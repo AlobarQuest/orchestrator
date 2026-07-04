@@ -1,6 +1,6 @@
 # WS-3.1 Persistent Orchestrator Core Design
 
-**Status:** Draft specification for Devon review  
+**Status:** Approved; adversarial review incorporated
 **Date:** 2026-07-04  
 **Intent package:** `ws-3.1-orchestrator-core`, revision 1  
 **Approved intent hash:** `4414eae543d9dac8b1983f796593569d9abf97dfee1b8a06ef29b308e7b8337b`
@@ -128,6 +128,7 @@ Immutable registration of one package revision:
 - `approval_event_id`
 - `enforcement_snapshot`
 - `authority_fingerprint`
+- `registry_version`
 - `registered_by`
 - `registered_at`
 
@@ -137,7 +138,7 @@ Constraints:
 - Unique `(work_package_id, content_hash)`.
 - Revision is positive.
 - Required source and approval fields are non-empty.
-- No update/delete path exists through the application.
+- PostgreSQL append-only triggers reject update and delete.
 
 ### 4.3 `work_units`
 
@@ -252,9 +253,9 @@ Append-only realized evidence:
 - `supersedes_evidence_id`
 
 At least one of `stable_ref` or `payload` is present. Supersession must target evidence
-for the same package revision, work unit, and AC. Existing records are never edited or
-deleted. Query services identify current evidence by following supersession links while
-retaining the full chain.
+for the same package revision, work unit, and AC. PostgreSQL append-only triggers reject
+update and delete. Query services identify current evidence by following supersession
+links while retaining the full chain.
 
 Standing-context, skills, and standards versions may be recorded in the structured
 payload. WS-3.3 makes those fields mandatory at worker preflight.
@@ -280,8 +281,8 @@ Explicit AC outcomes:
 - `event_id`
 - `supersedes_adjudication_id`
 
-Adjudications are append-only. A current outcome is the terminal item in its
-supersession chain.
+PostgreSQL append-only triggers reject update and delete. A current outcome is the
+terminal item in its supersession chain.
 
 For `waived`, database and service guards require:
 
@@ -309,14 +310,11 @@ Append-only local event and transactional outbox:
 - `payload`
 - `correlation_id`
 - `idempotency_key`
-- `published_event_id`
-- `published_at`
-- `publish_attempts`
-- `last_publish_error`
 
 The lifecycle mutation and its event share one database transaction. WS-3.1 leaves
-publication fields empty. WS-3.4 will publish to `factory-event/v1` idempotently and
-record delivery results.
+events undispatched. PostgreSQL append-only triggers reject update and delete. WS-3.4
+will add a separate delivery table keyed to immutable event IDs and publish to
+`factory-event/v1` idempotently.
 
 ## 5. State machine
 
@@ -397,9 +395,14 @@ The response includes reason codes and references to the facts producing the dec
 Authority fingerprints are deterministic normalized hashes. A new fingerprint is
 compared with the approved authority:
 
-- Removing authority or retaining the exact set does not constitute expansion.
-- Adding an allowed capability, moving a capability from prohibited to allowed, or
-  reducing an approval requirement is expansion.
+- Capabilities form the restriction order
+  `prohibited < requires_approval < allowed`.
+- A change is non-expanding only when every capability remains equal or moves toward
+  `prohibited`, and every numeric budget remains equal or decreases.
+- Adding an allowed capability, making any capability less restrictive, increasing a
+  budget, or removing a finite budget is expansion.
+- Unknown fields and comparisons that cannot prove non-expansion fail closed as
+  expansion.
 - Expansion invalidates readiness until a human approval binds to the new fingerprint.
 
 WS-3.1 does not implement WS-3.3 same-scope skill-subscription semantics.
@@ -413,8 +416,10 @@ WS-3.1 does not implement WS-3.3 same-scope skill-subscription semantics.
 - Acquisition: atomic, exclusive, idempotent, and legal only from `Ready`.
 - Renewal: legal only for the same actor, attempt, and lease token before expiry.
 - Expiry: does not rewrite history; it makes the claim ineffective.
-- Reclaim: locks the unit, confirms expiry, creates a new claim, increments attempt, and
-  transitions the unit through `Ready → Claimed`.
+- Reclaim: locks the unit, confirms expiry, records
+  `Claimed|Executing → Failed → Ready → Claimed` as three attributable transitions in
+  one transaction, creates a new claim, and increments the attempt. This uses only
+  declared legal edges and records the abandoned attempt honestly.
 - Exhaustion: the unit becomes `Failed`.
 - Retry after exhaustion: requires a human retry approval bound to the unit version and
   a new approved attempt limit or one-time retry grant.
@@ -436,6 +441,12 @@ Every request resolves:
 
 Unknown, inactive, reserved, or ambiguous identities fail closed.
 
+The identity boundary uses a registry adapter. Local development reads a configured
+Phase-1 registry checkout. Container builds embed a generated actor/authority bundle
+from an exact `security-standards` revision. Startup validates the bundle schema and
+every credential-key mapping. Registry changes require a rebuilt image; events record
+the registry version used for authorization.
+
 ### 7.2 Human UI
 
 The service accepts Alobar ID forward-auth headers only from its configured proxy trust
@@ -449,7 +460,7 @@ cancellation, review outcome, and retry.
 
 M2M bearer credentials map one-to-one to a registered Phase-1 `agent_id`. Credential
 material remains in BWS/runtime configuration. The application stores only the stable
-actor ID and credential key ID in audit facts.
+actor ID, credential key ID, and registry version in audit facts.
 
 The CLI is a thin HTTP client. It does not import the lifecycle kernel or connect
 directly to PostgreSQL.
@@ -558,6 +569,7 @@ addresses, or internal exception details.
 
 - Alembic empty-to-head and drift behavior.
 - Database constraints.
+- Database-enforced append-only package revisions, evidence, adjudications, and events.
 - Two concurrent claims: exactly one winner.
 - Idempotent duplicate claim.
 - Renewal ownership and expiry boundaries.
@@ -604,6 +616,8 @@ The application is compatible with the Flavor-B pattern:
 - Separate managed PostgreSQL database.
 - Alobar ID forward-auth for the UI.
 - M2M authentication for API/CLI.
+- A generated, version-pinned Phase-1 actor/authority registry bundle containing no
+  credentials.
 
 WS-3.1 does not mutate infrastructure. Deployment requires a separate approved
 `infrastructure-change` package and a fresh session. The approved target is:
