@@ -1,0 +1,129 @@
+# code-standards GitHub Actions workflow (vendored).
+# Destination: .github/workflows/quality.yml
+# Edit upstream and `code-standards sync`.
+#
+# CONTRACT (ADR-0005 — the baseline-vs-CI contract): this `make check` job runs
+# the FULL repo, baseline-BLIND. On a repo carrying accepted `.code-standards.toml`
+# baseline debt it shows RED by design — that red is a visible debt worklist, not a
+# defect. Therefore:
+#   • DO NOT configure this job as a required, merge-blocking status check. If it
+#     gated merges, a PR that REDUCES debt still couldn't merge while other debt
+#     remains — the burndown would freeze.
+#   • The regression gate is the baseline-aware `code-standards check` (the Stop
+#     hook): it blocks only when a change adds a NEW violation beyond the baseline.
+# Red here = "this repo still carries accepted debt"; green = genuinely debt-free.
+#
+# IMPORTANT: Keep tool versions here in sync with your local pins (pyproject.toml,
+# package.json, etc.). Local == CI parity is enforced by design.
+#
+# Language-scoped: each toolchain's setup is gated on a marker file, so the same
+# vendored workflow works on a Python, TypeScript, OR shell repo. Without this,
+# a Python-only `uv sync` step ran on every repo and failed (no pyproject / no
+# lockfile / unbuildable package) BEFORE `make check` ever ran (finding from the
+# Phase 6 merge — the CI analogue of the L1 Makefile fix).
+#
+# Dependency-manager-aware: `init` always merges ruff/pyright config into a
+# Python repo's pyproject.toml, so pyproject.toml marks "this is Python" but does
+# NOT mean the repo installs via uv. A pyproject that is tool-config-only (no
+# [project]/[tool.uv]/[tool.poetry] table) pins its deps in requirements*.txt and
+# must use pip — running `uv sync` there resolves an EMPTY project and uninstalls
+# the whole environment (verified on the ContactHub pip repo: `uv sync` wiped all
+# 56 venv packages). The install step below picks the installer from what the
+# repo actually uses, and exposes the resulting .venv/bin so `make check` — which
+# invokes ruff/pyright/pytest by bare name — finds the tools instead of silently
+# skipping them.
+
+name: Quality
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  check:
+    name: Lint, type-check, and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: hashFiles('pyproject.toml', 'requirements.txt') != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        if: hashFiles('pyproject.toml', 'requirements.txt') != ''
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.x"
+
+      - name: Install Python dependencies
+        if: hashFiles('pyproject.toml', 'requirements.txt') != ''
+        shell: bash
+        # Pick the installer from what the repo actually uses — NEVER blindly
+        # `uv sync`, which wipes the environment on a tool-config-only pyproject:
+        #   1. uv.lock present            → `uv sync --frozen` (locked uv project)
+        #   2. [project]/[tool.uv|poetry] → `uv sync` (PEP 621 / uv-managed)
+        #   3. requirements.txt present   → pip install into a .venv (pip repo)
+        #   4. none of the above          → no declared deps; nothing to install
+        # The .venv/bin is then put on PATH so `make check` resolves ruff/pyright/
+        # pytest (they live in .venv, not on PATH after a bare `uv sync`/pip).
+        run: |
+          venv=""
+          if [ -f uv.lock ]; then
+            uv sync --frozen
+            venv=".venv"
+          elif grep -qE '^\[project\]|^\[tool\.uv\]|^\[tool\.poetry\]' pyproject.toml 2>/dev/null; then
+            uv sync
+            venv=".venv"
+          elif [ -f requirements.txt ]; then
+            python -m venv .venv
+            .venv/bin/python -m pip install --upgrade pip
+            .venv/bin/pip install -r requirements.txt
+            if [ -f requirements-dev.txt ]; then
+              .venv/bin/pip install -r requirements-dev.txt
+            fi
+            venv=".venv"
+          else
+            echo "No uv.lock, [project] table, or requirements.txt — no Python dependencies to install."
+          fi
+          if [ -n "$venv" ] && [ -d "$venv/bin" ]; then
+            echo "$GITHUB_WORKSPACE/$venv/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Set up Node.js
+        if: hashFiles('package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+        # Skipped entirely when package.json does not exist (pure-Python repos).
+
+      - name: Install Node dependencies
+        if: hashFiles('package.json') != ''
+        shell: bash
+        # Expose node_modules/.bin on PATH so `make check` resolves eslint/
+        # prettier/tsc by bare name — they install into the project-local bin,
+        # NOT onto PATH after `npm ci`. Without this every Node tool fails its
+        # `command -v` guard in the Makefile and is silently skipped, so a TS
+        # repo's CI goes green having checked nothing (the Node twin of the
+        # .venv/bin step above; rate-shift-calculator pilot: CI ran zero Node
+        # checks).
+        run: |
+          npm ci
+          echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Install shellcheck
+        # `apt-get update` first — without a fresh index `install` can 404 on a
+        # stale package version and flake the job.
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run full quality check
+        # `make check` runs ruff, pyright, eslint, prettier, shellcheck, and pytest.
+        # Each block is gated on its language marker and each tool is command -v
+        # guarded, so absent toolchains degrade gracefully.
+        run: make check
