@@ -41,6 +41,14 @@ class TransitionResult:
     event_id: uuid.UUID
 
 
+def unit_history(session: Session, unit_id: uuid.UUID) -> tuple[Event, ...]:
+    return tuple(
+        session.scalars(
+            select(Event).where(Event.subject_id == unit_id).order_by(Event.occurred_at, Event.id)
+        )
+    )
+
+
 def transition_unit(
     session: Session,
     command: TransitionCommand,
@@ -71,19 +79,32 @@ def _perform_transition(
     if existing is not None:
         return _idempotent_result(existing, command)
     if unit.version != command.expected_version:
-        raise DomainError("version_conflict", "work unit version has changed", "reload")
+        raise DomainError(
+            "version_conflict",
+            "work unit version has changed",
+            "reload",
+            current_state=unit.state,
+            current_version=unit.version,
+        )
 
     source = WorkUnitState(unit.state)
     revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
     occurred_at = clock.now(session)
-    authorize_transition(
-        source,
-        command.target,
-        command.actor.role,
-        _transition_guards(session, unit, revision, occurred_at),
-    )
+    try:
+        authorize_transition(
+            source,
+            command.target,
+            command.actor.role,
+            _transition_guards(session, unit, revision, occurred_at),
+        )
+    except DomainError as error:
+        error.current_state = unit.state
+        error.current_version = unit.version
+        if error.code == "invalid_transition" and source is WorkUnitState.EXECUTING:
+            error.recovery = "submit"
+        raise
 
     next_version = unit.version + 1
     unit.state = command.target

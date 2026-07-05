@@ -25,6 +25,16 @@ NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57503338
 
 
+def list_evidence(session: Session, work_unit_id: uuid.UUID) -> tuple[Evidence, ...]:
+    return tuple(
+        session.scalars(
+            select(Evidence)
+            .where(Evidence.work_unit_id == work_unit_id)
+            .order_by(Evidence.recorded_at, Evidence.id)
+        )
+    )
+
+
 def append_evidence(
     session: Session,
     *,
