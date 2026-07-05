@@ -21,6 +21,9 @@ dependencies = [
   "uvicorn[standard]>=0.29",
 ]
 
+[project.scripts]
+orchestrator = "orchestrator.cli:app"
+
 [dependency-groups]
 dev = [
   "pytest>=8.0",
