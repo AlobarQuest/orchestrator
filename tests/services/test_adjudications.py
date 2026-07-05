@@ -105,6 +105,36 @@ def test_adjudication_idempotency_is_exact(migrated_session: Session, ready_unit
     assert changed.code == "idempotency_conflict"
 
 
+def test_adjudication_replay_precedes_current_version_validation(
+    migrated_session: Session, ready_unit
+) -> None:
+    command: dict[str, Any] = {
+        "work_package_revision_id": ready_unit.work_package_revision_id,
+        "work_unit_id": ready_unit.id,
+        "ac_id": "ac-1",
+        "outcome": "passed",
+        "actor": ActorContext("verifier-1", ActorRole.VERIFIER),
+        "rationale": "verified",
+        "idempotency_key": "adjudication-versioned",
+        "expected_version": ready_unit.version,
+    }
+    first = record(migrated_session, command)
+    assert isinstance(first, Adjudication)
+    ready_unit.version += 1
+    migrated_session.commit()
+
+    replay = record(migrated_session, command)
+    changed_actor = record(
+        migrated_session,
+        command | {"actor": ActorContext("verifier-2", ActorRole.VERIFIER)},
+    )
+
+    assert isinstance(replay, Adjudication)
+    assert replay.id == first.id
+    assert isinstance(changed_actor, DomainError)
+    assert changed_actor.code == "idempotency_conflict"
+
+
 def test_concurrent_identical_adjudications_converge(migrated_engine: Engine) -> None:
     with Session(migrated_engine) as setup:
         unit = register_unit(setup, "concurrent-adjudication")

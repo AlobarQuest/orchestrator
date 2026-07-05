@@ -2,11 +2,13 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event
+from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 
 
@@ -139,3 +141,73 @@ def test_stale_expected_version_is_rejected(migrated_session: Session, ready_uni
         transition_unit(migrated_session, command)
 
     assert error.value.code == "version_conflict"
+
+
+def test_forbidden_worker_transition_is_rejected_before_claim_proof(
+    migrated_session: Session, ready_unit
+) -> None:
+    ready_unit.state = WorkUnitState.SUBMITTED
+    migrated_session.commit()
+
+    with pytest.raises(DomainError) as error:
+        transition_unit(
+            migrated_session,
+            TransitionCommand(
+                ready_unit.id,
+                WorkUnitState.COMPLETED,
+                ActorContext("worker-1", ActorRole.WORKER),
+                ready_unit.version,
+                "worker-complete",
+            ),
+        )
+
+    assert error.value.code == "role_forbidden"
+
+
+@pytest.mark.parametrize(
+    ("actor_id", "attempt_delta", "expire"),
+    [
+        ("worker-2", 0, False),
+        ("worker-1", 1, False),
+        ("worker-1", 0, True),
+    ],
+)
+def test_worker_transition_rejects_invalid_claim_proof(
+    migrated_session: Session,
+    ready_unit,
+    actor_id: str,
+    attempt_delta: int,
+    expire: bool,
+) -> None:
+    grant = claim_unit(
+        migrated_session,
+        ready_unit.id,
+        ActorContext("worker-1", ActorRole.WORKER),
+        "claim-worker",
+    )
+    assert isinstance(grant, LeaseGrant)
+    if expire:
+        migrated_session.execute(
+            text(
+                "UPDATE claims SET lease_expires_at = "
+                "transaction_timestamp() - interval '1 second' WHERE id = :claim_id"
+            ),
+            {"claim_id": grant.claim_id},
+        )
+        migrated_session.commit()
+
+    with pytest.raises(DomainError) as error:
+        transition_unit(
+            migrated_session,
+            TransitionCommand(
+                ready_unit.id,
+                WorkUnitState.EXECUTING,
+                ActorContext(actor_id, ActorRole.WORKER),
+                2,
+                f"invalid-proof-{actor_id}-{attempt_delta}-{expire}",
+                grant.attempt + attempt_delta,
+                grant.lease_token,
+            ),
+        )
+
+    assert error.value.code == "active_claim_required"

@@ -99,8 +99,6 @@ def _perform_transition(
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
     occurred_at = clock.now(session)
-    if command.actor.role is ActorRole.WORKER:
-        _require_active_claim(session, unit, command, occurred_at)
     try:
         authorize_transition(
             source,
@@ -114,6 +112,8 @@ def _perform_transition(
         if error.code == "invalid_transition" and source is WorkUnitState.EXECUTING:
             error.recovery = "submit"
         raise
+    if command.actor.role is ActorRole.WORKER:
+        _require_active_claim(session, unit, command, occurred_at)
 
     next_version = unit.version + 1
     unit.state = command.target

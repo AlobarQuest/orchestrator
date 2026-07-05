@@ -12,7 +12,11 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import WorkPackageRevision
-from orchestrator.services.packages import register_approved_unit, register_revision
+from orchestrator.services.packages import (
+    record_approval,
+    register_approved_unit,
+    register_revision,
+)
 
 AUTHORITY = AuthorityEnvelope(
     capabilities={"repository_write": "allowed"},
@@ -186,6 +190,51 @@ def test_approved_unit_registration_preserves_explicit_attempt_budget(
     )
 
     assert unit.max_attempts == 2
+
+
+def test_authority_approval_idempotency_binds_expected_version(
+    migrated_session: Session,
+) -> None:
+    revision = register_test_revision(migrated_session)
+    unit = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="approval-version",
+        title="Approval version",
+        outcome="Approval is exact",
+        required_capability="repository_write",
+        authority=AUTHORITY,
+        approved_by="human-1",
+        approved_at=NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    first = record_approval(
+        migrated_session,
+        unit_id=unit.id,
+        subject_type="authority",
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        reason="approved",
+        idempotency_key="authority-version",
+        expected_version=1,
+    )
+    migrated_session.commit()
+
+    with pytest.raises(DomainError) as error:
+        record_approval(
+            migrated_session,
+            unit_id=unit.id,
+            subject_type="authority",
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+            reason="approved",
+            idempotency_key="authority-version",
+            expected_version=2,
+        )
+
+    assert first.subject_revision_or_fingerprint == unit.authority_fingerprint
+    assert error.value.code == "idempotency_conflict"
 
 
 def test_concurrent_identical_first_registration_converges(

@@ -70,12 +70,15 @@ def record_approval(
         unit.authority_fingerprint if subject_type == "authority" else str(expected_version)
     )
     if existing is not None:
+        event = session.get(Event, existing.event_id)
         if (
             existing.subject_type == subject_type
             and existing.subject_id == unit.id
             and existing.subject_revision_or_fingerprint == fingerprint
             and existing.approved_by == actor_id
             and existing.reason == reason
+            and event is not None
+            and event.payload.get("expected_version") == expected_version
         ):
             return existing
         raise DomainError(

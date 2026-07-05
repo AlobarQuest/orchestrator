@@ -161,6 +161,10 @@ def record_adjudication(
         _lock_idempotency_key(session, idempotency_key)
         unit, revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         del revision
+        replay = _adjudication_replay(session, idempotency_key, command)
+        if replay is not None:
+            session.commit()
+            return replay
         if expected_version is not None and unit.version != expected_version:
             raise DomainError(
                 "version_conflict",
@@ -169,10 +173,6 @@ def record_adjudication(
                 current_state=unit.state,
                 current_version=unit.version,
             )
-        replay = _adjudication_replay(session, idempotency_key, command)
-        if replay is not None:
-            session.commit()
-            return replay
         now = TransactionClock().now(session)
         _authorize_outcome(actor, outcome)
         _validate_adjudication_fields(
