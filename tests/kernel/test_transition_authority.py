@@ -3,9 +3,10 @@ import pytest
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import LEGAL_EDGES, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import EDGE_ROLES, TransitionGuards, authorize_transition
+from tests.kernel.canonical_expectations import EXPECTED_EDGE_ROLES, EXPECTED_LEGAL_EDGES
 
 
-@pytest.mark.parametrize(("edge", "roles"), sorted(EDGE_ROLES.items()))
+@pytest.mark.parametrize(("edge", "roles"), sorted(EXPECTED_EDGE_ROLES.items()))
 def test_each_legal_edge_allows_exactly_its_declared_roles(
     edge: tuple[WorkUnitState, WorkUnitState], roles: frozenset[ActorRole]
 ) -> None:
@@ -21,15 +22,15 @@ def test_each_legal_edge_allows_exactly_its_declared_roles(
 
 
 def test_role_map_covers_every_legal_edge() -> None:
-    assert set(EDGE_ROLES) == set(LEGAL_EDGES)
-    assert all(EDGE_ROLES.values())
+    assert LEGAL_EDGES == EXPECTED_LEGAL_EDGES
+    assert EDGE_ROLES == EXPECTED_EDGE_ROLES
 
 
 @pytest.mark.parametrize(
     ("source", "target"),
     sorted(
         edge
-        for edge in LEGAL_EDGES
+        for edge in EXPECTED_LEGAL_EDGES
         if edge[1]
         in {
             WorkUnitState.CANCELLED,
