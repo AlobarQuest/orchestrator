@@ -1,0 +1,38 @@
+services:
+  orchestrator-postgres:
+    image: postgres:16-alpine
+    container_name: orchestrator-postgres
+    environment:
+      POSTGRES_DB: orchestrator_test
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  orchestrator:
+    build:
+      context: .
+      additional_contexts:
+        registry: tests/fixtures/security-standards
+      args:
+        SECURITY_STANDARDS_REVISION: "0123456789abcdef0123456789abcdef01234567"
+        REGISTRY_ARTIFACT_SHA256: "00e17cb8e9841ccc8d892f0ca5b7ee240a23721c62d2d0f2236b5777ddab7d69"
+    command: ["uvicorn", "orchestrator.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      ORCHESTRATOR_DATABASE_URL: postgresql+psycopg://postgres@orchestrator-postgres:5432/orchestrator_test
+      ORCHESTRATOR_REGISTRY_BUNDLE: ""
+    depends_on:
+      orchestrator-postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

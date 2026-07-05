@@ -1,0 +1,1 @@
+"""Authenticated actor identity boundary."""

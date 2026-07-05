@@ -1,2 +1,13 @@
 .worktrees/
 .superpowers/
+.venv/
+__pycache__/
+*.pyc
+*.env
+*.key
+*.password
+.env
+.pytest_cache/
+*.db
+build/
+*.egg-info/

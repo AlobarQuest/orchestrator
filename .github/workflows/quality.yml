@@ -1,0 +1,58 @@
+name: Quality
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: orchestrator_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+    env:
+      ORCHESTRATOR_DATABASE_URL: postgresql+psycopg://postgres@127.0.0.1:5432/orchestrator_test
+      TEST_DATABASE_URL: postgresql+psycopg://postgres@127.0.0.1:5432/orchestrator_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.31"
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Upgrade empty database
+        run: uv run alembic upgrade head
+
+      - name: Run full quality gate
+        run: PATH="$PWD/.venv/bin:$PATH" make check
+
+      - name: Build fixture-registry image
+        run: >-
+          docker build
+          --build-context registry=tests/fixtures/security-standards
+          --build-arg SECURITY_STANDARDS_REVISION=0123456789abcdef0123456789abcdef01234567
+          --build-arg REGISTRY_ARTIFACT_SHA256=00e17cb8e9841ccc8d892f0ca5b7ee240a23721c62d2d0f2236b5777ddab7d69
+          -t orchestrator:quality .
