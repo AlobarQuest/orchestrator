@@ -6,7 +6,9 @@ from alembic.config import Config
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session
 
+from orchestrator.kernel.states import WorkUnitState
 from tests.conftest import TEST_DATABASE_URL
+from tests.services.test_dependencies import register_unit
 
 
 @pytest.fixture
@@ -27,3 +29,11 @@ def migrated_session(migrated_engine: Engine) -> Iterator[Session]:
     with Session(migrated_engine) as session:
         yield session
         session.rollback()
+
+
+@pytest.fixture
+def ready_unit(migrated_session: Session):
+    unit = register_unit(migrated_session, "lifecycle")
+    unit.state = WorkUnitState.READY
+    migrated_session.commit()
+    return unit
