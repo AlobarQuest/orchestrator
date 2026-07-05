@@ -1,6 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from typing import Any, cast
 
 import pytest
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -8,6 +11,7 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Adjudication
 from orchestrator.services.evidence import current_adjudication, record_adjudication
 from orchestrator.services.lifecycle import ActorContext
+from tests.services.test_dependencies import register_unit
 
 
 def record(session: Session, command: dict[str, Any]) -> Adjudication | DomainError:
@@ -99,3 +103,36 @@ def test_adjudication_idempotency_is_exact(migrated_session: Session, ready_unit
     assert replay.id == first.id
     assert isinstance(changed, DomainError)
     assert changed.code == "idempotency_conflict"
+
+
+def test_concurrent_identical_adjudications_converge(migrated_engine: Engine) -> None:
+    with Session(migrated_engine) as setup:
+        unit = register_unit(setup, "concurrent-adjudication")
+        setup.commit()
+        command: dict[str, Any] = {
+            "work_package_revision_id": unit.work_package_revision_id,
+            "work_unit_id": unit.id,
+            "ac_id": "ac-1",
+            "outcome": "passed",
+            "actor": ActorContext("verifier-1", ActorRole.VERIFIER),
+            "rationale": "verified",
+            "idempotency_key": "concurrent-adjudication-1",
+        }
+
+    start = Barrier(2)
+
+    def decide() -> tuple[str, object]:
+        with Session(migrated_engine) as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            start.wait(timeout=5)
+            result = record(session, command)
+            if isinstance(result, Adjudication):
+                return ("adjudication", result.id)
+            return ("error", result.code)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(executor.submit(decide) for _index in range(2))
+        results = tuple(future.result(timeout=10) for future in futures)
+
+    assert all(kind == "adjudication" for kind, _value in results)
+    assert len({value for _kind, value in results}) == 1

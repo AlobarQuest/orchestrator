@@ -1,8 +1,10 @@
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,6 +18,7 @@ from orchestrator.services.evidence import (
     supersede_evidence,
 )
 from orchestrator.services.lifecycle import ActorContext
+from tests.services.test_dependencies import register_unit
 
 
 def worker() -> ActorContext:
@@ -183,3 +186,37 @@ def test_evidence_rows_remain_database_immutable(migrated_session: Session, read
     migrated_session.rollback()
 
     assert migrated_session.scalar(select(Evidence).where(Evidence.id == row.id)) is not None
+
+
+@pytest.mark.parametrize("conflicting", [False, True])
+def test_concurrent_evidence_idempotency_is_stable(
+    migrated_engine: Engine, conflicting: bool
+) -> None:
+    with Session(migrated_engine) as setup:
+        unit = register_unit(setup, "concurrent-evidence")
+        unit.state = "ready"
+        setup.commit()
+        grant = active_claim(setup, unit)
+        command = evidence_kwargs(unit, grant)
+
+    start = Barrier(2)
+
+    def record(source_revision: str) -> tuple[str, uuid.UUID | str]:
+        with Session(migrated_engine) as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            start.wait(timeout=5)
+            result = append(session, command | {"source_revision": source_revision})
+            if isinstance(result, Evidence):
+                return ("evidence", result.id)
+            return ("error", result.code)
+
+    revisions = ("abc123", "def456" if conflicting else "abc123")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(executor.submit(record, revision) for revision in revisions)
+        results = tuple(future.result(timeout=10) for future in futures)
+
+    evidence = tuple(value for kind, value in results if kind == "evidence")
+    errors = tuple(value for kind, value in results if kind == "error")
+    assert len(evidence) == (1 if conflicting else 2)
+    assert len(set(evidence)) <= 1
+    assert list(errors) == (["idempotency_conflict"] if conflicting else [])

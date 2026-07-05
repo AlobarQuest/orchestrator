@@ -3,7 +3,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
@@ -21,6 +22,7 @@ from orchestrator.persistence.models import (
 from orchestrator.services.lifecycle import ActorContext
 
 NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
+IDEMPOTENCY_LOCK_NAMESPACE = 0x57503338
 
 
 def append_evidence(
@@ -138,12 +140,13 @@ def record_adjudication(
         "work_unit_id": str(work_unit_id),
     }
     try:
+        _lock_idempotency_key(session, idempotency_key)
+        unit, revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
+        del unit, revision
         replay = _adjudication_replay(session, idempotency_key, command)
         if replay is not None:
             session.commit()
             return replay
-        unit, revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
-        del unit, revision
         now = TransactionClock().now(session)
         _authorize_outcome(actor, outcome)
         _validate_adjudication_fields(
@@ -198,6 +201,9 @@ def record_adjudication(
     except DomainError as error:
         session.rollback()
         return error
+    except IntegrityError as error:
+        session.rollback()
+        return _adjudication_race_result(session, idempotency_key, command, error)
     except Exception:
         session.rollback()
         raise
@@ -252,11 +258,12 @@ def _store_evidence(
         "work_unit_id": str(work_unit_id),
     }
     try:
+        _lock_idempotency_key(session, idempotency_key)
+        unit, _revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         replay = _evidence_replay(session, idempotency_key, command)
         if replay is not None:
             session.commit()
             return replay
-        unit, _revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         _validate_evidence_fields(stable_ref, payload, evidence_type, source_revision)
         _validate_attempt(session, unit, actor, attempt, lease_token)
         previous = current_evidence(session, work_package_revision_id, work_unit_id, ac_id)
@@ -306,6 +313,9 @@ def _store_evidence(
     except DomainError as error:
         session.rollback()
         return error
+    except IntegrityError as error:
+        session.rollback()
+        return _evidence_race_result(session, idempotency_key, command, error)
     except Exception:
         session.rollback()
         raise
@@ -479,6 +489,46 @@ def _adjudication_replay(
     if row is None:
         raise _idempotency_conflict()
     return row
+
+
+def _lock_idempotency_key(session: Session, idempotency_key: str) -> None:
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(:namespace, hashtext(:idempotency_key))"),
+        {
+            "namespace": IDEMPOTENCY_LOCK_NAMESPACE,
+            "idempotency_key": idempotency_key,
+        },
+    )
+
+
+def _evidence_race_result(
+    session: Session,
+    idempotency_key: str,
+    command: dict[str, object],
+    error: IntegrityError,
+) -> Evidence | DomainError:
+    try:
+        replay = _evidence_replay(session, idempotency_key, command)
+    except DomainError as conflict:
+        return conflict
+    if replay is not None:
+        return replay
+    raise error
+
+
+def _adjudication_race_result(
+    session: Session,
+    idempotency_key: str,
+    command: dict[str, object],
+    error: IntegrityError,
+) -> Adjudication | DomainError:
+    try:
+        replay = _adjudication_replay(session, idempotency_key, command)
+    except DomainError as conflict:
+        return conflict
+    if replay is not None:
+        return replay
+    raise error
 
 
 def _event(
