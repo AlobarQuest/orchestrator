@@ -145,3 +145,10 @@ def test_real_http_api_and_cli_have_success_and_error_parity(
     } == {
         key: api_error.json()["error"].get(key) for key in ("code", "current_version", "recovery")
     }
+
+    api_history = db_client.get(f"/api/v1/work-units/{unit_id}/history", headers=WORKER)
+    assert api_history.status_code == 200
+    assert isinstance(api_history.json(), list)
+    cli_history = CliRunner().invoke(app, ["history", unit_id, "--json"])
+    assert cli_history.exit_code == 0
+    assert json.loads(cli_history.stdout) == api_history.json()

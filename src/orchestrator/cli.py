@@ -76,10 +76,8 @@ def request(method: str, path: str, payload: JsonObject | None = None) -> Any:
         raise CliError(
             {"code": "invalid_response", "message": "API returned an invalid response"}
         ) from None
-    if isinstance(value, dict):
+    if isinstance(value, (dict, list)):
         return value
-    if isinstance(value, list):
-        return {"items": value}
     raise CliError({"code": "invalid_response", "message": "API returned an invalid response"})
 
 
