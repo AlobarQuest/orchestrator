@@ -1,7 +1,11 @@
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier
+from typing import Any
 
 import pytest
+from sqlalchemy import Engine, event, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -137,3 +141,102 @@ def test_approved_unit_registration_only_creates_draft(migrated_session: Session
 
     assert unit.state == "draft"
     assert unit.decomposition_approved_by == "human-1"
+
+
+def test_concurrent_identical_first_registration_converges(
+    migrated_engine: Engine,
+) -> None:
+    start = Barrier(2)
+    before_registration_lock = Barrier(2)
+
+    def synchronize_registration_lock(
+        _connection: Any,
+        _cursor: Any,
+        statement: str,
+        _parameters: Any,
+        _context: Any,
+        _executemany: bool,
+    ) -> None:
+        if "pg_advisory_xact_lock" in statement:
+            before_registration_lock.wait(timeout=5)
+
+    event.listen(migrated_engine, "before_cursor_execute", synchronize_registration_lock)
+
+    def register() -> uuid.UUID:
+        with Session(migrated_engine) as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            session.execute(text("SET LOCAL lock_timeout = '5s'"))
+            start.wait(timeout=5)
+            revision = register_test_revision(session)
+            session.commit()
+            return revision.id
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(register) for _ in range(2)]
+            revision_ids = tuple(future.result(timeout=10) for future in futures)
+    finally:
+        event.remove(migrated_engine, "before_cursor_execute", synchronize_registration_lock)
+
+    assert revision_ids[0] == revision_ids[1]
+
+
+def test_concurrent_conflicting_first_registration_returns_stable_error(
+    migrated_engine: Engine,
+) -> None:
+    start = Barrier(2)
+    before_registration_lock = Barrier(2)
+
+    def synchronize_registration_lock(
+        _connection: Any,
+        _cursor: Any,
+        statement: str,
+        _parameters: Any,
+        _context: Any,
+        _executemany: bool,
+    ) -> None:
+        if "pg_advisory_xact_lock" in statement:
+            before_registration_lock.wait(timeout=5)
+
+    event.listen(migrated_engine, "before_cursor_execute", synchronize_registration_lock)
+
+    def register(registration: tuple[int, str]) -> str:
+        with Session(migrated_engine) as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            session.execute(text("SET LOCAL lock_timeout = '5s'"))
+            start.wait(timeout=5)
+            try:
+                register_revision(
+                    session,
+                    package_id="pkg-1",
+                    source_repository="owner/repo",
+                    revision=registration[0],
+                    content_hash=registration[1],
+                    source_path="intent.md",
+                    source_commit="abc123",
+                    approved_by="human-1",
+                    approved_at=NOW,
+                    approval_event_id=APPROVAL_EVENT_ID,
+                    enforcement_snapshot={"acceptance_criteria": ["ac-1"]},
+                    authority=AUTHORITY,
+                    registry_version=1,
+                    actor_id="human-1",
+                    actor_role=ActorRole.HUMAN,
+                )
+                session.commit()
+                return "registered"
+            except DomainError as error:
+                session.rollback()
+                return error.code
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(register, registration)
+                for registration in ((1, "sha256:one"), (2, "sha256:other"))
+            ]
+            results = tuple(future.result(timeout=10) for future in futures)
+    finally:
+        event.remove(migrated_engine, "before_cursor_execute", synchronize_registration_lock)
+
+    assert sorted(results) == ["registered", "revision_conflict"]

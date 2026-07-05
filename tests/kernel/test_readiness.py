@@ -8,15 +8,19 @@ from orchestrator.kernel.readiness import (
 )
 
 
-def facts(**overrides: object) -> ReadinessFacts:
-    values: dict[str, object] = {
-        "revision_approved": True,
-        "decomposition_approved": True,
-        "authority_approved": True,
-        "dependencies": (),
-    }
-    values.update(overrides)
-    return ReadinessFacts(**values)  # type: ignore[arg-type]
+def facts(
+    *,
+    revision_approved: bool = True,
+    decomposition_approved: bool = True,
+    authority_approved: bool = True,
+    dependencies: tuple[DependencyReadiness, ...] = (),
+) -> ReadinessFacts:
+    return ReadinessFacts(
+        revision_approved=revision_approved,
+        decomposition_approved=decomposition_approved,
+        authority_approved=authority_approved,
+        dependencies=dependencies,
+    )
 
 
 def test_unapproved_revision_and_decomposition_are_not_authorized() -> None:

@@ -58,7 +58,10 @@ def register_revision(
 ) -> WorkPackageRevision:
     _require_human(actor_id, actor_role)
     repository = PackageRepository(session)
+    observed_package = repository.package(package_id)
+    repository.lock_package_registration(package_id)
     package = repository.package_for_update(package_id)
+    concurrent_initial_registration = observed_package is None and package is not None
     if package is None:
         package = WorkPackage(package_id=package_id, source_repository=source_repository)
         session.add(package)
@@ -86,6 +89,8 @@ def register_revision(
     if existing is not None:
         if all(getattr(existing, field) == value for field, value in candidate.items()):
             return existing
+        raise _revision_conflict()
+    if concurrent_initial_registration:
         raise _revision_conflict()
 
     registered = WorkPackageRevision(

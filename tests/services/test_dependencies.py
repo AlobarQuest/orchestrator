@@ -1,6 +1,10 @@
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from typing import Any
 
 import pytest
+from sqlalchemy import Engine, event, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -142,3 +146,59 @@ def test_readiness_is_ready_after_dependency_and_exact_approval(
     decision = evaluate_readiness(migrated_session, unit.id)
 
     assert decision.status is ReadinessStatus.READY
+
+
+def test_concurrent_opposite_edges_allow_one_and_reject_cycle(
+    migrated_engine: Engine,
+) -> None:
+    with Session(migrated_engine) as setup:
+        first = register_unit(setup, "first")
+        second = register_unit(setup, "second")
+        setup.commit()
+        first_id = first.id
+        second_id = second.id
+
+    start = Barrier(2)
+    before_unit_lock = Barrier(2)
+
+    def synchronize_unit_lock(
+        _connection: Any,
+        _cursor: Any,
+        statement: str,
+        _parameters: Any,
+        _context: Any,
+        _executemany: bool,
+    ) -> None:
+        if "FROM work_units" in statement and "FOR UPDATE" in statement:
+            before_unit_lock.wait(timeout=5)
+
+    event.listen(migrated_engine, "before_cursor_execute", synchronize_unit_lock)
+
+    def add_edge(edge: tuple[uuid.UUID, uuid.UUID]) -> str:
+        with Session(migrated_engine) as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            session.execute(text("SET LOCAL lock_timeout = '5s'"))
+            start.wait(timeout=5)
+            try:
+                register_dependency(
+                    session,
+                    work_unit_id=edge[0],
+                    spec=DependencySpec.work_unit(edge[1], "completed"),
+                )
+                session.commit()
+                return "registered"
+            except DomainError as error:
+                session.rollback()
+                return error.code
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(add_edge, edge)
+                for edge in ((first_id, second_id), (second_id, first_id))
+            ]
+            results = tuple(future.result(timeout=10) for future in futures)
+    finally:
+        event.remove(migrated_engine, "before_cursor_execute", synchronize_unit_lock)
+
+    assert sorted(results) == ["dependency_cycle", "registered"]

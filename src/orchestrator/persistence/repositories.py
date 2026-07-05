@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import (
@@ -11,10 +11,24 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 
+PACKAGE_REGISTRATION_LOCK_NAMESPACE = 0x57503331
+
 
 class PackageRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def package(self, package_id: str) -> WorkPackage | None:
+        return self.session.scalar(select(WorkPackage).where(WorkPackage.package_id == package_id))
+
+    def lock_package_registration(self, package_id: str) -> None:
+        self.session.execute(
+            text("SELECT pg_advisory_xact_lock(:registration_namespace, hashtext(:package_id))"),
+            {
+                "registration_namespace": PACKAGE_REGISTRATION_LOCK_NAMESPACE,
+                "package_id": package_id,
+            },
+        )
 
     def package_for_update(self, package_id: str) -> WorkPackage | None:
         return self.session.scalar(
