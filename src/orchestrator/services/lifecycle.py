@@ -121,27 +121,29 @@ def _transition_event(
 
 
 def _idempotent_result(event: Event, command: TransitionCommand) -> TransitionResult:
+    if event.subject_type != "work_unit" or event.action != "work_unit.transitioned":
+        raise _idempotency_conflict()
     try:
         source = WorkUnitState(event.from_state)
-    except ValueError:
-        source = None
-    expected = (
-        event.subject_type == "work_unit"
-        and event.subject_id == command.unit_id
-        and event.action == "work_unit.transitioned"
-        and source is not None
-        and event.payload.get("command") == _command_identity(command, source)
-    )
+    except (TypeError, ValueError):
+        raise _idempotency_conflict() from None
+    expected = event.subject_id == command.unit_id and event.payload.get(
+        "command"
+    ) == _command_identity(command, source)
     if not expected:
-        raise DomainError(
-            "idempotency_conflict",
-            "idempotency key belongs to a different operation",
-            "use a new idempotency key",
-        )
+        raise _idempotency_conflict()
     version = event.payload.get("version")
     if not isinstance(version, int):
         raise DomainError("event_invalid", "transition event has no valid version", None)
     return TransitionResult(command.unit_id, command.target, version, event.id)
+
+
+def _idempotency_conflict() -> DomainError:
+    return DomainError(
+        "idempotency_conflict",
+        "idempotency key belongs to a different operation",
+        "use a new idempotency key",
+    )
 
 
 def _command_identity(command: TransitionCommand, source: WorkUnitState) -> dict[str, str | int]:
@@ -210,7 +212,7 @@ def _completion_satisfied(
 
 def _required_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[str, ...] | None:
     value = enforcement_snapshot.get("acceptance_criteria")
-    if not isinstance(value, list):
+    if not isinstance(value, list) or not value:
         return None
     ac_ids = tuple(item for item in value if isinstance(item, str) and item.strip())
     if len(ac_ids) != len(value) or len(set(ac_ids)) != len(ac_ids):

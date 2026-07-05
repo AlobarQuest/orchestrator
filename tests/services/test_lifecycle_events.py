@@ -75,6 +75,30 @@ def test_reused_idempotency_key_for_different_transition_is_rejected(
     assert error.value.code == "idempotency_conflict"
 
 
+def test_non_transition_event_idempotency_collision_is_rejected(
+    migrated_session: Session, ready_unit
+) -> None:
+    migrated_session.add(
+        Event(
+            actor_id="worker-1",
+            action="evidence.recorded",
+            subject_type="work_unit",
+            subject_id=ready_unit.id,
+            from_state=None,
+            to_state=None,
+            payload={},
+            correlation_id=uuid.uuid4(),
+            idempotency_key="claim-1",
+        )
+    )
+    migrated_session.commit()
+
+    with pytest.raises(DomainError) as error:
+        transition_unit(migrated_session, command_for(ready_unit))
+
+    assert error.value.code == "idempotency_conflict"
+
+
 @pytest.mark.parametrize(
     ("expected_version_delta", "role"),
     [(1, ActorRole.SYSTEM), (0, ActorRole.WORKER)],

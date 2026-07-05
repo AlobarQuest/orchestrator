@@ -8,7 +8,10 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import Adjudication, Approval, Evidence, WorkUnit
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.packages import register_approved_unit, register_revision
 from tests.services.test_dependencies import register_unit
+from tests.services.test_package_registration import AUTHORITY
+from tests.services.test_package_registration import NOW as APPROVED_AT
 
 NOW = datetime(2026, 7, 5, tzinfo=UTC)
 
@@ -95,6 +98,44 @@ def test_completion_requires_adjudication_for_every_required_ac(
     migrated_session: Session,
 ) -> None:
     assert_completion_rejected(migrated_session, submitted_unit(migrated_session))
+
+
+def test_completion_rejects_empty_acceptance_criteria(migrated_session: Session) -> None:
+    revision = register_revision(
+        migrated_session,
+        package_id="empty-acs",
+        source_repository="owner/repo",
+        revision=1,
+        content_hash="sha256:empty",
+        source_path="intent.md",
+        source_commit="abc123",
+        approved_by="human-1",
+        approved_at=APPROVED_AT,
+        approval_event_id=uuid.uuid4(),
+        enforcement_snapshot={"acceptance_criteria": []},
+        authority=AUTHORITY,
+        registry_version=1,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    unit = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="empty-acs",
+        title="Empty ACs",
+        outcome="complete",
+        required_capability="repository_write",
+        authority=AUTHORITY,
+        max_attempts=1,
+        approved_by="human-1",
+        approved_at=APPROVED_AT,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    unit.state = WorkUnitState.SUBMITTED
+    migrated_session.commit()
+
+    assert_completion_rejected(migrated_session, unit)
 
 
 def test_completion_accepts_one_current_terminal_adjudication(
