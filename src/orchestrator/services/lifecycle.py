@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -7,11 +8,13 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import Clock, TransactionClock
 from orchestrator.errors import DomainError
+from orchestrator.kernel.leases import hash_lease_token
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
     Adjudication,
     Approval,
+    Claim,
     Event,
     WorkPackageRevision,
     WorkUnit,
@@ -31,6 +34,8 @@ class TransitionCommand:
     actor: ActorContext
     expected_version: int
     idempotency_key: str
+    attempt: int | None = None
+    lease_token: str | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +47,8 @@ class TransitionResult:
 
 
 def unit_history(session: Session, unit_id: uuid.UUID) -> tuple[Event, ...]:
+    if session.get(WorkUnit, unit_id) is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
     return tuple(
         session.scalars(
             select(Event).where(Event.subject_id == unit_id).order_by(Event.occurred_at, Event.id)
@@ -92,6 +99,8 @@ def _perform_transition(
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
     occurred_at = clock.now(session)
+    if command.actor.role is ActorRole.WORKER:
+        _require_active_claim(session, unit, command, occurred_at)
     try:
         authorize_transition(
             source,
@@ -167,16 +176,55 @@ def _idempotency_conflict() -> DomainError:
     )
 
 
-def _command_identity(command: TransitionCommand, source: WorkUnitState) -> dict[str, str | int]:
+def _command_identity(
+    command: TransitionCommand, source: WorkUnitState
+) -> dict[str, str | int | None]:
     return {
         "action": "work_unit.transitioned",
         "actor_id": command.actor.actor_id,
         "actor_role": command.actor.role,
         "expected_version": command.expected_version,
         "from_state": source,
+        "attempt": command.attempt,
+        "lease_token_hash": (
+            hash_lease_token(command.lease_token) if command.lease_token is not None else None
+        ),
         "target": command.target,
         "unit_id": str(command.unit_id),
     }
+
+
+def _require_active_claim(
+    session: Session,
+    unit: WorkUnit,
+    command: TransitionCommand,
+    occurred_at: datetime,
+) -> None:
+    claim = session.scalar(
+        select(Claim)
+        .where(Claim.work_unit_id == unit.id)
+        .order_by(Claim.attempt.desc())
+        .limit(1)
+        .with_for_update()
+    )
+    valid = (
+        claim is not None
+        and command.attempt is not None
+        and command.lease_token is not None
+        and claim.claimed_by == command.actor.actor_id
+        and claim.attempt == command.attempt
+        and secrets.compare_digest(claim.lease_token_hash, hash_lease_token(command.lease_token))
+        and claim.released_at is None
+        and claim.lease_expires_at > occurred_at
+    )
+    if not valid:
+        raise DomainError(
+            "active_claim_required",
+            "worker mutation requires its active claim credentials",
+            "claim",
+            current_state=unit.state,
+            current_version=unit.version,
+        )
 
 
 def _transition_guards(

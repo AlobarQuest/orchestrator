@@ -6,7 +6,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from orchestrator.main import app
-from orchestrator.persistence.models import Adjudication, Approval, WorkUnit
+from orchestrator.persistence.models import WorkUnit
 
 
 def test_api_is_versioned() -> None:
@@ -128,33 +128,75 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
     assert conflicting_unit.json()["error"]["code"] == "idempotency_conflict"
     unit_id = first_unit.json()["id"]
 
-    with Session(migrated_engine) as session:
-        unit = session.get(WorkUnit, uuid.UUID(unit_id))
-        assert unit is not None
-        approval = Approval(
-            subject_type="authority",
-            subject_id=unit.id,
-            subject_revision_or_fingerprint=unit.authority_fingerprint,
-            decision="approved",
-            approved_by="devon",
-            reason="approved package authority",
-            event_id=uuid.uuid4(),
-            idempotency_key="authority-1",
-        )
-        session.add(approval)
-        session.flush()
-        unit.authority_approval_id = approval.id
-        session.commit()
+    worker_approval = db_client.post(
+        f"/api/v1/work-units/{unit_id}/approvals",
+        headers=WORKER,
+        json={
+            "idempotency_key": "worker-authority",
+            "expected_version": 1,
+            "subject_type": "authority",
+            "reason": "worker may not approve",
+        },
+    )
+    assert worker_approval.status_code == 403
+
+    dependency = db_client.post(
+        f"/api/v1/work-units/{unit_id}/dependencies",
+        headers=HUMAN,
+        json={
+            "idempotency_key": "dependency-1",
+            "expected_version": 1,
+            "kind": "external_system",
+            "required_state_or_condition": "passed",
+            "external_ref": "ci/build",
+        },
+    )
+    assert dependency.status_code == 200
+    resolved = db_client.post(
+        f"/api/v1/dependencies/{dependency.json()['id']}/resolve",
+        headers=SYSTEM,
+        json={
+            "idempotency_key": "dependency-resolve-1",
+            "expected_version": 1,
+            "status": "satisfied",
+            "detail": {"run": 42},
+        },
+    )
+    assert resolved.status_code == 200
+
+    authority_approval = db_client.post(
+        f"/api/v1/work-units/{unit_id}/approvals",
+        headers=HUMAN,
+        json={
+            "idempotency_key": "authority-1",
+            "expected_version": 1,
+            "subject_type": "authority",
+            "reason": "approved package authority",
+        },
+    )
+    assert authority_approval.status_code == 200
 
     readiness = db_client.get(f"/api/v1/work-units/{unit_id}/readiness", headers=HUMAN)
     assert readiness.status_code == 200
     assert readiness.json() == {"status": "ready", "reasons": []}
 
-    def command(name: str, version: int, key: str, headers: dict[str, str]):
+    def command(
+        name: str,
+        version: int,
+        key: str,
+        headers: dict[str, str],
+        lease_proof: dict[str, object] | None = None,
+    ):
+        body = {"idempotency_key": key, "expected_version": version}
+        if lease_proof is not None:
+            body.update(
+                attempt=lease_proof["attempt"],
+                lease_token=lease_proof["lease_token"],
+            )
         return db_client.post(
             f"/api/v1/work-units/{unit_id}/commands/{name}",
             headers=headers,
-            json={"idempotency_key": key, "expected_version": version},
+            json=body,
         )
 
     assert command("ready", 1, "ready-1", SYSTEM).json()["version"] == 2
@@ -183,38 +225,50 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
     assert renewed.status_code == replayed_renewal.status_code == 200
     assert renewed.json()["expires_at"] == replayed_renewal.json()["expires_at"]
 
-    assert command("start", 3, "start-1", WORKER).json()["version"] == 4
-    assert command("block", 4, "block-1", WORKER).json()["version"] == 5
+    missing_lease = command("start", 3, "start-missing-lease", WORKER)
+    assert missing_lease.status_code == 409
+    assert missing_lease.json()["error"]["code"] == "active_claim_required"
+    wrong_lease = command(
+        "start",
+        3,
+        "start-wrong-lease",
+        WORKER,
+        {**lease, "lease_token": "wrong-token"},
+    )
+    assert wrong_lease.status_code == 409
+    assert wrong_lease.json()["error"]["code"] == "active_claim_required"
+    assert command("start", 3, "start-1", WORKER, lease).json()["version"] == 4
+    assert command("block", 4, "block-1", WORKER, lease).json()["version"] == 5
     assert command("ready", 5, "ready-2", SYSTEM).json()["version"] == 6
     second_claim = db_client.post(
         f"/api/v1/work-units/{unit_id}/claim",
         headers=WORKER,
         json={"idempotency_key": "claim-2", "expected_version": 6},
     ).json()
-    assert command("start", 7, "start-2", WORKER).json()["version"] == 8
-    assert command("request-approval", 8, "request-approval-1", WORKER).json()["version"] == 9
-    with Session(migrated_engine) as session:
-        session.add(
-            Approval(
-                subject_type="action",
-                subject_id=uuid.UUID(unit_id),
-                subject_revision_or_fingerprint="9",
-                decision="approved",
-                approved_by="devon",
-                reason="approved requested action",
-                event_id=uuid.uuid4(),
-                idempotency_key="action-approval-1",
-            )
-        )
-        session.commit()
+    assert command("start", 7, "start-2", WORKER, second_claim).json()["version"] == 8
+    assert (
+        command("request-approval", 8, "request-approval-1", WORKER, second_claim).json()["version"]
+        == 9
+    )
+    action_approval = db_client.post(
+        f"/api/v1/work-units/{unit_id}/approvals",
+        headers=HUMAN,
+        json={
+            "idempotency_key": "action-approval-1",
+            "expected_version": 9,
+            "subject_type": "action",
+            "reason": "approved requested action",
+        },
+    )
+    assert action_approval.status_code == 200
     assert command("approve", 9, "approve-1", HUMAN).json()["version"] == 10
     final_claim = db_client.post(
         f"/api/v1/work-units/{unit_id}/claim",
         headers=WORKER,
         json={"idempotency_key": "claim-3", "expected_version": 10},
     ).json()
-    assert command("start", 11, "start-3", WORKER).json()["version"] == 12
-    invalid = command("complete", 12, "invalid-complete", WORKER)
+    assert command("start", 11, "start-3", WORKER, final_claim).json()["version"] == 12
+    invalid = command("complete", 12, "invalid-complete", WORKER, final_claim)
     assert invalid.status_code == 409
     assert invalid.json()["error"]["code"] == "invalid_transition"
 
@@ -234,29 +288,43 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
         },
     )
     assert evidence.status_code == 200
+    worker_adjudication = db_client.post(
+        f"/api/v1/work-units/{unit_id}/adjudications",
+        headers=WORKER,
+        json={
+            "idempotency_key": "worker-adjudication",
+            "expected_version": 12,
+            "work_package_revision_id": revision_id,
+            "ac_id": "ac-1",
+            "outcome": "passed",
+            "evidence_id": evidence.json()["id"],
+            "rationale": "worker may not adjudicate",
+        },
+    )
+    assert worker_adjudication.status_code == 403
     assert second_claim["attempt"] == 2
-    assert command("submit", 12, "submit-1", WORKER).json()["version"] == 13
+    assert command("submit", 12, "submit-1", WORKER, final_claim).json()["version"] == 13
     assert command("verify", 13, "verify-1", VERIFIER).json()["version"] == 14
     assert command("review", 14, "review-1", VERIFIER).json()["version"] == 15
 
-    forbidden = command("complete", 15, "worker-complete", WORKER)
+    forbidden = command("complete", 15, "worker-complete", WORKER, final_claim)
     assert forbidden.status_code == 403
     assert forbidden.json()["error"]["code"] == "role_forbidden"
 
-    with Session(migrated_engine) as session:
-        session.add(
-            Adjudication(
-                work_package_revision_id=uuid.UUID(revision_id),
-                work_unit_id=uuid.UUID(unit_id),
-                ac_id="ac-1",
-                outcome="passed",
-                evidence_id=uuid.UUID(evidence.json()["id"]),
-                decided_by="verifier",
-                rationale="verified",
-                event_id=uuid.uuid4(),
-            )
-        )
-        session.commit()
+    adjudication = db_client.post(
+        f"/api/v1/work-units/{unit_id}/adjudications",
+        headers=VERIFIER,
+        json={
+            "idempotency_key": "adjudication-1",
+            "expected_version": 15,
+            "work_package_revision_id": revision_id,
+            "ac_id": "ac-1",
+            "outcome": "passed",
+            "evidence_id": evidence.json()["id"],
+            "rationale": "verified",
+        },
+    )
+    assert adjudication.status_code == 200
 
     assert command("complete", 15, "complete-1", HUMAN).json()["state"] == "completed"
     assert len(db_client.get(f"/api/v1/work-units/{unit_id}/evidence", headers=HUMAN).json()) == 1
@@ -269,28 +337,25 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
         "idempotency_key": "unit-recovery",
         "unit_key": "unit-recovery",
         "title": "Exercise recovery API",
+        "max_attempts": 1,
     }
     recovery = db_client.post(
         f"/api/v1/revisions/{revision_id}/work-units", headers=HUMAN, json=recovery_body
     ).json()
     recovery_id = recovery["id"]
-    with Session(migrated_engine) as session:
-        recovery_unit = session.get(WorkUnit, uuid.UUID(recovery_id))
-        assert recovery_unit is not None
-        approval = Approval(
-            subject_type="authority",
-            subject_id=recovery_unit.id,
-            subject_revision_or_fingerprint=recovery_unit.authority_fingerprint,
-            decision="approved",
-            approved_by="devon",
-            reason="approved package authority",
-            event_id=uuid.uuid4(),
-            idempotency_key="authority-recovery",
-        )
-        session.add(approval)
-        session.flush()
-        recovery_unit.authority_approval_id = approval.id
-        session.commit()
+    assert (
+        db_client.post(
+            f"/api/v1/work-units/{recovery_id}/approvals",
+            headers=HUMAN,
+            json={
+                "idempotency_key": "authority-recovery",
+                "expected_version": 1,
+                "subject_type": "authority",
+                "reason": "approved package authority",
+            },
+        ).status_code
+        == 200
+    )
 
     def recovery_command(name: str, version: int, key: str, headers: dict[str, str]):
         return db_client.post(
@@ -300,16 +365,35 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
         )
 
     assert recovery_command("ready", 1, "recovery-ready", SYSTEM).status_code == 200
-    assert (
-        db_client.post(
-            f"/api/v1/work-units/{recovery_id}/claim",
-            headers=WORKER,
-            json={"idempotency_key": "recovery-claim-1", "expected_version": 2},
-        ).status_code
-        == 200
+    recovery_lease = db_client.post(
+        f"/api/v1/work-units/{recovery_id}/claim",
+        headers=WORKER,
+        json={"idempotency_key": "recovery-claim-1", "expected_version": 2},
     )
-    assert recovery_command("fail", 3, "recovery-fail", WORKER).json()["version"] == 4
-    assert recovery_command("retry", 4, "recovery-retry", SYSTEM).json()["version"] == 5
+    assert recovery_lease.status_code == 200
+    lease_body = recovery_lease.json()
+    failure = db_client.post(
+        f"/api/v1/work-units/{recovery_id}/commands/fail",
+        headers=WORKER,
+        json={
+            "idempotency_key": "recovery-fail",
+            "expected_version": 3,
+            "attempt": lease_body["attempt"],
+            "lease_token": lease_body["lease_token"],
+        },
+    )
+    assert failure.json()["version"] == 4
+    retry = db_client.post(
+        f"/api/v1/work-units/{recovery_id}/retry-authorization",
+        headers=HUMAN,
+        json={
+            "idempotency_key": "recovery-retry",
+            "expected_version": 4,
+            "new_max_attempts": 2,
+            "reason": "approved one additional attempt",
+        },
+    )
+    assert retry.status_code == 200
     assert (
         db_client.post(
             f"/api/v1/work-units/{recovery_id}/claim",
@@ -322,3 +406,12 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
 
     with Session(migrated_engine) as session:
         assert session.scalar(select(WorkUnit).where(WorkUnit.id == uuid.UUID(unit_id))) is not None
+
+
+def test_missing_unit_reads_return_404(db_client: TestClient) -> None:
+    missing = uuid.uuid4()
+
+    for suffix in ("evidence", "history"):
+        response = db_client.get(f"/api/v1/work-units/{missing}/{suffix}", headers=HUMAN)
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "work_unit_not_found"

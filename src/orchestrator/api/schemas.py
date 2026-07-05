@@ -19,6 +19,46 @@ class RenewCommand(CommandBase):
     lease_token: str = Field(min_length=1)
 
 
+class LifecycleCommand(CommandBase):
+    attempt: int | None = Field(default=None, gt=0)
+    lease_token: str | None = Field(default=None, min_length=1)
+
+
+class ApprovalCommand(CommandBase):
+    subject_type: str = Field(pattern="^(authority|action)$")
+    reason: str = Field(min_length=1)
+
+
+class RetryCommand(CommandBase):
+    new_max_attempts: int = Field(gt=0)
+    reason: str = Field(min_length=1)
+
+
+class AdjudicationCommand(CommandBase):
+    work_package_revision_id: UUID
+    ac_id: str = Field(min_length=1)
+    outcome: str = Field(pattern="^(passed|failed|waived|not_applicable)$")
+    rationale: str = Field(min_length=1)
+    evidence_id: UUID | None = None
+    failed_evidence_id: UUID | None = None
+    risk: str | None = None
+    follow_up: str | None = None
+    scope: str | None = None
+    expires_at: datetime | None = None
+
+
+class DependencyCommand(CommandBase):
+    kind: str
+    required_state_or_condition: str
+    depends_on_work_unit_id: UUID | None = None
+    external_ref: str | None = None
+
+
+class DependencyResolutionCommand(CommandBase):
+    status: str = Field(pattern="^(satisfied|failed)$")
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
 class EvidenceCommand(CommandBase):
     work_package_revision_id: UUID
     ac_id: str = Field(min_length=1)
@@ -141,3 +181,36 @@ class EventResponse(BaseModel):
     payload: dict[str, Any]
     correlation_id: UUID
     idempotency_key: str
+
+
+class ApprovalResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    subject_type: str
+    subject_id: UUID
+    subject_revision_or_fingerprint: str
+    approved_by: str
+    reason: str
+
+
+class AdjudicationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_package_revision_id: UUID
+    work_unit_id: UUID
+    ac_id: str
+    outcome: str
+    decided_by: str
+    rationale: str
+
+
+class DependencyResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_unit_id: UUID
+    kind: str
+    required_state_or_condition: str
+    status: str

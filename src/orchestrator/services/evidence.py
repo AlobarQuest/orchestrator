@@ -26,6 +26,8 @@ IDEMPOTENCY_LOCK_NAMESPACE = 0x57503338
 
 
 def list_evidence(session: Session, work_unit_id: uuid.UUID) -> tuple[Evidence, ...]:
+    if session.get(WorkUnit, work_unit_id) is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
     return tuple(
         session.scalars(
             select(Evidence)
@@ -131,6 +133,7 @@ def record_adjudication(
     actor: ActorContext,
     rationale: str,
     idempotency_key: str,
+    expected_version: int | None = None,
     evidence_id: uuid.UUID | None = None,
     failed_evidence_id: uuid.UUID | None = None,
     risk: str | None = None,
@@ -144,6 +147,7 @@ def record_adjudication(
         "actor_role": actor.role,
         "evidence_id": _uuid_text(evidence_id),
         "expires_at": expires_at.isoformat() if expires_at is not None else None,
+        "expected_version": expected_version,
         "failed_evidence_id": _uuid_text(failed_evidence_id),
         "follow_up": follow_up,
         "outcome": outcome,
@@ -156,7 +160,15 @@ def record_adjudication(
     try:
         _lock_idempotency_key(session, idempotency_key)
         unit, revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
-        del unit, revision
+        del revision
+        if expected_version is not None and unit.version != expected_version:
+            raise DomainError(
+                "version_conflict",
+                "work unit version has changed",
+                "reload",
+                current_state=unit.state,
+                current_version=unit.version,
+            )
         replay = _adjudication_replay(session, idempotency_key, command)
         if replay is not None:
             session.commit()

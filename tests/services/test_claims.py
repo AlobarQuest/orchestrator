@@ -68,6 +68,16 @@ def test_claim_rejects_stale_expected_version(migrated_session: Session, ready_u
     assert result.current_version == 1
 
 
+def test_claim_replay_binds_expected_version(migrated_session: Session, ready_unit) -> None:
+    first = claim_unit(migrated_session, ready_unit.id, worker(), "claim-1", expected_version=1)
+    assert isinstance(first, LeaseGrant)
+
+    replay = claim_unit(migrated_session, ready_unit.id, worker(), "claim-1", expected_version=2)
+
+    assert isinstance(replay, DomainError)
+    assert replay.code == "idempotency_conflict"
+
+
 def test_only_current_owner_attempt_and_token_can_renew(
     migrated_session: Session, ready_unit
 ) -> None:

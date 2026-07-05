@@ -22,6 +22,7 @@ from orchestrator.kernel.readiness import (
 )
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
+    Approval,
     Dependency,
     Event,
     WorkPackage,
@@ -45,6 +46,82 @@ class DependencySpec:
     @classmethod
     def external(cls, reference: str, condition: str) -> "DependencySpec":
         return cls("external_system", condition, external_ref=reference)
+
+
+def record_approval(
+    session: Session,
+    *,
+    unit_id: uuid.UUID,
+    subject_type: str,
+    actor_id: str,
+    actor_role: ActorRole,
+    reason: str,
+    idempotency_key: str,
+    expected_version: int,
+) -> Approval:
+    _require_human(actor_id, actor_role)
+    if subject_type not in {"authority", "action"}:
+        raise DomainError("approval_type_invalid", "unsupported approval type", None)
+    unit = PackageRepository(session).unit_for_update(unit_id)
+    if unit is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    existing = session.scalar(select(Approval).where(Approval.idempotency_key == idempotency_key))
+    fingerprint = (
+        unit.authority_fingerprint if subject_type == "authority" else str(expected_version)
+    )
+    if existing is not None:
+        if (
+            existing.subject_type == subject_type
+            and existing.subject_id == unit.id
+            and existing.subject_revision_or_fingerprint == fingerprint
+            and existing.approved_by == actor_id
+            and existing.reason == reason
+        ):
+            return existing
+        raise DomainError(
+            "idempotency_conflict",
+            "idempotency key belongs to a different operation",
+            "use a new idempotency key",
+        )
+    if unit.version != expected_version:
+        raise DomainError(
+            "version_conflict",
+            "work unit version has changed",
+            "reload",
+            current_state=unit.state,
+            current_version=unit.version,
+        )
+    event_id = uuid.uuid4()
+    approval = Approval(
+        subject_type=subject_type,
+        subject_id=unit.id,
+        subject_revision_or_fingerprint=fingerprint,
+        decision="approved",
+        approved_by=actor_id,
+        reason=reason,
+        event_id=event_id,
+        idempotency_key=idempotency_key,
+    )
+    session.add(approval)
+    session.flush()
+    if subject_type == "authority":
+        unit.authority_approval_id = approval.id
+    session.add(
+        Event(
+            id=event_id,
+            actor_id=actor_id,
+            action=f"{subject_type}.approved",
+            subject_type="work_unit",
+            subject_id=unit.id,
+            from_state=unit.state,
+            to_state=unit.state,
+            payload={"approval_id": str(approval.id), "expected_version": expected_version},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=f"{idempotency_key}:event",
+        )
+    )
+    session.flush()
+    return approval
 
 
 def register_revision(
@@ -331,6 +408,65 @@ def register_dependency(
     return dependency
 
 
+def register_dependency_command(
+    session: Session,
+    *,
+    work_unit_id: uuid.UUID,
+    spec: DependencySpec,
+    actor_id: str,
+    actor_role: ActorRole,
+    expected_version: int,
+    idempotency_key: str,
+) -> Dependency:
+    if actor_role not in {ActorRole.HUMAN, ActorRole.SYSTEM}:
+        raise DomainError("role_forbidden", "actor may not register dependencies", None)
+    unit = PackageRepository(session).unit_for_update(work_unit_id)
+    if unit is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    existing = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
+    identity = {
+        "actor_id": actor_id,
+        "expected_version": expected_version,
+        "spec": _json_identity(spec.__dict__),
+    }
+    if existing is not None:
+        dependency_id = existing.payload.get("dependency_id")
+        if existing.payload.get("command") != identity or not isinstance(dependency_id, str):
+            raise DomainError(
+                "idempotency_conflict",
+                "idempotency key belongs to a different operation",
+                "use a new idempotency key",
+            )
+        dependency = session.get(Dependency, uuid.UUID(dependency_id))
+        if dependency is None:
+            raise DomainError("dependency_not_found", "dependency does not exist", None)
+        return dependency
+    if unit.version != expected_version:
+        raise DomainError(
+            "version_conflict",
+            "work unit version has changed",
+            "reload",
+            current_state=unit.state,
+            current_version=unit.version,
+        )
+    dependency = register_dependency(session, work_unit_id=work_unit_id, spec=spec)
+    session.add(
+        Event(
+            actor_id=actor_id,
+            action="dependency.registered",
+            subject_type="work_unit",
+            subject_id=unit.id,
+            from_state=unit.state,
+            to_state=unit.state,
+            payload={"command": identity, "dependency_id": str(dependency.id)},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=idempotency_key,
+        )
+    )
+    session.flush()
+    return dependency
+
+
 def resolve_dependency(
     session: Session,
     *,
@@ -356,6 +492,75 @@ def resolve_dependency(
     dependency.detail = _normalize_json(detail)
     session.flush()
     return dependency
+
+
+def resolve_dependency_command(
+    session: Session,
+    *,
+    dependency_id: uuid.UUID,
+    status: str,
+    detail: Mapping[str, Any],
+    actor_id: str,
+    actor_role: ActorRole,
+    expected_version: int,
+    idempotency_key: str,
+) -> Dependency:
+    if actor_role not in {ActorRole.HUMAN, ActorRole.SYSTEM}:
+        raise DomainError("role_forbidden", "actor may not resolve dependencies", None)
+    dependency = PackageRepository(session).dependency_for_update(dependency_id)
+    if dependency is None:
+        raise DomainError("dependency_not_found", "dependency does not exist", None)
+    unit = PackageRepository(session).unit_for_update(dependency.work_unit_id)
+    if unit is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    existing = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
+    identity = {
+        "actor_id": actor_id,
+        "dependency_id": str(dependency_id),
+        "detail": _json_identity(detail),
+        "expected_version": expected_version,
+        "status": status,
+    }
+    if existing is not None:
+        if existing.payload.get("command") != identity:
+            raise DomainError(
+                "idempotency_conflict",
+                "idempotency key belongs to a different operation",
+                "use a new idempotency key",
+            )
+        return dependency
+    if unit.version != expected_version:
+        raise DomainError(
+            "version_conflict",
+            "work unit version has changed",
+            "reload",
+            current_state=unit.state,
+            current_version=unit.version,
+        )
+    resolved = resolve_dependency(
+        session,
+        dependency_id=dependency_id,
+        status=status,
+        resolved_by=actor_id,
+        resolution_event_id=uuid.uuid4(),
+        detail=detail,
+    )
+    session.add(
+        Event(
+            id=resolved.resolution_event_id,
+            actor_id=actor_id,
+            action="dependency.resolved",
+            subject_type="work_unit",
+            subject_id=unit.id,
+            from_state=unit.state,
+            to_state=unit.state,
+            payload={"command": identity},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=idempotency_key,
+        )
+    )
+    session.flush()
+    return resolved
 
 
 def evaluate_readiness(session: Session, unit_id: uuid.UUID) -> ReadinessDecision:

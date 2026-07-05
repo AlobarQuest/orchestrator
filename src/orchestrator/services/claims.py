@@ -34,7 +34,9 @@ def claim_unit(
 ) -> LeaseGrant | DomainError:
     try:
         unit = _locked_unit(session, unit_id)
-        replay = _claim_replay(session, unit, actor, idempotency_key)
+        replay = _claim_replay(
+            session, unit, actor, idempotency_key, expected_version=expected_version
+        )
         if replay is not None:
             session.commit()
             return replay
@@ -68,7 +70,11 @@ def claim_unit(
             actor=ActorContext(actor.actor_id, ActorRole.SYSTEM),
             idempotency_key=idempotency_key,
             occurred_at=now,
-            payload={"claim_id": str(claim.id), "attempt": claim.attempt},
+            payload={
+                "claim_id": str(claim.id),
+                "attempt": claim.attempt,
+                "expected_version": expected_version,
+            },
         )
         session.commit()
         return LeaseGrant(claim.id, claim.attempt, token, claim.lease_expires_at)
@@ -225,6 +231,7 @@ def authorize_retry(
     new_max_attempts: int,
     reason: str,
     idempotency_key: str,
+    expected_version: int | None = None,
 ) -> Approval | DomainError:
     try:
         unit = _locked_unit(session, unit_id)
@@ -240,6 +247,7 @@ def authorize_retry(
                 and existing.reason == reason
                 and event is not None
                 and event.payload.get("new_max_attempts") == new_max_attempts
+                and event.payload.get("expected_version") == expected_version
             )
             if not expected:
                 raise _idempotency_conflict()
@@ -247,20 +255,7 @@ def authorize_retry(
             return existing
         if session.scalar(select(Event.id).where(Event.idempotency_key == idempotency_key)):
             raise _idempotency_conflict()
-        if actor.role is not ActorRole.HUMAN or not actor.actor_id:
-            raise DomainError(
-                "human_actor_required", "retry requires a registered human actor", None
-            )
-        if WorkUnitState(unit.state) is not WorkUnitState.FAILED:
-            raise DomainError("retry_not_allowed", "only failed work may be retried", None)
-        if unit.attempt_count < unit.max_attempts:
-            raise DomainError("attempts_not_exhausted", "attempt budget is not exhausted", None)
-        if new_max_attempts <= unit.attempt_count:
-            raise DomainError(
-                "retry_budget_required",
-                "retry approval must increase the approved attempt limit",
-                None,
-            )
+        _require_retry_allowed(unit, actor, new_max_attempts, expected_version)
 
         bound_version = unit.version
         now = TransactionClock().now(session)
@@ -291,6 +286,7 @@ def authorize_retry(
                 "approval_id": str(approval.id),
                 "approved_by": actor.actor_id,
                 "new_max_attempts": new_max_attempts,
+                "expected_version": expected_version,
             },
         )
         session.commit()
@@ -308,6 +304,28 @@ def _locked_unit(session: Session, unit_id: uuid.UUID) -> WorkUnit:
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
     return unit
+
+
+def _require_retry_allowed(
+    unit: WorkUnit,
+    actor: ActorContext,
+    new_max_attempts: int,
+    expected_version: int | None,
+) -> None:
+    if actor.role is not ActorRole.HUMAN or not actor.actor_id:
+        raise DomainError("human_actor_required", "retry requires a registered human actor", None)
+    if expected_version is not None:
+        _require_version(unit, expected_version)
+    if WorkUnitState(unit.state) is not WorkUnitState.FAILED:
+        raise DomainError("retry_not_allowed", "only failed work may be retried", None)
+    if unit.attempt_count < unit.max_attempts:
+        raise DomainError("attempts_not_exhausted", "attempt budget is not exhausted", None)
+    if new_max_attempts <= unit.attempt_count:
+        raise DomainError(
+            "retry_budget_required",
+            "retry approval must increase the approved attempt limit",
+            None,
+        )
 
 
 def _current_claim(session: Session, unit_id: uuid.UUID) -> Claim | None:
@@ -351,6 +369,8 @@ def _claim_replay(
     unit: WorkUnit,
     actor: ActorContext,
     idempotency_key: str,
+    *,
+    expected_version: int | None = None,
 ) -> LeaseGrant | None:
     event = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
     if event is None:
@@ -365,6 +385,7 @@ def _claim_replay(
         or event.to_state != WorkUnitState.CLAIMED
         or claim.claimed_by != actor.actor_id
         or actor.role is not ActorRole.WORKER
+        or event.payload.get("expected_version") != expected_version
     ):
         raise _idempotency_conflict()
     return LeaseGrant(claim.id, claim.attempt, "", claim.lease_expires_at)
