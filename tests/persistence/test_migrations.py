@@ -82,3 +82,19 @@ def test_default_attempt_budget_migration_is_reversible(migrated_engine) -> None
 
     command.upgrade(config, "head")
     assert column_default(migrated_engine, "work_units", "max_attempts") == "3"
+
+
+def test_ws32_tables_exist_after_upgrade(migrated_session) -> None:
+    tables = {
+        row[0]
+        for row in migrated_session.execute(
+            text("select tablename from pg_tables where schemaname = 'public'")
+        )
+    }
+    assert "package_acceptance_criteria" in tables
+    assert "decomposition_proposals" in tables
+    assert "decomposition_proposal_units" in tables
+    assert "decomposition_proposal_dependencies" in tables
+    assert "decomposition_proposal_ac_mappings" in tables
+    assert "decomposition_proposal_retained_acs" in tables
+    assert "approved_decompositions" in tables
