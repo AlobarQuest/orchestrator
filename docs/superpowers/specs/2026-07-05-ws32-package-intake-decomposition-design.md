@@ -55,6 +55,14 @@ Devon approves a package revision expanding scope.
 depend on filesystem layout. The API remains the service contract and lets future tools
 submit already-normalized package facts.
 
+**Trust boundary:** In WS-3.2, the supported operator path for executable package intake
+is the CLI package-source verification flow. The API does not claim to independently
+verify remote git object integrity or recompute a package hash from a repository URL. It
+enforces the submitted approval/hash/source facts, rejects non-executable status values,
+records verification mode and limitations, and rejects conflicts. A future non-CLI
+producer must either perform the same source verification before submission or be covered
+by a separately approved stronger intake path.
+
 **Not in WS-3.2:** A webhook from `intent-packages approve`, background repository
 polling, or automatic intake on approval.
 
@@ -69,12 +77,18 @@ polling, or automatic intake on approval.
    ledger commit.
 3. API enforces shape, executable status, required approval fields, idempotency, and
    conflict behavior.
-4. API records `verification_mode: staged_cli_verified` and `verification_limitations`
+4. API records `verification_mode: caller_attested_cli_verified` and `verification_limitations`
    so the record is honest about what was checked at intake time.
+5. API rejects any executable intake payload whose `verification_mode` is absent or not
+   one of the explicitly supported WS-3.2 modes.
 
 **Why:** WS-3.2 can prevent mutable or unapproved package content from becoming
 executable work without pretending to provide cryptographic git-signature verification
 that the intent-package system does not yet implement.
+
+For WS-3.2, executable intake registration is restricted to registered human operators.
+A future system producer can be added only through separately approved intent that
+defines its trust boundary and proof format.
 
 **Future:** Stronger event-chain replay, remote git object verification, and signature
 verification can be added without changing the authority anchor.
@@ -141,6 +155,11 @@ Minimum proposal record:
 
 **Why:** Decomposition is judgment. The system can accept agent help, but canonical work
 exists only after human approval.
+
+The existing WS-3.1 direct unit-registration endpoint remains only for legacy/manual
+registrations. For revisions registered through WS-3.2 executable intake, direct
+`POST /api/v1/revisions/{revision_id}/work-units` must be rejected. Proposal approval is
+the only path that creates Draft units for intaken revisions.
 
 ### 3.6 Acceptance-Criterion Mapping
 
@@ -232,11 +251,14 @@ Recommended shape:
 - Add `decomposition_proposal_dependencies`.
 - Add `decomposition_proposal_ac_mappings`.
 - Add `decomposition_proposal_retained_acs`.
-- Add an approved-decomposition marker on `work_package_revisions` or a small
-  `approved_decompositions` table to enforce one active approved decomposition.
+- Add an `approved_decompositions` table to enforce one active approved decomposition.
 
 Existing work units remain the canonical lifecycle rows. They are created only from an
 approved proposal.
+
+The one-active-decomposition invariant lives in a separate `approved_decompositions`
+table, not on `work_package_revisions`. `work_package_revisions` is append-only in
+WS-3.1, and approval happens after intake.
 
 ### 3.10 WS-3.3 and WS-3.4 Preparation
 
@@ -259,15 +281,41 @@ Add immutable fields:
 
 - `profile`
 - `status_at_intake`
-- `source_repository`
+- `intake_source`
 - `approval_ledger_commit`
 - `verification_mode`
 - `verification_limitations`
 
-If adding `source_repository` conflicts with existing package-level storage, preserve the
-package-level field and add only revision-specific fields that are missing.
+Do not duplicate `source_repository` on `work_package_revisions`; WS-3.1 already stores it
+on `work_packages` and treats it as package identity. The revision source anchor is
+`source_path` plus `source_commit` under that package repository.
 
-### 4.2 `decomposition_proposals`
+Existing rows get `intake_source = 'manual_ws31'` and null verification fields. WS-3.2
+executable intake rows get `intake_source = 'package_cli'` and
+`verification_mode = 'caller_attested_cli_verified'`.
+
+### 4.2 `package_acceptance_criteria`
+
+Immutable AC projection rows:
+
+- `id`
+- `work_package_revision_id`
+- `ac_id`
+- `condition`
+- `evidence_type`
+- `evidence`
+- `approver`
+
+Constraints:
+
+- unique `(work_package_revision_id, ac_id)`;
+- non-empty AC ID, condition, evidence type, evidence, and approver;
+- no update/delete after insertion.
+
+Proposal AC mappings and retained package-level ACs reference these rows. Approval
+re-checks total AC disposition under lock before creating units.
+
+### 4.3 `decomposition_proposals`
 
 Fields:
 
@@ -295,7 +343,7 @@ Constraints:
 - decision fields required when state is terminal;
 - only one active approved decomposition per package revision.
 
-### 4.3 Proposal Unit and Mapping Tables
+### 4.4 Proposal Unit and Mapping Tables
 
 Use child tables rather than one large proposal JSON blob where constraints matter:
 
@@ -305,9 +353,14 @@ Use child tables rather than one large proposal JSON blob where constraints matt
   target proposed unit key or external ref, required condition.
 - `decomposition_proposal_ac_mappings`: AC ID to proposed unit key.
 - `decomposition_proposal_retained_acs`: AC ID, rationale.
+- `approved_decompositions`: proposal ID, package revision ID, approved by, approved at,
+  superseded by proposal ID, superseded at, superseded by actor, reason.
 
 Use JSONB only for normalized authority envelope and source-detail payloads that do not
 need relational joins in WS-3.2.
+
+`approved_decompositions` enforces one active approved decomposition per package revision
+with a partial unique index where `superseded_at IS NULL`.
 
 ## 5. Service Behavior
 
@@ -315,17 +368,17 @@ need relational joins in WS-3.2.
 
 `register_package_intake`:
 
-1. Requires human or system actor authorized for intake. CLI path will normally use a
-   human actor until a later approved automation exists.
+1. Requires a registered human actor for executable intake in WS-3.2.
 2. Rejects non-executable statuses. For WS-3.2, executable statuses are `approved` and
    `executable`; closed historical packages may be accepted only as fixtures in tests,
    not as executable runtime intake.
 3. Requires approved hash, source repository/path/commit, approval actor, approval time,
    and approval event or ledger facts.
 4. Computes authority fingerprint from the normalized authority envelope.
-5. Replays exact idempotency key and exact same package/revision facts.
-6. Rejects conflicts for same package/revision or same package/hash with different facts.
-7. Appends `package_revision.intake_registered`.
+5. Stores immutable package acceptance criteria rows from the normalized projection.
+6. Replays exact idempotency key and exact same package/revision facts.
+7. Rejects conflicts for same package/revision or same package/hash with different facts.
+8. Appends `package_revision.intake_registered`.
 
 ### 5.2 Proposal Submission
 
@@ -354,7 +407,8 @@ checks. It creates no work units.
 5. Revalidates AC disposition, dependencies, and authority.
 6. Creates Draft work units through the existing unit registration path or a refactored
    shared internal service that preserves the same invariants.
-7. Creates dependencies through the existing dependency path.
+7. Creates dependencies through an event-producing internal path that preserves the
+   existing dependency validation and emits `dependency.registered`.
 8. Marks proposal approved and records created unit IDs.
 9. Appends `decomposition.approved` and `work_unit.registered` events in the same
    transaction.
@@ -436,6 +490,10 @@ Fixture coverage should include:
 - `ws-3.1-orchestrator-core` for software-delivery profile and dense ACs;
 - `ws-2.4-ci-evidence-control` for exact CI evidence semantics;
 - `ws-2.4-historical-listing-launch` for universal non-software behavior.
+
+Closed historical packages used in tests must be loaded through fixture helpers that do
+not call the executable-intake service path, unless the test is specifically proving
+closed-package rejection.
 
 ## 10. Security and Authority
 
