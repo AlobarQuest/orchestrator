@@ -374,13 +374,36 @@ def _matching_approvals(
 ) -> list[dict[str, Any]]:
     if not isinstance(approvals, list):
         raise PackageSourceError("lineage approvals must be a list")
-    return [
-        item
-        for item in approvals
-        if isinstance(item, dict)
-        and item.get("revision") == revision
-        and item.get("approved_hash") == approved_hash
-    ]
+    matching: list[dict[str, Any]] = []
+    for item in approvals:
+        if not isinstance(item, dict):
+            raise PackageSourceError("lineage approval entries must be mappings")
+        if item.get("revision") == revision and item.get("approved_hash") == approved_hash:
+            matching.append(item)
+    return matching
+
+
+def _acceptance_criteria(acceptance: object) -> list[dict[str, object]]:
+    if not isinstance(acceptance, list):
+        raise PackageSourceError("package acceptance must be a list")
+    criteria: list[dict[str, object]] = []
+    required = ("id", "condition", "evidence_type", "evidence", "approver")
+    for item in acceptance:
+        if not isinstance(item, dict):
+            raise PackageSourceError("package acceptance entries must be mappings")
+        missing = [field for field in required if field not in item]
+        if missing:
+            raise PackageSourceError(f"package acceptance entry missing {missing[0]}")
+        criteria.append(
+            {
+                "ac_id": item["id"],
+                "condition": item["condition"],
+                "evidence_type": item["evidence_type"],
+                "evidence": item["evidence"],
+                "approver": item["approver"],
+            }
+        )
+    return criteria
 
 
 def _validate_approved_current_state(
@@ -400,6 +423,7 @@ def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[s
     package = _read_yaml(resolved_path / "package.yaml")
     lineage = _read_yaml(resolved_path / "lineage.yaml")
     _validate_approved_current_state(package, lineage)
+    acceptance_criteria = _acceptance_criteria(package.get("acceptance"))
     revision = package.get("revision")
     approved_hash = canonical_package_hash(package)
     matching_approvals = _matching_approvals(
@@ -412,9 +436,6 @@ def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[s
     if len(matching_approvals) != 1:
         raise PackageSourceError("package revision has ambiguous matching approvals")
     approval = matching_approvals[0]
-    acceptance = package.get("acceptance")
-    if not isinstance(acceptance, list):
-        raise PackageSourceError("package acceptance must be a list")
     verified_approval = _verify_current_approval(
         resolved_path,
         str(package["package_id"]),
@@ -453,15 +474,5 @@ def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[s
         },
         "authority": package["authority"],
         "registry_version": 1,
-        "acceptance_criteria": [
-            {
-                "ac_id": item["id"],
-                "condition": item["condition"],
-                "evidence_type": item["evidence_type"],
-                "evidence": item["evidence"],
-                "approver": item["approver"],
-            }
-            for item in acceptance
-            if isinstance(item, dict)
-        ],
+        "acceptance_criteria": acceptance_criteria,
     }

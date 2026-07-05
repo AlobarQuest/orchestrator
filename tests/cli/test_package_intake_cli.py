@@ -257,6 +257,93 @@ def test_package_source_reader_rejects_fail_open_yaml_shapes(
         )
 
 
+def test_package_source_reader_rejects_non_mapping_approval_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+    )
+    package_dir = tmp_path / "ws32-approved-software"
+    shutil.copytree("tests/fixtures/intent-packages/ws32-approved-software", package_dir)
+    lineage_path = package_dir / "lineage.yaml"
+    lineage_path.write_text(
+        lineage_path.read_text(encoding="utf-8").replace(
+            "approvals:\n"
+            "  - revision: 1\n",
+            "approvals:\n"
+            "  - malformed\n"
+            "  - revision: 1\n",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PackageSourceError, match="approval entries must be mappings"):
+        load_package_intake_payload(
+            package_dir,
+            source_repository="AlobarQuest/intent-packages",
+        )
+
+
+def test_package_source_reader_rejects_non_mapping_acceptance_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+    )
+    package_dir = tmp_path / "ws32-approved-software"
+    shutil.copytree("tests/fixtures/intent-packages/ws32-approved-software", package_dir)
+    package_path = package_dir / "package.yaml"
+    package_path.write_text(
+        package_path.read_text(encoding="utf-8").replace(
+            "acceptance:\n"
+            "  - id: AC-001\n",
+            "acceptance:\n"
+            "  - malformed\n"
+            "  - id: AC-001\n",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PackageSourceError, match="acceptance entries must be mappings"):
+        load_package_intake_payload(
+            package_dir,
+            source_repository="AlobarQuest/intent-packages",
+        )
+
+
+def test_package_source_reader_rejects_missing_acceptance_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+    )
+    package_dir = tmp_path / "ws32-approved-software"
+    shutil.copytree("tests/fixtures/intent-packages/ws32-approved-software", package_dir)
+    package_path = package_dir / "package.yaml"
+    package_path.write_text(
+        package_path.read_text(encoding="utf-8").replace(
+            "    approver: policy\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PackageSourceError, match="acceptance entry missing approver"):
+        load_package_intake_payload(
+            package_dir,
+            source_repository="AlobarQuest/intent-packages",
+        )
+
+
 def test_package_source_reader_binds_payload_to_verified_approval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
