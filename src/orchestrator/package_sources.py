@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,14 @@ class PackageSourceError(Exception):
 
 _HUMAN_OPERATOR_PROFILE = "human-operator-v1"
 _CHAIN_VERIFY_TIMEOUT_SECONDS = 30
+
+
+@dataclass(frozen=True)
+class VerifiedApproval:
+    approved_by: str
+    approved_at: str
+    approval_event_id: str
+    approval_ledger_commit: str
 
 
 class _NoDatesLoader(yaml.SafeLoader):
@@ -217,16 +226,35 @@ def _verify_factory_chain() -> bool:
     return result.returncode == 0
 
 
-def _events_file_has_matching_approval(approved_hash: str, revision: object) -> bool:
-    if not isinstance(revision, int):
+def _matching_event_evidence(
+    evidence: object,
+    *,
+    approved_hash: str,
+    revision: int,
+    approver: str,
+    commit: str,
+) -> bool:
+    if not isinstance(evidence, list):
         return False
+    return any(
+        isinstance(item, dict)
+        and item.get("approved_hash") == approved_hash
+        and item.get("revision") == revision
+        and item.get("approver") == approver
+        and item.get("commit") == commit
+        for item in evidence
+    )
+
+
+def _iter_package_approval_events() -> list[dict[str, Any]] | None:
     events_file = _factory_events_file()
     if not events_file.is_file():
-        return False
+        return None
     try:
         text = events_file.read_text(encoding="utf-8")
     except OSError:
-        return False
+        return None
+    events: list[dict[str, Any]] = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -236,35 +264,105 @@ def _events_file_has_matching_approval(approved_hash: str, revision: object) -> 
         except json.JSONDecodeError:
             continue
         event = obj.get("event", obj)
-        if event.get("action") != "package.approved":
-            continue
-        evidence = event.get("evidence")
-        if not isinstance(evidence, list):
-            continue
-        if any(
-            isinstance(item, dict)
-            and item.get("approved_hash") == approved_hash
-            and item.get("revision") == revision
-            for item in evidence
-        ):
-            return True
-    return False
+        if isinstance(event, dict) and event.get("action") == "package.approved":
+            events.append(event)
+    return events
+
+
+def _approval_event_to_verified(
+    event: Mapping[str, Any],
+    *,
+    package_id: str,
+    approved_hash: str,
+    revision: int,
+    approver: str,
+    commit: str,
+    event_id: str,
+) -> VerifiedApproval | None:
+    if event.get("event_id") != event_id:
+        return None
+    source = event.get("source")
+    if not isinstance(source, dict) or source.get("ref") != package_id:
+        return None
+    if not _matching_event_evidence(
+        event.get("evidence"),
+        approved_hash=approved_hash,
+        revision=revision,
+        approver=approver,
+        commit=commit,
+    ):
+        return None
+    approved_at = event.get("timestamp")
+    if not isinstance(approved_at, str) or not approved_at:
+        return None
+    return VerifiedApproval(
+        approved_by=approver,
+        approved_at=approved_at,
+        approval_event_id=event_id,
+        approval_ledger_commit=commit,
+    )
+
+
+def _verified_approval_from_events(
+    *,
+    package_id: str,
+    approved_hash: str,
+    revision: int,
+    approver: str,
+    commit: str,
+    event_id: str,
+) -> VerifiedApproval | None:
+    if not isinstance(revision, int):
+        return None
+    events = _iter_package_approval_events()
+    if events is None:
+        return None
+    for event in events:
+        verified = _approval_event_to_verified(
+            event,
+            package_id=package_id,
+            approved_hash=approved_hash,
+            revision=revision,
+            approver=approver,
+            commit=commit,
+            event_id=event_id,
+        )
+        if verified is not None:
+            return verified
+    return None
 
 
 def _verify_current_approval(
     path: Path,
+    package_id: str,
     approved_hash: str,
     revision: object,
-    approver: object,
-) -> bool:
-    sibling_verification = _verify_with_intent_packages_cli(path)
-    if sibling_verification is not None:
-        return sibling_verification
+    approval: Mapping[str, Any],
+) -> VerifiedApproval | None:
+    approver = approval.get("approver")
+    commit = approval.get("commit")
+    event_id = approval.get("event_id")
+    if not isinstance(revision, int):
+        return None
     if not isinstance(approver, str) or not _is_human_operator(approver):
-        return False
+        return None
+    if not isinstance(commit, str) or not commit:
+        return None
+    if not isinstance(event_id, str) or not event_id:
+        return None
+    sibling_verification = _verify_with_intent_packages_cli(path)
+    if sibling_verification is False:
+        return None
     if not _verify_factory_chain():
-        return False
-    return _events_file_has_matching_approval(approved_hash, revision)
+        return None
+    return _verified_approval_from_events(
+        package_id=package_id,
+        approved_hash=approved_hash,
+        revision=revision,
+        approver=approver,
+        commit=commit,
+        event_id=event_id,
+    )
 
 
 def _matching_approvals(
@@ -303,8 +401,14 @@ def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[s
     acceptance = package.get("acceptance")
     if not isinstance(acceptance, list):
         raise PackageSourceError("package acceptance must be a list")
-    approver = approval.get("approver")
-    if not _verify_current_approval(resolved_path, approved_hash, revision, approver):
+    verified_approval = _verify_current_approval(
+        resolved_path,
+        str(package["package_id"]),
+        approved_hash,
+        revision,
+        approval,
+    )
+    if verified_approval is None:
         raise PackageSourceError("approval verification failed")
     return {
         "package_id": package["package_id"],
@@ -313,10 +417,10 @@ def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[s
         "content_hash": approved_hash,
         "source_path": str(resolved_path),
         "source_commit": _git_head(resolved_path),
-        "approved_by": approver,
-        "approved_at": approval["approved_at"],
-        "approval_event_id": approval["event_id"],
-        "approval_ledger_commit": approval.get("commit"),
+        "approved_by": verified_approval.approved_by,
+        "approved_at": verified_approval.approved_at,
+        "approval_event_id": verified_approval.approval_event_id,
+        "approval_ledger_commit": verified_approval.approval_ledger_commit,
         "profile": package.get("profile"),
         "status_at_intake": package["status"],
         "verification_mode": "caller_attested_cli_verified",
