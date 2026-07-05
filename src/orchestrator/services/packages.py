@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import (
     AuthorityEnvelope,
@@ -19,7 +21,13 @@ from orchestrator.kernel.readiness import (
     evaluate_readiness_facts,
 )
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import Dependency, WorkPackage, WorkPackageRevision, WorkUnit
+from orchestrator.persistence.models import (
+    Dependency,
+    Event,
+    WorkPackage,
+    WorkPackageRevision,
+    WorkUnit,
+)
 from orchestrator.persistence.repositories import PackageRepository
 
 
@@ -56,8 +64,17 @@ def register_revision(
     registry_version: int,
     actor_id: str,
     actor_role: ActorRole,
+    idempotency_key: str | None = None,
+    expected_version: int | None = None,
 ) -> WorkPackageRevision:
     _require_human(actor_id, actor_role)
+    if expected_version not in {None, 0}:
+        raise DomainError(
+            "version_conflict",
+            "revision registration requires expected version 0",
+            "reload",
+            current_version=0,
+        )
     repository = PackageRepository(session)
     observed_package = repository.package(package_id)
     repository.lock_package_registration(package_id)
@@ -87,8 +104,21 @@ def register_revision(
         "registry_version": registry_version,
         "registered_by": actor_id,
     }
+    command = {
+        "action": "revision.registered",
+        "package_id": package_id,
+        "source_repository": source_repository,
+        "revision": revision,
+        **{field: _json_identity(value) for field, value in candidate.items()},
+    }
+    replay = _registration_replay(
+        session, idempotency_key, "revision.registered", command, WorkPackageRevision
+    )
+    if replay is not None:
+        return replay
     if existing is not None:
         if all(getattr(existing, field) == value for field, value in candidate.items()):
+            _record_registration(session, existing.id, actor_id, idempotency_key, command)
             return existing
         raise _revision_conflict()
     if concurrent_initial_registration:
@@ -101,6 +131,7 @@ def register_revision(
     )
     session.add(registered)
     session.flush()
+    _record_registration(session, registered.id, actor_id, idempotency_key, command)
     return registered
 
 
@@ -120,11 +151,65 @@ def register_approved_unit(
     actor_role: ActorRole,
     unit_id: uuid.UUID | None = None,
     dependencies: tuple[DependencySpec, ...] = (),
+    idempotency_key: str | None = None,
+    expected_version: int | None = None,
 ) -> WorkUnit:
     _require_human(actor_id, actor_role)
+    if expected_version not in {None, 0}:
+        raise DomainError(
+            "version_conflict",
+            "work unit registration requires expected version 0",
+            "reload",
+            current_version=0,
+        )
     revision = session.get(WorkPackageRevision, revision_id, with_for_update=True)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
+    command = {
+        "action": "work_unit.registered",
+        "revision_id": str(revision_id),
+        "unit_key": unit_key,
+        "title": title,
+        "outcome": outcome,
+        "required_capability": required_capability,
+        "authority": authority.normalized(),
+        "max_attempts": max_attempts,
+        "approved_by": approved_by,
+        "approved_at": approved_at.isoformat(),
+        "unit_id": str(unit_id) if unit_id is not None else None,
+        "dependencies": [_json_identity(spec.__dict__) for spec in dependencies],
+    }
+    replay = _registration_replay(
+        session, idempotency_key, "work_unit.registered", command, WorkUnit
+    )
+    if replay is not None:
+        return replay
+    existing_unit = session.scalar(
+        select(WorkUnit)
+        .where(
+            WorkUnit.work_package_revision_id == revision.id,
+            WorkUnit.unit_key == unit_key,
+        )
+        .with_for_update()
+    )
+    unit_candidate = {
+        "title": title,
+        "outcome": outcome,
+        "required_capability": required_capability,
+        "authority_fingerprint": authority_fingerprint(authority),
+        "max_attempts": max_attempts,
+        "decomposition_approved_by": approved_by,
+        "decomposition_approved_at": approved_at,
+    }
+    if existing_unit is not None:
+        if all(getattr(existing_unit, field) == value for field, value in unit_candidate.items()):
+            _record_registration(session, existing_unit.id, actor_id, idempotency_key, command)
+            return existing_unit
+        raise DomainError(
+            "unit_conflict",
+            "work unit is already registered with different content",
+            None,
+        )
     unit = WorkUnit(
         id=unit_id or uuid.uuid4(),
         work_package_revision_id=revision.id,
@@ -142,7 +227,72 @@ def register_approved_unit(
     session.flush()
     for dependency in dependencies:
         register_dependency(session, work_unit_id=unit.id, spec=dependency)
+    _record_registration(session, unit.id, actor_id, idempotency_key, command)
     return unit
+
+
+def _registration_replay[RegistrationModel: (WorkPackageRevision, WorkUnit)](
+    session: Session,
+    idempotency_key: str | None,
+    action: str,
+    command: dict[str, Any],
+    model: type[RegistrationModel],
+) -> RegistrationModel | None:
+    if idempotency_key is None:
+        return None
+    event = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
+    if event is None:
+        return None
+    if event.action != action or event.payload.get("command") != command:
+        raise DomainError(
+            "idempotency_conflict",
+            "idempotency key belongs to a different operation",
+            "use a new idempotency key",
+        )
+    value = session.get(model, event.subject_id)
+    if value is None:
+        raise DomainError("event_invalid", "registration event subject does not exist", None)
+    return value
+
+
+def _record_registration(
+    session: Session,
+    subject_id: uuid.UUID,
+    actor_id: str,
+    idempotency_key: str | None,
+    command: dict[str, Any],
+) -> None:
+    if idempotency_key is None:
+        return
+    session.add(
+        Event(
+            occurred_at=TransactionClock().now(session),
+            actor_id=actor_id,
+            action=str(command["action"]),
+            subject_type="work_package_revision"
+            if command["action"] == "revision.registered"
+            else "work_unit",
+            subject_id=subject_id,
+            from_state=None,
+            to_state=None,
+            payload={"command": command},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=idempotency_key,
+        )
+    )
+    session.flush()
+
+
+def _json_identity(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {key: _json_identity(item) for key, item in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_json_identity(item) for item in value]
+    return value
 
 
 def register_dependency(

@@ -49,6 +49,7 @@ def append_evidence(
     payload: dict[str, Any] | None,
     source_revision: str,
     idempotency_key: str,
+    expected_version: int | None = None,
 ) -> Evidence | DomainError:
     return _store_evidence(
         session,
@@ -63,6 +64,7 @@ def append_evidence(
         payload=payload,
         source_revision=source_revision,
         idempotency_key=idempotency_key,
+        expected_version=expected_version,
         supersede=False,
     )
 
@@ -81,6 +83,7 @@ def supersede_evidence(
     payload: dict[str, Any] | None,
     source_revision: str,
     idempotency_key: str,
+    expected_version: int | None = None,
 ) -> Evidence | DomainError:
     return _store_evidence(
         session,
@@ -95,6 +98,7 @@ def supersede_evidence(
         payload=payload,
         source_revision=source_revision,
         idempotency_key=idempotency_key,
+        expected_version=expected_version,
         supersede=True,
     )
 
@@ -251,6 +255,7 @@ def _store_evidence(
     payload: dict[str, Any] | None,
     source_revision: str,
     idempotency_key: str,
+    expected_version: int | None,
     supersede: bool,
 ) -> Evidence | DomainError:
     command = {
@@ -259,6 +264,7 @@ def _store_evidence(
         "actor_role": actor.role,
         "attempt": attempt,
         "evidence_type": evidence_type,
+        "expected_version": expected_version,
         "lease_token_hash": hash_lease_token(lease_token),
         "payload": payload,
         "source_revision": source_revision,
@@ -274,6 +280,14 @@ def _store_evidence(
         if replay is not None:
             session.commit()
             return replay
+        if expected_version is not None and unit.version != expected_version:
+            raise DomainError(
+                "version_conflict",
+                "work unit version has changed",
+                "reload",
+                current_state=unit.state,
+                current_version=unit.version,
+            )
         _validate_evidence_fields(stable_ref, payload, evidence_type, source_revision)
         _validate_attempt(session, unit, actor, attempt, lease_token)
         previous = current_evidence(session, work_package_revision_id, work_unit_id, ac_id)

@@ -59,6 +59,15 @@ def test_claim_reused_key_with_different_actor_conflicts(
     assert result.code == "idempotency_conflict"
 
 
+def test_claim_rejects_stale_expected_version(migrated_session: Session, ready_unit) -> None:
+    result = claim_unit(migrated_session, ready_unit.id, worker(), "claim-1", expected_version=0)
+
+    assert isinstance(result, DomainError)
+    assert result.code == "version_conflict"
+    assert result.current_state == "ready"
+    assert result.current_version == 1
+
+
 def test_only_current_owner_attempt_and_token_can_renew(
     migrated_session: Session, ready_unit
 ) -> None:
@@ -90,6 +99,64 @@ def test_only_current_owner_attempt_and_token_can_renew(
     assert isinstance(renewed, LeaseGrant)
     assert renewed.expires_at > grant.expires_at
     assert renewed.lease_token == ""
+
+
+def test_renew_replay_does_not_extend_twice(migrated_session: Session, ready_unit) -> None:
+    grant = claim_unit(migrated_session, ready_unit.id, worker(), "claim-1")
+    assert isinstance(grant, LeaseGrant)
+
+    first = renew_claim(
+        migrated_session,
+        ready_unit.id,
+        worker(),
+        grant.attempt,
+        grant.lease_token,
+        idempotency_key="renew-1",
+        expected_version=2,
+    )
+    replay = renew_claim(
+        migrated_session,
+        ready_unit.id,
+        worker(),
+        grant.attempt,
+        grant.lease_token,
+        idempotency_key="renew-1",
+        expected_version=2,
+    )
+
+    assert isinstance(first, LeaseGrant)
+    assert isinstance(replay, LeaseGrant)
+    assert replay.expires_at == first.expires_at
+
+
+def test_renew_reused_key_with_different_request_conflicts(
+    migrated_session: Session, ready_unit
+) -> None:
+    grant = claim_unit(migrated_session, ready_unit.id, worker(), "claim-1")
+    assert isinstance(grant, LeaseGrant)
+    first = renew_claim(
+        migrated_session,
+        ready_unit.id,
+        worker(),
+        grant.attempt,
+        grant.lease_token,
+        idempotency_key="renew-1",
+        expected_version=2,
+    )
+    assert isinstance(first, LeaseGrant)
+
+    result = renew_claim(
+        migrated_session,
+        ready_unit.id,
+        worker(),
+        grant.attempt,
+        grant.lease_token,
+        idempotency_key="renew-1",
+        expected_version=1,
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "idempotency_conflict"
 
 
 def test_expired_claim_cannot_be_renewed(migrated_session: Session, ready_unit) -> None:

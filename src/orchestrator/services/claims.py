@@ -30,6 +30,7 @@ def claim_unit(
     unit_id: uuid.UUID,
     actor: ActorContext,
     idempotency_key: str,
+    expected_version: int | None = None,
 ) -> LeaseGrant | DomainError:
     try:
         unit = _locked_unit(session, unit_id)
@@ -37,6 +38,8 @@ def claim_unit(
         if replay is not None:
             session.commit()
             return replay
+        if expected_version is not None:
+            _require_version(unit, expected_version)
         if actor.role is not ActorRole.WORKER:
             raise DomainError("role_forbidden", "only a worker may acquire a claim", None)
         if WorkUnitState(unit.state) is not WorkUnitState.READY:
@@ -83,9 +86,21 @@ def renew_claim(
     actor: ActorContext,
     attempt: int,
     lease_token: str,
+    *,
+    idempotency_key: str | None = None,
+    expected_version: int | None = None,
 ) -> LeaseGrant | DomainError:
     try:
         unit = _locked_unit(session, unit_id)
+        if idempotency_key is not None:
+            replay = _renew_replay(
+                session, unit, actor, attempt, lease_token, idempotency_key, expected_version
+            )
+            if replay is not None:
+                session.commit()
+                return replay
+        if expected_version is not None:
+            _require_version(unit, expected_version)
         claim = _current_claim(session, unit.id)
         if claim is None or not _claim_owned_by(claim, actor, attempt, lease_token):
             raise DomainError("claim_not_owned", "claim credentials do not match", None)
@@ -96,6 +111,26 @@ def renew_claim(
             raise DomainError("claim_not_active", "work unit has no active claim", None)
         claim.renewed_at = now
         claim.lease_expires_at = now + LEASE_DURATION
+        if idempotency_key is not None:
+            session.add(
+                Event(
+                    occurred_at=now,
+                    actor_id=actor.actor_id,
+                    action="claim.renewed",
+                    subject_type="work_unit",
+                    subject_id=unit.id,
+                    from_state=unit.state,
+                    to_state=unit.state,
+                    payload={
+                        "attempt": attempt,
+                        "expected_version": expected_version,
+                        "expires_at": claim.lease_expires_at.isoformat(),
+                        "lease_token_hash": hash_lease_token(lease_token),
+                    },
+                    correlation_id=uuid.uuid4(),
+                    idempotency_key=idempotency_key,
+                )
+            )
         session.commit()
         return LeaseGrant(claim.id, claim.attempt, "", claim.lease_expires_at)
     except DomainError as error:
@@ -333,6 +368,53 @@ def _claim_replay(
     ):
         raise _idempotency_conflict()
     return LeaseGrant(claim.id, claim.attempt, "", claim.lease_expires_at)
+
+
+def _renew_replay(
+    session: Session,
+    unit: WorkUnit,
+    actor: ActorContext,
+    attempt: int,
+    lease_token: str,
+    idempotency_key: str,
+    expected_version: int | None,
+) -> LeaseGrant | None:
+    event = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
+    if event is None:
+        return None
+    claim = _current_claim(session, unit.id)
+    expected = (
+        claim is not None
+        and event.action == "claim.renewed"
+        and event.subject_id == unit.id
+        and event.actor_id == actor.actor_id
+        and actor.role is ActorRole.WORKER
+        and event.payload.get("attempt") == attempt
+        and event.payload.get("expected_version") == expected_version
+        and event.payload.get("lease_token_hash") == hash_lease_token(lease_token)
+    )
+    if not expected:
+        raise _idempotency_conflict()
+    assert claim is not None
+    expires_at = event.payload.get("expires_at")
+    if not isinstance(expires_at, str):
+        raise DomainError("event_invalid", "renewal event has no valid expiry", None)
+    try:
+        replay_expiry = datetime.fromisoformat(expires_at)
+    except ValueError:
+        raise DomainError("event_invalid", "renewal event has no valid expiry", None) from None
+    return LeaseGrant(claim.id, claim.attempt, "", replay_expiry)
+
+
+def _require_version(unit: WorkUnit, expected_version: int) -> None:
+    if unit.version != expected_version:
+        raise DomainError(
+            "version_conflict",
+            "work unit version has changed",
+            "reload",
+            current_state=unit.state,
+            current_version=unit.version,
+        )
 
 
 def _reclaim_error_replay(

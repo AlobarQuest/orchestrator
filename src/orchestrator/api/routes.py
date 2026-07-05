@@ -134,7 +134,15 @@ def claim(
     actor: ActorDep,
     session: SessionDep,
 ) -> object:
-    return _raise_error(claim_unit(session, unit_id, actor, body.idempotency_key))
+    return _raise_error(
+        claim_unit(
+            session,
+            unit_id,
+            actor,
+            body.idempotency_key,
+            expected_version=body.expected_version,
+        )
+    )
 
 
 @router.post("/work-units/{unit_id}/renew", response_model=LeaseResponse)
@@ -144,7 +152,17 @@ def renew(
     actor: ActorDep,
     session: SessionDep,
 ) -> object:
-    return _raise_error(renew_claim(session, unit_id, actor, body.attempt, body.lease_token))
+    return _raise_error(
+        renew_claim(
+            session,
+            unit_id,
+            actor,
+            body.attempt,
+            body.lease_token,
+            idempotency_key=body.idempotency_key,
+            expected_version=body.expected_version,
+        )
+    )
 
 
 @router.post(

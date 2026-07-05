@@ -10,16 +10,16 @@ class CommandBase(BaseModel):
     expected_version: int = Field(ge=0)
 
 
-class ClaimCommand(BaseModel):
-    idempotency_key: str = Field(min_length=1, max_length=200)
+class ClaimCommand(CommandBase):
+    pass
 
 
-class RenewCommand(BaseModel):
+class RenewCommand(CommandBase):
     attempt: int = Field(gt=0)
     lease_token: str = Field(min_length=1)
 
 
-class EvidenceCommand(BaseModel):
+class EvidenceCommand(CommandBase):
     work_package_revision_id: UUID
     ac_id: str = Field(min_length=1)
     attempt: int = Field(gt=0)
@@ -28,10 +28,9 @@ class EvidenceCommand(BaseModel):
     stable_ref: str | None = None
     payload: dict[str, Any] | None = None
     source_revision: str = Field(min_length=1)
-    idempotency_key: str = Field(min_length=1, max_length=200)
 
 
-class RevisionRegistration(BaseModel):
+class RevisionRegistration(CommandBase):
     package_id: str
     source_repository: str
     revision: int = Field(gt=0)
@@ -46,7 +45,7 @@ class RevisionRegistration(BaseModel):
     registry_version: int = Field(ge=0)
 
 
-class UnitRegistration(BaseModel):
+class UnitRegistration(CommandBase):
     unit_key: str
     title: str
     outcome: str

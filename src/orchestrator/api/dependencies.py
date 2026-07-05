@@ -12,6 +12,7 @@ from orchestrator.identity.auth import (
     authenticate_m2m,
 )
 from orchestrator.identity.registry import RegistryAdapter
+from orchestrator.kernel.states import ActorRole
 from orchestrator.services.lifecycle import ActorContext
 
 
@@ -24,6 +25,7 @@ class AuthConfig:
     proxy_marker: str
     email_header: str
     email_to_actor: Mapping[str, str]
+    m2m_roles: Mapping[str, ActorRole] | None = None
     credential_key_header: str = "X-Credential-Key-Id"
 
 
@@ -71,7 +73,10 @@ def get_actor(request: Request) -> ActorContext:
             raise APIAuthenticationError("authentication_required")
     except AuthenticationError as error:
         raise APIAuthenticationError("authentication_failed") from error
-    return ActorContext(identity.actor_id, identity.role)
+    role = identity.role
+    if identity.credential_key_id is not None and config.m2m_roles is not None:
+        role = config.m2m_roles.get(identity.credential_key_id, role)
+    return ActorContext(identity.actor_id, role)
 
 
 def _authenticate_machine(
