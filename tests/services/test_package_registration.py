@@ -143,6 +143,51 @@ def test_approved_unit_registration_only_creates_draft(migrated_session: Session
     assert unit.decomposition_approved_by == "human-1"
 
 
+def test_approved_unit_registration_defaults_to_three_attempts(
+    migrated_session: Session,
+) -> None:
+    revision = register_test_revision(migrated_session)
+
+    unit = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="unit-default-attempts",
+        title="Implement defaults",
+        outcome="Defaults work",
+        required_capability="repository_write",
+        authority=AUTHORITY,
+        approved_by="human-1",
+        approved_at=NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+
+    assert unit.max_attempts == 3
+
+
+def test_approved_unit_registration_preserves_explicit_attempt_budget(
+    migrated_session: Session,
+) -> None:
+    revision = register_test_revision(migrated_session)
+
+    unit = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="unit-explicit-attempts",
+        title="Implement explicit budget",
+        outcome="Explicit budget works",
+        required_capability="repository_write",
+        authority=AUTHORITY,
+        max_attempts=2,
+        approved_by="human-1",
+        approved_at=NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+
+    assert unit.max_attempts == 2
+
+
 def test_concurrent_identical_first_registration_converges(
     migrated_engine: Engine,
 ) -> None:

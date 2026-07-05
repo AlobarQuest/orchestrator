@@ -11,6 +11,7 @@ from orchestrator.kernel.authority import (
     AuthorityEnvelope,
     authority_fingerprint,
 )
+from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
 from orchestrator.kernel.readiness import (
     DependencyReadiness,
     ReadinessDecision,
@@ -112,7 +113,7 @@ def register_approved_unit(
     outcome: str,
     required_capability: str,
     authority: AuthorityEnvelope,
-    max_attempts: int,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     approved_by: str,
     approved_at: datetime,
     actor_id: str,

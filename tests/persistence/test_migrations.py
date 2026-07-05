@@ -7,6 +7,12 @@ from tests.conftest import TEST_DATABASE_URL
 from tests.persistence.conftest import alembic_config
 
 
+def column_default(engine, table: str, column: str) -> str | None:
+    return next(
+        item["default"] for item in inspect(engine).get_columns(table) if item["name"] == column
+    )
+
+
 def test_alembic_upgrades_empty_database() -> None:
     engine = create_engine(TEST_DATABASE_URL)
     with engine.begin() as connection:
@@ -64,3 +70,15 @@ def test_alembic_downgrade_removes_schema_and_can_reupgrade(migrated_engine) -> 
         "adjudications",
         "events",
     }
+
+
+def test_default_attempt_budget_migration_is_reversible(migrated_engine) -> None:
+    config = alembic_config()
+
+    assert column_default(migrated_engine, "work_units", "max_attempts") == "3"
+
+    command.downgrade(config, "0001_ws31_core")
+    assert column_default(migrated_engine, "work_units", "max_attempts") == "1"
+
+    command.upgrade(config, "head")
+    assert column_default(migrated_engine, "work_units", "max_attempts") == "3"

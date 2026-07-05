@@ -97,7 +97,7 @@ def renew_claim(
         claim.renewed_at = now
         claim.lease_expires_at = now + LEASE_DURATION
         session.commit()
-        return LeaseGrant(claim.id, claim.attempt, lease_token, claim.lease_expires_at)
+        return LeaseGrant(claim.id, claim.attempt, "", claim.lease_expires_at)
     except DomainError as error:
         session.rollback()
         return error

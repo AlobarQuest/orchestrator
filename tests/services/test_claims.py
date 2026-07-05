@@ -89,6 +89,7 @@ def test_only_current_owner_attempt_and_token_can_renew(
     )
     assert isinstance(renewed, LeaseGrant)
     assert renewed.expires_at > grant.expires_at
+    assert renewed.lease_token == ""
 
 
 def test_expired_claim_cannot_be_renewed(migrated_session: Session, ready_unit) -> None:

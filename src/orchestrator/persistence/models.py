@@ -110,7 +110,7 @@ class WorkUnit(UUIDPrimaryKey, Base):
     authority_fingerprint: Mapped[str] = mapped_column(String)
     authority_approval_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    max_attempts: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
