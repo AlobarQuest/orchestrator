@@ -6,6 +6,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Text,
@@ -112,9 +113,7 @@ class WorkUnit(UUIDPrimaryKey, Base):
     max_attempts: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Dependency(UUIDPrimaryKey, Base):
@@ -195,6 +194,28 @@ class Approval(UUIDPrimaryKey, Base):
 class Evidence(UUIDPrimaryKey, Base):
     __tablename__ = "evidence"
     __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "work_package_revision_id",
+            "work_unit_id",
+            "ac_id",
+            name="uq_evidence_supersession_target",
+        ),
+        ForeignKeyConstraint(
+            [
+                "supersedes_evidence_id",
+                "work_package_revision_id",
+                "work_unit_id",
+                "ac_id",
+            ],
+            [
+                "evidence.id",
+                "evidence.work_package_revision_id",
+                "evidence.work_unit_id",
+                "evidence.ac_id",
+            ],
+            name="fk_evidence_supersession_scope",
+        ),
         CheckConstraint(
             "stable_ref IS NOT NULL OR payload IS NOT NULL",
             name="ck_evidence_reference_or_payload",
@@ -218,7 +239,7 @@ class Evidence(UUIDPrimaryKey, Base):
     )
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
     idempotency_key: Mapped[str] = mapped_column(String, unique=True)
-    supersedes_evidence_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("evidence.id"))
+    supersedes_evidence_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
 
 class Adjudication(UUIDPrimaryKey, Base):
