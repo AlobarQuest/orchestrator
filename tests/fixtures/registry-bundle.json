@@ -1,0 +1,20 @@
+{
+  "schema": "orchestrator-actor-bundle/v1",
+  "source_revision": "0123456789abcdef0123456789abcdef01234567",
+  "actors": [
+    {
+      "agent_id": "devon",
+      "version": 1,
+      "status": "active",
+      "runtime": "human",
+      "authority_profile": "human-operator-v1"
+    },
+    {
+      "agent_id": "worker",
+      "version": 1,
+      "status": "active",
+      "runtime": "runner",
+      "authority_profile": "agent-queue-v1"
+    }
+  ]
+}
