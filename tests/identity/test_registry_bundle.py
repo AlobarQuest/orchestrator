@@ -213,6 +213,33 @@ prohibited: []
         build_bundle(registry_dir, revision)
 
 
+def test_generator_ignores_untracked_ignored_yaml(tmp_path: Path) -> None:
+    registry_dir = tmp_path / "registry"
+    write_identity(
+        registry_dir,
+        "worker.yaml",
+        """schema: agent-identity/v1
+agent_id: worker
+version: 1
+status: active
+runtime: runner
+operator: devon
+environment: mini
+description: fixture
+authority_profile: agent-queue-v1
+capabilities: []
+prohibited: []
+""",
+    )
+    (registry_dir / ".gitignore").write_text("agents/ignored.yaml\n")
+    revision = commit_registry(registry_dir)
+    write_identity(registry_dir, "ignored.yaml", "host-controlled")
+
+    generated = build_bundle(registry_dir, revision)
+
+    assert [value["agent_id"] for value in generated["actors"]] == ["worker"]
+
+
 def test_generator_rejects_empty_registry(tmp_path: Path) -> None:
     registry_dir = tmp_path / "registry"
     (registry_dir / "agents").mkdir(parents=True)
@@ -233,6 +260,34 @@ def test_generator_rejects_symlinked_identity(tmp_path: Path) -> None:
     revision = commit_registry(registry_dir)
 
     with pytest.raises(RegistryValidationError, match="regular file"):
+        build_bundle(registry_dir, revision)
+
+
+def test_generator_rejects_symlinked_agents_directory(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    registry_dir = repository / "registry"
+    external_agents = tmp_path / "agents"
+    write_identity(
+        tmp_path,
+        "worker.yaml",
+        """schema: agent-identity/v1
+agent_id: worker
+version: 1
+status: active
+runtime: runner
+operator: devon
+environment: mini
+description: fixture
+authority_profile: agent-queue-v1
+capabilities: []
+prohibited: []
+""",
+    )
+    registry_dir.mkdir(parents=True)
+    (registry_dir / "agents").symlink_to(external_agents)
+    revision = commit_registry(repository)
+
+    with pytest.raises(RegistryValidationError, match="symlink"):
         build_bundle(registry_dir, revision)
 
 

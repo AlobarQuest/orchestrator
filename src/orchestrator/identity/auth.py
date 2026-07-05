@@ -1,7 +1,7 @@
 import hashlib
 import re
 import secrets
-from collections.abc import Mapping, Set
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass
 
 from orchestrator.identity.registry import RegistryAdapter, RegistryValidationError
@@ -60,7 +60,7 @@ def authenticate_m2m(
 
 def authenticate_human(
     *,
-    headers: Mapping[str, str],
+    headers: Sequence[tuple[str, str]],
     peer_ip: str,
     trusted_proxy_ips: Set[str],
     proxy_marker_header: str,
@@ -69,11 +69,9 @@ def authenticate_human(
     email_to_actor: Mapping[str, str],
     registry: RegistryAdapter,
 ) -> ActorContext:
-    normalized_headers = {name.lower(): value for name, value in headers.items()}
-    has_forward_auth = (
-        proxy_marker_header.lower() in normalized_headers
-        or email_header.lower() in normalized_headers
-    )
+    marker_values = _header_values(headers, proxy_marker_header)
+    email_values = _header_values(headers, email_header)
+    has_forward_auth = bool(marker_values) or bool(email_values)
     if peer_ip not in trusted_proxy_ips:
         message = (
             "forward-auth headers received from untrusted peer"
@@ -81,10 +79,12 @@ def authenticate_human(
             else "human authentication requires trusted proxy"
         )
         raise AuthenticationError(message)
-    marker = normalized_headers.get(proxy_marker_header.lower(), "")
+    if len(marker_values) != 1 or len(email_values) != 1:
+        raise AuthenticationError("forward-auth requires exactly one identity header")
+    marker = marker_values[0]
     if not proxy_marker or not secrets.compare_digest(marker, proxy_marker):
         raise AuthenticationError("invalid trusted proxy marker")
-    email = normalized_headers.get(email_header.lower(), "").strip().lower()
+    email = email_values[0].strip().lower()
     actor_id = email_to_actor.get(email)
     if actor_id is None:
         raise AuthenticationError("unknown human identity")
@@ -101,6 +101,11 @@ def authenticate_human(
         credential_key_id=None,
         registry_version=actor.version,
     )
+
+
+def _header_values(headers: Sequence[tuple[str, str]], target: str) -> list[str]:
+    normalized_target = target.lower()
+    return [value for name, value in headers if name.lower() == normalized_target]
 
 
 def _validate_m2m_credentials(credentials: Mapping[str, M2MCredential]) -> None:

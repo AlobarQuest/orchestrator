@@ -32,16 +32,14 @@ SOURCE_FIELDS = frozenset(
 
 
 def build_bundle(registry_dir: Path, source_revision: str) -> dict[str, Any]:
-    _validate_checkout(registry_dir, source_revision)
+    repository, actor_tree = _validate_checkout(registry_dir, source_revision)
     actors: list[dict[str, Any]] = []
     seen: set[str] = set()
-    paths = sorted((registry_dir / "agents").glob("*.yaml"))
-    if not paths:
+    entries = _actor_entries(repository, source_revision, actor_tree)
+    if not entries:
         raise RegistryValidationError("registry contains no identities")
-    for path in paths:
-        if path.is_symlink() or not path.is_file():
-            raise RegistryValidationError(f"registry identity is not a regular file: {path.name}")
-        source = _load_identity(path)
+    for name, content in entries:
+        source = _load_identity(name, content)
         actor_value = {
             name: source[name]
             for name in ("agent_id", "version", "status", "runtime", "authority_profile")
@@ -64,16 +62,24 @@ def write_bundle(output: Path, bundle: Mapping[str, Any]) -> None:
     output.write_text(json.dumps(bundle, indent=2, sort_keys=False) + "\n")
 
 
-def _validate_checkout(registry_dir: Path, source_revision: str) -> None:
+def _validate_checkout(registry_dir: Path, source_revision: str) -> tuple[Path, str]:
+    if registry_dir.is_symlink() or (registry_dir / "agents").is_symlink():
+        raise RegistryValidationError("registry path must not contain a symlink")
     try:
         head = _git(registry_dir, "rev-parse", "HEAD").strip()
         dirty = _git(registry_dir, "status", "--porcelain")
+        repository = Path(_git(registry_dir, "rev-parse", "--show-toplevel").strip())
+        relative_registry = registry_dir.absolute().relative_to(repository.absolute())
     except (OSError, subprocess.CalledProcessError) as error:
         raise RegistryValidationError("registry directory is not a git checkout") from error
+    except ValueError as error:
+        raise RegistryValidationError("registry directory is outside its git checkout") from error
     if head != source_revision:
         raise RegistryValidationError("registry checkout does not match source revision")
     if dirty:
         raise RegistryValidationError("registry checkout is dirty")
+    registry_prefix = "" if str(relative_registry) == "." else f"{relative_registry.as_posix()}/"
+    return repository, f"{registry_prefix}agents"
 
 
 def _git(registry_dir: Path, *args: str) -> str:
@@ -84,18 +90,59 @@ def _git(registry_dir: Path, *args: str) -> str:
     )
 
 
-def _load_identity(path: Path) -> Mapping[str, Any]:
+def _actor_entries(repository: Path, revision: str, actor_tree: str) -> list[tuple[str, str]]:
     try:
-        value = yaml.safe_load(path.read_text())
-    except (OSError, yaml.YAMLError) as error:
-        raise RegistryValidationError(f"invalid registry identity: {path.name}") from error
+        tree = subprocess.check_output(
+            ["git", "-C", str(repository), "ls-tree", "-z", f"{revision}:{actor_tree}"],
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RegistryValidationError("registry contains no identities") from error
+
+    entries: list[tuple[str, str]] = []
+    for raw_entry in tree.split(b"\0"):
+        if not raw_entry:
+            continue
+        try:
+            metadata, raw_name = raw_entry.split(b"\t", 1)
+            mode, object_type, _object_id = metadata.split(b" ", 2)
+            name = raw_name.decode("utf-8")
+        except (UnicodeDecodeError, ValueError) as error:
+            raise RegistryValidationError("invalid registry tree entry") from error
+        if mode not in {b"100644", b"100755"} or object_type != b"blob":
+            raise RegistryValidationError(f"registry identity is not a regular file: {name}")
+        if not name.endswith(".yaml") or "/" in name:
+            raise RegistryValidationError(f"invalid registry identity filename: {name}")
+        try:
+            content = subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(repository),
+                    "cat-file",
+                    "blob",
+                    f"{revision}:{actor_tree}/{name}",
+                ],
+                stderr=subprocess.DEVNULL,
+            ).decode("utf-8")
+        except (OSError, subprocess.CalledProcessError, UnicodeDecodeError) as error:
+            raise RegistryValidationError(f"invalid registry identity blob: {name}") from error
+        entries.append((name, content))
+    return entries
+
+
+def _load_identity(name: str, content: str) -> Mapping[str, Any]:
+    try:
+        value = yaml.safe_load(content)
+    except yaml.YAMLError as error:
+        raise RegistryValidationError(f"invalid registry identity: {name}") from error
     if not isinstance(value, Mapping) or set(value) != SOURCE_FIELDS:
-        message = f"registry identity has unknown or missing fields: {path.name}"
+        message = f"registry identity has unknown or missing fields: {name}"
         raise RegistryValidationError(message)
     if value["schema"] != "agent-identity/v1":
-        raise RegistryValidationError(f"unsupported registry identity schema: {path.name}")
+        raise RegistryValidationError(f"unsupported registry identity schema: {name}")
     if not isinstance(value["capabilities"], list) or not isinstance(value["prohibited"], list):
-        raise RegistryValidationError(f"invalid registry identity lists: {path.name}")
+        raise RegistryValidationError(f"invalid registry identity lists: {name}")
     return value
 
 

@@ -24,11 +24,11 @@ def registry(**overrides: object) -> RegistryAdapter:
     )
 
 
-def trusted_headers() -> dict[str, str]:
-    return {
-        "X-Alobar-Proxy": "fixture-marker",
-        "X-Alobar-Email": "devon@example.invalid",
-    }
+def trusted_headers() -> list[tuple[str, str]]:
+    return [
+        ("X-Alobar-Proxy", "fixture-marker"),
+        ("X-Alobar-Email", "devon@example.invalid"),
+    ]
 
 
 def test_human_authentication_maps_trusted_email_to_devon() -> None:
@@ -88,10 +88,33 @@ def test_only_active_human_operator_resolves_as_human(overrides: dict[str, objec
 
 def test_human_auth_rejects_missing_marker_or_unknown_email() -> None:
     headers = trusted_headers()
-    headers["X-Alobar-Proxy"] = "wrong"
+    headers[0] = ("X-Alobar-Proxy", "wrong")
     with pytest.raises(AuthenticationError):
         authenticate_human(
             headers=headers,
+            peer_ip="10.0.0.2",
+            trusted_proxy_ips={"10.0.0.2"},
+            proxy_marker_header="X-Alobar-Proxy",
+            proxy_marker="fixture-marker",
+            email_header="X-Alobar-Email",
+            email_to_actor={"devon@example.invalid": "devon"},
+            registry=registry(),
+        )
+
+
+@pytest.mark.parametrize(
+    "duplicate",
+    [
+        ("x-alobar-proxy", "fixture-marker"),
+        ("x-alobar-email", "devon@example.invalid"),
+    ],
+)
+def test_human_auth_rejects_case_variant_duplicate_headers(
+    duplicate: tuple[str, str],
+) -> None:
+    with pytest.raises(AuthenticationError, match="exactly one"):
+        authenticate_human(
+            headers=[*trusted_headers(), duplicate],
             peer_ip="10.0.0.2",
             trusted_proxy_ips={"10.0.0.2"},
             proxy_marker_header="X-Alobar-Proxy",
