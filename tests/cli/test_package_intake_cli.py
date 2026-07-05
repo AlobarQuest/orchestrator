@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import pytest
@@ -86,6 +87,49 @@ def test_package_source_reader_normalizes_source_path_with_resolved_directory(
     )
 
     assert payload["source_path"] == str(fixture_dir)
+
+
+def test_package_source_reader_rejects_ambiguous_matching_approvals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(package_sources, "_verify_current_approval", lambda *args: True)
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
+    package_dir = tmp_path / "ws32-approved-software"
+    shutil.copytree("tests/fixtures/intent-packages/ws32-approved-software", package_dir)
+    lineage_path = package_dir / "lineage.yaml"
+    original = lineage_path.read_text(encoding="utf-8")
+    lineage_path.write_text(
+        original.replace(
+            "approvals:\n"
+            "  - revision: 1\n"
+            "    approved_hash: bfcf35c540a540efcac4eb4095b9dbf33529e39361a03a21d43b64c96dd054b2\n"
+            "    approver: devon\n"
+            '    approved_at: "2026-07-05T00:02:00Z"\n'
+            '    commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n'
+            '    event_id: "22222222-2222-2222-2222-222222222222"\n',
+            "approvals:\n"
+            "  - revision: 1\n"
+            "    approved_hash: bfcf35c540a540efcac4eb4095b9dbf33529e39361a03a21d43b64c96dd054b2\n"
+            "    approver: mallory\n"
+            '    approved_at: "2026-07-04T23:59:00Z"\n'
+            '    commit: "ffffffffffffffffffffffffffffffffffffffff"\n'
+            '    event_id: "99999999-9999-9999-9999-999999999999"\n'
+            "  - revision: 1\n"
+            "    approved_hash: bfcf35c540a540efcac4eb4095b9dbf33529e39361a03a21d43b64c96dd054b2\n"
+            "    approver: devon\n"
+            '    approved_at: "2026-07-05T00:02:00Z"\n'
+            '    commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n'
+            '    event_id: "22222222-2222-2222-2222-222222222222"\n',
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PackageSourceError, match="ambiguous matching approvals"):
+        load_package_intake_payload(
+            package_dir,
+            source_repository="AlobarQuest/intent-packages",
+        )
 
 
 def test_package_source_reader_rejects_unapproved_package() -> None:

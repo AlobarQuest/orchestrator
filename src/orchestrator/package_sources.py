@@ -267,27 +267,39 @@ def _verify_current_approval(
     return _events_file_has_matching_approval(approved_hash, revision)
 
 
+def _matching_approvals(
+    approvals: object,
+    *,
+    approved_hash: str,
+    revision: object,
+) -> list[dict[str, Any]]:
+    if not isinstance(approvals, list):
+        raise PackageSourceError("lineage approvals must be a list")
+    return [
+        item
+        for item in approvals
+        if isinstance(item, dict)
+        and item.get("revision") == revision
+        and item.get("approved_hash") == approved_hash
+    ]
+
+
 def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[str, object]:
     resolved_path = _resolve_source_path(path)
     package = _read_yaml(resolved_path / "package.yaml")
     lineage = _read_yaml(resolved_path / "lineage.yaml")
-    approvals = lineage.get("approvals")
-    if not isinstance(approvals, list):
-        raise PackageSourceError("lineage approvals must be a list")
     revision = package.get("revision")
     approved_hash = canonical_package_hash(package)
-    approval = next(
-        (
-            item
-            for item in approvals
-            if isinstance(item, dict)
-            and item.get("revision") == revision
-            and item.get("approved_hash") == approved_hash
-        ),
-        None,
+    matching_approvals = _matching_approvals(
+        lineage.get("approvals"),
+        approved_hash=approved_hash,
+        revision=revision,
     )
-    if not isinstance(approval, dict):
+    if not matching_approvals:
         raise PackageSourceError("package revision has no matching approval")
+    if len(matching_approvals) != 1:
+        raise PackageSourceError("package revision has ambiguous matching approvals")
+    approval = matching_approvals[0]
     acceptance = package.get("acceptance")
     if not isinstance(acceptance, list):
         raise PackageSourceError("package acceptance must be a list")
