@@ -1,13 +1,30 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from orchestrator.api.dependencies import APIAuthenticationError, AuthConfig
 from orchestrator.api.health import router as health_router
 from orchestrator.api.routes import router as api_router
 from orchestrator.errors import DomainError
 
 
-def create_app() -> FastAPI:
+def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
     application = FastAPI(title="Orchestrator")
+    application.state.auth_config = auth_config
+
+    @application.exception_handler(APIAuthenticationError)
+    async def authentication_error_handler(
+        _request: Request, error: APIAuthenticationError
+    ) -> JSONResponse:
+        message = (
+            "valid authentication credentials are required"
+            if error.code == "authentication_required"
+            else "authentication credentials were rejected"
+        )
+        return JSONResponse(
+            status_code=401,
+            content={"error": {"code": error.code, "message": message}},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     @application.exception_handler(DomainError)
     async def domain_error_handler(_request: Request, error: DomainError) -> JSONResponse:

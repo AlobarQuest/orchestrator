@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Annotated
 
 from alembic.config import Config
@@ -14,6 +15,8 @@ from orchestrator.api.dependencies import get_session
 SessionDep = Annotated[Session, Depends(get_session)]
 
 router = APIRouter(prefix="/health", tags=["health"])
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+ALEMBIC_CONFIG_PATH = PROJECT_ROOT / "alembic.ini"
 
 
 @router.get("/live")
@@ -26,10 +29,21 @@ def ready(session: SessionDep) -> dict[str, str] | JSONResponse:
     try:
         session.execute(text("SELECT 1"))
         current = MigrationContext.configure(session.connection()).get_current_revision()
-        heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    except (SQLAlchemyError, OSError):
+    except SQLAlchemyError:
         return JSONResponse(
             status_code=503, content={"status": "unavailable", "reason": "database"}
+        )
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "reason": "configuration"},
+        )
+    try:
+        heads = ScriptDirectory.from_config(Config(str(ALEMBIC_CONFIG_PATH))).get_heads()
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "reason": "configuration"},
         )
     if len(heads) != 1 or current != heads[0]:
         return JSONResponse(

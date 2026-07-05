@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CommandBase(BaseModel):
@@ -55,3 +55,90 @@ class UnitRegistration(BaseModel):
     max_attempts: int = Field(ge=0, default=3)
     approved_by: str
     approved_at: datetime
+
+
+class ErrorDetail(BaseModel):
+    code: str
+    message: str
+    recovery: str | None = None
+    current_state: str | None = None
+    current_version: int | None = None
+
+
+class ErrorResponse(BaseModel):
+    error: ErrorDetail
+
+
+class RevisionResponse(BaseModel):
+    id: UUID
+    revision: int
+
+
+class UnitResponse(BaseModel):
+    id: UUID
+    state: str
+    version: int
+
+
+class ReadinessReasonResponse(BaseModel):
+    code: str
+    subject_id: UUID | None
+    detail: str
+
+
+class ReadinessResponse(BaseModel):
+    status: str
+    reasons: list[ReadinessReasonResponse]
+
+
+class LeaseResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    claim_id: UUID
+    attempt: int
+    lease_token: str
+    expires_at: datetime
+
+
+class TransitionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    unit_id: UUID
+    state: str
+    version: int
+    event_id: UUID
+
+
+class EvidenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_package_revision_id: UUID
+    work_unit_id: UUID
+    ac_id: str
+    attempt: int
+    evidence_type: str
+    stable_ref: str | None
+    payload: dict[str, Any] | None
+    source_revision: str
+    recorded_by: str
+    recorded_at: datetime
+    event_id: UUID
+    idempotency_key: str
+    supersedes_evidence_id: UUID | None
+
+
+class EventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    occurred_at: datetime
+    actor_id: str
+    action: str
+    subject_type: str
+    subject_id: UUID
+    from_state: str | None
+    to_state: str | None
+    payload: dict[str, Any]
+    correlation_id: UUID
+    idempotency_key: str
