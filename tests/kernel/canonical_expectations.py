@@ -2,6 +2,28 @@ from orchestrator.kernel.states import ActorRole, WorkUnitState
 
 Edge = tuple[WorkUnitState, WorkUnitState]
 
+EXPECTED_WORK_UNIT_STATE_VALUES = {
+    "DRAFT": "draft",
+    "READY": "ready",
+    "CLAIMED": "claimed",
+    "EXECUTING": "executing",
+    "BLOCKED": "blocked",
+    "AWAITING_APPROVAL": "awaiting_approval",
+    "SUBMITTED": "submitted",
+    "VERIFYING": "verifying",
+    "AWAITING_REVIEW": "awaiting_review",
+    "REVISION_REQUIRED": "revision_required",
+    "COMPLETED": "completed",
+    "FAILED": "failed",
+    "CANCELLED": "cancelled",
+}
+EXPECTED_ACTOR_ROLE_VALUES = {
+    "SYSTEM": "system",
+    "WORKER": "worker",
+    "VERIFIER": "verifier",
+    "HUMAN": "human",
+}
+
 SYSTEM = frozenset({ActorRole.SYSTEM})
 WORKER = frozenset({ActorRole.WORKER})
 SYSTEM_OR_WORKER = frozenset({ActorRole.SYSTEM, ActorRole.WORKER})

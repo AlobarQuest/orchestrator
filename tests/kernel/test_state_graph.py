@@ -5,7 +5,20 @@ import pytest
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import LEGAL_EDGES, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
-from tests.kernel.canonical_expectations import EXPECTED_EDGE_ROLES, EXPECTED_LEGAL_EDGES
+from tests.kernel.canonical_expectations import (
+    EXPECTED_ACTOR_ROLE_VALUES,
+    EXPECTED_EDGE_ROLES,
+    EXPECTED_LEGAL_EDGES,
+    EXPECTED_WORK_UNIT_STATE_VALUES,
+)
+
+
+def test_work_unit_state_names_and_wire_values_match_canonical_contract() -> None:
+    assert {state.name: state.value for state in WorkUnitState} == EXPECTED_WORK_UNIT_STATE_VALUES
+
+
+def test_actor_role_names_and_wire_values_match_canonical_contract() -> None:
+    assert {role.name: role.value for role in ActorRole} == EXPECTED_ACTOR_ROLE_VALUES
 
 
 def test_declared_graph_matches_canonical_edges() -> None:
