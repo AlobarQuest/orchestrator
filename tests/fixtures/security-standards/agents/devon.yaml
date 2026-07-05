@@ -1,0 +1,11 @@
+schema: agent-identity/v1
+agent_id: devon
+version: 1
+status: active
+runtime: human
+operator: devon
+environment: test
+description: Container build fixture
+authority_profile: human-operator-v1
+capabilities: []
+prohibited: []

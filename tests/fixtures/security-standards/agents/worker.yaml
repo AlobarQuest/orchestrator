@@ -1,0 +1,11 @@
+schema: agent-identity/v1
+agent_id: worker
+version: 1
+status: active
+runtime: runner
+operator: devon
+environment: test
+description: Container build fixture
+authority_profile: agent-queue-v1
+capabilities: []
+prohibited: []
