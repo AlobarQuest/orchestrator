@@ -20,7 +20,7 @@
 <h2>Approvals</h2>
 {% if approvals %}<ul>{% for row in approvals %}<li>{{ row.subject_type }}: {{ row.decision }} by {{ row.approved_by }}. {{ row.reason }}</li>{% endfor %}</ul>{% else %}<p class="empty">No approvals recorded.</p>{% endif %}
 <h2>Event history</h2>
-{% if events %}<ol>{% for row in events %}<li>{{ row.occurred_at }}: {{ row.action }} by {{ row.actor_id }}</li>{% endfor %}</ol>{% else %}<p class="empty">No events recorded.</p>{% endif %}
+{% if events %}<ol>{% for row in events %}<li>{{ row.occurred_at }}: {{ row.action }} by {{ row.actor_id }}{% if row.payload.reason %}. Reason: {{ row.payload.reason }}{% endif %}</li>{% endfor %}</ol>{% else %}<p class="empty">No events recorded.</p>{% endif %}
 
 <h2>Human actions</h2>
 {% macro hidden(action) %}<input type="hidden" name="csrf_token" value="{{ csrf_tokens[action] }}"><input type="hidden" name="idempotency_key" value="{{ idempotency_keys[action] }}"><input type="hidden" name="expected_version" value="{{ unit.version }}">{% endmacro %}

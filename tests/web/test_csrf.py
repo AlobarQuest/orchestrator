@@ -1,8 +1,13 @@
 import re
+from dataclasses import replace
+from typing import cast
 
+import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import orchestrator.web
+from orchestrator.api.dependencies import AuthConfig
 from orchestrator.persistence.models import WorkUnit
 from tests.api.test_lifecycle_api import HUMAN, WORKER
 
@@ -84,3 +89,66 @@ def test_csrf_is_secure_bound_and_expires(
         data={**common, "outcome": "revision_required"},
     )
     assert expired.status_code == 403
+
+
+def test_attacker_cookie_is_rotated_before_valid_post(
+    db_client: TestClient, review_unit: WorkUnit
+) -> None:
+    db_client.cookies.set(orchestrator.web.CSRF_COOKIE, "attacker-fixed-session")
+    page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+    token, key = _form_fields(page.text, review_unit.id, "review")
+    cookie = re.search(rf"{orchestrator.web.CSRF_COOKIE}=([^;]+)", page.headers["set-cookie"])
+    assert cookie is not None
+    assert cookie.group(1) != "attacker-fixed-session"
+    db_client.cookies.set(orchestrator.web.CSRF_COOKIE, cookie.group(1))
+
+    response = db_client.post(
+        f"/review/units/{review_unit.id}/review",
+        headers=HUMAN,
+        data={
+            "csrf_token": token,
+            "idempotency_key": key,
+            "expected_version": str(review_unit.version),
+            "outcome": "revision_required",
+            "reason": "Signed session accepted",
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+
+
+def test_malformed_base64_is_rejected_not_raised(
+    db_client: TestClient, review_unit: WorkUnit
+) -> None:
+    response = db_client.post(
+        f"/review/units/{review_unit.id}/cancel",
+        headers=HUMAN,
+        data={
+            "csrf_token": "/w==.invalid",
+            "idempotency_key": "malformed",
+            "expected_version": str(review_unit.version),
+            "reason": "malformed",
+            "confirm": "yes",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "csrf_rejected"
+
+
+def test_csrf_secret_configuration_is_strong_and_missing_is_stable(
+    db_client: TestClient,
+    auth_config: AuthConfig,
+    review_unit: WorkUnit,
+) -> None:
+    for value in (b"", b"weak"):
+        with pytest.raises(ValueError, match="at least 32 bytes"):
+            replace(auth_config, csrf_secret=value)
+
+    cast(FastAPI, db_client.app).state.auth_config = replace(auth_config, csrf_secret=None)
+    response = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "csrf_unavailable"

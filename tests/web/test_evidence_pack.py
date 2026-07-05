@@ -95,6 +95,11 @@ def test_evidence_pack_labels_supersession_and_named_waiver_facts(
     assert page.status_code == 200
     assert "artifact://old" in page.text and "superseded" in page.text
     assert "artifact://current" in page.text and "current" in page.text
+    assert "artifact://old</td><td>" in page.text
+    assert "<td>superseded</td><td>test</td><td>artifact://old" in page.text
+    assert "<td>current</td><td>test</td><td>artifact://current" in page.text
+    assert "failed (superseded)" in page.text
+    assert "waived (current)" in page.text
     assert failed_id in page.text
     assert "Risk: bounded" in page.text
     assert "Follow-up: monitor" in page.text

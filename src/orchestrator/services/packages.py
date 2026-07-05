@@ -120,7 +120,7 @@ def record_approval(
             to_state=unit.state,
             payload={"approval_id": str(approval.id), "expected_version": expected_version},
             correlation_id=uuid.uuid4(),
-            idempotency_key=f"{idempotency_key}:event",
+            idempotency_key=idempotency_key,
         )
     )
     session.flush()
