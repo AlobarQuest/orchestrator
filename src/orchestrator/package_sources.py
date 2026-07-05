@@ -19,6 +19,7 @@ class PackageSourceError(Exception):
 
 _HUMAN_OPERATOR_PROFILE = "human-operator-v1"
 _CHAIN_VERIFY_TIMEOUT_SECONDS = 30
+_EXECUTABLE_INTAKE_STATE = "approved"
 
 
 @dataclass(frozen=True)
@@ -351,7 +352,7 @@ def _verify_current_approval(
     if not isinstance(event_id, str) or not event_id:
         return None
     sibling_verification = _verify_with_intent_packages_cli(path)
-    if sibling_verification is False:
+    if sibling_verification is not True:
         return None
     if not _verify_factory_chain():
         return None
@@ -382,10 +383,23 @@ def _matching_approvals(
     ]
 
 
+def _validate_approved_current_state(
+    package: Mapping[str, Any],
+    lineage: Mapping[str, Any],
+) -> None:
+    status = package.get("status")
+    current_state = lineage.get("current_state")
+    if status != current_state:
+        raise PackageSourceError("package status does not match lineage current_state")
+    if status != _EXECUTABLE_INTAKE_STATE:
+        raise PackageSourceError("package current revision is not approved for intake")
+
+
 def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[str, object]:
     resolved_path = _resolve_source_path(path)
     package = _read_yaml(resolved_path / "package.yaml")
     lineage = _read_yaml(resolved_path / "lineage.yaml")
+    _validate_approved_current_state(package, lineage)
     revision = package.get("revision")
     approved_hash = canonical_package_hash(package)
     matching_approvals = _matching_approvals(

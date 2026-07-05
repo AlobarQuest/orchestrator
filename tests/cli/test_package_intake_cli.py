@@ -159,9 +159,100 @@ def test_package_source_reader_rejects_ambiguous_matching_approvals(
 
 
 def test_package_source_reader_rejects_unapproved_package() -> None:
-    with pytest.raises(PackageSourceError, match="matching approval"):
+    with pytest.raises(PackageSourceError, match="not approved for intake"):
         load_package_intake_payload(
             Path("tests/fixtures/intent-packages/ws32-draft-software"),
+            source_repository="AlobarQuest/intent-packages",
+        )
+
+
+def test_package_source_reader_rejects_unapproved_current_state_with_matching_approval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+    )
+    package_dir = tmp_path / "ws32-approved-software"
+    shutil.copytree("tests/fixtures/intent-packages/ws32-approved-software", package_dir)
+    package_path = package_dir / "package.yaml"
+    lineage_path = package_dir / "lineage.yaml"
+    package_path.write_text(
+        package_path.read_text(encoding="utf-8").replace("status: approved", "status: draft"),
+        encoding="utf-8",
+    )
+    lineage_path.write_text(
+        lineage_path.read_text(encoding="utf-8").replace(
+            "current_state: approved",
+            "current_state: draft",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PackageSourceError, match="not approved for intake"):
+        load_package_intake_payload(
+            package_dir,
+            source_repository="AlobarQuest/intent-packages",
+        )
+
+
+def test_package_source_reader_requires_cli_verifier_for_cli_verified_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FACTORY_EVENTS_HOME", str(tmp_path))
+    monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: None)
+    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: True)
+    monkeypatch.setattr(package_sources, "_is_human_operator", lambda agent_id: agent_id == "devon")
+
+    events_file = tmp_path / "events.jsonl"
+    events_file.write_text(
+        '{"event":{"action":"package.approved","event_id":"22222222-2222-2222-2222-222222222222",'
+        '"timestamp":"2026-07-05T00:02:00Z","source":{"ref":"ws32-approved-software"},'
+        '"evidence":[{"approved_hash":"bfcf35c540a540efcac4eb4095b9dbf33529e39361a03a21d43b64c96dd054b2",'
+        '"revision":1,"approver":"devon","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PackageSourceError, match="approval verification failed"):
+        load_package_intake_payload(
+            Path("tests/fixtures/intent-packages/ws32-approved-software"),
+            source_repository="AlobarQuest/intent-packages",
+        )
+
+
+@pytest.mark.parametrize(
+    ("filename", "replacement", "error"),
+    [
+        ("package.yaml", "package_id: duplicate\npackage_id: duplicate\n", "duplicate key"),
+        ("package.yaml", "---\npackage_id: one\n---\npackage_id: two\n", "exactly one"),
+        ("package.yaml", "- not\n- a\n- mapping\n", "must contain a mapping"),
+        ("lineage.yaml", "package_id: duplicate\npackage_id: duplicate\n", "duplicate key"),
+        ("lineage.yaml", "---\npackage_id: one\n---\npackage_id: two\n", "exactly one"),
+        ("lineage.yaml", "- not\n- a\n- mapping\n", "must contain a mapping"),
+    ],
+)
+def test_package_source_reader_rejects_fail_open_yaml_shapes(
+    tmp_path: Path,
+    filename: str,
+    replacement: str,
+    error: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+    )
+    package_dir = tmp_path / "ws32-approved-software"
+    shutil.copytree("tests/fixtures/intent-packages/ws32-approved-software", package_dir)
+    (package_dir / filename).write_text(replacement, encoding="utf-8")
+
+    with pytest.raises(PackageSourceError, match=error):
+        load_package_intake_payload(
+            package_dir,
             source_repository="AlobarQuest/intent-packages",
         )
 
