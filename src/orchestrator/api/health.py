@@ -28,7 +28,7 @@ def live() -> dict[str, str]:
 def ready(session: SessionDep) -> dict[str, str] | JSONResponse:
     try:
         session.execute(text("SELECT 1"))
-        current = MigrationContext.configure(session.connection()).get_current_revision()
+        database_heads = MigrationContext.configure(session.connection()).get_current_heads()
     except SQLAlchemyError:
         return JSONResponse(
             status_code=503, content={"status": "unavailable", "reason": "database"}
@@ -45,7 +45,7 @@ def ready(session: SessionDep) -> dict[str, str] | JSONResponse:
             status_code=503,
             content={"status": "unavailable", "reason": "configuration"},
         )
-    if len(heads) != 1 or current != heads[0]:
+    if len(database_heads) != 1 or len(heads) != 1 or database_heads[0] != heads[0]:
         return JSONResponse(
             status_code=503,
             content={"status": "unavailable", "reason": "migration_drift"},

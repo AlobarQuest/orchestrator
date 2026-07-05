@@ -2,7 +2,11 @@ from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -41,7 +45,7 @@ def test_readiness_resolves_alembic_config_independent_of_cwd(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "orchestrator.api.health.MigrationContext.configure",
-        lambda _connection: Mock(get_current_revision=lambda: "head"),
+        lambda _connection: Mock(get_current_heads=lambda: ("head",)),
     )
     observed: dict[str, str] = {}
 
@@ -77,12 +81,39 @@ def test_readiness_rejects_drift_and_multiple_heads(monkeypatch) -> None:
     application.dependency_overrides[get_session] = lambda: session
     monkeypatch.setattr(
         "orchestrator.api.health.MigrationContext.configure",
-        lambda _connection: Mock(get_current_revision=lambda: "database-head"),
+        lambda _connection: Mock(get_current_heads=lambda: ("database-head",)),
     )
     monkeypatch.setattr(
         "orchestrator.api.health.ScriptDirectory.from_config",
         lambda _config: Mock(get_heads=lambda: ["head-a", "head-b"]),
     )
+
+    response = TestClient(application).get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {"status": "unavailable", "reason": "migration_drift"}
+
+
+@pytest.mark.parametrize("database_heads", [(), ("extra-database-head",)])
+def test_readiness_rejects_real_database_zero_or_multiple_heads(
+    migrated_session: Session,
+    database_heads: tuple[str, ...],
+) -> None:
+    migrated_session.execute(text("DELETE FROM alembic_version"))
+    for head in database_heads:
+        migrated_session.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES (:head)"),
+            {"head": head},
+        )
+    if database_heads:
+        script_head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+        assert script_head is not None
+        migrated_session.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES (:head)"),
+            {"head": script_head},
+        )
+    application = create_app()
+    application.dependency_overrides[get_session] = lambda: migrated_session
 
     response = TestClient(application).get("/health/ready")
 
@@ -101,7 +132,7 @@ def test_readiness_sanitizes_alembic_configuration_failure(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "orchestrator.api.health.MigrationContext.configure",
-        lambda _connection: Mock(get_current_revision=lambda: "head"),
+        lambda _connection: Mock(get_current_heads=lambda: ("head",)),
     )
     monkeypatch.setattr("orchestrator.api.health.ScriptDirectory.from_config", fail_config)
 
