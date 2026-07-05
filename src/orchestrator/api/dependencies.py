@@ -29,6 +29,10 @@ class AuthConfig:
     credential_key_header: str = "X-Credential-Key-Id"
     csrf_secret: bytes | None = None
 
+    def __post_init__(self) -> None:
+        if self.csrf_secret is not None and len(self.csrf_secret) < 32:
+            raise ValueError("csrf_secret must contain at least 32 bytes")
+
 
 class APIAuthenticationError(PermissionError):
     def __init__(self, code: str) -> None:

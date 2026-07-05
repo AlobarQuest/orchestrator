@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -49,7 +50,20 @@ def _session_id(request: Request) -> str:
     existing = getattr(request.state, "review_session_id", None)
     if isinstance(existing, str):
         return existing
-    session_id = request.cookies.get(CSRF_COOKIE) or secrets.token_urlsafe(32)
+    candidate = request.cookies.get(CSRF_COOKIE)
+    session_id = ""
+    if candidate is not None:
+        try:
+            raw, signature = candidate.rsplit(".", 1)
+            expected = hmac.new(_csrf_secret(request), raw.encode(), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected, signature):
+                session_id = candidate
+        except ValueError:
+            pass
+    if not session_id:
+        raw = secrets.token_urlsafe(32)
+        signature = hmac.new(_csrf_secret(request), raw.encode(), hashlib.sha256).hexdigest()
+        session_id = f"{raw}.{signature}"
     request.state.review_session_id = session_id
     return session_id
 
@@ -107,7 +121,7 @@ def _require_form(
         encoded, signature = csrf_token.rsplit(".", 1)
         expected = hmac.new(_csrf_secret(request), encoded.encode(), hashlib.sha256).hexdigest()
         payload = json.loads(base64.urlsafe_b64decode(encoded).decode())
-    except (ValueError, TypeError, json.JSONDecodeError):
+    except (ValueError, TypeError, json.JSONDecodeError, binascii.Error):
         payload, expected, signature = {}, "", ""
     valid = (
         hmac.compare_digest(expected, signature)
