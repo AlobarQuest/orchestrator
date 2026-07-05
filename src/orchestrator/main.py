@@ -5,6 +5,7 @@ from orchestrator.api.dependencies import APIAuthenticationError, AuthConfig
 from orchestrator.api.health import router as health_router
 from orchestrator.api.routes import router as api_router
 from orchestrator.errors import DomainError
+from orchestrator.web import router as web_router
 
 
 def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
@@ -29,7 +30,7 @@ def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
     @application.exception_handler(DomainError)
     async def domain_error_handler(_request: Request, error: DomainError) -> JSONResponse:
         status = 404 if error.code.endswith("_not_found") else 409
-        if error.code in {"role_forbidden", "human_actor_required"}:
+        if error.code in {"role_forbidden", "human_actor_required", "csrf_rejected"}:
             status = 403
         detail = {"code": error.code, "message": error.message}
         if error.recovery is not None:
@@ -41,6 +42,7 @@ def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
 
     application.include_router(api_router)
     application.include_router(health_router)
+    application.include_router(web_router)
     return application
 
 

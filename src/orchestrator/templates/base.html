@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Orchestrator review{% endblock %}</title>
+  <style>
+    :root { color-scheme: light; --ink: oklch(24% 0.015 255); --muted: oklch(49% 0.015 255); --line: oklch(86% 0.012 255); --paper: oklch(98% 0.006 255); --panel: oklch(94% 0.009 255); --accent: oklch(48% 0.12 245); --danger: oklch(48% 0.13 28); }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+    header { border-bottom: 1px solid var(--line); padding: 1rem max(1rem, calc((100% - 72rem)/2)); }
+    header a { color: var(--ink); font-weight: 700; text-decoration: none; }
+    main { max-width: 72rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+    h1 { font-size: 1.8rem; line-height: 1.2; } h2 { margin-top: 2.5rem; font-size: 1.3rem; } h3 { font-size: 1.05rem; }
+    a { color: var(--accent); } a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid oklch(72% 0.13 245); outline-offset: 3px; }
+    .group { border-top: 1px solid var(--line); margin-top: 1.5rem; }
+    .unit { display: grid; grid-template-columns: minmax(12rem, 1fr) 2fr; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid var(--line); }
+    .meta, small { color: var(--muted); } .status { font-weight: 650; }
+    dl { display: grid; grid-template-columns: minmax(9rem, 14rem) 1fr; gap: .55rem 1rem; } dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+    table { width: 100%; border-collapse: collapse; } th, td { padding: .65rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    form { max-width: 42rem; padding: 1rem 0 1.5rem; border-bottom: 1px solid var(--line); }
+    label { display: block; font-weight: 650; margin: .7rem 0 .3rem; } textarea, select, input[type=number] { width: 100%; padding: .65rem; border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: .25rem; }
+    .confirm { display: flex; gap: .5rem; align-items: start; font-weight: 400; }
+    button { margin-top: .8rem; padding: .65rem .9rem; border: 1px solid var(--accent); border-radius: .25rem; background: var(--accent); color: oklch(98% .005 255); font: inherit; font-weight: 700; cursor: pointer; }
+    button.danger { background: var(--danger); border-color: var(--danger); }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); padding: .75rem; }
+    .empty { color: var(--muted); font-style: italic; }
+    @media (max-width: 42rem) { .unit, dl { grid-template-columns: 1fr; } dt { font-weight: 650; } }
+  </style>
+</head>
+<body>
+  <header><a href="/review">Orchestrator review</a></header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

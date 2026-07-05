@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Evidence Pack: {{ unit.title }}{% endblock %}
+{% block content %}
+<p><a href="/review/units/{{ unit.id }}">← Work unit</a></p><h1>Evidence Pack</h1><p class="status">{{ unit.title }} · {{ unit.state }}</p>
+<h2>Canonical provenance</h2><dl><dt>Package revision</dt><dd>{{ revision.revision }}</dd><dt>Content hash</dt><dd>{{ revision.content_hash }}</dd><dt>Source path</dt><dd>{{ revision.source_path }}</dd><dt>Source commit</dt><dd>{{ revision.source_commit }}</dd><dt>Registered by</dt><dd>{{ revision.registered_by }}</dd></dl>
+<h2>Authority</h2><p><code>{{ unit.authority_fingerprint }}</code></p><pre>{{ revision.enforcement_snapshot }}</pre>
+<h2>Dependencies and claims</h2><ul>{% for row in dependencies %}<li>{{ row.kind }}: {{ row.status }}</li>{% else %}<li>None recorded</li>{% endfor %}{% for row in claims %}<li>Attempt {{ row.attempt }} claimed by {{ row.claimed_by }}, expires {{ row.lease_expires_at }}, reason {{ row.terminal_reason or "active" }}</li>{% endfor %}</ul>
+<h2>AC-keyed evidence, including supersession</h2><table><tr><th>AC</th><th>Type</th><th>Reference or payload</th><th>Supersedes</th></tr>{% for row in evidence %}<tr><td>{{ row.ac_id }}</td><td>{{ row.evidence_type }}</td><td>{{ row.stable_ref or row.payload }}</td><td>{{ row.supersedes_evidence_id or "Current root" }}</td></tr>{% else %}<tr><td colspan="4">No evidence recorded.</td></tr>{% endfor %}</table>
+<h2>Adjudications and waiver facts</h2><ul>{% for row in adjudications %}<li>{{ row.ac_id }}: {{ row.outcome }} by {{ row.decided_by }}. {{ row.rationale }}{% if row.outcome == "waived" %} Risk: {{ row.risk }}. Follow-up: {{ row.follow_up }}. Scope: {{ row.scope or "full" }}. Expires: {{ row.expires_at or "never" }}.{% endif %}</li>{% else %}<li>No adjudications recorded.</li>{% endfor %}</ul>
+<h2>Approvals</h2><ul>{% for row in approvals %}<li>{{ row.subject_type }} {{ row.decision }} by {{ row.approved_by }}: {{ row.reason }}</li>{% else %}<li>No approvals recorded.</li>{% endfor %}</ul>
+<h2>Event history</h2><ol>{% for row in events %}<li>{{ row.occurred_at }} · {{ row.action }} · {{ row.actor_id }} · {{ row.from_state or "none" }} to {{ row.to_state or "none" }}</li>{% else %}<li>No events recorded.</li>{% endfor %}</ol>
+{% endblock %}
