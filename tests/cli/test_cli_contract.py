@@ -120,7 +120,6 @@ def test_human_transition_output_contains_contract_identity(
     [
         (["register-revision"], "POST", "/api/v1/revisions"),
         (["register-unit", "revision-1"], "POST", "/api/v1/revisions/revision-1/work-units"),
-        (["approve-action", "unit-1"], "POST", "/api/v1/work-units/unit-1/approvals"),
         (["adjudicate", "unit-1"], "POST", "/api/v1/work-units/unit-1/adjudications"),
         (
             ["authorize-retry", "unit-1"],
@@ -159,6 +158,59 @@ def test_mutation_nouns_forward_json_payload(
     }
 
 
+def test_record_approval_has_explicit_validated_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_request(method: str, path: str, payload=None):
+        observed.update(method=method, path=path, payload=payload)
+        return {"id": "approval-1"}
+
+    monkeypatch.setattr("orchestrator.cli.request", fake_request)
+    result = CliRunner().invoke(
+        app,
+        [
+            "record-approval",
+            "unit-1",
+            "--idempotency-key",
+            "approval-1",
+            "--expected-version",
+            "2",
+            "--subject-type",
+            "authority",
+            "--reason",
+            "approved",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed["payload"] == {
+        "idempotency_key": "approval-1",
+        "expected_version": 2,
+        "subject_type": "authority",
+        "reason": "approved",
+    }
+
+    invalid = CliRunner().invoke(
+        app,
+        [
+            "record-approval",
+            "unit-1",
+            "--idempotency-key",
+            "approval-2",
+            "--expected-version",
+            "2",
+            "--subject-type",
+            "worker",
+            "--reason",
+            "invalid",
+        ],
+    )
+    assert invalid.exit_code == 2
+
+
 def test_cli_source_has_no_forbidden_domain_or_database_imports() -> None:
     source = Path("src/orchestrator/cli.py").read_text()
     imports = {
@@ -180,5 +232,7 @@ def test_cli_source_has_no_forbidden_domain_or_database_imports() -> None:
         or name.startswith("orchestrator.kernel.")
         or name == "orchestrator.persistence"
         or name.startswith("orchestrator.persistence.")
+        or name == "orchestrator.services"
+        or name.startswith("orchestrator.services.")
         for name in imports
     )

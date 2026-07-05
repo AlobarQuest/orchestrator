@@ -2,12 +2,13 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import httpx
 import typer
 
 app = typer.Typer(no_args_is_help=True)
+HTTP_TRANSPORT: httpx.BaseTransport | None = None
 JsonObject = dict[str, Any]
 JsonOption = Annotated[bool, typer.Option("--json", help="Write deterministic JSON.")]
 DataOption = Annotated[str, typer.Option("--data", help="Request body as a JSON object.")]
@@ -53,15 +54,33 @@ def request(method: str, path: str, payload: JsonObject | None = None) -> Any:
     headers = {"Authorization": f"Bearer {settings.api_token}"}
     if settings.credential_key_id:
         headers["X-Credential-Key-Id"] = settings.credential_key_id
-    with httpx.Client(
-        base_url=settings.api_url,
-        headers=headers,
-        timeout=30.0,
-    ) as client:
-        response = client.request(method, path, json=payload)
+    try:
+        with httpx.Client(
+            base_url=settings.api_url,
+            headers=headers,
+            timeout=30.0,
+            transport=HTTP_TRANSPORT,
+        ) as client:
+            response = client.request(method, path, json=payload)
+    except httpx.TimeoutException:
+        raise CliError({"code": "api_timeout", "message": "API request timed out"}) from None
+    except httpx.RequestError:
+        raise CliError(
+            {"code": "api_unavailable", "message": "API request could not be completed"}
+        ) from None
     if response.is_error:
         raise CliError.from_response(response)
-    return response.json()
+    try:
+        value = response.json()
+    except ValueError:
+        raise CliError(
+            {"code": "invalid_response", "message": "API returned an invalid response"}
+        ) from None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        return {"items": value}
+    raise CliError({"code": "invalid_response", "message": "API returned an invalid response"})
 
 
 def _json_object(value: str) -> JsonObject:
@@ -214,9 +233,28 @@ for _command_name in (
     _register_lifecycle_command(_command_name)
 
 
-@app.command("approve-action")
-def approve_action(unit_id: str, data: DataOption, json_output: JsonOption = False) -> None:
-    _post_data(f"/api/v1/work-units/{unit_id}/approvals", data, json_output)
+@app.command("record-approval")
+def record_approval(
+    unit_id: str,
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    expected_version: Annotated[int, typer.Option("--expected-version", min=0)],
+    subject_type: Annotated[Literal["authority", "action"], typer.Option("--subject-type")],
+    reason: Annotated[str, typer.Option("--reason", min=1)],
+    json_output: JsonOption = False,
+) -> None:
+    _run(
+        lambda: request(
+            "POST",
+            f"/api/v1/work-units/{unit_id}/approvals",
+            {
+                "idempotency_key": idempotency_key,
+                "expected_version": expected_version,
+                "subject_type": subject_type,
+                "reason": reason,
+            },
+        ),
+        json_output,
+    )
 
 
 @app.command()

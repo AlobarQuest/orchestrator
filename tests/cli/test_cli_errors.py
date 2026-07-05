@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from typer.testing import CliRunner
 
 from orchestrator.api.dependencies import get_actor, get_session
-from orchestrator.cli import app
+from orchestrator.cli import CliError, app, request
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.main import create_app
@@ -90,3 +90,142 @@ def test_cli_rejects_invalid_data_before_http(monkeypatch) -> None:
 
     assert result.exit_code == 2
     assert "data must be a JSON object" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "message"),
+    [
+        (
+            httpx.ConnectError(
+                "token=secret-token host=private.example",
+                request=httpx.Request("GET", "https://private.example"),
+            ),
+            "api_unavailable",
+            "API request could not be completed",
+        ),
+        (
+            httpx.ReadTimeout(
+                "timed out at https://private.example?token=secret-token",
+                request=httpx.Request("GET", "https://private.example"),
+            ),
+            "api_timeout",
+            "API request timed out",
+        ),
+    ],
+)
+def test_transport_failures_are_stable_and_do_not_leak(
+    monkeypatch,
+    error: httpx.RequestError,
+    code: str,
+    message: str,
+) -> None:
+    class FailingClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def request(self, *_args, **_kwargs):
+            raise error
+
+    monkeypatch.setattr("orchestrator.cli.httpx.Client", lambda **_kwargs: FailingClient())
+    monkeypatch.setenv("ORCHESTRATOR_API_TOKEN", "secret-token")
+    monkeypatch.setenv("ORCHESTRATOR_API_URL", "https://private.example")
+
+    with pytest.raises(CliError) as observed:
+        request("GET", "/api/v1/work-units/unit-1/history")
+
+    assert observed.value.detail == {"code": code, "message": message}
+    assert "secret-token" not in str(observed.value.detail)
+    assert "private.example" not in str(observed.value.detail)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(
+            200,
+            request=httpx.Request("GET", "https://private.example"),
+            content=b"not-json secret-token",
+        ),
+        httpx.Response(
+            200,
+            request=httpx.Request("GET", "https://private.example"),
+            json="secret-token",
+        ),
+    ],
+)
+def test_malformed_success_response_is_stable_and_does_not_leak(
+    monkeypatch, response: httpx.Response
+) -> None:
+    class ResponseClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def request(self, *_args, **_kwargs):
+            return response
+
+    monkeypatch.setattr("orchestrator.cli.httpx.Client", lambda **_kwargs: ResponseClient())
+
+    with pytest.raises(CliError) as observed:
+        request("GET", "/api/v1/work-units/unit-1/history")
+
+    assert observed.value.detail == {
+        "code": "invalid_response",
+        "message": "API returned an invalid response",
+    }
+    assert "secret-token" not in str(observed.value.detail)
+
+
+def test_non_json_error_response_is_sanitized() -> None:
+    response = httpx.Response(
+        502,
+        request=httpx.Request("GET", "https://private.example?token=secret-token"),
+        content=b"upstream private.example token=secret-token",
+    )
+
+    error = CliError.from_response(response)
+
+    assert error.detail == {
+        "code": "http_error",
+        "message": "API request failed with HTTP 502",
+    }
+    assert "secret-token" not in str(error.detail)
+    assert "private.example" not in str(error.detail)
+
+
+def test_transport_failure_cli_exit_is_stable_and_sanitized(monkeypatch) -> None:
+    class FailingClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def request(self, *_args, **_kwargs):
+            raise httpx.ConnectError(
+                "secret-token private.example",
+                request=httpx.Request("GET", "https://private.example"),
+            )
+
+    monkeypatch.setattr("orchestrator.cli.httpx.Client", lambda **_kwargs: FailingClient())
+    monkeypatch.setenv("ORCHESTRATOR_API_TOKEN", "secret-token")
+    monkeypatch.setenv("ORCHESTRATOR_API_URL", "https://private.example")
+
+    result = CliRunner().invoke(app, ["history", "unit-1", "--json"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == {
+        "error": {
+            "code": "api_unavailable",
+            "message": "API request could not be completed",
+        }
+    }
+    assert "secret-token" not in result.stdout
+    assert "private.example" not in result.stdout
+    assert "secret-token" not in result.stderr
+    assert "private.example" not in result.stderr
