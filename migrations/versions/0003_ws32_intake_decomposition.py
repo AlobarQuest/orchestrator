@@ -67,6 +67,14 @@ def upgrade() -> None:
         "work_package_revisions",
         "verification_mode IS NULL OR verification_mode IN ('caller_attested_cli_verified')",
     )
+    op.create_check_constraint(
+        "ck_work_package_revisions_package_cli_verification_mode",
+        "work_package_revisions",
+        "("
+        "intake_source <> 'package_cli' OR "
+        "COALESCE(verification_mode = 'caller_attested_cli_verified', FALSE)"
+        ")",
+    )
 
     op.create_table(
         "package_acceptance_criteria",
@@ -113,6 +121,7 @@ def upgrade() -> None:
         sa.Column("idempotency_key", sa.String(), nullable=False, unique=True),
         _timestamp("created_at", default=True),
         sa.UniqueConstraint("work_package_revision_id", "proposal_number"),
+        sa.UniqueConstraint("id", "work_package_revision_id"),
         sa.CheckConstraint(
             "state IN ('proposed', 'approved', 'rejected', 'revision_required')",
             name="ck_decomposition_proposals_state",
@@ -213,7 +222,6 @@ def upgrade() -> None:
         sa.Column(
             "proposal_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("decomposition_proposals.id"),
             nullable=False,
         ),
         sa.Column("approved_by", sa.String(), nullable=False),
@@ -221,6 +229,11 @@ def upgrade() -> None:
         _timestamp("superseded_at", nullable=True),
         sa.Column("superseded_by", sa.String(), nullable=True),
         sa.Column("supersession_reason", sa.Text(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["proposal_id", "work_package_revision_id"],
+            ["decomposition_proposals.id", "decomposition_proposals.work_package_revision_id"],
+            name="fk_approved_decompositions_proposal_revision",
+        ),
     )
     op.create_index(
         "uq_approved_decompositions_active_revision",
@@ -252,6 +265,10 @@ def downgrade() -> None:
     op.drop_table("decomposition_proposal_units")
     op.drop_table("decomposition_proposals")
     op.drop_table("package_acceptance_criteria")
+    op.drop_constraint(
+        "ck_work_package_revisions_package_cli_verification_mode",
+        "work_package_revisions",
+    )
     op.drop_constraint(
         "ck_work_package_revisions_verification_mode",
         "work_package_revisions",

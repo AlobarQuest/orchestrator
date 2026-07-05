@@ -153,10 +153,11 @@ def test_ws32_projection_tables_are_append_only(
     )
     migrated_session.commit()
 
-    with pytest.raises(IntegrityError):
-        migrated_session.execute(
-            text(f"update {table} set condition = 'changed' where id = :id"),
-            {"id": criterion_id},
-        )
-        migrated_session.commit()
-    migrated_session.rollback()
+    for statement in (
+        f"update {table} set condition = 'changed' where id = :id",
+        f"delete from {table} where id = :id",
+    ):
+        with pytest.raises(IntegrityError):
+            migrated_session.execute(text(statement), {"id": criterion_id})
+            migrated_session.commit()
+        migrated_session.rollback()

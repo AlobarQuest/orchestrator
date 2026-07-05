@@ -56,6 +56,13 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
             name="ck_work_package_revisions_verification_mode",
         ),
         CheckConstraint(
+            "("
+            "intake_source <> 'package_cli' OR "
+            "COALESCE(verification_mode = 'caller_attested_cli_verified', FALSE)"
+            ")",
+            name="ck_work_package_revisions_package_cli_verification_mode",
+        ),
+        CheckConstraint(
             "content_hash <> '' AND source_path <> '' AND source_commit <> '' "
             "AND approved_by <> '' AND registered_by <> ''",
             name="ck_work_package_revisions_required_text",
@@ -343,6 +350,7 @@ class DecompositionProposal(UUIDPrimaryKey, Base):
     __tablename__ = "decomposition_proposals"
     __table_args__ = (
         UniqueConstraint("work_package_revision_id", "proposal_number"),
+        UniqueConstraint("id", "work_package_revision_id"),
         CheckConstraint(
             f"state IN {PROPOSAL_STATES!r}",
             name="ck_decomposition_proposals_state",
@@ -437,6 +445,11 @@ class DecompositionProposalRetainedAc(UUIDPrimaryKey, Base):
 class ApprovedDecomposition(UUIDPrimaryKey, Base):
     __tablename__ = "approved_decompositions"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["proposal_id", "work_package_revision_id"],
+            ["decomposition_proposals.id", "decomposition_proposals.work_package_revision_id"],
+            name="fk_approved_decompositions_proposal_revision",
+        ),
         Index(
             "uq_approved_decompositions_active_revision",
             "work_package_revision_id",
@@ -448,7 +461,7 @@ class ApprovedDecomposition(UUIDPrimaryKey, Base):
     work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("work_package_revisions.id")
     )
-    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("decomposition_proposals.id"))
+    proposal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
     approved_by: Mapped[str] = mapped_column(String)
     approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
