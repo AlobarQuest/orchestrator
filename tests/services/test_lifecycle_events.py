@@ -75,6 +75,32 @@ def test_reused_idempotency_key_for_different_transition_is_rejected(
     assert error.value.code == "idempotency_conflict"
 
 
+@pytest.mark.parametrize(
+    ("expected_version_delta", "role"),
+    [(1, ActorRole.SYSTEM), (0, ActorRole.WORKER)],
+)
+def test_idempotent_retry_requires_exact_command(
+    migrated_session: Session,
+    ready_unit,
+    expected_version_delta: int,
+    role: ActorRole,
+) -> None:
+    command = command_for(ready_unit)
+    transition_unit(migrated_session, command)
+    changed = TransitionCommand(
+        unit_id=command.unit_id,
+        target=command.target,
+        actor=ActorContext(command.actor.actor_id, role),
+        expected_version=command.expected_version + expected_version_delta,
+        idempotency_key=command.idempotency_key,
+    )
+
+    with pytest.raises(DomainError) as error:
+        transition_unit(migrated_session, changed)
+
+    assert error.value.code == "idempotency_conflict"
+
+
 def test_stale_expected_version_is_rejected(migrated_session: Session, ready_unit) -> None:
     command = command_for(ready_unit, idempotency_key=str(uuid.uuid4()))
     command = TransitionCommand(
