@@ -31,5 +31,5 @@ Outstanding gates:
 
 - onboard orchestrator into the project-standards foundation matrix;
 - complete Devon's rendered UI review;
-- obtain exact PR-head `Quality` evidence;
+- confirm `Quality` on the final evidence-only PR head;
 - complete Devon's final review and merge decision.

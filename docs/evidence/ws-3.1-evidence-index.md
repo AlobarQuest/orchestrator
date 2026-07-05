@@ -29,6 +29,24 @@ onboarding, Devon's final review, and Devon's merge remain outstanding.
 - In-app browser discovery returned no available browser surface. Rendered UI
   inspection is absent and remains Devon-owned evidence.
 
+## Pull request CI evidence
+
+- Draft PR: `https://github.com/AlobarQuest/orchestrator/pull/1`
+- Evaluated head: `5ea9504cc46f57cf3d551c66a4981e844ecfc92c`
+- Workflow: `Quality`
+- Event: `pull_request`
+- Check: `Quality`
+- Conclusion: `success`
+- Completed at: `2026-07-05T21:51:30Z`
+- Workflow run:
+  `https://github.com/AlobarQuest/orchestrator/actions/runs/28756038731`
+- Job:
+  `https://github.com/AlobarQuest/orchestrator/actions/runs/28756038731/job/85263232014`
+
+This CI evidence is exact for the pre-evidence PR head above. Committing this
+record creates a new documentation-only head; Task 14 must confirm a fresh
+`Quality` result for that final head before handoff.
+
 ## Adversarial architecture review
 
 - The transition kernel declares the exact 13-state, 29-edge graph and tests all
@@ -148,16 +166,16 @@ onboarding, Devon's final review, and Devon's merge remain outstanding.
 
 ## AC-009
 
-- Outcome: failed
+- Outcome: passed
 - Evidence: local API/CLI contract command returned 63 passed, including real
-  HTTP/FastAPI/PostgreSQL parity, list response parity, and stable errors. The
-  required exact-revision GitHub `Quality` result does not exist until Task 14
-  publishes the draft PR. Local artifact:
-  `tests/cli/test_cli_http_parity.py`; commit
-  `aa76b29df0753a0eeba4cde67a3e4028d3da4c90`.
+  HTTP/FastAPI/PostgreSQL parity, list response parity, and stable errors.
+  PR-associated `Quality` succeeded for exact head
+  `5ea9504cc46f57cf3d551c66a4981e844ecfc92c`; workflow run
+  `28756038731`. Local artifact: `tests/cli/test_cli_http_parity.py`;
+  implementation commit `aa76b29df0753a0eeba4cde67a3e4028d3da4c90`.
 - Recorded by: codex
 - Recorded at: 2026-07-05T21:45:43Z
-- Review: policy; revise only after exact PR-head `Quality` evidence exists
+- Review: policy
 
 ## AC-010
 
