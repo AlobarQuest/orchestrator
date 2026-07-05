@@ -81,6 +81,7 @@ def auth_config() -> AuthConfig:
             "system-key": ActorRole.SYSTEM,
             "verifier-key": ActorRole.VERIFIER,
         },
+        csrf_secret=b"test-only-csrf-secret-with-32-bytes",
     )
 
 
@@ -92,7 +93,9 @@ def client(auth_config: AuthConfig) -> Iterator[TestClient]:
         yield Mock(spec=Session)
 
     app.dependency_overrides[get_session] = unavailable_session
-    with TestClient(app, raise_server_exceptions=False) as test_client:
+    with TestClient(
+        app, base_url="https://testserver", raise_server_exceptions=False
+    ) as test_client:
         yield test_client
 
 
@@ -105,5 +108,7 @@ def db_client(auth_config: AuthConfig, migrated_engine: Engine) -> Iterator[Test
             yield session
 
     app.dependency_overrides[get_session] = database_session
-    with TestClient(app, raise_server_exceptions=False) as test_client:
+    with TestClient(
+        app, base_url="https://testserver", raise_server_exceptions=False
+    ) as test_client:
         yield test_client

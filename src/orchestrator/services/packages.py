@@ -566,9 +566,11 @@ def resolve_dependency_command(
     return resolved
 
 
-def evaluate_readiness(session: Session, unit_id: uuid.UUID) -> ReadinessDecision:
+def evaluate_readiness(
+    session: Session, unit_id: uuid.UUID, *, for_update: bool = True
+) -> ReadinessDecision:
     repository = PackageRepository(session)
-    unit = repository.unit_for_update(unit_id)
+    unit = repository.unit_for_update(unit_id) if for_update else session.get(WorkUnit, unit_id)
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
     revision = session.get(WorkPackageRevision, unit.work_package_revision_id)

@@ -15,4 +15,5 @@ def test_queue_is_human_authenticated_and_grouped(
     assert "Awaiting review" in page.text
     assert review_unit.title in page.text
     assert "readiness" in page.text.lower()
+    assert "dependency_pending" in page.text
     assert "/review/units/" in page.text

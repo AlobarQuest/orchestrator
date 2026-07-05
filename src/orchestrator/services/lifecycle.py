@@ -36,6 +36,7 @@ class TransitionCommand:
     idempotency_key: str
     attempt: int | None = None
     lease_token: str | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +144,7 @@ def _transition_event(
             "actor_role": command.actor.role,
             "command": _command_identity(command, source),
             "registry_version": registry_version,
+            "reason": command.reason,
             "version": unit.version,
         },
         correlation_id=uuid.uuid4(),
@@ -189,6 +191,7 @@ def _command_identity(
         "lease_token_hash": (
             hash_lease_token(command.lease_token) if command.lease_token is not None else None
         ),
+        "reason": command.reason,
         "target": command.target,
         "unit_id": str(command.unit_id),
     }

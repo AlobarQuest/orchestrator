@@ -22,14 +22,21 @@ def test_detail_has_human_actions_but_no_worker_or_creation_controls(
 
 def test_review_form_uses_post_redirect_get(db_client: TestClient, review_unit: WorkUnit) -> None:
     page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
-    token = re.search(r'name="csrf_token" value="([^"]+)"', page.text)
-    assert token is not None
+    form = re.search(
+        rf'action="/review/units/{review_unit.id}/review">(.*?)</form>',
+        page.text,
+    )
+    assert form is not None
+    token = re.search(r'name="csrf_token" value="([^"]+)"', form.group(1))
+    idempotency = re.search(r'name="idempotency_key" value="([^"]+)"', form.group(1))
+    assert token is not None and idempotency is not None
 
     response = db_client.post(
         f"/review/units/{review_unit.id}/review",
         headers=HUMAN,
         data={
             "csrf_token": token.group(1),
+            "idempotency_key": idempotency.group(1),
             "expected_version": str(review_unit.version),
             "outcome": "revision_required",
             "reason": "Needs another pass",
@@ -40,3 +47,18 @@ def test_review_form_uses_post_redirect_get(db_client: TestClient, review_unit: 
 
     assert response.status_code == 303
     assert response.headers["location"] == f"/review/units/{review_unit.id}"
+
+    replay = db_client.post(
+        f"/review/units/{review_unit.id}/review",
+        headers=HUMAN,
+        data={
+            "csrf_token": token.group(1),
+            "idempotency_key": idempotency.group(1),
+            "expected_version": str(review_unit.version),
+            "outcome": "revision_required",
+            "reason": "Needs another pass",
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+    assert replay.status_code == 303

@@ -27,6 +27,7 @@ class AuthConfig:
     email_to_actor: Mapping[str, str]
     m2m_roles: Mapping[str, ActorRole] | None = None
     credential_key_header: str = "X-Credential-Key-Id"
+    csrf_secret: bytes | None = None
 
 
 class APIAuthenticationError(PermissionError):

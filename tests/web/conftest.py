@@ -5,7 +5,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import WorkUnitState
-from orchestrator.persistence.models import Approval, WorkUnit
+from orchestrator.persistence.models import Approval, Dependency, WorkUnit
 from tests.api.conftest import auth_config, db_client
 from tests.persistence.conftest import migrated_engine
 from tests.services.test_dependencies import register_unit
@@ -29,6 +29,15 @@ def review_unit(migrated_engine: Engine) -> WorkUnit:
             idempotency_key=f"authority-{unit.id}",
         )
         session.add(approval)
+        session.add(
+            Dependency(
+                work_unit_id=unit.id,
+                kind="external_system",
+                required_state_or_condition="passed",
+                external_ref="ci/review",
+                status="pending",
+            )
+        )
         session.flush()
         unit.authority_approval_id = approval.id
         session.commit()
