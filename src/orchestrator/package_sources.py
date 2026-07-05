@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import subprocess
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -11,6 +14,10 @@ import yaml
 
 class PackageSourceError(Exception):
     pass
+
+
+_HUMAN_OPERATOR_PROFILE = "human-operator-v1"
+_CHAIN_VERIFY_TIMEOUT_SECONDS = 30
 
 
 class _NoDatesLoader(yaml.SafeLoader):
@@ -100,6 +107,13 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return value
 
 
+def _resolve_source_path(path: Path) -> Path:
+    try:
+        return path.resolve(strict=True)
+    except OSError as exc:
+        raise PackageSourceError(f"could not resolve source path {path}: {exc}") from exc
+
+
 def _git_head(path: Path) -> str:
     result = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "HEAD"],
@@ -107,12 +121,156 @@ def _git_head(path: Path) -> str:
         text=True,
         check=False,
     )
-    return result.stdout.strip() if result.returncode == 0 else "unknown"
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "git rev-parse HEAD failed"
+        raise PackageSourceError(f"could not read git provenance for {path}: {detail}")
+    commit = result.stdout.strip()
+    if not commit:
+        raise PackageSourceError(f"could not read git provenance for {path}: empty git HEAD")
+    return commit
+
+
+def _intent_packages_src() -> Path | None:
+    sibling = Path(__file__).resolve().parents[2].parent / "intent-packages" / "src"
+    return sibling if sibling.is_dir() else None
+
+
+def _verify_with_intent_packages_cli(path: Path) -> bool | None:
+    sibling_src = _intent_packages_src()
+    if sibling_src is None:
+        return None
+    env = dict(os.environ)
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        f"{sibling_src}{os.pathsep}{existing_pythonpath}"
+        if existing_pythonpath
+        else str(sibling_src)
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "intent_packages", "verify-approval", str(path)],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+    except OSError:
+        return None
+    return result.returncode == 0
+
+
+def _security_registry_dir() -> Path | None:
+    env_dir = os.environ.get("SECURITY_STANDARDS_DIR")
+    if env_dir:
+        candidate = Path(env_dir) / "registry"
+        return candidate if candidate.is_dir() else None
+    candidate = Path.home() / "Projects" / "security-standards" / "registry"
+    return candidate if candidate.is_dir() else None
+
+
+def _is_human_operator(agent_id: str) -> bool:
+    registry_dir = _security_registry_dir()
+    if registry_dir is None:
+        return False
+    agent_path = registry_dir / "agents" / f"{agent_id}.yaml"
+    if not agent_path.is_file():
+        return False
+    data = _read_yaml(agent_path)
+    return data.get("authority_profile") == _HUMAN_OPERATOR_PROFILE
+
+
+def _security_standards_dir() -> Path | None:
+    env_dir = os.environ.get("SECURITY_STANDARDS_DIR")
+    if env_dir:
+        candidate = Path(env_dir)
+        return candidate if candidate.is_dir() else None
+    candidate = Path.home() / "Projects" / "security-standards"
+    return candidate if candidate.is_dir() else None
+
+
+def _factory_events_file() -> Path:
+    home = Path(os.environ.get("FACTORY_EVENTS_HOME", str(Path.home() / ".factory")))
+    return home / "events.jsonl"
+
+
+def _verify_factory_chain() -> bool:
+    sec_std_dir = _security_standards_dir()
+    if sec_std_dir is None:
+        return False
+    src_dir = sec_std_dir / "src"
+    env = dict(os.environ)
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        f"{src_dir}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(src_dir)
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "factory_events", "verify"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=_CHAIN_VERIFY_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _events_file_has_matching_approval(approved_hash: str, revision: object) -> bool:
+    if not isinstance(revision, int):
+        return False
+    events_file = _factory_events_file()
+    if not events_file.is_file():
+        return False
+    try:
+        text = events_file.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        event = obj.get("event", obj)
+        if event.get("action") != "package.approved":
+            continue
+        evidence = event.get("evidence")
+        if not isinstance(evidence, list):
+            continue
+        if any(
+            isinstance(item, dict)
+            and item.get("approved_hash") == approved_hash
+            and item.get("revision") == revision
+            for item in evidence
+        ):
+            return True
+    return False
+
+
+def _verify_current_approval(
+    path: Path,
+    approved_hash: str,
+    revision: object,
+    approver: object,
+) -> bool:
+    sibling_verification = _verify_with_intent_packages_cli(path)
+    if sibling_verification is not None:
+        return sibling_verification
+    if not isinstance(approver, str) or not _is_human_operator(approver):
+        return False
+    if not _verify_factory_chain():
+        return False
+    return _events_file_has_matching_approval(approved_hash, revision)
 
 
 def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[str, object]:
-    package = _read_yaml(path / "package.yaml")
-    lineage = _read_yaml(path / "lineage.yaml")
+    resolved_path = _resolve_source_path(path)
+    package = _read_yaml(resolved_path / "package.yaml")
+    lineage = _read_yaml(resolved_path / "lineage.yaml")
     approvals = lineage.get("approvals")
     if not isinstance(approvals, list):
         raise PackageSourceError("lineage approvals must be a list")
@@ -133,14 +291,17 @@ def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[s
     acceptance = package.get("acceptance")
     if not isinstance(acceptance, list):
         raise PackageSourceError("package acceptance must be a list")
+    approver = approval.get("approver")
+    if not _verify_current_approval(resolved_path, approved_hash, revision, approver):
+        raise PackageSourceError("approval verification failed")
     return {
         "package_id": package["package_id"],
         "source_repository": source_repository,
         "revision": revision,
         "content_hash": approved_hash,
-        "source_path": str(path),
-        "source_commit": _git_head(path),
-        "approved_by": approval["approver"],
+        "source_path": str(resolved_path),
+        "source_commit": _git_head(resolved_path),
+        "approved_by": approver,
         "approved_at": approval["approved_at"],
         "approval_event_id": approval["event_id"],
         "approval_ledger_commit": approval.get("commit"),
