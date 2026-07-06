@@ -2,7 +2,7 @@
 
 **Intent package:** `ws-3.3-protocol-smoke-runtime-semantics`, revision 1  
 **Approved hash:** `7829f22bfa30630a906d75131c84bc018c5dac3ceac7b933b7c9b46d23e5047a`  
-**Status:** Draft design for Devon review
+**Status:** Approved by Devon; amended by adversarial review resolutions before implementation planning
 
 ## 1. Boundary
 
@@ -41,9 +41,11 @@ WS-3.3 should not replace these surfaces. It should add runtime protocol semanti
 Use a mix:
 
 1. **Synthetic protocol package fixture:** a small test package under orchestrator test fixtures that validates like a real approved software-delivery package. It has enough proposed units to exercise every runtime lifecycle path deterministically.
-2. **Closed Phase-2 package fixtures:** register and decompose `ws-2.4-ci-evidence-control` and `ws-2.4-historical-listing-launch` as package-intake/decomposition acceptance examples.
+2. **Closed Phase-2 package fixtures:** register and decompose `ws-2.4-ci-evidence-control` and `ws-2.4-historical-listing-launch` as package-intake/decomposition acceptance examples through an explicit `protocol_fixture` intake mode.
 
 The synthetic package drives exhaustive smoke paths. The two Phase-2 packages prove domain-neutral intake/decomposition against real historical contracts, but WS-3.3 must not execute their real work. The listing package remains universal-domain; no listing-specific profile is added.
+
+Closed packages must not be smuggled through the existing executable package-intake path, because WS-3.2 intentionally accepts only `approved` status for executable intake. WS-3.3 adds a narrow fixture-only mode that accepts a chain-verified closed package revision for local protocol proof while marking the resulting units as non-executable acceptance examples unless a test explicitly moves a synthetic fixture unit through runtime states. The mode preserves approved hash/source/approval facts and records that the package was closed at fixture intake time.
 
 ### D2 - Preflight Gate Placement
 
@@ -53,6 +55,8 @@ Gate both **claim** and **execute**, with different meanings.
 - Execute preflight answers: "Has the worker's context drifted since claim in a way that changes authorization or reproducibility?"
 
 This prevents queue capture by an unqualified or stale worker and catches context drift after a long claim/renew window. The execute gate should accept an unchanged claim-time context, a same-scope updated context, or a newly approved authority-expanding context. It rejects missing, stale, and unapproved authority-expanding context.
+
+Preflight must be re-evaluated inside the same database transaction as claim and start. The standalone preflight endpoint is diagnostic only; it may create a snapshot, but a later claim/start cannot trust that snapshot without rechecking the current work-unit state, actor, authority envelope, package-required context, and supplied context fingerprint under lock.
 
 ### D3 - Standing-Context Fields
 
@@ -86,6 +90,7 @@ Each snapshot stores:
 
 - actor ID and role;
 - work-package revision ID and work-unit ID;
+- claim ID and attempt when the snapshot is bound to a claim or execution attempt;
 - normalized context JSON;
 - context fingerprint;
 - classification: `same_scope`, `authority_expanding`, `missing_required`, `stale`, or `accepted`;
@@ -93,7 +98,7 @@ Each snapshot stores:
 - optional approval ID;
 - created event ID.
 
-Claims record `claim_context_snapshot_id`. Execute/start events record `execution_context_snapshot_id` in the event payload. Evidence records get a nullable `context_snapshot_id` column and should use the execution snapshot for worker-submitted evidence. This gives verifiers a stable way to prove which context the worker used without trusting free-form evidence payload text.
+Claims record `claim_context_snapshot_id`. Claims also record `execution_context_snapshot_id` once start succeeds for that attempt. Execute/start events include the same ID in the event payload. Evidence records get a nullable `context_snapshot_id` column and must use the current claim's execution snapshot for worker-submitted evidence unless the request supplies an equivalent accepted snapshot for the same unit, claim, actor, and attempt. This gives verifiers a stable way to prove which context the worker used without trusting free-form evidence payload text.
 
 ### D5 - Same-Scope vs Authority-Expanding Updates
 
@@ -115,7 +120,7 @@ Authority-expanding updates include:
 - losing a required standard or package context;
 - changing package-required context after approval.
 
-Authority expansion must not execute under the existing claim. It either invalidates readiness or requires a named human approval recorded against the work unit before execution resumes.
+Authority expansion must not execute under the existing claim. Before claim, authority expansion rejects readiness for that worker context. After claim, authority expansion puts the unit on the existing `awaiting_approval` path or rejects start/evidence until a named human approval is recorded against the work unit and the exact context fingerprint.
 
 ### D6 - Skill-Subscription Model
 
@@ -188,6 +193,8 @@ Columns:
 - `id`;
 - `work_package_revision_id`;
 - `work_unit_id`;
+- `claim_id`;
+- `attempt`;
 - `actor_id`;
 - `actor_role`;
 - `context`;
@@ -204,13 +211,15 @@ Constraints:
 - `classification` enum: `accepted`, `same_scope`, `authority_expanding`, `missing_required`, `stale`;
 - `decision` enum: `accepted`, `rejected`, `requires_approval`;
 - `(work_unit_id, idempotency_key)` unique;
-- `approval_id` required when decision is `accepted` for an authority-expanding update.
+- `approval_id` required when decision is `accepted` for an authority-expanding update;
+- when `claim_id` is present, `attempt` must match the linked claim attempt.
 
 ### Claim and Evidence Links
 
 Add:
 
 - `claims.context_snapshot_id`;
+- `claims.execution_context_snapshot_id`;
 - `evidence.context_snapshot_id`.
 
 These are nullable for existing rows and legacy tests. WS-3.3 protocol smoke tests should assert they are present for worker paths that claim, start, and submit evidence.
@@ -227,11 +236,11 @@ Add:
 
 Modify:
 
-- `POST /api/v1/work-units/{unit_id}/claim` accepts `context_snapshot_id` or inline `standing_context`.
-- `POST /api/v1/work-units/{unit_id}/commands/start` accepts `context_snapshot_id` or inline `standing_context`.
+- `POST /api/v1/work-units/{unit_id}/claim` accepts inline `standing_context` and creates an accepted claim-bound snapshot in the same transaction.
+- `POST /api/v1/work-units/{unit_id}/commands/start` accepts inline `standing_context` or a previously recorded snapshot, re-evaluates it under lock, and records an execution snapshot for the active claim attempt.
 - `POST /api/v1/work-units/{unit_id}/evidence` records the current execution context or explicitly provided context snapshot.
 
-Design preference: support inline context on claim/start for ergonomic CLI use, while internally storing a snapshot and returning its ID. A separate preflight endpoint remains useful for dry-run diagnosis.
+Design preference: support inline context on claim/start for ergonomic CLI use, while internally storing a snapshot and returning its ID. A separate preflight endpoint remains useful for dry-run diagnosis but is not an authorization token.
 
 ### CLI
 
@@ -245,7 +254,7 @@ Extend:
 
 - `claim --context @context.json`;
 - `start --context @context.json`;
-- `append-evidence` accepts or infers `context_snapshot_id`.
+- `append-evidence` infers the active execution context for the supplied attempt and token, or accepts an explicit equivalent `context_snapshot_id`.
 
 ## 6. Protocol Smoke Suite
 
@@ -304,6 +313,8 @@ They should use package source facts from `intent-packages/main` and preserve ap
 
 The exhaustive runtime smoke suite should not execute these packages' real work; it should use the synthetic protocol package.
 
+Implementation note: the existing WS-3.2 executable intake path remains `approved`-only. The closed Phase-2 path must be named and tested as fixture/protocol acceptance intake, with architecture guards preventing it from becoming a general way to execute closed packages.
+
 ## 9. Risks and Controls
 
 | Risk | Control |
@@ -338,4 +349,3 @@ Remote check:
 - WS-4 adds factory-runner dispatch.
 - WS-5 adds independent verifier logic.
 - Phase 6 adds tracker projections and governed learning.
-
