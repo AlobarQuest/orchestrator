@@ -449,24 +449,19 @@ def register_dependency_command(
     unit = PackageRepository(session).unit_for_update(work_unit_id)
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
-    existing = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
-    identity = {
-        "actor_id": actor_id,
-        "expected_version": expected_version,
-        "spec": _json_identity(spec.__dict__),
-    }
-    if existing is not None:
-        dependency_id = existing.payload.get("dependency_id")
-        if existing.payload.get("command") != identity or not isinstance(dependency_id, str):
-            raise DomainError(
-                "idempotency_conflict",
-                "idempotency key belongs to a different operation",
-                "use a new idempotency key",
-            )
-        dependency = session.get(Dependency, uuid.UUID(dependency_id))
-        if dependency is None:
-            raise DomainError("dependency_not_found", "dependency does not exist", None)
-        return dependency
+    identity = _dependency_command_identity(
+        actor_id=actor_id,
+        expected_version=expected_version,
+        spec=spec,
+    )
+    replay = _dependency_replay(
+        session,
+        work_unit_id=unit.id,
+        identity=identity,
+        idempotency_key=idempotency_key,
+    )
+    if replay is not None:
+        return replay
     if unit.version != expected_version:
         raise DomainError(
             "version_conflict",
@@ -475,22 +470,53 @@ def register_dependency_command(
             current_state=unit.state,
             current_version=unit.version,
         )
-    dependency = register_dependency(session, work_unit_id=work_unit_id, spec=spec)
-    session.add(
-        Event(
-            actor_id=actor_id,
-            action="dependency.registered",
-            subject_type="work_unit",
-            subject_id=unit.id,
-            from_state=unit.state,
-            to_state=unit.state,
-            payload={"command": identity, "dependency_id": str(dependency.id)},
-            correlation_id=uuid.uuid4(),
-            idempotency_key=idempotency_key,
-        )
+    return _register_dependency_with_event(
+        session,
+        unit=unit,
+        spec=spec,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        idempotency_key=idempotency_key,
+        identity=identity,
     )
-    session.flush()
-    return dependency
+
+
+def register_dependency_with_event(
+    session: Session,
+    *,
+    work_unit_id: uuid.UUID,
+    spec: DependencySpec,
+    actor_id: str,
+    actor_role: ActorRole,
+    idempotency_key: str,
+) -> Dependency:
+    if actor_role not in {ActorRole.HUMAN, ActorRole.SYSTEM}:
+        raise DomainError("role_forbidden", "actor may not register dependencies", None)
+    unit = PackageRepository(session).unit_for_update(work_unit_id)
+    if unit is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    identity = _dependency_command_identity(
+        actor_id=actor_id,
+        expected_version=unit.version,
+        spec=spec,
+    )
+    replay = _dependency_replay(
+        session,
+        work_unit_id=unit.id,
+        identity=identity,
+        idempotency_key=idempotency_key,
+    )
+    if replay is not None:
+        return replay
+    return _register_dependency_with_event(
+        session,
+        unit=unit,
+        spec=spec,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        idempotency_key=idempotency_key,
+        identity=identity,
+    )
 
 
 def resolve_dependency(
@@ -656,6 +682,76 @@ def _validate_dependency_spec(spec: DependencySpec) -> None:
         raise DomainError("invalid_dependency", "work-unit dependency requires a unit", None)
     if spec.kind != "work_unit" and not has_external:
         raise DomainError("invalid_dependency", "external dependency requires a reference", None)
+
+
+def _dependency_command_identity(
+    *, actor_id: str, expected_version: int, spec: DependencySpec
+) -> dict[str, Any]:
+    return {
+        "actor_id": actor_id,
+        "expected_version": expected_version,
+        "spec": _json_identity(spec.__dict__),
+    }
+
+
+def _dependency_replay(
+    session: Session,
+    *,
+    work_unit_id: uuid.UUID,
+    identity: dict[str, Any],
+    idempotency_key: str,
+) -> Dependency | None:
+    existing = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
+    if existing is None:
+        return None
+    dependency_id = existing.payload.get("dependency_id")
+    if (
+        existing.action != "dependency.registered"
+        or existing.subject_type != "work_unit"
+        or existing.subject_id != work_unit_id
+        or existing.payload.get("command") != identity
+        or not isinstance(dependency_id, str)
+    ):
+        raise DomainError(
+            "idempotency_conflict",
+            "idempotency key belongs to a different operation",
+            "use a new idempotency key",
+        )
+    dependency = session.get(Dependency, uuid.UUID(dependency_id))
+    if dependency is None:
+        raise DomainError("dependency_not_found", "dependency does not exist", None)
+    return dependency
+
+
+def _register_dependency_with_event(
+    session: Session,
+    *,
+    unit: WorkUnit,
+    spec: DependencySpec,
+    actor_id: str,
+    actor_role: ActorRole,
+    idempotency_key: str,
+    identity: dict[str, Any],
+) -> Dependency:
+    if actor_role not in {ActorRole.HUMAN, ActorRole.SYSTEM}:
+        raise DomainError("role_forbidden", "actor may not register dependencies", None)
+    dependency = register_dependency(session, work_unit_id=unit.id, spec=spec)
+    session.add(
+        Event(
+            occurred_at=TransactionClock().now(session),
+            actor_id=actor_id,
+            action="dependency.registered",
+            subject_type="work_unit",
+            subject_id=unit.id,
+            from_state=unit.state,
+            to_state=unit.state,
+            payload={"command": identity, "dependency_id": str(dependency.id)},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=idempotency_key,
+        )
+    )
+    session.flush()
+    return dependency
 
 
 def _has_internal_dependency_cycle(

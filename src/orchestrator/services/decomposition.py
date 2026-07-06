@@ -8,10 +8,15 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
-from orchestrator.kernel.authority import AuthorityEnvelope, authority_fingerprint
+from orchestrator.kernel.authority import (
+    AuthorityEnvelope,
+    authority_fingerprint,
+    normalize_authority,
+)
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
+    ApprovedDecomposition,
     DecompositionProposal,
     DecompositionProposalAcMapping,
     DecompositionProposalDependency,
@@ -22,6 +27,11 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
 )
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.packages import (
+    DependencySpec,
+    register_approved_unit,
+    register_dependency_with_event,
+)
 
 _PROPOSAL_ACTION = "decomposition.proposed"
 _PACKAGE_CLI_SOURCE = "package_cli"
@@ -194,9 +204,204 @@ def submit_decomposition_proposal(
     return proposal
 
 
+def approve_decomposition_proposal(
+    session: Session,
+    proposal_id: uuid.UUID,
+    *,
+    actor: ActorContext,
+    reason: str,
+    idempotency_key: str,
+) -> DecompositionProposal:
+    _require_decision_actor(actor)
+    _require_decision_reason(reason)
+    replay = _decision_replay(
+        session,
+        proposal_id=proposal_id,
+        action="decomposition.approved",
+        actor=actor,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+    if replay is not None:
+        return replay
+
+    proposal = _proposal_for_decision(session, proposal_id)
+    revision = session.get(
+        WorkPackageRevision,
+        proposal.work_package_revision_id,
+        with_for_update=True,
+    )
+    if revision is None:
+        raise DomainError("revision_not_found", "package revision does not exist", None)
+    _require_proposed_state(proposal)
+
+    proposal_units = tuple(
+        session.scalars(
+            select(DecompositionProposalUnit)
+            .where(DecompositionProposalUnit.proposal_id == proposal.id)
+            .order_by(DecompositionProposalUnit.unit_key)
+            .with_for_update()
+        )
+    )
+    proposal_dependencies = tuple(
+        session.scalars(
+            select(DecompositionProposalDependency)
+            .where(DecompositionProposalDependency.proposal_id == proposal.id)
+            .order_by(
+                DecompositionProposalDependency.source_unit_key,
+                DecompositionProposalDependency.target_unit_key,
+                DecompositionProposalDependency.external_ref,
+            )
+            .with_for_update()
+        )
+    )
+    _revalidate_ac_disposition(
+        session,
+        revision.id,
+        proposal.id,
+        {unit.unit_key for unit in proposal_units},
+    )
+
+    existing_approval = session.scalar(
+        select(ApprovedDecomposition)
+        .where(
+            ApprovedDecomposition.work_package_revision_id == revision.id,
+            ApprovedDecomposition.superseded_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if existing_approval is not None:
+        raise DomainError(
+            "decomposition_already_approved",
+            "an active approved decomposition already exists for this revision",
+            None,
+        )
+
+    decided_at = TransactionClock().now(session)
+    created_work_unit_ids: dict[str, str] = {}
+    units_by_key: dict[str, uuid.UUID] = {}
+    for proposal_unit in proposal_units:
+        unit = register_approved_unit(
+            session,
+            revision_id=revision.id,
+            unit_id=_proposal_unit_id(proposal.id, proposal_unit.unit_key),
+            unit_key=proposal_unit.unit_key,
+            title=proposal_unit.title,
+            outcome=proposal_unit.outcome,
+            required_capability=proposal_unit.required_capability,
+            authority=normalize_authority(proposal_unit.authority),
+            max_attempts=proposal_unit.max_attempts,
+            approved_by=actor.actor_id,
+            approved_at=decided_at,
+            actor_id=actor.actor_id,
+            actor_role=actor.role,
+            activation_source="approved_decomposition",
+            idempotency_key=_derived_idempotency_key(
+                idempotency_key, f"unit:{proposal_unit.unit_key}"
+            ),
+        )
+        created_work_unit_ids[proposal_unit.unit_key] = str(unit.id)
+        units_by_key[proposal_unit.unit_key] = unit.id
+
+    for proposal_dependency in proposal_dependencies:
+        register_dependency_with_event(
+            session,
+            work_unit_id=units_by_key[proposal_dependency.source_unit_key],
+            spec=_dependency_spec(proposal_dependency, units_by_key),
+            actor_id=actor.actor_id,
+            actor_role=actor.role,
+            idempotency_key=_dependency_idempotency_key(idempotency_key, proposal_dependency),
+        )
+
+    approved = ApprovedDecomposition(
+        work_package_revision_id=revision.id,
+        proposal_id=proposal.id,
+        approved_by=actor.actor_id,
+        approved_at=decided_at,
+    )
+    session.add(approved)
+    proposal.state = "approved"
+    proposal.decided_by = actor.actor_id
+    proposal.decided_at = decided_at
+    proposal.decision_reason = reason
+    proposal.created_work_unit_ids = created_work_unit_ids
+    session.flush()
+    _record_decision_event(
+        session,
+        proposal=proposal,
+        actor=actor,
+        action="decomposition.approved",
+        from_state="proposed",
+        reason=reason,
+        idempotency_key=idempotency_key,
+        payload={
+            "approved_decomposition_id": str(approved.id),
+            "created_work_unit_ids": created_work_unit_ids,
+        },
+        occurred_at=decided_at,
+    )
+    return proposal
+
+
+def reject_decomposition_proposal(
+    session: Session,
+    proposal_id: uuid.UUID,
+    *,
+    actor: ActorContext,
+    reason: str,
+    idempotency_key: str,
+) -> DecompositionProposal:
+    return _decide_decomposition_proposal(
+        session,
+        proposal_id,
+        actor=actor,
+        reason=reason,
+        idempotency_key=idempotency_key,
+        action="decomposition.rejected",
+        to_state="rejected",
+    )
+
+
+def require_decomposition_revision(
+    session: Session,
+    proposal_id: uuid.UUID,
+    *,
+    actor: ActorContext,
+    reason: str,
+    idempotency_key: str,
+) -> DecompositionProposal:
+    return _decide_decomposition_proposal(
+        session,
+        proposal_id,
+        actor=actor,
+        reason=reason,
+        idempotency_key=idempotency_key,
+        action="decomposition.revision_required",
+        to_state="revision_required",
+    )
+
+
 def _require_submission_actor(actor: ActorContext) -> None:
     if not actor.actor_id or actor.role not in _ALLOWED_ROLES:
         raise DomainError("role_forbidden", "actor may not submit decomposition proposals", None)
+
+
+def _require_decision_actor(actor: ActorContext) -> None:
+    if not actor.actor_id or actor.role is not ActorRole.HUMAN:
+        raise DomainError(
+            "human_actor_required",
+            "decomposition decisions require a registered human actor",
+            None,
+        )
+
+
+def _require_decision_reason(reason: str) -> None:
+    if not reason.strip():
+        raise DomainError(
+            "decision_reason_required",
+            "decomposition decisions require a non-empty reason",
+            None,
+        )
 
 
 def _proposal_replay(
@@ -214,6 +419,31 @@ def _proposal_replay(
     ):
         raise _idempotency_conflict()
     proposal = session.get(DecompositionProposal, event.subject_id)
+    if proposal is None:
+        raise DomainError("event_invalid", "proposal event subject does not exist", None)
+    return proposal
+
+
+def _decision_replay(
+    session: Session,
+    *,
+    proposal_id: uuid.UUID,
+    action: str,
+    actor: ActorContext,
+    reason: str,
+    idempotency_key: str,
+) -> DecompositionProposal | None:
+    event = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
+    if event is None:
+        return None
+    if (
+        event.action != action
+        or event.subject_type != "decomposition_proposal"
+        or event.subject_id != proposal_id
+        or event.payload.get("command") != _decision_identity(action, proposal_id, actor, reason)
+    ):
+        raise _idempotency_conflict()
+    proposal = session.get(DecompositionProposal, proposal_id)
     if proposal is None:
         raise DomainError("event_invalid", "proposal event subject does not exist", None)
     return proposal
@@ -454,6 +684,21 @@ def _command_identity(
     }
 
 
+def _decision_identity(
+    action: str,
+    proposal_id: uuid.UUID,
+    actor: ActorContext,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "action": action,
+        "actor_id": actor.actor_id,
+        "actor_role": actor.role,
+        "proposal_id": str(proposal_id),
+        "reason": reason,
+    }
+
+
 def _dependency_identity(dependency: ProposedDependency) -> dict[str, Any]:
     return {
         "source_unit_key": dependency.source_unit_key,
@@ -462,6 +707,193 @@ def _dependency_identity(dependency: ProposedDependency) -> dict[str, Any]:
         "target_unit_key": dependency.target_unit_key,
         "external_ref": dependency.external_ref,
     }
+
+
+def _decide_decomposition_proposal(
+    session: Session,
+    proposal_id: uuid.UUID,
+    *,
+    actor: ActorContext,
+    reason: str,
+    idempotency_key: str,
+    action: str,
+    to_state: str,
+) -> DecompositionProposal:
+    _require_decision_actor(actor)
+    _require_decision_reason(reason)
+    replay = _decision_replay(
+        session,
+        proposal_id=proposal_id,
+        action=action,
+        actor=actor,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+    if replay is not None:
+        return replay
+    proposal = _proposal_for_decision(session, proposal_id)
+    _require_proposed_state(proposal)
+    decided_at = TransactionClock().now(session)
+    proposal.state = to_state
+    proposal.decided_by = actor.actor_id
+    proposal.decided_at = decided_at
+    proposal.decision_reason = reason
+    session.flush()
+    _record_decision_event(
+        session,
+        proposal=proposal,
+        actor=actor,
+        action=action,
+        from_state="proposed",
+        reason=reason,
+        idempotency_key=idempotency_key,
+        payload={},
+        occurred_at=decided_at,
+    )
+    return proposal
+
+
+def _proposal_for_decision(session: Session, proposal_id: uuid.UUID) -> DecompositionProposal:
+    proposal = session.get(DecompositionProposal, proposal_id, with_for_update=True)
+    if proposal is None:
+        raise DomainError(
+            "decomposition_proposal_not_found",
+            "decomposition proposal does not exist",
+            None,
+        )
+    return proposal
+
+
+def _require_proposed_state(proposal: DecompositionProposal) -> None:
+    if proposal.state != "proposed":
+        raise DomainError(
+            "decomposition_proposal_state_invalid",
+            "decomposition proposal is not awaiting decision",
+            "reload",
+            current_state=proposal.state,
+        )
+
+
+def _revalidate_ac_disposition(
+    session: Session,
+    revision_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+    unit_keys: set[str],
+) -> None:
+    package_criteria = tuple(
+        session.scalars(
+            select(PackageAcceptanceCriterion)
+            .where(PackageAcceptanceCriterion.work_package_revision_id == revision_id)
+            .order_by(PackageAcceptanceCriterion.ac_id)
+            .with_for_update()
+        )
+    )
+    criteria_by_id = {str(criterion.id): criterion for criterion in package_criteria}
+    ac_mappings = tuple(
+        session.scalars(
+            select(DecompositionProposalAcMapping)
+            .where(DecompositionProposalAcMapping.proposal_id == proposal_id)
+            .order_by(
+                DecompositionProposalAcMapping.package_acceptance_criterion_id,
+                DecompositionProposalAcMapping.unit_key,
+            )
+            .with_for_update()
+        )
+    )
+    retained_acs = tuple(
+        session.scalars(
+            select(DecompositionProposalRetainedAc)
+            .where(DecompositionProposalRetainedAc.proposal_id == proposal_id)
+            .order_by(DecompositionProposalRetainedAc.package_acceptance_criterion_id)
+            .with_for_update()
+        )
+    )
+    validated_mappings = _validated_ac_mappings(
+        tuple(
+            AcMapping(ac_id=str(mapping.package_acceptance_criterion_id), unit_key=mapping.unit_key)
+            for mapping in ac_mappings
+        ),
+        criteria_by_id,
+        unit_keys,
+    )
+    validated_retained = _validated_retained_acs(
+        tuple(
+            RetainedAc(
+                ac_id=str(retained.package_acceptance_criterion_id),
+                rationale=retained.rationale,
+            )
+            for retained in retained_acs
+        ),
+        criteria_by_id,
+    )
+    _validate_ac_coverage(criteria_by_id, validated_mappings, validated_retained)
+
+
+def _proposal_unit_id(proposal_id: uuid.UUID, unit_key: str) -> uuid.UUID:
+    return uuid.uuid5(proposal_id, unit_key)
+
+
+def _derived_idempotency_key(idempotency_key: str, suffix: str) -> str:
+    return f"{idempotency_key}:{suffix}"
+
+
+def _dependency_idempotency_key(
+    idempotency_key: str,
+    dependency: DecompositionProposalDependency,
+) -> str:
+    reference = dependency.target_unit_key or dependency.external_ref or "missing"
+    return _derived_idempotency_key(
+        idempotency_key,
+        f"dependency:{dependency.source_unit_key}:{dependency.kind}:{reference}",
+    )
+
+
+def _dependency_spec(
+    dependency: DecompositionProposalDependency,
+    units_by_key: Mapping[str, uuid.UUID],
+) -> DependencySpec:
+    if dependency.target_unit_key is not None:
+        return DependencySpec.work_unit(
+            units_by_key[dependency.target_unit_key],
+            dependency.required_state_or_condition,
+        )
+    assert dependency.external_ref is not None
+    return DependencySpec.external(
+        dependency.external_ref,
+        dependency.required_state_or_condition,
+    )
+
+
+def _record_decision_event(
+    session: Session,
+    *,
+    proposal: DecompositionProposal,
+    actor: ActorContext,
+    action: str,
+    from_state: str,
+    reason: str,
+    idempotency_key: str,
+    payload: Mapping[str, Any],
+    occurred_at: Any,
+) -> None:
+    session.add(
+        Event(
+            occurred_at=occurred_at,
+            actor_id=actor.actor_id,
+            action=action,
+            subject_type="decomposition_proposal",
+            subject_id=proposal.id,
+            from_state=from_state,
+            to_state=proposal.state,
+            payload={
+                "command": _decision_identity(action, proposal.id, actor, reason),
+                **payload,
+            },
+            correlation_id=uuid.uuid4(),
+            idempotency_key=idempotency_key,
+        )
+    )
+    session.flush()
 
 
 def _idempotency_conflict() -> DomainError:
