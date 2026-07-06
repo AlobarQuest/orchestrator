@@ -88,6 +88,17 @@ def test_package_intake_rejects_draft_status(migrated_session: Session) -> None:
     assert error.value.code == "package_intake_status_invalid"
 
 
+def test_package_intake_rejects_executable_status(migrated_session: Session) -> None:
+    with pytest.raises(DomainError) as error:
+        register_package_intake(
+            migrated_session,
+            intake_command(status_at_intake="executable"),
+            human_actor(),
+        )
+
+    assert error.value.code == "package_intake_status_invalid"
+
+
 def test_package_intake_requires_human_actor(migrated_session: Session) -> None:
     with pytest.raises(DomainError) as error:
         register_package_intake(

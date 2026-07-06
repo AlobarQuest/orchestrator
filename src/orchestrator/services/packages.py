@@ -12,6 +12,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import (
     AuthorityEnvelope,
     authority_fingerprint,
+    normalize_authority,
 )
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
 from orchestrator.kernel.readiness import (
@@ -24,6 +25,7 @@ from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
     ApprovedDecomposition,
+    DecompositionProposalUnit,
     Dependency,
     Event,
     WorkPackage,
@@ -263,6 +265,14 @@ def register_approved_unit(
     _require_allowed_unit_activation(
         session,
         revision,
+        unit_key=unit_key,
+        title=title,
+        outcome=outcome,
+        required_capability=required_capability,
+        authority=authority,
+        max_attempts=max_attempts,
+        approved_by=approved_by,
+        approved_at=approved_at,
         activation_source=activation_source,
         approved_decomposition_id=approved_decomposition_id,
     )
@@ -364,6 +374,14 @@ def _require_allowed_unit_activation(
     session: Session,
     revision: WorkPackageRevision,
     *,
+    unit_key: str,
+    title: str,
+    outcome: str,
+    required_capability: str,
+    authority: AuthorityEnvelope,
+    max_attempts: int,
+    approved_by: str,
+    approved_at: datetime,
     activation_source: str,
     approved_decomposition_id: uuid.UUID | None,
 ) -> None:
@@ -381,6 +399,27 @@ def _require_allowed_unit_activation(
         .with_for_update()
     )
     if approved is None:
+        raise _decomposition_approval_required()
+    proposal_unit = session.scalar(
+        select(DecompositionProposalUnit)
+        .where(
+            DecompositionProposalUnit.proposal_id == approved.proposal_id,
+            DecompositionProposalUnit.unit_key == unit_key,
+        )
+        .with_for_update()
+    )
+    if proposal_unit is None:
+        raise _decomposition_approval_required()
+    if (
+        proposal_unit.title != title
+        or proposal_unit.outcome != outcome
+        or proposal_unit.required_capability != required_capability
+        or proposal_unit.max_attempts != max_attempts
+        or authority_fingerprint(normalize_authority(proposal_unit.authority))
+        != authority_fingerprint(authority)
+        or approved.approved_by != approved_by
+        or approved.approved_at != approved_at
+    ):
         raise _decomposition_approval_required()
 
 

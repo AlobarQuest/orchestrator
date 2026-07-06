@@ -6,8 +6,8 @@ This index records local evidence for approved intent package
 
 The pre-evidence implementation head was
 `c6c6f45e80c059f2543708858796fe81eb82776c`. Evidence was recorded by `codex`
-at `2026-07-06T02:04:29Z`, with fresh branch-level checks repeated against
-`22c7acf22ca483e04bec8f710c5f2b0464d8a1b6`. This is not a completion claim.
+at `2026-07-06T02:04:29Z`, with fresh branch-level checks repeated after final
+review fixes. This is not a completion claim.
 Final whole-branch review, pushed PR CI, Devon's final review, and Devon's merge
 remain outstanding.
 
@@ -18,7 +18,7 @@ remain outstanding.
   source verification behavior.
 - `pytest tests/services/test_package_intake.py tests/services/test_package_registration.py -v`:
   passed during focused development after tightening package-cli activation. The
-  current package-intake file alone passed 9 tests.
+  current package-intake file alone passed 10 tests.
 - `pytest tests/services/test_decomposition.py tests/services/test_lifecycle_events.py -v`:
   passed during focused development after binding created work units to the
   active approved decomposition.
@@ -34,7 +34,7 @@ remain outstanding.
   passed.
 - `pyright tests/architecture/test_ws32_scope_guards.py`: passed, 0 errors.
 - `make check` with `TEST_DATABASE_URL` pointed at the local OrbStack PostgreSQL
-  endpoint: passed. Ruff, formatting, Pyright, and 571 pytest tests passed with
+  endpoint: passed. Ruff, formatting, Pyright, and 573 pytest tests passed with
   one existing Starlette/httpx deprecation warning.
 - Security scan
   `PYTHONPATH="$HOME/Projects/security-standards/src" python3 -m security_scan.cli . --category security`:
@@ -52,6 +52,12 @@ remain outstanding.
   unit creation. The test was corrected to assert that an active
   `approved_decomposition_id` is also required. Focused package-intake tests then
   passed.
+- Final whole-branch review found two blocking service-boundary gaps:
+  `status_at_intake="executable"` was still accepted, and an active
+  approved-decomposition id could be reused to mint a unit outside the approved
+  proposal. Regression tests were added and the service guards were tightened.
+  Focused API/CLI/service suite then passed 68 tests; the final full gate passed
+  573 tests.
 - One full run also produced PostgreSQL schema-reset cascade errors after the
   stale-test failure. Focused reproduction for `tests/services/test_dependencies.py`
   and for `tests/persistence/test_migrations.py tests/services/test_evidence.py`
@@ -99,15 +105,13 @@ remain outstanding.
   approval, rejection, revision-required, and already-decided display behavior.
 - Every intake, proposal, decision, and created work-unit path appends local
   attributable events in the service transaction.
-- Existing WS-3.1 gates continue to pass in the 571-test full local gate.
+- Existing WS-3.1 gates continue to pass in the 573-test full local gate.
 - No automatic merge path exists; architecture guards and workflow scan remain
   in force.
 
 ## Explicitly absent evidence
 
 - No pushed PR CI result exists yet for the final WS-3.2 branch head.
-- No independent final whole-branch security/architecture review has been
-  recorded yet after Task 9.
 - No production deployment, factory-runner dispatch, external factory-event/v1
   publication, tracker canonicalization, or automatic merge evidence exists;
   those remain out of scope.

@@ -17,7 +17,7 @@ from orchestrator.services.packages import register_revision
 
 _INTAKE_ACTION = "package_revision.intake_registered"
 _INTAKE_SOURCE = "package_cli"
-_VALID_STATUSES = frozenset({"approved", "executable"})
+_VALID_STATUSES = frozenset({"approved"})
 _VERIFICATION_MODE = "caller_attested_cli_verified"
 
 
@@ -70,7 +70,7 @@ def register_package_intake(
     if command.status_at_intake not in _VALID_STATUSES:
         raise DomainError(
             "package_intake_status_invalid",
-            "package intake requires approved or executable status",
+            "package intake requires approved status",
             None,
         )
     if command.verification_mode != _VERIFICATION_MODE:

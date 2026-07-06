@@ -495,6 +495,48 @@ def test_package_cli_revision_rejects_forged_approved_decomposition_id(
     assert error.value.code == "decomposition_approval_required"
 
 
+def test_package_cli_revision_rejects_extra_unit_for_active_approved_decomposition(
+    migrated_session: Session,
+) -> None:
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(revision.id, ac_ids),
+        worker_actor(),
+    )
+    approve_decomposition_proposal(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="Approve the proposed units.",
+        idempotency_key="proposal-approve-extra-unit-guard",
+    )
+    approved = migrated_session.scalar(
+        select(ApprovedDecomposition).where(ApprovedDecomposition.proposal_id == proposal.id)
+    )
+    assert approved is not None
+
+    with pytest.raises(DomainError) as error:
+        register_approved_unit(
+            migrated_session,
+            revision_id=revision.id,
+            unit_key="unit-extra",
+            title="Extra unit",
+            outcome="This unit was not approved.",
+            required_capability="repository_write",
+            authority=AUTHORITY,
+            approved_by="human-1",
+            approved_at=approved.approved_at,
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+            activation_source="approved_decomposition",
+            approved_decomposition_id=approved.id,
+        )
+
+    assert error.value.code == "decomposition_approval_required"
+
+
 def test_second_approval_is_rejected(migrated_session: Session) -> None:
     revision = register_intaken_revision(migrated_session)
     ac_ids = package_ac_ids(migrated_session, revision.id)
