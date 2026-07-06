@@ -105,6 +105,35 @@ def test_ws32_tables_exist_after_upgrade(migrated_session) -> None:
     assert "approved_decompositions" in tables
 
 
+def test_ws33_context_snapshot_tables_and_links_exist(migrated_engine) -> None:
+    inspector = inspect(migrated_engine)
+
+    columns = {column["name"] for column in inspector.get_columns("context_snapshots")}
+    assert {
+        "id",
+        "work_package_revision_id",
+        "work_unit_id",
+        "claim_id",
+        "attempt",
+        "actor_id",
+        "actor_role",
+        "context",
+        "context_fingerprint",
+        "classification",
+        "decision",
+        "approval_id",
+        "event_id",
+        "idempotency_key",
+        "created_at",
+    } <= columns
+
+    claim_columns = {column["name"] for column in inspector.get_columns("claims")}
+    assert {"context_snapshot_id", "execution_context_snapshot_id"} <= claim_columns
+
+    evidence_columns = {column["name"] for column in inspector.get_columns("evidence")}
+    assert "context_snapshot_id" in evidence_columns
+
+
 def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> None:
     package_id = register_test_revision(migrated_session).work_package_id
     migrated_session.commit()

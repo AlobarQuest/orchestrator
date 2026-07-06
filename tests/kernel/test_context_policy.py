@@ -1,3 +1,5 @@
+from typing import TypedDict, Unpack
+
 from orchestrator.kernel.context import (
     ContextDecision,
     classify_context_update,
@@ -6,7 +8,20 @@ from orchestrator.kernel.context import (
 )
 
 
-def required_context(**overrides: object) -> dict[str, object]:
+class ContextOverrides(TypedDict, total=False):
+    code_standards_version: str
+    security_standards_version: str
+    project_standards_version: str
+    agent_id: str
+    authority_profile: str
+    runtime_name: str
+    runtime_version: str
+    skill_bundle_id: str
+    skill_bundle_version: str
+    capabilities: list[str]
+
+
+def required_context(**overrides: Unpack[ContextOverrides]) -> dict[str, object]:
     return valid_context(**overrides)
 
 

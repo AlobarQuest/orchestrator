@@ -3,7 +3,6 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 REQUIRED_CONTEXT_FIELDS = (
     "code_standards_version",
@@ -67,7 +66,9 @@ def classify_context_update(
     )
 
     missing_fields = tuple(
-        field for field in REQUIRED_CONTEXT_FIELDS if _is_missing_field(current, current_normalized, field)
+        field
+        for field in REQUIRED_CONTEXT_FIELDS
+        if _is_missing_field(current, current_normalized, field)
     )
     if missing_fields:
         return ContextDecision(
@@ -108,8 +109,8 @@ def classify_context_update(
 
     same_scope_reasons: list[str] = []
     if previous_normalized is not None:
-        previous_capabilities = set(previous_normalized["capabilities"])
-        current_capabilities = set(current_normalized["capabilities"])
+        previous_capabilities = _capabilities_set(previous_normalized)
+        current_capabilities = _capabilities_set(current_normalized)
         if current_capabilities < previous_capabilities:
             same_scope_reasons.append("capabilities_narrowed")
         elif _standard_versions_changed(previous_normalized, current_normalized):
@@ -195,11 +196,11 @@ def _authority_expansion_reasons(
     allowed_capabilities: set[str],
 ) -> tuple[str, ...]:
     reasons: list[str] = []
-    current_capabilities = set(current_normalized["capabilities"])
+    current_capabilities = _capabilities_set(current_normalized)
     baseline_capabilities = (
-        set(previous_normalized["capabilities"])
+        _capabilities_set(previous_normalized)
         if previous_normalized is not None
-        else set(required_normalized["capabilities"])
+        else _capabilities_set(required_normalized)
     )
     if not current_capabilities.issubset(allowed_capabilities):
         reasons.append("capabilities_expanded")
@@ -239,3 +240,10 @@ def _standard_versions_changed(
         if previous_normalized[field] != current_normalized[field]:
             return True
     return False
+
+
+def _capabilities_set(context: Mapping[str, object]) -> set[str]:
+    capabilities = context.get("capabilities")
+    if not isinstance(capabilities, list):
+        return set()
+    return set(item for item in capabilities if isinstance(item, str))
