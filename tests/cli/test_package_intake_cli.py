@@ -1,9 +1,12 @@
+import json
 import shutil
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 import orchestrator.package_sources as package_sources
+from orchestrator.cli import app
 from orchestrator.package_sources import (
     PackageSourceError,
     VerifiedApproval,
@@ -473,3 +476,46 @@ def test_canonical_package_hash_uses_intent_package_ordering_rules() -> None:
         canonical_package_hash(package)
         == "04208f6cdb854e2ab1b07dd3633a39dec854344fe72824cf7f2fdb4e2e33129e"
     )
+
+
+def test_intake_package_reads_approved_fixture_and_posts_expected_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+    )
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
+
+    def fake_request(method: str, path: str, payload=None):
+        observed.update(method=method, path=path, payload=payload)
+        return {"id": "revision-1", "revision": 1}
+
+    monkeypatch.setattr("orchestrator.cli.request", fake_request)
+    result = CliRunner().invoke(
+        app,
+        [
+            "intake-package",
+            "tests/fixtures/intent-packages/ws32-approved-software",
+            "--source-repository",
+            "AlobarQuest/intent-packages",
+            "--idempotency-key",
+            "package-intake-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {"id": "revision-1", "revision": 1}
+    assert observed["method"] == "POST"
+    assert observed["path"] == "/api/v1/package-intakes"
+    payload = observed["payload"]
+    assert isinstance(payload, dict)
+    assert payload["idempotency_key"] == "package-intake-1"
+    assert payload["expected_version"] == 0
+    assert payload["package_id"] == "ws32-approved-software"
+    assert payload["source_repository"] == "AlobarQuest/intent-packages"
+    assert payload["source_commit"] == "deadbeef"
+    assert payload["verification_mode"] == "caller_attested_cli_verified"

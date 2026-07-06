@@ -120,6 +120,11 @@ def test_human_transition_output_contains_contract_identity(
     [
         (["register-revision"], "POST", "/api/v1/revisions"),
         (["register-unit", "revision-1"], "POST", "/api/v1/revisions/revision-1/work-units"),
+        (
+            ["propose-decomposition", "revision-1"],
+            "POST",
+            "/api/v1/package-intakes/revision-1/decomposition-proposals",
+        ),
         (["adjudicate", "unit-1"], "POST", "/api/v1/work-units/unit-1/adjudications"),
         (
             ["authorize-retry", "unit-1"],
@@ -156,6 +161,145 @@ def test_mutation_nouns_forward_json_payload(
         "path": path,
         "payload": {"expected_version": 2},
     }
+
+
+def test_intake_package_loads_fixture_payload_and_posts_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "orchestrator.cli.load_package_intake_payload",
+        lambda path, *, source_repository: {
+            "package_id": "pkg-ws32",
+            "source_repository": source_repository,
+            "source_path": str(path),
+        },
+    )
+
+    def fake_request(method: str, path: str, payload=None):
+        observed.update(method=method, path=path, payload=payload)
+        return {"id": "revision-1", "revision": 1}
+
+    monkeypatch.setattr("orchestrator.cli.request", fake_request)
+    result = CliRunner().invoke(
+        app,
+        [
+            "intake-package",
+            "tests/fixtures/intent-packages/ws32-approved-software",
+            "--source-repository",
+            "AlobarQuest/intent-packages",
+            "--idempotency-key",
+            "package-intake-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed == {
+        "method": "POST",
+        "path": "/api/v1/package-intakes",
+        "payload": {
+            "package_id": "pkg-ws32",
+            "source_repository": "AlobarQuest/intent-packages",
+            "source_path": "tests/fixtures/intent-packages/ws32-approved-software",
+            "idempotency_key": "package-intake-1",
+            "expected_version": 0,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("arguments", "path"),
+    [
+        (["show-package-intake", "revision-1"], "/api/v1/package-intakes/revision-1"),
+        (
+            ["list-decomposition-proposals", "revision-1"],
+            "/api/v1/package-intakes/revision-1/decomposition-proposals",
+        ),
+        (
+            ["show-decomposition-proposal", "proposal-1"],
+            "/api/v1/decomposition-proposals/proposal-1",
+        ),
+    ],
+)
+def test_get_commands_forward_without_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: list[str],
+    path: str,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_request(method: str, actual_path: str, payload=None):
+        observed.update(method=method, path=actual_path, payload=payload)
+        return {"id": "result-1"}
+
+    monkeypatch.setattr("orchestrator.cli.request", fake_request)
+    result = CliRunner().invoke(app, [*arguments, "--json"])
+
+    assert result.exit_code == 0
+    assert observed == {"method": "GET", "path": path, "payload": None}
+
+
+@pytest.mark.parametrize(
+    ("command", "path"),
+    [
+        ("approve-decomposition", "/api/v1/decomposition-proposals/proposal-1/approve"),
+        ("reject-decomposition", "/api/v1/decomposition-proposals/proposal-1/reject"),
+        (
+            "require-decomposition-revision",
+            "/api/v1/decomposition-proposals/proposal-1/require-revision",
+        ),
+    ],
+)
+def test_decomposition_decision_commands_have_explicit_validated_options(
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    path: str,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_request(method: str, actual_path: str, payload=None):
+        observed.update(method=method, path=actual_path, payload=payload)
+        return {"id": "proposal-1"}
+
+    monkeypatch.setattr("orchestrator.cli.request", fake_request)
+    result = CliRunner().invoke(
+        app,
+        [
+            command,
+            "proposal-1",
+            "--idempotency-key",
+            "decision-1",
+            "--reason",
+            "Looks good.",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed == {
+        "method": "POST",
+        "path": path,
+        "payload": {
+            "idempotency_key": "decision-1",
+            "expected_version": 0,
+            "reason": "Looks good.",
+        },
+    }
+
+    invalid = CliRunner().invoke(
+        app,
+        [
+            command,
+            "proposal-1",
+            "--idempotency-key",
+            "decision-2",
+            "--reason",
+            "",
+        ],
+    )
+    assert invalid.exit_code == 2
 
 
 def test_record_approval_has_explicit_validated_options(

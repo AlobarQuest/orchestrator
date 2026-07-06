@@ -2,10 +2,13 @@ import json
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import httpx
 import typer
+
+from orchestrator.package_sources import PackageSourceError, load_package_intake_payload
 
 app = typer.Typer(no_args_is_help=True)
 HTTP_TRANSPORT: httpx.BaseTransport | None = None
@@ -82,6 +85,11 @@ def request(method: str, path: str, payload: JsonObject | None = None) -> Any:
 
 
 def _json_object(value: str) -> JsonObject:
+    if value.startswith("@"):
+        try:
+            value = Path(value[1:]).read_text(encoding="utf-8")
+        except OSError as error:
+            raise typer.BadParameter("data must be a JSON object", param_hint="--data") from error
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError as error:
@@ -125,6 +133,42 @@ def _post_data(path: str, data: str, json_output: bool) -> None:
     _run(lambda: request("POST", path, payload), json_output)
 
 
+def _reason_option(value: str) -> str:
+    if not value.strip():
+        raise typer.BadParameter("reason must not be empty", param_hint="--reason")
+    return value
+
+
+def _load_intake_payload(path: Path, source_repository: str) -> JsonObject:
+    try:
+        return load_package_intake_payload(path, source_repository=source_repository)
+    except PackageSourceError as error:
+        raise CliError(
+            {"code": "package_source_error", "message": str(error)}
+        ) from error
+
+
+def _decomposition_decision(
+    endpoint: str,
+    proposal_id: str,
+    idempotency_key: str,
+    reason: str,
+    json_output: bool,
+) -> None:
+    _run(
+        lambda: request(
+            "POST",
+            f"/api/v1/decomposition-proposals/{proposal_id}/{endpoint}",
+            {
+                "idempotency_key": idempotency_key,
+                "expected_version": 0,
+                "reason": reason,
+            },
+        ),
+        json_output,
+    )
+
+
 @app.command("register-revision")
 def register_revision(data: DataOption, json_output: JsonOption = False) -> None:
     _post_data("/api/v1/revisions", data, json_output)
@@ -133,6 +177,56 @@ def register_revision(data: DataOption, json_output: JsonOption = False) -> None
 @app.command("register-unit")
 def register_unit(revision_id: str, data: DataOption, json_output: JsonOption = False) -> None:
     _post_data(f"/api/v1/revisions/{revision_id}/work-units", data, json_output)
+
+
+@app.command("intake-package")
+def intake_package(
+    path: Path,
+    source_repository: Annotated[str, typer.Option("--source-repository")],
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    json_output: JsonOption = False,
+) -> None:
+    def operation() -> Any:
+        payload = {
+            **_load_intake_payload(Path(path), source_repository),
+            "idempotency_key": idempotency_key,
+            "expected_version": 0,
+        }
+        return request("POST", "/api/v1/package-intakes", payload)
+
+    _run(operation, json_output)
+
+
+@app.command("show-package-intake")
+def show_package_intake(revision_id: str, json_output: JsonOption = False) -> None:
+    _run(lambda: request("GET", f"/api/v1/package-intakes/{revision_id}"), json_output)
+
+
+@app.command("propose-decomposition")
+def propose_decomposition(
+    revision_id: str, data: DataOption, json_output: JsonOption = False
+) -> None:
+    _post_data(
+        f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        data,
+        json_output,
+    )
+
+
+@app.command("list-decomposition-proposals")
+def list_decomposition_proposals(revision_id: str, json_output: JsonOption = False) -> None:
+    _run(
+        lambda: request(
+            "GET",
+            f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        ),
+        json_output,
+    )
+
+
+@app.command("show-decomposition-proposal")
+def show_decomposition_proposal(proposal_id: str, json_output: JsonOption = False) -> None:
+    _run(lambda: request("GET", f"/api/v1/decomposition-proposals/{proposal_id}"), json_output)
 
 
 @app.command()
@@ -214,6 +308,19 @@ def _register_lifecycle_command(name: str) -> None:
     app.command(name)(lifecycle_command)
 
 
+def _register_decomposition_decision_command(name: str, endpoint: str) -> None:
+    def decision_command(
+        proposal_id: str,
+        idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+        reason: Annotated[str, typer.Option("--reason", callback=_reason_option)],
+        json_output: JsonOption = False,
+    ) -> None:
+        _decomposition_decision(endpoint, proposal_id, idempotency_key, reason, json_output)
+
+    decision_command.__name__ = name.replace("-", "_")
+    app.command(name)(decision_command)
+
+
 for _command_name in (
     "ready",
     "start",
@@ -229,6 +336,14 @@ for _command_name in (
     "cancel",
 ):
     _register_lifecycle_command(_command_name)
+
+
+for _command_name, _endpoint in (
+    ("approve-decomposition", "approve"),
+    ("reject-decomposition", "reject"),
+    ("require-decomposition-revision", "require-revision"),
+):
+    _register_decomposition_decision_command(_command_name, _endpoint)
 
 
 @app.command("record-approval")
