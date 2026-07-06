@@ -38,4 +38,13 @@ the cleanest, most idiomatic existing module in this repo
 When writing new code, mirror the structure, naming conventions, and documentation
 style of that module.
 
+## Known Non-obvious Invariants
+
+- Generic authority approvals satisfy work-unit readiness only. Authority-expanding
+  standing-context updates require a named human approval bound to the exact
+  standing-context fingerprint.
+- Protocol smoke tests may manipulate time or lease expiry as deterministic fixture
+  setup. Runtime recovery behavior itself must go through public API/CLI surfaces,
+  not private service shortcuts.
+
 <!-- code-standards:end -->
