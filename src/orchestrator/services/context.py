@@ -1,6 +1,8 @@
+import secrets
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,6 +16,7 @@ from orchestrator.kernel.context import (
     context_fingerprint,
     normalize_standing_context,
 )
+from orchestrator.kernel.leases import hash_lease_token
 from orchestrator.persistence.models import (
     Approval,
     Claim,
@@ -33,6 +36,8 @@ class PreflightCommand:
     approval_id: uuid.UUID | None
     purpose: str
     idempotency_key: str
+    attempt: int | None = None
+    lease_token: str | None = None
 
 
 def record_preflight(
@@ -69,9 +74,9 @@ def record_preflight(
         if previous is None and classification == "same_scope":
             classification = "accepted"
 
-        claim = _bound_claim(session, unit, command.purpose)
-        attempt = _snapshot_attempt(unit, claim, command.purpose)
         now = TransactionClock().now(session)
+        claim = _bound_claim(session, unit, command, actor, now)
+        attempt = _snapshot_attempt(unit, claim, command.purpose)
         context_digest = context_fingerprint(normalized_context)
         snapshot = ContextSnapshot(
             work_package_revision_id=unit.work_package_revision_id,
@@ -280,17 +285,24 @@ def _approval_matches(
     approval: Approval,
     normalized_context: Mapping[str, object],
 ) -> bool:
+    _ = normalized_context
     return (
         approval.subject_type == "authority"
         and approval.subject_id == unit.id
         and approval.decision == "approved"
-        and approval.subject_revision_or_fingerprint == context_fingerprint(normalized_context)
+        and approval.subject_revision_or_fingerprint == unit.authority_fingerprint
         and approval.approved_by != ""
     )
 
 
-def _bound_claim(session: Session, unit: WorkUnit, purpose: str) -> Claim | None:
-    if purpose != "execution":
+def _bound_claim(
+    session: Session,
+    unit: WorkUnit,
+    command: PreflightCommand,
+    actor: ActorContext,
+    occurred_at: datetime,
+) -> Claim | None:
+    if command.purpose != "execution":
         return None
     claim = session.scalar(
         select(Claim)
@@ -299,10 +311,23 @@ def _bound_claim(session: Session, unit: WorkUnit, purpose: str) -> Claim | None
         .limit(1)
         .with_for_update()
     )
-    if claim is None:
+    valid = (
+        claim is not None
+        and command.attempt is not None
+        and command.lease_token is not None
+        and claim.claimed_by == actor.actor_id
+        and claim.attempt == command.attempt
+        and secrets.compare_digest(
+            claim.lease_token_hash,
+            hash_lease_token(command.lease_token),
+        )
+        and claim.released_at is None
+        and claim.lease_expires_at > occurred_at
+    )
+    if not valid:
         raise DomainError(
             "active_claim_required",
-            "execution preflight requires an active claim",
+            "execution preflight requires active claim credentials",
             "claim",
         )
     return claim

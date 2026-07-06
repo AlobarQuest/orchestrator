@@ -5,12 +5,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.context import context_fingerprint, normalize_standing_context
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Approval, ContextSnapshot, Event
+from orchestrator.persistence.models import Claim, ContextSnapshot, Event
+from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.context import PreflightCommand, record_preflight
 from orchestrator.services.lifecycle import ActorContext
-from orchestrator.services.packages import register_approved_unit, register_revision
+from orchestrator.services.packages import (
+    record_approval,
+    register_approved_unit,
+    register_revision,
+)
 from tests.services.test_package_registration import AUTHORITY, NOW
 
 
@@ -205,24 +209,17 @@ def test_authority_expansion_with_matching_approval_records_accepted_snapshot(
     migrated_session: Session,
 ) -> None:
     ready_unit = register_context_unit(migrated_session, valid_context(), "approved-expansion")
-    approval_id = uuid.uuid4()
     expanded_context = valid_context(capabilities=["python", "deploy"])
-    migrated_session.add(
-        Approval(
-            id=approval_id,
-            subject_type="authority",
-            subject_id=ready_unit.id,
-            subject_revision_or_fingerprint=context_fingerprint(
-                normalize_standing_context(expanded_context)
-            ),
-            decision="approved",
-            approved_by="human-1",
-            reason="allow deploy capability for this context",
-            event_id=uuid.uuid4(),
-            idempotency_key="context-approval-1",
-        )
+    approval = record_approval(
+        migrated_session,
+        unit_id=ready_unit.id,
+        subject_type="authority",
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        reason="allow authority envelope for this unit",
+        idempotency_key="context-approval-1",
+        expected_version=ready_unit.version,
     )
-    migrated_session.flush()
 
     result = record_preflight(
         migrated_session,
@@ -230,7 +227,7 @@ def test_authority_expansion_with_matching_approval_records_accepted_snapshot(
             work_unit_id=ready_unit.id,
             standing_context=expanded_context,
             previous_context_snapshot_id=None,
-            approval_id=approval_id,
+            approval_id=approval.id,
             purpose="claim",
             idempotency_key="preflight-approved-expansion",
         ),
@@ -238,6 +235,90 @@ def test_authority_expansion_with_matching_approval_records_accepted_snapshot(
     )
 
     assert isinstance(result, ContextSnapshot)
-    assert result.approval_id == approval_id
+    assert result.approval_id == approval.id
     assert result.classification == "authority_expanding"
     assert result.decision == "accepted"
+
+
+def test_execution_preflight_requires_matching_active_claim_credentials(
+    migrated_session: Session,
+) -> None:
+    ready_unit = register_context_unit(migrated_session, valid_context(), "execution-claim")
+    grant = claim_unit(
+        migrated_session,
+        ready_unit.id,
+        ActorContext("worker-1", ActorRole.WORKER),
+        "claim-1",
+    )
+    assert isinstance(grant, LeaseGrant)
+
+    result = record_preflight(
+        migrated_session,
+        PreflightCommand(
+            work_unit_id=ready_unit.id,
+            standing_context=valid_context(),
+            previous_context_snapshot_id=None,
+            approval_id=None,
+            purpose="execution",
+            idempotency_key="execution-preflight-1",
+            attempt=grant.attempt,
+            lease_token=grant.lease_token,
+        ),
+        ActorContext("worker-1", ActorRole.WORKER),
+    )
+
+    assert isinstance(result, ContextSnapshot)
+    assert result.claim_id == grant.claim_id
+    assert result.attempt == grant.attempt
+
+
+def test_execution_preflight_rejects_wrong_or_expired_claim_credentials(
+    migrated_session: Session,
+) -> None:
+    ready_unit = register_context_unit(migrated_session, valid_context(), "execution-reject")
+    grant = claim_unit(
+        migrated_session,
+        ready_unit.id,
+        ActorContext("worker-1", ActorRole.WORKER),
+        "claim-1",
+    )
+    assert isinstance(grant, LeaseGrant)
+
+    wrong_token = record_preflight(
+        migrated_session,
+        PreflightCommand(
+            work_unit_id=ready_unit.id,
+            standing_context=valid_context(),
+            previous_context_snapshot_id=None,
+            approval_id=None,
+            purpose="execution",
+            idempotency_key="execution-preflight-wrong-token",
+            attempt=grant.attempt,
+            lease_token="wrong-token",
+        ),
+        ActorContext("worker-1", ActorRole.WORKER),
+    )
+    assert isinstance(wrong_token, DomainError)
+    assert wrong_token.code == "active_claim_required"
+
+    claim = migrated_session.get(Claim, grant.claim_id)
+    assert claim is not None
+    claim.lease_expires_at = claim.acquired_at
+    migrated_session.commit()
+
+    expired = record_preflight(
+        migrated_session,
+        PreflightCommand(
+            work_unit_id=ready_unit.id,
+            standing_context=valid_context(),
+            previous_context_snapshot_id=None,
+            approval_id=None,
+            purpose="execution",
+            idempotency_key="execution-preflight-expired",
+            attempt=grant.attempt,
+            lease_token=grant.lease_token,
+        ),
+        ActorContext("worker-1", ActorRole.WORKER),
+    )
+    assert isinstance(expired, DomainError)
+    assert expired.code == "active_claim_required"
