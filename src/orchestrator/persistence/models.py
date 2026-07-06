@@ -51,8 +51,7 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
             name="ck_work_package_revisions_intake_source",
         ),
         CheckConstraint(
-            "verification_mode IS NULL OR "
-            f"verification_mode IN {VERIFICATION_MODES!r}",
+            f"verification_mode IS NULL OR verification_mode IN {VERIFICATION_MODES!r}",
             name="ck_work_package_revisions_verification_mode",
         ),
         CheckConstraint(
@@ -366,7 +365,9 @@ class DecompositionProposal(UUIDPrimaryKey, Base):
     rationale: Mapped[str] = mapped_column(Text)
     proposed_by: Mapped[str] = mapped_column(String)
     proposed_actor_role: Mapped[str] = mapped_column(String)
-    proposed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    proposed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     decided_by: Mapped[str | None] = mapped_column(String)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     decision_reason: Mapped[str | None] = mapped_column(Text)
@@ -463,7 +464,9 @@ class ApprovedDecomposition(UUIDPrimaryKey, Base):
     )
     proposal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
     approved_by: Mapped[str] = mapped_column(String)
-    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     superseded_by: Mapped[str | None] = mapped_column(String)
     supersession_reason: Mapped[str | None] = mapped_column(Text)

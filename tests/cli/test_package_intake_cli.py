@@ -81,9 +81,11 @@ def test_package_source_reader_raises_when_git_provenance_unavailable(
         "_verify_current_approval",
         lambda *args: _verified_approval(),
     )
-    monkeypatch.setattr(package_sources, "_git_head", lambda path: (_ for _ in ()).throw(
-        PackageSourceError("git provenance unavailable")
-    ))
+    monkeypatch.setattr(
+        package_sources,
+        "_git_head",
+        lambda path: (_ for _ in ()).throw(PackageSourceError("git provenance unavailable")),
+    )
 
     with pytest.raises(PackageSourceError, match="git provenance unavailable"):
         load_package_intake_payload(
@@ -299,11 +301,8 @@ def test_package_source_reader_rejects_non_mapping_approval_entries(
     lineage_path = package_dir / "lineage.yaml"
     lineage_path.write_text(
         lineage_path.read_text(encoding="utf-8").replace(
-            "approvals:\n"
-            "  - revision: 1\n",
-            "approvals:\n"
-            "  - malformed\n"
-            "  - revision: 1\n",
+            "approvals:\n  - revision: 1\n",
+            "approvals:\n  - malformed\n  - revision: 1\n",
         ),
         encoding="utf-8",
     )
@@ -329,12 +328,8 @@ def test_package_source_reader_rejects_malformed_approval_mapping_entries(
     lineage_path = package_dir / "lineage.yaml"
     lineage_path.write_text(
         lineage_path.read_text(encoding="utf-8").replace(
-            "approvals:\n"
-            "  - revision: 1\n",
-            "approvals:\n"
-            "  - revision: 999\n"
-            "    approved_hash: irrelevant\n"
-            "  - revision: 1\n",
+            "approvals:\n  - revision: 1\n",
+            "approvals:\n  - revision: 999\n    approved_hash: irrelevant\n  - revision: 1\n",
         ),
         encoding="utf-8",
     )
@@ -360,11 +355,8 @@ def test_package_source_reader_rejects_non_mapping_acceptance_entries(
     package_path = package_dir / "package.yaml"
     package_path.write_text(
         package_path.read_text(encoding="utf-8").replace(
-            "acceptance:\n"
-            "  - id: AC-001\n",
-            "acceptance:\n"
-            "  - malformed\n"
-            "  - id: AC-001\n",
+            "acceptance:\n  - id: AC-001\n",
+            "acceptance:\n  - malformed\n  - id: AC-001\n",
         ),
         encoding="utf-8",
     )

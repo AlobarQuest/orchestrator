@@ -178,9 +178,7 @@ def test_concurrent_identical_intake_converges(migrated_engine: Engine) -> None:
 
     with Session(migrated_engine) as session:
         intake_events = tuple(
-            session.scalars(
-                select(Event).where(Event.idempotency_key == "package-intake-1")
-            )
+            session.scalars(select(Event).where(Event.idempotency_key == "package-intake-1"))
         )
         acceptance_rows = tuple(session.scalars(select(PackageAcceptanceCriterion)))
 
@@ -246,24 +244,25 @@ def test_package_cli_revision_blocks_direct_unit_registration_without_approved_d
     assert error.value.code == "decomposition_approval_required"
 
 
-def test_package_cli_revision_allows_unit_registration_with_approved_decomposition_activation_source(  # noqa: E501 - required task test name
+def test_package_cli_revision_rejects_activation_source_without_approved_decomposition_id(
     migrated_session: Session,
 ) -> None:
     revision = register_package_intake(migrated_session, intake_command(), human_actor())
 
-    unit = register_approved_unit(
-        migrated_session,
-        revision_id=revision.id,
-        unit_key="unit-1",
-        title="Implement one",
-        outcome="One works",
-        required_capability="repository_write",
-        authority=AUTHORITY,
-        approved_by="human-1",
-        approved_at=NOW,
-        actor_id="human-1",
-        actor_role=ActorRole.HUMAN,
-        activation_source="approved_decomposition",
-    )
+    with pytest.raises(DomainError) as error:
+        register_approved_unit(
+            migrated_session,
+            revision_id=revision.id,
+            unit_key="unit-1",
+            title="Implement one",
+            outcome="One works",
+            required_capability="repository_write",
+            authority=AUTHORITY,
+            approved_by="human-1",
+            approved_at=NOW,
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+            activation_source="approved_decomposition",
+        )
 
-    assert unit.state == "draft"
+    assert error.value.code == "decomposition_approval_required"

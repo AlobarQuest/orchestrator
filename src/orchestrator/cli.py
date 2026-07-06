@@ -143,9 +143,7 @@ def _load_intake_payload(path: Path, source_repository: str) -> JsonObject:
     try:
         return load_package_intake_payload(path, source_repository=source_repository)
     except PackageSourceError as error:
-        raise CliError(
-            {"code": "package_source_error", "message": str(error)}
-        ) from error
+        raise CliError({"code": "package_source_error", "message": str(error)}) from error
 
 
 def _decomposition_decision(

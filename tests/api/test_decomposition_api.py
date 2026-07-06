@@ -169,8 +169,7 @@ def acceptance_criteria_by_key(db_client: TestClient, revision_id: str) -> dict[
     response = db_client.get(f"/api/v1/package-intakes/{revision_id}", headers=HUMAN)
     assert response.status_code == 200
     return {
-        criterion["ac_id"]: criterion["id"]
-        for criterion in response.json()["acceptance_criteria"]
+        criterion["ac_id"]: criterion["id"] for criterion in response.json()["acceptance_criteria"]
     }
 
 

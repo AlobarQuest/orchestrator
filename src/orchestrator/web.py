@@ -306,9 +306,7 @@ def _decomposition_proposal_projection(session: Session, proposal_id: uuid.UUID)
             .order_by(DecompositionProposalRetainedAc.package_acceptance_criterion_id)
         )
     )
-    mapped_by_criterion = {
-        mapping.package_acceptance_criterion_id: mapping for mapping in mappings
-    }
+    mapped_by_criterion = {mapping.package_acceptance_criterion_id: mapping for mapping in mappings}
     retained_by_criterion = {
         retained.package_acceptance_criterion_id: retained for retained in retained_acs
     }

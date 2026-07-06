@@ -1,7 +1,7 @@
+import pytest
 from alembic import command
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
@@ -121,7 +121,11 @@ def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> Non
             "'human-1', now(), :approval_event_id, '{}', 'authority', 1, 'human-1', "
             "'manual_ws31', NULL)"
         ),
-        {"id": manual_revision_id, "work_package_id": package_id, "approval_event_id": package_id.__class__(int=11)},
+        {
+            "id": manual_revision_id,
+            "work_package_id": package_id,
+            "approval_event_id": package_id.__class__(int=11),
+        },
     )
     migrated_session.commit()
 
@@ -137,7 +141,11 @@ def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> Non
                 "'human-1', now(), :approval_event_id, '{}', 'authority', 1, 'human-1', "
                 "'package_cli', NULL)"
             ),
-            {"id": package_id.__class__(int=12), "work_package_id": package_id, "approval_event_id": package_id.__class__(int=13)},
+            {
+                "id": package_id.__class__(int=12),
+                "work_package_id": package_id,
+                "approval_event_id": package_id.__class__(int=13),
+            },
         )
         migrated_session.commit()
     migrated_session.rollback()
@@ -153,7 +161,11 @@ def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> Non
             "'human-1', now(), :approval_event_id, '{}', 'authority', 1, 'human-1', "
             "'package_cli', 'caller_attested_cli_verified')"
         ),
-        {"id": package_id.__class__(int=14), "work_package_id": package_id, "approval_event_id": package_id.__class__(int=15)},
+        {
+            "id": package_id.__class__(int=14),
+            "work_package_id": package_id,
+            "approval_event_id": package_id.__class__(int=15),
+        },
     )
     migrated_session.commit()
 

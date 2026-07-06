@@ -244,9 +244,7 @@ def create_decomposition_proposal(
                 ProposedDependency(**command.model_dump()) for command in body.dependencies
             ),
             ac_mappings=tuple(AcMapping(**command.model_dump()) for command in body.ac_mappings),
-            retained_acs=tuple(
-                RetainedAc(**command.model_dump()) for command in body.retained_acs
-            ),
+            retained_acs=tuple(RetainedAc(**command.model_dump()) for command in body.retained_acs),
             idempotency_key=body.idempotency_key,
         ),
         actor,

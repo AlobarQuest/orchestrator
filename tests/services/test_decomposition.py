@@ -97,9 +97,7 @@ def proposal_command(revision_id: uuid.UUID, ac_ids: dict[str, uuid.UUID], **ove
                 target_unit_key="unit-1",
             ),
         ),
-        ac_mappings=(
-            AcMapping(ac_id=str(ac_ids["AC-001"]), unit_key="unit-1"),
-        ),
+        ac_mappings=(AcMapping(ac_id=str(ac_ids["AC-001"]), unit_key="unit-1"),),
         retained_acs=(
             RetainedAc(
                 ac_id=str(ac_ids["AC-002"]),
