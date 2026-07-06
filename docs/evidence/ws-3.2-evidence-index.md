@@ -40,6 +40,9 @@ remain outstanding.
   `PYTHONPATH="$HOME/Projects/security-standards/src" python3 -m security_scan.cli . --category security`:
   passed with 0 BLOCK, 0 WARN, and one judgment-only INFO
   (`bws.least-privilege-scope`).
+- PR #6 `Quality` checks passed for the pushed branch head:
+  workflow run `28783352241`, job `85344008734`, duration 2m39s; and workflow
+  run `28783369046`, job `85344067555`, duration 2m32s.
 
 ## Preserved failed gates
 
@@ -111,7 +114,6 @@ remain outstanding.
 
 ## Explicitly absent evidence
 
-- No pushed PR CI result exists yet for the final WS-3.2 branch head.
 - No production deployment, factory-runner dispatch, external factory-event/v1
   publication, tracker canonicalization, or automatic merge evidence exists;
   those remain out of scope.
