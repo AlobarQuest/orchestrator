@@ -18,7 +18,7 @@ revisions, and approved-decomposition state could not safely live on append-only
 The other main risk was overstating what WS-3.2 can verify at API time. The design now
 states that the supported executable intake path is CLI source verification followed by
 API registration, while the API enforces submitted facts, idempotency, conflicts,
-executable status, and recorded verification limitations.
+approved package status, and recorded verification limitations.
 
 ## Findings
 
