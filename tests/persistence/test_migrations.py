@@ -127,11 +127,38 @@ def test_ws33_context_snapshot_tables_and_links_exist(migrated_engine) -> None:
         "created_at",
     } <= columns
 
-    claim_columns = {column["name"] for column in inspector.get_columns("claims")}
-    assert {"context_snapshot_id", "execution_context_snapshot_id"} <= claim_columns
+    claim_columns = {
+        column["name"]: column for column in inspector.get_columns("claims")
+    }
+    assert {"context_snapshot_id", "execution_context_snapshot_id"} <= claim_columns.keys()
+    assert claim_columns["context_snapshot_id"]["nullable"] is True
+    assert claim_columns["execution_context_snapshot_id"]["nullable"] is True
 
-    evidence_columns = {column["name"] for column in inspector.get_columns("evidence")}
+    evidence_columns = {
+        column["name"]: column for column in inspector.get_columns("evidence")
+    }
     assert "context_snapshot_id" in evidence_columns
+    assert evidence_columns["context_snapshot_id"]["nullable"] is True
+
+    claim_foreign_keys = {
+        foreign_key["name"]: foreign_key for foreign_key in inspector.get_foreign_keys("claims")
+    }
+    assert claim_foreign_keys["fk_claims_context_snapshot_id"]["referred_table"] == "context_snapshots"
+    assert claim_foreign_keys["fk_claims_context_snapshot_id"]["referred_columns"] == ["id"]
+    assert claim_foreign_keys["fk_claims_execution_context_snapshot_id"]["referred_table"] == (
+        "context_snapshots"
+    )
+    assert claim_foreign_keys["fk_claims_execution_context_snapshot_id"]["referred_columns"] == [
+        "id"
+    ]
+
+    evidence_foreign_keys = {
+        foreign_key["name"]: foreign_key for foreign_key in inspector.get_foreign_keys("evidence")
+    }
+    assert evidence_foreign_keys["fk_evidence_context_snapshot_id"]["referred_table"] == (
+        "context_snapshots"
+    )
+    assert evidence_foreign_keys["fk_evidence_context_snapshot_id"]["referred_columns"] == ["id"]
 
 
 def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> None:
@@ -154,6 +181,25 @@ def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> Non
             "id": manual_revision_id,
             "work_package_id": package_id,
             "approval_event_id": package_id.__class__(int=11),
+        },
+    )
+    migrated_session.commit()
+
+    migrated_session.execute(
+        text(
+            "INSERT INTO work_package_revisions "
+            "(id, work_package_id, revision, content_hash, source_path, source_commit, "
+            "approved_by, approved_at, approval_event_id, enforcement_snapshot, "
+            "authority_fingerprint, registry_version, registered_by, intake_source, "
+            "verification_mode) VALUES "
+            "(:id, :work_package_id, 5, 'sha256:fixture', 'intent.md', 'mno345', "
+            "'human-1', now(), :approval_event_id, '{}', 'authority', 1, 'human-1', "
+            "'protocol_fixture', NULL)"
+        ),
+        {
+            "id": package_id.__class__(int=16),
+            "work_package_id": package_id,
+            "approval_event_id": package_id.__class__(int=17),
         },
     )
     migrated_session.commit()
