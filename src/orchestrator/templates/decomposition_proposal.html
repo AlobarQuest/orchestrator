@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Decomposition proposal {{ proposal.proposal_number }}{% endblock %}
+{% block content %}
+<p><a href="/review/intakes/{{ revision.id }}">← Package intake</a></p>
+<h1>Decomposition proposal {{ proposal.proposal_number }}</h1>
+<p class="status">State: {{ proposal.state }}</p>
+
+<h2>Proposal facts</h2>
+<dl>
+  <dt>Package</dt><dd>{{ package.package_id }}</dd>
+  <dt>Revision</dt><dd>{{ revision.revision }}</dd>
+  <dt>Proposed by</dt><dd>{{ proposal.proposed_by }} ({{ proposal.proposed_actor_role }}) at {{ proposal.proposed_at }}</dd>
+  <dt>Rationale</dt><dd>{{ proposal.rationale }}</dd>
+  <dt>Decision by</dt><dd>{{ proposal.decided_by or "Pending" }}</dd>
+  <dt>Decision at</dt><dd>{{ proposal.decided_at or "Pending" }}</dd>
+  <dt>Decision reason</dt><dd>{{ proposal.decision_reason or "Pending" }}</dd>
+</dl>
+
+<h2>Proposed units</h2>
+<table>
+  <caption>Draft work units implied by this proposal</caption>
+  <thead>
+    <tr>
+      <th scope="col">Unit key</th>
+      <th scope="col">Title</th>
+      <th scope="col">Outcome</th>
+      <th scope="col">Capability</th>
+      <th scope="col">Attempts</th>
+      <th scope="col">Authority fingerprint</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for unit in units %}
+    <tr>
+      <td>{{ unit.unit_key }}</td>
+      <td>{{ unit.title }}</td>
+      <td>{{ unit.outcome }}</td>
+      <td>{{ unit.required_capability }}</td>
+      <td>{{ unit.max_attempts }}</td>
+      <td><code>{{ unit.authority_fingerprint }}</code></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">No proposed units.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Dependencies</h2>
+<table>
+  <caption>Internal and external dependencies in the proposal</caption>
+  <thead>
+    <tr>
+      <th scope="col">Source unit</th>
+      <th scope="col">Kind</th>
+      <th scope="col">Target or reference</th>
+      <th scope="col">Required condition</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for dependency in dependencies %}
+    <tr>
+      <td>{{ dependency.source_unit_key }}</td>
+      <td>{{ dependency.kind }}</td>
+      <td>{{ dependency.target_unit_key or dependency.external_ref }}</td>
+      <td>{{ dependency.required_state_or_condition }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No dependencies.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Package acceptance criteria coverage</h2>
+<table>
+  <caption>Per-criterion disposition across proposed units and retained package-level review</caption>
+  <thead>
+    <tr>
+      <th scope="col">AC</th>
+      <th scope="col">Disposition</th>
+      <th scope="col">Unit key</th>
+      <th scope="col">Condition</th>
+      <th scope="col">Evidence</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in ac_coverage %}
+    <tr>
+      <td>{{ row.criterion.ac_id }}</td>
+      <td>{{ row.disposition }}</td>
+      <td>{{ row.unit_key or "package-level" }}</td>
+      <td>{{ row.criterion.condition }}</td>
+      <td>{{ row.criterion.evidence_type }} · {{ row.criterion.evidence }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">No AC coverage recorded.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Retained package-level acceptance criteria</h2>
+{% if retained_acs %}
+<table>
+  <caption>Criteria retained for package-level review</caption>
+  <thead>
+    <tr>
+      <th scope="col">AC</th>
+      <th scope="col">Marker</th>
+      <th scope="col">Rationale</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in retained_acs %}
+    <tr>
+      <td>{{ row.criterion.ac_id }}</td>
+      <td>retained_package_level</td>
+      <td>{{ row.rationale }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No acceptance criteria are retained at package level.</p>
+{% endif %}
+
+{% if created_work_unit_ids %}
+<h2>Created draft work units</h2>
+<ul>
+  {% for unit_key, work_unit_id in created_work_unit_ids %}
+  <li>{{ unit_key }} → {{ work_unit_id }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<h2>Human decision</h2>
+{% if proposal.state == "proposed" %}
+{% macro hidden(action) %}<input type="hidden" name="csrf_token" value="{{ csrf_tokens[action] }}"><input type="hidden" name="idempotency_key" value="{{ idempotency_keys[action] }}">{% endmacro %}
+<h3>Approve</h3>
+<form method="post" action="/review/decomposition-proposals/{{ proposal.id }}/approve">
+  {{ hidden("approve") }}
+  <label for="approve-reason">Reason</label>
+  <textarea id="approve-reason" name="reason" required></textarea>
+  <label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm this approval decision.</label>
+  <button type="submit">Approve</button>
+</form>
+<h3>Require revision</h3>
+<form method="post" action="/review/decomposition-proposals/{{ proposal.id }}/require-revision">
+  {{ hidden("require_revision") }}
+  <label for="require-revision-reason">Reason</label>
+  <textarea id="require-revision-reason" name="reason" required></textarea>
+  <label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm this revision request.</label>
+  <button type="submit">Require revision</button>
+</form>
+<h3>Reject</h3>
+<form method="post" action="/review/decomposition-proposals/{{ proposal.id }}/reject">
+  {{ hidden("reject") }}
+  <label for="reject-reason">Reason</label>
+  <textarea id="reject-reason" name="reason" required></textarea>
+  <label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm this rejection.</label>
+  <button class="danger" type="submit">Reject</button>
+</form>
+{% else %}
+<p class="meta">This proposal has already been decided. No further review action is available on this page.</p>
+{% endif %}
+{% endblock %}

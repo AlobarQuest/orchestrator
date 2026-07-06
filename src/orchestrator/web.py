@@ -23,13 +23,24 @@ from orchestrator.persistence.models import (
     Adjudication,
     Approval,
     Claim,
+    DecompositionProposal,
+    DecompositionProposalAcMapping,
+    DecompositionProposalDependency,
+    DecompositionProposalRetainedAc,
+    DecompositionProposalUnit,
     Dependency,
     Event,
     Evidence,
+    PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
 )
 from orchestrator.services.claims import authorize_retry
+from orchestrator.services.decomposition import (
+    approve_decomposition_proposal,
+    reject_decomposition_proposal,
+    require_decomposition_revision,
+)
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 from orchestrator.services.packages import evaluate_readiness, record_approval
 
@@ -89,7 +100,7 @@ def _csrf_secret(request: Request) -> bytes:
 def _issue_token(
     request: Request,
     actor: ActorContext,
-    unit_id: uuid.UUID,
+    subject_id: uuid.UUID,
     action: str,
     idempotency_key: str,
 ) -> str:
@@ -99,7 +110,7 @@ def _issue_token(
         "exp": int(time.time()) + CSRF_TTL_SECONDS,
         "idempotency_key": idempotency_key,
         "session": _session_id(request),
-        "unit": str(unit_id),
+        "subject": str(subject_id),
     }
     encoded = base64.urlsafe_b64encode(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -111,7 +122,7 @@ def _issue_token(
 def _require_form(
     request: Request,
     actor: ActorContext,
-    unit_id: uuid.UUID,
+    subject_id: uuid.UUID,
     action: str,
     csrf_token: str,
     idempotency_key: str,
@@ -126,7 +137,7 @@ def _require_form(
     valid = (
         hmac.compare_digest(expected, signature)
         and payload.get("actor") == actor.actor_id
-        and payload.get("unit") == str(unit_id)
+        and payload.get("subject") == str(subject_id)
         and payload.get("action") == action
         and payload.get("session") == request.cookies.get(CSRF_COOKIE)
         and payload.get("idempotency_key") == idempotency_key
@@ -209,6 +220,141 @@ def _projection(session: Session, unit_id: uuid.UUID) -> dict[str, Any]:
     }
 
 
+def _package_intake_projection(session: Session, revision_id: uuid.UUID) -> dict[str, Any]:
+    revision = session.get(WorkPackageRevision, revision_id)
+    if revision is None or revision.intake_source != "package_cli":
+        raise DomainError(
+            "package_intake_not_found",
+            "package intake does not exist for this revision",
+            None,
+        )
+    acceptance_criteria = tuple(
+        session.scalars(
+            select(PackageAcceptanceCriterion)
+            .where(PackageAcceptanceCriterion.work_package_revision_id == revision.id)
+            .order_by(PackageAcceptanceCriterion.ac_id, PackageAcceptanceCriterion.id)
+        )
+    )
+    intake_event = session.scalar(
+        select(Event)
+        .where(
+            Event.subject_type == "work_package_revision",
+            Event.subject_id == revision.id,
+            Event.action == "package_revision.intake_registered",
+        )
+        .order_by(Event.occurred_at, Event.id)
+    )
+    command = intake_event.payload.get("command", {}) if intake_event is not None else {}
+    return {
+        "revision": revision,
+        "package": revision.work_package,
+        "acceptance_criteria": acceptance_criteria,
+        "authority": command.get("authority"),
+    }
+
+
+def _decomposition_proposal_projection(session: Session, proposal_id: uuid.UUID) -> dict[str, Any]:
+    proposal = session.get(DecompositionProposal, proposal_id)
+    if proposal is None:
+        raise DomainError(
+            "decomposition_proposal_not_found",
+            "decomposition proposal does not exist",
+            None,
+        )
+    revision = session.get(WorkPackageRevision, proposal.work_package_revision_id)
+    assert revision is not None
+    units = tuple(
+        session.scalars(
+            select(DecompositionProposalUnit)
+            .where(DecompositionProposalUnit.proposal_id == proposal.id)
+            .order_by(DecompositionProposalUnit.unit_key)
+        )
+    )
+    dependencies = tuple(
+        session.scalars(
+            select(DecompositionProposalDependency)
+            .where(DecompositionProposalDependency.proposal_id == proposal.id)
+            .order_by(
+                DecompositionProposalDependency.source_unit_key,
+                DecompositionProposalDependency.target_unit_key,
+                DecompositionProposalDependency.external_ref,
+            )
+        )
+    )
+    criteria = tuple(
+        session.scalars(
+            select(PackageAcceptanceCriterion)
+            .where(PackageAcceptanceCriterion.work_package_revision_id == revision.id)
+            .order_by(PackageAcceptanceCriterion.ac_id, PackageAcceptanceCriterion.id)
+        )
+    )
+    criteria_by_id = {criterion.id: criterion for criterion in criteria}
+    mappings = tuple(
+        session.scalars(
+            select(DecompositionProposalAcMapping)
+            .where(DecompositionProposalAcMapping.proposal_id == proposal.id)
+            .order_by(
+                DecompositionProposalAcMapping.unit_key,
+                DecompositionProposalAcMapping.package_acceptance_criterion_id,
+            )
+        )
+    )
+    retained_acs = tuple(
+        session.scalars(
+            select(DecompositionProposalRetainedAc)
+            .where(DecompositionProposalRetainedAc.proposal_id == proposal.id)
+            .order_by(DecompositionProposalRetainedAc.package_acceptance_criterion_id)
+        )
+    )
+    mapped_by_criterion = {
+        mapping.package_acceptance_criterion_id: mapping for mapping in mappings
+    }
+    retained_by_criterion = {
+        retained.package_acceptance_criterion_id: retained for retained in retained_acs
+    }
+    created_work_unit_ids = (
+        proposal.created_work_unit_ids if isinstance(proposal.created_work_unit_ids, dict) else {}
+    )
+    ac_coverage: list[dict[str, Any]] = []
+    for criterion in criteria:
+        mapping = mapped_by_criterion.get(criterion.id)
+        retained = retained_by_criterion.get(criterion.id)
+        if mapping is not None:
+            ac_coverage.append(
+                {
+                    "criterion": criterion,
+                    "disposition": "mapped_to_unit",
+                    "unit_key": mapping.unit_key,
+                    "rationale": None,
+                }
+            )
+        elif retained is not None:
+            ac_coverage.append(
+                {
+                    "criterion": criterion,
+                    "disposition": "retained_package_level",
+                    "unit_key": None,
+                    "rationale": retained.rationale,
+                }
+            )
+    return {
+        "proposal": proposal,
+        "revision": revision,
+        "package": revision.work_package,
+        "units": units,
+        "dependencies": dependencies,
+        "ac_coverage": ac_coverage,
+        "retained_acs": tuple(
+            {
+                "criterion": criteria_by_id[retained.package_acceptance_criterion_id],
+                "rationale": retained.rationale,
+            }
+            for retained in retained_acs
+        ),
+        "created_work_unit_ids": tuple(sorted(created_work_unit_ids.items())),
+    }
+
+
 @router.get("/units/{unit_id}", response_class=HTMLResponse)
 def detail(
     request: Request, unit_id: uuid.UUID, actor: ActorDep, session: SessionDep
@@ -223,6 +369,30 @@ def detail(
     return _render(request, "unit.html", context)
 
 
+@router.get("/intakes/{revision_id}", response_class=HTMLResponse)
+def intake_detail(
+    request: Request, revision_id: uuid.UUID, actor: ActorDep, session: SessionDep
+) -> HTMLResponse:
+    _human(actor)
+    return _render(request, "intake.html", _package_intake_projection(session, revision_id))
+
+
+@router.get("/decomposition-proposals/{proposal_id}", response_class=HTMLResponse)
+def decomposition_proposal_detail(
+    request: Request, proposal_id: uuid.UUID, actor: ActorDep, session: SessionDep
+) -> HTMLResponse:
+    _human(actor)
+    context = _decomposition_proposal_projection(session, proposal_id)
+    if context["proposal"].state == "proposed":
+        keys = {action: str(uuid.uuid4()) for action in ("approve", "reject", "require_revision")}
+        context["idempotency_keys"] = keys
+        context["csrf_tokens"] = {
+            action: _issue_token(request, actor, proposal_id, action, key)
+            for action, key in keys.items()
+        }
+    return _render(request, "decomposition_proposal.html", context)
+
+
 @router.get("/units/{unit_id}/evidence-pack", response_class=HTMLResponse)
 def evidence_pack(
     request: Request, unit_id: uuid.UUID, actor: ActorDep, session: SessionDep
@@ -233,6 +403,10 @@ def evidence_pack(
 
 def _redirect(unit_id: uuid.UUID) -> RedirectResponse:
     return RedirectResponse(f"/review/units/{unit_id}", status_code=303)
+
+
+def _proposal_redirect(proposal_id: uuid.UUID) -> RedirectResponse:
+    return RedirectResponse(f"/review/decomposition-proposals/{proposal_id}", status_code=303)
 
 
 @router.post("/units/{unit_id}/approval")
@@ -357,3 +531,83 @@ def retry(
     if isinstance(result, DomainError):
         raise result
     return _redirect(unit_id)
+
+
+@router.post("/decomposition-proposals/{proposal_id}/approve")
+def approve_decomposition_route(
+    request: Request,
+    proposal_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    reason: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    _human(actor)
+    _require_form(request, actor, proposal_id, "approve", csrf_token, idempotency_key, confirm)
+    approve_decomposition_proposal(
+        session,
+        proposal_id,
+        actor=actor,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+    session.commit()
+    return _proposal_redirect(proposal_id)
+
+
+@router.post("/decomposition-proposals/{proposal_id}/reject")
+def reject_decomposition_route(
+    request: Request,
+    proposal_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    reason: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    _human(actor)
+    _require_form(request, actor, proposal_id, "reject", csrf_token, idempotency_key, confirm)
+    reject_decomposition_proposal(
+        session,
+        proposal_id,
+        actor=actor,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+    session.commit()
+    return _proposal_redirect(proposal_id)
+
+
+@router.post("/decomposition-proposals/{proposal_id}/require-revision")
+def require_decomposition_revision_route(
+    request: Request,
+    proposal_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    reason: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    _human(actor)
+    _require_form(
+        request,
+        actor,
+        proposal_id,
+        "require_revision",
+        csrf_token,
+        idempotency_key,
+        confirm,
+    )
+    require_decomposition_revision(
+        session,
+        proposal_id,
+        actor=actor,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+    session.commit()
+    return _proposal_redirect(proposal_id)
