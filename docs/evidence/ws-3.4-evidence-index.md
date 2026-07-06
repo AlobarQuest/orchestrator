@@ -48,6 +48,10 @@ Final verification:
   - `PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test make check`
   - Result: Ruff passed, format passed, pyright passed, `668 passed`.
   - Existing Starlette/httpx warning remained.
+- `orchestrator` CI-equivalent fixture-path gate:
+  - `PATH="$PWD/.venv/bin:$PATH" SECURITY_STANDARDS_DIR="$PWD/tests/fixtures/security-standards" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test make check`
+  - Result: Ruff passed, format passed, pyright passed, `668 passed`.
+  - Existing Starlette/httpx warning remained.
 - `security-standards` final gate:
   - `make check`
   - Result: Ruff passed, format passed, pyright reported 0 errors and 5 existing missing-source warnings, `175 passed, 3 skipped`.

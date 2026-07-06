@@ -26,16 +26,10 @@ jobs:
           - 5432:5432
     env:
       ORCHESTRATOR_DATABASE_URL: postgresql+psycopg://postgres@127.0.0.1:5432/orchestrator_test
-      SECURITY_STANDARDS_DIR: ${{ github.workspace }}/security-standards
+      SECURITY_STANDARDS_DIR: ${{ github.workspace }}/tests/fixtures/security-standards
       TEST_DATABASE_URL: postgresql+psycopg://postgres@127.0.0.1:5432/orchestrator_test
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check out security-standards contracts
-        uses: actions/checkout@v4
-        with:
-          repository: AlobarQuest/security-standards
-          path: security-standards
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
