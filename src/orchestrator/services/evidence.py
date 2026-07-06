@@ -564,7 +564,14 @@ def _evidence_replay(
     if row is None:
         raise _idempotency_conflict()
     assert row is not None
-    expected_command = command | {"context_snapshot_id": _uuid_text(row.context_snapshot_id)}
+    command_context_snapshot_id = command.get("context_snapshot_id")
+    expected_command = command | {
+        "context_snapshot_id": (
+            command_context_snapshot_id
+            if command_context_snapshot_id is not None
+            else _uuid_text(row.context_snapshot_id)
+        )
+    }
     if (
         event is None
         or event.action != "evidence.recorded"

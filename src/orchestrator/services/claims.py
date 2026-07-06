@@ -189,9 +189,18 @@ def reclaim_expired_claim(
     actor: ActorContext,
     next_owner: ActorContext,
     idempotency_key: str,
+    *,
+    standing_context: dict[str, Any] | None = None,
 ) -> LeaseGrant | DomainError:
     try:
-        grant = _perform_reclaim(session, unit_id, actor, next_owner, idempotency_key)
+        grant = _perform_reclaim(
+            session,
+            unit_id,
+            actor,
+            next_owner,
+            idempotency_key,
+            standing_context=standing_context,
+        )
         session.commit()
         return grant
     except DomainError as error:
@@ -208,9 +217,17 @@ def _perform_reclaim(
     actor: ActorContext,
     next_owner: ActorContext,
     idempotency_key: str,
+    *,
+    standing_context: dict[str, Any] | None = None,
 ) -> LeaseGrant | DomainError:
     unit = _locked_unit(session, unit_id)
-    replay = _claim_replay(session, unit, next_owner, idempotency_key)
+    replay = _claim_replay(
+        session,
+        unit,
+        next_owner,
+        idempotency_key,
+        standing_context=standing_context,
+    )
     if replay is not None:
         return replay
     error_replay = _reclaim_error_replay(session, unit, actor, next_owner, idempotency_key)
@@ -256,7 +273,15 @@ def _perform_reclaim(
         occurred_at=now,
         correlation_id=correlation_id,
     )
-    return _acquire_reclaimed_claim(session, unit, next_owner, idempotency_key, now, correlation_id)
+    return _acquire_reclaimed_claim(
+        session,
+        unit,
+        next_owner,
+        idempotency_key,
+        now,
+        correlation_id,
+        standing_context=standing_context,
+    )
 
 
 def authorize_retry(
@@ -582,7 +607,16 @@ def _acquire_reclaimed_claim(
     idempotency_key: str,
     now: datetime,
     correlation_id: uuid.UUID,
+    *,
+    standing_context: dict[str, Any] | None = None,
 ) -> LeaseGrant:
+    context_snapshot = _claim_context_snapshot(
+        session,
+        unit,
+        owner,
+        idempotency_key,
+        standing_context,
+    )
     token = secrets.token_urlsafe(32)
     unit.attempt_count += 1
     claim = Claim(
@@ -591,6 +625,7 @@ def _acquire_reclaimed_claim(
         claimed_by=owner.actor_id,
         lease_token_hash=hash_lease_token(token),
         idempotency_key=idempotency_key,
+        context_snapshot_id=context_snapshot.id if context_snapshot is not None else None,
         acquired_at=now,
         lease_expires_at=now + LEASE_DURATION,
     )
@@ -604,9 +639,21 @@ def _acquire_reclaimed_claim(
         idempotency_key=idempotency_key,
         occurred_at=now,
         correlation_id=correlation_id,
-        payload={"claim_id": str(claim.id), "attempt": claim.attempt},
+        payload={
+            "claim_id": str(claim.id),
+            "attempt": claim.attempt,
+            "context_snapshot_id": (
+                str(context_snapshot.id) if context_snapshot is not None else None
+            ),
+        },
     )
-    return LeaseGrant(claim.id, claim.attempt, token, claim.lease_expires_at, None)
+    return LeaseGrant(
+        claim.id,
+        claim.attempt,
+        token,
+        claim.lease_expires_at,
+        claim.context_snapshot_id,
+    )
 
 
 def _transition(

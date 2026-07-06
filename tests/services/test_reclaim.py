@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import Approval, Event, WorkUnit
+from orchestrator.persistence.models import Approval, Claim, Event, WorkUnit
 from orchestrator.services.claims import (
     LeaseGrant,
     authorize_retry,
@@ -15,6 +15,7 @@ from orchestrator.services.claims import (
 )
 from orchestrator.services.lifecycle import ActorContext
 from tests.services.test_claims import worker
+from tests.services.test_context_preflight import register_context_unit, valid_context
 
 SYSTEM = ActorContext("lease-reaper", ActorRole.SYSTEM)
 
@@ -77,6 +78,62 @@ def test_reclaim_records_three_transitions_and_invalidates_old_token(
     stale = renew_claim(migrated_session, ready_unit.id, worker(), first.attempt, first.lease_token)
     assert isinstance(stale, DomainError)
     assert stale.code == "claim_not_owned"
+
+
+def test_required_context_reclaim_rejects_missing_context(migrated_session: Session) -> None:
+    unit = register_context_unit(migrated_session, valid_context(), "reclaim-context-missing")
+    authorize_readiness(migrated_session, unit)
+    first = claim_unit(
+        migrated_session,
+        unit.id,
+        worker(),
+        "claim-1",
+        standing_context=valid_context(),
+    )
+    assert isinstance(first, LeaseGrant)
+    expire(migrated_session, first.claim_id)
+
+    result = reclaim_expired_claim(
+        migrated_session,
+        unit.id,
+        SYSTEM,
+        worker("worker-2"),
+        "claim-2",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "context_missing_required"
+
+
+def test_required_context_reclaim_records_replacement_claim_context(
+    migrated_session: Session,
+) -> None:
+    unit = register_context_unit(migrated_session, valid_context(), "reclaim-context-stored")
+    authorize_readiness(migrated_session, unit)
+    first = claim_unit(
+        migrated_session,
+        unit.id,
+        worker(),
+        "claim-1",
+        standing_context=valid_context(),
+    )
+    assert isinstance(first, LeaseGrant)
+    expire(migrated_session, first.claim_id)
+
+    second = reclaim_expired_claim(
+        migrated_session,
+        unit.id,
+        SYSTEM,
+        worker(),
+        "claim-2",
+        standing_context=valid_context(),
+    )
+
+    assert isinstance(second, LeaseGrant)
+    assert second.context_snapshot_id is not None
+    claim = migrated_session.get(Claim, second.claim_id)
+    assert claim is not None
+    assert claim.context_snapshot_id == second.context_snapshot_id
 
 
 def test_reclaim_from_executing_records_honest_failure(

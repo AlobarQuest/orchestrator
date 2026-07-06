@@ -217,6 +217,13 @@ def test_evidence_defaults_to_active_execution_context(migrated_session: Session
         claim.execution_context_snapshot_id
     )
 
+    conflicting_replay = append(
+        migrated_session,
+        evidence_kwargs(unit, grant) | {"context_snapshot_id": grant.context_snapshot_id},
+    )
+    assert isinstance(conflicting_replay, DomainError)
+    assert conflicting_replay.code == "idempotency_conflict"
+
 
 def test_evidence_rejects_context_snapshot_from_old_attempt(migrated_session: Session) -> None:
     unit = register_context_unit(migrated_session, valid_context(), "evidence-stale-context")
