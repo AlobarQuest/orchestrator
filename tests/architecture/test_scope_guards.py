@@ -43,6 +43,11 @@ def test_production_post_route_inventory_is_explicit() -> None:
         if isinstance(route, APIRoute) and "POST" in (route.methods or set())
     )
     assert observed == {
+        "/api/v1/package-intakes",
+        "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        "/api/v1/decomposition-proposals/{proposal_id}/approve",
+        "/api/v1/decomposition-proposals/{proposal_id}/reject",
+        "/api/v1/decomposition-proposals/{proposal_id}/require-revision",
         "/api/v1/revisions",
         "/api/v1/revisions/{revision_id}/work-units",
         "/api/v1/work-units/{unit_id}/claim",
