@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 import orchestrator.package_sources as package_sources
 from orchestrator.cli import app
 from orchestrator.package_sources import VerifiedApproval, load_package_intake_payload
+from tests.api.test_context_api import standing_context
 
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
 SYSTEM = {"Authorization": "Bearer system-token", "X-Credential-Key-Id": "system-key"}
@@ -331,3 +332,110 @@ def test_real_http_package_intake_and_decomposition_cli_have_parity(
     )
     assert cli_approve.exit_code == 0
     assert json.loads(cli_approve.stdout) == api_approve.json()
+
+
+def test_real_http_claim_context_cli_matches_api(
+    db_client: TestClient,
+    in_process_transport: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    revision_body = {
+        "idempotency_key": "cli-http-context-revision",
+        "expected_version": 0,
+        "package_id": "cli-http-context-package",
+        "source_repository": "owner/repo",
+        "revision": 1,
+        "content_hash": "sha256:cli-http-context",
+        "source_path": "intent.md",
+        "source_commit": "abc123",
+        "approved_by": "devon",
+        "approved_at": datetime(2026, 7, 5, tzinfo=UTC).isoformat(),
+        "approval_event_id": str(uuid.uuid4()),
+        "enforcement_snapshot": {
+            "acceptance_criteria": ["ac-1"],
+            "required_context": standing_context(),
+        },
+        "authority": AUTHORITY,
+        "registry_version": 1,
+    }
+    revision = db_client.post("/api/v1/revisions", headers=HUMAN, json=revision_body)
+    assert revision.status_code == 201
+    unit = db_client.post(
+        f"/api/v1/revisions/{revision.json()['id']}/work-units",
+        headers=HUMAN,
+        json={
+            "idempotency_key": "cli-http-context-unit",
+            "expected_version": 0,
+            "unit_key": "cli-http-context-unit",
+            "title": "Exercise CLI context",
+            "outcome": "CLI context works",
+            "required_capability": "repository_write",
+            "authority": AUTHORITY,
+            "max_attempts": 3,
+            "approved_by": "devon",
+            "approved_at": datetime(2026, 7, 5, tzinfo=UTC).isoformat(),
+        },
+    )
+    assert unit.status_code == 201
+    unit_id = unit.json()["id"]
+    authority = db_client.post(
+        f"/api/v1/work-units/{unit_id}/approvals",
+        headers=HUMAN,
+        json={
+            "idempotency_key": "cli-http-context-authority",
+            "expected_version": 1,
+            "subject_type": "authority",
+            "reason": "approved",
+        },
+    )
+    assert authority.status_code == 200
+    ready = db_client.post(
+        f"/api/v1/work-units/{unit_id}/commands/ready",
+        headers=SYSTEM,
+        json={"idempotency_key": "cli-http-context-ready", "expected_version": 1},
+    )
+    assert ready.status_code == 200
+    context_path = tmp_path / "context.json"
+    context_path.write_text(json.dumps(standing_context()), encoding="utf-8")
+
+    api_claim = db_client.post(
+        f"/api/v1/work-units/{unit_id}/claim",
+        headers=WORKER,
+        json={
+            "idempotency_key": "cli-http-context-claim",
+            "expected_version": 2,
+            "standing_context": standing_context(),
+        },
+    )
+    assert api_claim.status_code == 200
+
+    monkeypatch.setenv("ORCHESTRATOR_API_TOKEN", "fixture-token")
+    monkeypatch.setenv("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "worker-key")
+    cli_claim = CliRunner().invoke(
+        app,
+        [
+            "claim",
+            unit_id,
+            "--idempotency-key",
+            "cli-http-context-claim",
+            "--expected-version",
+            "2",
+            "--context",
+            f"@{context_path}",
+            "--json",
+        ],
+    )
+
+    assert cli_claim.exit_code == 0
+    cli_body = json.loads(cli_claim.stdout)
+    api_body = api_claim.json()
+    assert cli_body["lease_token"] == ""
+    assert {
+        key: cli_body[key]
+        for key in ("claim_id", "attempt", "expires_at", "context_snapshot_id")
+    } == {
+        key: api_body[key]
+        for key in ("claim_id", "attempt", "expires_at", "context_snapshot_id")
+    }
+    assert cli_body["context_snapshot_id"]

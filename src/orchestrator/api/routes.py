@@ -14,6 +14,7 @@ from orchestrator.api.schemas import (
     ApprovalCommand,
     ApprovalResponse,
     ClaimCommand,
+    ContextSnapshotResponse,
     DecompositionDecisionCommand,
     DecompositionProposalAcMappingResponse,
     DecompositionProposalDependencyResponse,
@@ -33,6 +34,7 @@ from orchestrator.api.schemas import (
     PackageAcceptanceCriterionResponse,
     PackageIntakeRegistration,
     PackageIntakeResponse,
+    PreflightCommandModel,
     ProposedUnitCommand,
     ReadinessResponse,
     RenewCommand,
@@ -47,6 +49,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import (
+    ContextSnapshot,
     DecompositionProposal,
     DecompositionProposalAcMapping,
     DecompositionProposalDependency,
@@ -55,8 +58,10 @@ from orchestrator.persistence.models import (
     Event,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
+    WorkUnit,
 )
 from orchestrator.services.claims import authorize_retry, claim_unit, renew_claim
+from orchestrator.services.context import PreflightCommand, record_preflight
 from orchestrator.services.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
@@ -367,6 +372,53 @@ def readiness(
             for reason in result.reasons
         ],
     }
+
+
+@router.post("/work-units/{unit_id}/preflight", response_model=ContextSnapshotResponse)
+def preflight(
+    unit_id: UUID,
+    body: PreflightCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    result = record_preflight(
+        session,
+        PreflightCommand(
+            work_unit_id=unit_id,
+            standing_context=body.standing_context,
+            previous_context_snapshot_id=body.previous_context_snapshot_id,
+            approval_id=body.approval_id,
+            purpose=body.purpose,
+            idempotency_key=body.idempotency_key,
+            attempt=body.attempt,
+            lease_token=body.lease_token,
+        ),
+        actor,
+    )
+    if isinstance(result, DomainError):
+        raise result
+    session.commit()
+    return result
+
+
+@router.get(
+    "/work-units/{unit_id}/context-snapshots",
+    response_model=list[ContextSnapshotResponse],
+)
+def context_snapshots(
+    unit_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    if session.get(WorkUnit, unit_id) is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    return tuple(
+        session.scalars(
+            select(ContextSnapshot)
+            .where(ContextSnapshot.work_unit_id == unit_id)
+            .order_by(ContextSnapshot.created_at, ContextSnapshot.id)
+        )
+    )
 
 
 @router.post("/work-units/{unit_id}/claim", response_model=LeaseResponse)

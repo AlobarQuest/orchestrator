@@ -15,6 +15,10 @@ HTTP_TRANSPORT: httpx.BaseTransport | None = None
 JsonObject = dict[str, Any]
 JsonOption = Annotated[bool, typer.Option("--json", help="Write deterministic JSON.")]
 DataOption = Annotated[str, typer.Option("--data", help="Request body as a JSON object.")]
+ContextOption = Annotated[
+    str | None,
+    typer.Option("--context", help="Standing context as JSON object or @file."),
+]
 
 
 @dataclass(frozen=True)
@@ -84,19 +88,40 @@ def request(method: str, path: str, payload: JsonObject | None = None) -> Any:
     raise CliError({"code": "invalid_response", "message": "API returned an invalid response"})
 
 
-def _json_object(value: str) -> JsonObject:
+def _json_file_or_object(
+    value: str,
+    *,
+    param_hint: str = "--data",
+    noun: str = "data",
+) -> JsonObject:
     if value.startswith("@"):
         try:
             value = Path(value[1:]).read_text(encoding="utf-8")
         except OSError as error:
-            raise typer.BadParameter("data must be a JSON object", param_hint="--data") from error
+            raise typer.BadParameter(
+                f"{noun} must be a JSON object",
+                param_hint=param_hint,
+            ) from error
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError as error:
-        raise typer.BadParameter("data must be a JSON object", param_hint="--data") from error
+        raise typer.BadParameter(
+            f"{noun} must be a JSON object",
+            param_hint=param_hint,
+        ) from error
     if not isinstance(parsed, dict):
-        raise typer.BadParameter("data must be a JSON object", param_hint="--data")
+        raise typer.BadParameter(f"{noun} must be a JSON object", param_hint=param_hint)
     return parsed
+
+
+def _json_object(value: str) -> JsonObject:
+    return _json_file_or_object(value, param_hint="--data", noun="data")
+
+
+def _context_object(value: str | None) -> JsonObject | None:
+    if value is None:
+        return None
+    return _json_file_or_object(value, param_hint="--context", noun="context")
 
 
 def _emit(value: Any, json_output: bool) -> None:
@@ -233,13 +258,61 @@ def readiness(unit_id: str, json_output: JsonOption = False) -> None:
 
 
 @app.command()
-def claim(unit_id: str, data: DataOption, json_output: JsonOption = False) -> None:
-    _post_data(f"/api/v1/work-units/{unit_id}/claim", data, json_output)
+def claim(
+    unit_id: str,
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    expected_version: Annotated[int, typer.Option("--expected-version", min=0)],
+    context: ContextOption = None,
+    json_output: JsonOption = False,
+) -> None:
+    payload = {
+        "idempotency_key": idempotency_key,
+        "expected_version": expected_version,
+        "standing_context": _context_object(context),
+    }
+    _run(lambda: request("POST", f"/api/v1/work-units/{unit_id}/claim", payload), json_output)
 
 
 @app.command()
 def renew(unit_id: str, data: DataOption, json_output: JsonOption = False) -> None:
     _post_data(f"/api/v1/work-units/{unit_id}/renew", data, json_output)
+
+
+@app.command()
+def preflight(
+    unit_id: str,
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    expected_version: Annotated[int, typer.Option("--expected-version", min=0)],
+    context: Annotated[str, typer.Option("--context")],
+    purpose: Annotated[str, typer.Option("--purpose", min=1)],
+    previous_context_snapshot_id: Annotated[
+        str | None,
+        typer.Option("--previous-context-snapshot-id"),
+    ] = None,
+    approval_id: Annotated[str | None, typer.Option("--approval-id")] = None,
+    attempt: Annotated[int | None, typer.Option("--attempt", min=1)] = None,
+    lease_token: Annotated[str | None, typer.Option("--lease-token")] = None,
+    json_output: JsonOption = False,
+) -> None:
+    payload = {
+        "idempotency_key": idempotency_key,
+        "expected_version": expected_version,
+        "standing_context": _context_object(context),
+        "previous_context_snapshot_id": previous_context_snapshot_id,
+        "approval_id": approval_id,
+        "purpose": purpose,
+        "attempt": attempt,
+        "lease_token": lease_token,
+    }
+    _run(lambda: request("POST", f"/api/v1/work-units/{unit_id}/preflight", payload), json_output)
+
+
+@app.command("list-context-snapshots")
+def list_context_snapshots(unit_id: str, json_output: JsonOption = False) -> None:
+    _run(
+        lambda: request("GET", f"/api/v1/work-units/{unit_id}/context-snapshots"),
+        json_output,
+    )
 
 
 def _lifecycle(
@@ -249,6 +322,8 @@ def _lifecycle(
     expected_version: int,
     attempt: int | None,
     lease_token: str | None,
+    context: str | None,
+    context_snapshot_id: str | None,
     json_output: bool,
 ) -> None:
     payload = {
@@ -257,6 +332,11 @@ def _lifecycle(
         "attempt": attempt,
         "lease_token": lease_token,
     }
+    if context is not None:
+        payload["standing_context"] = _context_object(context)
+        payload["context_snapshot_id"] = context_snapshot_id
+    elif context_snapshot_id is not None:
+        payload["context_snapshot_id"] = context_snapshot_id
     _run(
         lambda: request("POST", f"/api/v1/work-units/{unit_id}/commands/{command}", payload),
         json_output,
@@ -270,6 +350,8 @@ def _lifecycle_options(
     expected_version: int,
     attempt: int | None,
     lease_token: str | None,
+    context: str | None,
+    context_snapshot_id: str | None,
     json_output: bool,
 ) -> None:
     _lifecycle(
@@ -279,6 +361,8 @@ def _lifecycle_options(
         expected_version,
         attempt,
         lease_token,
+        context,
+        context_snapshot_id,
         json_output,
     )
 
@@ -290,6 +374,11 @@ def _register_lifecycle_command(name: str) -> None:
         expected_version: Annotated[int, typer.Option("--expected-version", min=0)],
         attempt: Annotated[int | None, typer.Option("--attempt", min=1)] = None,
         lease_token: Annotated[str | None, typer.Option("--lease-token")] = None,
+        context: ContextOption = None,
+        context_snapshot_id: Annotated[
+            str | None,
+            typer.Option("--context-snapshot-id"),
+        ] = None,
         json_output: JsonOption = False,
     ) -> None:
         _lifecycle_options(
@@ -299,6 +388,8 @@ def _register_lifecycle_command(name: str) -> None:
             expected_version,
             attempt,
             lease_token,
+            context,
+            context_snapshot_id,
             json_output,
         )
 

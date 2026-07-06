@@ -73,6 +73,15 @@ class EvidenceCommand(CommandBase):
     context_snapshot_id: UUID | None = None
 
 
+class PreflightCommandModel(CommandBase):
+    standing_context: dict[str, Any]
+    purpose: str = Field(min_length=1)
+    previous_context_snapshot_id: UUID | None = None
+    approval_id: UUID | None = None
+    attempt: int | None = Field(default=None, gt=0)
+    lease_token: str | None = Field(default=None, min_length=1)
+
+
 class RevisionRegistration(CommandBase):
     package_id: str
     source_repository: str
@@ -170,6 +179,26 @@ class EvidenceResponse(BaseModel):
     idempotency_key: str
     supersedes_evidence_id: UUID | None
     context_snapshot_id: UUID | None = None
+
+
+class ContextSnapshotResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_package_revision_id: UUID
+    work_unit_id: UUID
+    claim_id: UUID | None
+    attempt: int
+    actor_id: str
+    actor_role: str
+    context: dict[str, Any] | list[Any]
+    context_fingerprint: str
+    classification: str
+    decision: str
+    approval_id: UUID | None
+    event_id: UUID
+    idempotency_key: str
+    created_at: datetime
 
 
 class EventResponse(BaseModel):
