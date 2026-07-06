@@ -23,6 +23,7 @@ from orchestrator.kernel.readiness import (
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
+    ApprovedDecomposition,
     Dependency,
     Event,
     WorkPackage,
@@ -30,8 +31,6 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.persistence.repositories import PackageRepository
-
-_APPROVED_DECOMPOSITION_ACTIVATION = object()
 
 
 @dataclass(frozen=True)
@@ -246,7 +245,7 @@ def register_approved_unit(
     unit_id: uuid.UUID | None = None,
     dependencies: tuple[DependencySpec, ...] = (),
     activation_source: str = "legacy_manual",
-    activation_token: object | None = None,
+    approved_decomposition_id: uuid.UUID | None = None,
     idempotency_key: str | None = None,
     expected_version: int | None = None,
 ) -> WorkUnit:
@@ -261,18 +260,12 @@ def register_approved_unit(
     revision = session.get(WorkPackageRevision, revision_id, with_for_update=True)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
-    if (
-        revision.intake_source == "package_cli"
-        and (
-            activation_source != "approved_decomposition"
-            or activation_token is not _APPROVED_DECOMPOSITION_ACTIVATION
-        )
-    ):
-        raise DomainError(
-            "decomposition_approval_required",
-            "WS-3.2 package revisions require approved decomposition",
-            None,
-        )
+    _require_allowed_unit_activation(
+        session,
+        revision,
+        activation_source=activation_source,
+        approved_decomposition_id=approved_decomposition_id,
+    )
     command = {
         "action": "work_unit.registered",
         "revision_id": str(revision_id),
@@ -286,6 +279,9 @@ def register_approved_unit(
         "approved_at": approved_at.isoformat(),
         "unit_id": str(unit_id) if unit_id is not None else None,
         "activation_source": activation_source,
+        "approved_decomposition_id": str(approved_decomposition_id)
+        if approved_decomposition_id is not None
+        else None,
         "dependencies": [_json_identity(spec.__dict__) for spec in dependencies],
     }
     replay = _registration_replay(
@@ -362,6 +358,38 @@ def _registration_replay[RegistrationModel: (WorkPackageRevision, WorkUnit)](
     if value is None:
         raise DomainError("event_invalid", "registration event subject does not exist", None)
     return value
+
+
+def _require_allowed_unit_activation(
+    session: Session,
+    revision: WorkPackageRevision,
+    *,
+    activation_source: str,
+    approved_decomposition_id: uuid.UUID | None,
+) -> None:
+    if revision.intake_source != "package_cli":
+        return
+    if activation_source != "approved_decomposition" or approved_decomposition_id is None:
+        raise _decomposition_approval_required()
+    approved = session.scalar(
+        select(ApprovedDecomposition)
+        .where(
+            ApprovedDecomposition.id == approved_decomposition_id,
+            ApprovedDecomposition.work_package_revision_id == revision.id,
+            ApprovedDecomposition.superseded_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if approved is None:
+        raise _decomposition_approval_required()
+
+
+def _decomposition_approval_required() -> DomainError:
+    return DomainError(
+        "decomposition_approval_required",
+        "WS-3.2 package revisions require approved decomposition",
+        None,
+    )
 
 
 def _record_registration(

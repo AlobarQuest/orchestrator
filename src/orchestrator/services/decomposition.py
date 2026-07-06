@@ -28,7 +28,6 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import (
-    _APPROVED_DECOMPOSITION_ACTIVATION,
     DependencySpec,
     register_approved_unit,
     register_dependency_with_event,
@@ -279,6 +278,14 @@ def approve_decomposition_proposal(
         )
 
     decided_at = TransactionClock().now(session)
+    approved = ApprovedDecomposition(
+        work_package_revision_id=revision.id,
+        proposal_id=proposal.id,
+        approved_by=actor.actor_id,
+        approved_at=decided_at,
+    )
+    session.add(approved)
+    session.flush()
     created_work_unit_ids: dict[str, str] = {}
     units_by_key: dict[str, uuid.UUID] = {}
     for proposal_unit in proposal_units:
@@ -297,7 +304,7 @@ def approve_decomposition_proposal(
             actor_id=actor.actor_id,
             actor_role=actor.role,
             activation_source="approved_decomposition",
-            activation_token=_APPROVED_DECOMPOSITION_ACTIVATION,
+            approved_decomposition_id=approved.id,
             idempotency_key=_derived_idempotency_key(
                 idempotency_key, f"unit:{proposal_unit.unit_key}"
             ),
@@ -315,13 +322,6 @@ def approve_decomposition_proposal(
             idempotency_key=_dependency_idempotency_key(idempotency_key, proposal_dependency),
         )
 
-    approved = ApprovedDecomposition(
-        work_package_revision_id=revision.id,
-        proposal_id=proposal.id,
-        approved_by=actor.actor_id,
-        approved_at=decided_at,
-    )
-    session.add(approved)
     proposal.state = "approved"
     proposal.decided_by = actor.actor_id
     proposal.decided_at = decided_at
