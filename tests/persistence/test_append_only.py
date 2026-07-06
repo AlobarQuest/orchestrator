@@ -6,6 +6,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from tests.services.test_package_registration import register_test_revision
+
 
 @pytest.mark.parametrize(
     ("table", "values"),
@@ -131,5 +133,30 @@ def test_append_only_tables_reject_update_and_delete(
     ):
         with pytest.raises(IntegrityError):
             migrated_session.execute(text(statement), {"id": row_id})
+            migrated_session.commit()
+        migrated_session.rollback()
+
+
+@pytest.mark.parametrize("table", ["package_acceptance_criteria"])
+def test_ws32_projection_tables_are_append_only(migrated_session: Session, table: str) -> None:
+    revision = register_test_revision(migrated_session)
+    criterion_id = uuid.uuid4()
+    migrated_session.execute(
+        text(
+            f"insert into {table} "
+            "(id, work_package_revision_id, ac_id, condition, evidence_type, evidence, approver) "
+            "values (:id, :revision_id, 'AC-001', 'condition', 'automated_test', "
+            "'gate: test', 'policy')"
+        ),
+        {"id": criterion_id, "revision_id": revision.id},
+    )
+    migrated_session.commit()
+
+    for statement in (
+        f"update {table} set condition = 'changed' where id = :id",
+        f"delete from {table} where id = :id",
+    ):
+        with pytest.raises(IntegrityError):
+            migrated_session.execute(text(statement), {"id": criterion_id})
             migrated_session.commit()
         migrated_session.rollback()

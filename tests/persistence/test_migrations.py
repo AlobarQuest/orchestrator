@@ -1,10 +1,15 @@
+import pytest
 from alembic import command
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
+from orchestrator.kernel.states import ActorRole
+from orchestrator.services.packages import register_revision
 from tests.conftest import TEST_DATABASE_URL
 from tests.persistence.conftest import alembic_config
+from tests.services.test_package_registration import AUTHORITY, NOW, register_test_revision
 
 
 def column_default(engine, table: str, column: str) -> str | None:
@@ -82,3 +87,141 @@ def test_default_attempt_budget_migration_is_reversible(migrated_engine) -> None
 
     command.upgrade(config, "head")
     assert column_default(migrated_engine, "work_units", "max_attempts") == "3"
+
+
+def test_ws32_tables_exist_after_upgrade(migrated_session) -> None:
+    tables = {
+        row[0]
+        for row in migrated_session.execute(
+            text("select tablename from pg_tables where schemaname = 'public'")
+        )
+    }
+    assert "package_acceptance_criteria" in tables
+    assert "decomposition_proposals" in tables
+    assert "decomposition_proposal_units" in tables
+    assert "decomposition_proposal_dependencies" in tables
+    assert "decomposition_proposal_ac_mappings" in tables
+    assert "decomposition_proposal_retained_acs" in tables
+    assert "approved_decompositions" in tables
+
+
+def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> None:
+    package_id = register_test_revision(migrated_session).work_package_id
+    migrated_session.commit()
+
+    manual_revision_id = package_id.__class__(int=10)
+    migrated_session.execute(
+        text(
+            "INSERT INTO work_package_revisions "
+            "(id, work_package_id, revision, content_hash, source_path, source_commit, "
+            "approved_by, approved_at, approval_event_id, enforcement_snapshot, "
+            "authority_fingerprint, registry_version, registered_by, intake_source, "
+            "verification_mode) VALUES "
+            "(:id, :work_package_id, 2, 'sha256:manual', 'intent.md', 'def456', "
+            "'human-1', now(), :approval_event_id, '{}', 'authority', 1, 'human-1', "
+            "'manual_ws31', NULL)"
+        ),
+        {
+            "id": manual_revision_id,
+            "work_package_id": package_id,
+            "approval_event_id": package_id.__class__(int=11),
+        },
+    )
+    migrated_session.commit()
+
+    with pytest.raises(IntegrityError):
+        migrated_session.execute(
+            text(
+                "INSERT INTO work_package_revisions "
+                "(id, work_package_id, revision, content_hash, source_path, source_commit, "
+                "approved_by, approved_at, approval_event_id, enforcement_snapshot, "
+                "authority_fingerprint, registry_version, registered_by, intake_source, "
+                "verification_mode) VALUES "
+                "(:id, :work_package_id, 3, 'sha256:cli-missing', 'intent.md', 'ghi789', "
+                "'human-1', now(), :approval_event_id, '{}', 'authority', 1, 'human-1', "
+                "'package_cli', NULL)"
+            ),
+            {
+                "id": package_id.__class__(int=12),
+                "work_package_id": package_id,
+                "approval_event_id": package_id.__class__(int=13),
+            },
+        )
+        migrated_session.commit()
+    migrated_session.rollback()
+
+    migrated_session.execute(
+        text(
+            "INSERT INTO work_package_revisions "
+            "(id, work_package_id, revision, content_hash, source_path, source_commit, "
+            "approved_by, approved_at, approval_event_id, enforcement_snapshot, "
+            "authority_fingerprint, registry_version, registered_by, intake_source, "
+            "verification_mode) VALUES "
+            "(:id, :work_package_id, 4, 'sha256:cli-verified', 'intent.md', 'jkl012', "
+            "'human-1', now(), :approval_event_id, '{}', 'authority', 1, 'human-1', "
+            "'package_cli', 'caller_attested_cli_verified')"
+        ),
+        {
+            "id": package_id.__class__(int=14),
+            "work_package_id": package_id,
+            "approval_event_id": package_id.__class__(int=15),
+        },
+    )
+    migrated_session.commit()
+
+
+def test_ws32_approved_decomposition_must_match_proposal_revision(migrated_session) -> None:
+    revision_one = register_test_revision(migrated_session)
+    migrated_session.commit()
+    revision_two = register_revision(
+        migrated_session,
+        package_id="pkg-2",
+        source_repository="owner/repo",
+        revision=1,
+        content_hash="sha256:two",
+        source_path="intent.md",
+        source_commit="def456",
+        approved_by="human-2",
+        approved_at=NOW,
+        approval_event_id=revision_one.id.__class__(int=2),
+        enforcement_snapshot={"acceptance_criteria": ["ac-2"]},
+        authority=AUTHORITY,
+        registry_version=1,
+        actor_id="human-2",
+        actor_role=ActorRole.HUMAN,
+    )
+    migrated_session.commit()
+
+    proposal_id = revision_one.id.__class__(int=3)
+    approved_id = revision_one.id.__class__(int=4)
+    migrated_session.execute(
+        text(
+            "INSERT INTO decomposition_proposals "
+            "(id, work_package_revision_id, proposal_number, state, rationale, "
+            "proposed_by, proposed_actor_role, idempotency_key) "
+            "VALUES (:id, :revision_id, 1, 'proposed', 'rationale', "
+            "'human-1', 'human', :idempotency_key)"
+        ),
+        {
+            "id": proposal_id,
+            "revision_id": revision_one.id,
+            "idempotency_key": "proposal-1",
+        },
+    )
+    migrated_session.commit()
+
+    with pytest.raises(IntegrityError):
+        migrated_session.execute(
+            text(
+                "INSERT INTO approved_decompositions "
+                "(id, work_package_revision_id, proposal_id, approved_by) "
+                "VALUES (:id, :revision_id, :proposal_id, 'human-2')"
+            ),
+            {
+                "id": approved_id,
+                "revision_id": revision_two.id,
+                "proposal_id": proposal_id,
+            },
+        )
+        migrated_session.commit()
+    migrated_session.rollback()

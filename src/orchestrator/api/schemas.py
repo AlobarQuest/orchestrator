@@ -214,3 +214,159 @@ class DependencyResponse(BaseModel):
     kind: str
     required_state_or_condition: str
     status: str
+
+
+class PackageAcceptanceCriterionCommand(BaseModel):
+    ac_id: str = Field(min_length=1)
+    condition: str = Field(min_length=1)
+    evidence_type: str = Field(min_length=1)
+    evidence: str = Field(min_length=1)
+    approver: str = Field(min_length=1)
+
+
+class PackageIntakeRegistration(CommandBase):
+    package_id: str = Field(min_length=1)
+    source_repository: str = Field(min_length=1)
+    revision: int = Field(gt=0)
+    content_hash: str = Field(min_length=1)
+    source_path: str = Field(min_length=1)
+    source_commit: str = Field(min_length=1)
+    approved_by: str = Field(min_length=1)
+    approved_at: datetime
+    approval_event_id: UUID
+    approval_ledger_commit: str = Field(min_length=1)
+    profile: str | None = None
+    status_at_intake: str = Field(min_length=1)
+    verification_mode: str = Field(min_length=1)
+    verification_limitations: dict[str, Any] | list[Any] | None = None
+    enforcement_snapshot: dict[str, Any]
+    authority: dict[str, Any]
+    registry_version: int = Field(ge=0)
+    acceptance_criteria: list[PackageAcceptanceCriterionCommand] = Field(min_length=1)
+
+
+class PackageAcceptanceCriterionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    ac_id: str
+    condition: str
+    evidence_type: str
+    evidence: str
+    approver: str
+
+
+class PackageIntakeResponse(BaseModel):
+    id: UUID
+    package_id: str
+    source_repository: str
+    revision: int
+    content_hash: str
+    source_path: str
+    source_commit: str
+    approved_by: str
+    approved_at: datetime
+    approval_event_id: UUID
+    approval_ledger_commit: str | None
+    profile: str | None
+    status_at_intake: str | None
+    intake_source: str
+    verification_mode: str | None
+    verification_limitations: dict[str, Any] | list[Any] | None
+    enforcement_snapshot: dict[str, Any]
+    authority_fingerprint: str
+    authority: dict[str, Any] | None
+    registry_version: int
+    registered_by: str
+    registered_at: datetime
+    acceptance_criteria: list[PackageAcceptanceCriterionResponse]
+
+
+class ProposedUnitCommand(BaseModel):
+    unit_key: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    outcome: str = Field(min_length=1)
+    required_capability: str = Field(min_length=1)
+    authority: dict[str, Any]
+    max_attempts: int = Field(ge=0, default=3)
+
+
+class ProposedDependencyCommand(BaseModel):
+    source_unit_key: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    required_state_or_condition: str = Field(min_length=1)
+    target_unit_key: str | None = None
+    external_ref: str | None = None
+
+
+class AcMappingCommandModel(BaseModel):
+    ac_id: str = Field(min_length=1)
+    unit_key: str = Field(min_length=1)
+
+
+class RetainedAcCommandModel(BaseModel):
+    ac_id: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+
+
+class DecompositionProposalRegistration(CommandBase):
+    rationale: str = Field(min_length=1)
+    proposed_units: list[ProposedUnitCommand] = Field(min_length=1)
+    dependencies: list[ProposedDependencyCommand] = Field(default_factory=list)
+    ac_mappings: list[AcMappingCommandModel] = Field(default_factory=list)
+    retained_acs: list[RetainedAcCommandModel] = Field(default_factory=list)
+
+
+class DecompositionDecisionCommand(CommandBase):
+    reason: str = Field(min_length=1)
+
+
+class DecompositionProposalUnitResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    unit_key: str
+    title: str
+    outcome: str
+    required_capability: str
+    authority: dict[str, Any]
+    authority_fingerprint: str
+    max_attempts: int
+
+
+class DecompositionProposalDependencyResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source_unit_key: str
+    kind: str
+    target_unit_key: str | None
+    external_ref: str | None
+    required_state_or_condition: str
+
+
+class DecompositionProposalAcMappingResponse(BaseModel):
+    unit_key: str
+    package_acceptance_criterion: PackageAcceptanceCriterionResponse
+
+
+class DecompositionProposalRetainedAcResponse(BaseModel):
+    rationale: str
+    package_acceptance_criterion: PackageAcceptanceCriterionResponse
+
+
+class DecompositionProposalResponse(BaseModel):
+    id: UUID
+    work_package_revision_id: UUID
+    proposal_number: int
+    state: str
+    rationale: str
+    proposed_by: str
+    proposed_actor_role: str
+    proposed_at: datetime
+    decided_by: str | None
+    decided_at: datetime | None
+    decision_reason: str | None
+    created_work_unit_ids: dict[str, str] | None
+    proposed_units: list[DecompositionProposalUnitResponse]
+    dependencies: list[DecompositionProposalDependencyResponse]
+    ac_mappings: list[DecompositionProposalAcMappingResponse]
+    retained_acs: list[DecompositionProposalRetainedAcResponse]

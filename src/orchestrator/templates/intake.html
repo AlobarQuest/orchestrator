@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Package intake {{ revision.id }}{% endblock %}
+{% block content %}
+<p><a href="/review">← Review queue</a></p>
+<h1>Package intake</h1>
+<p class="status">{{ package.package_id }} · revision {{ revision.revision }}</p>
+
+<h2>Immutable source facts</h2>
+<dl>
+  <dt>Source repository</dt><dd>{{ package.source_repository }}</dd>
+  <dt>Source path</dt><dd>{{ revision.source_path }}</dd>
+  <dt>Source commit</dt><dd>{{ revision.source_commit }}</dd>
+  <dt>Content hash</dt><dd>{{ revision.content_hash }}</dd>
+  <dt>Status at intake</dt><dd>{{ revision.status_at_intake }}</dd>
+  <dt>Verification mode</dt><dd>{{ revision.verification_mode }}</dd>
+  <dt>Approved by</dt><dd>{{ revision.approved_by }} at {{ revision.approved_at }}</dd>
+  <dt>Registered by</dt><dd>{{ revision.registered_by }} at {{ revision.registered_at }}</dd>
+  <dt>Approval ledger commit</dt><dd>{{ revision.approval_ledger_commit or "Not recorded" }}</dd>
+</dl>
+
+<h2>Authority facts</h2>
+<dl>
+  <dt>Profile</dt><dd>{{ revision.profile or "Not recorded" }}</dd>
+  <dt>Authority fingerprint</dt><dd><code>{{ revision.authority_fingerprint }}</code></dd>
+  <dt>Registry version</dt><dd>{{ revision.registry_version }}</dd>
+</dl>
+<h3>Authority envelope</h3>
+{% if authority %}<pre>{{ authority }}</pre>{% else %}<p class="empty">Authority envelope was not recorded in the intake event payload.</p>{% endif %}
+<h3>Enforcement snapshot</h3>
+<pre>{{ revision.enforcement_snapshot }}</pre>
+
+<h2>Acceptance criteria</h2>
+<table>
+  <caption>Package-level acceptance criteria recorded at intake</caption>
+  <thead>
+    <tr>
+      <th scope="col">AC</th>
+      <th scope="col">Condition</th>
+      <th scope="col">Evidence</th>
+      <th scope="col">Approver</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for criterion in acceptance_criteria %}
+    <tr>
+      <td>{{ criterion.ac_id }}</td>
+      <td>{{ criterion.condition }}</td>
+      <td>{{ criterion.evidence_type }} · {{ criterion.evidence }}</td>
+      <td>{{ criterion.approver }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No acceptance criteria were recorded.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

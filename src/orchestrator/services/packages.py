@@ -12,6 +12,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import (
     AuthorityEnvelope,
     authority_fingerprint,
+    normalize_authority,
 )
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
 from orchestrator.kernel.readiness import (
@@ -23,6 +24,8 @@ from orchestrator.kernel.readiness import (
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
+    ApprovedDecomposition,
+    DecompositionProposalUnit,
     Dependency,
     Event,
     WorkPackage,
@@ -142,6 +145,12 @@ def register_revision(
     enforcement_snapshot: Mapping[str, Any],
     authority: AuthorityEnvelope,
     registry_version: int,
+    profile: str | None = None,
+    status_at_intake: str | None = None,
+    intake_source: str = "manual_ws31",
+    approval_ledger_commit: str | None = None,
+    verification_mode: str | None = None,
+    verification_limitations: Mapping[str, Any] | list[Any] | None = None,
     actor_id: str,
     actor_role: ActorRole,
     idempotency_key: str | None = None,
@@ -182,6 +191,12 @@ def register_revision(
         "enforcement_snapshot": normalized_snapshot,
         "authority_fingerprint": fingerprint,
         "registry_version": registry_version,
+        "profile": profile,
+        "status_at_intake": status_at_intake,
+        "intake_source": intake_source,
+        "approval_ledger_commit": approval_ledger_commit,
+        "verification_mode": verification_mode,
+        "verification_limitations": _normalize_json(verification_limitations),
         "registered_by": actor_id,
     }
     command = {
@@ -231,6 +246,8 @@ def register_approved_unit(
     actor_role: ActorRole,
     unit_id: uuid.UUID | None = None,
     dependencies: tuple[DependencySpec, ...] = (),
+    activation_source: str = "legacy_manual",
+    approved_decomposition_id: uuid.UUID | None = None,
     idempotency_key: str | None = None,
     expected_version: int | None = None,
 ) -> WorkUnit:
@@ -245,6 +262,20 @@ def register_approved_unit(
     revision = session.get(WorkPackageRevision, revision_id, with_for_update=True)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
+    _require_allowed_unit_activation(
+        session,
+        revision,
+        unit_key=unit_key,
+        title=title,
+        outcome=outcome,
+        required_capability=required_capability,
+        authority=authority,
+        max_attempts=max_attempts,
+        approved_by=approved_by,
+        approved_at=approved_at,
+        activation_source=activation_source,
+        approved_decomposition_id=approved_decomposition_id,
+    )
     command = {
         "action": "work_unit.registered",
         "revision_id": str(revision_id),
@@ -257,6 +288,10 @@ def register_approved_unit(
         "approved_by": approved_by,
         "approved_at": approved_at.isoformat(),
         "unit_id": str(unit_id) if unit_id is not None else None,
+        "activation_source": activation_source,
+        "approved_decomposition_id": str(approved_decomposition_id)
+        if approved_decomposition_id is not None
+        else None,
         "dependencies": [_json_identity(spec.__dict__) for spec in dependencies],
     }
     replay = _registration_replay(
@@ -333,6 +368,67 @@ def _registration_replay[RegistrationModel: (WorkPackageRevision, WorkUnit)](
     if value is None:
         raise DomainError("event_invalid", "registration event subject does not exist", None)
     return value
+
+
+def _require_allowed_unit_activation(
+    session: Session,
+    revision: WorkPackageRevision,
+    *,
+    unit_key: str,
+    title: str,
+    outcome: str,
+    required_capability: str,
+    authority: AuthorityEnvelope,
+    max_attempts: int,
+    approved_by: str,
+    approved_at: datetime,
+    activation_source: str,
+    approved_decomposition_id: uuid.UUID | None,
+) -> None:
+    if revision.intake_source != "package_cli":
+        return
+    if activation_source != "approved_decomposition" or approved_decomposition_id is None:
+        raise _decomposition_approval_required()
+    approved = session.scalar(
+        select(ApprovedDecomposition)
+        .where(
+            ApprovedDecomposition.id == approved_decomposition_id,
+            ApprovedDecomposition.work_package_revision_id == revision.id,
+            ApprovedDecomposition.superseded_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if approved is None:
+        raise _decomposition_approval_required()
+    proposal_unit = session.scalar(
+        select(DecompositionProposalUnit)
+        .where(
+            DecompositionProposalUnit.proposal_id == approved.proposal_id,
+            DecompositionProposalUnit.unit_key == unit_key,
+        )
+        .with_for_update()
+    )
+    if proposal_unit is None:
+        raise _decomposition_approval_required()
+    if (
+        proposal_unit.title != title
+        or proposal_unit.outcome != outcome
+        or proposal_unit.required_capability != required_capability
+        or proposal_unit.max_attempts != max_attempts
+        or authority_fingerprint(normalize_authority(proposal_unit.authority))
+        != authority_fingerprint(authority)
+        or approved.approved_by != approved_by
+        or approved.approved_at != approved_at
+    ):
+        raise _decomposition_approval_required()
+
+
+def _decomposition_approval_required() -> DomainError:
+    return DomainError(
+        "decomposition_approval_required",
+        "WS-3.2 package revisions require approved decomposition",
+        None,
+    )
 
 
 def _record_registration(
@@ -426,24 +522,19 @@ def register_dependency_command(
     unit = PackageRepository(session).unit_for_update(work_unit_id)
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
-    existing = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
-    identity = {
-        "actor_id": actor_id,
-        "expected_version": expected_version,
-        "spec": _json_identity(spec.__dict__),
-    }
-    if existing is not None:
-        dependency_id = existing.payload.get("dependency_id")
-        if existing.payload.get("command") != identity or not isinstance(dependency_id, str):
-            raise DomainError(
-                "idempotency_conflict",
-                "idempotency key belongs to a different operation",
-                "use a new idempotency key",
-            )
-        dependency = session.get(Dependency, uuid.UUID(dependency_id))
-        if dependency is None:
-            raise DomainError("dependency_not_found", "dependency does not exist", None)
-        return dependency
+    identity = _dependency_command_identity(
+        actor_id=actor_id,
+        expected_version=expected_version,
+        spec=spec,
+    )
+    replay = _dependency_replay(
+        session,
+        work_unit_id=unit.id,
+        identity=identity,
+        idempotency_key=idempotency_key,
+    )
+    if replay is not None:
+        return replay
     if unit.version != expected_version:
         raise DomainError(
             "version_conflict",
@@ -452,22 +543,53 @@ def register_dependency_command(
             current_state=unit.state,
             current_version=unit.version,
         )
-    dependency = register_dependency(session, work_unit_id=work_unit_id, spec=spec)
-    session.add(
-        Event(
-            actor_id=actor_id,
-            action="dependency.registered",
-            subject_type="work_unit",
-            subject_id=unit.id,
-            from_state=unit.state,
-            to_state=unit.state,
-            payload={"command": identity, "dependency_id": str(dependency.id)},
-            correlation_id=uuid.uuid4(),
-            idempotency_key=idempotency_key,
-        )
+    return _register_dependency_with_event(
+        session,
+        unit=unit,
+        spec=spec,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        idempotency_key=idempotency_key,
+        identity=identity,
     )
-    session.flush()
-    return dependency
+
+
+def register_dependency_with_event(
+    session: Session,
+    *,
+    work_unit_id: uuid.UUID,
+    spec: DependencySpec,
+    actor_id: str,
+    actor_role: ActorRole,
+    idempotency_key: str,
+) -> Dependency:
+    if actor_role not in {ActorRole.HUMAN, ActorRole.SYSTEM}:
+        raise DomainError("role_forbidden", "actor may not register dependencies", None)
+    unit = PackageRepository(session).unit_for_update(work_unit_id)
+    if unit is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    identity = _dependency_command_identity(
+        actor_id=actor_id,
+        expected_version=unit.version,
+        spec=spec,
+    )
+    replay = _dependency_replay(
+        session,
+        work_unit_id=unit.id,
+        identity=identity,
+        idempotency_key=idempotency_key,
+    )
+    if replay is not None:
+        return replay
+    return _register_dependency_with_event(
+        session,
+        unit=unit,
+        spec=spec,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        idempotency_key=idempotency_key,
+        identity=identity,
+    )
 
 
 def resolve_dependency(
@@ -633,6 +755,76 @@ def _validate_dependency_spec(spec: DependencySpec) -> None:
         raise DomainError("invalid_dependency", "work-unit dependency requires a unit", None)
     if spec.kind != "work_unit" and not has_external:
         raise DomainError("invalid_dependency", "external dependency requires a reference", None)
+
+
+def _dependency_command_identity(
+    *, actor_id: str, expected_version: int, spec: DependencySpec
+) -> dict[str, Any]:
+    return {
+        "actor_id": actor_id,
+        "expected_version": expected_version,
+        "spec": _json_identity(spec.__dict__),
+    }
+
+
+def _dependency_replay(
+    session: Session,
+    *,
+    work_unit_id: uuid.UUID,
+    identity: dict[str, Any],
+    idempotency_key: str,
+) -> Dependency | None:
+    existing = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
+    if existing is None:
+        return None
+    dependency_id = existing.payload.get("dependency_id")
+    if (
+        existing.action != "dependency.registered"
+        or existing.subject_type != "work_unit"
+        or existing.subject_id != work_unit_id
+        or existing.payload.get("command") != identity
+        or not isinstance(dependency_id, str)
+    ):
+        raise DomainError(
+            "idempotency_conflict",
+            "idempotency key belongs to a different operation",
+            "use a new idempotency key",
+        )
+    dependency = session.get(Dependency, uuid.UUID(dependency_id))
+    if dependency is None:
+        raise DomainError("dependency_not_found", "dependency does not exist", None)
+    return dependency
+
+
+def _register_dependency_with_event(
+    session: Session,
+    *,
+    unit: WorkUnit,
+    spec: DependencySpec,
+    actor_id: str,
+    actor_role: ActorRole,
+    idempotency_key: str,
+    identity: dict[str, Any],
+) -> Dependency:
+    if actor_role not in {ActorRole.HUMAN, ActorRole.SYSTEM}:
+        raise DomainError("role_forbidden", "actor may not register dependencies", None)
+    dependency = register_dependency(session, work_unit_id=unit.id, spec=spec)
+    session.add(
+        Event(
+            occurred_at=TransactionClock().now(session),
+            actor_id=actor_id,
+            action="dependency.registered",
+            subject_type="work_unit",
+            subject_id=unit.id,
+            from_state=unit.state,
+            to_state=unit.state,
+            payload={"command": identity, "dependency_id": str(dependency.id)},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=idempotency_key,
+        )
+    )
+    session.flush()
+    return dependency
 
 
 def _has_internal_dependency_cycle(

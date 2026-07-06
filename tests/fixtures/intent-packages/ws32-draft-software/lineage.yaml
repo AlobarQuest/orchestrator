@@ -1,0 +1,10 @@
+package_id: ws32-draft-software
+current_state: draft
+revisions:
+  - revision: 1
+    hash: c65bb3dd54d09ed884fd8bae51ab6cc425f1b376468cbc9dd52b6b3639af3231
+    created_at: "2026-07-05T00:00:00Z"
+    author: test
+transitions: []
+approvals: []
+grants: []

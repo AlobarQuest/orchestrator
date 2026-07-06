@@ -1,13 +1,16 @@
 import json
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+import orchestrator.package_sources as package_sources
 from orchestrator.cli import app
+from orchestrator.package_sources import VerifiedApproval, load_package_intake_payload
 
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
 SYSTEM = {"Authorization": "Bearer system-token", "X-Credential-Key-Id": "system-key"}
@@ -16,15 +19,72 @@ AUTHORITY = {
     "capabilities": {"repository_write": "allowed"},
     "budgets": {"max_attempts": 3, "max_llm_calls": 4},
 }
+PACKAGE_FIXTURE = Path("tests/fixtures/intent-packages/ws32-approved-software")
+
+
+def _verified_approval() -> VerifiedApproval:
+    return VerifiedApproval(
+        approved_by="devon",
+        approved_at="2026-07-05T00:02:00Z",
+        approval_event_id="22222222-2222-2222-2222-222222222222",
+        approval_ledger_commit="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+
+
+def decomposition_payload(
+    acceptance_criteria: dict[str, str],
+    **overrides: object,
+) -> dict[str, object]:
+    ac_ids = list(acceptance_criteria.values())
+    base = {
+        "idempotency_key": "cli-http-proposal",
+        "expected_version": 0,
+        "rationale": "Split by independent delivery path.",
+        "proposed_units": [
+            {
+                "unit_key": "unit-1",
+                "title": "Implement service",
+                "outcome": "Service persists proposals.",
+                "required_capability": "repository_write",
+                "authority": AUTHORITY,
+                "max_attempts": 3,
+            },
+            {
+                "unit_key": "unit-2",
+                "title": "Implement tests",
+                "outcome": "Service is covered by focused tests.",
+                "required_capability": "repository_write",
+                "authority": AUTHORITY,
+                "max_attempts": 3,
+            },
+        ],
+        "dependencies": [
+            {
+                "source_unit_key": "unit-2",
+                "kind": "work_unit",
+                "required_state_or_condition": "completed",
+                "target_unit_key": "unit-1",
+                "external_ref": None,
+            }
+        ],
+        "ac_mappings": [{"ac_id": ac_ids[0], "unit_key": "unit-1"}],
+        "retained_acs": [],
+    }
+    return {**base, **overrides}
 
 
 @pytest.fixture
 def in_process_transport(monkeypatch: pytest.MonkeyPatch, db_client: TestClient) -> None:
     def handle(request: httpx.Request) -> httpx.Response:
+        headers = dict(request.headers)
+        if headers.get("authorization") == "Bearer human-token":
+            headers.pop("authorization", None)
+            headers.pop("x-credential-key-id", None)
+            headers.update(HUMAN)
         response = db_client.request(
             request.method,
             request.url.path,
-            headers=dict(request.headers),
+            headers=headers,
             content=request.content,
         )
         return httpx.Response(
@@ -152,3 +212,122 @@ def test_real_http_api_and_cli_have_success_and_error_parity(
     cli_history = CliRunner().invoke(app, ["history", unit_id, "--json"])
     assert cli_history.exit_code == 0
     assert json.loads(cli_history.stdout) == api_history.json()
+
+
+def test_real_http_package_intake_and_decomposition_cli_have_parity(
+    db_client: TestClient,
+    in_process_transport: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+    )
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
+
+    intake_body = {
+        **load_package_intake_payload(
+            PACKAGE_FIXTURE,
+            source_repository="AlobarQuest/intent-packages",
+        ),
+        "idempotency_key": "cli-http-intake",
+        "expected_version": 0,
+    }
+    api_intake = db_client.post("/api/v1/package-intakes", headers=HUMAN, json=intake_body)
+    assert api_intake.status_code == 201
+
+    monkeypatch.setenv("ORCHESTRATOR_API_TOKEN", "human-token")
+    monkeypatch.delenv("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", raising=False)
+    cli_intake = CliRunner().invoke(
+        app,
+        [
+            "intake-package",
+            str(PACKAGE_FIXTURE),
+            "--source-repository",
+            "AlobarQuest/intent-packages",
+            "--idempotency-key",
+            "cli-http-intake",
+            "--json",
+        ],
+    )
+    assert cli_intake.exit_code == 0
+    assert json.loads(cli_intake.stdout) == api_intake.json()
+
+    revision_id = api_intake.json()["id"]
+    api_show = db_client.get(f"/api/v1/package-intakes/{revision_id}", headers=HUMAN)
+    assert api_show.status_code == 200
+    cli_show = CliRunner().invoke(app, ["show-package-intake", revision_id, "--json"])
+    assert cli_show.exit_code == 0
+    assert json.loads(cli_show.stdout) == api_show.json()
+
+    acceptance_criteria = {
+        criterion["ac_id"]: criterion["id"] for criterion in api_show.json()["acceptance_criteria"]
+    }
+    proposal_body = decomposition_payload(acceptance_criteria)
+    api_proposal = db_client.post(
+        f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        headers=WORKER,
+        json=proposal_body,
+    )
+    assert api_proposal.status_code == 201
+
+    monkeypatch.setenv("ORCHESTRATOR_API_TOKEN", "fixture-token")
+    monkeypatch.setenv("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "worker-key")
+    cli_proposal = CliRunner().invoke(
+        app,
+        [
+            "propose-decomposition",
+            revision_id,
+            "--data",
+            json.dumps(proposal_body),
+            "--json",
+        ],
+    )
+    assert cli_proposal.exit_code == 0
+    assert json.loads(cli_proposal.stdout) == api_proposal.json()
+
+    api_list = db_client.get(
+        f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        headers=WORKER,
+    )
+    assert api_list.status_code == 200
+    cli_list = CliRunner().invoke(app, ["list-decomposition-proposals", revision_id, "--json"])
+    assert cli_list.exit_code == 0
+    assert json.loads(cli_list.stdout) == api_list.json()
+
+    proposal_id = api_proposal.json()["id"]
+    api_detail = db_client.get(f"/api/v1/decomposition-proposals/{proposal_id}", headers=WORKER)
+    assert api_detail.status_code == 200
+    cli_detail = CliRunner().invoke(app, ["show-decomposition-proposal", proposal_id, "--json"])
+    assert cli_detail.exit_code == 0
+    assert json.loads(cli_detail.stdout) == api_detail.json()
+
+    decision_body = {
+        "idempotency_key": "cli-http-approve",
+        "expected_version": 0,
+        "reason": "Approved for draft activation.",
+    }
+    api_approve = db_client.post(
+        f"/api/v1/decomposition-proposals/{proposal_id}/approve",
+        headers=HUMAN,
+        json=decision_body,
+    )
+    assert api_approve.status_code == 200
+
+    monkeypatch.setenv("ORCHESTRATOR_API_TOKEN", "human-token")
+    monkeypatch.delenv("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", raising=False)
+    cli_approve = CliRunner().invoke(
+        app,
+        [
+            "approve-decomposition",
+            proposal_id,
+            "--idempotency-key",
+            "cli-http-approve",
+            "--reason",
+            "Approved for draft activation.",
+            "--json",
+        ],
+    )
+    assert cli_approve.exit_code == 0
+    assert json.loads(cli_approve.stdout) == api_approve.json()

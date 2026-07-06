@@ -7,11 +7,13 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -23,6 +25,11 @@ class Base(DeclarativeBase):
 
 class UUIDPrimaryKey:
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+
+PROPOSAL_STATES = ("proposed", "approved", "rejected", "revision_required")
+INTAKE_SOURCES = ("manual_ws31", "package_cli")
+VERIFICATION_MODES = ("caller_attested_cli_verified",)
 
 
 class WorkPackage(UUIDPrimaryKey, Base):
@@ -39,6 +46,21 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
         UniqueConstraint("work_package_id", "revision"),
         UniqueConstraint("work_package_id", "content_hash"),
         CheckConstraint("revision > 0", name="ck_work_package_revisions_positive_revision"),
+        CheckConstraint(
+            f"intake_source IN {INTAKE_SOURCES!r}",
+            name="ck_work_package_revisions_intake_source",
+        ),
+        CheckConstraint(
+            f"verification_mode IS NULL OR verification_mode IN {VERIFICATION_MODES!r}",
+            name="ck_work_package_revisions_verification_mode",
+        ),
+        CheckConstraint(
+            "("
+            "intake_source <> 'package_cli' OR "
+            "COALESCE(verification_mode = 'caller_attested_cli_verified', FALSE)"
+            ")",
+            name="ck_work_package_revisions_package_cli_verification_mode",
+        ),
         CheckConstraint(
             "content_hash <> '' AND source_path <> '' AND source_commit <> '' "
             "AND approved_by <> '' AND registered_by <> ''",
@@ -61,6 +83,12 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    profile: Mapped[str | None] = mapped_column(String)
+    status_at_intake: Mapped[str | None] = mapped_column(String)
+    intake_source: Mapped[str] = mapped_column(String, server_default="manual_ws31")
+    approval_ledger_commit: Mapped[str | None] = mapped_column(String)
+    verification_mode: Mapped[str | None] = mapped_column(String)
+    verification_limitations: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSONB)
     work_package: Mapped[WorkPackage] = relationship()
 
 
@@ -293,3 +321,152 @@ class Event(UUIDPrimaryKey, Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
     correlation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
     idempotency_key: Mapped[str] = mapped_column(String, unique=True)
+
+
+class PackageAcceptanceCriterion(UUIDPrimaryKey, Base):
+    __tablename__ = "package_acceptance_criteria"
+    __table_args__ = (
+        UniqueConstraint("work_package_revision_id", "ac_id"),
+        CheckConstraint(
+            "ac_id <> '' AND condition <> '' AND evidence_type <> '' "
+            "AND evidence <> '' AND approver <> ''",
+            name="ck_package_acceptance_criteria_required_text",
+        ),
+    )
+
+    work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("work_package_revisions.id")
+    )
+    ac_id: Mapped[str] = mapped_column(String)
+    condition: Mapped[str] = mapped_column(Text)
+    evidence_type: Mapped[str] = mapped_column(String)
+    evidence: Mapped[str] = mapped_column(Text)
+    approver: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DecompositionProposal(UUIDPrimaryKey, Base):
+    __tablename__ = "decomposition_proposals"
+    __table_args__ = (
+        UniqueConstraint("work_package_revision_id", "proposal_number"),
+        UniqueConstraint("id", "work_package_revision_id"),
+        CheckConstraint(
+            f"state IN {PROPOSAL_STATES!r}",
+            name="ck_decomposition_proposals_state",
+        ),
+        CheckConstraint("rationale <> ''", name="ck_decomposition_proposals_rationale"),
+    )
+
+    work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("work_package_revisions.id")
+    )
+    proposal_number: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String)
+    rationale: Mapped[str] = mapped_column(Text)
+    proposed_by: Mapped[str] = mapped_column(String)
+    proposed_actor_role: Mapped[str] = mapped_column(String)
+    proposed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    decided_by: Mapped[str | None] = mapped_column(String)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_reason: Mapped[str | None] = mapped_column(Text)
+    created_work_unit_ids: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSONB)
+    idempotency_key: Mapped[str] = mapped_column(String, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DecompositionProposalUnit(UUIDPrimaryKey, Base):
+    __tablename__ = "decomposition_proposal_units"
+    __table_args__ = (
+        UniqueConstraint("proposal_id", "unit_key"),
+        CheckConstraint(
+            "max_attempts >= 0",
+            name="ck_decomposition_proposal_units_attempts",
+        ),
+    )
+
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("decomposition_proposals.id"))
+    unit_key: Mapped[str] = mapped_column(String)
+    title: Mapped[str] = mapped_column(String)
+    outcome: Mapped[str] = mapped_column(Text)
+    required_capability: Mapped[str] = mapped_column(String)
+    authority: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    authority_fingerprint: Mapped[str] = mapped_column(String)
+    max_attempts: Mapped[int] = mapped_column(Integer, server_default="3")
+
+
+class DecompositionProposalDependency(UUIDPrimaryKey, Base):
+    __tablename__ = "decomposition_proposal_dependencies"
+    __table_args__ = (
+        CheckConstraint(
+            "(target_unit_key IS NOT NULL) <> (external_ref IS NOT NULL)",
+            name="ck_decomposition_proposal_dependencies_reference",
+        ),
+    )
+
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("decomposition_proposals.id"))
+    source_unit_key: Mapped[str] = mapped_column(String)
+    kind: Mapped[str] = mapped_column(String)
+    target_unit_key: Mapped[str | None] = mapped_column(String)
+    external_ref: Mapped[str | None] = mapped_column(String)
+    required_state_or_condition: Mapped[str] = mapped_column(String)
+
+
+class DecompositionProposalAcMapping(UUIDPrimaryKey, Base):
+    __tablename__ = "decomposition_proposal_ac_mappings"
+    __table_args__ = (
+        UniqueConstraint("proposal_id", "package_acceptance_criterion_id", "unit_key"),
+    )
+
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("decomposition_proposals.id"))
+    package_acceptance_criterion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("package_acceptance_criteria.id")
+    )
+    unit_key: Mapped[str] = mapped_column(String)
+
+
+class DecompositionProposalRetainedAc(UUIDPrimaryKey, Base):
+    __tablename__ = "decomposition_proposal_retained_acs"
+    __table_args__ = (
+        UniqueConstraint("proposal_id", "package_acceptance_criterion_id"),
+        CheckConstraint(
+            "rationale <> ''",
+            name="ck_decomposition_proposal_retained_acs_rationale",
+        ),
+    )
+
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("decomposition_proposals.id"))
+    package_acceptance_criterion_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("package_acceptance_criteria.id")
+    )
+    rationale: Mapped[str] = mapped_column(Text)
+
+
+class ApprovedDecomposition(UUIDPrimaryKey, Base):
+    __tablename__ = "approved_decompositions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["proposal_id", "work_package_revision_id"],
+            ["decomposition_proposals.id", "decomposition_proposals.work_package_revision_id"],
+            name="fk_approved_decompositions_proposal_revision",
+        ),
+        Index(
+            "uq_approved_decompositions_active_revision",
+            "work_package_revision_id",
+            unique=True,
+            postgresql_where=text("superseded_at IS NULL"),
+        ),
+    )
+
+    work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("work_package_revisions.id")
+    )
+    proposal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    approved_by: Mapped[str] = mapped_column(String)
+    approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    superseded_by: Mapped[str | None] = mapped_column(String)
+    supersession_reason: Mapped[str | None] = mapped_column(Text)
