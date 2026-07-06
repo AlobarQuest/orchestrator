@@ -117,6 +117,7 @@ COMMAND_TARGETS = {
     "submit": WorkUnitState.SUBMITTED,
     "verify": WorkUnitState.VERIFYING,
     "review": WorkUnitState.AWAITING_REVIEW,
+    "revision-required": WorkUnitState.REVISION_REQUIRED,
     "complete": WorkUnitState.COMPLETED,
     "fail": WorkUnitState.FAILED,
     "retry": WorkUnitState.READY,

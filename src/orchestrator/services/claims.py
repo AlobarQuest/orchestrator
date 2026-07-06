@@ -249,6 +249,7 @@ def _perform_reclaim(
         "attempt": claim.attempt,
         "reclaim_actor_id": actor.actor_id,
         "next_owner_id": next_owner.actor_id,
+        "reason": "lease_expired",
     }
     if eligibility_error is not None:
         failed_payload["result_error_code"] = eligibility_error.code

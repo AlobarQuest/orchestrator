@@ -488,6 +488,7 @@ for _command_name in (
     "submit",
     "verify",
     "review",
+    "revision-required",
     "complete",
     "fail",
     "retry",
