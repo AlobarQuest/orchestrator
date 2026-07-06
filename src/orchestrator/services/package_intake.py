@@ -213,16 +213,38 @@ def _intake_replay(
     event = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))
     if event is None:
         return None
+    expected = _command_identity(command, actor)
+    observed = event.payload.get("command")
     if (
         event.action != _INTAKE_ACTION
         or event.subject_type != "work_package_revision"
-        or event.payload.get("command") != _command_identity(command, actor)
+        or (
+            observed != expected
+            and not _legacy_executable_identity_matches(observed, expected, command)
+        )
     ):
         raise _idempotency_conflict()
     revision = session.get(WorkPackageRevision, event.subject_id)
     if revision is None:
         raise DomainError("event_invalid", "intake event subject does not exist", None)
     return revision
+
+
+def _legacy_executable_identity_matches(
+    observed: object,
+    expected: dict[str, Any],
+    command: PackageIntakeCommand,
+) -> bool:
+    if command.intake_purpose != "executable" or not isinstance(observed, dict):
+        return False
+    legacy = dict(expected)
+    legacy.pop("intake_purpose", None)
+    expected_limitations = legacy.get("verification_limitations")
+    if isinstance(expected_limitations, dict):
+        expected_limitations = dict(expected_limitations)
+        expected_limitations.pop("protocol_fixture_only", None)
+        legacy["verification_limitations"] = expected_limitations
+    return observed == legacy
 
 
 def _command_identity(

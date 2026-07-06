@@ -515,6 +515,13 @@ def _load_intake_payload(
     )
     if verified_approval is None:
         raise PackageSourceError("approval verification failed")
+    verification_limitations = {
+        "api_recomputes_remote_git_object": False,
+        "cli_verified_local_package_hash": True,
+        "cli_verified_approval_lineage": True,
+    }
+    if protocol_fixture_only:
+        verification_limitations["protocol_fixture_only"] = True
     return {
         "package_id": package["package_id"],
         "source_repository": source_repository,
@@ -530,12 +537,7 @@ def _load_intake_payload(
         "status_at_intake": package["status"],
         "intake_purpose": intake_purpose,
         "verification_mode": "caller_attested_cli_verified",
-        "verification_limitations": {
-            "api_recomputes_remote_git_object": False,
-            "cli_verified_local_package_hash": True,
-            "cli_verified_approval_lineage": True,
-            "protocol_fixture_only": protocol_fixture_only,
-        },
+        "verification_limitations": verification_limitations,
         "enforcement_snapshot": {
             "title": package["title"],
             "outcome": package["outcome"],
