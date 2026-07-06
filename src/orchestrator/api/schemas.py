@@ -223,6 +223,40 @@ class EventResponse(BaseModel):
     idempotency_key: str
 
 
+class EventPublicationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    source_system: str
+    source_kind: str
+    source_id: UUID
+    source_action: str | None
+    event_id: str
+    mapping_version: str
+    status: str
+    skip_reason: str | None
+    export_ref: str | None
+    attempt_count: int
+    last_error: str | None
+    created_at: datetime
+    updated_at: datetime
+    last_attempted_at: datetime | None
+    published_at: datetime | None
+
+
+class EventPublicationQueueCommand(CommandBase):
+    source_kind: str | None = None
+    source_id: UUID | None = None
+
+
+class EventPublicationExportCommand(CommandBase):
+    output_path: str = Field(min_length=1)
+
+
+class EventPublicationRetryCommand(CommandBase):
+    pass
+
+
 class ApprovalResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

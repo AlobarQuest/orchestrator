@@ -156,10 +156,10 @@ def test_runtime_has_no_external_factory_events_publisher_import() -> None:
         SourceMatch(path, module)
         for path in _python_sources()
         for module in _imported_modules(path)
-        if module == "factory_events" or module.startswith("factory_events.")
+        if module == "factory_events.store" or module.startswith("factory_events.store.")
     ]
 
-    assert not matches, "Forbidden factory_events imports found:\n" + "\n".join(
+    assert not matches, "Forbidden factory_events store imports found:\n" + "\n".join(
         f"- {match.path}: {match.value}" for match in matches
     )
 

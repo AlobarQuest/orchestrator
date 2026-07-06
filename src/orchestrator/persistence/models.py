@@ -38,6 +38,15 @@ CONTEXT_CLASSIFICATIONS = (
     "stale",
 )
 CONTEXT_DECISIONS = ("accepted", "rejected", "requires_approval")
+EVENT_PUBLICATION_KINDS = ("event", "evidence", "adjudication", "context_snapshot")
+EVENT_PUBLICATION_STATUSES = (
+    "pending",
+    "exported",
+    "published",
+    "skipped",
+    "rejected",
+    "failed",
+)
 
 
 class WorkPackage(UUIDPrimaryKey, Base):
@@ -376,6 +385,48 @@ class Event(UUIDPrimaryKey, Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
     correlation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
     idempotency_key: Mapped[str] = mapped_column(String, unique=True)
+
+
+class EventPublication(UUIDPrimaryKey, Base):
+    __tablename__ = "event_publications"
+    __table_args__ = (
+        UniqueConstraint("source_kind", "source_id", "mapping_version"),
+        UniqueConstraint("event_id"),
+        CheckConstraint(
+            "source_system = 'orchestrator'",
+            name="ck_event_publications_source_system",
+        ),
+        CheckConstraint(
+            f"source_kind IN {EVENT_PUBLICATION_KINDS!r}",
+            name="ck_event_publications_source_kind",
+        ),
+        CheckConstraint(
+            f"status IN {EVENT_PUBLICATION_STATUSES!r}",
+            name="ck_event_publications_status",
+        ),
+        CheckConstraint("attempt_count >= 0", name="ck_event_publications_attempt_count"),
+    )
+
+    source_system: Mapped[str] = mapped_column(
+        String,
+        default="orchestrator",
+        server_default="orchestrator",
+    )
+    source_kind: Mapped[str] = mapped_column(String)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    source_action: Mapped[str | None] = mapped_column(String)
+    event_id: Mapped[str] = mapped_column(String)
+    mapping_version: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)
+    skip_reason: Mapped[str | None] = mapped_column(Text)
+    factory_event: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    export_ref: Mapped[str | None] = mapped_column(Text)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PackageAcceptanceCriterion(UUIDPrimaryKey, Base):
