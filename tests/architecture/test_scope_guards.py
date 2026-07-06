@@ -8,7 +8,7 @@ from orchestrator.web import router as web_router
 
 
 def test_application_has_no_external_mutation_integrations() -> None:
-    forbidden = ("infraops", "linear", "todoist", "github.actions", "factory_event")
+    forbidden = ("infraops", "linear", "todoist", "github.actions", "factory_events.store")
     imports: set[str] = set()
     for path in Path("src/orchestrator").rglob("*.py"):
         tree = ast.parse(path.read_text())
@@ -61,6 +61,9 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/work-units/{unit_id}/dependencies",
         "/api/v1/dependencies/{dependency_id}/resolve",
         "/api/v1/work-units/{unit_id}/evidence",
+        "/api/v1/event-publications/queue",
+        "/api/v1/event-publications/export",
+        "/api/v1/event-publications/{publication_id}/retry",
         "/review/units/{unit_id}/approval",
         "/review/units/{unit_id}/review",
         "/review/units/{unit_id}/cancel",

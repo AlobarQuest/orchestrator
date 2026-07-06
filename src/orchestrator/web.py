@@ -13,7 +13,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig, get_actor, get_session
@@ -30,6 +30,7 @@ from orchestrator.persistence.models import (
     DecompositionProposalUnit,
     Dependency,
     Event,
+    EventPublication,
     Evidence,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
@@ -184,6 +185,11 @@ def _projection(session: Session, unit_id: uuid.UUID) -> dict[str, Any]:
             .order_by(Adjudication.decided_at)
         )
     )
+    events = tuple(
+        session.scalars(
+            select(Event).where(Event.subject_id == unit.id).order_by(Event.occurred_at, Event.id)
+        )
+    )
     return {
         "unit": unit,
         "revision": revision,
@@ -210,14 +216,54 @@ def _projection(session: Session, unit_id: uuid.UUID) -> dict[str, Any]:
                 select(Approval).where(Approval.subject_id == unit.id).order_by(Approval.created_at)
             )
         ),
-        "events": tuple(
-            session.scalars(
-                select(Event)
-                .where(Event.subject_id == unit.id)
-                .order_by(Event.occurred_at, Event.id)
-            )
+        "events": events,
+        "event_publications": _event_publication_projection(
+            session,
+            evidence=evidence,
+            adjudications=adjudications,
+            events=events,
         ),
     }
+
+
+def _event_publication_projection(
+    session: Session,
+    *,
+    evidence: tuple[Evidence, ...],
+    adjudications: tuple[Adjudication, ...],
+    events: tuple[Event, ...],
+) -> tuple[dict[str, Any], ...]:
+    source_ids: dict[str, set[uuid.UUID]] = {
+        "evidence": {row.id for row in evidence},
+        "adjudication": {row.id for row in adjudications},
+        "event": {row.id for row in events},
+    }
+    clauses = [
+        and_(EventPublication.source_kind == kind, EventPublication.source_id.in_(ids))
+        for kind, ids in source_ids.items()
+        if ids
+    ]
+    if not clauses:
+        return ()
+    rows = tuple(
+        session.scalars(
+            select(EventPublication)
+            .where(or_(*clauses))
+            .order_by(
+                EventPublication.source_kind,
+                EventPublication.source_id,
+                EventPublication.created_at,
+                EventPublication.event_id,
+            )
+        )
+    )
+    return tuple(
+        {
+            "row": row,
+            "source_ref": f"orchestrator:{row.source_kind}:{row.source_id}",
+        }
+        for row in rows
+    )
 
 
 def _package_intake_projection(session: Session, revision_id: uuid.UUID) -> dict[str, Any]:

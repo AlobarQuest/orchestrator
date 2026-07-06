@@ -1,5 +1,6 @@
 from collections import defaultdict
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -26,6 +27,10 @@ from orchestrator.api.schemas import (
     DependencyResolutionCommand,
     DependencyResponse,
     ErrorResponse,
+    EventPublicationExportCommand,
+    EventPublicationQueueCommand,
+    EventPublicationResponse,
+    EventPublicationRetryCommand,
     EventResponse,
     EvidenceCommand,
     EvidenceResponse,
@@ -79,6 +84,13 @@ from orchestrator.services.decomposition import (
     reject_decomposition_proposal,
     require_decomposition_revision,
     submit_decomposition_proposal,
+)
+from orchestrator.services.event_publications import (
+    EventPublicationFilters,
+    export_event_publications,
+    list_event_publications,
+    queue_event_publications,
+    retry_event_publication,
 )
 from orchestrator.services.evidence import append_evidence, list_evidence, record_adjudication
 from orchestrator.services.lifecycle import (
@@ -402,6 +414,55 @@ def status_ledger_route(
             include_inactive=include_inactive,
         ),
     )
+
+
+@router.get("/event-publications", response_model=list[EventPublicationResponse])
+def event_publications(
+    _actor: ActorDep,
+    session: SessionDep,
+    source_kind: str | None = None,
+    source_id: UUID | None = None,
+    status: str | None = None,
+) -> object:
+    return list_event_publications(
+        session,
+        EventPublicationFilters(source_kind=source_kind, source_id=source_id, status=status),
+    )
+
+
+@router.post("/event-publications/queue", response_model=list[EventPublicationResponse])
+def event_publications_queue(
+    body: EventPublicationQueueCommand,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return queue_event_publications(
+        session,
+        source_kind=body.source_kind,
+        source_id=body.source_id,
+    )
+
+
+@router.post("/event-publications/export", response_model=list[EventPublicationResponse])
+def event_publications_export(
+    body: EventPublicationExportCommand,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return export_event_publications(session, Path(body.output_path))
+
+
+@router.post(
+    "/event-publications/{publication_id}/retry",
+    response_model=EventPublicationResponse,
+)
+def event_publications_retry(
+    publication_id: UUID,
+    _body: EventPublicationRetryCommand,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return retry_event_publication(session, publication_id)
 
 
 @router.post("/work-units/{unit_id}/preflight", response_model=ContextSnapshotResponse)

@@ -159,6 +159,32 @@ def test_ws33_context_snapshot_tables_and_links_exist(migrated_engine) -> None:
     assert evidence_foreign_keys["fk_evidence_context_snapshot_id"]["referred_columns"] == ["id"]
 
 
+def test_ws34_event_publication_table_exists(migrated_engine) -> None:
+    inspector = inspect(migrated_engine)
+
+    assert "event_publications" in inspector.get_table_names()
+    columns = {column["name"] for column in inspector.get_columns("event_publications")}
+    assert {
+        "id",
+        "source_system",
+        "source_kind",
+        "source_id",
+        "source_action",
+        "event_id",
+        "mapping_version",
+        "status",
+        "skip_reason",
+        "factory_event",
+        "export_ref",
+        "attempt_count",
+        "last_error",
+        "created_at",
+        "updated_at",
+        "last_attempted_at",
+        "published_at",
+    } <= columns
+
+
 def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> None:
     package_id = register_test_revision(migrated_session).work_package_id
     migrated_session.commit()

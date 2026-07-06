@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import Adjudication, Evidence, WorkUnit
+from orchestrator.persistence.models import Adjudication, EventPublication, Evidence, WorkUnit
 from tests.api.test_lifecycle_api import HUMAN
 
 
@@ -25,6 +25,51 @@ def test_evidence_pack_has_no_post_route(db_client: TestClient, review_unit: Wor
     response = db_client.post(f"/review/units/{review_unit.id}/evidence-pack", headers=HUMAN)
 
     assert response.status_code == 405
+
+
+def test_evidence_pack_shows_read_only_event_publication_status(
+    db_client: TestClient,
+    migrated_engine: Engine,
+    review_unit: WorkUnit,
+) -> None:
+    with Session(migrated_engine) as session:
+        evidence = Evidence(
+            work_package_revision_id=review_unit.work_package_revision_id,
+            work_unit_id=review_unit.id,
+            ac_id="ac-1",
+            attempt=1,
+            evidence_type="test",
+            stable_ref="artifact://published",
+            source_revision="abc123",
+            recorded_by="factory-runner",
+            event_id=uuid.uuid4(),
+            idempotency_key="web-publication-evidence",
+        )
+        session.add(evidence)
+        session.flush()
+        session.add(
+            EventPublication(
+                source_kind="evidence",
+                source_id=evidence.id,
+                source_action="evidence.recorded",
+                event_id="evt-" + "a" * 64,
+                mapping_version="ws34.v1",
+                status="exported",
+                factory_event={"schema": "factory-event/v1"},
+                export_ref="/tmp/factory-events.jsonl",
+            )
+        )
+        session.commit()
+        source_ref = f"orchestrator:evidence:{evidence.id}"
+
+    page = db_client.get(f"/review/units/{review_unit.id}/evidence-pack", headers=HUMAN)
+
+    assert page.status_code == 200
+    assert "Event publications" in page.text
+    assert source_ref in page.text
+    assert "exported" in page.text
+    assert "evt-" + "a" * 64 in page.text
+    assert "<form" not in page.text
 
 
 def test_evidence_pack_labels_supersession_and_named_waiver_facts(

@@ -16,6 +16,8 @@ from orchestrator.package_sources import (
 )
 
 app = typer.Typer(no_args_is_help=True)
+event_publications_app = typer.Typer(no_args_is_help=True)
+app.add_typer(event_publications_app, name="event-publications")
 HTTP_TRANSPORT: httpx.BaseTransport | None = None
 JsonObject = dict[str, Any]
 JsonOption = Annotated[bool, typer.Option("--json", help="Write deterministic JSON.")]
@@ -310,6 +312,70 @@ def status_ledger(
         params["include_inactive"] = "true"
     query = f"?{urlencode(params)}" if params else ""
     _run(lambda: request("GET", f"/api/v1/status-ledger{query}"), json_output)
+
+
+@event_publications_app.command("list")
+def event_publications_list(
+    source_kind: Annotated[str | None, typer.Option("--source-kind")] = None,
+    source_id: Annotated[str | None, typer.Option("--source-id")] = None,
+    status: Annotated[str | None, typer.Option("--status")] = None,
+    json_output: JsonOption = False,
+) -> None:
+    params: dict[str, str] = {}
+    if source_kind is not None:
+        params["source_kind"] = source_kind
+    if source_id is not None:
+        params["source_id"] = source_id
+    if status is not None:
+        params["status"] = status
+    query = f"?{urlencode(params)}" if params else ""
+    _run(lambda: request("GET", f"/api/v1/event-publications{query}"), json_output)
+
+
+@event_publications_app.command("queue")
+def event_publications_queue(
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    expected_version: Annotated[int, typer.Option("--expected-version", min=0)],
+    source_kind: Annotated[str | None, typer.Option("--source-kind")] = None,
+    source_id: Annotated[str | None, typer.Option("--source-id")] = None,
+    json_output: JsonOption = False,
+) -> None:
+    payload = {
+        "idempotency_key": idempotency_key,
+        "expected_version": expected_version,
+        "source_kind": source_kind,
+        "source_id": source_id,
+    }
+    _run(lambda: request("POST", "/api/v1/event-publications/queue", payload), json_output)
+
+
+@event_publications_app.command("export")
+def event_publications_export(
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    expected_version: Annotated[int, typer.Option("--expected-version", min=0)],
+    output_path: Annotated[str, typer.Option("--output-path", min=1)],
+    json_output: JsonOption = False,
+) -> None:
+    payload = {
+        "idempotency_key": idempotency_key,
+        "expected_version": expected_version,
+        "output_path": output_path,
+    }
+    _run(lambda: request("POST", "/api/v1/event-publications/export", payload), json_output)
+
+
+@event_publications_app.command("retry")
+def event_publications_retry(
+    publication_id: str,
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    expected_version: Annotated[int, typer.Option("--expected-version", min=0)],
+    json_output: JsonOption = False,
+) -> None:
+    payload = {"idempotency_key": idempotency_key, "expected_version": expected_version}
+    _run(
+        lambda: request("POST", f"/api/v1/event-publications/{publication_id}/retry", payload),
+        json_output,
+    )
 
 
 @app.command()

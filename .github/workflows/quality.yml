@@ -26,6 +26,7 @@ jobs:
           - 5432:5432
     env:
       ORCHESTRATOR_DATABASE_URL: postgresql+psycopg://postgres@127.0.0.1:5432/orchestrator_test
+      SECURITY_STANDARDS_DIR: ${{ github.workspace }}/tests/fixtures/security-standards
       TEST_DATABASE_URL: postgresql+psycopg://postgres@127.0.0.1:5432/orchestrator_test
     steps:
       - uses: actions/checkout@v4
