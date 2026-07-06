@@ -392,6 +392,7 @@ def preflight(
             idempotency_key=body.idempotency_key,
             attempt=body.attempt,
             lease_token=body.lease_token,
+            expected_version=body.expected_version,
         ),
         actor,
     )

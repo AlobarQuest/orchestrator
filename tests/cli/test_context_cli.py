@@ -55,6 +55,40 @@ def test_claim_accepts_context_file_and_posts_standing_context(
     }
 
 
+def test_claim_preserves_data_payload_compatibility(monkeypatch) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_request(method: str, path: str, payload=None):
+        observed.update(method=method, path=path, payload=payload)
+        return {
+            "claim_id": "claim-1",
+            "attempt": 1,
+            "lease_token": "token",
+            "expires_at": "2026-07-06T12:00:00Z",
+            "context_snapshot_id": None,
+        }
+
+    monkeypatch.setattr("orchestrator.cli.request", fake_request)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "claim",
+            "unit-1",
+            "--data",
+            '{"idempotency_key":"claim-1","expected_version":2}',
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed == {
+        "method": "POST",
+        "path": "/api/v1/work-units/unit-1/claim",
+        "payload": {"idempotency_key": "claim-1", "expected_version": 2},
+    }
+
+
 def test_start_accepts_context_file_and_posts_standing_context(
     monkeypatch,
     tmp_path: Path,

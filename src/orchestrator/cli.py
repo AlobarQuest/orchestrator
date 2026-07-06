@@ -15,6 +15,10 @@ HTTP_TRANSPORT: httpx.BaseTransport | None = None
 JsonObject = dict[str, Any]
 JsonOption = Annotated[bool, typer.Option("--json", help="Write deterministic JSON.")]
 DataOption = Annotated[str, typer.Option("--data", help="Request body as a JSON object.")]
+OptionalDataOption = Annotated[
+    str | None,
+    typer.Option("--data", help="Request body as a JSON object."),
+]
 ContextOption = Annotated[
     str | None,
     typer.Option("--context", help="Standing context as JSON object or @file."),
@@ -260,11 +264,25 @@ def readiness(unit_id: str, json_output: JsonOption = False) -> None:
 @app.command()
 def claim(
     unit_id: str,
-    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
-    expected_version: Annotated[int, typer.Option("--expected-version", min=0)],
+    data: OptionalDataOption = None,
+    idempotency_key: Annotated[str | None, typer.Option("--idempotency-key")] = None,
+    expected_version: Annotated[int | None, typer.Option("--expected-version", min=0)] = None,
     context: ContextOption = None,
     json_output: JsonOption = False,
 ) -> None:
+    if data is not None:
+        _post_data(f"/api/v1/work-units/{unit_id}/claim", data, json_output)
+        return
+    if idempotency_key is None:
+        raise typer.BadParameter(
+            "idempotency key is required unless --data is provided",
+            param_hint="--idempotency-key",
+        )
+    if expected_version is None:
+        raise typer.BadParameter(
+            "expected version is required unless --data is provided",
+            param_hint="--expected-version",
+        )
     payload = {
         "idempotency_key": idempotency_key,
         "expected_version": expected_version,

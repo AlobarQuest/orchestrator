@@ -38,6 +38,7 @@ class PreflightCommand:
     idempotency_key: str
     attempt: int | None = None
     lease_token: str | None = None
+    expected_version: int | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,14 @@ def record_preflight(
         unit = _locked_unit(session, command.work_unit_id)
         if unit is None:
             return DomainError("work_unit_not_found", "work unit does not exist", None)
+        if command.expected_version is not None and unit.version != command.expected_version:
+            return DomainError(
+                "version_conflict",
+                "work unit version has changed",
+                "reload",
+                current_state=unit.state,
+                current_version=unit.version,
+            )
         previous = _previous_context(session, command, unit)
         revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
         if revision is None:
@@ -130,6 +139,7 @@ def record_preflight(
                     if effective_decision.approval_id
                     else None
                 ),
+                "expected_version": command.expected_version,
             },
             correlation_id=uuid.uuid4(),
             idempotency_key=command.idempotency_key,
@@ -203,6 +213,7 @@ def _preflight_replay(
             if command.previous_context_snapshot_id is not None
             else None
         )
+        or event.payload.get("expected_version") != command.expected_version
     ):
         raise _idempotency_conflict()
     if command.purpose == "execution":

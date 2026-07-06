@@ -118,6 +118,25 @@ def test_preflight_records_and_lists_context_snapshots(db_client: TestClient) ->
     assert [row["id"] for row in listed.json()] == [snapshot["id"]]
 
 
+def test_preflight_rejects_stale_expected_version(db_client: TestClient) -> None:
+    unit_id = register_context_unit(db_client)
+
+    result = db_client.post(
+        f"/api/v1/work-units/{unit_id}/preflight",
+        headers=WORKER,
+        json={
+            "idempotency_key": "context-api-stale-preflight",
+            "expected_version": 1,
+            "standing_context": standing_context(),
+            "purpose": "diagnostic",
+        },
+    )
+
+    assert result.status_code == 409
+    assert result.json()["error"]["code"] == "version_conflict"
+    assert result.json()["error"]["current_version"] == 2
+
+
 def test_claim_api_accepts_standing_context_and_returns_snapshot_id(
     db_client: TestClient,
 ) -> None:
