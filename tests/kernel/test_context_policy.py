@@ -102,19 +102,19 @@ def test_same_scope_newer_standard_version_is_accepted() -> None:
     assert decision == ContextDecision(
         classification="same_scope",
         decision="accepted",
-        reasons=("standards_newer_or_equal",),
+        reasons=("standards_changed_within_floor",),
     )
 
 
 def test_narrower_capability_set_is_accepted() -> None:
-    previous = valid_context(capabilities=["repository_read"])
-    current = valid_context(capabilities=[])
+    previous = valid_context(capabilities=["repository_read", "repository_write"])
+    current = valid_context(capabilities=["repository_read"])
 
     decision = classify_context_update(
         previous=previous,
         current=current,
-        required=required_context(),
-        allowed_capabilities={"repository_read"},
+        required=required_context(capabilities=["repository_read"]),
+        allowed_capabilities={"repository_read", "repository_write"},
     )
 
     assert decision == ContextDecision(
@@ -154,6 +154,60 @@ def test_broader_authority_profile_requires_approval() -> None:
     assert decision.classification == "authority_expanding"
     assert decision.decision == "requires_approval"
     assert "authority_profile_expanded" in decision.reasons
+
+
+def test_dropping_required_capability_is_rejected() -> None:
+    previous = valid_context(capabilities=["repository_read"])
+    current = valid_context(capabilities=[])
+
+    decision = classify_context_update(
+        previous=previous,
+        current=current,
+        required=required_context(capabilities=["repository_read"]),
+        allowed_capabilities={"repository_read"},
+    )
+
+    assert decision == ContextDecision(
+        classification="missing_required",
+        decision="rejected",
+        reasons=("missing:capabilities",),
+    )
+
+
+def test_lower_than_required_authority_profile_is_rejected() -> None:
+    previous = valid_context(authority_profile="agent-queue-v1")
+    current = valid_context(authority_profile="verifier-v1")
+
+    decision = classify_context_update(
+        previous=previous,
+        current=current,
+        required=required_context(authority_profile="agent-queue-v1"),
+        allowed_capabilities={"repository_read"},
+    )
+
+    assert decision == ContextDecision(
+        classification="missing_required",
+        decision="rejected",
+        reasons=("missing:authority_profile",),
+    )
+
+
+def test_malformed_capabilities_is_rejected() -> None:
+    current = valid_context()
+    current["capabilities"] = "repository_read"
+
+    decision = classify_context_update(
+        previous=None,
+        current=current,
+        required=required_context(),
+        allowed_capabilities={"repository_read"},
+    )
+
+    assert decision == ContextDecision(
+        classification="missing_required",
+        decision="rejected",
+        reasons=("missing:capabilities",),
+    )
 
 
 def test_context_fingerprint_is_deterministic_across_key_order() -> None:

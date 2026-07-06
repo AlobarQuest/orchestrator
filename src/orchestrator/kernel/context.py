@@ -65,16 +65,16 @@ def classify_context_update(
         normalize_standing_context(previous) if previous is not None else None
     )
 
-    missing_fields = tuple(
-        field
-        for field in REQUIRED_CONTEXT_FIELDS
-        if _is_missing_field(current, current_normalized, field)
+    missing_reasons = _missing_required_reasons(
+        raw_current=current,
+        current_normalized=current_normalized,
+        required_normalized=required_normalized,
     )
-    if missing_fields:
+    if missing_reasons:
         return ContextDecision(
             classification="missing_required",
             decision="rejected",
-            reasons=tuple(f"missing:{field}" for field in missing_fields),
+            reasons=missing_reasons,
         )
 
     stale_reasons = _stale_reasons(current_normalized, required_normalized)
@@ -114,7 +114,7 @@ def classify_context_update(
         if current_capabilities < previous_capabilities:
             same_scope_reasons.append("capabilities_narrowed")
         elif _standard_versions_changed(previous_normalized, current_normalized):
-            same_scope_reasons.append("standards_newer_or_equal")
+            same_scope_reasons.append("standards_changed_within_floor")
 
     if not same_scope_reasons:
         same_scope_reasons.append("same_scope")
@@ -141,8 +141,35 @@ def _is_missing_field(
         return True
     value = normalized_current[field]
     if field == "capabilities":
-        return not isinstance(value, list)
+        raw_value = raw_current[field]
+        return not isinstance(raw_value, Sequence) or isinstance(raw_value, (str, bytes))
     return value == ""
+
+
+def _missing_required_reasons(
+    *,
+    raw_current: Mapping[str, object],
+    current_normalized: Mapping[str, object],
+    required_normalized: Mapping[str, object],
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    for field in REQUIRED_CONTEXT_FIELDS:
+        if _is_missing_field(raw_current, current_normalized, field):
+            reasons.append(f"missing:{field}")
+
+    if "missing:capabilities" not in reasons and not _meets_required_capabilities(
+        current_normalized,
+        required_normalized,
+    ):
+        reasons.append("missing:capabilities")
+
+    if "missing:authority_profile" not in reasons and not _meets_required_authority_profile(
+        current_normalized,
+        required_normalized,
+    ):
+        reasons.append("missing:authority_profile")
+
+    return tuple(reasons)
 
 
 def _stale_reasons(
@@ -228,6 +255,21 @@ def _authority_profile_expands(previous: str, current: str) -> bool:
     return current_rank > previous_rank
 
 
+def _meets_required_authority_profile(
+    current_normalized: Mapping[str, object],
+    required_normalized: Mapping[str, object],
+) -> bool:
+    current_profile = str(current_normalized["authority_profile"])
+    required_profile = str(required_normalized["authority_profile"])
+    if current_profile == required_profile:
+        return True
+    current_rank = AUTHORITY_PROFILE_RANK.get(current_profile)
+    required_rank = AUTHORITY_PROFILE_RANK.get(required_profile)
+    if current_rank is None or required_rank is None:
+        return False
+    return current_rank >= required_rank
+
+
 def _standard_versions_changed(
     previous_normalized: Mapping[str, object],
     current_normalized: Mapping[str, object],
@@ -247,3 +289,12 @@ def _capabilities_set(context: Mapping[str, object]) -> set[str]:
     if not isinstance(capabilities, list):
         return set()
     return set(item for item in capabilities if isinstance(item, str))
+
+
+def _meets_required_capabilities(
+    current_normalized: Mapping[str, object],
+    required_normalized: Mapping[str, object],
+) -> bool:
+    return _capabilities_set(required_normalized).issubset(
+        _capabilities_set(current_normalized)
+    )
