@@ -28,6 +28,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import (
+    _APPROVED_DECOMPOSITION_ACTIVATION,
     DependencySpec,
     register_approved_unit,
     register_dependency_with_event,
@@ -296,6 +297,7 @@ def approve_decomposition_proposal(
             actor_id=actor.actor_id,
             actor_role=actor.role,
             activation_source="approved_decomposition",
+            activation_token=_APPROVED_DECOMPOSITION_ACTIVATION,
             idempotency_key=_derived_idempotency_key(
                 idempotency_key, f"unit:{proposal_unit.unit_key}"
             ),

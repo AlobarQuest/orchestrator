@@ -31,8 +31,10 @@ from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.package_intake import (
     register_package_intake,
 )
+from orchestrator.services.packages import register_approved_unit
 from tests.services.test_package_intake import (
     AUTHORITY,
+    NOW,
     acceptance_criterion,
     human_actor,
     intake_command,
@@ -413,6 +415,11 @@ def test_human_approval_creates_draft_units_and_dependencies(migrated_session: S
             select(Event).where(Event.action == "dependency.registered").order_by(Event.id)
         )
     )
+    approval_events = tuple(
+        migrated_session.scalars(
+            select(Event).where(Event.action == "decomposition.approved").order_by(Event.id)
+        )
+    )
 
     assert approved.id == proposal.id
     assert approved.state == "approved"
@@ -437,6 +444,32 @@ def test_human_approval_creates_draft_units_and_dependencies(migrated_session: S
     assert activated.approved_by == "human-1"
     assert [event.actor_id for event in dependency_events] == ["human-1", "human-1"]
     assert {event.subject_id for event in dependency_events} == {units[0].id, units[1].id}
+    assert len(approval_events) == 1
+    assert approval_events[0].payload["created_work_unit_ids"] == approved.created_work_unit_ids
+
+
+def test_package_cli_revision_rejects_forged_activation_source(
+    migrated_session: Session,
+) -> None:
+    revision = register_intaken_revision(migrated_session)
+
+    with pytest.raises(DomainError) as error:
+        register_approved_unit(
+            migrated_session,
+            revision_id=revision.id,
+            unit_key="unit-forged",
+            title="Forged unit",
+            outcome="Should not be created.",
+            required_capability="repository_write",
+            authority=AUTHORITY,
+            approved_by="human-1",
+            approved_at=NOW,
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+            activation_source="approved_decomposition",
+        )
+
+    assert error.value.code == "decomposition_approval_required"
 
 
 def test_second_approval_is_rejected(migrated_session: Session) -> None:
@@ -512,6 +545,54 @@ def test_reject_decomposition_records_decision_without_units(migrated_session: S
     }
 
 
+def test_reject_decomposition_idempotency_replays_and_conflicts(
+    migrated_session: Session,
+) -> None:
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(revision.id, ac_ids),
+        worker_actor(),
+    )
+
+    first = reject_decomposition_proposal(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="Missing split rationale.",
+        idempotency_key="proposal-reject-idempotent",
+    )
+    second = reject_decomposition_proposal(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="Missing split rationale.",
+        idempotency_key="proposal-reject-idempotent",
+    )
+
+    assert second.id == first.id
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(Event)
+            .where(Event.idempotency_key == "proposal-reject-idempotent")
+        )
+        == 1
+    )
+
+    with pytest.raises(DomainError) as error:
+        reject_decomposition_proposal(
+            migrated_session,
+            proposal.id,
+            actor=human_actor(),
+            reason="Different reason.",
+            idempotency_key="proposal-reject-idempotent",
+        )
+
+    assert error.value.code == "idempotency_conflict"
+
+
 def test_require_revision_records_decision_without_units(migrated_session: Session) -> None:
     revision = register_intaken_revision(migrated_session)
     ac_ids = package_ac_ids(migrated_session, revision.id)
@@ -543,6 +624,54 @@ def test_require_revision_records_decision_without_units(migrated_session: Sessi
         "decomposition.proposed",
         "decomposition.revision_required",
     }
+
+
+def test_require_revision_idempotency_replays_and_conflicts(
+    migrated_session: Session,
+) -> None:
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(revision.id, ac_ids),
+        worker_actor(),
+    )
+
+    first = require_decomposition_revision(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="Please break out dependencies.",
+        idempotency_key="proposal-revision-idempotent",
+    )
+    second = require_decomposition_revision(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="Please break out dependencies.",
+        idempotency_key="proposal-revision-idempotent",
+    )
+
+    assert second.id == first.id
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(Event)
+            .where(Event.idempotency_key == "proposal-revision-idempotent")
+        )
+        == 1
+    )
+
+    with pytest.raises(DomainError) as error:
+        require_decomposition_revision(
+            migrated_session,
+            proposal.id,
+            actor=human_actor(),
+            reason="Different reason.",
+            idempotency_key="proposal-revision-idempotent",
+        )
+
+    assert error.value.code == "idempotency_conflict"
 
 
 def test_approval_idempotency_replays_without_duplicate_units(

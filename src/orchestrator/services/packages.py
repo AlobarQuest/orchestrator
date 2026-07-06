@@ -31,6 +31,8 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.persistence.repositories import PackageRepository
 
+_APPROVED_DECOMPOSITION_ACTIVATION = object()
+
 
 @dataclass(frozen=True)
 class DependencySpec:
@@ -244,6 +246,7 @@ def register_approved_unit(
     unit_id: uuid.UUID | None = None,
     dependencies: tuple[DependencySpec, ...] = (),
     activation_source: str = "legacy_manual",
+    activation_token: object | None = None,
     idempotency_key: str | None = None,
     expected_version: int | None = None,
 ) -> WorkUnit:
@@ -260,7 +263,10 @@ def register_approved_unit(
         raise DomainError("revision_not_found", "package revision does not exist", None)
     if (
         revision.intake_source == "package_cli"
-        and activation_source != "approved_decomposition"
+        and (
+            activation_source != "approved_decomposition"
+            or activation_token is not _APPROVED_DECOMPOSITION_ACTIVATION
+        )
     ):
         raise DomainError(
             "decomposition_approval_required",
