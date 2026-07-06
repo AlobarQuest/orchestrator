@@ -375,9 +375,13 @@ def _matching_approvals(
     if not isinstance(approvals, list):
         raise PackageSourceError("lineage approvals must be a list")
     matching: list[dict[str, Any]] = []
+    required = ("revision", "approved_hash", "approver", "approved_at", "commit", "event_id")
     for item in approvals:
         if not isinstance(item, dict):
             raise PackageSourceError("lineage approval entries must be mappings")
+        missing = [field for field in required if field not in item]
+        if missing:
+            raise PackageSourceError(f"lineage approval entry missing {missing[0]}")
         if item.get("revision") == revision and item.get("approved_hash") == approved_hash:
             matching.append(item)
     return matching

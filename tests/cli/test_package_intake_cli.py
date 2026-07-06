@@ -223,6 +223,31 @@ def test_package_source_reader_requires_cli_verifier_for_cli_verified_mode(
         )
 
 
+def test_package_source_reader_rejects_false_cli_verifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FACTORY_EVENTS_HOME", str(tmp_path))
+    monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: False)
+    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: True)
+    monkeypatch.setattr(package_sources, "_is_human_operator", lambda agent_id: agent_id == "devon")
+
+    events_file = tmp_path / "events.jsonl"
+    events_file.write_text(
+        '{"event":{"action":"package.approved","event_id":"22222222-2222-2222-2222-222222222222",'
+        '"timestamp":"2026-07-05T00:02:00Z","source":{"ref":"ws32-approved-software"},'
+        '"evidence":[{"approved_hash":"bfcf35c540a540efcac4eb4095b9dbf33529e39361a03a21d43b64c96dd054b2",'
+        '"revision":1,"approver":"devon","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PackageSourceError, match="approval verification failed"):
+        load_package_intake_payload(
+            Path("tests/fixtures/intent-packages/ws32-approved-software"),
+            source_repository="AlobarQuest/intent-packages",
+        )
+
+
 @pytest.mark.parametrize(
     ("filename", "replacement", "error"),
     [
@@ -281,6 +306,37 @@ def test_package_source_reader_rejects_non_mapping_approval_entries(
     )
 
     with pytest.raises(PackageSourceError, match="approval entries must be mappings"):
+        load_package_intake_payload(
+            package_dir,
+            source_repository="AlobarQuest/intent-packages",
+        )
+
+
+def test_package_source_reader_rejects_malformed_approval_mapping_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+    )
+    package_dir = tmp_path / "ws32-approved-software"
+    shutil.copytree("tests/fixtures/intent-packages/ws32-approved-software", package_dir)
+    lineage_path = package_dir / "lineage.yaml"
+    lineage_path.write_text(
+        lineage_path.read_text(encoding="utf-8").replace(
+            "approvals:\n"
+            "  - revision: 1\n",
+            "approvals:\n"
+            "  - revision: 999\n"
+            "    approved_hash: irrelevant\n"
+            "  - revision: 1\n",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PackageSourceError, match="approval entry missing approver"):
         load_package_intake_payload(
             package_dir,
             source_repository="AlobarQuest/intent-packages",
