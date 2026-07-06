@@ -93,3 +93,35 @@ Observed result:
 - Pytest: `19 passed in 4.89s`
 - Ruff: `All checks passed!`
 - Pyright: `0 errors, 0 warnings, 0 informations`
+
+## Fix Pass 2
+
+Finding addressed:
+
+- Execution preflight idempotent replay now revalidates active claim credentials
+  before returning an existing snapshot.
+
+Red evidence:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/services/test_context_preflight.py::test_execution_preflight_replay_revalidates_active_claim_credentials -q
+```
+
+Observed result:
+
+- Failed because replay with missing claim credentials returned the prior
+  `ContextSnapshot` instead of `DomainError("active_claim_required")`.
+
+Green evidence:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/kernel/test_context_policy.py tests/services/test_context_preflight.py -q
+PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/services/context.py tests/services/test_context_preflight.py
+PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/services/context.py tests/services/test_context_preflight.py
+```
+
+Observed result:
+
+- Pytest: `20 passed in 3.43s`
+- Ruff: `All checks passed!`
+- Pyright: `0 errors, 0 warnings, 0 informations`

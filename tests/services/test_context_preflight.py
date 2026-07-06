@@ -322,3 +322,60 @@ def test_execution_preflight_rejects_wrong_or_expired_claim_credentials(
     )
     assert isinstance(expired, DomainError)
     assert expired.code == "active_claim_required"
+
+
+def test_execution_preflight_replay_revalidates_active_claim_credentials(
+    migrated_session: Session,
+) -> None:
+    ready_unit = register_context_unit(migrated_session, valid_context(), "execution-replay")
+    grant = claim_unit(
+        migrated_session,
+        ready_unit.id,
+        ActorContext("worker-1", ActorRole.WORKER),
+        "claim-1",
+    )
+    assert isinstance(grant, LeaseGrant)
+    command = PreflightCommand(
+        work_unit_id=ready_unit.id,
+        standing_context=valid_context(),
+        previous_context_snapshot_id=None,
+        approval_id=None,
+        purpose="execution",
+        idempotency_key="execution-preflight-replay",
+        attempt=grant.attempt,
+        lease_token=grant.lease_token,
+    )
+    first = record_preflight(
+        migrated_session,
+        command,
+        ActorContext("worker-1", ActorRole.WORKER),
+    )
+    assert isinstance(first, ContextSnapshot)
+
+    missing_credentials = record_preflight(
+        migrated_session,
+        PreflightCommand(
+            work_unit_id=ready_unit.id,
+            standing_context=valid_context(),
+            previous_context_snapshot_id=None,
+            approval_id=None,
+            purpose="execution",
+            idempotency_key="execution-preflight-replay",
+        ),
+        ActorContext("worker-1", ActorRole.WORKER),
+    )
+    assert isinstance(missing_credentials, DomainError)
+    assert missing_credentials.code == "active_claim_required"
+
+    claim = migrated_session.get(Claim, grant.claim_id)
+    assert claim is not None
+    claim.lease_expires_at = claim.acquired_at
+    migrated_session.commit()
+
+    expired_replay = record_preflight(
+        migrated_session,
+        command,
+        ActorContext("worker-1", ActorRole.WORKER),
+    )
+    assert isinstance(expired_replay, DomainError)
+    assert expired_replay.code == "active_claim_required"

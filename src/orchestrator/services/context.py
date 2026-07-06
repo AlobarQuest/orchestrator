@@ -46,7 +46,8 @@ def record_preflight(
     actor: ActorContext,
 ) -> ContextSnapshot | DomainError:
     try:
-        replay = _preflight_replay(session, command, actor)
+        now = TransactionClock().now(session)
+        replay = _preflight_replay(session, command, actor, now)
         if replay is not None:
             return replay
         unit = _locked_unit(session, command.work_unit_id)
@@ -74,7 +75,6 @@ def record_preflight(
         if previous is None and classification == "same_scope":
             classification = "accepted"
 
-        now = TransactionClock().now(session)
         claim = _bound_claim(session, unit, command, actor, now)
         attempt = _snapshot_attempt(unit, claim, command.purpose)
         context_digest = context_fingerprint(normalized_context)
@@ -161,6 +161,7 @@ def _preflight_replay(
     session: Session,
     command: PreflightCommand,
     actor: ActorContext,
+    occurred_at: datetime,
 ) -> ContextSnapshot | None:
     existing = session.scalar(
         select(ContextSnapshot).where(ContextSnapshot.idempotency_key == command.idempotency_key)
@@ -194,6 +195,14 @@ def _preflight_replay(
         )
     ):
         raise _idempotency_conflict()
+    if command.purpose == "execution":
+        unit = _locked_unit(session, command.work_unit_id)
+        if unit is None:
+            raise DomainError("work_unit_not_found", "work unit does not exist", None)
+        claim = _bound_claim(session, unit, command, actor, occurred_at)
+        assert claim is not None
+        if existing.claim_id != claim.id or existing.attempt != claim.attempt:
+            raise _idempotency_conflict()
     return existing
 
 
