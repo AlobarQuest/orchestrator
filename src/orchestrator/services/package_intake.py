@@ -17,7 +17,9 @@ from orchestrator.services.packages import register_revision
 
 _INTAKE_ACTION = "package_revision.intake_registered"
 _INTAKE_SOURCE = "package_cli"
+_PROTOCOL_FIXTURE_SOURCE = "protocol_fixture"
 _VALID_STATUSES = frozenset({"approved"})
+_VALID_PROTOCOL_FIXTURE_STATUSES = frozenset({"closed"})
 _VERIFICATION_MODE = "caller_attested_cli_verified"
 
 
@@ -52,6 +54,7 @@ class PackageIntakeCommand:
     acceptance_criteria: tuple[AcceptanceCriterionProjection, ...]
     idempotency_key: str
     expected_version: int
+    intake_purpose: str = "executable"
 
 
 def register_package_intake(
@@ -67,12 +70,16 @@ def register_package_intake(
             "reload",
             current_version=0,
         )
-    if command.status_at_intake not in _VALID_STATUSES:
-        raise DomainError(
-            "package_intake_status_invalid",
-            "package intake requires approved status",
-            None,
-        )
+    intake_source = _intake_source(command)
+    if isinstance(intake_source, DomainError):
+        raise intake_source
+    status_error = _status_error(command)
+    if status_error is not None:
+        raise status_error
+    if command.intake_purpose == "protocol_fixture":
+        fixture_error = _protocol_fixture_error(command)
+        if fixture_error is not None:
+            raise fixture_error
     if command.verification_mode != _VERIFICATION_MODE:
         raise DomainError(
             "package_intake_verification_invalid",
@@ -108,7 +115,7 @@ def register_package_intake(
             registry_version=command.registry_version,
             profile=command.profile,
             status_at_intake=command.status_at_intake,
-            intake_source=_INTAKE_SOURCE,
+            intake_source=intake_source,
             approval_ledger_commit=command.approval_ledger_commit,
             verification_mode=command.verification_mode,
             verification_limitations=command.verification_limitations,
@@ -124,6 +131,48 @@ def register_package_intake(
     _sync_acceptance_criteria(session, revision.id, acceptance_criteria)
     _record_intake_event(session, revision.id, command, actor)
     return revision
+
+
+def _status_error(command: PackageIntakeCommand) -> DomainError | None:
+    if command.intake_purpose == "executable" and command.status_at_intake not in _VALID_STATUSES:
+        raise DomainError(
+            "package_intake_status_invalid",
+            "package intake requires approved status",
+            None,
+        )
+    if (
+        command.intake_purpose == "protocol_fixture"
+        and command.status_at_intake not in _VALID_PROTOCOL_FIXTURE_STATUSES
+    ):
+        return DomainError(
+            "package_intake_status_invalid",
+            "protocol fixture intake requires closed status",
+            None,
+        )
+    return None
+
+
+def _intake_source(command: PackageIntakeCommand) -> str | DomainError:
+    if command.intake_purpose == "executable":
+        return _INTAKE_SOURCE
+    if command.intake_purpose == "protocol_fixture":
+        return _PROTOCOL_FIXTURE_SOURCE
+    return DomainError(
+        "package_intake_purpose_invalid",
+        "package intake purpose is invalid",
+        None,
+    )
+
+
+def _protocol_fixture_error(command: PackageIntakeCommand) -> DomainError | None:
+    limitations = command.verification_limitations
+    if not isinstance(limitations, dict) or limitations.get("protocol_fixture_only") is not True:
+        return DomainError(
+            "package_intake_verification_invalid",
+            "protocol fixture intake requires protocol_fixture_only verification limitation",
+            None,
+        )
+    return None
 
 
 def _require_human(actor: ActorContext) -> None:
@@ -164,16 +213,38 @@ def _intake_replay(
     event = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))
     if event is None:
         return None
+    expected = _command_identity(command, actor)
+    observed = event.payload.get("command")
     if (
         event.action != _INTAKE_ACTION
         or event.subject_type != "work_package_revision"
-        or event.payload.get("command") != _command_identity(command, actor)
+        or (
+            observed != expected
+            and not _legacy_executable_identity_matches(observed, expected, command)
+        )
     ):
         raise _idempotency_conflict()
     revision = session.get(WorkPackageRevision, event.subject_id)
     if revision is None:
         raise DomainError("event_invalid", "intake event subject does not exist", None)
     return revision
+
+
+def _legacy_executable_identity_matches(
+    observed: object,
+    expected: dict[str, Any],
+    command: PackageIntakeCommand,
+) -> bool:
+    if command.intake_purpose != "executable" or not isinstance(observed, dict):
+        return False
+    legacy = dict(expected)
+    legacy.pop("intake_purpose", None)
+    expected_limitations = legacy.get("verification_limitations")
+    if isinstance(expected_limitations, dict):
+        expected_limitations = dict(expected_limitations)
+        expected_limitations.pop("protocol_fixture_only", None)
+        legacy["verification_limitations"] = expected_limitations
+    return observed == legacy
 
 
 def _command_identity(
@@ -185,6 +256,7 @@ def _command_identity(
         "actor_id": actor.actor_id,
         "actor_role": actor.role,
         "expected_version": command.expected_version,
+        "intake_purpose": command.intake_purpose,
         "package_id": command.package_id,
         "source_repository": command.source_repository,
         "revision": command.revision,

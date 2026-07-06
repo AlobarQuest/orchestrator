@@ -2,12 +2,14 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import Clock, TransactionClock
 from orchestrator.errors import DomainError
+from orchestrator.kernel.context import context_fingerprint
 from orchestrator.kernel.leases import hash_lease_token
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
@@ -37,6 +39,8 @@ class TransitionCommand:
     attempt: int | None = None
     lease_token: str | None = None
     reason: str | None = None
+    standing_context: dict[str, Any] | None = None
+    context_snapshot_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -114,7 +118,11 @@ def _perform_transition(
             error.recovery = "submit"
         raise
     if command.actor.role is ActorRole.WORKER:
-        _require_active_claim(session, unit, command, occurred_at)
+        claim = _require_active_claim(session, unit, command, occurred_at)
+        if command.target is WorkUnitState.EXECUTING:
+            claim.execution_context_snapshot_id = _execution_context_snapshot_id(
+                session, unit, revision, claim, command
+            )
 
     next_version = unit.version + 1
     unit.state = command.target
@@ -178,13 +186,19 @@ def _idempotency_conflict() -> DomainError:
     )
 
 
-def _command_identity(
-    command: TransitionCommand, source: WorkUnitState
-) -> dict[str, str | int | None]:
+def _command_identity(command: TransitionCommand, source: WorkUnitState) -> dict[str, object]:
     return {
         "action": "work_unit.transitioned",
         "actor_id": command.actor.actor_id,
         "actor_role": command.actor.role,
+        "context_fingerprint": (
+            context_fingerprint(command.standing_context)
+            if command.standing_context is not None
+            else None
+        ),
+        "context_snapshot_id": (
+            str(command.context_snapshot_id) if command.context_snapshot_id is not None else None
+        ),
         "expected_version": command.expected_version,
         "from_state": source,
         "attempt": command.attempt,
@@ -202,7 +216,7 @@ def _require_active_claim(
     unit: WorkUnit,
     command: TransitionCommand,
     occurred_at: datetime,
-) -> None:
+) -> Claim:
     claim = session.scalar(
         select(Claim)
         .where(Claim.work_unit_id == unit.id)
@@ -228,6 +242,44 @@ def _require_active_claim(
             current_state=unit.state,
             current_version=unit.version,
         )
+    assert claim is not None
+    return claim
+
+
+def _execution_context_snapshot_id(
+    session: Session,
+    unit: WorkUnit,
+    revision: WorkPackageRevision,
+    claim: Claim,
+    command: TransitionCommand,
+) -> uuid.UUID | None:
+    if command.standing_context is None:
+        if _has_required_context(revision):
+            raise DomainError("context_missing_required", "standing context is incomplete", None)
+        return None
+
+    from orchestrator.services.context import PreflightCommand, require_execution_context
+
+    snapshot = require_execution_context(
+        session,
+        PreflightCommand(
+            work_unit_id=unit.id,
+            standing_context=command.standing_context,
+            previous_context_snapshot_id=command.context_snapshot_id or claim.context_snapshot_id,
+            approval_id=None,
+            purpose="execution",
+            idempotency_key=f"{command.idempotency_key}:execution-context",
+            attempt=claim.attempt,
+            lease_token=command.lease_token,
+        ),
+        command.actor,
+    )
+    return snapshot.id
+
+
+def _has_required_context(revision: WorkPackageRevision) -> bool:
+    required = revision.enforcement_snapshot.get("required_context")
+    return isinstance(required, dict) and bool(required)
 
 
 def _transition_guards(

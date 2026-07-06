@@ -9,15 +9,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Event, Evidence
+from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.persistence.models import Claim, ContextSnapshot, Event, Evidence
 from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.evidence import (
     append_evidence,
     current_evidence,
     supersede_evidence,
 )
-from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from tests.services.test_context_preflight import register_context_unit, valid_context
 from tests.services.test_dependencies import register_unit
 
 
@@ -170,6 +171,107 @@ def test_stale_or_invalid_attempt_credentials_are_rejected(
         result = append(migrated_session, command | changed)
         assert isinstance(result, DomainError)
         assert result.code == "claim_not_owned"
+
+
+def executing_context_claim(session: Session, unit) -> LeaseGrant:
+    grant = claim_unit(
+        session,
+        unit.id,
+        worker(),
+        "claim-1",
+        standing_context=valid_context(),
+    )
+    assert isinstance(grant, LeaseGrant)
+    result = transition_unit(
+        session,
+        TransitionCommand(
+            unit_id=unit.id,
+            target=WorkUnitState.EXECUTING,
+            actor=worker(),
+            expected_version=unit.version,
+            idempotency_key="start-1",
+            attempt=grant.attempt,
+            lease_token=grant.lease_token,
+            standing_context=valid_context(),
+            context_snapshot_id=grant.context_snapshot_id,
+        ),
+    )
+    assert result.state is WorkUnitState.EXECUTING
+    return grant
+
+
+def test_evidence_defaults_to_active_execution_context(migrated_session: Session) -> None:
+    unit = register_context_unit(migrated_session, valid_context(), "evidence-context")
+    grant = executing_context_claim(migrated_session, unit)
+    claim = migrated_session.get(Claim, grant.claim_id)
+    assert claim is not None
+    assert claim.execution_context_snapshot_id is not None
+
+    result = append(migrated_session, evidence_kwargs(unit, grant))
+
+    assert isinstance(result, Evidence)
+    assert result.context_snapshot_id == claim.execution_context_snapshot_id
+    event = migrated_session.get(Event, result.event_id)
+    assert event is not None
+    assert event.payload["command"]["context_snapshot_id"] == str(
+        claim.execution_context_snapshot_id
+    )
+
+    conflicting_replay = append(
+        migrated_session,
+        evidence_kwargs(unit, grant) | {"context_snapshot_id": grant.context_snapshot_id},
+    )
+    assert isinstance(conflicting_replay, DomainError)
+    assert conflicting_replay.code == "idempotency_conflict"
+
+
+def test_evidence_rejects_context_snapshot_from_old_attempt(migrated_session: Session) -> None:
+    unit = register_context_unit(migrated_session, valid_context(), "evidence-stale-context")
+    grant = executing_context_claim(migrated_session, unit)
+    claim = migrated_session.get(Claim, grant.claim_id)
+    assert claim is not None
+    assert claim.execution_context_snapshot_id is not None
+    stale_snapshot = migrated_session.get(ContextSnapshot, claim.execution_context_snapshot_id)
+    assert stale_snapshot is not None
+
+    claim.released_at = claim.acquired_at
+    claim.terminal_reason = "test_release"
+    unit.state = "ready"
+    migrated_session.commit()
+    second = claim_unit(
+        migrated_session,
+        unit.id,
+        worker(),
+        "claim-2",
+        standing_context=valid_context(),
+    )
+    assert isinstance(second, LeaseGrant)
+    transition_unit(
+        migrated_session,
+        TransitionCommand(
+            unit_id=unit.id,
+            target=WorkUnitState.EXECUTING,
+            actor=worker(),
+            expected_version=unit.version,
+            idempotency_key="start-2",
+            attempt=second.attempt,
+            lease_token=second.lease_token,
+            standing_context=valid_context(),
+            context_snapshot_id=second.context_snapshot_id,
+        ),
+    )
+
+    result = append(
+        migrated_session,
+        evidence_kwargs(unit, second)
+        | {
+            "context_snapshot_id": stale_snapshot.id,
+            "idempotency_key": "evidence-stale-context",
+        },
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "context_snapshot_invalid"
 
 
 def test_evidence_rows_remain_database_immutable(migrated_session: Session, ready_unit) -> None:

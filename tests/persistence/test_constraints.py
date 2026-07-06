@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -6,6 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import (
+    Claim,
+    ContextSnapshot,
     Dependency,
     Evidence,
     WorkPackage,
@@ -333,6 +336,54 @@ def test_dependency_cannot_reference_its_own_work_unit(migrated_session: Session
             required_state_or_condition="completed",
             depends_on_work_unit_id=unit.id,
             status="pending",
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        migrated_session.commit()
+
+
+def test_context_snapshot_claim_attempt_must_match_claim(migrated_session: Session) -> None:
+    revision = _revision(migrated_session)
+    ready_unit = WorkUnit(
+        unit_key="unit-1",
+        work_package_revision_id=revision.id,
+        title="Title",
+        outcome="Outcome",
+        state="ready",
+        decomposition_approved_by="human-1",
+        decomposition_approved_at="2026-07-05T12:00:00+00:00",
+        required_capability="python",
+        authority_fingerprint="authority",
+    )
+    migrated_session.add(ready_unit)
+    migrated_session.flush()
+
+    claim = Claim(
+        work_unit_id=ready_unit.id,
+        attempt=1,
+        claimed_by="worker-1",
+        lease_token_hash="hash",
+        idempotency_key="claim",
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    migrated_session.add(claim)
+    migrated_session.flush()
+
+    migrated_session.add(
+        ContextSnapshot(
+            work_package_revision_id=ready_unit.work_package_revision_id,
+            work_unit_id=ready_unit.id,
+            claim_id=claim.id,
+            attempt=2,
+            actor_id="worker-1",
+            actor_role="worker",
+            context={},
+            context_fingerprint="fp",
+            classification="accepted",
+            decision="accepted",
+            event_id=uuid.uuid4(),
+            idempotency_key="ctx",
         )
     )
 

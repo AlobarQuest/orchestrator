@@ -14,6 +14,7 @@ from orchestrator.kernel.authority import (
     authority_fingerprint,
     normalize_authority,
 )
+from orchestrator.kernel.context import context_fingerprint
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
 from orchestrator.kernel.readiness import (
     DependencyReadiness,
@@ -61,6 +62,7 @@ def record_approval(
     reason: str,
     idempotency_key: str,
     expected_version: int,
+    standing_context: Mapping[str, object] | None = None,
 ) -> Approval:
     _require_human(actor_id, actor_role)
     if subject_type not in {"authority", "action"}:
@@ -69,9 +71,7 @@ def record_approval(
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
     existing = session.scalar(select(Approval).where(Approval.idempotency_key == idempotency_key))
-    fingerprint = (
-        unit.authority_fingerprint if subject_type == "authority" else str(expected_version)
-    )
+    fingerprint = _approval_fingerprint(unit, subject_type, standing_context, expected_version)
     if existing is not None:
         event = session.get(Event, existing.event_id)
         if (
@@ -110,7 +110,7 @@ def record_approval(
     )
     session.add(approval)
     session.flush()
-    if subject_type == "authority":
+    if subject_type == "authority" and standing_context is None:
         unit.authority_approval_id = approval.id
     session.add(
         Event(
@@ -121,13 +121,34 @@ def record_approval(
             subject_id=unit.id,
             from_state=unit.state,
             to_state=unit.state,
-            payload={"approval_id": str(approval.id), "expected_version": expected_version},
+            payload={
+                "approval_id": str(approval.id),
+                "expected_version": expected_version,
+                "context_fingerprint": (
+                    fingerprint
+                    if subject_type == "authority" and standing_context is not None
+                    else None
+                ),
+            },
             correlation_id=uuid.uuid4(),
             idempotency_key=idempotency_key,
         )
     )
     session.flush()
     return approval
+
+
+def _approval_fingerprint(
+    unit: WorkUnit,
+    subject_type: str,
+    standing_context: Mapping[str, object] | None,
+    expected_version: int,
+) -> str:
+    if subject_type == "authority":
+        if standing_context is not None:
+            return context_fingerprint(standing_context)
+        return unit.authority_fingerprint
+    return str(expected_version)
 
 
 def register_revision(
@@ -385,6 +406,12 @@ def _require_allowed_unit_activation(
     activation_source: str,
     approved_decomposition_id: uuid.UUID | None,
 ) -> None:
+    if revision.intake_source == "protocol_fixture":
+        raise DomainError(
+            "protocol_fixture_not_executable",
+            "protocol fixture intake cannot create executable work units",
+            None,
+        )
     if revision.intake_source != "package_cli":
         return
     if activation_source != "approved_decomposition" or approved_decomposition_id is None:

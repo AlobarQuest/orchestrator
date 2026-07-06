@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import Engine, event, select, text
 from sqlalchemy.orm import Session
 
+import orchestrator.services.package_intake as package_intake
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
@@ -17,7 +18,7 @@ from orchestrator.services.package_intake import (
     PackageIntakeCommand,
     register_package_intake,
 )
-from orchestrator.services.packages import register_approved_unit
+from orchestrator.services.packages import register_approved_unit, register_revision
 
 AUTHORITY = AuthorityEnvelope(
     capabilities={"repository_write": "allowed"},
@@ -152,6 +153,61 @@ def test_package_intake_is_idempotent(migrated_session: Session) -> None:
         ("AC-001", "The change is tested.")
     ]
     assert [event.action for event in events] == ["package_revision.intake_registered"]
+
+
+def test_package_intake_replays_ws32_event_identity_without_new_task6_fields(
+    migrated_session: Session,
+) -> None:
+    command = intake_command()
+    actor = human_actor()
+    revision = register_revision(
+        migrated_session,
+        package_id=command.package_id,
+        source_repository=command.source_repository,
+        revision=command.revision,
+        content_hash=command.content_hash,
+        source_path=command.source_path,
+        source_commit=command.source_commit,
+        approved_by=command.approved_by,
+        approved_at=command.approved_at,
+        approval_event_id=command.approval_event_id,
+        enforcement_snapshot={
+            **command.enforcement_snapshot,
+            "acceptance_criteria": ["AC-001"],
+        },
+        authority=command.authority,
+        registry_version=command.registry_version,
+        profile=command.profile,
+        status_at_intake=command.status_at_intake,
+        intake_source="package_cli",
+        approval_ledger_commit=command.approval_ledger_commit,
+        verification_mode=command.verification_mode,
+        verification_limitations=command.verification_limitations,
+        actor_id=actor.actor_id,
+        actor_role=actor.role,
+        expected_version=command.expected_version,
+    )
+    legacy_identity = package_intake._command_identity(command, actor)
+    legacy_identity.pop("intake_purpose")
+    limitations = legacy_identity["verification_limitations"]
+    assert isinstance(limitations, dict)
+    limitations.pop("protocol_fixture_only", None)
+    migrated_session.add(
+        Event(
+            actor_id=actor.actor_id,
+            action="package_revision.intake_registered",
+            subject_type="work_package_revision",
+            subject_id=revision.id,
+            payload={"command": legacy_identity},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=command.idempotency_key,
+        )
+    )
+    migrated_session.flush()
+
+    replay = register_package_intake(migrated_session, command, actor)
+
+    assert replay.id == revision.id
 
 
 def test_concurrent_identical_intake_converges(migrated_engine: Engine) -> None:

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -11,7 +11,7 @@ class CommandBase(BaseModel):
 
 
 class ClaimCommand(CommandBase):
-    pass
+    standing_context: dict[str, Any] | None = None
 
 
 class RenewCommand(CommandBase):
@@ -19,14 +19,22 @@ class RenewCommand(CommandBase):
     lease_token: str = Field(min_length=1)
 
 
+class ReclaimCommand(CommandBase):
+    next_owner_id: str = Field(min_length=1)
+    standing_context: dict[str, Any] | None = None
+
+
 class LifecycleCommand(CommandBase):
     attempt: int | None = Field(default=None, gt=0)
     lease_token: str | None = Field(default=None, min_length=1)
+    standing_context: dict[str, Any] | None = None
+    context_snapshot_id: UUID | None = None
 
 
 class ApprovalCommand(CommandBase):
     subject_type: str = Field(pattern="^(authority|action)$")
     reason: str = Field(min_length=1)
+    standing_context: dict[str, Any] | None = None
 
 
 class RetryCommand(CommandBase):
@@ -68,6 +76,16 @@ class EvidenceCommand(CommandBase):
     stable_ref: str | None = None
     payload: dict[str, Any] | None = None
     source_revision: str = Field(min_length=1)
+    context_snapshot_id: UUID | None = None
+
+
+class PreflightCommandModel(CommandBase):
+    standing_context: dict[str, Any]
+    purpose: str = Field(min_length=1)
+    previous_context_snapshot_id: UUID | None = None
+    approval_id: UUID | None = None
+    attempt: int | None = Field(default=None, gt=0)
+    lease_token: str | None = Field(default=None, min_length=1)
 
 
 class RevisionRegistration(CommandBase):
@@ -137,6 +155,7 @@ class LeaseResponse(BaseModel):
     attempt: int
     lease_token: str
     expires_at: datetime
+    context_snapshot_id: UUID | None = None
 
 
 class TransitionResponse(BaseModel):
@@ -165,6 +184,27 @@ class EvidenceResponse(BaseModel):
     event_id: UUID
     idempotency_key: str
     supersedes_evidence_id: UUID | None
+    context_snapshot_id: UUID | None = None
+
+
+class ContextSnapshotResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_package_revision_id: UUID
+    work_unit_id: UUID
+    claim_id: UUID | None
+    attempt: int
+    actor_id: str
+    actor_role: str
+    context: dict[str, Any] | list[Any]
+    context_fingerprint: str
+    classification: str
+    decision: str
+    approval_id: UUID | None
+    event_id: UUID
+    idempotency_key: str
+    created_at: datetime
 
 
 class EventResponse(BaseModel):
@@ -206,6 +246,65 @@ class AdjudicationResponse(BaseModel):
     rationale: str
 
 
+class StatusLedgerEvidenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    ac_id: str
+    attempt: int
+    evidence_type: str
+    stable_ref: str | None
+    source_revision: str
+    recorded_by: str
+    recorded_at: datetime
+    context_snapshot_id: UUID | None
+
+
+class StatusLedgerAdjudicationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    ac_id: str
+    outcome: str
+    decided_by: str
+    decided_at: datetime
+    evidence_id: UUID | None
+    rationale: str
+
+
+class StatusLedgerFailureResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    event_id: UUID
+    actor_id: str
+    occurred_at: datetime
+    from_state: str | None
+    reason: str | None
+
+
+class StatusLedgerRowResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    actor_id: str | None
+    unit_id: UUID
+    unit_key: str
+    unit_title: str
+    unit_state: str
+    claim_id: UUID | None
+    claim_attempt: int | None
+    claim_lease_expires_at: datetime | None
+    last_heartbeat_at: datetime | None
+    last_event_at: datetime | None
+    blockers: list[dict[str, Any | None]]
+    pending_human_approvals: list[dict[str, Any]]
+    latest_evidence: StatusLedgerEvidenceResponse | None
+    latest_adjudication: StatusLedgerAdjudicationResponse | None
+    last_failure: StatusLedgerFailureResponse | None
+    context_snapshot_id: UUID | None
+    context_classification: str | None
+    context_decision: str | None
+
+
 class DependencyResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -243,6 +342,7 @@ class PackageIntakeRegistration(CommandBase):
     authority: dict[str, Any]
     registry_version: int = Field(ge=0)
     acceptance_criteria: list[PackageAcceptanceCriterionCommand] = Field(min_length=1)
+    intake_purpose: Literal["executable", "protocol_fixture"] = "executable"
 
 
 class PackageAcceptanceCriterionResponse(BaseModel):

@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.leases import LEASE_DURATION, hash_lease_token
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Claim
+from orchestrator.persistence.models import Claim, ContextSnapshot
 from orchestrator.services.claims import LeaseGrant, claim_unit, renew_claim
 from orchestrator.services.lifecycle import ActorContext
+from tests.services.test_context_preflight import register_context_unit, valid_context
 
 
 def worker(actor_id: str = "worker-1") -> ActorContext:
@@ -76,6 +77,38 @@ def test_claim_replay_binds_expected_version(migrated_session: Session, ready_un
 
     assert isinstance(replay, DomainError)
     assert replay.code == "idempotency_conflict"
+
+
+def test_claim_required_context_unit_rejects_missing_context(migrated_session: Session) -> None:
+    ready_unit = register_context_unit(migrated_session, valid_context(), "claim-context-missing")
+
+    result = claim_unit(migrated_session, ready_unit.id, worker(), "claim-1")
+
+    assert isinstance(result, DomainError)
+    assert result.code == "context_missing_required"
+
+
+def test_claim_required_context_unit_stores_context_snapshot(migrated_session: Session) -> None:
+    ready_unit = register_context_unit(migrated_session, valid_context(), "claim-context-stored")
+
+    result = claim_unit(
+        migrated_session,
+        ready_unit.id,
+        worker(),
+        "claim-1",
+        standing_context=valid_context(),
+    )
+
+    assert isinstance(result, LeaseGrant)
+    assert result.context_snapshot_id is not None
+    claim = migrated_session.get(Claim, result.claim_id)
+    assert claim is not None
+    assert claim.context_snapshot_id == result.context_snapshot_id
+    snapshot = migrated_session.get(ContextSnapshot, result.context_snapshot_id)
+    assert snapshot is not None
+    assert snapshot.work_unit_id == ready_unit.id
+    assert snapshot.claim_id is None
+    assert snapshot.attempt == result.attempt
 
 
 def test_only_current_owner_attempt_and_token_can_renew(

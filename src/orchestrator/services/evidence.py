@@ -14,6 +14,7 @@ from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
     Claim,
+    ContextSnapshot,
     Event,
     Evidence,
     WorkPackageRevision,
@@ -52,6 +53,7 @@ def append_evidence(
     source_revision: str,
     idempotency_key: str,
     expected_version: int | None = None,
+    context_snapshot_id: uuid.UUID | None = None,
 ) -> Evidence | DomainError:
     return _store_evidence(
         session,
@@ -67,6 +69,7 @@ def append_evidence(
         source_revision=source_revision,
         idempotency_key=idempotency_key,
         expected_version=expected_version,
+        context_snapshot_id=context_snapshot_id,
         supersede=False,
     )
 
@@ -86,6 +89,7 @@ def supersede_evidence(
     source_revision: str,
     idempotency_key: str,
     expected_version: int | None = None,
+    context_snapshot_id: uuid.UUID | None = None,
 ) -> Evidence | DomainError:
     return _store_evidence(
         session,
@@ -101,6 +105,7 @@ def supersede_evidence(
         source_revision=source_revision,
         idempotency_key=idempotency_key,
         expected_version=expected_version,
+        context_snapshot_id=context_snapshot_id,
         supersede=True,
     )
 
@@ -268,6 +273,7 @@ def _store_evidence(
     source_revision: str,
     idempotency_key: str,
     expected_version: int | None,
+    context_snapshot_id: uuid.UUID | None,
     supersede: bool,
 ) -> Evidence | DomainError:
     command = {
@@ -282,12 +288,13 @@ def _store_evidence(
         "source_revision": source_revision,
         "stable_ref": stable_ref,
         "supersede": supersede,
+        "context_snapshot_id": _uuid_text(context_snapshot_id),
         "work_package_revision_id": str(work_package_revision_id),
         "work_unit_id": str(work_unit_id),
     }
     try:
         _lock_idempotency_key(session, idempotency_key)
-        unit, _revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
+        unit, revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         replay = _evidence_replay(session, idempotency_key, command)
         if replay is not None:
             session.commit()
@@ -301,7 +308,17 @@ def _store_evidence(
                 current_version=unit.version,
             )
         _validate_evidence_fields(stable_ref, payload, evidence_type, source_revision)
-        _validate_attempt(session, unit, actor, attempt, lease_token)
+        claim = _validate_attempt(session, unit, actor, attempt, lease_token)
+        bound_context_snapshot_id = _resolve_context_snapshot_id(
+            session,
+            unit,
+            revision,
+            claim,
+            actor,
+            attempt,
+            context_snapshot_id,
+        )
+        command["context_snapshot_id"] = _uuid_text(bound_context_snapshot_id)
         previous = current_evidence(session, work_package_revision_id, work_unit_id, ac_id)
         if supersede and previous is None:
             raise DomainError(
@@ -329,6 +346,7 @@ def _store_evidence(
             event_id=event_id,
             idempotency_key=idempotency_key,
             supersedes_evidence_id=previous.id if supersede and previous is not None else None,
+            context_snapshot_id=bound_context_snapshot_id,
         )
         session.add(row)
         session.flush()
@@ -407,7 +425,7 @@ def _validate_attempt(
     actor: ActorContext,
     attempt: int,
     lease_token: str,
-) -> None:
+) -> Claim:
     if actor.role is not ActorRole.WORKER:
         raise DomainError("role_forbidden", "only workers may record evidence", None)
     claim = session.scalar(
@@ -433,6 +451,47 @@ def _validate_attempt(
         or WorkUnitState(unit.state) not in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}
     ):
         raise DomainError("claim_not_active", "work unit has no active claim", None)
+    return claim
+
+
+def _resolve_context_snapshot_id(
+    session: Session,
+    unit: WorkUnit,
+    revision: WorkPackageRevision,
+    claim: Claim,
+    actor: ActorContext,
+    attempt: int,
+    context_snapshot_id: uuid.UUID | None,
+) -> uuid.UUID | None:
+    selected_id = context_snapshot_id or claim.execution_context_snapshot_id
+    if selected_id is None:
+        if _has_required_context(revision):
+            raise DomainError("context_missing_required", "standing context is incomplete", None)
+        return None
+    snapshot = session.get(ContextSnapshot, selected_id)
+    valid = (
+        snapshot is not None
+        and snapshot.work_package_revision_id == revision.id
+        and snapshot.work_unit_id == unit.id
+        and snapshot.claim_id == claim.id
+        and snapshot.actor_id == actor.actor_id
+        and snapshot.actor_role == actor.role
+        and snapshot.attempt == attempt
+        and snapshot.decision == "accepted"
+    )
+    if not valid:
+        raise DomainError(
+            "context_snapshot_invalid",
+            "evidence context snapshot does not match the active attempt",
+            None,
+        )
+    assert snapshot is not None
+    return snapshot.id
+
+
+def _has_required_context(revision: WorkPackageRevision) -> bool:
+    required = revision.enforcement_snapshot.get("required_context")
+    return isinstance(required, dict) and bool(required)
 
 
 def _authorize_outcome(actor: ActorContext, outcome: str) -> None:
@@ -502,12 +561,22 @@ def _evidence_replay(
     row = session.scalar(select(Evidence).where(Evidence.idempotency_key == idempotency_key))
     if event is None and row is None:
         return None
+    if row is None:
+        raise _idempotency_conflict()
+    assert row is not None
+    command_context_snapshot_id = command.get("context_snapshot_id")
+    expected_command = command | {
+        "context_snapshot_id": (
+            command_context_snapshot_id
+            if command_context_snapshot_id is not None
+            else _uuid_text(row.context_snapshot_id)
+        )
+    }
     if (
         event is None
-        or row is None
         or event.action != "evidence.recorded"
         or event.subject_id != row.id
-        or event.payload.get("command") != command
+        or event.payload.get("command") != expected_command
     ):
         raise _idempotency_conflict()
     return row

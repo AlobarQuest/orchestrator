@@ -12,6 +12,7 @@ from orchestrator.package_sources import (
     VerifiedApproval,
     canonical_package_hash,
     load_package_intake_payload,
+    load_protocol_fixture_intake_payload,
 )
 
 
@@ -201,6 +202,40 @@ def test_package_source_reader_rejects_unapproved_current_state_with_matching_ap
             package_dir,
             source_repository="AlobarQuest/intent-packages",
         )
+
+
+def test_protocol_fixture_reader_accepts_closed_package(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+    )
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
+    package_dir = tmp_path / "ws32-closed-software"
+    shutil.copytree("tests/fixtures/intent-packages/ws32-approved-software", package_dir)
+    (package_dir / "package.yaml").write_text(
+        (package_dir / "package.yaml")
+        .read_text(encoding="utf-8")
+        .replace("status: approved", "status: closed"),
+        encoding="utf-8",
+    )
+    (package_dir / "lineage.yaml").write_text(
+        (package_dir / "lineage.yaml")
+        .read_text(encoding="utf-8")
+        .replace("current_state: approved", "current_state: closed"),
+        encoding="utf-8",
+    )
+
+    payload = load_protocol_fixture_intake_payload(
+        package_dir,
+        source_repository="AlobarQuest/intent-packages",
+    )
+
+    assert payload["status_at_intake"] == "closed"
+    assert payload["intake_purpose"] == "protocol_fixture"
 
 
 def test_package_source_reader_requires_cli_verifier_for_cli_verified_mode(
@@ -511,3 +546,58 @@ def test_intake_package_reads_approved_fixture_and_posts_expected_payload(
     assert payload["source_repository"] == "AlobarQuest/intent-packages"
     assert payload["source_commit"] == "deadbeef"
     assert payload["verification_mode"] == "caller_attested_cli_verified"
+
+
+def test_intake_protocol_fixture_reads_closed_fixture_and_posts_expected_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+    )
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
+    package_dir = tmp_path / "ws32-closed-software"
+    shutil.copytree("tests/fixtures/intent-packages/ws32-approved-software", package_dir)
+    (package_dir / "package.yaml").write_text(
+        (package_dir / "package.yaml")
+        .read_text(encoding="utf-8")
+        .replace("status: approved", "status: closed"),
+        encoding="utf-8",
+    )
+    (package_dir / "lineage.yaml").write_text(
+        (package_dir / "lineage.yaml")
+        .read_text(encoding="utf-8")
+        .replace("current_state: approved", "current_state: closed"),
+        encoding="utf-8",
+    )
+
+    def fake_request(method: str, path: str, payload=None):
+        observed.update(method=method, path=path, payload=payload)
+        return {"id": "revision-1", "revision": 1}
+
+    monkeypatch.setattr("orchestrator.cli.request", fake_request)
+    result = CliRunner().invoke(
+        app,
+        [
+            "intake-protocol-fixture",
+            str(package_dir),
+            "--source-repository",
+            "AlobarQuest/intent-packages",
+            "--idempotency-key",
+            "fixture-intake-1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert observed["method"] == "POST"
+    assert observed["path"] == "/api/v1/package-intakes"
+    payload = observed["payload"]
+    assert isinstance(payload, dict)
+    assert payload["idempotency_key"] == "fixture-intake-1"
+    assert payload["expected_version"] == 0
+    assert payload["status_at_intake"] == "closed"
+    assert payload["intake_purpose"] == "protocol_fixture"

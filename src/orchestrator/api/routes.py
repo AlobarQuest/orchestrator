@@ -14,6 +14,7 @@ from orchestrator.api.schemas import (
     ApprovalCommand,
     ApprovalResponse,
     ClaimCommand,
+    ContextSnapshotResponse,
     DecompositionDecisionCommand,
     DecompositionProposalAcMappingResponse,
     DecompositionProposalDependencyResponse,
@@ -33,20 +34,24 @@ from orchestrator.api.schemas import (
     PackageAcceptanceCriterionResponse,
     PackageIntakeRegistration,
     PackageIntakeResponse,
+    PreflightCommandModel,
     ProposedUnitCommand,
     ReadinessResponse,
+    ReclaimCommand,
     RenewCommand,
     RetryCommand,
     RevisionRegistration,
     RevisionResponse,
+    StatusLedgerRowResponse,
     TransitionResponse,
     UnitRegistration,
     UnitResponse,
 )
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
-from orchestrator.kernel.states import WorkUnitState
+from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
+    ContextSnapshot,
     DecompositionProposal,
     DecompositionProposalAcMapping,
     DecompositionProposalDependency,
@@ -55,8 +60,15 @@ from orchestrator.persistence.models import (
     Event,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
+    WorkUnit,
 )
-from orchestrator.services.claims import authorize_retry, claim_unit, renew_claim
+from orchestrator.services.claims import (
+    authorize_retry,
+    claim_unit,
+    reclaim_expired_claim,
+    renew_claim,
+)
+from orchestrator.services.context import PreflightCommand, record_preflight
 from orchestrator.services.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
@@ -89,6 +101,7 @@ from orchestrator.services.packages import (
     register_revision,
     resolve_dependency_command,
 )
+from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
 
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[ActorContext, Depends(get_actor)]
@@ -110,6 +123,7 @@ COMMAND_TARGETS = {
     "submit": WorkUnitState.SUBMITTED,
     "verify": WorkUnitState.VERIFYING,
     "review": WorkUnitState.AWAITING_REVIEW,
+    "revision-required": WorkUnitState.REVISION_REQUIRED,
     "complete": WorkUnitState.COMPLETED,
     "fail": WorkUnitState.FAILED,
     "retry": WorkUnitState.READY,
@@ -182,6 +196,7 @@ def create_package_intake(
             ),
             idempotency_key=body.idempotency_key,
             expected_version=body.expected_version,
+            intake_purpose=body.intake_purpose,
         ),
         actor,
     )
@@ -369,6 +384,74 @@ def readiness(
     }
 
 
+@router.get("/status-ledger", response_model=list[StatusLedgerRowResponse])
+def status_ledger_route(
+    _actor: ActorDep,
+    session: SessionDep,
+    actor_id: str | None = None,
+    work_unit_id: UUID | None = None,
+    state: str | None = None,
+    include_inactive: bool = False,
+) -> object:
+    return status_ledger(
+        session,
+        StatusLedgerFilters(
+            actor_id=actor_id,
+            work_unit_id=work_unit_id,
+            state=state,
+            include_inactive=include_inactive,
+        ),
+    )
+
+
+@router.post("/work-units/{unit_id}/preflight", response_model=ContextSnapshotResponse)
+def preflight(
+    unit_id: UUID,
+    body: PreflightCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    result = record_preflight(
+        session,
+        PreflightCommand(
+            work_unit_id=unit_id,
+            standing_context=body.standing_context,
+            previous_context_snapshot_id=body.previous_context_snapshot_id,
+            approval_id=body.approval_id,
+            purpose=body.purpose,
+            idempotency_key=body.idempotency_key,
+            attempt=body.attempt,
+            lease_token=body.lease_token,
+            expected_version=body.expected_version,
+        ),
+        actor,
+    )
+    if isinstance(result, DomainError):
+        raise result
+    session.commit()
+    return result
+
+
+@router.get(
+    "/work-units/{unit_id}/context-snapshots",
+    response_model=list[ContextSnapshotResponse],
+)
+def context_snapshots(
+    unit_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    if session.get(WorkUnit, unit_id) is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    return tuple(
+        session.scalars(
+            select(ContextSnapshot)
+            .where(ContextSnapshot.work_unit_id == unit_id)
+            .order_by(ContextSnapshot.created_at, ContextSnapshot.id)
+        )
+    )
+
+
 @router.post("/work-units/{unit_id}/claim", response_model=LeaseResponse)
 def claim(
     unit_id: UUID,
@@ -383,6 +466,7 @@ def claim(
             actor,
             body.idempotency_key,
             expected_version=body.expected_version,
+            standing_context=body.standing_context,
         )
     )
 
@@ -407,6 +491,26 @@ def renew(
     )
 
 
+@router.post("/work-units/{unit_id}/reclaim-expired-claim", response_model=LeaseResponse)
+def reclaim_expired(
+    unit_id: UUID,
+    body: ReclaimCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        reclaim_expired_claim(
+            session,
+            unit_id,
+            actor,
+            ActorContext(body.next_owner_id, ActorRole.WORKER),
+            body.idempotency_key,
+            expected_version=body.expected_version,
+            standing_context=body.standing_context,
+        )
+    )
+
+
 @router.post(
     "/work-units/{unit_id}/commands/{command}",
     response_model=TransitionResponse,
@@ -424,13 +528,15 @@ def command(
     return transition_unit(
         session,
         TransitionCommand(
-            unit_id,
-            target,
-            actor,
-            body.expected_version,
-            body.idempotency_key,
-            body.attempt,
-            body.lease_token,
+            unit_id=unit_id,
+            target=target,
+            actor=actor,
+            expected_version=body.expected_version,
+            idempotency_key=body.idempotency_key,
+            attempt=body.attempt,
+            lease_token=body.lease_token,
+            standing_context=body.standing_context,
+            context_snapshot_id=body.context_snapshot_id,
         ),
     )
 

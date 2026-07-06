@@ -6,9 +6,22 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import Adjudication, Approval, Evidence, WorkUnit
+from orchestrator.persistence.models import (
+    Adjudication,
+    Approval,
+    Claim,
+    ContextSnapshot,
+    Evidence,
+    WorkUnit,
+)
+from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
-from orchestrator.services.packages import register_approved_unit, register_revision
+from orchestrator.services.packages import (
+    record_approval,
+    register_approved_unit,
+    register_revision,
+)
+from tests.services.test_context_preflight import register_context_unit, valid_context
 from tests.services.test_dependencies import register_unit
 from tests.services.test_package_registration import AUTHORITY
 from tests.services.test_package_registration import NOW as APPROVED_AT
@@ -236,3 +249,181 @@ def test_approval_must_bind_current_unit_version(
         with pytest.raises(DomainError) as error:
             transition_unit(migrated_session, command)
         assert error.value.code == "approval_required"
+
+
+def test_worker_start_records_execution_context_snapshot(migrated_session: Session) -> None:
+    unit = register_context_unit(migrated_session, valid_context(), "start-context")
+    grant = claim_unit(
+        migrated_session,
+        unit.id,
+        ActorContext("worker-1", ActorRole.WORKER),
+        "claim-1",
+        standing_context=valid_context(),
+    )
+    assert isinstance(grant, LeaseGrant)
+
+    result = transition_unit(
+        migrated_session,
+        TransitionCommand(
+            unit_id=unit.id,
+            target=WorkUnitState.EXECUTING,
+            actor=ActorContext("worker-1", ActorRole.WORKER),
+            expected_version=unit.version,
+            idempotency_key="start-1",
+            attempt=grant.attempt,
+            lease_token=grant.lease_token,
+            standing_context=valid_context(),
+        ),
+    )
+
+    assert result.state is WorkUnitState.EXECUTING
+    claim = migrated_session.get(Claim, grant.claim_id)
+    assert claim is not None
+    assert claim.execution_context_snapshot_id is not None
+
+
+def test_worker_start_defaults_execution_preflight_to_claim_context_snapshot(
+    migrated_session: Session,
+) -> None:
+    unit = register_context_unit(migrated_session, valid_context(), "start-default-previous")
+    actor = ActorContext("worker-1", ActorRole.WORKER)
+    grant = claim_unit(
+        migrated_session,
+        unit.id,
+        actor,
+        "claim-1",
+        standing_context=valid_context(),
+    )
+    assert isinstance(grant, LeaseGrant)
+
+    transition_unit(
+        migrated_session,
+        TransitionCommand(
+            unit_id=unit.id,
+            target=WorkUnitState.EXECUTING,
+            actor=actor,
+            expected_version=unit.version,
+            idempotency_key="start-1",
+            attempt=grant.attempt,
+            lease_token=grant.lease_token,
+            standing_context=valid_context(),
+        ),
+    )
+
+    claim = migrated_session.get(Claim, grant.claim_id)
+    assert claim is not None
+    assert claim.execution_context_snapshot_id is not None
+    execution_snapshot = migrated_session.get(ContextSnapshot, claim.execution_context_snapshot_id)
+    assert execution_snapshot is not None
+    assert execution_snapshot.classification == "accepted"
+
+
+def test_worker_start_rejects_authority_expanding_context_until_approved(
+    migrated_session: Session,
+) -> None:
+    unit = register_context_unit(migrated_session, valid_context(), "start-expansion")
+    actor = ActorContext("worker-1", ActorRole.WORKER)
+    grant = claim_unit(
+        migrated_session,
+        unit.id,
+        actor,
+        "claim-1",
+        standing_context=valid_context(),
+    )
+    assert isinstance(grant, LeaseGrant)
+    expanded = valid_context(capabilities=["python", "deploy"])
+    command = TransitionCommand(
+        unit_id=unit.id,
+        target=WorkUnitState.EXECUTING,
+        actor=actor,
+        expected_version=unit.version,
+        idempotency_key="start-1",
+        attempt=grant.attempt,
+        lease_token=grant.lease_token,
+        standing_context=expanded,
+    )
+
+    with pytest.raises(DomainError) as error:
+        transition_unit(migrated_session, command)
+    assert error.value.code == "context_authority_expanding"
+
+    record_approval(
+        migrated_session,
+        unit_id=unit.id,
+        subject_type="authority",
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        reason="approve runtime authority envelope",
+        idempotency_key="start-context-approval",
+        expected_version=unit.version,
+        standing_context=expanded,
+    )
+    migrated_session.commit()
+
+    result = transition_unit(
+        migrated_session,
+        TransitionCommand(
+            unit_id=unit.id,
+            target=WorkUnitState.EXECUTING,
+            actor=actor,
+            expected_version=unit.version,
+            idempotency_key="start-2",
+            attempt=grant.attempt,
+            lease_token=grant.lease_token,
+            standing_context=expanded,
+            context_snapshot_id=grant.context_snapshot_id,
+        ),
+    )
+
+    assert result.state is WorkUnitState.EXECUTING
+
+
+def test_worker_start_rejects_authority_approval_for_different_context_fingerprint(
+    migrated_session: Session,
+) -> None:
+    unit = register_context_unit(migrated_session, valid_context(), "start-approval-fingerprint")
+    actor = ActorContext("worker-1", ActorRole.WORKER)
+    grant = claim_unit(
+        migrated_session,
+        unit.id,
+        actor,
+        "claim-1",
+        standing_context=valid_context(),
+    )
+    assert isinstance(grant, LeaseGrant)
+    approved_context = valid_context(capabilities=["python", "repository_write"])
+    requested_context = valid_context(
+        capabilities=["python", "repository_write"],
+        runtime_version="1.1",
+    )
+    approval = record_approval(
+        migrated_session,
+        unit_id=unit.id,
+        subject_type="authority",
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        reason="approve exact runtime context",
+        idempotency_key="start-context-approval",
+        expected_version=unit.version,
+        standing_context=approved_context,
+    )
+    migrated_session.commit()
+
+    with pytest.raises(DomainError) as error:
+        transition_unit(
+            migrated_session,
+            TransitionCommand(
+                unit_id=unit.id,
+                target=WorkUnitState.EXECUTING,
+                actor=actor,
+                expected_version=unit.version,
+                idempotency_key="start-1",
+                attempt=grant.attempt,
+                lease_token=grant.lease_token,
+                standing_context=requested_context,
+                context_snapshot_id=grant.context_snapshot_id,
+            ),
+        )
+
+    assert approval.subject_revision_or_fingerprint != unit.authority_fingerprint
+    assert error.value.code == "context_authority_expanding"

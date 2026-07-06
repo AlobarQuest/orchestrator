@@ -20,6 +20,7 @@ class PackageSourceError(Exception):
 _HUMAN_OPERATOR_PROFILE = "human-operator-v1"
 _CHAIN_VERIFY_TIMEOUT_SECONDS = 30
 _EXECUTABLE_INTAKE_STATE = "approved"
+_PROTOCOL_FIXTURE_STATE = "closed"
 
 
 @dataclass(frozen=True)
@@ -414,12 +415,39 @@ def _validate_approved_current_state(
     package: Mapping[str, Any],
     lineage: Mapping[str, Any],
 ) -> None:
+    _validate_current_state(
+        package,
+        lineage,
+        expected_state=_EXECUTABLE_INTAKE_STATE,
+        error="package current revision is not approved for intake",
+    )
+
+
+def _validate_closed_current_state(
+    package: Mapping[str, Any],
+    lineage: Mapping[str, Any],
+) -> None:
+    _validate_current_state(
+        package,
+        lineage,
+        expected_state=_PROTOCOL_FIXTURE_STATE,
+        error="package current revision is not closed for protocol fixture intake",
+    )
+
+
+def _validate_current_state(
+    package: Mapping[str, Any],
+    lineage: Mapping[str, Any],
+    *,
+    expected_state: str,
+    error: str,
+) -> None:
     status = package.get("status")
     current_state = lineage.get("current_state")
     if status != current_state:
         raise PackageSourceError("package status does not match lineage current_state")
-    if status != _EXECUTABLE_INTAKE_STATE:
-        raise PackageSourceError("package current revision is not approved for intake")
+    if status != expected_state:
+        raise PackageSourceError(error)
 
 
 def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[str, object]:
@@ -427,6 +455,44 @@ def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[s
     package = _read_yaml(resolved_path / "package.yaml")
     lineage = _read_yaml(resolved_path / "lineage.yaml")
     _validate_approved_current_state(package, lineage)
+    return _load_intake_payload(
+        resolved_path,
+        package,
+        lineage,
+        source_repository=source_repository,
+        intake_purpose="executable",
+        protocol_fixture_only=False,
+    )
+
+
+def load_protocol_fixture_intake_payload(
+    path: Path,
+    *,
+    source_repository: str,
+) -> dict[str, object]:
+    resolved_path = _resolve_source_path(path)
+    package = _read_yaml(resolved_path / "package.yaml")
+    lineage = _read_yaml(resolved_path / "lineage.yaml")
+    _validate_closed_current_state(package, lineage)
+    return _load_intake_payload(
+        resolved_path,
+        package,
+        lineage,
+        source_repository=source_repository,
+        intake_purpose="protocol_fixture",
+        protocol_fixture_only=True,
+    )
+
+
+def _load_intake_payload(
+    resolved_path: Path,
+    package: dict[str, Any],
+    lineage: dict[str, Any],
+    *,
+    source_repository: str,
+    intake_purpose: str,
+    protocol_fixture_only: bool,
+) -> dict[str, object]:
     acceptance_criteria = _acceptance_criteria(package.get("acceptance"))
     revision = package.get("revision")
     approved_hash = canonical_package_hash(package)
@@ -449,6 +515,13 @@ def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[s
     )
     if verified_approval is None:
         raise PackageSourceError("approval verification failed")
+    verification_limitations = {
+        "api_recomputes_remote_git_object": False,
+        "cli_verified_local_package_hash": True,
+        "cli_verified_approval_lineage": True,
+    }
+    if protocol_fixture_only:
+        verification_limitations["protocol_fixture_only"] = True
     return {
         "package_id": package["package_id"],
         "source_repository": source_repository,
@@ -462,12 +535,9 @@ def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[s
         "approval_ledger_commit": verified_approval.approval_ledger_commit,
         "profile": package.get("profile"),
         "status_at_intake": package["status"],
+        "intake_purpose": intake_purpose,
         "verification_mode": "caller_attested_cli_verified",
-        "verification_limitations": {
-            "api_recomputes_remote_git_object": False,
-            "cli_verified_local_package_hash": True,
-            "cli_verified_approval_lineage": True,
-        },
+        "verification_limitations": verification_limitations,
         "enforcement_snapshot": {
             "title": package["title"],
             "outcome": package["outcome"],

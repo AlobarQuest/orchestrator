@@ -28,8 +28,16 @@ class UUIDPrimaryKey:
 
 
 PROPOSAL_STATES = ("proposed", "approved", "rejected", "revision_required")
-INTAKE_SOURCES = ("manual_ws31", "package_cli")
+INTAKE_SOURCES = ("manual_ws31", "package_cli", "protocol_fixture")
 VERIFICATION_MODES = ("caller_attested_cli_verified",)
+CONTEXT_CLASSIFICATIONS = (
+    "accepted",
+    "same_scope",
+    "authority_expanding",
+    "missing_required",
+    "stale",
+)
+CONTEXT_DECISIONS = ("accepted", "rejected", "requires_approval")
 
 
 class WorkPackage(UUIDPrimaryKey, Base):
@@ -179,6 +187,7 @@ class Dependency(UUIDPrimaryKey, Base):
 class Claim(UUIDPrimaryKey, Base):
     __tablename__ = "claims"
     __table_args__ = (
+        UniqueConstraint("id", "attempt", name="uq_claims_id_attempt"),
         UniqueConstraint("work_unit_id", "attempt"),
         UniqueConstraint("work_unit_id", "idempotency_key"),
         CheckConstraint("attempt > 0", name="ck_claims_positive_attempt"),
@@ -189,6 +198,12 @@ class Claim(UUIDPrimaryKey, Base):
     claimed_by: Mapped[str] = mapped_column(String)
     lease_token_hash: Mapped[str] = mapped_column(String)
     idempotency_key: Mapped[str] = mapped_column(String)
+    context_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("context_snapshots.id")
+    )
+    execution_context_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("context_snapshots.id")
+    )
     acquired_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -217,6 +232,43 @@ class Approval(UUIDPrimaryKey, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
     idempotency_key: Mapped[str] = mapped_column(String, unique=True)
+
+
+class ContextSnapshot(UUIDPrimaryKey, Base):
+    __tablename__ = "context_snapshots"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["claim_id", "attempt"],
+            ["claims.id", "claims.attempt"],
+            name="fk_context_snapshots_claim_attempt",
+        ),
+        CheckConstraint(
+            f"classification IN {CONTEXT_CLASSIFICATIONS!r}",
+            name="ck_context_snapshots_classification",
+        ),
+        CheckConstraint(
+            f"decision IN {CONTEXT_DECISIONS!r}",
+            name="ck_context_snapshots_decision",
+        ),
+        CheckConstraint("attempt > 0", name="ck_context_snapshots_positive_attempt"),
+    )
+
+    work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("work_package_revisions.id")
+    )
+    work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
+    claim_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    attempt: Mapped[int] = mapped_column(Integer)
+    actor_id: Mapped[str] = mapped_column(String)
+    actor_role: Mapped[str] = mapped_column(String)
+    context: Mapped[dict[str, Any] | list[Any]] = mapped_column(JSONB)
+    context_fingerprint: Mapped[str] = mapped_column(String)
+    classification: Mapped[str] = mapped_column(String)
+    decision: Mapped[str] = mapped_column(String)
+    approval_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("approvals.id"))
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    idempotency_key: Mapped[str] = mapped_column(String, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Evidence(UUIDPrimaryKey, Base):
@@ -268,6 +320,9 @@ class Evidence(UUIDPrimaryKey, Base):
     event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
     idempotency_key: Mapped[str] = mapped_column(String, unique=True)
     supersedes_evidence_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    context_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("context_snapshots.id")
+    )
 
 
 class Adjudication(UUIDPrimaryKey, Base):
