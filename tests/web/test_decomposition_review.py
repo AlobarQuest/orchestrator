@@ -122,6 +122,8 @@ def test_approve_form_requires_human_confirmation_and_records_decision(
     detail = db_client.get(f"/review/decomposition-proposals/{proposal.id}", headers=HUMAN)
     assert "Approved for draft activation." in detail.text
     assert "State: approved" in detail.text
+    assert "No further review action is available" in detail.text
+    assert f'action="/review/decomposition-proposals/{proposal.id}/approve"' not in detail.text
 
 
 def test_intake_page_is_read_only_and_shows_source_facts(
@@ -140,3 +142,64 @@ def test_intake_page_is_read_only_and_shows_source_facts(
     assert "AC-001" in page.text
     assert "The change is tested." in page.text
     assert "<form" not in page.text
+
+
+def test_reject_and_require_revision_forms_record_decisions(
+    db_client: TestClient,
+    migrated_engine: Engine,
+) -> None:
+    _, reject_proposal = _seed_intake_and_proposal(migrated_engine)
+    reject_page = db_client.get(
+        f"/review/decomposition-proposals/{reject_proposal.id}",
+        headers=HUMAN,
+    )
+    reject_token, reject_key = _form(reject_page.text, reject_proposal.id, "reject")
+
+    rejected = db_client.post(
+        f"/review/decomposition-proposals/{reject_proposal.id}/reject",
+        headers=HUMAN,
+        data={
+            "csrf_token": reject_token,
+            "idempotency_key": reject_key,
+            "reason": "The unit split is too broad.",
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert rejected.status_code == 303
+    with Session(migrated_engine) as session:
+        current = session.get(DecompositionProposal, reject_proposal.id)
+        assert current is not None
+        assert current.state == "rejected"
+        assert current.decision_reason == "The unit split is too broad."
+
+    _, revision_proposal = _seed_intake_and_proposal(migrated_engine)
+    revision_page = db_client.get(
+        f"/review/decomposition-proposals/{revision_proposal.id}",
+        headers=HUMAN,
+    )
+    revision_token, revision_key = _form(
+        revision_page.text,
+        revision_proposal.id,
+        "require-revision",
+    )
+
+    required = db_client.post(
+        f"/review/decomposition-proposals/{revision_proposal.id}/require-revision",
+        headers=HUMAN,
+        data={
+            "csrf_token": revision_token,
+            "idempotency_key": revision_key,
+            "reason": "Map the retained criterion explicitly.",
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert required.status_code == 303
+    with Session(migrated_engine) as session:
+        current = session.get(DecompositionProposal, revision_proposal.id)
+        assert current is not None
+        assert current.state == "revision_required"
+        assert current.decision_reason == "Map the retained criterion explicitly."
