@@ -12,6 +12,7 @@ from orchestrator.persistence.models import (
 )
 
 PACKAGE_REGISTRATION_LOCK_NAMESPACE = 0x57503331
+PACKAGE_INTAKE_LOCK_NAMESPACE = 0x57503332
 
 
 class PackageRepository:
@@ -26,6 +27,15 @@ class PackageRepository:
             text("SELECT pg_advisory_xact_lock(:registration_namespace, hashtext(:package_id))"),
             {
                 "registration_namespace": PACKAGE_REGISTRATION_LOCK_NAMESPACE,
+                "package_id": package_id,
+            },
+        )
+
+    def lock_package_intake(self, package_id: str) -> None:
+        self.session.execute(
+            text("SELECT pg_advisory_xact_lock(:intake_namespace, hashtext(:package_id))"),
+            {
+                "intake_namespace": PACKAGE_INTAKE_LOCK_NAMESPACE,
                 "package_id": package_id,
             },
         )

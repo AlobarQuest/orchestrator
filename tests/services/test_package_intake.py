@@ -1,8 +1,10 @@
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import Engine, event, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -139,6 +141,52 @@ def test_package_intake_is_idempotent(migrated_session: Session) -> None:
         ("AC-001", "The change is tested.")
     ]
     assert [event.action for event in events] == ["package_revision.intake_registered"]
+
+
+def test_concurrent_identical_intake_converges(migrated_engine: Engine) -> None:
+    start = Barrier(2)
+    before_intake_lock = Barrier(2)
+
+    def synchronize_intake_lock(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if "pg_advisory_xact_lock" in statement and "intake_namespace" in statement:
+            before_intake_lock.wait(timeout=5)
+
+    event.listen(migrated_engine, "before_cursor_execute", synchronize_intake_lock)
+
+    def register() -> uuid.UUID:
+        with Session(migrated_engine) as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            session.execute(text("SET LOCAL lock_timeout = '5s'"))
+            start.wait(timeout=5)
+            revision = register_package_intake(session, intake_command(), human_actor())
+            session.commit()
+            return revision.id
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(register) for _ in range(2)]
+            revision_ids = tuple(future.result(timeout=10) for future in futures)
+    finally:
+        event.remove(migrated_engine, "before_cursor_execute", synchronize_intake_lock)
+
+    with Session(migrated_engine) as session:
+        intake_events = tuple(
+            session.scalars(
+                select(Event).where(Event.idempotency_key == "package-intake-1")
+            )
+        )
+        acceptance_rows = tuple(session.scalars(select(PackageAcceptanceCriterion)))
+
+    assert revision_ids[0] == revision_ids[1]
+    assert len(intake_events) == 1
+    assert len(acceptance_rows) == 1
 
 
 def test_package_intake_conflict_is_stable(migrated_session: Session) -> None:

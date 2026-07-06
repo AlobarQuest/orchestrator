@@ -11,6 +11,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event, PackageAcceptanceCriterion, WorkPackageRevision
+from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import register_revision
 
@@ -79,6 +80,7 @@ def register_package_intake(
             None,
         )
     acceptance_criteria = _validated_acceptance_criteria(command.acceptance_criteria)
+    PackageRepository(session).lock_package_intake(command.package_id)
     replay = _intake_replay(session, command, actor)
     if replay is not None:
         return replay
