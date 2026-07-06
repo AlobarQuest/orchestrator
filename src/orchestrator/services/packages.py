@@ -142,6 +142,12 @@ def register_revision(
     enforcement_snapshot: Mapping[str, Any],
     authority: AuthorityEnvelope,
     registry_version: int,
+    profile: str | None = None,
+    status_at_intake: str | None = None,
+    intake_source: str = "manual_ws31",
+    approval_ledger_commit: str | None = None,
+    verification_mode: str | None = None,
+    verification_limitations: Mapping[str, Any] | list[Any] | None = None,
     actor_id: str,
     actor_role: ActorRole,
     idempotency_key: str | None = None,
@@ -182,6 +188,12 @@ def register_revision(
         "enforcement_snapshot": normalized_snapshot,
         "authority_fingerprint": fingerprint,
         "registry_version": registry_version,
+        "profile": profile,
+        "status_at_intake": status_at_intake,
+        "intake_source": intake_source,
+        "approval_ledger_commit": approval_ledger_commit,
+        "verification_mode": verification_mode,
+        "verification_limitations": _normalize_json(verification_limitations),
         "registered_by": actor_id,
     }
     command = {
@@ -231,6 +243,7 @@ def register_approved_unit(
     actor_role: ActorRole,
     unit_id: uuid.UUID | None = None,
     dependencies: tuple[DependencySpec, ...] = (),
+    activation_source: str = "legacy_manual",
     idempotency_key: str | None = None,
     expected_version: int | None = None,
 ) -> WorkUnit:
@@ -245,6 +258,15 @@ def register_approved_unit(
     revision = session.get(WorkPackageRevision, revision_id, with_for_update=True)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
+    if (
+        revision.intake_source == "package_cli"
+        and activation_source != "approved_decomposition"
+    ):
+        raise DomainError(
+            "decomposition_approval_required",
+            "WS-3.2 package revisions require approved decomposition",
+            None,
+        )
     command = {
         "action": "work_unit.registered",
         "revision_id": str(revision_id),
@@ -257,6 +279,7 @@ def register_approved_unit(
         "approved_by": approved_by,
         "approved_at": approved_at.isoformat(),
         "unit_id": str(unit_id) if unit_id is not None else None,
+        "activation_source": activation_source,
         "dependencies": [_json_identity(spec.__dict__) for spec in dependencies],
     }
     replay = _registration_replay(
