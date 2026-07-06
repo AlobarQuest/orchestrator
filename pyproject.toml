@@ -41,8 +41,14 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C90"]
 
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B", "C90"]
 [tool.pyright]
 typeCheckingMode = "basic"
 pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "**/alembic", "**/migrations"]
