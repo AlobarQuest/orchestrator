@@ -8,7 +8,11 @@ from typing import Annotated, Any, Literal
 import httpx
 import typer
 
-from orchestrator.package_sources import PackageSourceError, load_package_intake_payload
+from orchestrator.package_sources import (
+    PackageSourceError,
+    load_package_intake_payload,
+    load_protocol_fixture_intake_payload,
+)
 
 app = typer.Typer(no_args_is_help=True)
 HTTP_TRANSPORT: httpx.BaseTransport | None = None
@@ -175,6 +179,13 @@ def _load_intake_payload(path: Path, source_repository: str) -> JsonObject:
         raise CliError({"code": "package_source_error", "message": str(error)}) from error
 
 
+def _load_protocol_fixture_payload(path: Path, source_repository: str) -> JsonObject:
+    try:
+        return load_protocol_fixture_intake_payload(path, source_repository=source_repository)
+    except PackageSourceError as error:
+        raise CliError({"code": "package_source_error", "message": str(error)}) from error
+
+
 def _decomposition_decision(
     endpoint: str,
     proposal_id: str,
@@ -216,6 +227,24 @@ def intake_package(
     def operation() -> Any:
         payload = {
             **_load_intake_payload(Path(path), source_repository),
+            "idempotency_key": idempotency_key,
+            "expected_version": 0,
+        }
+        return request("POST", "/api/v1/package-intakes", payload)
+
+    _run(operation, json_output)
+
+
+@app.command("intake-protocol-fixture")
+def intake_protocol_fixture(
+    path: Path,
+    source_repository: Annotated[str, typer.Option("--source-repository")],
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    json_output: JsonOption = False,
+) -> None:
+    def operation() -> Any:
+        payload = {
+            **_load_protocol_fixture_payload(Path(path), source_repository),
             "idempotency_key": idempotency_key,
             "expected_version": 0,
         }

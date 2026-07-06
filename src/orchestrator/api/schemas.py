@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -277,6 +277,7 @@ class PackageIntakeRegistration(CommandBase):
     authority: dict[str, Any]
     registry_version: int = Field(ge=0)
     acceptance_criteria: list[PackageAcceptanceCriterionCommand] = Field(min_length=1)
+    intake_purpose: Literal["executable", "protocol_fixture"] = "executable"
 
 
 class PackageAcceptanceCriterionResponse(BaseModel):

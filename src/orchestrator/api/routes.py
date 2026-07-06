@@ -187,6 +187,7 @@ def create_package_intake(
             ),
             idempotency_key=body.idempotency_key,
             expected_version=body.expected_version,
+            intake_purpose=body.intake_purpose,
         ),
         actor,
     )

@@ -385,6 +385,12 @@ def _require_allowed_unit_activation(
     activation_source: str,
     approved_decomposition_id: uuid.UUID | None,
 ) -> None:
+    if revision.intake_source == "protocol_fixture":
+        raise DomainError(
+            "protocol_fixture_not_executable",
+            "protocol fixture intake cannot create executable work units",
+            None,
+        )
     if revision.intake_source != "package_cli":
         return
     if activation_source != "approved_decomposition" or approved_decomposition_id is None:
