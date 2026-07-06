@@ -432,10 +432,8 @@ def test_real_http_claim_context_cli_matches_api(
     api_body = api_claim.json()
     assert cli_body["lease_token"] == ""
     assert {
-        key: cli_body[key]
-        for key in ("claim_id", "attempt", "expires_at", "context_snapshot_id")
+        key: cli_body[key] for key in ("claim_id", "attempt", "expires_at", "context_snapshot_id")
     } == {
-        key: api_body[key]
-        for key in ("claim_id", "attempt", "expires_at", "context_snapshot_id")
+        key: api_body[key] for key in ("claim_id", "attempt", "expires_at", "context_snapshot_id")
     }
     assert cli_body["context_snapshot_id"]

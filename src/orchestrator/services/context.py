@@ -135,9 +135,7 @@ def record_preflight(
                     else None
                 ),
                 "approval_id": (
-                    str(effective_decision.approval_id)
-                    if effective_decision.approval_id
-                    else None
+                    str(effective_decision.approval_id) if effective_decision.approval_id else None
                 ),
                 "expected_version": command.expected_version,
             },
@@ -240,7 +238,8 @@ def _replay_approval_matches(
     return (
         unit is not None
         and existing.approval_id is not None
-        and existing.approval_id == _matching_authority_approval_id(session, unit)
+        and existing.approval_id
+        == _matching_authority_approval_id(session, unit, command.standing_context)
     )
 
 
@@ -277,9 +276,7 @@ def _allowed_capabilities(
     if isinstance(authority_value, Mapping):
         authority = normalize_authority(authority_value)
         capabilities.update(
-            capability
-            for capability, level in authority.capabilities.items()
-            if level == "allowed"
+            capability for capability, level in authority.capabilities.items() if level == "allowed"
         )
     return capabilities
 
@@ -309,7 +306,9 @@ def _effective_decision(
         return DomainError("context_stale", "standing context is stale", None)
     if decision.decision != "requires_approval":
         return EffectiveDecision(decision.decision, command.approval_id)
-    approval_id = command.approval_id or _matching_authority_approval_id(session, unit)
+    approval_id = command.approval_id or _matching_authority_approval_id(
+        session, unit, normalized_context
+    )
     if approval_id is None:
         return DomainError(
             "context_authority_expanding",
@@ -328,14 +327,18 @@ def _effective_decision(
     return EffectiveDecision("accepted", approval_id)
 
 
-def _matching_authority_approval_id(session: Session, unit: WorkUnit) -> uuid.UUID | None:
+def _matching_authority_approval_id(
+    session: Session,
+    unit: WorkUnit,
+    normalized_context: Mapping[str, object],
+) -> uuid.UUID | None:
     return session.scalar(
         select(Approval.id)
         .where(
             Approval.subject_type == "authority",
             Approval.subject_id == unit.id,
             Approval.decision == "approved",
-            Approval.subject_revision_or_fingerprint == unit.authority_fingerprint,
+            Approval.subject_revision_or_fingerprint == context_fingerprint(normalized_context),
         )
         .order_by(Approval.created_at.desc(), Approval.id.desc())
         .limit(1)
@@ -347,12 +350,11 @@ def _approval_matches(
     approval: Approval,
     normalized_context: Mapping[str, object],
 ) -> bool:
-    _ = normalized_context
     return (
         approval.subject_type == "authority"
         and approval.subject_id == unit.id
         and approval.decision == "approved"
-        and approval.subject_revision_or_fingerprint == unit.authority_fingerprint
+        and approval.subject_revision_or_fingerprint == context_fingerprint(normalized_context)
         and approval.approved_by != ""
     )
 

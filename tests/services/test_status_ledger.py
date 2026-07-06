@@ -238,6 +238,8 @@ def test_status_ledger_filters_and_sorts_by_last_event_desc_then_actor(
     rows = status_ledger(migrated_session, StatusLedgerFilters(state="claimed"))
 
     assert [row.actor_id for row in rows] == ["worker-2", "worker-1"]
+    assert rows[0].last_event_at is not None
+    assert rows[1].last_event_at is not None
     assert rows[0].last_event_at >= rows[1].last_event_at
 
 

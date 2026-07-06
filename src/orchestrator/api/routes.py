@@ -37,6 +37,7 @@ from orchestrator.api.schemas import (
     PreflightCommandModel,
     ProposedUnitCommand,
     ReadinessResponse,
+    ReclaimCommand,
     RenewCommand,
     RetryCommand,
     RevisionRegistration,
@@ -48,7 +49,7 @@ from orchestrator.api.schemas import (
 )
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
-from orchestrator.kernel.states import WorkUnitState
+from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     ContextSnapshot,
     DecompositionProposal,
@@ -61,7 +62,12 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.claims import authorize_retry, claim_unit, renew_claim
+from orchestrator.services.claims import (
+    authorize_retry,
+    claim_unit,
+    reclaim_expired_claim,
+    renew_claim,
+)
 from orchestrator.services.context import PreflightCommand, record_preflight
 from orchestrator.services.decomposition import (
     AcMapping,
@@ -481,6 +487,26 @@ def renew(
             body.lease_token,
             idempotency_key=body.idempotency_key,
             expected_version=body.expected_version,
+        )
+    )
+
+
+@router.post("/work-units/{unit_id}/reclaim-expired-claim", response_model=LeaseResponse)
+def reclaim_expired(
+    unit_id: UUID,
+    body: ReclaimCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        reclaim_expired_claim(
+            session,
+            unit_id,
+            actor,
+            ActorContext(body.next_owner_id, ActorRole.WORKER),
+            body.idempotency_key,
+            expected_version=body.expected_version,
+            standing_context=body.standing_context,
         )
     )
 

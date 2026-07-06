@@ -6,9 +6,9 @@ locally recorded in
 `docs/superpowers/plans/2026-07-06-ws33-protocol-smoke-runtime-semantics.md` as
 `7829f22bfa30630a906d75131c84bc018c5dac3ceac7b933b7c9b46d23e5047a`.
 
-Task 9 evidence was recorded by `codex` at `2026-07-06T15:43:25Z` from branch
-`codex/ws33-design`. The pre-Task-9 implementation head was
-`5778dc6 test: add WS-3.3 protocol smoke suite`. This is an evidence index, not
+Task 10 evidence was recorded by `codex` at `2026-07-06T16:13:06Z` from branch
+`codex/ws33-design`. The pre-Task-10 implementation head was
+`946d356 test: add WS-3.3 architecture guards`. This is an evidence index, not
 a completion claim for deployment, PR CI, or merge.
 
 ## Verification summary
@@ -22,7 +22,16 @@ a completion claim for deployment, PR CI, or merge.
   `192.168.97.2:5432` was blocked with `Operation not permitted`. The same
   command was rerun with approved DB access and passed with `31 passed, 1
   existing Starlette/httpx warning in 7.99s`.
-- Full `make check`: not run in Task 9 yet; evidence is pending/absent.
+- Task 10 final review focused suite:
+  `TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test uv run pytest tests/services/test_lifecycle_guards.py tests/services/test_context_preflight.py tests/api/test_context_api.py tests/architecture/test_scope_guards.py tests/protocol/test_ws33_smoke.py -q`
+  first failed inside the default sandbox because TCP access to PostgreSQL at
+  `192.168.97.2:5432` was blocked with `Operation not permitted`. The same
+  command was rerun with approved DB access and passed with `33 passed, 1
+  existing Starlette/httpx warning in 11.70s`.
+- Full `make check`:
+  `PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test make check`
+  passed with Ruff, Pyright, and `643 passed, 1 existing Starlette/httpx warning
+  in 73.47s`.
 
 ## Prior local WS-3.3 task evidence
 
@@ -71,6 +80,12 @@ a completion claim for deployment, PR CI, or merge.
   tightened the status-ledger route-method guard and automatic-merge scanner.
   The scanner now catches token-split command arguments such as `gh pr merge`
   and `git push origin main`.
+- Task 10 final review fixes:
+  local changes bind authority-expanding standing-context approvals to exact
+  context fingerprints, default execution preflight comparison to the
+  claim-time context snapshot when no explicit snapshot is supplied, and expose
+  lease-expiry reclaim through public API/CLI protocol surfaces so the WS-3.3
+  smoke suite no longer calls the reclaim service directly.
 
 ## Scope guard evidence
 
@@ -94,7 +109,7 @@ a completion claim for deployment, PR CI, or merge.
   `INTAKE_SOURCES`, and is wired through the package-intake protocol fixture
   source constant.
 - `tests/architecture/test_scope_guards.py` keeps the production POST route
-  inventory explicit, including the WS-3.3 preflight route.
+  inventory explicit, including the WS-3.3 preflight and reclaim routes.
 
 ## Baseline and standards evidence
 
@@ -103,7 +118,7 @@ a completion claim for deployment, PR CI, or merge.
 - Foundation/project-standards findings are not recorded in this Task 9 evidence
   index beyond the locally available reports. No separate foundation or
   project-standards evidence artifact was found during Task 9.
-- Full branch `make check` for Task 9 is pending/absent until actually run.
+- Full branch `make check` passed during Task 10 as recorded above.
 
 ## Explicitly absent evidence
 

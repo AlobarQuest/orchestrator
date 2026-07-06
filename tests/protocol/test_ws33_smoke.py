@@ -7,8 +7,10 @@ from typing import Any
 
 import httpx
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session
 from typer.testing import CliRunner
 
@@ -22,8 +24,7 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.main import create_app
 from orchestrator.package_sources import VerifiedApproval, load_package_intake_payload
 from orchestrator.persistence.models import Claim, WorkUnit
-from orchestrator.services.claims import LeaseGrant, reclaim_expired_claim
-from orchestrator.services.lifecycle import ActorContext
+from tests.conftest import TEST_DATABASE_URL
 
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
 WORKER = {"Authorization": "Bearer fixture-token", "X-Credential-Key-Id": "worker-key"}
@@ -34,7 +35,19 @@ AUTHORITY = {
     "capabilities": {"repository_write": "allowed"},
     "budgets": {"max_attempts": 3, "max_llm_calls": 4},
 }
-pytest_plugins = ("tests.persistence.conftest",)
+
+
+@pytest.fixture
+def migrated_engine() -> Iterator[Engine]:
+    engine = create_engine(TEST_DATABASE_URL)
+    with engine.begin() as connection:
+        connection.execute(text("DROP SCHEMA public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
+    command.upgrade(config, "head")
+    yield engine
+    engine.dispose()
 
 
 @pytest.fixture
@@ -231,7 +244,7 @@ def _command(
     *,
     expected_version: int,
     idempotency_key: str,
-    lease: dict[str, Any] | LeaseGrant | None = None,
+    lease: dict[str, Any] | None = None,
     context_path: Path | None = None,
 ) -> dict[str, Any]:
     args = [
@@ -250,10 +263,8 @@ def _command(
     return _invoke(monkeypatch, actor, args)
 
 
-def _lease_value(lease: dict[str, Any] | LeaseGrant, key: str) -> Any:
-    if isinstance(lease, dict):
-        return lease[key]
-    return getattr(lease, key)
+def _lease_value(lease: dict[str, Any], key: str) -> Any:
+    return lease[key]
 
 
 def _write_context(tmp_path: Path, **overrides: object) -> Path:
@@ -286,7 +297,7 @@ def _assert_state(
     unit_id: str,
     state: str,
     *,
-    claim: dict[str, Any] | LeaseGrant | None = None,
+    claim: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     row = _ledger_row(db_client, unit_id, state=state)
     assert row["unit_state"] == state
@@ -301,7 +312,7 @@ def _append_evidence(
     revision_id: str,
     unit_id: str,
     ac_id: str,
-    lease: dict[str, Any] | LeaseGrant,
+    lease: dict[str, Any],
 ) -> dict[str, Any]:
     response = db_client.post(
         f"/api/v1/work-units/{unit_id}/evidence",
@@ -360,21 +371,26 @@ def _expire_latest_claim(migrated_engine: Engine, unit_id: str) -> None:
 
 
 def _reclaim(
-    migrated_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
     unit_id: str,
-    context: dict[str, object] | None = None,
-) -> LeaseGrant:
-    with Session(migrated_engine) as session:
-        result = reclaim_expired_claim(
-            session,
-            uuid.UUID(unit_id),
-            ActorContext("system", ActorRole.SYSTEM),
-            ActorContext("worker", ActorRole.WORKER),
+    context_path: Path,
+) -> dict[str, Any]:
+    return _invoke(
+        monkeypatch,
+        "system",
+        [
+            "reclaim-expired-claim",
+            unit_id,
+            "--idempotency-key",
             "ws33-smoke-reclaim",
-            standing_context=context,
-        )
-    assert isinstance(result, LeaseGrant), result
-    return result
+            "--expected-version",
+            "3",
+            "--next-owner-id",
+            "worker",
+            "--context",
+            f"@{context_path}",
+        ],
+    )
 
 
 def test_ws33_end_to_end_protocol_smoke_suite(
@@ -395,12 +411,14 @@ def test_ws33_end_to_end_protocol_smoke_suite(
         PACKAGE_FIXTURE,
         source_repository="AlobarQuest/intent-packages",
     )
+    enforcement_snapshot = package_payload["enforcement_snapshot"]
+    assert isinstance(enforcement_snapshot, dict)
     intake_body = {
         **package_payload,
         "idempotency_key": "ws33-smoke-intake",
         "expected_version": 0,
         "enforcement_snapshot": {
-            **package_payload["enforcement_snapshot"],
+            **enforcement_snapshot,
             "required_context": _standing_context(),
         },
     }
@@ -831,7 +849,7 @@ def test_ws33_end_to_end_protocol_smoke_suite(
         ],
     )
     _expire_latest_claim(migrated_engine, reclaim_unit_id)
-    reclaimed = _reclaim(migrated_engine, reclaim_unit_id, _standing_context())
+    reclaimed = _reclaim(monkeypatch, reclaim_unit_id, claim_context)
     reclaimed_row = _assert_state(db_client, reclaim_unit_id, "claimed", claim=reclaimed)
     assert reclaimed_row["last_failure"]["reason"] == "lease_expired"
     stale_error = _invoke_error(
@@ -888,13 +906,15 @@ def _approved_decomposition_unit(
         PACKAGE_FIXTURE,
         source_repository="AlobarQuest/intent-packages",
     )
+    enforcement_snapshot = package_payload["enforcement_snapshot"]
+    assert isinstance(enforcement_snapshot, dict)
     intake_body = {
         **package_payload,
         "idempotency_key": f"ws33-smoke-{suffix}-intake",
         "expected_version": 0,
         "package_id": f"ws33-smoke-{suffix}",
         "enforcement_snapshot": {
-            **package_payload["enforcement_snapshot"],
+            **enforcement_snapshot,
             "required_context": _standing_context(),
         },
     }

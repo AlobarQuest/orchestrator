@@ -265,7 +265,7 @@ def _execution_context_snapshot_id(
         PreflightCommand(
             work_unit_id=unit.id,
             standing_context=command.standing_context,
-            previous_context_snapshot_id=command.context_snapshot_id,
+            previous_context_snapshot_id=command.context_snapshot_id or claim.context_snapshot_id,
             approval_id=None,
             purpose="execution",
             idempotency_key=f"{command.idempotency_key}:execution-context",

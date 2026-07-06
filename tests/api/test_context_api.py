@@ -90,8 +90,10 @@ def test_context_api_openapi_declares_preflight_and_snapshot_routes(client: Test
 
     assert "/api/v1/work-units/{unit_id}/preflight" in document["paths"]
     assert "/api/v1/work-units/{unit_id}/context-snapshots" in document["paths"]
+    assert "/api/v1/work-units/{unit_id}/reclaim-expired-claim" in document["paths"]
     assert "PreflightCommandModel" in document["components"]["schemas"]
     assert "ContextSnapshotResponse" in document["components"]["schemas"]
+    assert "ReclaimCommand" in document["components"]["schemas"]
 
 
 def test_preflight_records_and_lists_context_snapshots(db_client: TestClient) -> None:

@@ -347,6 +347,30 @@ def renew(unit_id: str, data: DataOption, json_output: JsonOption = False) -> No
     _post_data(f"/api/v1/work-units/{unit_id}/renew", data, json_output)
 
 
+@app.command("reclaim-expired-claim")
+def reclaim_expired_claim(
+    unit_id: str,
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    expected_version: Annotated[int, typer.Option("--expected-version", min=0)],
+    next_owner_id: Annotated[str, typer.Option("--next-owner-id", min=1)],
+    context: ContextOption = None,
+    json_output: JsonOption = False,
+) -> None:
+    _run(
+        lambda: request(
+            "POST",
+            f"/api/v1/work-units/{unit_id}/reclaim-expired-claim",
+            {
+                "idempotency_key": idempotency_key,
+                "expected_version": expected_version,
+                "next_owner_id": next_owner_id,
+                "standing_context": _context_object(context),
+            },
+        ),
+        json_output,
+    )
+
+
 @app.command()
 def preflight(
     unit_id: str,
@@ -512,18 +536,22 @@ def record_approval(
     expected_version: Annotated[int, typer.Option("--expected-version", min=0)],
     subject_type: Annotated[Literal["authority", "action"], typer.Option("--subject-type")],
     reason: Annotated[str, typer.Option("--reason", min=1)],
+    context: ContextOption = None,
     json_output: JsonOption = False,
 ) -> None:
+    payload = {
+        "idempotency_key": idempotency_key,
+        "expected_version": expected_version,
+        "subject_type": subject_type,
+        "reason": reason,
+    }
+    if context is not None:
+        payload["standing_context"] = _context_object(context)
     _run(
         lambda: request(
             "POST",
             f"/api/v1/work-units/{unit_id}/approvals",
-            {
-                "idempotency_key": idempotency_key,
-                "expected_version": expected_version,
-                "subject_type": subject_type,
-                "reason": reason,
-            },
+            payload,
         ),
         json_output,
     )

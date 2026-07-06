@@ -19,6 +19,11 @@ class RenewCommand(CommandBase):
     lease_token: str = Field(min_length=1)
 
 
+class ReclaimCommand(CommandBase):
+    next_owner_id: str = Field(min_length=1)
+    standing_context: dict[str, Any] | None = None
+
+
 class LifecycleCommand(CommandBase):
     attempt: int | None = Field(default=None, gt=0)
     lease_token: str | None = Field(default=None, min_length=1)
@@ -29,6 +34,7 @@ class LifecycleCommand(CommandBase):
 class ApprovalCommand(CommandBase):
     subject_type: str = Field(pattern="^(authority|action)$")
     reason: str = Field(min_length=1)
+    standing_context: dict[str, Any] | None = None
 
 
 class RetryCommand(CommandBase):

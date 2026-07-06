@@ -219,6 +219,7 @@ def test_authority_expansion_with_matching_approval_records_accepted_snapshot(
         reason="allow authority envelope for this unit",
         idempotency_key="context-approval-1",
         expected_version=ready_unit.version,
+        standing_context=expanded_context,
     )
 
     result = record_preflight(
@@ -238,6 +239,41 @@ def test_authority_expansion_with_matching_approval_records_accepted_snapshot(
     assert result.approval_id == approval.id
     assert result.classification == "authority_expanding"
     assert result.decision == "accepted"
+
+
+def test_authority_expansion_rejects_approval_for_different_context_fingerprint(
+    migrated_session: Session,
+) -> None:
+    ready_unit = register_context_unit(migrated_session, valid_context(), "wrong-approval")
+    approved_context = valid_context(capabilities=["python", "deploy"])
+    requested_context = valid_context(capabilities=["python", "deploy"], runtime_version="1.1")
+    approval = record_approval(
+        migrated_session,
+        unit_id=ready_unit.id,
+        subject_type="authority",
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        reason="allow exact context only",
+        idempotency_key="context-approval-mismatch",
+        expected_version=ready_unit.version,
+        standing_context=approved_context,
+    )
+
+    result = record_preflight(
+        migrated_session,
+        PreflightCommand(
+            work_unit_id=ready_unit.id,
+            standing_context=requested_context,
+            previous_context_snapshot_id=None,
+            approval_id=approval.id,
+            purpose="claim",
+            idempotency_key="preflight-rejects-wrong-approval",
+        ),
+        ActorContext("worker-1", ActorRole.WORKER),
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "context_approval_mismatch"
 
 
 def test_execution_preflight_requires_matching_active_claim_credentials(

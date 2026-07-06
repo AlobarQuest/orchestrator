@@ -62,9 +62,7 @@ def classify_context_update(
 ) -> ContextDecision:
     current_normalized = normalize_standing_context(current)
     required_normalized = normalize_standing_context(required)
-    previous_normalized = (
-        normalize_standing_context(previous) if previous is not None else None
-    )
+    previous_normalized = normalize_standing_context(previous) if previous is not None else None
 
     missing_reasons = _missing_required_reasons(
         raw_current=current,
@@ -305,6 +303,4 @@ def _meets_required_capabilities(
     current_normalized: Mapping[str, object],
     required_normalized: Mapping[str, object],
 ) -> bool:
-    return _capabilities_set(required_normalized).issubset(
-        _capabilities_set(current_normalized)
-    )
+    return _capabilities_set(required_normalized).issubset(_capabilities_set(current_normalized))

@@ -127,23 +127,21 @@ def test_ws33_context_snapshot_tables_and_links_exist(migrated_engine) -> None:
         "created_at",
     } <= columns
 
-    claim_columns = {
-        column["name"]: column for column in inspector.get_columns("claims")
-    }
+    claim_columns = {column["name"]: column for column in inspector.get_columns("claims")}
     assert {"context_snapshot_id", "execution_context_snapshot_id"} <= claim_columns.keys()
     assert claim_columns["context_snapshot_id"]["nullable"] is True
     assert claim_columns["execution_context_snapshot_id"]["nullable"] is True
 
-    evidence_columns = {
-        column["name"]: column for column in inspector.get_columns("evidence")
-    }
+    evidence_columns = {column["name"]: column for column in inspector.get_columns("evidence")}
     assert "context_snapshot_id" in evidence_columns
     assert evidence_columns["context_snapshot_id"]["nullable"] is True
 
     claim_foreign_keys = {
         foreign_key["name"]: foreign_key for foreign_key in inspector.get_foreign_keys("claims")
     }
-    assert claim_foreign_keys["fk_claims_context_snapshot_id"]["referred_table"] == "context_snapshots"
+    assert (
+        claim_foreign_keys["fk_claims_context_snapshot_id"]["referred_table"] == "context_snapshots"
+    )
     assert claim_foreign_keys["fk_claims_context_snapshot_id"]["referred_columns"] == ["id"]
     assert claim_foreign_keys["fk_claims_execution_context_snapshot_id"]["referred_table"] == (
         "context_snapshots"

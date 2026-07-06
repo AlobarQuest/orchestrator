@@ -190,6 +190,7 @@ def reclaim_expired_claim(
     next_owner: ActorContext,
     idempotency_key: str,
     *,
+    expected_version: int | None = None,
     standing_context: dict[str, Any] | None = None,
 ) -> LeaseGrant | DomainError:
     try:
@@ -199,6 +200,7 @@ def reclaim_expired_claim(
             actor,
             next_owner,
             idempotency_key,
+            expected_version=expected_version,
             standing_context=standing_context,
         )
         session.commit()
@@ -218,6 +220,7 @@ def _perform_reclaim(
     next_owner: ActorContext,
     idempotency_key: str,
     *,
+    expected_version: int | None = None,
     standing_context: dict[str, Any] | None = None,
 ) -> LeaseGrant | DomainError:
     unit = _locked_unit(session, unit_id)
@@ -226,13 +229,18 @@ def _perform_reclaim(
         unit,
         next_owner,
         idempotency_key,
+        expected_version=expected_version,
         standing_context=standing_context,
     )
     if replay is not None:
         return replay
-    error_replay = _reclaim_error_replay(session, unit, actor, next_owner, idempotency_key)
+    error_replay = _reclaim_error_replay(
+        session, unit, actor, next_owner, idempotency_key, expected_version
+    )
     if error_replay is not None:
         return error_replay
+    if expected_version is not None:
+        _require_version(unit, expected_version)
     _validate_reclaim_roles(actor, next_owner)
     claim = _current_claim(session, unit.id)
     if claim is None:
@@ -250,6 +258,7 @@ def _perform_reclaim(
         "reclaim_actor_id": actor.actor_id,
         "next_owner_id": next_owner.actor_id,
         "reason": "lease_expired",
+        "expected_version": expected_version,
     }
     if eligibility_error is not None:
         failed_payload["result_error_code"] = eligibility_error.code
@@ -281,6 +290,7 @@ def _perform_reclaim(
         idempotency_key,
         now,
         correlation_id,
+        expected_version=expected_version,
         standing_context=standing_context,
     )
 
@@ -505,9 +515,8 @@ def _claim_context_replay_matches(
     if standing_context is None:
         return False
     snapshot = session.get(ContextSnapshot, claim.context_snapshot_id)
-    return (
-        snapshot is not None
-        and snapshot.context_fingerprint == context_fingerprint(standing_context)
+    return snapshot is not None and snapshot.context_fingerprint == context_fingerprint(
+        standing_context
     )
 
 
@@ -564,6 +573,7 @@ def _reclaim_error_replay(
     actor: ActorContext,
     next_owner: ActorContext,
     idempotency_key: str,
+    expected_version: int | None,
 ) -> DomainError | None:
     event = session.scalar(
         select(Event).where(Event.idempotency_key == f"{idempotency_key}:failed")
@@ -579,6 +589,7 @@ def _reclaim_error_replay(
         and actor.role is ActorRole.SYSTEM
         and event.payload.get("next_owner_id") == next_owner.actor_id
         and next_owner.role is ActorRole.WORKER
+        and event.payload.get("expected_version") == expected_version
         and error_code in {"attempts_exhausted", "readiness_not_satisfied"}
     )
     if not expected:
@@ -609,6 +620,7 @@ def _acquire_reclaimed_claim(
     now: datetime,
     correlation_id: uuid.UUID,
     *,
+    expected_version: int | None = None,
     standing_context: dict[str, Any] | None = None,
 ) -> LeaseGrant:
     context_snapshot = _claim_context_snapshot(
@@ -643,6 +655,7 @@ def _acquire_reclaimed_claim(
         payload={
             "claim_id": str(claim.id),
             "attempt": claim.attempt,
+            "expected_version": expected_version,
             "context_snapshot_id": (
                 str(context_snapshot.id) if context_snapshot is not None else None
             ),
