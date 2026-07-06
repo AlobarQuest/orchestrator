@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlencode
 
 import httpx
 import typer
@@ -288,6 +289,27 @@ def show_decomposition_proposal(proposal_id: str, json_output: JsonOption = Fals
 @app.command()
 def readiness(unit_id: str, json_output: JsonOption = False) -> None:
     _run(lambda: request("GET", f"/api/v1/work-units/{unit_id}/readiness"), json_output)
+
+
+@app.command("status-ledger")
+def status_ledger(
+    actor_id: Annotated[str | None, typer.Option("--actor-id")] = None,
+    work_unit_id: Annotated[str | None, typer.Option("--work-unit-id")] = None,
+    state: Annotated[str | None, typer.Option("--state")] = None,
+    include_inactive: Annotated[bool, typer.Option("--include-inactive")] = False,
+    json_output: JsonOption = False,
+) -> None:
+    params: dict[str, str] = {}
+    if actor_id is not None:
+        params["actor_id"] = actor_id
+    if work_unit_id is not None:
+        params["work_unit_id"] = work_unit_id
+    if state is not None:
+        params["state"] = state
+    if include_inactive:
+        params["include_inactive"] = "true"
+    query = f"?{urlencode(params)}" if params else ""
+    _run(lambda: request("GET", f"/api/v1/status-ledger{query}"), json_output)
 
 
 @app.command()

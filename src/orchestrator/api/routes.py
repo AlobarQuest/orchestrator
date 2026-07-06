@@ -41,6 +41,7 @@ from orchestrator.api.schemas import (
     RetryCommand,
     RevisionRegistration,
     RevisionResponse,
+    StatusLedgerRowResponse,
     TransitionResponse,
     UnitRegistration,
     UnitResponse,
@@ -94,6 +95,7 @@ from orchestrator.services.packages import (
     register_revision,
     resolve_dependency_command,
 )
+from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
 
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[ActorContext, Depends(get_actor)]
@@ -373,6 +375,26 @@ def readiness(
             for reason in result.reasons
         ],
     }
+
+
+@router.get("/status-ledger", response_model=list[StatusLedgerRowResponse])
+def status_ledger_route(
+    _actor: ActorDep,
+    session: SessionDep,
+    actor_id: str | None = None,
+    work_unit_id: UUID | None = None,
+    state: str | None = None,
+    include_inactive: bool = False,
+) -> object:
+    return status_ledger(
+        session,
+        StatusLedgerFilters(
+            actor_id=actor_id,
+            work_unit_id=work_unit_id,
+            state=state,
+            include_inactive=include_inactive,
+        ),
+    )
 
 
 @router.post("/work-units/{unit_id}/preflight", response_model=ContextSnapshotResponse)
