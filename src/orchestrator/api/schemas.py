@@ -11,7 +11,7 @@ class CommandBase(BaseModel):
 
 
 class ClaimCommand(CommandBase):
-    pass
+    standing_context: dict[str, Any] | None = None
 
 
 class RenewCommand(CommandBase):
@@ -22,6 +22,8 @@ class RenewCommand(CommandBase):
 class LifecycleCommand(CommandBase):
     attempt: int | None = Field(default=None, gt=0)
     lease_token: str | None = Field(default=None, min_length=1)
+    standing_context: dict[str, Any] | None = None
+    context_snapshot_id: UUID | None = None
 
 
 class ApprovalCommand(CommandBase):
@@ -68,6 +70,7 @@ class EvidenceCommand(CommandBase):
     stable_ref: str | None = None
     payload: dict[str, Any] | None = None
     source_revision: str = Field(min_length=1)
+    context_snapshot_id: UUID | None = None
 
 
 class RevisionRegistration(CommandBase):
@@ -137,6 +140,7 @@ class LeaseResponse(BaseModel):
     attempt: int
     lease_token: str
     expires_at: datetime
+    context_snapshot_id: UUID | None = None
 
 
 class TransitionResponse(BaseModel):
@@ -165,6 +169,7 @@ class EvidenceResponse(BaseModel):
     event_id: UUID
     idempotency_key: str
     supersedes_evidence_id: UUID | None
+    context_snapshot_id: UUID | None = None
 
 
 class EventResponse(BaseModel):

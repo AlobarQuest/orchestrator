@@ -2,17 +2,27 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
+from orchestrator.kernel.context import context_fingerprint
 from orchestrator.kernel.leases import LEASE_DURATION, hash_lease_token
 from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
-from orchestrator.persistence.models import Approval, Claim, Event, WorkUnit
+from orchestrator.persistence.models import (
+    Approval,
+    Claim,
+    ContextSnapshot,
+    Event,
+    WorkPackageRevision,
+    WorkUnit,
+)
+from orchestrator.services.context import PreflightCommand, require_claim_context
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import evaluate_readiness
 
@@ -23,6 +33,7 @@ class LeaseGrant:
     attempt: int
     lease_token: str
     expires_at: datetime
+    context_snapshot_id: uuid.UUID | None = None
 
 
 def claim_unit(
@@ -31,11 +42,17 @@ def claim_unit(
     actor: ActorContext,
     idempotency_key: str,
     expected_version: int | None = None,
+    standing_context: dict[str, Any] | None = None,
 ) -> LeaseGrant | DomainError:
     try:
         unit = _locked_unit(session, unit_id)
         replay = _claim_replay(
-            session, unit, actor, idempotency_key, expected_version=expected_version
+            session,
+            unit,
+            actor,
+            idempotency_key,
+            expected_version=expected_version,
+            standing_context=standing_context,
         )
         if replay is not None:
             session.commit()
@@ -50,6 +67,9 @@ def claim_unit(
             raise DomainError("attempts_exhausted", "attempt budget is exhausted", "approve_retry")
 
         now = TransactionClock().now(session)
+        context_snapshot = _claim_context_snapshot(
+            session, unit, actor, idempotency_key, standing_context
+        )
         token = secrets.token_urlsafe(32)
         unit.attempt_count += 1
         claim = Claim(
@@ -58,6 +78,7 @@ def claim_unit(
             claimed_by=actor.actor_id,
             lease_token_hash=hash_lease_token(token),
             idempotency_key=idempotency_key,
+            context_snapshot_id=context_snapshot.id if context_snapshot is not None else None,
             acquired_at=now,
             lease_expires_at=now + LEASE_DURATION,
         )
@@ -74,10 +95,19 @@ def claim_unit(
                 "claim_id": str(claim.id),
                 "attempt": claim.attempt,
                 "expected_version": expected_version,
+                "context_snapshot_id": (
+                    str(context_snapshot.id) if context_snapshot is not None else None
+                ),
             },
         )
         session.commit()
-        return LeaseGrant(claim.id, claim.attempt, token, claim.lease_expires_at)
+        return LeaseGrant(
+            claim.id,
+            claim.attempt,
+            token,
+            claim.lease_expires_at,
+            claim.context_snapshot_id,
+        )
     except DomainError as error:
         session.rollback()
         return error
@@ -138,7 +168,13 @@ def renew_claim(
                 )
             )
         session.commit()
-        return LeaseGrant(claim.id, claim.attempt, "", claim.lease_expires_at)
+        return LeaseGrant(
+            claim.id,
+            claim.attempt,
+            "",
+            claim.lease_expires_at,
+            claim.context_snapshot_id,
+        )
     except DomainError as error:
         session.rollback()
         return error
@@ -306,6 +342,39 @@ def _locked_unit(session: Session, unit_id: uuid.UUID) -> WorkUnit:
     return unit
 
 
+def _claim_context_snapshot(
+    session: Session,
+    unit: WorkUnit,
+    actor: ActorContext,
+    idempotency_key: str,
+    standing_context: dict[str, Any] | None,
+) -> ContextSnapshot | None:
+    revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
+    if revision is None:
+        raise DomainError("revision_not_found", "package revision does not exist", None)
+    if standing_context is None:
+        if _has_required_context(revision):
+            raise DomainError("context_missing_required", "standing context is incomplete", None)
+        return None
+    return require_claim_context(
+        session,
+        PreflightCommand(
+            work_unit_id=unit.id,
+            standing_context=standing_context,
+            previous_context_snapshot_id=None,
+            approval_id=None,
+            purpose="claim",
+            idempotency_key=f"{idempotency_key}:claim-context",
+        ),
+        actor,
+    )
+
+
+def _has_required_context(revision: WorkPackageRevision) -> bool:
+    required = revision.enforcement_snapshot.get("required_context")
+    return isinstance(required, dict) and bool(required)
+
+
 def _require_retry_allowed(
     unit: WorkUnit,
     actor: ActorContext,
@@ -371,6 +440,7 @@ def _claim_replay(
     idempotency_key: str,
     *,
     expected_version: int | None = None,
+    standing_context: dict[str, Any] | None = None,
 ) -> LeaseGrant | None:
     event = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
     if event is None:
@@ -388,7 +458,31 @@ def _claim_replay(
         or event.payload.get("expected_version") != expected_version
     ):
         raise _idempotency_conflict()
-    return LeaseGrant(claim.id, claim.attempt, "", claim.lease_expires_at)
+    if not _claim_context_replay_matches(session, claim, standing_context):
+        raise _idempotency_conflict()
+    return LeaseGrant(
+        claim.id,
+        claim.attempt,
+        "",
+        claim.lease_expires_at,
+        claim.context_snapshot_id,
+    )
+
+
+def _claim_context_replay_matches(
+    session: Session,
+    claim: Claim,
+    standing_context: dict[str, Any] | None,
+) -> bool:
+    if claim.context_snapshot_id is None:
+        return standing_context is None
+    if standing_context is None:
+        return False
+    snapshot = session.get(ContextSnapshot, claim.context_snapshot_id)
+    return (
+        snapshot is not None
+        and snapshot.context_fingerprint == context_fingerprint(standing_context)
+    )
 
 
 def _renew_replay(
@@ -424,7 +518,7 @@ def _renew_replay(
         replay_expiry = datetime.fromisoformat(expires_at)
     except ValueError:
         raise DomainError("event_invalid", "renewal event has no valid expiry", None) from None
-    return LeaseGrant(claim.id, claim.attempt, "", replay_expiry)
+    return LeaseGrant(claim.id, claim.attempt, "", replay_expiry, claim.context_snapshot_id)
 
 
 def _require_version(unit: WorkUnit, expected_version: int) -> None:
@@ -512,7 +606,7 @@ def _acquire_reclaimed_claim(
         correlation_id=correlation_id,
         payload={"claim_id": str(claim.id), "attempt": claim.attempt},
     )
-    return LeaseGrant(claim.id, claim.attempt, token, claim.lease_expires_at)
+    return LeaseGrant(claim.id, claim.attempt, token, claim.lease_expires_at, None)
 
 
 def _transition(

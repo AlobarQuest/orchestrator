@@ -40,6 +40,12 @@ class PreflightCommand:
     lease_token: str | None = None
 
 
+@dataclass(frozen=True)
+class EffectiveDecision:
+    decision: str
+    approval_id: uuid.UUID | None
+
+
 def record_preflight(
     session: Session,
     command: PreflightCommand,
@@ -88,8 +94,8 @@ def record_preflight(
             context=normalized_context,
             context_fingerprint=context_digest,
             classification=classification,
-            decision=effective_decision,
-            approval_id=command.approval_id,
+            decision=effective_decision.decision,
+            approval_id=effective_decision.approval_id,
             event_id=uuid.uuid4(),
             idempotency_key=command.idempotency_key,
             created_at=now,
@@ -119,7 +125,11 @@ def record_preflight(
                     if command.previous_context_snapshot_id is not None
                     else None
                 ),
-                "approval_id": str(command.approval_id) if command.approval_id else None,
+                "approval_id": (
+                    str(effective_decision.approval_id)
+                    if effective_decision.approval_id
+                    else None
+                ),
             },
             correlation_id=uuid.uuid4(),
             idempotency_key=command.idempotency_key,
@@ -178,7 +188,7 @@ def _preflight_replay(
         and existing.actor_id == actor.actor_id
         and existing.actor_role == actor.role
         and existing.context_fingerprint == context_fingerprint(command.standing_context)
-        and existing.approval_id == command.approval_id
+        and _replay_approval_matches(session, existing, command)
     )
     if not expected:
         raise _idempotency_conflict()
@@ -204,6 +214,23 @@ def _preflight_replay(
         if existing.claim_id != claim.id or existing.attempt != claim.attempt:
             raise _idempotency_conflict()
     return existing
+
+
+def _replay_approval_matches(
+    session: Session,
+    existing: ContextSnapshot,
+    command: PreflightCommand,
+) -> bool:
+    if existing.approval_id == command.approval_id:
+        return True
+    if command.approval_id is not None:
+        return False
+    unit = session.get(WorkUnit, command.work_unit_id)
+    return (
+        unit is not None
+        and existing.approval_id is not None
+        and existing.approval_id == _matching_authority_approval_id(session, unit)
+    )
 
 
 def _previous_context(
@@ -264,20 +291,21 @@ def _effective_decision(
     command: PreflightCommand,
     decision: ContextDecision,
     normalized_context: Mapping[str, object],
-) -> str | DomainError:
+) -> EffectiveDecision | DomainError:
     if decision.classification == "missing_required":
         return DomainError("context_missing_required", "standing context is incomplete", None)
     if decision.classification == "stale":
         return DomainError("context_stale", "standing context is stale", None)
     if decision.decision != "requires_approval":
-        return decision.decision
-    if command.approval_id is None:
+        return EffectiveDecision(decision.decision, command.approval_id)
+    approval_id = command.approval_id or _matching_authority_approval_id(session, unit)
+    if approval_id is None:
         return DomainError(
             "context_authority_expanding",
             "standing context expands authority",
             "approval_required",
         )
-    approval = session.get(Approval, command.approval_id)
+    approval = session.get(Approval, approval_id)
     if approval is None:
         return DomainError("approval_not_found", "approval does not exist", None)
     if not _approval_matches(unit, approval, normalized_context):
@@ -286,7 +314,21 @@ def _effective_decision(
             "approval does not authorize this standing context",
             "approve",
         )
-    return "accepted"
+    return EffectiveDecision("accepted", approval_id)
+
+
+def _matching_authority_approval_id(session: Session, unit: WorkUnit) -> uuid.UUID | None:
+    return session.scalar(
+        select(Approval.id)
+        .where(
+            Approval.subject_type == "authority",
+            Approval.subject_id == unit.id,
+            Approval.decision == "approved",
+            Approval.subject_revision_or_fingerprint == unit.authority_fingerprint,
+        )
+        .order_by(Approval.created_at.desc(), Approval.id.desc())
+        .limit(1)
+    )
 
 
 def _approval_matches(

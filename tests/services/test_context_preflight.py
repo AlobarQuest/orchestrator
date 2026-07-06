@@ -47,7 +47,7 @@ def register_context_unit(session: Session, context: dict[str, object], unit_key
         approved_by="human-1",
         approved_at=NOW,
         approval_event_id=uuid.uuid4(),
-        enforcement_snapshot={"required_context": context},
+        enforcement_snapshot={"acceptance_criteria": ["ac-1"], "required_context": context},
         authority=AUTHORITY,
         registry_version=1,
         actor_id="human-1",
@@ -249,6 +249,7 @@ def test_execution_preflight_requires_matching_active_claim_credentials(
         ready_unit.id,
         ActorContext("worker-1", ActorRole.WORKER),
         "claim-1",
+        standing_context=valid_context(),
     )
     assert isinstance(grant, LeaseGrant)
 
@@ -281,6 +282,7 @@ def test_execution_preflight_rejects_wrong_or_expired_claim_credentials(
         ready_unit.id,
         ActorContext("worker-1", ActorRole.WORKER),
         "claim-1",
+        standing_context=valid_context(),
     )
     assert isinstance(grant, LeaseGrant)
 
@@ -333,6 +335,7 @@ def test_execution_preflight_replay_revalidates_active_claim_credentials(
         ready_unit.id,
         ActorContext("worker-1", ActorRole.WORKER),
         "claim-1",
+        standing_context=valid_context(),
     )
     assert isinstance(grant, LeaseGrant)
     command = PreflightCommand(

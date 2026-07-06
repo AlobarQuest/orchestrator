@@ -383,6 +383,7 @@ def claim(
             actor,
             body.idempotency_key,
             expected_version=body.expected_version,
+            standing_context=body.standing_context,
         )
     )
 
@@ -424,13 +425,15 @@ def command(
     return transition_unit(
         session,
         TransitionCommand(
-            unit_id,
-            target,
-            actor,
-            body.expected_version,
-            body.idempotency_key,
-            body.attempt,
-            body.lease_token,
+            unit_id=unit_id,
+            target=target,
+            actor=actor,
+            expected_version=body.expected_version,
+            idempotency_key=body.idempotency_key,
+            attempt=body.attempt,
+            lease_token=body.lease_token,
+            standing_context=body.standing_context,
+            context_snapshot_id=body.context_snapshot_id,
         ),
     )
 
