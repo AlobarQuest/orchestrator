@@ -4,7 +4,7 @@
 
 **Goal:** Implement approved immutable package intake and human-approved decomposition proposals without adding dispatch, verifier logic, external event publication, production mutation, or automatic merge.
 
-**Architecture:** Extend WS-3.1 additively. `work_package_revisions` remains the immutable package-revision anchor; WS-3.2 adds package AC projection rows, decomposition proposal rows, and an `approved_decompositions` table. CLI reads package YAML/lineage and submits normalized caller-attested facts; API/services enforce executable status, human actor, idempotency, conflicts, AC disposition, one active approved decomposition, and Draft work-unit creation through existing lifecycle paths.
+**Architecture:** Extend WS-3.1 additively. `work_package_revisions` remains the immutable package-revision anchor; WS-3.2 adds package AC projection rows, decomposition proposal rows, and an `approved_decompositions` table. CLI reads package YAML/lineage and submits normalized caller-attested facts; API/services enforce approved package status, human actor, idempotency, conflicts, AC disposition, one active approved decomposition, and Draft work-unit creation through existing lifecycle paths.
 
 **Tech Stack:** Python 3.12, FastAPI, SQLAlchemy, Alembic, PostgreSQL 16, Pydantic, Typer, Jinja/HTMX, PyYAML, pytest, ruff, pyright.
 
@@ -14,7 +14,7 @@
 - Preserve WS-3.1 lifecycle, claims, evidence, adjudication, waiver, API, CLI, UI, migration, and architecture behavior.
 - No factory-runner dispatch, GitHub Actions worker execution, production deployment, Coolify mutation, external `factory-event/v1` publication, Phase-5 verifier logic, standing-context preflight, skill-subscription semantics, or status ledger.
 - No automatic merge and no worker/agent path that approves intent, approves decomposition, or declares canonical completion.
-- Executable package intake in WS-3.2 requires a registered human actor and `verification_mode = "caller_attested_cli_verified"`.
+- Package intake for executable orchestration in WS-3.2 requires approved package status, a registered human actor, and `verification_mode = "caller_attested_cli_verified"`.
 - Direct unit registration remains only for legacy/manual WS-3.1 revisions; WS-3.2-intaken revisions create Draft work units only through approved decomposition proposals.
 - `work_package_revisions` remains append-only. Do not update revision rows during decomposition approval.
 - Use TDD. Every task starts with failing tests and ends with focused tests passing and a commit.

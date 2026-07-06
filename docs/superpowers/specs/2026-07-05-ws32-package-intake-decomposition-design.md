@@ -1,6 +1,6 @@
 # WS-3.2 Package Intake and Decomposition Design
 
-**Status:** Proposed for Devon review  
+**Status:** Implemented, merged, and closed  
 **Date:** 2026-07-05  
 **Intent package:** `ws-3.2-package-intake-decomposition`, revision 1  
 **Approved intent hash:** `84c929bc0860b6a585a62ec02fa35d9cdf89fce84773660aea1e383d955689df`
@@ -55,10 +55,11 @@ Devon approves a package revision expanding scope.
 depend on filesystem layout. The API remains the service contract and lets future tools
 submit already-normalized package facts.
 
-**Trust boundary:** In WS-3.2, the supported operator path for executable package intake
+**Trust boundary:** In WS-3.2, the supported operator path for package intake into
+executable orchestration
 is the CLI package-source verification flow. The API does not claim to independently
 verify remote git object integrity or recompute a package hash from a repository URL. It
-enforces the submitted approval/hash/source facts, rejects non-executable status values,
+enforces the submitted approval/hash/source facts, accepts only approved package status,
 records verification mode and limitations, and rejects conflicts. A future non-CLI
 producer must either perform the same source verification before submission or be covered
 by a separately approved stronger intake path.
@@ -75,7 +76,7 @@ polling, or automatic intake on approval.
 2. CLI records git source facts: repository URL/name, path, HEAD commit, package status,
    revision, approved hash, approver, approved time, approval event ID, and approval
    ledger commit.
-3. API enforces shape, executable status, required approval fields, idempotency, and
+3. API enforces shape, approved package status, required approval fields, idempotency, and
    conflict behavior.
 4. API records `verification_mode: caller_attested_cli_verified` and `verification_limitations`
    so the record is honest about what was checked at intake time.
@@ -86,7 +87,8 @@ polling, or automatic intake on approval.
 executable work without pretending to provide cryptographic git-signature verification
 that the intent-package system does not yet implement.
 
-For WS-3.2, executable intake registration is restricted to registered human operators.
+For WS-3.2, package intake registration for executable orchestration is restricted to
+registered human operators and approved package status.
 A future system producer can be added only through separately approved intent that
 defines its trust boundary and proof format.
 
@@ -368,10 +370,10 @@ with a partial unique index where `superseded_at IS NULL`.
 
 `register_package_intake`:
 
-1. Requires a registered human actor for executable intake in WS-3.2.
-2. Rejects non-executable statuses. For WS-3.2, executable statuses are `approved` and
-   `executable`; closed historical packages may be accepted only as fixtures in tests,
-   not as executable runtime intake.
+1. Requires a registered human actor for package intake in WS-3.2.
+2. Rejects any package status other than `approved`; lifecycle `executable` and closed
+   historical packages may be accepted only as fixtures in tests, not as executable
+   runtime intake.
 3. Requires approved hash, source repository/path/commit, approval actor, approval time,
    and approval event or ledger facts.
 4. Computes authority fingerprint from the normalized authority envelope.
