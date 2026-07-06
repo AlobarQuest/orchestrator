@@ -210,6 +210,24 @@ def test_malformed_capabilities_is_rejected() -> None:
     )
 
 
+def test_capabilities_with_non_string_members_is_rejected() -> None:
+    current = valid_context()
+    current["capabilities"] = ["repository_read", 1, None]
+
+    decision = classify_context_update(
+        previous=None,
+        current=current,
+        required=required_context(),
+        allowed_capabilities={"repository_read"},
+    )
+
+    assert decision == ContextDecision(
+        classification="missing_required",
+        decision="rejected",
+        reasons=("missing:capabilities",),
+    )
+
+
 def test_context_fingerprint_is_deterministic_across_key_order() -> None:
     first = normalize_standing_context(valid_context())
     second = normalize_standing_context(

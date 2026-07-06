@@ -3,6 +3,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 REQUIRED_CONTEXT_FIELDS = (
     "code_standards_version",
@@ -127,9 +128,10 @@ def classify_context_update(
 
 
 def _normalize_capabilities(value: object) -> list[str]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+    if not _capabilities_payload_is_valid(value):
         return []
-    return sorted({str(item) for item in value if str(item)})
+    capabilities = cast(Sequence[str], value)
+    return sorted(set(capabilities))
 
 
 def _is_missing_field(
@@ -142,8 +144,16 @@ def _is_missing_field(
     value = normalized_current[field]
     if field == "capabilities":
         raw_value = raw_current[field]
-        return not isinstance(raw_value, Sequence) or isinstance(raw_value, (str, bytes))
+        return not _capabilities_payload_is_valid(raw_value)
     return value == ""
+
+
+def _capabilities_payload_is_valid(value: object) -> bool:
+    return (
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes))
+        and all(isinstance(item, str) and item != "" for item in value)
+    )
 
 
 def _missing_required_reasons(

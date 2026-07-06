@@ -48,3 +48,17 @@ Commit SHA:
 
 Concerns:
 - The starting worktree already contained the WS-3.3 Task 2 implementation and tests, so this pass was a targeted policy correction on top of existing branch work rather than a first implementation.
+
+## Fix Pass 2
+
+Finding addressed:
+- Rejected malformed capability list members instead of coercing them with `str(...)`.
+
+Red evidence:
+- Added `test_capabilities_with_non_string_members_is_rejected`.
+- `PATH="$PWD/.venv/bin:$PATH" pytest tests/kernel/test_context_policy.py -q` failed because `["repository_read", 1, None]` was classified as `authority_expanding` instead of `missing_required`.
+
+Green evidence:
+- `PATH="$PWD/.venv/bin:$PATH" pytest tests/kernel/test_context_policy.py -q` -> `11 passed in 0.01s`
+- `PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/kernel/context.py tests/kernel/test_context_policy.py` -> `All checks passed!`
+- `PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/kernel/context.py tests/kernel/test_context_policy.py` -> `0 errors, 0 warnings, 0 informations`
