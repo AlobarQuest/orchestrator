@@ -68,6 +68,26 @@ def intake_payload(**overrides: object) -> dict[str, object]:
     return {**base, **overrides}
 
 
+def revision_payload(**overrides: object) -> dict[str, object]:
+    base = {
+        "idempotency_key": "manual-revision-1",
+        "expected_version": 0,
+        "package_id": "pkg-manual",
+        "source_repository": "owner/repo",
+        "revision": 1,
+        "content_hash": "sha256:manual",
+        "source_path": "/tmp/pkg-manual",
+        "source_commit": "abc123",
+        "approved_by": "human-1",
+        "approved_at": NOW.isoformat(),
+        "approval_event_id": str(uuid.UUID(int=2)),
+        "enforcement_snapshot": {"title": "Manual revision"},
+        "authority": AUTHORITY,
+        "registry_version": 1,
+    }
+    return {**base, **overrides}
+
+
 def proposal_payload(
     revision_id: str,
     acceptance_criteria: dict[str, str],
@@ -270,6 +290,21 @@ def test_decomposition_proposal_list_and_get_expose_review_projection(
             },
         }
     ]
+
+
+def test_decomposition_proposal_list_rejects_non_intaken_revision(
+    db_client: TestClient,
+) -> None:
+    created = db_client.post("/api/v1/revisions", headers=HUMAN, json=revision_payload())
+    revision_id = created.json()["id"]
+
+    listed = db_client.get(
+        f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        headers=HUMAN,
+    )
+
+    assert listed.status_code == 404
+    assert listed.json()["error"]["code"] == "package_intake_not_found"
 
 
 def test_decomposition_decision_routes_update_state_and_approval_creates_drafts(

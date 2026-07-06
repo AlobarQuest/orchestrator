@@ -78,6 +78,26 @@ def unit_payload(**overrides: object) -> dict[str, object]:
     return {**base, **overrides}
 
 
+def revision_payload(**overrides: object) -> dict[str, object]:
+    base = {
+        "idempotency_key": "manual-revision-1",
+        "expected_version": 0,
+        "package_id": "pkg-manual",
+        "source_repository": "owner/repo",
+        "revision": 1,
+        "content_hash": "sha256:manual",
+        "source_path": "/tmp/pkg-manual",
+        "source_commit": "abc123",
+        "approved_by": "human-1",
+        "approved_at": NOW.isoformat(),
+        "approval_event_id": str(uuid.UUID(int=2)),
+        "enforcement_snapshot": {"title": "Manual revision"},
+        "authority": AUTHORITY,
+        "registry_version": 1,
+    }
+    return {**base, **overrides}
+
+
 def test_package_intake_post_returns_revision_identity(db_client: TestClient) -> None:
     response = db_client.post("/api/v1/package-intakes", headers=HUMAN, json=intake_payload())
 
@@ -116,6 +136,16 @@ def test_package_intake_get_returns_persisted_intake_projection(db_client: TestC
         "AC-002",
     ]
     assert all(uuid.UUID(criterion["id"]) for criterion in body["acceptance_criteria"])
+
+
+def test_package_intake_get_rejects_non_intaken_revision(db_client: TestClient) -> None:
+    created = db_client.post("/api/v1/revisions", headers=HUMAN, json=revision_payload())
+    revision_id = created.json()["id"]
+
+    fetched = db_client.get(f"/api/v1/package-intakes/{revision_id}", headers=HUMAN)
+
+    assert fetched.status_code == 404
+    assert fetched.json()["error"]["code"] == "package_intake_not_found"
 
 
 def test_direct_unit_registration_rejects_package_cli_revision_without_decomposition(

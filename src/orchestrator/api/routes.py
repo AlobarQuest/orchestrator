@@ -195,7 +195,7 @@ def package_intake(
     _actor: ActorDep,
     session: SessionDep,
 ) -> dict[str, object]:
-    revision = _revision_or_raise(session, revision_id)
+    revision = _package_intake_revision_or_raise(session, revision_id)
     return _package_intake_payload(session, revision)
 
 
@@ -264,7 +264,7 @@ def decomposition_proposals(
     _actor: ActorDep,
     session: SessionDep,
 ) -> list[dict[str, object]]:
-    _revision_or_raise(session, revision_id)
+    _package_intake_revision_or_raise(session, revision_id)
     proposals = tuple(
         session.scalars(
             select(DecompositionProposal)
@@ -560,6 +560,20 @@ def _revision_or_raise(session: Session, revision_id: UUID) -> WorkPackageRevisi
     revision = session.get(WorkPackageRevision, revision_id)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
+    return revision
+
+
+def _package_intake_revision_or_raise(
+    session: Session,
+    revision_id: UUID,
+) -> WorkPackageRevision:
+    revision = _revision_or_raise(session, revision_id)
+    if revision.intake_source != "package_cli":
+        raise DomainError(
+            "package_intake_not_found",
+            "package intake does not exist for this revision",
+            None,
+        )
     return revision
 
 
