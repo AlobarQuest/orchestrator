@@ -140,6 +140,56 @@ def test_added_capability_requires_approval() -> None:
     assert "capabilities_expanded" in decision.reasons
 
 
+def test_absent_required_context_accepts_complete_context_with_allowed_capability() -> None:
+    current = valid_context(capabilities=["change_filing"])
+
+    decision = classify_context_update(
+        previous=None,
+        current=current,
+        required={},
+        allowed_capabilities={"change_filing"},
+    )
+
+    assert decision == ContextDecision(
+        classification="same_scope",
+        decision="accepted",
+        reasons=("same_scope",),
+    )
+
+
+def test_absent_required_context_still_rejects_incomplete_context() -> None:
+    current = valid_context(capabilities=["change_filing"])
+    current.pop("runtime_name")
+
+    decision = classify_context_update(
+        previous=None,
+        current=current,
+        required={},
+        allowed_capabilities={"change_filing"},
+    )
+
+    assert decision == ContextDecision(
+        classification="missing_required",
+        decision="rejected",
+        reasons=("missing:runtime_name",),
+    )
+
+
+def test_absent_required_context_rejects_unallowed_capability() -> None:
+    current = valid_context(capabilities=["change_filing", "infra_mutation"])
+
+    decision = classify_context_update(
+        previous=None,
+        current=current,
+        required={},
+        allowed_capabilities={"change_filing"},
+    )
+
+    assert decision.classification == "authority_expanding"
+    assert decision.decision == "requires_approval"
+    assert "capabilities_expanded" in decision.reasons
+
+
 def test_broader_authority_profile_requires_approval() -> None:
     previous = valid_context(authority_profile="agent-queue-v1")
     current = valid_context(authority_profile="human-operator-v1")

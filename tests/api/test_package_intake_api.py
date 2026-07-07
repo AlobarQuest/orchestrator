@@ -23,7 +23,7 @@ def intake_payload(**overrides: object) -> dict[str, object]:
         "source_commit": "abc123",
         "approved_by": "human-1",
         "approved_at": NOW.isoformat(),
-        "approval_event_id": str(uuid.UUID(int=1)),
+        "approval_event_id": "evt-package-intake-1",
         "approval_ledger_commit": "a" * 40,
         "profile": "software",
         "status_at_intake": "approved",
@@ -107,6 +107,7 @@ def test_package_intake_post_returns_revision_identity(db_client: TestClient) ->
     assert body["revision"] == 1
     assert body["intake_source"] == "package_cli"
     assert body["status_at_intake"] == "approved"
+    assert body["approval_event_id"] == "evt-package-intake-1"
 
 
 def test_package_intake_get_returns_persisted_intake_projection(db_client: TestClient) -> None:

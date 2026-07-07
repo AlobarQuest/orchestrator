@@ -162,7 +162,7 @@ def register_revision(
     source_commit: str,
     approved_by: str,
     approved_at: datetime,
-    approval_event_id: uuid.UUID,
+    approval_event_id: str,
     enforcement_snapshot: Mapping[str, Any],
     authority: AuthorityEnvelope,
     registry_version: int,

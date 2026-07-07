@@ -42,7 +42,7 @@ class PackageIntakeCommand:
     source_commit: str
     approved_by: str
     approved_at: datetime
-    approval_event_id: uuid.UUID
+    approval_event_id: str
     approval_ledger_commit: str
     profile: str | None
     status_at_intake: str

@@ -13,6 +13,10 @@
 
 .PHONY: check fix
 
+VENV_BIN := $(CURDIR)/.venv/bin
+NODE_BIN := $(CURDIR)/node_modules/.bin
+export PATH := $(VENV_BIN):$(NODE_BIN):$(PATH)
+
 check:
 	@if [ -f pyproject.toml ]; then if command -v ruff >/dev/null 2>&1; then ruff check .; else echo "ruff not installed — skipping ruff check"; fi; fi
 	@if [ -f pyproject.toml ]; then if command -v ruff >/dev/null 2>&1; then ruff format --check .; else echo "ruff not installed — skipping ruff format check"; fi; fi

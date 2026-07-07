@@ -44,7 +44,7 @@ def protocol_fixture_unit(session: Session) -> WorkUnit:
         source_commit="abc123",
         approved_by="human-1",
         approved_at=datetime(2026, 7, 6, tzinfo=UTC),
-        approval_event_id=uuid.uuid4(),
+        approval_event_id=str(uuid.uuid4()),
         enforcement_snapshot={},
         authority_fingerprint="authority",
         registry_version=1,

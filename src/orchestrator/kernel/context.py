@@ -192,13 +192,15 @@ def _stale_reasons(
         "runtime_version",
         "skill_bundle_version",
     ):
-        if _version_is_stale(
+        required_value = str(required_normalized[field])
+        if required_value != "" and _version_is_stale(
             str(current_normalized[field]),
-            str(required_normalized[field]),
+            required_value,
         ):
             reasons.append(f"stale:{field}")
     for field in ("agent_id", "runtime_name", "skill_bundle_id"):
-        if current_normalized[field] != required_normalized[field]:
+        required_value = str(required_normalized[field])
+        if required_value != "" and current_normalized[field] != required_value:
             reasons.append(f"mismatch:{field}")
     return tuple(reasons)
 
@@ -239,7 +241,7 @@ def _authority_expansion_reasons(
     )
     if not current_capabilities.issubset(allowed_capabilities):
         reasons.append("capabilities_expanded")
-    elif current_capabilities > baseline_capabilities:
+    elif baseline_capabilities and current_capabilities > baseline_capabilities:
         reasons.append("capabilities_expanded")
 
     baseline_profile = (
@@ -248,7 +250,7 @@ def _authority_expansion_reasons(
         else str(required_normalized["authority_profile"])
     )
     current_profile = str(current_normalized["authority_profile"])
-    if _authority_profile_expands(baseline_profile, current_profile):
+    if baseline_profile != "" and _authority_profile_expands(baseline_profile, current_profile):
         reasons.append("authority_profile_expanded")
     return tuple(reasons)
 
@@ -269,6 +271,8 @@ def _meets_required_authority_profile(
 ) -> bool:
     current_profile = str(current_normalized["authority_profile"])
     required_profile = str(required_normalized["authority_profile"])
+    if required_profile == "":
+        return True
     if current_profile == required_profile:
         return True
     current_rank = AUTHORITY_PROFILE_RANK.get(current_profile)
