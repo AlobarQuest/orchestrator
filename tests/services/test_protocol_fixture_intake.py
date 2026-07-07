@@ -1,5 +1,4 @@
 import shutil
-import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -77,7 +76,7 @@ def command_from_payload(payload: dict[str, object]) -> PackageIntakeCommand:
         source_commit=str(payload["source_commit"]),
         approved_by=str(payload["approved_by"]),
         approved_at=datetime.fromisoformat(approved_at.replace("Z", "+00:00")),
-        approval_event_id=uuid.UUID(approval_event_id),
+        approval_event_id=approval_event_id,
         approval_ledger_commit=str(payload["approval_ledger_commit"]),
         profile=payload["profile"] if isinstance(payload["profile"], str) else None,
         status_at_intake=str(payload["status_at_intake"]),

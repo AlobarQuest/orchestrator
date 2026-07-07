@@ -9,9 +9,13 @@ from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
     Approval,
+    ApprovedDecomposition,
     Claim,
     ContextSnapshot,
+    DecompositionProposal,
+    DecompositionProposalAcMapping,
     Evidence,
+    PackageAcceptanceCriterion,
     WorkUnit,
 )
 from orchestrator.services.claims import LeaseGrant, claim_unit
@@ -113,6 +117,94 @@ def test_completion_requires_adjudication_for_every_required_ac(
     assert_completion_rejected(migrated_session, submitted_unit(migrated_session))
 
 
+def test_completion_uses_approved_decomposition_ac_mapping(
+    migrated_session: Session,
+) -> None:
+    revision = register_revision(
+        migrated_session,
+        package_id="mapped-completion",
+        source_repository="owner/repo",
+        revision=1,
+        content_hash="sha256:mapped",
+        source_path="intent.md",
+        source_commit="abc123",
+        approved_by="human-1",
+        approved_at=APPROVED_AT,
+        approval_event_id=str(uuid.uuid4()),
+        enforcement_snapshot={"acceptance_criteria": ["ac-1", "ac-2"]},
+        authority=AUTHORITY,
+        registry_version=1,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    unit = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="mapped-unit",
+        title="mapped-unit",
+        outcome="mapped unit complete",
+        required_capability="repository_write",
+        authority=AUTHORITY,
+        max_attempts=3,
+        approved_by="human-1",
+        approved_at=APPROVED_AT,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    ac_one = PackageAcceptanceCriterion(
+        work_package_revision_id=revision.id,
+        ac_id="ac-1",
+        condition="first",
+        evidence_type="test",
+        evidence="evidence",
+        approver="policy",
+    )
+    ac_two = PackageAcceptanceCriterion(
+        work_package_revision_id=revision.id,
+        ac_id="ac-2",
+        condition="second",
+        evidence_type="test",
+        evidence="evidence",
+        approver="policy",
+    )
+    proposal = DecompositionProposal(
+        work_package_revision_id=revision.id,
+        proposal_number=1,
+        state="approved",
+        rationale="mapped",
+        proposed_by="worker",
+        proposed_actor_role="worker",
+        decided_by="human-1",
+        decided_at=NOW,
+        idempotency_key="mapped-completion-proposal",
+    )
+    migrated_session.add_all([ac_one, ac_two, proposal])
+    migrated_session.flush()
+    migrated_session.add(
+        ApprovedDecomposition(
+            work_package_revision_id=revision.id,
+            proposal_id=proposal.id,
+            approved_by="human-1",
+            approved_at=NOW,
+        )
+    )
+    migrated_session.add(
+        DecompositionProposalAcMapping(
+            proposal_id=proposal.id,
+            package_acceptance_criterion_id=ac_one.id,
+            unit_key=unit.unit_key,
+        )
+    )
+    unit.state = WorkUnitState.SUBMITTED
+    migrated_session.flush()
+    add_adjudication(migrated_session, unit, outcome="passed")
+    migrated_session.commit()
+
+    result = transition_unit(migrated_session, completion_command(unit), clock=FixedClock())
+
+    assert result.state is WorkUnitState.COMPLETED
+
+
 def test_completion_rejects_empty_acceptance_criteria(migrated_session: Session) -> None:
     revision = register_revision(
         migrated_session,
@@ -124,7 +216,7 @@ def test_completion_rejects_empty_acceptance_criteria(migrated_session: Session)
         source_commit="abc123",
         approved_by="human-1",
         approved_at=APPROVED_AT,
-        approval_event_id=uuid.uuid4(),
+        approval_event_id=str(uuid.uuid4()),
         enforcement_snapshot={"acceptance_criteria": []},
         authority=AUTHORITY,
         registry_version=1,

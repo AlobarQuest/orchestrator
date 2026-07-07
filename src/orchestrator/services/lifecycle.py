@@ -16,8 +16,11 @@ from orchestrator.kernel.transitions import TransitionGuards, authorize_transiti
 from orchestrator.persistence.models import (
     Adjudication,
     Approval,
+    ApprovedDecomposition,
     Claim,
+    DecompositionProposalAcMapping,
     Event,
+    PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
 )
@@ -311,16 +314,19 @@ def _transition_guards(
     )
     return TransitionGuards(
         approval_recorded,
-        _completion_satisfied(revision.enforcement_snapshot, adjudications, occurred_at),
+        _completion_satisfied(
+            _required_ac_ids(session, revision, unit),
+            adjudications,
+            occurred_at,
+        ),
     )
 
 
 def _completion_satisfied(
-    enforcement_snapshot: dict[str, object],
+    required_ac_ids: tuple[str, ...] | None,
     adjudications: tuple[Adjudication, ...],
     occurred_at: datetime,
 ) -> bool:
-    required_ac_ids = _required_ac_ids(enforcement_snapshot)
     if required_ac_ids is None:
         return False
     grouped = {ac_id: [] for ac_id in required_ac_ids}
@@ -334,7 +340,38 @@ def _completion_satisfied(
     )
 
 
-def _required_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[str, ...] | None:
+def _required_ac_ids(
+    session: Session,
+    revision: WorkPackageRevision,
+    unit: WorkUnit,
+) -> tuple[str, ...] | None:
+    mapped_ac_ids = tuple(
+        session.scalars(
+            select(PackageAcceptanceCriterion.ac_id)
+            .join(
+                DecompositionProposalAcMapping,
+                DecompositionProposalAcMapping.package_acceptance_criterion_id
+                == PackageAcceptanceCriterion.id,
+            )
+            .join(
+                ApprovedDecomposition,
+                ApprovedDecomposition.proposal_id == DecompositionProposalAcMapping.proposal_id,
+            )
+            .where(
+                ApprovedDecomposition.work_package_revision_id == revision.id,
+                ApprovedDecomposition.superseded_at.is_(None),
+                PackageAcceptanceCriterion.work_package_revision_id == revision.id,
+                DecompositionProposalAcMapping.unit_key == unit.unit_key,
+            )
+            .order_by(PackageAcceptanceCriterion.ac_id)
+        )
+    )
+    if mapped_ac_ids:
+        return mapped_ac_ids
+    return _package_required_ac_ids(revision.enforcement_snapshot)
+
+
+def _package_required_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[str, ...] | None:
     value = enforcement_snapshot.get("acceptance_criteria")
     if not isinstance(value, list) or not value:
         return None

@@ -46,7 +46,7 @@ def register_context_unit(session: Session, context: dict[str, object], unit_key
         source_commit="abc123",
         approved_by="human-1",
         approved_at=NOW,
-        approval_event_id=uuid.uuid4(),
+        approval_event_id=str(uuid.uuid4()),
         enforcement_snapshot={"acceptance_criteria": ["ac-1"], "required_context": context},
         authority=AUTHORITY,
         registry_version=1,

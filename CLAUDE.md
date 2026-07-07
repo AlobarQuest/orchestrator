@@ -46,5 +46,12 @@ style of that module.
 - Protocol smoke tests may manipulate time or lease expiry as deterministic fixture
   setup. Runtime recovery behavior itself must go through public API/CLI surfaces,
   not private service shortcuts.
+- The default `make check` gate must resolve Python tools from the repo-local
+  `.venv/bin` before global PATH. A global `pytest` can collect with the wrong
+  interpreter and fail imports even when the uv-scoped suite is green.
+- Local dogfooding must use a runtime database separate from `orchestrator_test`.
+  The test fixtures intentionally drop and recreate the test database, so storing
+  live orchestrator lifecycle state there will erase approved intake, decomposition,
+  claims, and evidence during `make check`.
 
 <!-- code-standards:end -->

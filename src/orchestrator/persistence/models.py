@@ -92,7 +92,7 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
     source_commit: Mapped[str] = mapped_column(String)
     approved_by: Mapped[str] = mapped_column(String)
     approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    approval_event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    approval_event_id: Mapped[str] = mapped_column(String)
     enforcement_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
     authority_fingerprint: Mapped[str] = mapped_column(String)
     registry_version: Mapped[int] = mapped_column(Integer)

@@ -25,7 +25,7 @@ AUTHORITY = AuthorityEnvelope(
     budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
 )
 NOW = datetime(2026, 7, 5, tzinfo=UTC)
-APPROVAL_EVENT_ID = uuid.UUID(int=1)
+APPROVAL_EVENT_ID = "evt-package-intake-1"
 
 
 def acceptance_criterion(ac_id: str = "AC-001") -> AcceptanceCriterionProjection:
@@ -146,6 +146,7 @@ def test_package_intake_is_idempotent(migrated_session: Session) -> None:
     assert first.status_at_intake == "approved"
     assert first.intake_source == "package_cli"
     assert first.approval_ledger_commit == "a" * 40
+    assert first.approval_event_id == "evt-package-intake-1"
     assert first.verification_mode == "caller_attested_cli_verified"
     assert first.verification_limitations == command.verification_limitations
     assert first.enforcement_snapshot["acceptance_criteria"] == ["AC-001"]

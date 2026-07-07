@@ -97,7 +97,7 @@ class RevisionRegistration(CommandBase):
     source_commit: str
     approved_by: str
     approved_at: datetime
-    approval_event_id: UUID
+    approval_event_id: str = Field(min_length=1)
     enforcement_snapshot: dict[str, Any]
     authority: dict[str, Any]
     registry_version: int = Field(ge=0)
@@ -366,7 +366,7 @@ class PackageIntakeRegistration(CommandBase):
     source_commit: str = Field(min_length=1)
     approved_by: str = Field(min_length=1)
     approved_at: datetime
-    approval_event_id: UUID
+    approval_event_id: str = Field(min_length=1)
     approval_ledger_commit: str = Field(min_length=1)
     profile: str | None = None
     status_at_intake: str = Field(min_length=1)
@@ -400,7 +400,7 @@ class PackageIntakeResponse(BaseModel):
     source_commit: str
     approved_by: str
     approved_at: datetime
-    approval_event_id: UUID
+    approval_event_id: str
     approval_ledger_commit: str | None
     profile: str | None
     status_at_intake: str | None

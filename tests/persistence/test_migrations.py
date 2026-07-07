@@ -282,7 +282,7 @@ def test_ws32_approved_decomposition_must_match_proposal_revision(migrated_sessi
         source_commit="def456",
         approved_by="human-2",
         approved_at=NOW,
-        approval_event_id=revision_one.id.__class__(int=2),
+        approval_event_id=str(revision_one.id.__class__(int=2)),
         enforcement_snapshot={"acceptance_criteria": ["ac-2"]},
         authority=AUTHORITY,
         registry_version=1,

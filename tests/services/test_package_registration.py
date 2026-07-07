@@ -23,7 +23,7 @@ AUTHORITY = AuthorityEnvelope(
     budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
 )
 NOW = datetime(2026, 7, 5, tzinfo=UTC)
-APPROVAL_EVENT_ID = uuid.UUID(int=1)
+APPROVAL_EVENT_ID = str(uuid.UUID(int=1))
 
 
 def register_test_revision(session: Session) -> WorkPackageRevision:
@@ -49,7 +49,7 @@ def register_test_revision(session: Session) -> WorkPackageRevision:
 def test_revision_registration_is_idempotent_and_normalized(
     migrated_session: Session,
 ) -> None:
-    approval_event_id = uuid.uuid4()
+    approval_event_id = str(uuid.uuid4())
     values = {
         "package_id": "pkg-1",
         "source_repository": "owner/repo",
@@ -91,7 +91,7 @@ def test_conflicting_revision_registration_has_stable_error(
             source_commit="def456",
             approved_by="human-1",
             approved_at=NOW,
-            approval_event_id=uuid.uuid4(),
+            approval_event_id=str(uuid.uuid4()),
             enforcement_snapshot={},
             authority=AUTHORITY,
             registry_version=1,
@@ -114,7 +114,7 @@ def test_registration_requires_registered_human_actor(migrated_session: Session)
             source_commit="abc123",
             approved_by="human-1",
             approved_at=NOW,
-            approval_event_id=uuid.uuid4(),
+            approval_event_id=str(uuid.uuid4()),
             enforcement_snapshot={},
             authority=AUTHORITY,
             registry_version=1,
