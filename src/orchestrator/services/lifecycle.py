@@ -345,6 +345,17 @@ def _required_ac_ids(
     revision: WorkPackageRevision,
     unit: WorkUnit,
 ) -> tuple[str, ...] | None:
+    has_approved_decomposition = (
+        session.execute(
+            select(ApprovedDecomposition.id)
+            .where(
+                ApprovedDecomposition.work_package_revision_id == revision.id,
+                ApprovedDecomposition.superseded_at.is_(None),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        is not None
+    )
     mapped_ac_ids = tuple(
         session.scalars(
             select(PackageAcceptanceCriterion.ac_id)
@@ -366,7 +377,7 @@ def _required_ac_ids(
             .order_by(PackageAcceptanceCriterion.ac_id)
         )
     )
-    if mapped_ac_ids:
+    if has_approved_decomposition:
         return mapped_ac_ids
     return _package_required_ac_ids(revision.enforcement_snapshot)
 

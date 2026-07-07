@@ -1,4 +1,4 @@
-11# Orchestrator Production Deploy Plan
+# Orchestrator Production Deploy Plan
 
 Work unit: `deploy-plan`
 Package: `orchestrator-production-deploy` revision 1

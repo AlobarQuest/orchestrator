@@ -26,6 +26,22 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    connection = op.get_bind()
+    non_uuid_count = connection.scalar(
+        sa.text(
+            """
+            SELECT count(*)
+            FROM work_package_revisions
+            WHERE approval_event_id !~*
+                '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            """
+        )
+    )
+    if non_uuid_count:
+        raise RuntimeError(
+            "Cannot downgrade approval_event_id to UUID after ledger string event IDs "
+            "have been stored; restore from a pre-migration backup instead."
+        )
     op.alter_column(
         "work_package_revisions",
         "approval_event_id",
