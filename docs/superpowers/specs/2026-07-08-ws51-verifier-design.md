@@ -1,18 +1,26 @@
 # WS-5.1 Verifier Design
 
-**Status:** Approved scope, implementation pending
-**Intent package:** `ws-5.1-verifier` pending registration in this repo session
+**Status:** Implemented in draft PR #20 on branch `agent/ws51-verifier`; pending Devon merge
+**Intent package:** `ws-5.1-verifier` not registered as a separate package in this implementation session
 **Scope:** Phase 5 WS-5.1 only. No release immutability, artifact digest binding, post-deploy unit creation, tracker canonicalization, brain learning or promotion, graduation automation, automatic merge, or automatic deployment.
 
 ## 1. Baseline
 
-The verified implementation baseline is orchestrator `main` at `b5fa2959deeb2a28387860e261e29493ce0518d6`.
+The verified implementation baseline was orchestrator `main` at `b5fa2959deeb2a28387860e261e29493ce0518d6`.
 
 - `SECURITY_STANDARDS_DIR=/Users/devon/Projects/security-standards make check` passed with 710 tests.
 - `cd /Users/devon/Projects/project-standards && uv run portfolio foundation` reported `violations=0 accepted=0 unknown=0`.
 - Production `https://sds.alobar.net` returned 200 for `/health/live`, `/health/ready`, and `/openapi.json`.
 - Missing M2M credentials against `/api/v1/status-ledger` returned 401.
 - The BWS helper at `/Users/devon/Projects/vps-backup/bws-token.sh` can source `BWS_ACCESS_TOKEN` for this shell without printing secret values.
+
+Implementation closeout for PR #20:
+
+- Branch: `agent/ws51-verifier`
+- Commit: `4cd4132`
+- `SECURITY_STANDARDS_DIR=/Users/devon/Projects/security-standards make check` passed with 721 tests.
+- Security scan reported `0 BLOCK`, `0 WARN`, `1 INFO`.
+- `git diff --check` passed.
 
 Existing orchestrator facts to preserve:
 
