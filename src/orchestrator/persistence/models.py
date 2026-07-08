@@ -48,6 +48,15 @@ EVENT_PUBLICATION_STATUSES = (
     "failed",
 )
 DISPATCH_RECORD_STATUSES = ("dispatched", "skipped", "blocked", "failed")
+INFRA_LANE_LINK_STATUSES = (
+    "requested",
+    "approved",
+    "executing",
+    "verification_pending",
+    "completed",
+    "failed",
+    "cancelled",
+)
 
 
 class WorkPackage(UUIDPrimaryKey, Base):
@@ -422,6 +431,47 @@ class DispatchRecord(UUIDPrimaryKey, Base):
     event_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("events.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InfraLaneLink(UUIDPrimaryKey, Base):
+    __tablename__ = "infra_lane_links"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        CheckConstraint("attempt > 0", name="ck_infra_lane_links_positive_attempt"),
+        CheckConstraint(
+            f"status IN {INFRA_LANE_LINK_STATUSES!r}",
+            name="ck_infra_lane_links_status",
+        ),
+        CheckConstraint(
+            "change_manager_ref <> ''",
+            name="ck_infra_lane_links_change_manager_ref_required",
+        ),
+    )
+
+    work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
+    work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("work_package_revisions.id")
+    )
+    attempt: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String)
+    change_manager_ref: Mapped[str] = mapped_column(String)
+    change_manager_url: Mapped[str | None] = mapped_column(Text)
+    infraops_ref: Mapped[str | None] = mapped_column(String)
+    approval_ref: Mapped[str | None] = mapped_column(Text)
+    rollback_ref: Mapped[str | None] = mapped_column(Text)
+    verify_ref: Mapped[str | None] = mapped_column(Text)
+    final_evidence_ref: Mapped[str | None] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    recorded_by: Mapped[str] = mapped_column(String)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
+    idempotency_key: Mapped[str] = mapped_column(String)
 
 
 class EventPublication(UUIDPrimaryKey, Base):

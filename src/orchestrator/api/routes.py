@@ -36,6 +36,8 @@ from orchestrator.api.schemas import (
     EventResponse,
     EvidenceCommand,
     EvidenceResponse,
+    InfraLaneLinkCommandModel,
+    InfraLaneLinkResponse,
     LeaseResponse,
     LifecycleCommand,
     PackageAcceptanceCriterionResponse,
@@ -103,6 +105,11 @@ from orchestrator.services.event_publications import (
     retry_event_publication,
 )
 from orchestrator.services.evidence import append_evidence, list_evidence, record_adjudication
+from orchestrator.services.infra_links import (
+    InfraLaneLinkCommand,
+    list_infra_lane_links,
+    record_infra_lane_link,
+)
 from orchestrator.services.lifecycle import (
     ActorContext,
     TransitionCommand,
@@ -451,6 +458,53 @@ def dispatch_route(
         dispatch_settings,
         dispatcher,
     )
+
+
+@router.post(
+    "/work-units/{unit_id}/infra-lane-links",
+    response_model=InfraLaneLinkResponse,
+    status_code=201,
+)
+def create_infra_lane_link(
+    unit_id: UUID,
+    body: InfraLaneLinkCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        record_infra_lane_link(
+            session,
+            InfraLaneLinkCommand(
+                work_unit_id=unit_id,
+                attempt=body.attempt,
+                actor=actor,
+                lease_token=body.lease_token,
+                status=body.status,
+                change_manager_ref=body.change_manager_ref,
+                change_manager_url=body.change_manager_url,
+                infraops_ref=body.infraops_ref,
+                approval_ref=body.approval_ref,
+                rollback_ref=body.rollback_ref,
+                verify_ref=body.verify_ref,
+                final_evidence_ref=body.final_evidence_ref,
+                payload=body.payload,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+            ),
+        )
+    )
+
+
+@router.get(
+    "/work-units/{unit_id}/infra-lane-links",
+    response_model=list[InfraLaneLinkResponse],
+)
+def infra_lane_links(
+    unit_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(list_infra_lane_links(session, unit_id))
 
 
 @router.get("/status-ledger", response_model=list[StatusLedgerRowResponse])

@@ -233,6 +233,38 @@ def test_ws42_dispatch_records_table_exists(migrated_engine) -> None:
     assert ("work_unit_id", "runner_attempt") in unique_constraints
 
 
+def test_ws44_infra_lane_links_table_exists(migrated_engine) -> None:
+    inspector = inspect(migrated_engine)
+
+    assert "infra_lane_links" in inspector.get_table_names()
+    columns = {column["name"] for column in inspector.get_columns("infra_lane_links")}
+    assert {
+        "id",
+        "work_unit_id",
+        "work_package_revision_id",
+        "attempt",
+        "status",
+        "change_manager_ref",
+        "change_manager_url",
+        "infraops_ref",
+        "approval_ref",
+        "rollback_ref",
+        "verify_ref",
+        "final_evidence_ref",
+        "payload",
+        "recorded_by",
+        "recorded_at",
+        "event_id",
+        "idempotency_key",
+    } <= columns
+
+    unique_constraints = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("infra_lane_links")
+    }
+    assert ("idempotency_key",) in unique_constraints
+
+
 def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> None:
     package_id = register_test_revision(migrated_session).work_package_id
     migrated_session.commit()
