@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.persistence.models import (
+    ApprovedDecomposition,
     DecompositionProposalAcMapping,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
@@ -22,7 +23,7 @@ def runner_brief(session: Session, unit_id: UUID) -> dict[str, object]:
         raise DomainError("revision_not_found", "package revision does not exist", None)
 
     criteria = _criteria_for_unit(session, revision.id, unit.unit_key)
-    readiness = evaluate_readiness(session, unit.id)
+    readiness = evaluate_readiness(session, unit.id, for_update=False)
     target_repository = str(unit.authority.get("constraints", {}).get("target_repository", ""))
     if not target_repository:
         raise DomainError(
@@ -80,6 +81,20 @@ def runner_brief(session: Session, unit_id: UUID) -> dict[str, object]:
 def _criteria_for_unit(
     session: Session, revision_id: UUID, unit_key: str
 ) -> tuple[PackageAcceptanceCriterion, ...]:
+    approved = session.scalar(
+        select(ApprovedDecomposition).where(
+            ApprovedDecomposition.work_package_revision_id == revision_id,
+            ApprovedDecomposition.superseded_at.is_(None),
+        )
+    )
+    if approved is None:
+        return tuple(
+            session.scalars(
+                select(PackageAcceptanceCriterion)
+                .where(PackageAcceptanceCriterion.work_package_revision_id == revision_id)
+                .order_by(PackageAcceptanceCriterion.ac_id)
+            )
+        )
     mapped = tuple(
         session.scalars(
             select(PackageAcceptanceCriterion)
@@ -89,6 +104,7 @@ def _criteria_for_unit(
                 == PackageAcceptanceCriterion.id,
             )
             .where(PackageAcceptanceCriterion.work_package_revision_id == revision_id)
+            .where(DecompositionProposalAcMapping.proposal_id == approved.proposal_id)
             .where(DecompositionProposalAcMapping.unit_key == unit_key)
             .order_by(PackageAcceptanceCriterion.ac_id)
         )

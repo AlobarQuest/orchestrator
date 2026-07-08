@@ -833,9 +833,9 @@ def _proposal_payloads(
         .where(DecompositionProposalUnit.proposal_id.in_(proposal_ids))
         .order_by(DecompositionProposalUnit.proposal_id, DecompositionProposalUnit.unit_key)
     ):
-        units_by_proposal[unit.proposal_id].append(
-            DecompositionProposalUnitResponse.model_validate(unit).model_dump(mode="json")
-        )
+        payload = DecompositionProposalUnitResponse.model_validate(unit).model_dump(mode="json")
+        payload["authority"] = normalize_authority(unit.authority).normalized()
+        units_by_proposal[unit.proposal_id].append(payload)
     for dependency in session.scalars(
         select(DecompositionProposalDependency)
         .where(DecompositionProposalDependency.proposal_id.in_(proposal_ids))
@@ -933,5 +933,6 @@ def _proposed_unit(command: ProposedUnitCommand) -> ProposedUnit:
         outcome=command.outcome,
         required_capability=command.required_capability,
         authority=normalize_authority(command.authority),
+        authority_payload=command.authority,
         max_attempts=command.max_attempts,
     )

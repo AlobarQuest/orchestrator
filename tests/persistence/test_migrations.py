@@ -2,13 +2,28 @@ import pytest
 from alembic import command
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
+from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorRole
-from orchestrator.services.packages import register_revision
+from orchestrator.persistence.models import WorkUnit
+from orchestrator.services.decomposition import (
+    AcMapping,
+    DecompositionProposalCommand,
+    ProposedDependency,
+    ProposedUnit,
+    RetainedAc,
+    approve_decomposition_proposal,
+    submit_decomposition_proposal,
+)
+from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.package_intake import register_package_intake
+from orchestrator.services.packages import register_approved_unit, register_revision
 from tests.conftest import TEST_DATABASE_URL
 from tests.persistence.conftest import alembic_config
+from tests.services.test_package_intake import acceptance_criterion, intake_command
 from tests.services.test_package_registration import AUTHORITY, NOW, register_test_revision
 
 
@@ -324,3 +339,154 @@ def test_ws32_approved_decomposition_must_match_proposal_revision(migrated_sessi
         )
         migrated_session.commit()
     migrated_session.rollback()
+
+
+def test_work_unit_authority_upgrade_prefers_proposal_unit_authority_when_available(
+    migrated_engine,
+) -> None:
+    raw_unit_authority = {
+        "capabilities": {
+            "repo.read": "allowed",
+            "repo.edit": "allowed",
+            "command.run": "allowed",
+        },
+        "budgets": {"max_attempts": 2, "max_llm_calls": 5},
+        "constraints": {
+            "target_repository": "AlobarQuest/orchestrator",
+            "allowed_commands": ["make check"],
+        },
+    }
+    fallback_authority = {
+        "capabilities": {"repository_write": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {"target_repository": "AlobarQuest/fallback"},
+    }
+    with Session(migrated_engine) as session:
+        manual_revision = register_revision(
+            session,
+            package_id="pkg-manual-authority-upgrade",
+            source_repository="owner/manual",
+            revision=1,
+            content_hash="sha256:manual-authority-upgrade",
+            source_path="intent.md",
+            source_commit="manual123",
+            approved_by="human-1",
+            approved_at=NOW,
+            approval_event_id="evt-manual-authority-upgrade",
+            enforcement_snapshot={"authority": fallback_authority},
+            authority=normalize_authority(fallback_authority),
+            registry_version=1,
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+        )
+        register_approved_unit(
+            session,
+            revision_id=manual_revision.id,
+            unit_key="manual-unit",
+            title="Manual unit",
+            outcome="Fallback authority should come from the revision.",
+            required_capability="repository_write",
+            authority=AUTHORITY,
+            approved_by="human-1",
+            approved_at=NOW,
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+        )
+
+        intake_revision = register_package_intake(
+            session,
+            intake_command(
+                package_id="pkg-decomposition-authority-upgrade",
+                idempotency_key="package-intake-authority-upgrade",
+                content_hash="sha256:decomposition-authority-upgrade",
+                authority=AUTHORITY,
+                acceptance_criteria=(
+                    acceptance_criterion("AC-001"),
+                    acceptance_criterion("AC-002"),
+                ),
+            ),
+            ActorContext("human-1", ActorRole.HUMAN),
+        )
+        ac_rows = tuple(
+            session.execute(
+                text(
+                    "SELECT id, ac_id FROM package_acceptance_criteria "
+                    "WHERE work_package_revision_id = :revision_id ORDER BY ac_id"
+                ),
+                {"revision_id": intake_revision.id},
+            )
+        )
+        ac_ids = {row.ac_id: row.id for row in ac_rows}
+        proposal = submit_decomposition_proposal(
+            session,
+            DecompositionProposalCommand(
+                work_package_revision_id=intake_revision.id,
+                rationale="Split by authority-bearing unit.",
+                proposed_units=(
+                    ProposedUnit(
+                        unit_key="unit-1",
+                        title="Implement service",
+                        outcome="Service persists proposals.",
+                        required_capability="repository_write",
+                        authority=normalize_authority(raw_unit_authority),
+                        authority_payload=raw_unit_authority,
+                        max_attempts=2,
+                    ),
+                    ProposedUnit(
+                        unit_key="unit-2",
+                        title="Implement tests",
+                        outcome="Service is covered by focused tests.",
+                        required_capability="repository_write",
+                        authority=normalize_authority(fallback_authority),
+                        authority_payload=fallback_authority,
+                    ),
+                ),
+                dependencies=(
+                    ProposedDependency(
+                        source_unit_key="unit-2",
+                        kind="work_unit",
+                        required_state_or_condition="completed",
+                        target_unit_key="unit-1",
+                    ),
+                ),
+                ac_mappings=(AcMapping(ac_id=str(ac_ids["AC-001"]), unit_key="unit-1"),),
+                retained_acs=(
+                    RetainedAc(
+                        ac_id=str(ac_ids["AC-002"]),
+                        rationale="Leave AC-002 at package scope.",
+                    ),
+                ),
+                idempotency_key="proposal-authority-upgrade",
+            ),
+            ActorContext("worker-1", ActorRole.WORKER),
+        )
+        approved = approve_decomposition_proposal(
+            session,
+            proposal.id,
+            actor=ActorContext("human-1", ActorRole.HUMAN),
+            reason="Approve for authority backfill test.",
+            idempotency_key="proposal-authority-upgrade-approve",
+        )
+        session.commit()
+        assert isinstance(approved.created_work_unit_ids, dict)
+        decomposition_unit_id = approved.created_work_unit_ids["unit-1"]
+
+    config = alembic_config()
+    command.downgrade(config, "0006_approval_event_id_text")
+    command.upgrade(config, "head")
+
+    with Session(migrated_engine) as session:
+        units = {
+            unit.unit_key: unit
+            for unit in session.scalars(
+                select(WorkUnit)
+                .where(
+                    WorkUnit.unit_key.in_(("manual-unit", "unit-1")),
+                )
+                .order_by(WorkUnit.unit_key)
+            )
+        }
+
+    assert str(units["unit-1"].id) == decomposition_unit_id
+    assert units["unit-1"].authority == raw_unit_authority
+    assert units["manual-unit"].authority == normalize_authority(fallback_authority).normalized()

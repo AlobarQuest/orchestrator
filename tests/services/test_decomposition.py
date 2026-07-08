@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
@@ -535,6 +536,64 @@ def test_package_cli_revision_rejects_extra_unit_for_active_approved_decompositi
         )
 
     assert error.value.code == "decomposition_approval_required"
+
+
+def test_approved_decomposition_preserves_raw_unit_authority_payload(
+    migrated_session: Session,
+) -> None:
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    raw_authority = {
+        "capabilities": {
+            "repo.read": "allowed",
+            "repo.edit": "allowed",
+            "command.run": "allowed",
+        },
+        "budgets": {"max_attempts": 2, "max_llm_calls": 5},
+        "constraints": {
+            "target_repository": "AlobarQuest/orchestrator",
+            "allowed_commands": ["make check"],
+        },
+    }
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(
+            revision.id,
+            ac_ids,
+            proposed_units=(
+                ProposedUnit(
+                    unit_key="unit-1",
+                    title="Implement service",
+                    outcome="Service persists proposals.",
+                    required_capability="repository_write",
+                    authority=normalize_authority(raw_authority),
+                    authority_payload=raw_authority,
+                    max_attempts=2,
+                ),
+                ProposedUnit(
+                    unit_key="unit-2",
+                    title="Implement tests",
+                    outcome="Service is covered by focused tests.",
+                    required_capability="repository_write",
+                    authority=AUTHORITY,
+                ),
+            ),
+        ),
+        worker_actor(),
+    )
+
+    approve_decomposition_proposal(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="Approve the proposed units.",
+        idempotency_key="proposal-approve-raw-authority",
+    )
+    unit = migrated_session.scalar(select(WorkUnit).where(WorkUnit.unit_key == "unit-1"))
+
+    assert unit is not None
+    assert unit.authority == raw_authority
+    assert unit.authority_fingerprint == authority_fingerprint(normalize_authority(raw_authority))
 
 
 def test_second_approval_is_rejected(migrated_session: Session) -> None:
