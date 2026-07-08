@@ -134,6 +134,21 @@ class ReleaseArtifactCommandModel(CommandBase):
     summary: dict[str, Any] | None = None
 
 
+class DeploymentObservationCommandModel(CommandBase):
+    environment: str = Field(min_length=1)
+    base_url: str = Field(min_length=1)
+    observed_artifact_digest: str = Field(min_length=1)
+    deployment_ref: str = Field(min_length=1)
+    deployment_url: str = Field(min_length=1)
+    deployer: str = Field(min_length=1)
+    observed_at: datetime
+    probe_summary: dict[str, Any]
+    route_summary: dict[str, Any]
+    auth_summary: dict[str, Any]
+    dispatch_summary: dict[str, Any]
+    status_summary: dict[str, Any]
+
+
 class VerifyCommandModel(CommandBase):
     pass
 
@@ -412,6 +427,35 @@ class ReleaseArtifactResponse(BaseModel):
     recorded_at: datetime
     event_id: UUID
     evidence_id: UUID
+    idempotency_key: str
+
+
+class DeploymentObservationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    release_artifact_binding_id: UUID
+    implementation_work_unit_id: UUID
+    work_package_revision_id: UUID
+    package_revision_hash: str
+    post_deploy_work_unit_id: UUID
+    environment: str
+    base_url: str
+    observed_artifact_digest: str
+    deployment_ref: str
+    deployment_url: str
+    deployer: str
+    observed_at: datetime
+    probe_summary: dict[str, Any]
+    route_summary: dict[str, Any]
+    auth_summary: dict[str, Any]
+    dispatch_summary: dict[str, Any]
+    status_summary: dict[str, Any]
+    recorded_by: str
+    recorded_at: datetime
+    event_id: UUID
+    post_deploy_event_id: UUID
+    evidence_ids: list[str]
     idempotency_key: str
 
 

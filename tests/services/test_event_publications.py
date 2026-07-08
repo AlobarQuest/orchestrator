@@ -27,9 +27,11 @@ from orchestrator.services.event_publications import (
     queue_event_publications,
     retry_event_publication,
 )
+from orchestrator.services.deployment_observations import record_deployment_observation
 from orchestrator.services.evidence import append_evidence
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.release_artifacts import record_release_artifact
+from tests.services.test_deployment_observations import observation_command
 from tests.services.test_release_artifacts import command as release_command
 from tests.services.test_release_artifacts import completed_unit
 
@@ -184,6 +186,48 @@ def test_maps_release_artifact_event_to_valid_factory_event(
     assert factory_event["input_revision"] == "revision:1@sha256:sha256:release-package"
     assert factory_event["evidence"][0]["record"]["local_action"] == "release_artifact.bound"
     assert factory_event["evidence"][0]["record"]["raw_actor_id"] == "system"
+
+
+def test_maps_deployment_observation_events_to_valid_factory_events(
+    migrated_session: Session,
+) -> None:
+    unit = completed_unit(migrated_session, key="publication-deployment")
+    binding = record_release_artifact(
+        migrated_session,
+        release_command(unit, key="publication-deployment-binding"),
+    )
+    assert not isinstance(binding, DomainError)
+    observation = record_deployment_observation(
+        migrated_session,
+        observation_command(binding, key="publication-deployment-observation"),
+    )
+    assert not isinstance(observation, DomainError)
+    observed_event = migrated_session.get(Event, observation.event_id)
+    created_event = migrated_session.get(Event, observation.post_deploy_event_id)
+    assert observed_event is not None
+    assert created_event is not None
+    observed_event.payload["raw_external_output"] = "Authorization: Bearer never-map-this"
+    migrated_session.commit()
+
+    observed = map_source_fact(migrated_session, "event", observed_event.id)
+    created = map_source_fact(migrated_session, "event", created_event.id)
+
+    assert observed.status == "pending"
+    assert created.status == "pending"
+    assert observed.factory_event is not None
+    assert created.factory_event is not None
+    assert observed.factory_event["action"] == "orchestrator.deployment_observed"
+    assert created.factory_event["action"] == "orchestrator.post_deploy_verification_created"
+    assert observed.factory_event["target"] == f"deployment_observation:{observation.id}"
+    assert created.factory_event["target"] == f"work_unit:{observation.post_deploy_work_unit_id}"
+    assert observed.factory_event["work_package"] == "pkg-publication-deployment"
+    assert created.factory_event["work_package"] == "pkg-publication-deployment"
+    assert observed.factory_event["input_revision"] == "revision:1@sha256:sha256:release-package"
+    assert created.factory_event["input_revision"] == "revision:1@sha256:sha256:release-package"
+    encoded = json.dumps(observed.factory_event)
+    assert "never-map-this" not in encoded
+    assert observed.factory_event["evidence"][0]["record"]["local_action"] == "deployment.observed"
+    assert observed.factory_event["evidence"][0]["record"]["raw_actor_id"] == "system"
 
 
 def test_maps_adjudication_and_context_rows_to_valid_factory_events(

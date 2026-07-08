@@ -20,6 +20,7 @@ from orchestrator.persistence.models import (
     Event,
     EventPublication,
     Evidence,
+    DeploymentObservation,
     ReleaseArtifactBinding,
     WorkPackage,
     WorkPackageRevision,
@@ -354,6 +355,10 @@ def _factory_action(event: Event) -> str | None:
         return "orchestrator.evidence_recorded"
     if event.action == "release_artifact.bound":
         return "orchestrator.release_artifact_bound"
+    if event.action == "deployment.observed":
+        return "orchestrator.deployment_observed"
+    if event.action == "post_deploy_verification.created":
+        return "orchestrator.post_deploy_verification_created"
     if event.action == "work_unit.transitioned" and event.to_state == "submitted":
         return "orchestrator.work_unit_submitted"
     return None
@@ -401,6 +406,8 @@ def _revision_id_for_event_subject(session: Session, event: Event) -> uuid.UUID 
         row = session.get(ContextSnapshot, event.subject_id)
     elif event.subject_type == "release_artifact_binding":
         row = session.get(ReleaseArtifactBinding, event.subject_id)
+    elif event.subject_type == "deployment_observation":
+        row = session.get(DeploymentObservation, event.subject_id)
     else:
         row = None
     return getattr(row, "work_package_revision_id", None)

@@ -26,6 +26,8 @@ from orchestrator.api.schemas import (
     DependencyCommand,
     DependencyResolutionCommand,
     DependencyResponse,
+    DeploymentObservationCommandModel,
+    DeploymentObservationResponse,
     DispatchCommandModel,
     DispatchResponse,
     ErrorResponse,
@@ -94,6 +96,11 @@ from orchestrator.services.decomposition import (
     reject_decomposition_proposal,
     require_decomposition_revision,
     submit_decomposition_proposal,
+)
+from orchestrator.services.deployment_observations import (
+    DeploymentObservationCommand,
+    list_deployment_observations,
+    record_deployment_observation,
 )
 from orchestrator.services.dispatch import (
     DispatchCommand,
@@ -574,6 +581,54 @@ def release_artifacts(
     session: SessionDep,
 ) -> object:
     return _raise_error(list_release_artifacts(session, unit_id))
+
+
+@router.post(
+    "/release-artifacts/{binding_id}/deployment-observations",
+    response_model=DeploymentObservationResponse,
+    status_code=201,
+)
+def create_deployment_observation(
+    binding_id: UUID,
+    body: DeploymentObservationCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        record_deployment_observation(
+            session,
+            DeploymentObservationCommand(
+                release_artifact_binding_id=binding_id,
+                actor=actor,
+                environment=body.environment,
+                base_url=body.base_url,
+                observed_artifact_digest=body.observed_artifact_digest,
+                deployment_ref=body.deployment_ref,
+                deployment_url=body.deployment_url,
+                deployer=body.deployer,
+                observed_at=body.observed_at,
+                probe_summary=body.probe_summary,
+                route_summary=body.route_summary,
+                auth_summary=body.auth_summary,
+                dispatch_summary=body.dispatch_summary,
+                status_summary=body.status_summary,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+            ),
+        )
+    )
+
+
+@router.get(
+    "/release-artifacts/{binding_id}/deployment-observations",
+    response_model=list[DeploymentObservationResponse],
+)
+def deployment_observations(
+    binding_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(list_deployment_observations(session, binding_id))
 
 
 @router.get("/status-ledger", response_model=list[StatusLedgerRowResponse])
