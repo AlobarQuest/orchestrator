@@ -106,11 +106,16 @@ def test_append_only_tables_reject_update_and_delete(
                 text(
                     "INSERT INTO work_units "
                     "(id, unit_key, work_package_revision_id, title, outcome, state, "
-                    "required_capability, authority_fingerprint) VALUES "
+                    "required_capability, authority, authority_fingerprint) VALUES "
                     "(:id, 'unit-1', :revision_id, 'Title', 'Outcome', 'draft', "
-                    "'python', 'authority')"
+                    "'python', :authority, 'authority')"
                 ),
-                {"id": unit_id, "revision_id": revision_id},
+                {
+                    "id": unit_id,
+                    "revision_id": revision_id,
+                    "authority": '{"capabilities":{"repository_write":"allowed"},'
+                    '"budgets":{},"unknown_fields":[]}',
+                },
             )
         else:
             values["work_package_id"] = package_id

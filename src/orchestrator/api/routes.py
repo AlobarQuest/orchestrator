@@ -47,6 +47,7 @@ from orchestrator.api.schemas import (
     RetryCommand,
     RevisionRegistration,
     RevisionResponse,
+    RunnerBriefResponse,
     StatusLedgerRowResponse,
     TransitionResponse,
     UnitRegistration,
@@ -113,6 +114,7 @@ from orchestrator.services.packages import (
     register_revision,
     resolve_dependency_command,
 )
+from orchestrator.services.runner_brief import runner_brief
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -242,6 +244,7 @@ def create_unit(
         revision_id=revision_id,
         **body.model_dump(exclude={"authority"}),
         authority=normalize_authority(body.authority),
+        authority_payload=body.authority,
         actor_id=actor.actor_id,
         actor_role=actor.role,
     )
@@ -394,6 +397,15 @@ def readiness(
             for reason in result.reasons
         ],
     }
+
+
+@router.get("/work-units/{unit_id}/runner-brief", response_model=RunnerBriefResponse)
+def runner_brief_route(
+    unit_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return runner_brief(session, unit_id)
 
 
 @router.get("/status-ledger", response_model=list[StatusLedgerRowResponse])

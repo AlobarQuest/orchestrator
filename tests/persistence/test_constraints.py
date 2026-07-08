@@ -16,6 +16,8 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 
+AUTHORITY = {"capabilities": {"repository_write": "allowed"}, "budgets": {}, "unknown_fields": []}
+
 
 def _revision(session: Session) -> WorkPackageRevision:
     package = WorkPackage(package_id="pkg-1", source_repository="owner/repo")
@@ -50,6 +52,7 @@ def test_work_unit_beyond_draft_requires_decomposition_approval(
             outcome="Outcome",
             state="ready",
             required_capability="python",
+            authority=AUTHORITY,
             authority_fingerprint="authority",
         )
     )
@@ -67,6 +70,7 @@ def test_dependency_requires_exactly_one_reference(migrated_session: Session) ->
         outcome="Outcome",
         state="draft",
         required_capability="python",
+        authority=AUTHORITY,
         authority_fingerprint="authority",
     )
     migrated_session.add(unit)
@@ -93,6 +97,7 @@ def test_evidence_requires_reference_or_payload(migrated_session: Session) -> No
         outcome="Outcome",
         state="draft",
         required_capability="python",
+        authority=AUTHORITY,
         authority_fingerprint="authority",
     )
     migrated_session.add(unit)
@@ -139,6 +144,7 @@ def test_work_unit_package_revision_cannot_change(migrated_session: Session) -> 
         outcome="Outcome",
         state="draft",
         required_capability="python",
+        authority=AUTHORITY,
         authority_fingerprint="authority",
     )
     migrated_session.add_all((second_revision, unit))
@@ -165,6 +171,7 @@ def test_work_unit_state_and_version_remain_mutable(migrated_session: Session) -
         decomposition_approved_by="human-1",
         decomposition_approved_at="2026-07-05T12:00:00+00:00",
         required_capability="python",
+        authority=AUTHORITY,
         authority_fingerprint="authority",
     )
     migrated_session.add(unit)
@@ -194,6 +201,7 @@ def test_evidence_supersession_must_match_revision_unit_and_ac(
         outcome="Outcome",
         state="draft",
         required_capability="python",
+        authority=AUTHORITY,
         authority_fingerprint="authority",
     )
     second_unit = WorkUnit(
@@ -203,6 +211,7 @@ def test_evidence_supersession_must_match_revision_unit_and_ac(
         outcome="Outcome",
         state="draft",
         required_capability="python",
+        authority=AUTHORITY,
         authority_fingerprint="authority",
     )
     migrated_session.add_all((first_unit, second_unit))
@@ -262,6 +271,7 @@ def test_work_unit_enum_and_attempt_boundaries(
             outcome="Outcome",
             state=state,
             required_capability="python",
+            authority=AUTHORITY,
             authority_fingerprint="authority",
             attempt_count=attempt_count,
             max_attempts=max_attempts,
@@ -308,6 +318,7 @@ def test_work_unit_revision_foreign_key_is_database_enforced(
             outcome="Outcome",
             state="draft",
             required_capability="python",
+            authority=AUTHORITY,
             authority_fingerprint="authority",
         )
     )
@@ -325,6 +336,7 @@ def test_dependency_cannot_reference_its_own_work_unit(migrated_session: Session
         outcome="Outcome",
         state="draft",
         required_capability="python",
+        authority=AUTHORITY,
         authority_fingerprint="authority",
     )
     migrated_session.add(unit)
@@ -354,6 +366,7 @@ def test_context_snapshot_claim_attempt_must_match_claim(migrated_session: Sessi
         decomposition_approved_by="human-1",
         decomposition_approved_at="2026-07-05T12:00:00+00:00",
         required_capability="python",
+        authority=AUTHORITY,
         authority_fingerprint="authority",
     )
     migrated_session.add(ready_unit)

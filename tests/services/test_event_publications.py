@@ -62,6 +62,11 @@ def protocol_fixture_unit(session: Session) -> WorkUnit:
         decomposition_approved_by="human-1",
         decomposition_approved_at=datetime(2026, 7, 6, tzinfo=UTC),
         required_capability="repository_write",
+        authority={
+            "capabilities": {"repository_write": "allowed"},
+            "budgets": {},
+            "unknown_fields": [],
+        },
         authority_fingerprint="authority",
     )
     session.add(unit)
