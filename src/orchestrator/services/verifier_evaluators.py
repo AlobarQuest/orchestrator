@@ -54,23 +54,9 @@ def evaluate_criterion(
         return ("failed_closed", "failed", "missing required evidence")
     if not isinstance(evidence.payload, dict):
         return ("failed_closed", "failed", "evidence payload is missing or malformed")
-
-    if evidence_type in {"test", "tests", "pytest", "runner.verification", "gate.summary"}:
-        return _status_result(evidence.payload)
-    if evidence_type in {"security.scan", "security_scan"}:
-        return _security_scan_result(evidence.payload)
-    if evidence_type in {"github.checks", "github.check_run"}:
-        return _github_checks_result(evidence.payload)
-    if evidence_type in {"health.probe", "production.health"}:
-        return _health_probe_result(evidence.payload)
-    if evidence_type == "release.deployment_observed":
-        return _deployment_observed_result(evidence.payload)
-    if evidence_type == "production.route_presence":
-        return _route_presence_result(evidence.payload)
-    if evidence_type == "production.auth_behavior":
-        return _auth_behavior_result(evidence.payload)
-    if evidence_type == "production.dispatch_posture":
-        return _dispatch_posture_result(evidence.payload)
+    evaluator = EVALUATORS.get(evidence_type)
+    if evaluator is not None:
+        return evaluator(evidence.payload)
     if evidence_type == "infra_lane.final":
         return _infra_lane_result(evidence)
     return ("judgment_required", None, f"{criterion.evidence_type} requires review")
@@ -211,6 +197,25 @@ def _dispatch_posture_result(payload: dict[str, Any]) -> tuple[EvaluationStatus,
     if dispatch_enabled:
         return ("failed", "failed", "dispatch automation is enabled")
     return ("passed", "passed", "dispatch automation is disabled")
+
+
+EVALUATORS = {
+    "test": _status_result,
+    "tests": _status_result,
+    "pytest": _status_result,
+    "runner.verification": _status_result,
+    "gate.summary": _status_result,
+    "security.scan": _security_scan_result,
+    "security_scan": _security_scan_result,
+    "github.checks": _github_checks_result,
+    "github.check_run": _github_checks_result,
+    "health.probe": _health_probe_result,
+    "production.health": _health_probe_result,
+    "release.deployment_observed": _deployment_observed_result,
+    "production.route_presence": _route_presence_result,
+    "production.auth_behavior": _auth_behavior_result,
+    "production.dispatch_posture": _dispatch_posture_result,
+}
 
 
 def _count_value(payload: dict[str, Any], *keys: str) -> int | None:

@@ -93,7 +93,9 @@ def _generated_post_deploy_criteria(
     revision: WorkPackageRevision,
 ) -> tuple[PackageAcceptanceCriterion, ...] | None:
     observation = session.scalar(
-        select(DeploymentObservation).where(DeploymentObservation.post_deploy_work_unit_id == unit.id)
+        select(DeploymentObservation).where(
+            DeploymentObservation.post_deploy_work_unit_id == unit.id
+        )
     )
     if observation is None:
         return None

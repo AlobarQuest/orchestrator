@@ -19,8 +19,10 @@ from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from tests.services.test_release_artifacts import (
     DIGEST,
     OTHER_DIGEST,
-    command as release_command,
     completed_unit,
+)
+from tests.services.test_release_artifacts import (
+    command as release_command,
 )
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)

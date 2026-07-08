@@ -17,10 +17,10 @@ from orchestrator.errors import DomainError
 from orchestrator.persistence.models import (
     Adjudication,
     ContextSnapshot,
+    DeploymentObservation,
     Event,
     EventPublication,
     Evidence,
-    DeploymentObservation,
     ReleaseArtifactBinding,
     WorkPackage,
     WorkPackageRevision,

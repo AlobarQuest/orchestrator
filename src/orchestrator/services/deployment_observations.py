@@ -78,7 +78,11 @@ def list_deployment_observations(
     release_artifact_binding_id: uuid.UUID,
 ) -> tuple[DeploymentObservation, ...] | DomainError:
     if session.get(ReleaseArtifactBinding, release_artifact_binding_id) is None:
-        return DomainError("release_artifact_not_found", "release artifact binding does not exist", None)
+        return DomainError(
+            "release_artifact_not_found",
+            "release artifact binding does not exist",
+            None,
+        )
     return tuple(
         session.scalars(
             select(DeploymentObservation)
@@ -409,6 +413,24 @@ def _authorize_actor(actor: ActorContext) -> None:
 
 
 def _validate_command_shape(command: DeploymentObservationCommand) -> None:
+    _validate_command_envelope(command)
+    _validate_required_text_and_urls(command)
+    _validate_observed_at_and_digest(command)
+    secret_path = _secret_metadata_path(_command_payload(command))
+    if secret_path is not None:
+        raise DomainError(
+            "deployment_observation_secret_rejected",
+            f"deployment observation contains secret-shaped content at {secret_path}",
+            "store only bounded non-secret references",
+        )
+    _validate_probe_summary(command.probe_summary)
+    _validate_route_summary(command.route_summary)
+    _validate_auth_summary(command.auth_summary)
+    _validate_dispatch_summary(command.dispatch_summary)
+    _validate_status_summary(command.status_summary)
+
+
+def _validate_command_envelope(command: DeploymentObservationCommand) -> None:
     if command.expected_version not in {None, 0}:
         raise DomainError(
             "version_conflict",
@@ -418,6 +440,9 @@ def _validate_command_shape(command: DeploymentObservationCommand) -> None:
         )
     if not command.idempotency_key.strip():
         raise DomainError("deployment_observation_invalid", "idempotency key is required", None)
+
+
+def _validate_required_text_and_urls(command: DeploymentObservationCommand) -> None:
     if not ENVIRONMENT.fullmatch(command.environment):
         raise DomainError("deployment_observation_invalid", "environment is invalid", None)
     for field, value in {
@@ -436,6 +461,9 @@ def _validate_command_shape(command: DeploymentObservationCommand) -> None:
     }.items():
         if not value.strip():
             raise DomainError("deployment_observation_invalid", f"{field} is required", None)
+
+
+def _validate_observed_at_and_digest(command: DeploymentObservationCommand) -> None:
     if command.observed_at.tzinfo is None:
         raise DomainError(
             "deployment_observation_invalid",
@@ -448,18 +476,6 @@ def _validate_command_shape(command: DeploymentObservationCommand) -> None:
             "observed artifact digest must be an immutable sha256 digest",
             None,
         )
-    secret_path = _secret_metadata_path(_command_payload(command))
-    if secret_path is not None:
-        raise DomainError(
-            "deployment_observation_secret_rejected",
-            f"deployment observation contains secret-shaped content at {secret_path}",
-            "store only bounded non-secret references",
-        )
-    _validate_probe_summary(command.probe_summary)
-    _validate_route_summary(command.route_summary)
-    _validate_auth_summary(command.auth_summary)
-    _validate_dispatch_summary(command.dispatch_summary)
-    _validate_status_summary(command.status_summary)
 
 
 def _validate_probe_summary(payload: dict[str, Any]) -> None:
@@ -556,26 +572,41 @@ def _command_payload(command: DeploymentObservationCommand) -> dict[str, object]
 
 def _secret_metadata_path(value: object, path: str = "$") -> str | None:
     if isinstance(value, dict):
-        for key, child in value.items():
-            key_text = str(key)
-            lowered = key_text.lower()
-            child_path = f"{path}.{key_text}"
-            if any(part in lowered for part in SECRET_KEY_PARTS):
-                return child_path
-            found = _secret_metadata_path(child, child_path)
-            if found is not None:
-                return found
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            found = _secret_metadata_path(child, f"{path}[{index}]")
-            if found is not None:
-                return found
-    elif isinstance(value, str):
-        if len(value) > MAX_FACT_STRING:
-            return path
-        lowered = value.lower()
-        if "authorization: bearer " in lowered or BWS_TOKEN_SHAPE.search(value):
-            return path
+        return _secret_dict_path(value, path)
+    if isinstance(value, list):
+        return _secret_list_path(value, path)
+    if isinstance(value, str):
+        return _secret_string_path(value, path)
+    return None
+
+
+def _secret_dict_path(value: dict[object, object], path: str) -> str | None:
+    for key, child in value.items():
+        key_text = str(key)
+        lowered = key_text.lower()
+        child_path = f"{path}.{key_text}"
+        if any(part in lowered for part in SECRET_KEY_PARTS):
+            return child_path
+        found = _secret_metadata_path(child, child_path)
+        if found is not None:
+            return found
+    return None
+
+
+def _secret_list_path(value: list[object], path: str) -> str | None:
+    for index, child in enumerate(value):
+        found = _secret_metadata_path(child, f"{path}[{index}]")
+        if found is not None:
+            return found
+    return None
+
+
+def _secret_string_path(value: str, path: str) -> str | None:
+    if len(value) > MAX_FACT_STRING:
+        return path
+    lowered = value.lower()
+    if "authorization: bearer " in lowered or BWS_TOKEN_SHAPE.search(value):
+        return path
     return None
 
 

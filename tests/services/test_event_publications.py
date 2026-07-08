@@ -19,6 +19,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.claims import LeaseGrant, claim_unit
+from orchestrator.services.deployment_observations import record_deployment_observation
 from orchestrator.services.event_publications import (
     deterministic_factory_event_id,
     export_event_publications,
@@ -27,7 +28,6 @@ from orchestrator.services.event_publications import (
     queue_event_publications,
     retry_event_publication,
 )
-from orchestrator.services.deployment_observations import record_deployment_observation
 from orchestrator.services.evidence import append_evidence
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.release_artifacts import record_release_artifact

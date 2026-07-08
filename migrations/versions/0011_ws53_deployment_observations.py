@@ -54,14 +54,16 @@ def upgrade() -> None:
         sa.Column("probe_summary", jsonb, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("route_summary", jsonb, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("auth_summary", jsonb, nullable=False, server_default=sa.text("'{}'::jsonb")),
-        sa.Column(
-            "dispatch_summary", jsonb, nullable=False, server_default=sa.text("'{}'::jsonb")
-        ),
+        sa.Column("dispatch_summary", jsonb, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("status_summary", jsonb, nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column("recorded_by", sa.String(), nullable=False),
         sa.Column("recorded_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("event_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("events.id")),
-        sa.Column("post_deploy_event_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("events.id")),
+        sa.Column(
+            "post_deploy_event_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("events.id"),
+        ),
         sa.Column("evidence_ids", jsonb, nullable=False, server_default=sa.text("'[]'::jsonb")),
         sa.Column("idempotency_key", sa.String(), nullable=False),
         sa.UniqueConstraint("idempotency_key"),
