@@ -88,6 +88,10 @@ class PreflightCommandModel(CommandBase):
     lease_token: str | None = Field(default=None, min_length=1)
 
 
+class DispatchCommandModel(CommandBase):
+    runner_attempt: int = Field(gt=0)
+
+
 class RevisionRegistration(CommandBase):
     package_id: str
     source_repository: str
@@ -286,6 +290,26 @@ class EventPublicationResponse(BaseModel):
     updated_at: datetime
     last_attempted_at: datetime | None
     published_at: datetime | None
+
+
+class DispatchResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_unit_id: UUID
+    work_package_revision_id: UUID
+    runner_attempt: int
+    status: str
+    reason_code: str | None
+    target_repository: str
+    workflow_id: str
+    workflow_ref: str
+    github_run_id: str | None
+    github_run_url: str | None
+    failure_signature: str | None
+    event_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class EventPublicationQueueCommand(CommandBase):

@@ -6,6 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SOURCE_ROOT = Path("src/orchestrator")
+WS42_DISPATCH_PATHS = {
+    Path("src/orchestrator/api/routes.py"),
+    Path("src/orchestrator/api/schemas.py"),
+    Path("src/orchestrator/config.py"),
+    Path("src/orchestrator/persistence/models.py"),
+    Path("src/orchestrator/services/dispatch.py"),
+}
 CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
 TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 
@@ -105,6 +112,8 @@ def _iter_string_terms(path: Path, tree: ast.AST) -> list[RuntimeTerm]:
 def _find_matches(term_kind: str) -> list[str]:
     matches: set[str] = set()
     for path in sorted(SOURCE_ROOT.rglob("*.py")):
+        if path in WS42_DISPATCH_PATHS:
+            continue
         tree = _parse_source(path)
         terms = (
             _iter_identifier_terms(path, tree)

@@ -47,6 +47,7 @@ EVENT_PUBLICATION_STATUSES = (
     "rejected",
     "failed",
 )
+DISPATCH_RECORD_STATUSES = ("dispatched", "skipped", "blocked", "failed")
 
 
 class WorkPackage(UUIDPrimaryKey, Base):
@@ -386,6 +387,41 @@ class Event(UUIDPrimaryKey, Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
     correlation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
     idempotency_key: Mapped[str] = mapped_column(String, unique=True)
+
+
+class DispatchRecord(UUIDPrimaryKey, Base):
+    __tablename__ = "dispatch_records"
+    __table_args__ = (
+        UniqueConstraint("work_unit_id", "runner_attempt"),
+        CheckConstraint("runner_attempt > 0", name="ck_dispatch_records_positive_attempt"),
+        CheckConstraint(
+            f"status IN {DISPATCH_RECORD_STATUSES!r}",
+            name="ck_dispatch_records_status",
+        ),
+    )
+
+    work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
+    work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("work_package_revisions.id")
+    )
+    runner_attempt: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String)
+    reason_code: Mapped[str | None] = mapped_column(String)
+    idempotency_key: Mapped[str] = mapped_column(String, unique=True)
+    target_repository: Mapped[str] = mapped_column(String)
+    workflow_id: Mapped[str] = mapped_column(String)
+    workflow_ref: Mapped[str] = mapped_column(String)
+    github_run_id: Mapped[str | None] = mapped_column(String)
+    github_run_url: Mapped[str | None] = mapped_column(Text)
+    failure_signature: Mapped[str | None] = mapped_column(String)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    event_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("events.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class EventPublication(UUIDPrimaryKey, Base):

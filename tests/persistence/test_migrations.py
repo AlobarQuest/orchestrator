@@ -200,6 +200,39 @@ def test_ws34_event_publication_table_exists(migrated_engine) -> None:
     } <= columns
 
 
+def test_ws42_dispatch_records_table_exists(migrated_engine) -> None:
+    inspector = inspect(migrated_engine)
+
+    assert "dispatch_records" in inspector.get_table_names()
+    columns = {column["name"] for column in inspector.get_columns("dispatch_records")}
+    assert {
+        "id",
+        "work_unit_id",
+        "work_package_revision_id",
+        "runner_attempt",
+        "status",
+        "reason_code",
+        "idempotency_key",
+        "target_repository",
+        "workflow_id",
+        "workflow_ref",
+        "github_run_id",
+        "github_run_url",
+        "failure_signature",
+        "payload",
+        "event_id",
+        "created_at",
+        "updated_at",
+    } <= columns
+
+    unique_constraints = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("dispatch_records")
+    }
+    assert ("idempotency_key",) in unique_constraints
+    assert ("work_unit_id", "runner_attempt") in unique_constraints
+
+
 def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> None:
     package_id = register_test_revision(migrated_session).work_package_id
     migrated_session.commit()

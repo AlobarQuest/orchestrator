@@ -26,6 +26,8 @@ from orchestrator.api.schemas import (
     DependencyCommand,
     DependencyResolutionCommand,
     DependencyResponse,
+    DispatchCommandModel,
+    DispatchResponse,
     ErrorResponse,
     EventPublicationExportCommand,
     EventPublicationQueueCommand,
@@ -53,6 +55,7 @@ from orchestrator.api.schemas import (
     UnitRegistration,
     UnitResponse,
 )
+from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
@@ -85,6 +88,12 @@ from orchestrator.services.decomposition import (
     reject_decomposition_proposal,
     require_decomposition_revision,
     submit_decomposition_proposal,
+)
+from orchestrator.services.dispatch import (
+    DispatchCommand,
+    DispatchSettings,
+    GitHubActionsDispatcher,
+    dispatch_work_unit,
 )
 from orchestrator.services.event_publications import (
     EventPublicationFilters,
@@ -119,6 +128,7 @@ from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledg
 
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[ActorContext, Depends(get_actor)]
+SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorResponse, "description": "Authentication required or rejected"},
@@ -406,6 +416,41 @@ def runner_brief_route(
     session: SessionDep,
 ) -> object:
     return runner_brief(session, unit_id)
+
+
+@router.post("/work-units/{unit_id}/dispatch", response_model=DispatchResponse)
+def dispatch_route(
+    unit_id: UUID,
+    body: DispatchCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    dispatch_settings = DispatchSettings(
+        enabled=settings.dispatch_enabled,
+        allowed_change_classes=settings.dispatch_allowed_change_classes,
+        enabled_capabilities=settings.dispatch_enabled_capabilities,
+        target_repository=settings.dispatch_target_repository,
+        workflow_id=settings.dispatch_workflow_id,
+        workflow_ref=settings.dispatch_workflow_ref,
+        github_token=settings.github_dispatch_token,
+        failure_signature_threshold=settings.dispatch_failure_signature_threshold,
+        orchestrator_url=settings.dispatch_orchestrator_url,
+        human_gate_age_out_seconds=settings.dispatch_human_gate_age_out_seconds,
+    )
+    dispatcher = GitHubActionsDispatcher(settings.github_dispatch_token or "")
+    return dispatch_work_unit(
+        session,
+        DispatchCommand(
+            unit_id=unit_id,
+            runner_attempt=body.runner_attempt,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_version=body.expected_version,
+        ),
+        dispatch_settings,
+        dispatcher,
+    )
 
 
 @router.get("/status-ledger", response_model=list[StatusLedgerRowResponse])
