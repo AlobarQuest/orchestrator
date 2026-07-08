@@ -60,6 +60,7 @@ def add_adjudication(
     session: Session,
     unit: WorkUnit,
     *,
+    ac_id: str = "ac-1",
     outcome: str = "passed",
     supersedes: Adjudication | None = None,
     expires_at: datetime | None = None,
@@ -72,7 +73,7 @@ def add_adjudication(
         evidence = Evidence(
             work_package_revision_id=unit.work_package_revision_id,
             work_unit_id=unit.id,
-            ac_id="ac-1",
+            ac_id=ac_id,
             attempt=1,
             evidence_type="test",
             stable_ref="artifact://failed",
@@ -88,7 +89,7 @@ def add_adjudication(
         id=adjudication_id,
         work_package_revision_id=unit.work_package_revision_id,
         work_unit_id=unit.id,
-        ac_id="ac-1",
+        ac_id=ac_id,
         outcome=outcome,
         decided_by="human-1",
         rationale="verified",
@@ -198,6 +199,95 @@ def test_completion_uses_approved_decomposition_ac_mapping(
     unit.state = WorkUnitState.SUBMITTED
     migrated_session.flush()
     add_adjudication(migrated_session, unit, outcome="passed")
+    migrated_session.commit()
+
+    result = transition_unit(migrated_session, completion_command(unit), clock=FixedClock())
+
+    assert result.state is WorkUnitState.COMPLETED
+
+
+def test_completion_ignores_adjudications_outside_decomposed_unit_mapping(
+    migrated_session: Session,
+) -> None:
+    revision = register_revision(
+        migrated_session,
+        package_id="mapped-completion-with-extra-adjudication",
+        source_repository="owner/repo",
+        revision=1,
+        content_hash="sha256:mapped-extra",
+        source_path="intent.md",
+        source_commit="abc123",
+        approved_by="human-1",
+        approved_at=APPROVED_AT,
+        approval_event_id=str(uuid.uuid4()),
+        enforcement_snapshot={"acceptance_criteria": ["ac-1", "ac-2"]},
+        authority=AUTHORITY,
+        registry_version=1,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    unit = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="mapped-unit-extra",
+        title="mapped-unit-extra",
+        outcome="mapped unit complete",
+        required_capability="repository_write",
+        authority=AUTHORITY,
+        max_attempts=3,
+        approved_by="human-1",
+        approved_at=APPROVED_AT,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    ac_one = PackageAcceptanceCriterion(
+        work_package_revision_id=revision.id,
+        ac_id="ac-1",
+        condition="first",
+        evidence_type="test",
+        evidence="evidence",
+        approver="policy",
+    )
+    ac_two = PackageAcceptanceCriterion(
+        work_package_revision_id=revision.id,
+        ac_id="ac-2",
+        condition="second",
+        evidence_type="test",
+        evidence="evidence",
+        approver="policy",
+    )
+    proposal = DecompositionProposal(
+        work_package_revision_id=revision.id,
+        proposal_number=1,
+        state="approved",
+        rationale="mapped",
+        proposed_by="worker",
+        proposed_actor_role="worker",
+        decided_by="human-1",
+        decided_at=NOW,
+        idempotency_key="mapped-completion-extra-adjudication-proposal",
+    )
+    migrated_session.add_all([ac_one, ac_two, proposal])
+    migrated_session.flush()
+    migrated_session.add(
+        ApprovedDecomposition(
+            work_package_revision_id=revision.id,
+            proposal_id=proposal.id,
+            approved_by="human-1",
+            approved_at=NOW,
+        )
+    )
+    migrated_session.add(
+        DecompositionProposalAcMapping(
+            proposal_id=proposal.id,
+            package_acceptance_criterion_id=ac_one.id,
+            unit_key=unit.unit_key,
+        )
+    )
+    unit.state = WorkUnitState.SUBMITTED
+    migrated_session.flush()
+    add_adjudication(migrated_session, unit, ac_id="ac-1", outcome="passed")
+    add_adjudication(migrated_session, unit, ac_id="ac-2", outcome="passed")
     migrated_session.commit()
 
     result = transition_unit(migrated_session, completion_command(unit), clock=FixedClock())

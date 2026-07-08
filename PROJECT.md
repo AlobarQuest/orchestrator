@@ -5,7 +5,7 @@ status: active
 purpose: Canonical work-unit lifecycle control plane for the software factory.
 version: 0.1.0
 version_source: pyproject
-updated: '2026-07-06'
+updated: '2026-07-07'
 foundation: true
 foundation_contract: 1
 applicable_standards:
@@ -29,6 +29,9 @@ required_checks:
 - Protocol smoke tests may manipulate time or lease expiry as deterministic fixture
   setup. Runtime recovery behavior itself must go through public API/CLI surfaces,
   not private service shortcuts.
+- For decomposed units, completion is evaluated only against the approved unit AC
+  mapping. Extra package-level adjudications recorded on that unit are ignored by
+  the completion guard rather than blocking completion.
 
 ## WS-3.1 verification
 
@@ -55,3 +58,39 @@ Runtime protocol semantics are merged and closed. Orchestrator PR #9 merged at
 merged at `61550f21f59b4f70c4f03205e15415bf97cd87fd`. The closed package is
 `ws-3.3-protocol-smoke-runtime-semantics` revision 1 with hash
 `7829f22bfa30630a906d75131c84bc018c5dac3ceac7b933b7c9b46d23e5047a`.
+
+## Phase 4 bootstrap verification
+
+Option A for the runner reachability gap is approved: deploy the orchestrator to
+production before WS-4.1 factory-runner work. Governing package
+`orchestrator-production-deploy` revision 1 is approved with hash
+`2f6bc7da07aa00106cb6008fc8a85878e001652f6ec645bf25a37760d84c2e7d`.
+
+Repository deploy-prep is merged. Orchestrator PR #14 merged at
+`22ce0a9fd4183df1794f0155ec4bd4ba6e4a83b5`; local `main` is clean at that
+commit. Verification after merge: `make check` passed with 673 tests; security
+scan reported `0 BLOCK`, `0 WARN`, and one judgment-only BWS least-privilege
+INFO.
+
+Local dogfooding through the orchestrator completed `deploy-plan`,
+`repo-deploy-prep`, and `backup-coverage`. The `backup-coverage` dependency was
+satisfied by Devon's explicit uncommon bootstrap waiver only to unblock
+infrastructure creation; physical `vps-backup` manifest and restore verification
+must still be proven after the production DB exists and before real production
+orchestrator data is accepted. `infra-mutation` then ran in a fresh
+infrastructure-only session through the change-manager/infraops lane.
+
+`infra-mutation` is complete in the local `orchestrator_runtime` database at
+version 11. Production Coolify app `orchestrator` serves `https://sds.alobar.net`;
+Alembic is at `0006_approval_event_id_text`; health checks pass; the human
+surface is protected by Alobar ID forward-auth; M2M auth rejects missing/invalid
+credentials and accepted only the configured bootstrap smoke credential during
+verification. The bootstrap smoke token was deleted after the test.
+
+The production orchestrator database is now covered by `vps-backup`. The
+`vps-backup` repo commit `8ed7586` adds the `orchestrator` dump and verification;
+the manifest includes the Coolify Postgres resource and `./verify-backup.sh`
+passed with a valid `orchestrator.sql.gz` dump. The durable GitHub-runner M2M
+credential was not created in this infra-mutation session; that belongs to
+WS-4.1 factory-runner credential rollout through BWS/Coolify-managed secret
+references.

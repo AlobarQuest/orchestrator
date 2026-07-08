@@ -332,7 +332,7 @@ def _completion_satisfied(
     grouped = {ac_id: [] for ac_id in required_ac_ids}
     for adjudication in adjudications:
         if adjudication.ac_id not in grouped:
-            return False
+            continue
         grouped[adjudication.ac_id].append(adjudication)
     return all(
         _current_terminal_is_satisfied(tuple(grouped[ac_id]), occurred_at)
