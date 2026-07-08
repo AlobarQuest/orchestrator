@@ -108,6 +108,10 @@ class InfraLaneLinkCommandModel(CommandBase):
     payload: dict[str, Any] | None = None
 
 
+class VerifyCommandModel(CommandBase):
+    pass
+
+
 class RevisionRegistration(CommandBase):
     package_id: str
     source_repository: str
@@ -384,6 +388,25 @@ class AdjudicationResponse(BaseModel):
     outcome: str
     decided_by: str
     rationale: str
+
+
+class VerifyEvaluationResponse(BaseModel):
+    ac_id: str
+    evidence_type: str
+    status: str
+    outcome: str | None
+    evidence_id: UUID | None
+    finding_evidence_id: UUID | None
+    adjudication_id: UUID | None
+    reason: str
+
+
+class VerifyResponse(BaseModel):
+    unit_id: UUID
+    state: str
+    version: int
+    result: str
+    evaluations: tuple[VerifyEvaluationResponse, ...]
 
 
 class StatusLedgerEvidenceResponse(BaseModel):
