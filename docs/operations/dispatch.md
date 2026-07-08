@@ -67,3 +67,10 @@ Runner-created commits and PRs must retain greppable provenance:
 - `SDS-Package-Rev:`
 
 No dispatcher or runner path may merge PRs.
+
+## Infra-Lane Boundary
+
+Do not use the dispatch adapter for work units whose authority envelope covers
+production infrastructure mutation. Those units route to the existing
+change-manager/infraops lane and are linked back to the work unit as evidence;
+see `docs/operations/infra-lane-linkage.md`.

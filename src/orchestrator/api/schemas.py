@@ -92,6 +92,22 @@ class DispatchCommandModel(CommandBase):
     runner_attempt: int = Field(gt=0)
 
 
+class InfraLaneLinkCommandModel(CommandBase):
+    attempt: int = Field(gt=0)
+    lease_token: str = Field(min_length=1)
+    status: str = Field(
+        pattern="^(requested|approved|executing|verification_pending|completed|failed|cancelled)$"
+    )
+    change_manager_ref: str = Field(min_length=1)
+    change_manager_url: str | None = None
+    infraops_ref: str | None = None
+    approval_ref: str | None = None
+    rollback_ref: str | None = None
+    verify_ref: str | None = None
+    final_evidence_ref: str | None = None
+    payload: dict[str, Any] | None = None
+
+
 class RevisionRegistration(CommandBase):
     package_id: str
     source_repository: str
@@ -310,6 +326,28 @@ class DispatchResponse(BaseModel):
     event_id: UUID | None
     created_at: datetime
     updated_at: datetime
+
+
+class InfraLaneLinkResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_unit_id: UUID
+    work_package_revision_id: UUID
+    attempt: int
+    status: str
+    change_manager_ref: str
+    change_manager_url: str | None
+    infraops_ref: str | None
+    approval_ref: str | None
+    rollback_ref: str | None
+    verify_ref: str | None
+    final_evidence_ref: str | None
+    payload: dict[str, Any]
+    recorded_by: str
+    recorded_at: datetime
+    event_id: UUID
+    idempotency_key: str
 
 
 class EventPublicationQueueCommand(CommandBase):
