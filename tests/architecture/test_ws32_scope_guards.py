@@ -13,6 +13,14 @@ WS42_DISPATCH_PATHS = {
     Path("src/orchestrator/persistence/models.py"),
     Path("src/orchestrator/services/dispatch.py"),
 }
+WS53_POST_DEPLOY_PATHS = {
+    Path("src/orchestrator/services/deployment_observations.py"),
+    Path("src/orchestrator/services/event_publications.py"),
+    Path("src/orchestrator/services/evidence.py"),
+    Path("src/orchestrator/services/lifecycle.py"),
+    Path("src/orchestrator/services/verifier_criteria.py"),
+    Path("src/orchestrator/services/verifier_evaluators.py"),
+}
 CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
 TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 
@@ -112,7 +120,7 @@ def _iter_string_terms(path: Path, tree: ast.AST) -> list[RuntimeTerm]:
 def _find_matches(term_kind: str) -> list[str]:
     matches: set[str] = set()
     for path in sorted(SOURCE_ROOT.rglob("*.py")):
-        if path in WS42_DISPATCH_PATHS:
+        if path in WS42_DISPATCH_PATHS or path in WS53_POST_DEPLOY_PATHS:
             continue
         tree = _parse_source(path)
         terms = (

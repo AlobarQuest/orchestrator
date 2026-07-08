@@ -5,6 +5,7 @@ from orchestrator.errors import DomainError
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
     DecompositionProposalAcMapping,
+    DeploymentObservation,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
@@ -16,6 +17,10 @@ def load_required_criteria(
     unit: WorkUnit,
     revision: WorkPackageRevision,
 ) -> tuple[PackageAcceptanceCriterion, ...]:
+    generated = _generated_post_deploy_criteria(session, unit, revision)
+    if generated is not None:
+        return generated
+
     has_approved_decomposition = (
         session.execute(
             select(ApprovedDecomposition.id)
@@ -80,3 +85,66 @@ def load_required_criteria(
             None,
         )
     return criteria
+
+
+def _generated_post_deploy_criteria(
+    session: Session,
+    unit: WorkUnit,
+    revision: WorkPackageRevision,
+) -> tuple[PackageAcceptanceCriterion, ...] | None:
+    observation = session.scalar(
+        select(DeploymentObservation).where(
+            DeploymentObservation.post_deploy_work_unit_id == unit.id
+        )
+    )
+    if observation is None:
+        return None
+    if observation.work_package_revision_id != revision.id:
+        raise DomainError(
+            "verification_subject_invalid",
+            "post-deploy observation revision does not match generated unit",
+            None,
+        )
+    specs = (
+        (
+            "post-deploy-artifact",
+            "Deployed artifact digest matches release binding.",
+            "release.deployment_observed",
+            "bounded deployment observation evidence",
+        ),
+        (
+            "post-deploy-health",
+            "Production health probes pass.",
+            "production.health",
+            "bounded health probe summary",
+        ),
+        (
+            "post-deploy-routes",
+            "Required production routes are present.",
+            "production.route_presence",
+            "bounded route presence summary",
+        ),
+        (
+            "post-deploy-auth",
+            "Production M2M behavior matches expected posture.",
+            "production.auth_behavior",
+            "bounded authentication behavior summary",
+        ),
+        (
+            "post-deploy-dispatch",
+            "Production dispatch automation remains disabled.",
+            "production.dispatch_posture",
+            "bounded dispatch posture summary",
+        ),
+    )
+    return tuple(
+        PackageAcceptanceCriterion(
+            work_package_revision_id=revision.id,
+            ac_id=ac_id,
+            condition=condition,
+            evidence_type=evidence_type,
+            evidence=evidence,
+            approver="verifier",
+        )
+        for ac_id, condition, evidence_type, evidence in specs
+    )

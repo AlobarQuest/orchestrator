@@ -17,6 +17,10 @@ DETERMINISTIC_TYPES = frozenset(
         "github.check_run",
         "health.probe",
         "production.health",
+        "release.deployment_observed",
+        "production.route_presence",
+        "production.auth_behavior",
+        "production.dispatch_posture",
         "infra_lane.final",
     }
 )
@@ -50,15 +54,9 @@ def evaluate_criterion(
         return ("failed_closed", "failed", "missing required evidence")
     if not isinstance(evidence.payload, dict):
         return ("failed_closed", "failed", "evidence payload is missing or malformed")
-
-    if evidence_type in {"test", "tests", "pytest", "runner.verification", "gate.summary"}:
-        return _status_result(evidence.payload)
-    if evidence_type in {"security.scan", "security_scan"}:
-        return _security_scan_result(evidence.payload)
-    if evidence_type in {"github.checks", "github.check_run"}:
-        return _github_checks_result(evidence.payload)
-    if evidence_type in {"health.probe", "production.health"}:
-        return _health_probe_result(evidence.payload)
+    evaluator = EVALUATORS.get(evidence_type)
+    if evaluator is not None:
+        return evaluator(evidence.payload)
     if evidence_type == "infra_lane.final":
         return _infra_lane_result(evidence)
     return ("judgment_required", None, f"{criterion.evidence_type} requires review")
@@ -149,6 +147,75 @@ def _infra_lane_result(evidence: Evidence) -> tuple[EvaluationStatus, str, str]:
     if status in {"failed", "cancelled", "canceled"}:
         return ("failed", "failed", f"infra lane status is {status}")
     return ("failed_closed", "failed", "infra lane final evidence is insufficient")
+
+
+def _deployment_observed_result(payload: dict[str, Any]) -> tuple[EvaluationStatus, str, str]:
+    binding_id = _string_value(payload.get("binding_id"))
+    release_digest = _string_value(payload.get("release_artifact_digest"))
+    observed_digest = _string_value(payload.get("observed_artifact_digest"))
+    if binding_id is None or release_digest is None or observed_digest is None:
+        return ("failed_closed", "failed", "deployment observation digest facts are missing")
+    if release_digest == observed_digest:
+        return ("passed", "passed", "observed digest matches release binding")
+    return ("failed", "failed", "observed digest does not match release binding")
+
+
+def _route_presence_result(payload: dict[str, Any]) -> tuple[EvaluationStatus, str, str]:
+    routes = payload.get("routes")
+    if not isinstance(routes, list) or not routes:
+        return ("failed_closed", "failed", "route presence summary is missing")
+    for route in routes:
+        if not isinstance(route, dict):
+            return ("failed_closed", "failed", "route presence payload is malformed")
+        path = route.get("path")
+        present = route.get("present")
+        if not isinstance(path, str) or not path.strip() or not isinstance(present, bool):
+            return ("failed_closed", "failed", "route presence payload is malformed")
+        if not present:
+            return ("failed", "failed", f"route {path} is missing")
+    return ("passed", "passed", "all required routes are present")
+
+
+def _auth_behavior_result(payload: dict[str, Any]) -> tuple[EvaluationStatus, str, str]:
+    missing_status = payload.get("missing_m2m_status")
+    configured_status = payload.get("configured_m2m_status")
+    if missing_status != 401:
+        if isinstance(missing_status, int):
+            return ("failed", "failed", f"missing M2M returned {missing_status}")
+        return ("failed_closed", "failed", "missing M2M status is missing")
+    if configured_status is not None and configured_status != 200:
+        if isinstance(configured_status, int):
+            return ("failed", "failed", f"configured M2M returned {configured_status}")
+        return ("failed_closed", "failed", "configured M2M status is malformed")
+    return ("passed", "passed", "M2M behavior matches expected posture")
+
+
+def _dispatch_posture_result(payload: dict[str, Any]) -> tuple[EvaluationStatus, str, str]:
+    dispatch_enabled = payload.get("dispatch_enabled")
+    if not isinstance(dispatch_enabled, bool):
+        return ("failed_closed", "failed", "dispatch posture is missing")
+    if dispatch_enabled:
+        return ("failed", "failed", "dispatch automation is enabled")
+    return ("passed", "passed", "dispatch automation is disabled")
+
+
+EVALUATORS = {
+    "test": _status_result,
+    "tests": _status_result,
+    "pytest": _status_result,
+    "runner.verification": _status_result,
+    "gate.summary": _status_result,
+    "security.scan": _security_scan_result,
+    "security_scan": _security_scan_result,
+    "github.checks": _github_checks_result,
+    "github.check_run": _github_checks_result,
+    "health.probe": _health_probe_result,
+    "production.health": _health_probe_result,
+    "release.deployment_observed": _deployment_observed_result,
+    "production.route_presence": _route_presence_result,
+    "production.auth_behavior": _auth_behavior_result,
+    "production.dispatch_posture": _dispatch_posture_result,
+}
 
 
 def _count_value(payload: dict[str, Any], *keys: str) -> int | None:

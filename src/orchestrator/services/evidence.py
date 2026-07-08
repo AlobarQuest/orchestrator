@@ -15,6 +15,7 @@ from orchestrator.persistence.models import (
     Adjudication,
     Claim,
     ContextSnapshot,
+    DeploymentObservation,
     Event,
     Evidence,
     WorkPackageRevision,
@@ -24,6 +25,15 @@ from orchestrator.services.lifecycle import ActorContext
 
 NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57503338
+POST_DEPLOY_AC_IDS = frozenset(
+    {
+        "post-deploy-artifact",
+        "post-deploy-health",
+        "post-deploy-routes",
+        "post-deploy-auth",
+        "post-deploy-dispatch",
+    }
+)
 
 
 def list_evidence(session: Session, work_unit_id: uuid.UUID) -> tuple[Evidence, ...]:
@@ -174,6 +184,7 @@ def record_adjudication(
     follow_up: str | None = None,
     scope: str | None = None,
     expires_at: datetime | None = None,
+    allow_generated_post_deploy: bool = False,
 ) -> Adjudication | DomainError:
     command = {
         "ac_id": ac_id,
@@ -193,7 +204,13 @@ def record_adjudication(
     }
     try:
         _lock_idempotency_key(session, idempotency_key)
-        unit, revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
+        unit, revision = _validated_subject(
+            session,
+            work_package_revision_id,
+            work_unit_id,
+            ac_id,
+            allow_generated_post_deploy=allow_generated_post_deploy,
+        )
         del revision
         replay = _adjudication_replay(session, idempotency_key, command)
         if replay is not None:
@@ -434,7 +451,13 @@ def _store_verifier_evidence(
     }
     try:
         _lock_idempotency_key(session, idempotency_key)
-        unit, _revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
+        unit, _revision = _validated_subject(
+            session,
+            work_package_revision_id,
+            work_unit_id,
+            ac_id,
+            allow_generated_post_deploy=True,
+        )
         replay = _evidence_replay(session, idempotency_key, command)
         if replay is not None:
             session.commit()
@@ -500,18 +523,29 @@ def _validated_subject(
     revision_id: uuid.UUID,
     unit_id: uuid.UUID,
     ac_id: str,
+    *,
+    allow_generated_post_deploy: bool = False,
 ) -> tuple[WorkUnit, WorkPackageRevision]:
     unit = session.scalar(select(WorkUnit).where(WorkUnit.id == unit_id).with_for_update())
     revision = session.get(WorkPackageRevision, revision_id)
     acceptance_criteria = (
         revision.enforcement_snapshot.get("acceptance_criteria") if revision is not None else None
     )
+    generated_post_deploy = _is_generated_post_deploy_subject(session, revision_id, unit_id, ac_id)
+    if generated_post_deploy and not allow_generated_post_deploy:
+        raise DomainError(
+            "post_deploy_verifier_required",
+            "post-deploy verification adjudications must be recorded by the verifier command",
+            "verify",
+        )
     if (
         unit is None
         or revision is None
         or unit.work_package_revision_id != revision_id
-        or not isinstance(acceptance_criteria, list)
-        or ac_id not in acceptance_criteria
+        or (
+            not generated_post_deploy
+            and (not isinstance(acceptance_criteria, list) or ac_id not in acceptance_criteria)
+        )
     ):
         raise DomainError(
             "evidence_subject_invalid",
@@ -519,6 +553,23 @@ def _validated_subject(
             None,
         )
     return unit, revision
+
+
+def _is_generated_post_deploy_subject(
+    session: Session,
+    revision_id: uuid.UUID,
+    unit_id: uuid.UUID,
+    ac_id: str,
+) -> bool:
+    if ac_id not in POST_DEPLOY_AC_IDS:
+        return False
+    observation = session.scalar(
+        select(DeploymentObservation).where(
+            DeploymentObservation.work_package_revision_id == revision_id,
+            DeploymentObservation.post_deploy_work_unit_id == unit_id,
+        )
+    )
+    return observation is not None
 
 
 def _validate_evidence_fields(
