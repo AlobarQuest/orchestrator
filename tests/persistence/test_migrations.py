@@ -320,6 +320,46 @@ def test_ws52_release_artifact_bindings_table_exists(migrated_engine) -> None:
     ) in unique_constraints
 
 
+def test_ws53_deployment_observations_table_exists(migrated_engine) -> None:
+    inspector = inspect(migrated_engine)
+
+    assert "deployment_observations" in inspector.get_table_names()
+    columns = {column["name"] for column in inspector.get_columns("deployment_observations")}
+    assert {
+        "id",
+        "release_artifact_binding_id",
+        "implementation_work_unit_id",
+        "work_package_revision_id",
+        "package_revision_hash",
+        "post_deploy_work_unit_id",
+        "environment",
+        "base_url",
+        "observed_artifact_digest",
+        "deployment_ref",
+        "deployment_url",
+        "deployer",
+        "observed_at",
+        "probe_summary",
+        "route_summary",
+        "auth_summary",
+        "dispatch_summary",
+        "status_summary",
+        "recorded_by",
+        "recorded_at",
+        "event_id",
+        "post_deploy_event_id",
+        "evidence_ids",
+        "idempotency_key",
+    } <= columns
+
+    unique_constraints = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("deployment_observations")
+    }
+    assert ("idempotency_key",) in unique_constraints
+    assert ("release_artifact_binding_id", "environment") in unique_constraints
+
+
 def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> None:
     package_id = register_test_revision(migrated_session).work_package_id
     migrated_session.commit()
