@@ -142,9 +142,20 @@ def test_no_workflow_dispatch_or_factory_runner_dispatch_code_exists() -> None:
     workflow_paths = [
         path for path in _workflow_sources() if path.name != "factory-runner-pilot.yml"
     ]
+    python_paths = [
+        path
+        for path in _python_sources()
+        if path
+        not in {
+            Path("src/orchestrator/services/dispatch.py"),
+            Path("src/orchestrator/api/routes.py"),
+            Path("src/orchestrator/api/schemas.py"),
+            Path("src/orchestrator/config.py"),
+        }
+    ]
     matches = [
         SourceMatch(path, value)
-        for path in [*_python_sources(), *workflow_paths]
+        for path in [*python_paths, *workflow_paths]
         for value in forbidden
         if value in _read_lower(path)
     ]

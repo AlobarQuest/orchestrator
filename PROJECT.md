@@ -115,3 +115,29 @@ Post-rollout smoke checks showed `/health/live` and `/health/ready` returning
 200, missing M2M auth returning 401, and the configured key ID plus BWS-backed
 bearer returning 200. Devon's merge gate remains permanent; no automatic merge
 behavior was added.
+
+## WS-4.2 dispatch-adapter verification
+
+Dispatch adapter implementation is complete locally on branch
+`codex/ws42-dispatch-adapter` and pending PR merge. It adds
+`dispatch_records`, `POST /api/v1/work-units/{unit_id}/dispatch`,
+disabled-by-default runtime dispatch settings, fail-closed admission, idempotent
+GitHub Actions `workflow_dispatch`, repeated-failure circuit breaking,
+conformance admission, human-gate age-out evidence, and dispatch outcome
+events.
+
+Runtime dispatch remains disabled unless explicitly configured through approved
+secret/config rollout. No production config was mutated during implementation.
+Devon's merge gate remains permanent; no worker or dispatcher may merge PRs.
+
+Verification at implementation closeout:
+
+- `SECURITY_STANDARDS_DIR=/Users/devon/Projects/security-standards make check`
+  passed with 698 tests.
+- Security scan reported `0 BLOCK`, `0 WARN`, and one judgment-only BWS
+  least-privilege INFO.
+- `cd /Users/devon/Projects/project-standards && uv run portfolio foundation`
+  reported `violations=0 accepted=0 unknown=0`.
+- Production `/health/live` and `/health/ready` returned 200.
+- Missing M2M auth returned 401.
+- Configured WS-4.1 M2M auth returned 200 without printing secret values.

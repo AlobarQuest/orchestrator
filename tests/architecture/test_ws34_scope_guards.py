@@ -26,9 +26,16 @@ def _imported_modules(path: Path) -> set[str]:
 
 def test_ws34_adds_no_factory_runner_or_workflow_dispatch_code() -> None:
     forbidden = ("workflow_dispatch", "factory_runner", "github.actions")
+    ws42_dispatch_paths = {
+        Path("src/orchestrator/services/dispatch.py"),
+        Path("src/orchestrator/api/routes.py"),
+        Path("src/orchestrator/api/schemas.py"),
+        Path("src/orchestrator/config.py"),
+    }
     matches = [
         f"{path}:{value}"
         for path in _source_files()
+        if path not in ws42_dispatch_paths
         for value in forbidden
         if value in path.read_text(encoding="utf-8").lower()
     ]
