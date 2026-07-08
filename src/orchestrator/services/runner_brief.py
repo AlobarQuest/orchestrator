@@ -109,12 +109,4 @@ def _criteria_for_unit(
             .order_by(PackageAcceptanceCriterion.ac_id)
         )
     )
-    if mapped:
-        return mapped
-    return tuple(
-        session.scalars(
-            select(PackageAcceptanceCriterion)
-            .where(PackageAcceptanceCriterion.work_package_revision_id == revision_id)
-            .order_by(PackageAcceptanceCriterion.ac_id)
-        )
-    )
+    return mapped

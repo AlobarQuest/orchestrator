@@ -232,6 +232,80 @@ def test_runner_brief_scopes_ac_mapping_to_active_approved_proposal(
     assert body["target"]["repository"] == "AlobarQuest/orchestrator"
 
 
+def test_runner_brief_returns_no_acceptance_criteria_for_unmapped_unit_in_approved_decomposition(
+    db_client: TestClient,
+) -> None:
+    revision_id = register_intake(
+        db_client,
+        package_id="pkg-runner-brief-empty-mapping",
+        content_hash="sha256:runner-brief-empty-mapping",
+        idempotency_key="package-intake-runner-brief-empty-mapping",
+    )
+    ac_ids = acceptance_criteria_by_key(db_client, revision_id)
+
+    approved = db_client.post(
+        f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        headers=WORKER,
+        json=proposal_payload(
+            revision_id,
+            ac_ids,
+            idempotency_key="proposal-runner-brief-empty-mapping",
+            proposed_units=[
+                {
+                    "unit_key": "unit-1",
+                    "title": "Implement service",
+                    "outcome": "Service persists proposals.",
+                    "required_capability": "repository_write",
+                    "authority": {
+                        "capabilities": {
+                            "repo.read": "allowed",
+                            "repo.edit": "allowed",
+                            "command.run": "allowed",
+                        },
+                        "budgets": {"max_attempts": 2, "max_llm_calls": 5},
+                        "constraints": {
+                            "target_repository": "AlobarQuest/orchestrator",
+                            "allowed_commands": ["make check"],
+                        },
+                    },
+                    "max_attempts": 2,
+                },
+                {
+                    "unit_key": "unit-2",
+                    "title": "Implement tests",
+                    "outcome": "Service is covered by focused tests.",
+                    "required_capability": "repository_write",
+                    "authority": AUTHORITY,
+                    "max_attempts": 3,
+                },
+            ],
+            ac_mappings=[{"ac_id": ac_ids["AC-001"], "unit_key": "unit-1"}],
+            retained_acs=[
+                {
+                    "ac_id": ac_ids["AC-002"],
+                    "rationale": "Leave AC-002 at package scope for the approved split.",
+                }
+            ],
+        ),
+    )
+    assert approved.status_code == 201
+    approved_decision = db_client.post(
+        f"/api/v1/decomposition-proposals/{approved.json()['id']}/approve",
+        headers=DECOMPOSITION_HUMAN,
+        json=decision_payload(
+            "proposal-runner-brief-empty-mapping-decision",
+            "Approve the active mapping.",
+        ),
+    )
+    assert approved_decision.status_code == 200
+    unit_id = approved_decision.json()["created_work_unit_ids"]["unit-2"]
+
+    response = db_client.get(f"/api/v1/work-units/{unit_id}/runner-brief", headers=WORKER)
+
+    assert response.status_code == 200
+    assert response.json()["acceptance_criteria"] == []
+
+
 def test_runner_brief_uses_read_only_readiness_evaluation(
     db_client: TestClient,
     monkeypatch,
