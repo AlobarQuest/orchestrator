@@ -13,6 +13,7 @@ from orchestrator.services.deployment_observations import (
     list_deployment_observations,
     record_deployment_observation,
 )
+from orchestrator.services.evidence import record_adjudication
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.release_artifacts import record_release_artifact
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
@@ -331,6 +332,149 @@ def test_generated_post_deploy_unit_verifies_through_ws51(migrated_session: Sess
         "post-deploy-routes",
     }
     assert all(evaluation.outcome == "passed" for evaluation in result.evaluations)
+
+
+def test_generated_post_deploy_unit_rejects_direct_public_adjudication(
+    migrated_session: Session,
+) -> None:
+    _unit, binding = release_binding(migrated_session, key="direct-adjudication")
+    observation = record_deployment_observation(
+        migrated_session,
+        observation_command(binding, key="direct-adjudication-observation"),
+    )
+    assert isinstance(observation, DeploymentObservation)
+
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=observation.work_package_revision_id,
+        work_unit_id=observation.post_deploy_work_unit_id,
+        ac_id="post-deploy-artifact",
+        outcome="passed",
+        actor=VERIFIER,
+        rationale="attempt to bypass verifier evaluation",
+        idempotency_key="direct-post-deploy-adjudication",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "post_deploy_verifier_required"
+
+
+def test_generated_post_deploy_unit_fails_closed_for_bad_route_fact(
+    migrated_session: Session,
+) -> None:
+    _unit, binding = release_binding(migrated_session, key="bad-route")
+    command = replace(
+        observation_command(binding, key="bad-route-observation"),
+        route_summary={"routes": [{"path": "/health/live", "present": False}]},
+    )
+    observation = record_deployment_observation(migrated_session, command)
+    assert isinstance(observation, DeploymentObservation)
+    generated = migrated_session.get(WorkUnit, observation.post_deploy_work_unit_id)
+    assert generated is not None
+
+    result = verify_work_unit(
+        migrated_session,
+        VerifyCommand(
+            unit_id=generated.id,
+            actor=VERIFIER,
+            expected_version=generated.version,
+            idempotency_key="verify-bad-route",
+        ),
+    )
+
+    assert result.result == "revision_required"
+    assert result.state is WorkUnitState.REVISION_REQUIRED
+    assert any(
+        evaluation.ac_id == "post-deploy-routes" and evaluation.outcome == "failed"
+        for evaluation in result.evaluations
+    )
+
+
+def test_generated_post_deploy_unit_fails_closed_for_dispatch_enabled(
+    migrated_session: Session,
+) -> None:
+    _unit, binding = release_binding(migrated_session, key="dispatch-enabled")
+    command = replace(
+        observation_command(binding, key="dispatch-enabled-observation"),
+        dispatch_summary={"dispatch_enabled": True},
+    )
+    observation = record_deployment_observation(migrated_session, command)
+    assert isinstance(observation, DeploymentObservation)
+    generated = migrated_session.get(WorkUnit, observation.post_deploy_work_unit_id)
+    assert generated is not None
+
+    result = verify_work_unit(
+        migrated_session,
+        VerifyCommand(
+            unit_id=generated.id,
+            actor=VERIFIER,
+            expected_version=generated.version,
+            idempotency_key="verify-dispatch-enabled",
+        ),
+    )
+
+    assert result.result == "revision_required"
+    assert result.state is WorkUnitState.REVISION_REQUIRED
+    assert any(
+        evaluation.ac_id == "post-deploy-dispatch" and evaluation.outcome == "failed"
+        for evaluation in result.evaluations
+    )
+
+
+def test_rejects_unbounded_raw_observation_fields(migrated_session: Session) -> None:
+    _unit, binding = release_binding(migrated_session, key="raw-fields")
+
+    raw_body = record_deployment_observation(
+        migrated_session,
+        replace(
+            observation_command(binding, key="raw-body"),
+            status_summary={"status": "observed", "response_body": "raw external body"},
+        ),
+    )
+    large_probe_list = record_deployment_observation(
+        migrated_session,
+        replace(
+            observation_command(binding, key="large-probe-list"),
+            probe_summary={
+                "probes": [
+                    {
+                        "endpoint": f"/health/{index}",
+                        "status_code": 200,
+                    }
+                    for index in range(11)
+                ]
+            },
+        ),
+    )
+
+    assert isinstance(raw_body, DomainError)
+    assert raw_body.code == "deployment_observation_secret_rejected"
+    assert isinstance(large_probe_list, DomainError)
+    assert large_probe_list.code == "deployment_observation_invalid"
+
+
+def test_canonicalizes_base_url_and_rejects_invalid_urls(migrated_session: Session) -> None:
+    _unit, binding = release_binding(migrated_session, key="url-validation")
+
+    observation = record_deployment_observation(
+        migrated_session,
+        replace(
+            observation_command(binding, key="canonical-url"),
+            base_url="https://SDS.ALOBAR.NET/",
+        ),
+    )
+    invalid = record_deployment_observation(
+        migrated_session,
+        replace(
+            observation_command(binding, key="invalid-url"),
+            deployment_url="https://",
+        ),
+    )
+
+    assert isinstance(observation, DeploymentObservation)
+    assert observation.base_url == BASE_URL
+    assert isinstance(invalid, DomainError)
+    assert invalid.code == "deployment_observation_invalid"
 
 
 def test_list_deployment_observations(migrated_session: Session) -> None:

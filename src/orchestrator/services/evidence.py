@@ -184,6 +184,7 @@ def record_adjudication(
     follow_up: str | None = None,
     scope: str | None = None,
     expires_at: datetime | None = None,
+    allow_generated_post_deploy: bool = False,
 ) -> Adjudication | DomainError:
     command = {
         "ac_id": ac_id,
@@ -203,7 +204,13 @@ def record_adjudication(
     }
     try:
         _lock_idempotency_key(session, idempotency_key)
-        unit, revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
+        unit, revision = _validated_subject(
+            session,
+            work_package_revision_id,
+            work_unit_id,
+            ac_id,
+            allow_generated_post_deploy=allow_generated_post_deploy,
+        )
         del revision
         replay = _adjudication_replay(session, idempotency_key, command)
         if replay is not None:
@@ -444,7 +451,13 @@ def _store_verifier_evidence(
     }
     try:
         _lock_idempotency_key(session, idempotency_key)
-        unit, _revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
+        unit, _revision = _validated_subject(
+            session,
+            work_package_revision_id,
+            work_unit_id,
+            ac_id,
+            allow_generated_post_deploy=True,
+        )
         replay = _evidence_replay(session, idempotency_key, command)
         if replay is not None:
             session.commit()
@@ -510,6 +523,8 @@ def _validated_subject(
     revision_id: uuid.UUID,
     unit_id: uuid.UUID,
     ac_id: str,
+    *,
+    allow_generated_post_deploy: bool = False,
 ) -> tuple[WorkUnit, WorkPackageRevision]:
     unit = session.scalar(select(WorkUnit).where(WorkUnit.id == unit_id).with_for_update())
     revision = session.get(WorkPackageRevision, revision_id)
@@ -517,6 +532,12 @@ def _validated_subject(
         revision.enforcement_snapshot.get("acceptance_criteria") if revision is not None else None
     )
     generated_post_deploy = _is_generated_post_deploy_subject(session, revision_id, unit_id, ac_id)
+    if generated_post_deploy and not allow_generated_post_deploy:
+        raise DomainError(
+            "post_deploy_verifier_required",
+            "post-deploy verification adjudications must be recorded by the verifier command",
+            "verify",
+        )
     if (
         unit is None
         or revision is None

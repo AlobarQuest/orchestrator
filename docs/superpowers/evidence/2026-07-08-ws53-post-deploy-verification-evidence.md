@@ -26,6 +26,7 @@ knowledge, or add secrets.
 - Implementation commits:
   - `8580162` (`feat: record deployment observations`)
   - `e06a9e4` (`feat: expose deployment observation API`)
+  - final review hardening commit on this branch
 
 ## Implementation Summary
 
@@ -55,6 +56,11 @@ knowledge, or add secrets.
 - Extended lifecycle/adjudication guards narrowly so generated post-deploy ACs
   satisfy completion only for the generated unit linked by a deployment
   observation.
+- Restricted generated post-deploy adjudications to the verifier command path so
+  public adjudication cannot bypass deterministic post-deploy evaluation.
+- Tightened observation normalization and validation for canonical HTTPS URLs,
+  bounded fact size, allowed fact keys, probe/route cardinality, and status-code
+  ranges.
 - Added event-publication mappings for:
   - `deployment.observed`
   - `post_deploy_verification.created`
@@ -68,7 +74,7 @@ knowledge, or add secrets.
   - ruff check passed;
   - ruff format check passed;
   - pyright reported `0 errors, 0 warnings, 0 informations`;
-  - pytest passed `753` tests.
+  - pytest passed `758` tests.
 - Security scanner:
   - command:
     `PYTHONPATH="$HOME/Projects/security-standards/src" .venv/bin/python -m security_scan.cli . --category security`

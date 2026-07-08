@@ -1,8 +1,10 @@
+import json
 import re
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
@@ -26,8 +28,23 @@ from orchestrator.services.release_artifacts import SHA256_DIGEST
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533533
 ENVIRONMENT = re.compile(r"^[a-z][a-z0-9_-]{1,62}$")
 BWS_TOKEN_SHAPE = re.compile(r"\b0\.[0-9a-fA-F-]{36}\.[A-Za-z0-9_=-]{8,}")
-SECRET_KEY_PARTS = ("authorization", "password", "secret", "token")
+SECRET_KEY_PARTS = (
+    "api_key",
+    "authorization",
+    "bearer",
+    "body",
+    "credential",
+    "instruction",
+    "log",
+    "password",
+    "response",
+    "secret",
+    "token",
+)
 MAX_FACT_STRING = 512
+MAX_FACT_BYTES = 4096
+MAX_PROBES = 10
+MAX_ROUTES = 30
 
 
 @dataclass(frozen=True)
@@ -97,6 +114,7 @@ def _record_deployment_observation(
     command: DeploymentObservationCommand,
 ) -> DeploymentObservation:
     _authorize_actor(command.actor)
+    command = _normalized_command(command)
     _validate_command_shape(command)
     payload = _command_payload(command)
     _lock_idempotency_key(session, command.idempotency_key)
@@ -428,6 +446,7 @@ def _validate_command_shape(command: DeploymentObservationCommand) -> None:
     _validate_auth_summary(command.auth_summary)
     _validate_dispatch_summary(command.dispatch_summary)
     _validate_status_summary(command.status_summary)
+    _validate_bounded_json_size(command)
 
 
 def _validate_command_envelope(command: DeploymentObservationCommand) -> None:
@@ -445,16 +464,6 @@ def _validate_command_envelope(command: DeploymentObservationCommand) -> None:
 def _validate_required_text_and_urls(command: DeploymentObservationCommand) -> None:
     if not ENVIRONMENT.fullmatch(command.environment):
         raise DomainError("deployment_observation_invalid", "environment is invalid", None)
-    for field, value in {
-        "base_url": command.base_url,
-        "deployment_url": command.deployment_url,
-    }.items():
-        if not value.startswith("https://") or not value.strip():
-            raise DomainError(
-                "deployment_observation_invalid",
-                f"{field} must be an https URL",
-                None,
-            )
     for field, value in {
         "deployment_ref": command.deployment_ref,
         "deployer": command.deployer,
@@ -479,23 +488,51 @@ def _validate_observed_at_and_digest(command: DeploymentObservationCommand) -> N
 
 
 def _validate_probe_summary(payload: dict[str, Any]) -> None:
+    _require_keys(payload, {"probes"}, "probe summary")
     probes = payload.get("probes")
-    if not isinstance(probes, list) or not probes:
+    if not isinstance(probes, list) or not probes or len(probes) > MAX_PROBES:
         raise DomainError("deployment_observation_invalid", "probe summary is missing", None)
     for probe in probes:
+        _require_keys(
+            probe if isinstance(probe, dict) else {},
+            {
+                "endpoint",
+                "expected_status_max",
+                "expected_status_min",
+                "method",
+                "name",
+                "observed_at",
+                "status_code",
+            },
+            "probe summary",
+        )
         if not isinstance(probe, dict):
             raise DomainError("deployment_observation_invalid", "probe summary is malformed", None)
         if not isinstance(probe.get("endpoint"), str) or not probe["endpoint"].strip():
             raise DomainError("deployment_observation_invalid", "probe endpoint is missing", None)
-        if not isinstance(probe.get("status_code"), int):
+        if not _valid_status_code(probe.get("status_code")):
             raise DomainError("deployment_observation_invalid", "probe status is missing", None)
+        if not _valid_status_code(probe.get("expected_status_min")) or not _valid_status_code(
+            probe.get("expected_status_max")
+        ):
+            raise DomainError(
+                "deployment_observation_invalid",
+                "probe status range is malformed",
+                None,
+            )
 
 
 def _validate_route_summary(payload: dict[str, Any]) -> None:
+    _require_keys(payload, {"routes"}, "route summary")
     routes = payload.get("routes")
-    if not isinstance(routes, list) or not routes:
+    if not isinstance(routes, list) or not routes or len(routes) > MAX_ROUTES:
         raise DomainError("deployment_observation_invalid", "route summary is missing", None)
     for route in routes:
+        _require_keys(
+            route if isinstance(route, dict) else {},
+            {"path", "present"},
+            "route summary",
+        )
         if (
             not isinstance(route, dict)
             or not isinstance(route.get("path"), str)
@@ -505,6 +542,11 @@ def _validate_route_summary(payload: dict[str, Any]) -> None:
 
 
 def _validate_auth_summary(payload: dict[str, Any]) -> None:
+    _require_keys(
+        payload,
+        {"configured_m2m_status", "missing_m2m_status"},
+        "auth summary",
+    )
     if payload.get("missing_m2m_status") != 401:
         raise DomainError(
             "deployment_observation_invalid",
@@ -512,18 +554,98 @@ def _validate_auth_summary(payload: dict[str, Any]) -> None:
             None,
         )
     configured = payload.get("configured_m2m_status")
-    if configured is not None and not isinstance(configured, int):
+    if configured is not None and not _valid_status_code(configured):
         raise DomainError("deployment_observation_invalid", "auth summary is malformed", None)
 
 
 def _validate_dispatch_summary(payload: dict[str, Any]) -> None:
+    _require_keys(payload, {"dispatch_enabled"}, "dispatch posture")
     if not isinstance(payload.get("dispatch_enabled"), bool):
         raise DomainError("deployment_observation_invalid", "dispatch posture is malformed", None)
 
 
 def _validate_status_summary(payload: dict[str, Any]) -> None:
+    _require_keys(payload, {"status", "summary"}, "status summary")
     if not isinstance(payload.get("status"), str) or not payload["status"].strip():
         raise DomainError("deployment_observation_invalid", "status summary is missing", None)
+
+
+def _require_keys(payload: dict[str, Any], allowed: set[str], label: str) -> None:
+    if not isinstance(payload, dict) or not set(payload).issubset(allowed):
+        raise DomainError(
+            "deployment_observation_invalid",
+            f"{label} contains unbounded fields",
+            None,
+        )
+
+
+def _valid_status_code(value: object) -> bool:
+    return isinstance(value, int) and 100 <= value <= 599
+
+
+def _validate_bounded_json_size(command: DeploymentObservationCommand) -> None:
+    payload = {
+        "probe_summary": command.probe_summary,
+        "route_summary": command.route_summary,
+        "auth_summary": command.auth_summary,
+        "dispatch_summary": command.dispatch_summary,
+        "status_summary": command.status_summary,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > MAX_FACT_BYTES:
+        raise DomainError(
+            "deployment_observation_invalid",
+            "deployment observation facts exceed bounded size",
+            None,
+        )
+
+
+def _normalized_command(command: DeploymentObservationCommand) -> DeploymentObservationCommand:
+    return replace(
+        command,
+        base_url=_canonical_base_url(command.base_url),
+        deployment_url=_canonical_https_url(command.deployment_url, "deployment_url"),
+    )
+
+
+def _canonical_base_url(value: str) -> str:
+    parsed = _https_parts(value, "base_url")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise DomainError(
+            "deployment_observation_invalid",
+            "base_url must be a canonical origin URL",
+            None,
+        )
+    return urlunsplit(("https", parsed.netloc.lower(), "", "", ""))
+
+
+def _canonical_https_url(value: str, field: str) -> str:
+    parsed = _https_parts(value, field)
+    return urlunsplit(
+        (
+            "https",
+            parsed.netloc.lower(),
+            parsed.path or "",
+            parsed.query,
+            parsed.fragment,
+        )
+    )
+
+
+def _https_parts(value: str, field: str):
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise DomainError(
+            "deployment_observation_invalid",
+            f"{field} must be an https URL with a host and no userinfo",
+            None,
+        )
+    return parsed
 
 
 def _same_observation_facts(

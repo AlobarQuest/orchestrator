@@ -359,6 +359,17 @@ def test_ws53_deployment_observations_table_exists(migrated_engine) -> None:
     assert ("idempotency_key",) in unique_constraints
     assert ("release_artifact_binding_id", "environment") in unique_constraints
 
+    foreign_keys = {
+        tuple(key["constrained_columns"]): key["referred_table"]
+        for key in inspector.get_foreign_keys("deployment_observations")
+    }
+    assert foreign_keys[("release_artifact_binding_id",)] == "release_artifact_bindings"
+    assert foreign_keys[("implementation_work_unit_id",)] == "work_units"
+    assert foreign_keys[("post_deploy_work_unit_id",)] == "work_units"
+    assert foreign_keys[("work_package_revision_id",)] == "work_package_revisions"
+    assert foreign_keys[("event_id",)] == "events"
+    assert foreign_keys[("post_deploy_event_id",)] == "events"
+
 
 def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> None:
     package_id = register_test_revision(migrated_session).work_package_id

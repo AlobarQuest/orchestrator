@@ -144,6 +144,7 @@ def _verify_criterion(
         idempotency_key=_child_key(command, "adjudication", criterion.ac_id),
         evidence_id=adjudication_evidence_id,
         failed_evidence_id=failed_evidence_id,
+        allow_generated_post_deploy=True,
     )
     if isinstance(adjudication, DomainError):
         raise adjudication
