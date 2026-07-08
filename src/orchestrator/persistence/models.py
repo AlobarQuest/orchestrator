@@ -474,6 +474,77 @@ class InfraLaneLink(UUIDPrimaryKey, Base):
     idempotency_key: Mapped[str] = mapped_column(String)
 
 
+class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
+    __tablename__ = "release_artifact_bindings"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        UniqueConstraint(
+            "work_package_revision_id",
+            "work_unit_id",
+            "source_repository",
+            "merge_commit",
+            "source_commit",
+            "artifact_registry",
+            "artifact_repository",
+            "artifact_name",
+            name="uq_release_artifact_source_tuple",
+        ),
+        CheckConstraint(
+            "implementation_pr_number IS NULL OR implementation_pr_number > 0",
+            name="ck_release_artifact_positive_pr",
+        ),
+        CheckConstraint(
+            "workflow_run_attempt IS NULL OR workflow_run_attempt > 0",
+            name="ck_release_artifact_positive_workflow_attempt",
+        ),
+        CheckConstraint(
+            "package_revision_hash <> '' AND source_repository <> '' "
+            "AND source_commit <> '' AND merge_commit <> '' "
+            "AND artifact_registry <> '' AND artifact_repository <> '' "
+            "AND artifact_name <> '' AND artifact_digest <> ''",
+            name="ck_release_artifact_required_text",
+        ),
+    )
+
+    work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
+    work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("work_package_revisions.id")
+    )
+    package_revision_hash: Mapped[str] = mapped_column(String)
+    source_repository: Mapped[str] = mapped_column(String)
+    implementation_pr_number: Mapped[int | None] = mapped_column(Integer)
+    source_commit: Mapped[str] = mapped_column(String)
+    merge_commit: Mapped[str] = mapped_column(String)
+    artifact_registry: Mapped[str] = mapped_column(String)
+    artifact_repository: Mapped[str] = mapped_column(String)
+    artifact_name: Mapped[str] = mapped_column(String)
+    artifact_digest: Mapped[str] = mapped_column(String)
+    artifact_tag: Mapped[str | None] = mapped_column(String)
+    workflow_run_id: Mapped[str | None] = mapped_column(String)
+    workflow_run_attempt: Mapped[int | None] = mapped_column(Integer)
+    workflow_path: Mapped[str | None] = mapped_column(Text)
+    workflow_ref: Mapped[str | None] = mapped_column(Text)
+    workflow_run_url: Mapped[str | None] = mapped_column(Text)
+    builder_id: Mapped[str | None] = mapped_column(String)
+    builder_class: Mapped[str | None] = mapped_column(String)
+    provenance_ref: Mapped[str | None] = mapped_column(Text)
+    provenance_digest: Mapped[str | None] = mapped_column(String)
+    sbom_ref: Mapped[str | None] = mapped_column(Text)
+    sbom_digest: Mapped[str | None] = mapped_column(String)
+    summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    recorded_by: Mapped[str] = mapped_column(String)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
+    evidence_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("evidence.id"))
+    idempotency_key: Mapped[str] = mapped_column(String)
+
+
 class EventPublication(UUIDPrimaryKey, Base):
     __tablename__ = "event_publications"
     __table_args__ = (

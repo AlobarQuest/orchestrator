@@ -108,6 +108,32 @@ class InfraLaneLinkCommandModel(CommandBase):
     payload: dict[str, Any] | None = None
 
 
+class ReleaseArtifactCommandModel(CommandBase):
+    package_revision_id: UUID
+    package_revision_hash: str = Field(min_length=1)
+    source_repository: str = Field(min_length=1)
+    implementation_pr_number: int | None = Field(default=None, gt=0)
+    source_commit: str = Field(min_length=1)
+    merge_commit: str = Field(min_length=1)
+    artifact_registry: str = Field(min_length=1)
+    artifact_repository: str = Field(min_length=1)
+    artifact_name: str = Field(min_length=1)
+    artifact_digest: str = Field(min_length=1)
+    artifact_tag: str | None = None
+    workflow_run_id: str | None = None
+    workflow_run_attempt: int | None = Field(default=None, gt=0)
+    workflow_path: str | None = None
+    workflow_ref: str | None = None
+    workflow_run_url: str | None = None
+    builder_id: str | None = None
+    builder_class: str | None = None
+    provenance_ref: str | None = None
+    provenance_digest: str | None = None
+    sbom_ref: str | None = None
+    sbom_digest: str | None = None
+    summary: dict[str, Any] | None = None
+
+
 class VerifyCommandModel(CommandBase):
     pass
 
@@ -351,6 +377,41 @@ class InfraLaneLinkResponse(BaseModel):
     recorded_by: str
     recorded_at: datetime
     event_id: UUID
+    idempotency_key: str
+
+
+class ReleaseArtifactResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_unit_id: UUID
+    work_package_revision_id: UUID
+    package_revision_hash: str
+    source_repository: str
+    implementation_pr_number: int | None
+    source_commit: str
+    merge_commit: str
+    artifact_registry: str
+    artifact_repository: str
+    artifact_name: str
+    artifact_digest: str
+    artifact_tag: str | None
+    workflow_run_id: str | None
+    workflow_run_attempt: int | None
+    workflow_path: str | None
+    workflow_ref: str | None
+    workflow_run_url: str | None
+    builder_id: str | None
+    builder_class: str | None
+    provenance_ref: str | None
+    provenance_digest: str | None
+    sbom_ref: str | None
+    sbom_digest: str | None
+    summary: dict[str, Any]
+    recorded_by: str
+    recorded_at: datetime
+    event_id: UUID
+    evidence_id: UUID
     idempotency_key: str
 
 

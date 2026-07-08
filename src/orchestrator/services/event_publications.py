@@ -20,6 +20,7 @@ from orchestrator.persistence.models import (
     Event,
     EventPublication,
     Evidence,
+    ReleaseArtifactBinding,
     WorkPackage,
     WorkPackageRevision,
     WorkUnit,
@@ -351,6 +352,8 @@ def _source_action(session: Session, source_kind: str, source_id: uuid.UUID) -> 
 def _factory_action(event: Event) -> str | None:
     if event.action == "evidence.recorded":
         return "orchestrator.evidence_recorded"
+    if event.action == "release_artifact.bound":
+        return "orchestrator.release_artifact_bound"
     if event.action == "work_unit.transitioned" and event.to_state == "submitted":
         return "orchestrator.work_unit_submitted"
     return None
@@ -379,25 +382,28 @@ def _source_context_for_event(session: Session, event: Event) -> _SourceContext:
 
 
 def _revision_for_event_subject(session: Session, event: Event) -> WorkPackageRevision | None:
-    if event.subject_type == "work_unit":
-        unit = session.get(WorkUnit, event.subject_id)
-        if unit is not None:
-            return session.get(WorkPackageRevision, unit.work_package_revision_id)
-    elif event.subject_type == "evidence":
-        evidence = session.get(Evidence, event.subject_id)
-        if evidence is not None:
-            return session.get(WorkPackageRevision, evidence.work_package_revision_id)
-    elif event.subject_type == "adjudication":
-        adjudication = session.get(Adjudication, event.subject_id)
-        if adjudication is not None:
-            return session.get(WorkPackageRevision, adjudication.work_package_revision_id)
-    elif event.subject_type == "context_snapshot":
-        snapshot = session.get(ContextSnapshot, event.subject_id)
-        if snapshot is not None:
-            return session.get(WorkPackageRevision, snapshot.work_package_revision_id)
-    elif event.subject_type == "work_package_revision":
+    if event.subject_type == "work_package_revision":
         return session.get(WorkPackageRevision, event.subject_id)
+    revision_id = _revision_id_for_event_subject(session, event)
+    if revision_id is not None:
+        return session.get(WorkPackageRevision, revision_id)
     return None
+
+
+def _revision_id_for_event_subject(session: Session, event: Event) -> uuid.UUID | None:
+    if event.subject_type == "work_unit":
+        row = session.get(WorkUnit, event.subject_id)
+    elif event.subject_type == "evidence":
+        row = session.get(Evidence, event.subject_id)
+    elif event.subject_type == "adjudication":
+        row = session.get(Adjudication, event.subject_id)
+    elif event.subject_type == "context_snapshot":
+        row = session.get(ContextSnapshot, event.subject_id)
+    elif event.subject_type == "release_artifact_binding":
+        row = session.get(ReleaseArtifactBinding, event.subject_id)
+    else:
+        row = None
+    return getattr(row, "work_package_revision_id", None)
 
 
 def _source_context_for_revision(
@@ -421,6 +427,8 @@ def _source_context_for_revision(
 def _mapped_actor(actor_id: str, fixture_or_historical: bool) -> str | None:
     if actor_id in _registered_actor_ids():
         return actor_id
+    if actor_id == "system":
+        return "unknown"
     if fixture_or_historical:
         return "unknown"
     return None

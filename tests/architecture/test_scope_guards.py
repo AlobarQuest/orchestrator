@@ -57,6 +57,7 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/work-units/{unit_id}/dispatch",
         "/api/v1/work-units/{unit_id}/verify",
         "/api/v1/work-units/{unit_id}/infra-lane-links",
+        "/api/v1/work-units/{unit_id}/release-artifacts",
         "/api/v1/work-units/{unit_id}/commands/{command}",
         "/api/v1/work-units/{unit_id}/approvals",
         "/api/v1/work-units/{unit_id}/adjudications",
