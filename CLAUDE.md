@@ -53,5 +53,8 @@ style of that module.
   The test fixtures intentionally drop and recreate the test database, so storing
   live orchestrator lifecycle state there will erase approved intake, decomposition,
   claims, and evidence during `make check`.
+- Generated post-deploy acceptance criteria are verifier-owned. Public
+  adjudication must reject generated post-deploy AC IDs, so post-deploy completion
+  always flows through the WS-5.1 verifier evaluators and lifecycle guards.
 
 <!-- code-standards:end -->
