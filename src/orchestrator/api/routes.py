@@ -56,6 +56,8 @@ from orchestrator.api.schemas import (
     TransitionResponse,
     UnitRegistration,
     UnitResponse,
+    VerifyCommandModel,
+    VerifyResponse,
 )
 from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
@@ -132,6 +134,7 @@ from orchestrator.services.packages import (
 )
 from orchestrator.services.runner_brief import runner_brief
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
+from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[ActorContext, Depends(get_actor)]
@@ -709,6 +712,24 @@ def command(
             lease_token=body.lease_token,
             standing_context=body.standing_context,
             context_snapshot_id=body.context_snapshot_id,
+        ),
+    )
+
+
+@router.post("/work-units/{unit_id}/verify", response_model=VerifyResponse)
+def verify(
+    unit_id: UUID,
+    body: VerifyCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return verify_work_unit(
+        session,
+        VerifyCommand(
+            unit_id=unit_id,
+            actor=actor,
+            expected_version=body.expected_version,
+            idempotency_key=body.idempotency_key,
         ),
     )
 

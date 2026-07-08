@@ -110,6 +110,35 @@ def supersede_evidence(
     )
 
 
+def append_verifier_evidence(
+    session: Session,
+    *,
+    work_package_revision_id: uuid.UUID,
+    work_unit_id: uuid.UUID,
+    ac_id: str,
+    actor: ActorContext,
+    evidence_type: str,
+    stable_ref: str | None,
+    payload: dict[str, Any] | None,
+    source_revision: str,
+    idempotency_key: str,
+    expected_version: int | None = None,
+) -> Evidence | DomainError:
+    return _store_verifier_evidence(
+        session,
+        work_package_revision_id=work_package_revision_id,
+        work_unit_id=work_unit_id,
+        ac_id=ac_id,
+        actor=actor,
+        evidence_type=evidence_type,
+        stable_ref=stable_ref,
+        payload=payload,
+        source_revision=source_revision,
+        idempotency_key=idempotency_key,
+        expected_version=expected_version,
+    )
+
+
 def current_evidence(
     session: Session,
     work_package_revision_id: uuid.UUID,
@@ -375,6 +404,97 @@ def _store_evidence(
         raise
 
 
+def _store_verifier_evidence(
+    session: Session,
+    *,
+    work_package_revision_id: uuid.UUID,
+    work_unit_id: uuid.UUID,
+    ac_id: str,
+    actor: ActorContext,
+    evidence_type: str,
+    stable_ref: str | None,
+    payload: dict[str, Any] | None,
+    source_revision: str,
+    idempotency_key: str,
+    expected_version: int | None,
+) -> Evidence | DomainError:
+    command = {
+        "ac_id": ac_id,
+        "actor_id": actor.actor_id,
+        "actor_role": actor.role,
+        "attempt": 1,
+        "evidence_type": evidence_type,
+        "expected_version": expected_version,
+        "payload": payload,
+        "source_revision": source_revision,
+        "stable_ref": stable_ref,
+        "context_snapshot_id": None,
+        "work_package_revision_id": str(work_package_revision_id),
+        "work_unit_id": str(work_unit_id),
+    }
+    try:
+        _lock_idempotency_key(session, idempotency_key)
+        unit, _revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
+        replay = _evidence_replay(session, idempotency_key, command)
+        if replay is not None:
+            session.commit()
+            return replay
+        if expected_version is not None and unit.version != expected_version:
+            raise DomainError(
+                "version_conflict",
+                "work unit version has changed",
+                "reload",
+                current_state=unit.state,
+                current_version=unit.version,
+            )
+        _authorize_verifier_evidence(actor)
+        _validate_evidence_fields(stable_ref, payload, evidence_type, source_revision)
+        previous = current_evidence(session, work_package_revision_id, work_unit_id, ac_id)
+        now = TransactionClock().now(session)
+        event_id = uuid.uuid4()
+        row = Evidence(
+            work_package_revision_id=work_package_revision_id,
+            work_unit_id=work_unit_id,
+            ac_id=ac_id,
+            attempt=1,
+            evidence_type=evidence_type,
+            stable_ref=stable_ref,
+            payload=payload,
+            source_revision=source_revision,
+            recorded_by=actor.actor_id,
+            recorded_at=now,
+            event_id=event_id,
+            idempotency_key=idempotency_key,
+            supersedes_evidence_id=previous.id if previous is not None else None,
+            context_snapshot_id=None,
+        )
+        session.add(row)
+        session.flush()
+        session.add(
+            _event(
+                event_id,
+                now,
+                actor,
+                "evidence.recorded",
+                "evidence",
+                row.id,
+                command,
+                idempotency_key,
+            )
+        )
+        session.commit()
+        return row
+    except DomainError as error:
+        session.rollback()
+        return error
+    except IntegrityError as error:
+        session.rollback()
+        return _evidence_race_result(session, idempotency_key, command, error)
+    except Exception:
+        session.rollback()
+        raise
+
+
 def _validated_subject(
     session: Session,
     revision_id: uuid.UUID,
@@ -501,6 +621,11 @@ def _authorize_outcome(actor: ActorContext, outcome: str) -> None:
         allowed = outcome in NON_WAIVER_OUTCOMES and actor.role is ActorRole.VERIFIER
     if not allowed:
         raise DomainError("role_forbidden", "actor may not record this outcome", None)
+
+
+def _authorize_verifier_evidence(actor: ActorContext) -> None:
+    if actor.role is not ActorRole.VERIFIER:
+        raise DomainError("role_forbidden", "only verifiers may record verifier evidence", None)
 
 
 def _validate_adjudication_fields(
