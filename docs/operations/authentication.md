@@ -43,6 +43,16 @@ When runtime secrets are provisioned, follow the portfolio BWS standard:
 - Add consumed UUIDs to `.bws-secrets.toml` in the same approved change.
 - Never log, render, or place secret values in command arguments or tracked files.
 
-No BWS secret is consumed by the current local fixture configuration. Assigning real
-credential UUIDs and configuring Alobar ID belongs to the separate approved
-`infrastructure-change` package for the development Coolify environment.
+No BWS secret is consumed by the current local fixture configuration.
+
+Production is deployed at `https://sds.alobar.net` behind Alobar ID forward-auth
+for the human review surface and M2M bearer credentials for API callers. The
+production human surface uses the Authentik application `Orchestrator`, slug
+`orchestrator`, provider mode `forward_single`, external host
+`https://sds.alobar.net`, and the `authentik Embedded Outpost`.
+
+Runner-facing durable credentials are not bootstrapped by the production deploy
+itself. WS-4.1 must create the GitHub-hosted-runner M2M credential through the
+BWS/Coolify-managed secret path, reference it without printing secret values, and
+configure clients to send both `X-Credential-Key-Id` and `Authorization: Bearer
+<token>` for authenticated API calls.
