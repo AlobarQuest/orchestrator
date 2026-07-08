@@ -260,6 +260,7 @@ def register_approved_unit(
     outcome: str,
     required_capability: str,
     authority: AuthorityEnvelope,
+    authority_payload: Mapping[str, Any] | None = None,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     approved_by: str,
     approved_at: datetime,
@@ -304,7 +305,9 @@ def register_approved_unit(
         "title": title,
         "outcome": outcome,
         "required_capability": required_capability,
-        "authority": authority.normalized(),
+        "authority": _normalize_json(
+            authority_payload if authority_payload is not None else authority.normalized()
+        ),
         "max_attempts": max_attempts,
         "approved_by": approved_by,
         "approved_at": approved_at.isoformat(),
@@ -332,6 +335,9 @@ def register_approved_unit(
         "title": title,
         "outcome": outcome,
         "required_capability": required_capability,
+        "authority": _normalize_json(
+            authority_payload if authority_payload is not None else authority.normalized()
+        ),
         "authority_fingerprint": authority_fingerprint(authority),
         "max_attempts": max_attempts,
         "decomposition_approved_by": approved_by,
@@ -356,6 +362,7 @@ def register_approved_unit(
         decomposition_approved_by=approved_by,
         decomposition_approved_at=approved_at,
         required_capability=required_capability,
+        authority=unit_candidate["authority"],
         authority_fingerprint=authority_fingerprint(authority),
         max_attempts=max_attempts,
     )

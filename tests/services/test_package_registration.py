@@ -9,7 +9,11 @@ from sqlalchemy import Engine, event, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
+from orchestrator.kernel.authority import (
+    AuthorityBudgets,
+    AuthorityEnvelope,
+    normalize_authority,
+)
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import WorkPackageRevision
 from orchestrator.services.packages import (
@@ -190,6 +194,82 @@ def test_approved_unit_registration_preserves_explicit_attempt_budget(
     )
 
     assert unit.max_attempts == 2
+
+
+def test_approved_unit_registration_idempotency_conflicts_when_raw_authority_differs(
+    migrated_session: Session,
+) -> None:
+    revision = register_test_revision(migrated_session)
+    raw_authority = {
+        "capabilities": {"repository_write": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {
+            "target_repository": "owner/repo-a",
+            "allowed_commands": ["make check"],
+        },
+    }
+    conflicting_raw_authority = {
+        "capabilities": {"repository_write": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {
+            "target_repository": "owner/repo-b",
+            "allowed_commands": ["make check"],
+        },
+    }
+
+    assert normalize_authority(raw_authority) == normalize_authority(conflicting_raw_authority)
+
+    first = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="unit-raw-authority",
+        title="Respect raw authority",
+        outcome="Replay identity includes raw authority.",
+        required_capability="repository_write",
+        authority=normalize_authority(raw_authority),
+        authority_payload=raw_authority,
+        approved_by="human-1",
+        approved_at=NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        idempotency_key="unit-raw-authority",
+    )
+    replay = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="unit-raw-authority",
+        title="Respect raw authority",
+        outcome="Replay identity includes raw authority.",
+        required_capability="repository_write",
+        authority=normalize_authority(raw_authority),
+        authority_payload=raw_authority,
+        approved_by="human-1",
+        approved_at=NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        idempotency_key="unit-raw-authority",
+    )
+
+    assert replay.id == first.id
+
+    with pytest.raises(DomainError) as error:
+        register_approved_unit(
+            migrated_session,
+            revision_id=revision.id,
+            unit_key="unit-raw-authority",
+            title="Respect raw authority",
+            outcome="Replay identity includes raw authority.",
+            required_capability="repository_write",
+            authority=normalize_authority(conflicting_raw_authority),
+            authority_payload=conflicting_raw_authority,
+            approved_by="human-1",
+            approved_at=NOW,
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+            idempotency_key="unit-raw-authority",
+        )
+
+    assert error.value.code == "idempotency_conflict"
 
 
 def test_authority_approval_idempotency_binds_expected_version(

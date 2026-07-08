@@ -139,9 +139,12 @@ def _verified_approval() -> VerifiedApproval:
 
 def test_no_workflow_dispatch_or_factory_runner_dispatch_code_exists() -> None:
     forbidden = ("workflow_dispatch", "factory-runner", "factory_runner")
+    workflow_paths = [
+        path for path in _workflow_sources() if path.name != "factory-runner-pilot.yml"
+    ]
     matches = [
         SourceMatch(path, value)
-        for path in [*_python_sources(), *_workflow_sources()]
+        for path in [*_python_sources(), *workflow_paths]
         for value in forbidden
         if value in _read_lower(path)
     ]

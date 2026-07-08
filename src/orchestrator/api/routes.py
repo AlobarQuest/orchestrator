@@ -47,6 +47,7 @@ from orchestrator.api.schemas import (
     RetryCommand,
     RevisionRegistration,
     RevisionResponse,
+    RunnerBriefResponse,
     StatusLedgerRowResponse,
     TransitionResponse,
     UnitRegistration,
@@ -113,6 +114,7 @@ from orchestrator.services.packages import (
     register_revision,
     resolve_dependency_command,
 )
+from orchestrator.services.runner_brief import runner_brief
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -242,6 +244,7 @@ def create_unit(
         revision_id=revision_id,
         **body.model_dump(exclude={"authority"}),
         authority=normalize_authority(body.authority),
+        authority_payload=body.authority,
         actor_id=actor.actor_id,
         actor_role=actor.role,
     )
@@ -394,6 +397,15 @@ def readiness(
             for reason in result.reasons
         ],
     }
+
+
+@router.get("/work-units/{unit_id}/runner-brief", response_model=RunnerBriefResponse)
+def runner_brief_route(
+    unit_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return runner_brief(session, unit_id)
 
 
 @router.get("/status-ledger", response_model=list[StatusLedgerRowResponse])
@@ -821,9 +833,9 @@ def _proposal_payloads(
         .where(DecompositionProposalUnit.proposal_id.in_(proposal_ids))
         .order_by(DecompositionProposalUnit.proposal_id, DecompositionProposalUnit.unit_key)
     ):
-        units_by_proposal[unit.proposal_id].append(
-            DecompositionProposalUnitResponse.model_validate(unit).model_dump(mode="json")
-        )
+        payload = DecompositionProposalUnitResponse.model_validate(unit).model_dump(mode="json")
+        payload["authority"] = normalize_authority(unit.authority).normalized()
+        units_by_proposal[unit.proposal_id].append(payload)
     for dependency in session.scalars(
         select(DecompositionProposalDependency)
         .where(DecompositionProposalDependency.proposal_id.in_(proposal_ids))
@@ -921,5 +933,6 @@ def _proposed_unit(command: ProposedUnitCommand) -> ProposedUnit:
         outcome=command.outcome,
         required_capability=command.required_capability,
         authority=normalize_authority(command.authority),
+        authority_payload=command.authority,
         max_attempts=command.max_attempts,
     )

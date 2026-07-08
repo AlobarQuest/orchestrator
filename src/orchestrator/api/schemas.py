@@ -148,6 +148,50 @@ class ReadinessResponse(BaseModel):
     reasons: list[ReadinessReasonResponse]
 
 
+class RunnerBriefWorkUnitResponse(BaseModel):
+    id: UUID
+    state: str
+    version: int
+    title: str
+    outcome: str
+    required_capability: str
+    max_attempts: int
+
+
+class RunnerBriefPackageResponse(BaseModel):
+    id: str
+    revision_id: UUID
+    revision: int
+    content_hash: str
+    source_repository: str
+    source_path: str
+    source_commit: str
+
+
+class RunnerBriefAuthorityResponse(BaseModel):
+    fingerprint: str
+    envelope: dict[str, Any]
+
+
+class RunnerBriefReadinessResponse(BaseModel):
+    status: str
+    reasons: list[ReadinessReasonResponse]
+
+
+class RunnerBriefTargetResponse(BaseModel):
+    repository: str
+
+
+class RunnerBriefResponse(BaseModel):
+    work_unit: RunnerBriefWorkUnitResponse
+    package: RunnerBriefPackageResponse
+    authority: RunnerBriefAuthorityResponse
+    acceptance_criteria: list["PackageAcceptanceCriterionResponse"]
+    readiness: RunnerBriefReadinessResponse
+    target: RunnerBriefTargetResponse
+    standing_context: dict[str, Any]
+
+
 class LeaseResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

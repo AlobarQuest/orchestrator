@@ -1,0 +1,25 @@
+name: Factory Runner Pilot
+
+on:
+  workflow_dispatch:
+    inputs:
+      work_unit_id:
+        description: Approved orchestrator work-unit ID
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+  checks: read
+
+jobs:
+  factory-runner:
+    uses: AlobarQuest/factory-runner/.github/workflows/factory-runner.yml@main
+    with:
+      work_unit_id: ${{ inputs.work_unit_id }}
+      orchestrator_url: https://sds.alobar.net
+    secrets:
+      FACTORY_RUNNER_TOKEN: ${{ secrets.FACTORY_RUNNER_TOKEN }}
+      FACTORY_RUNNER_CREDENTIAL_KEY_ID: ${{ secrets.FACTORY_RUNNER_CREDENTIAL_KEY_ID }}

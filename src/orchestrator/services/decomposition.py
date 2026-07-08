@@ -52,6 +52,7 @@ class ProposedUnit:
     outcome: str
     required_capability: str
     authority: AuthorityEnvelope
+    authority_payload: Mapping[str, Any] | None = None
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
 
 
@@ -149,7 +150,7 @@ def submit_decomposition_proposal(
                 title=unit.title,
                 outcome=unit.outcome,
                 required_capability=unit.required_capability,
-                authority=unit.authority.normalized(),
+                authority=_authority_payload(unit),
                 authority_fingerprint=authority_fingerprint(unit.authority),
                 max_attempts=unit.max_attempts,
             )
@@ -298,6 +299,7 @@ def approve_decomposition_proposal(
             outcome=proposal_unit.outcome,
             required_capability=proposal_unit.required_capability,
             authority=normalize_authority(proposal_unit.authority),
+            authority_payload=proposal_unit.authority,
             max_attempts=proposal_unit.max_attempts,
             approved_by=actor.actor_id,
             approved_at=decided_at,
@@ -663,7 +665,7 @@ def _command_identity(
                 "title": unit.title,
                 "outcome": unit.outcome,
                 "required_capability": unit.required_capability,
-                "authority": unit.authority.normalized(),
+                "authority": _authority_payload(unit),
                 "max_attempts": unit.max_attempts,
             }
             for unit in command.proposed_units
@@ -709,6 +711,13 @@ def _dependency_identity(dependency: ProposedDependency) -> dict[str, Any]:
         "target_unit_key": dependency.target_unit_key,
         "external_ref": dependency.external_ref,
     }
+
+
+def _authority_payload(unit: ProposedUnit) -> dict[str, Any]:
+    payload = unit.authority_payload
+    if payload is None:
+        return unit.authority.normalized()
+    return {key: payload[key] for key in sorted(payload)}
 
 
 def _decide_decomposition_proposal(

@@ -51,8 +51,10 @@ production human surface uses the Authentik application `Orchestrator`, slug
 `orchestrator`, provider mode `forward_single`, external host
 `https://sds.alobar.net`, and the `authentik Embedded Outpost`.
 
-Runner-facing durable credentials are not bootstrapped by the production deploy
-itself. WS-4.1 must create the GitHub-hosted-runner M2M credential through the
-BWS/Coolify-managed secret path, reference it without printing secret values, and
-configure clients to send both `X-Credential-Key-Id` and `Authorization: Bearer
-<token>` for authenticated API calls.
+The WS-4.1 runner-facing durable credential uses credential key ID
+`factory-runner-github` and BWS secret UUID
+`d2a4c0fc-128b-4bf5-8e25-b481010e1be0`. Production stores only the credential
+hash in `ORCHESTRATOR_M2M_CREDENTIALS`; GitHub Actions receives the raw bearer
+token through repository secrets. Runner clients must send both
+`X-Credential-Key-Id` and `Authorization: Bearer <token>` for authenticated API
+calls.

@@ -306,6 +306,86 @@ def test_decomposition_proposal_list_rejects_non_intaken_revision(
     assert listed.json()["error"]["code"] == "package_intake_not_found"
 
 
+def test_decomposition_proposal_idempotency_conflicts_on_raw_authority_change(
+    db_client: TestClient,
+) -> None:
+    revision_id = register_intake(
+        db_client,
+        package_id="pkg-proposal-raw-authority",
+        content_hash="sha256:proposal-raw-authority",
+        idempotency_key="package-intake-proposal-raw-authority",
+    )
+    ac_ids = acceptance_criteria_by_key(db_client, revision_id)
+    raw_authority = {
+        "capabilities": {"repository_write": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {
+            "target_repository": "owner/repo-a",
+            "allowed_commands": ["make check"],
+        },
+    }
+    conflicting_raw_authority = {
+        "capabilities": {"repository_write": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {
+            "target_repository": "owner/repo-b",
+            "allowed_commands": ["make check"],
+        },
+    }
+    body = proposal_payload(
+        revision_id,
+        ac_ids,
+        idempotency_key="proposal-raw-authority",
+        proposed_units=[
+            {
+                "unit_key": "unit-1",
+                "title": "Implement service",
+                "outcome": "Service persists proposals.",
+                "required_capability": "repository_write",
+                "authority": raw_authority,
+                "max_attempts": 3,
+            },
+            {
+                "unit_key": "unit-2",
+                "title": "Implement tests",
+                "outcome": "Service is covered by focused tests.",
+                "required_capability": "repository_write",
+                "authority": AUTHORITY,
+                "max_attempts": 3,
+            },
+        ],
+    )
+
+    first = db_client.post(
+        f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        headers=WORKER,
+        json=body,
+    )
+    replay = db_client.post(
+        f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        headers=WORKER,
+        json=body,
+    )
+    assert first.status_code == replay.status_code == 201
+    assert first.json() == replay.json()
+    proposed_units = cast(list[dict[str, object]], body["proposed_units"])
+
+    conflicting = db_client.post(
+        f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        headers=WORKER,
+        json={
+            **body,
+            "proposed_units": [
+                {**proposed_units[0], "authority": conflicting_raw_authority},
+                proposed_units[1],
+            ],
+        },
+    )
+
+    assert conflicting.status_code == 409
+    assert conflicting.json()["error"]["code"] == "idempotency_conflict"
+
+
 def test_decomposition_decision_routes_update_state_and_approval_creates_drafts(
     db_client: TestClient,
     migrated_engine: Engine,

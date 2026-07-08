@@ -152,6 +152,7 @@ class WorkUnit(UUIDPrimaryKey, Base):
     decomposition_approved_by: Mapped[str | None] = mapped_column(String)
     decomposition_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     required_capability: Mapped[str] = mapped_column(String)
+    authority: Mapped[dict[str, Any]] = mapped_column(JSONB)
     authority_fingerprint: Mapped[str] = mapped_column(String)
     authority_approval_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
