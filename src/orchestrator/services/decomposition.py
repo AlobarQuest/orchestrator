@@ -665,7 +665,7 @@ def _command_identity(
                 "title": unit.title,
                 "outcome": unit.outcome,
                 "required_capability": unit.required_capability,
-                "authority": unit.authority.normalized(),
+                "authority": _authority_payload(unit),
                 "max_attempts": unit.max_attempts,
             }
             for unit in command.proposed_units

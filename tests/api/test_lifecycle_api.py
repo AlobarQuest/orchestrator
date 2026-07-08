@@ -415,3 +415,81 @@ def test_missing_unit_reads_return_404(db_client: TestClient) -> None:
         response = db_client.get(f"/api/v1/work-units/{missing}/{suffix}", headers=HUMAN)
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "work_unit_not_found"
+
+
+def test_work_unit_registration_idempotency_conflicts_on_raw_authority_change(
+    db_client: TestClient,
+) -> None:
+    revision = db_client.post(
+        "/api/v1/revisions",
+        headers=HUMAN,
+        json={
+            "idempotency_key": "revision-raw-authority",
+            "expected_version": 0,
+            "package_id": "pkg-raw-authority",
+            "source_repository": "owner/repo",
+            "revision": 1,
+            "content_hash": "sha256:raw-authority",
+            "source_path": "intent.md",
+            "source_commit": "abc123",
+            "approved_by": "devon",
+            "approved_at": datetime(2026, 7, 5, tzinfo=UTC).isoformat(),
+            "approval_event_id": str(uuid.uuid4()),
+            "enforcement_snapshot": {"acceptance_criteria": ["ac-1"]},
+            "authority": AUTHORITY,
+            "registry_version": 1,
+        },
+    )
+    assert revision.status_code == 201
+    revision_id = revision.json()["id"]
+
+    raw_authority = {
+        "capabilities": {"repository_write": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {
+            "target_repository": "owner/repo-a",
+            "allowed_commands": ["make check"],
+        },
+    }
+    conflicting_raw_authority = {
+        "capabilities": {"repository_write": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {
+            "target_repository": "owner/repo-b",
+            "allowed_commands": ["make check"],
+        },
+    }
+    unit_body = {
+        "idempotency_key": "unit-raw-authority",
+        "expected_version": 0,
+        "unit_key": "unit-raw-authority",
+        "title": "Raw authority unit",
+        "outcome": "Registration identity includes raw authority.",
+        "required_capability": "repository_write",
+        "authority": raw_authority,
+        "max_attempts": 3,
+        "approved_by": "devon",
+        "approved_at": datetime(2026, 7, 5, tzinfo=UTC).isoformat(),
+    }
+
+    first = db_client.post(
+        f"/api/v1/revisions/{revision_id}/work-units",
+        headers=HUMAN,
+        json=unit_body,
+    )
+    replay = db_client.post(
+        f"/api/v1/revisions/{revision_id}/work-units",
+        headers=HUMAN,
+        json=unit_body,
+    )
+    assert first.status_code == replay.status_code == 201
+    assert first.json() == replay.json()
+
+    conflicting = db_client.post(
+        f"/api/v1/revisions/{revision_id}/work-units",
+        headers=HUMAN,
+        json={**unit_body, "authority": conflicting_raw_authority},
+    )
+
+    assert conflicting.status_code == 409
+    assert conflicting.json()["error"]["code"] == "idempotency_conflict"

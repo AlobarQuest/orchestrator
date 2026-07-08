@@ -305,7 +305,9 @@ def register_approved_unit(
         "title": title,
         "outcome": outcome,
         "required_capability": required_capability,
-        "authority": authority.normalized(),
+        "authority": _normalize_json(
+            authority_payload if authority_payload is not None else authority.normalized()
+        ),
         "max_attempts": max_attempts,
         "approved_by": approved_by,
         "approved_at": approved_at.isoformat(),

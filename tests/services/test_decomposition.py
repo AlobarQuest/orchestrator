@@ -251,6 +251,89 @@ def test_proposal_idempotency_conflict_rejected(migrated_session: Session) -> No
     assert error.value.code == "idempotency_conflict"
 
 
+def test_proposal_idempotency_conflicts_when_raw_unit_authority_differs(
+    migrated_session: Session,
+) -> None:
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    raw_authority = {
+        "capabilities": {"repository_write": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {
+            "target_repository": "owner/repo-a",
+            "allowed_commands": ["make check"],
+        },
+    }
+    conflicting_raw_authority = {
+        "capabilities": {"repository_write": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {
+            "target_repository": "owner/repo-b",
+            "allowed_commands": ["make check"],
+        },
+    }
+    command = proposal_command(
+        revision.id,
+        ac_ids,
+        proposed_units=(
+            ProposedUnit(
+                unit_key="unit-1",
+                title="Implement service",
+                outcome="Service persists proposals.",
+                required_capability="repository_write",
+                authority=normalize_authority(raw_authority),
+                authority_payload=raw_authority,
+                max_attempts=3,
+            ),
+            ProposedUnit(
+                unit_key="unit-2",
+                title="Implement tests",
+                outcome="Service is covered by focused tests.",
+                required_capability="repository_write",
+                authority=AUTHORITY,
+            ),
+        ),
+        idempotency_key="proposal-raw-authority",
+    )
+
+    first = submit_decomposition_proposal(migrated_session, command, worker_actor())
+    replay = submit_decomposition_proposal(migrated_session, command, worker_actor())
+
+    assert normalize_authority(raw_authority) == normalize_authority(conflicting_raw_authority)
+    assert replay.id == first.id
+
+    with pytest.raises(DomainError) as error:
+        submit_decomposition_proposal(
+            migrated_session,
+            proposal_command(
+                revision.id,
+                ac_ids,
+                proposed_units=(
+                    ProposedUnit(
+                        unit_key="unit-1",
+                        title="Implement service",
+                        outcome="Service persists proposals.",
+                        required_capability="repository_write",
+                        authority=normalize_authority(conflicting_raw_authority),
+                        authority_payload=conflicting_raw_authority,
+                        max_attempts=3,
+                    ),
+                    ProposedUnit(
+                        unit_key="unit-2",
+                        title="Implement tests",
+                        outcome="Service is covered by focused tests.",
+                        required_capability="repository_write",
+                        authority=AUTHORITY,
+                    ),
+                ),
+                idempotency_key="proposal-raw-authority",
+            ),
+            worker_actor(),
+        )
+
+    assert error.value.code == "idempotency_conflict"
+
+
 def test_proposal_rejects_unknown_ac_mapping(migrated_session: Session) -> None:
     revision = register_intaken_revision(migrated_session)
     ac_ids = package_ac_ids(migrated_session, revision.id)
