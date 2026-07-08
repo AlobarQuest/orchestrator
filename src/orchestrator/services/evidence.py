@@ -15,6 +15,7 @@ from orchestrator.persistence.models import (
     Adjudication,
     Claim,
     ContextSnapshot,
+    DeploymentObservation,
     Event,
     Evidence,
     WorkPackageRevision,
@@ -24,6 +25,15 @@ from orchestrator.services.lifecycle import ActorContext
 
 NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57503338
+POST_DEPLOY_AC_IDS = frozenset(
+    {
+        "post-deploy-artifact",
+        "post-deploy-health",
+        "post-deploy-routes",
+        "post-deploy-auth",
+        "post-deploy-dispatch",
+    }
+)
 
 
 def list_evidence(session: Session, work_unit_id: uuid.UUID) -> tuple[Evidence, ...]:
@@ -506,12 +516,15 @@ def _validated_subject(
     acceptance_criteria = (
         revision.enforcement_snapshot.get("acceptance_criteria") if revision is not None else None
     )
+    generated_post_deploy = _is_generated_post_deploy_subject(session, revision_id, unit_id, ac_id)
     if (
         unit is None
         or revision is None
         or unit.work_package_revision_id != revision_id
-        or not isinstance(acceptance_criteria, list)
-        or ac_id not in acceptance_criteria
+        or (
+            not generated_post_deploy
+            and (not isinstance(acceptance_criteria, list) or ac_id not in acceptance_criteria)
+        )
     ):
         raise DomainError(
             "evidence_subject_invalid",
@@ -519,6 +532,23 @@ def _validated_subject(
             None,
         )
     return unit, revision
+
+
+def _is_generated_post_deploy_subject(
+    session: Session,
+    revision_id: uuid.UUID,
+    unit_id: uuid.UUID,
+    ac_id: str,
+) -> bool:
+    if ac_id not in POST_DEPLOY_AC_IDS:
+        return False
+    observation = session.scalar(
+        select(DeploymentObservation).where(
+            DeploymentObservation.work_package_revision_id == revision_id,
+            DeploymentObservation.post_deploy_work_unit_id == unit_id,
+        )
+    )
+    return observation is not None
 
 
 def _validate_evidence_fields(

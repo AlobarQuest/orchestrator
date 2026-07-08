@@ -19,10 +19,19 @@ from orchestrator.persistence.models import (
     ApprovedDecomposition,
     Claim,
     DecompositionProposalAcMapping,
+    DeploymentObservation,
     Event,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
+)
+
+POST_DEPLOY_AC_IDS = (
+    "post-deploy-artifact",
+    "post-deploy-auth",
+    "post-deploy-dispatch",
+    "post-deploy-health",
+    "post-deploy-routes",
 )
 
 
@@ -345,6 +354,9 @@ def _required_ac_ids(
     revision: WorkPackageRevision,
     unit: WorkUnit,
 ) -> tuple[str, ...] | None:
+    if _is_generated_post_deploy_unit(session, revision, unit):
+        return POST_DEPLOY_AC_IDS
+
     has_approved_decomposition = (
         session.execute(
             select(ApprovedDecomposition.id)
@@ -380,6 +392,20 @@ def _required_ac_ids(
     if has_approved_decomposition:
         return mapped_ac_ids
     return _package_required_ac_ids(revision.enforcement_snapshot)
+
+
+def _is_generated_post_deploy_unit(
+    session: Session,
+    revision: WorkPackageRevision,
+    unit: WorkUnit,
+) -> bool:
+    observation = session.scalar(
+        select(DeploymentObservation.id).where(
+            DeploymentObservation.work_package_revision_id == revision.id,
+            DeploymentObservation.post_deploy_work_unit_id == unit.id,
+        )
+    )
+    return observation is not None
 
 
 def _package_required_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[str, ...] | None:

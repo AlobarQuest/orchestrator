@@ -545,6 +545,78 @@ class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
     idempotency_key: Mapped[str] = mapped_column(String)
 
 
+class DeploymentObservation(UUIDPrimaryKey, Base):
+    __tablename__ = "deployment_observations"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        UniqueConstraint(
+            "release_artifact_binding_id",
+            "environment",
+            name="uq_deployment_observation_binding_environment",
+        ),
+        CheckConstraint(
+            "package_revision_hash <> '' AND environment <> '' AND base_url <> '' "
+            "AND observed_artifact_digest <> '' AND deployment_ref <> '' "
+            "AND deployment_url <> '' AND deployer <> ''",
+            name="ck_deployment_observations_required_text",
+        ),
+    )
+
+    release_artifact_binding_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("release_artifact_bindings.id")
+    )
+    implementation_work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
+    work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("work_package_revisions.id")
+    )
+    package_revision_hash: Mapped[str] = mapped_column(String)
+    post_deploy_work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
+    environment: Mapped[str] = mapped_column(String)
+    base_url: Mapped[str] = mapped_column(Text)
+    observed_artifact_digest: Mapped[str] = mapped_column(String)
+    deployment_ref: Mapped[str] = mapped_column(Text)
+    deployment_url: Mapped[str] = mapped_column(Text)
+    deployer: Mapped[str] = mapped_column(String)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    probe_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    route_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    auth_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    dispatch_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    status_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    recorded_by: Mapped[str] = mapped_column(String)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
+    post_deploy_event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
+    evidence_ids: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    idempotency_key: Mapped[str] = mapped_column(String)
+
+
 class EventPublication(UUIDPrimaryKey, Base):
     __tablename__ = "event_publications"
     __table_args__ = (
