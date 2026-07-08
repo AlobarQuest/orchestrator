@@ -5,7 +5,7 @@ status: active
 purpose: Canonical work-unit lifecycle control plane for the software factory.
 version: 0.1.0
 version_source: pyproject
-updated: '2026-07-07'
+updated: '2026-07-08'
 foundation: true
 foundation_contract: 1
 applicable_standards:
@@ -94,3 +94,24 @@ passed with a valid `orchestrator.sql.gz` dump. The durable GitHub-runner M2M
 credential was not created in this infra-mutation session; that belongs to
 WS-4.1 factory-runner credential rollout through BWS/Coolify-managed secret
 references.
+
+## WS-4.1 factory-runner verification
+
+Factory-runner is merged and pilot-ready. `AlobarQuest/factory-runner` PR #1
+merged at local merge commit `f0e796f`; `AlobarQuest/orchestrator` PR #16 merged
+at local merge commit `03cce5c`. The orchestrator pilot workflow is present but
+has not been dispatched.
+
+The durable GitHub-hosted runner M2M credential is active through
+BWS/GitHub/Coolify-managed references only. The credential key ID is
+`factory-runner-github`; the BWS secret UUID is
+`d2a4c0fc-128b-4bf5-8e25-b481010e1be0`; production stores only the token hash in
+`ORCHESTRATOR_M2M_CREDENTIALS`.
+
+Production was redeployed with
+`ghcr.io/alobarquest/orchestrator:656fcef-ws41-registry`, including the
+`factory-runner` registry actor from `security-standards` commit `972c64a`.
+Post-rollout smoke checks showed `/health/live` and `/health/ready` returning
+200, missing M2M auth returning 401, and the configured key ID plus BWS-backed
+bearer returning 200. Devon's merge gate remains permanent; no automatic merge
+behavior was added.
