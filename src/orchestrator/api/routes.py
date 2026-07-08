@@ -47,6 +47,8 @@ from orchestrator.api.schemas import (
     ProposedUnitCommand,
     ReadinessResponse,
     ReclaimCommand,
+    ReleaseArtifactCommandModel,
+    ReleaseArtifactResponse,
     RenewCommand,
     RetryCommand,
     RevisionRegistration,
@@ -131,6 +133,11 @@ from orchestrator.services.packages import (
     register_dependency_command,
     register_revision,
     resolve_dependency_command,
+)
+from orchestrator.services.release_artifacts import (
+    ReleaseArtifactCommand,
+    list_release_artifacts,
+    record_release_artifact,
 )
 from orchestrator.services.runner_brief import runner_brief
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
@@ -508,6 +515,65 @@ def infra_lane_links(
     session: SessionDep,
 ) -> object:
     return _raise_error(list_infra_lane_links(session, unit_id))
+
+
+@router.post(
+    "/work-units/{unit_id}/release-artifacts",
+    response_model=ReleaseArtifactResponse,
+    status_code=201,
+)
+def create_release_artifact(
+    unit_id: UUID,
+    body: ReleaseArtifactCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        record_release_artifact(
+            session,
+            ReleaseArtifactCommand(
+                work_unit_id=unit_id,
+                actor=actor,
+                package_revision_id=body.package_revision_id,
+                package_revision_hash=body.package_revision_hash,
+                source_repository=body.source_repository,
+                implementation_pr_number=body.implementation_pr_number,
+                source_commit=body.source_commit,
+                merge_commit=body.merge_commit,
+                artifact_registry=body.artifact_registry,
+                artifact_repository=body.artifact_repository,
+                artifact_name=body.artifact_name,
+                artifact_digest=body.artifact_digest,
+                artifact_tag=body.artifact_tag,
+                workflow_run_id=body.workflow_run_id,
+                workflow_run_attempt=body.workflow_run_attempt,
+                workflow_path=body.workflow_path,
+                workflow_ref=body.workflow_ref,
+                workflow_run_url=body.workflow_run_url,
+                builder_id=body.builder_id,
+                builder_class=body.builder_class,
+                provenance_ref=body.provenance_ref,
+                provenance_digest=body.provenance_digest,
+                sbom_ref=body.sbom_ref,
+                sbom_digest=body.sbom_digest,
+                summary=body.summary,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+            ),
+        )
+    )
+
+
+@router.get(
+    "/work-units/{unit_id}/release-artifacts",
+    response_model=list[ReleaseArtifactResponse],
+)
+def release_artifacts(
+    unit_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(list_release_artifacts(session, unit_id))
 
 
 @router.get("/status-ledger", response_model=list[StatusLedgerRowResponse])

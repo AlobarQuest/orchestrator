@@ -265,6 +265,61 @@ def test_ws44_infra_lane_links_table_exists(migrated_engine) -> None:
     assert ("idempotency_key",) in unique_constraints
 
 
+def test_ws52_release_artifact_bindings_table_exists(migrated_engine) -> None:
+    inspector = inspect(migrated_engine)
+
+    assert "release_artifact_bindings" in inspector.get_table_names()
+    columns = {column["name"] for column in inspector.get_columns("release_artifact_bindings")}
+    assert {
+        "id",
+        "work_unit_id",
+        "work_package_revision_id",
+        "package_revision_hash",
+        "source_repository",
+        "implementation_pr_number",
+        "source_commit",
+        "merge_commit",
+        "artifact_registry",
+        "artifact_repository",
+        "artifact_name",
+        "artifact_digest",
+        "artifact_tag",
+        "workflow_run_id",
+        "workflow_run_attempt",
+        "workflow_path",
+        "workflow_ref",
+        "workflow_run_url",
+        "builder_id",
+        "builder_class",
+        "provenance_ref",
+        "provenance_digest",
+        "sbom_ref",
+        "sbom_digest",
+        "summary",
+        "recorded_by",
+        "recorded_at",
+        "event_id",
+        "evidence_id",
+        "idempotency_key",
+    } <= columns
+
+    unique_constraints = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("release_artifact_bindings")
+    }
+    assert ("idempotency_key",) in unique_constraints
+    assert (
+        "work_package_revision_id",
+        "work_unit_id",
+        "source_repository",
+        "merge_commit",
+        "source_commit",
+        "artifact_registry",
+        "artifact_repository",
+        "artifact_name",
+    ) in unique_constraints
+
+
 def test_ws32_package_cli_intake_requires_verified_mode(migrated_session) -> None:
     package_id = register_test_revision(migrated_session).work_package_id
     migrated_session.commit()

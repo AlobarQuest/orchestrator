@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.orm import Session
 
+from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
     Adjudication,
@@ -28,6 +29,9 @@ from orchestrator.services.event_publications import (
 )
 from orchestrator.services.evidence import append_evidence
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.release_artifacts import record_release_artifact
+from tests.services.test_release_artifacts import command as release_command
+from tests.services.test_release_artifacts import completed_unit
 
 
 def registered_worker() -> ActorContext:
@@ -151,6 +155,35 @@ def test_maps_evidence_row_to_valid_factory_event(
     }
     assert result.factory_event["action"] == "orchestrator.evidence_recorded"
     assert result.factory_event["target"] == f"evidence:{evidence.id}"
+
+
+def test_maps_release_artifact_event_to_valid_factory_event(
+    migrated_session: Session,
+) -> None:
+    unit = completed_unit(migrated_session, key="publication-release")
+    binding = record_release_artifact(
+        migrated_session,
+        release_command(unit, key="publication-release-binding"),
+    )
+    assert not isinstance(binding, DomainError)
+    event = migrated_session.get(Event, binding.event_id)
+    assert event is not None
+
+    result = map_source_fact(migrated_session, "event", event.id)
+
+    assert result.status == "pending"
+    assert result.reason is None
+    assert result.factory_event is not None
+    factory_event = result.factory_event
+    assert factory_event["schema"] == "factory-event/v1"
+    assert factory_event["actor"] == "unknown"
+    assert factory_event["action"] == "orchestrator.release_artifact_bound"
+    assert factory_event["result"] == "success"
+    assert factory_event["target"] == f"release_artifact_binding:{binding.id}"
+    assert factory_event["work_package"] == "pkg-publication-release"
+    assert factory_event["input_revision"] == "revision:1@sha256:sha256:release-package"
+    assert factory_event["evidence"][0]["record"]["local_action"] == "release_artifact.bound"
+    assert factory_event["evidence"][0]["record"]["raw_actor_id"] == "system"
 
 
 def test_maps_adjudication_and_context_rows_to_valid_factory_events(
