@@ -30,8 +30,10 @@ from orchestrator.services.event_publications import (
 )
 from orchestrator.services.evidence import append_evidence
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.observations import record_observation
 from orchestrator.services.release_artifacts import record_release_artifact
 from tests.services.test_deployment_observations import observation_command
+from tests.services.test_observations import command as general_observation_command
 from tests.services.test_release_artifacts import command as release_command
 from tests.services.test_release_artifacts import completed_unit
 
@@ -228,6 +230,42 @@ def test_maps_deployment_observation_events_to_valid_factory_events(
     assert "never-map-this" not in encoded
     assert observed.factory_event["evidence"][0]["record"]["local_action"] == "deployment.observed"
     assert observed.factory_event["evidence"][0]["record"]["raw_actor_id"] == "system"
+
+
+def test_maps_observation_recorded_event_to_valid_factory_event(
+    migrated_session: Session,
+) -> None:
+    observation = record_observation(
+        migrated_session,
+        general_observation_command(key="publication-observation"),
+    )
+    assert not isinstance(observation, DomainError)
+    event = migrated_session.get(Event, observation.event_id)
+    assert event is not None
+    event.payload["raw_external_output"] = "Authorization: Bearer never-map-this"
+    migrated_session.commit()
+
+    result = map_source_fact(migrated_session, "event", event.id)
+
+    assert result.status == "pending"
+    assert result.reason is None
+    assert result.factory_event is not None
+    factory_event = result.factory_event
+    assert factory_event["schema"] == "factory-event/v1"
+    assert factory_event["actor"] == "unknown"
+    assert factory_event["action"] == "orchestrator.observation_recorded"
+    assert factory_event["result"] == "success"
+    assert factory_event["target"] == f"observation:{observation.id}"
+    assert factory_event["source"] == {
+        "system": "orchestrator",
+        "ref": f"orchestrator:event:{event.id}",
+    }
+    encoded = json.dumps(factory_event)
+    assert "never-map-this" not in encoded
+    assert factory_event["evidence"][0]["record"]["local_action"] == "observation.recorded"
+    assert factory_event["evidence"][0]["record"]["raw_actor_id"] == "system"
+    assert factory_event["evidence"][0]["record"]["observation_type"] == "github_check"
+    assert factory_event["evidence"][0]["record"]["normalized_fact_hash"].startswith("sha256:")
 
 
 def test_maps_adjudication_and_context_rows_to_valid_factory_events(

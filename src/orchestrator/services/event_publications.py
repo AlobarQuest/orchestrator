@@ -21,6 +21,7 @@ from orchestrator.persistence.models import (
     Event,
     EventPublication,
     Evidence,
+    Observation,
     ReleaseArtifactBinding,
     WorkPackage,
     WorkPackageRevision,
@@ -359,6 +360,8 @@ def _factory_action(event: Event) -> str | None:
         return "orchestrator.deployment_observed"
     if event.action == "post_deploy_verification.created":
         return "orchestrator.post_deploy_verification_created"
+    if event.action == "observation.recorded":
+        return "orchestrator.observation_recorded"
     if event.action == "work_unit.transitioned" and event.to_state == "submitted":
         return "orchestrator.work_unit_submitted"
     return None
@@ -408,6 +411,8 @@ def _revision_id_for_event_subject(session: Session, event: Event) -> uuid.UUID 
         row = session.get(ReleaseArtifactBinding, event.subject_id)
     elif event.subject_type == "deployment_observation":
         row = session.get(DeploymentObservation, event.subject_id)
+    elif event.subject_type == "observation":
+        row = session.get(Observation, event.subject_id)
     else:
         row = None
     return getattr(row, "work_package_revision_id", None)
@@ -478,18 +483,37 @@ def _source_ref(source_kind: str, source_id: uuid.UUID) -> str:
 
 
 def _mapping_evidence(event: Event) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "source_kind": "event",
+        "source_id": str(event.id),
+        "local_action": event.action,
+        "subject_type": event.subject_type,
+        "subject_id": str(event.subject_id),
+        "from_state": event.from_state,
+        "to_state": event.to_state,
+        "raw_actor_id": event.actor_id,
+    }
+    if event.action == "observation.recorded":
+        command = event.payload.get("command") if isinstance(event.payload, dict) else None
+        if isinstance(command, dict):
+            for key in (
+                "source_system",
+                "source_reference",
+                "trust_classification",
+                "subject_type",
+                "subject_reference",
+                "environment",
+                "observation_type",
+                "status",
+                "severity",
+                "observed_at",
+                "normalized_fact_hash",
+                "payload_digest",
+            ):
+                record[key] = command.get(key)
     return {
         "kind": "orchestrator_mapping_source",
-        "record": {
-            "source_kind": "event",
-            "source_id": str(event.id),
-            "local_action": event.action,
-            "subject_type": event.subject_type,
-            "subject_id": str(event.subject_id),
-            "from_state": event.from_state,
-            "to_state": event.to_state,
-            "raw_actor_id": event.actor_id,
-        },
+        "record": record,
     }
 
 

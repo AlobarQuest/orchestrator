@@ -1,5 +1,6 @@
 from collections import defaultdict
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID
@@ -42,6 +43,8 @@ from orchestrator.api.schemas import (
     InfraLaneLinkResponse,
     LeaseResponse,
     LifecycleCommand,
+    ObservationCommandModel,
+    ObservationResponse,
     PackageAcceptanceCriterionResponse,
     PackageIntakeRegistration,
     PackageIntakeResponse,
@@ -127,6 +130,12 @@ from orchestrator.services.lifecycle import (
     transition_unit,
     unit_history,
 )
+from orchestrator.services.observations import (
+    ObservationCommand,
+    ObservationFilters,
+    list_observations,
+    record_observation,
+)
 from orchestrator.services.package_intake import (
     AcceptanceCriterionProjection,
     PackageIntakeCommand,
@@ -193,6 +202,15 @@ def _require_zero_expected_version(value: int, operation: str) -> None:
             "reload",
             current_version=0,
         )
+
+
+def _parse_datetime_filter(value: str | None, field: str) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise DomainError("observation_invalid", f"{field} is invalid", None) from error
 
 
 @router.post("/revisions", response_model=RevisionResponse, status_code=201)
@@ -629,6 +647,66 @@ def deployment_observations(
     session: SessionDep,
 ) -> object:
     return _raise_error(list_deployment_observations(session, binding_id))
+
+
+@router.post("/observations", response_model=ObservationResponse, status_code=201)
+def create_observation(
+    body: ObservationCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        record_observation(
+            session,
+            ObservationCommand(
+                actor=actor,
+                source_system=body.source_system,
+                source_reference=body.source_reference,
+                source_url=body.source_url,
+                trust_classification=body.trust_classification,
+                subject_type=body.subject_type,
+                subject_reference=body.subject_reference,
+                environment=body.environment,
+                observation_type=body.observation_type,
+                status=body.status,
+                severity=body.severity,
+                observed_at=body.observed_at,
+                summary=body.summary,
+                facts=body.facts,
+                payload_digest=body.payload_digest,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+            ),
+        )
+    )
+
+
+@router.get("/observations", response_model=list[ObservationResponse])
+def observations(
+    _actor: ActorDep,
+    session: SessionDep,
+    source_system: str | None = None,
+    subject_type: str | None = None,
+    subject_reference: str | None = None,
+    observation_type: str | None = None,
+    environment: str | None = None,
+    observed_from: str | None = None,
+    observed_to: str | None = None,
+) -> object:
+    return _raise_error(
+        list_observations(
+            session,
+            ObservationFilters(
+                source_system=source_system,
+                subject_type=subject_type,
+                subject_reference=subject_reference,
+                observation_type=observation_type,
+                environment=environment,
+                observed_from=_parse_datetime_filter(observed_from, "observed_from"),
+                observed_to=_parse_datetime_filter(observed_to, "observed_to"),
+            ),
+        )
+    )
 
 
 @router.get("/status-ledger", response_model=list[StatusLedgerRowResponse])

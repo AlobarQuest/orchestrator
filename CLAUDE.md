@@ -40,6 +40,9 @@ style of that module.
 
 ## Known Non-obvious Invariants
 
+- On this machine, repo-local agent instructions live in `CLAUDE.md`. Treat
+  `AGENTS.md` references from generic agent tooling as equivalent to checking
+  `CLAUDE.md` unless a repo explicitly provides both files.
 - Generic authority approvals satisfy work-unit readiness only. Authority-expanding
   standing-context updates require a named human approval bound to the exact
   standing-context fingerprint.

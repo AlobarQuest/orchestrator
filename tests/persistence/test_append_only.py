@@ -68,6 +68,26 @@ from tests.services.test_package_registration import register_test_revision
                 "idempotency_key": "event-1",
             },
         ),
+        (
+            "observations",
+            {
+                "source_system": "github",
+                "source_reference": "github:AlobarQuest/orchestrator:check:123",
+                "trust_classification": "delivery_system",
+                "subject_type": "repo",
+                "subject_reference": "AlobarQuest/orchestrator",
+                "observation_type": "github_check",
+                "status": "passed",
+                "severity": "info",
+                "observed_at": datetime.now(UTC),
+                "summary": "GitHub check passed",
+                "facts": '{"check_suite_id":"123","conclusion":"success"}',
+                "normalized_fact_hash": "sha256:" + "1" * 64,
+                "recorded_by": "system",
+                "event_id": uuid.uuid4(),
+                "idempotency_key": "observation-1",
+            },
+        ),
     ],
 )
 def test_append_only_tables_reject_update_and_delete(
@@ -77,7 +97,8 @@ def test_append_only_tables_reject_update_and_delete(
     package_id = uuid.uuid4()
     revision_id = uuid.uuid4()
     unit_id = uuid.uuid4()
-    if table != "events":
+    lifecycle_scoped_tables = {"evidence", "adjudications"}
+    if table not in {"events", "observations"}:
         migrated_session.execute(
             text(
                 "INSERT INTO work_packages (id, package_id, source_repository) "
@@ -119,9 +140,25 @@ def test_append_only_tables_reject_update_and_delete(
             )
         else:
             values["work_package_id"] = package_id
-        if table != "work_package_revisions":
+        if table in lifecycle_scoped_tables:
             values["work_package_revision_id"] = revision_id
             values["work_unit_id"] = unit_id
+    if table == "observations":
+        event_id = values["event_id"]
+        migrated_session.execute(
+            text(
+                "INSERT INTO events "
+                "(id, actor_id, action, subject_type, subject_id, payload, "
+                "correlation_id, idempotency_key) VALUES "
+                "(:id, 'system', 'observation.recorded', 'observation', :subject_id, "
+                "'{}', :correlation_id, 'observation-event-1')"
+            ),
+            {
+                "id": event_id,
+                "subject_id": uuid.uuid4(),
+                "correlation_id": uuid.uuid4(),
+            },
+        )
 
     columns = ", ".join(("id", *values))
     parameters = ", ".join((":id", *(f":{name}" for name in values)))
