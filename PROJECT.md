@@ -82,7 +82,7 @@ infrastructure-only session through the change-manager/infraops lane.
 
 `infra-mutation` is complete in the local `orchestrator_runtime` database at
 version 11. Production Coolify app `orchestrator` serves `https://sds.alobar.net`;
-Alembic is at `0006_approval_event_id_text`; health checks pass; the human
+Alembic is at `0007_work_unit_authority`; health checks pass; the human
 surface is protected by Alobar ID forward-auth; M2M auth rejects missing/invalid
 credentials and accepted only the configured bootstrap smoke credential during
 verification. The bootstrap smoke token was deleted after the test.
@@ -108,8 +108,8 @@ BWS/GitHub/Coolify-managed references only. The credential key ID is
 `d2a4c0fc-128b-4bf5-8e25-b481010e1be0`; production stores only the token hash in
 `ORCHESTRATOR_M2M_CREDENTIALS`.
 
-Production was redeployed with
-`ghcr.io/alobarquest/orchestrator:656fcef-ws41-registry`, including the
+Production was repaired after WS-4.1 closeout with
+`ghcr.io/alobarquest/orchestrator:03cce5c-ws41-closeout`, including the
 `factory-runner` registry actor from `security-standards` commit `972c64a`.
 Post-rollout smoke checks showed `/health/live` and `/health/ready` returning
 200, missing M2M auth returning 401, and the configured key ID plus BWS-backed
