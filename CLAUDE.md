@@ -56,5 +56,10 @@ style of that module.
 - Generated post-deploy acceptance criteria are verifier-owned. Public
   adjudication must reject generated post-deploy AC IDs, so post-deploy completion
   always flows through the WS-5.1 verifier evaluators and lifecycle guards.
+- Production Coolify images must be amd64 or multi-arch. Local Apple Silicon
+  Docker builds produce arm64 images by default; use `docker buildx build
+  --platform linux/amd64 --push` or a multi-arch build for `sds.alobar.net`, and
+  verify the running container image/digest after Coolify reports deployment
+  finished.
 
 <!-- code-standards:end -->
