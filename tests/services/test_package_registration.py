@@ -12,6 +12,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import (
     AuthorityBudgets,
     AuthorityEnvelope,
+    authority_fingerprint,
     normalize_authority,
 )
 from orchestrator.kernel.states import ActorRole
@@ -217,7 +218,10 @@ def test_approved_unit_registration_idempotency_conflicts_when_raw_authority_dif
         },
     }
 
-    assert normalize_authority(raw_authority) == normalize_authority(conflicting_raw_authority)
+    # Constraint values are covered by the authority fingerprint, so these two envelopes
+    # are no longer normalization-identical. Raw-payload replay identity is still what
+    # catches differences the fingerprint cannot see — see the unknown-field test below.
+    assert normalize_authority(raw_authority) != normalize_authority(conflicting_raw_authority)
 
     first = register_approved_unit(
         migrated_session,
@@ -267,6 +271,63 @@ def test_approved_unit_registration_idempotency_conflicts_when_raw_authority_dif
             actor_id="human-1",
             actor_role=ActorRole.HUMAN,
             idempotency_key="unit-raw-authority",
+        )
+
+    assert error.value.code == "idempotency_conflict"
+
+
+def test_approved_unit_registration_conflicts_when_unknown_field_values_differ(
+    migrated_session: Session,
+) -> None:
+    """Raw-payload replay identity guards what the fingerprint cannot see.
+
+    Normalization records unknown fields by *name* only, so two envelopes whose unknown
+    field values differ share a fingerprint. The stored raw payload must still make them
+    conflict, otherwise an approved fingerprint would cover an envelope nobody approved.
+    """
+    revision = register_test_revision(migrated_session)
+    raw_authority = {
+        "capabilities": {"repository_write": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "future_field": "original",
+    }
+    conflicting_raw_authority = {**raw_authority, "future_field": "tampered"}
+
+    assert authority_fingerprint(normalize_authority(raw_authority)) == authority_fingerprint(
+        normalize_authority(conflicting_raw_authority)
+    )
+
+    register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="unit-unknown-field",
+        title="Respect raw authority",
+        outcome="Replay identity includes unknown field values.",
+        required_capability="repository_write",
+        authority=normalize_authority(raw_authority),
+        authority_payload=raw_authority,
+        approved_by="human-1",
+        approved_at=NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        idempotency_key="unit-unknown-field",
+    )
+
+    with pytest.raises(DomainError) as error:
+        register_approved_unit(
+            migrated_session,
+            revision_id=revision.id,
+            unit_key="unit-unknown-field",
+            title="Respect raw authority",
+            outcome="Replay identity includes unknown field values.",
+            required_capability="repository_write",
+            authority=normalize_authority(conflicting_raw_authority),
+            authority_payload=conflicting_raw_authority,
+            approved_by="human-1",
+            approved_at=NOW,
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+            idempotency_key="unit-unknown-field",
         )
 
     assert error.value.code == "idempotency_conflict"

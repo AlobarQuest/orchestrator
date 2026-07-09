@@ -143,6 +143,11 @@ def submit_decomposition_proposal(
     session.flush()
 
     for unit in proposed_units:
+        # The runner refuses an envelope that does not name its own work unit, and the
+        # author cannot know the UUID. It is derivable here because _proposal_unit_id is
+        # deterministic in the now-flushed proposal id, so stamping at proposal time keeps
+        # the approved envelope identical to the one the runner will be served.
+        stamped = _stamped_authority_payload(unit, _proposal_unit_id(proposal.id, unit.unit_key))
         session.add(
             DecompositionProposalUnit(
                 proposal_id=proposal.id,
@@ -150,8 +155,8 @@ def submit_decomposition_proposal(
                 title=unit.title,
                 outcome=unit.outcome,
                 required_capability=unit.required_capability,
-                authority=_authority_payload(unit),
-                authority_fingerprint=authority_fingerprint(unit.authority),
+                authority=stamped,
+                authority_fingerprint=authority_fingerprint(normalize_authority(stamped)),
                 max_attempts=unit.max_attempts,
             )
         )
@@ -475,9 +480,65 @@ def _validated_units(proposed_units: Sequence[ProposedUnit]) -> tuple[ProposedUn
                 "proposed unit keys must be unique",
                 None,
             )
+        _validate_unit_constraints(unit)
         observed_keys.add(unit.unit_key)
         normalized_units.append(unit)
     return tuple(normalized_units)
+
+
+def _validate_unit_constraints(unit: ProposedUnit) -> None:
+    payload = _authority_payload(unit)
+    constraints = payload.get("constraints", {})
+    if not isinstance(constraints, Mapping):
+        raise DomainError(
+            "authority_constraints_invalid",
+            "proposed unit authority constraints must be a mapping",
+            None,
+        )
+    if "work_unit_id" in constraints:
+        raise DomainError(
+            "authority_work_unit_id_forbidden",
+            "constraints.work_unit_id is assigned by the orchestrator at proposal time",
+            "omit constraints.work_unit_id from the proposed authority envelope",
+        )
+    # normalized() emits an explicit conformance=None for envelopes that omit it, so an
+    # absent claim and a null claim are the same thing: nothing to validate, and dispatch
+    # will fail closed on conformance_missing.
+    conformance = payload.get("conformance")
+    if conformance is not None:
+        _validate_unit_conformance(conformance)
+
+
+def _validate_unit_conformance(conformance: Any) -> None:
+    """Conformance attests the unit's own target repository, so it must be shaped before it
+    is fingerprinted — an unparseable claim would otherwise be approved as an unknown field."""
+    if not isinstance(conformance, Mapping):
+        raise DomainError(
+            "authority_conformance_invalid",
+            "proposed unit authority conformance must be a mapping",
+            None,
+        )
+    missing = {"status", "standards_touched", "accepted_standards"} - set(conformance)
+    if missing:
+        raise DomainError(
+            "authority_conformance_invalid",
+            f"conformance is missing required keys: {', '.join(sorted(missing))}",
+            None,
+        )
+    if not isinstance(conformance["status"], str) or not conformance["status"]:
+        raise DomainError(
+            "authority_conformance_invalid",
+            "conformance.status must be a non-empty string",
+            None,
+        )
+    for name in ("standards_touched", "accepted_standards"):
+        value = conformance[name]
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise DomainError(
+                "authority_conformance_invalid",
+                f"conformance.{name} must be a list of strings",
+                None,
+            )
 
 
 def _validated_ac_mappings(
@@ -718,6 +779,14 @@ def _authority_payload(unit: ProposedUnit) -> dict[str, Any]:
     if payload is None:
         return unit.authority.normalized()
     return {key: payload[key] for key in sorted(payload)}
+
+
+def _stamped_authority_payload(unit: ProposedUnit, unit_id: uuid.UUID) -> dict[str, Any]:
+    payload = _authority_payload(unit)
+    constraints = dict(payload.get("constraints", {}))
+    constraints["work_unit_id"] = str(unit_id)
+    stamped = {**payload, "constraints": dict(sorted(constraints.items()))}
+    return {key: stamped[key] for key in sorted(stamped)}
 
 
 def _decide_decomposition_proposal(

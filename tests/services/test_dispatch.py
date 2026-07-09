@@ -22,10 +22,34 @@ from orchestrator.services.packages import (
     register_revision,
 )
 
-AUTHORITY = AuthorityEnvelope(
-    capabilities={"repository_write": "allowed"},
-    budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
-)
+PILOT_REPOSITORY = "AlobarQuest/orchestrator"
+GREEN_CONFORMANCE: dict[str, object] = {
+    "status": "green",
+    "accepted_standards": [],
+    "standards_touched": ["project-standards"],
+}
+MISSING = object()
+
+
+def authority(
+    target_repository: str | None = PILOT_REPOSITORY,
+    conformance: dict[str, object] | object = MISSING,
+) -> AuthorityEnvelope:
+    """Conformance is attested per unit, against the unit's own target repository."""
+    constraints: dict[str, object] = {}
+    if target_repository is not None:
+        constraints["target_repository"] = target_repository
+    if conformance is MISSING:
+        conformance = GREEN_CONFORMANCE
+    return AuthorityEnvelope(
+        capabilities={"repository_write": "allowed"},
+        budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
+        constraints=constraints,
+        conformance=conformance if isinstance(conformance, dict) else None,
+    )
+
+
+AUTHORITY = authority()
 NOW = datetime(2026, 7, 8, tzinfo=UTC)
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 HUMAN = ActorContext("devon", ActorRole.HUMAN)
@@ -48,7 +72,7 @@ def settings(**overrides: object) -> DispatchSettings:
         "enabled": True,
         "allowed_change_classes": frozenset({"repository_write"}),
         "enabled_capabilities": frozenset({"repository_write"}),
-        "target_repository": "AlobarQuest/orchestrator",
+        "allowed_target_repositories": frozenset({PILOT_REPOSITORY}),
         "workflow_id": ".github/workflows/factory-runner-pilot.yml",
         "workflow_ref": "main",
         "github_token": "test-token",
@@ -58,27 +82,14 @@ def settings(**overrides: object) -> DispatchSettings:
     return DispatchSettings(**values)
 
 
-MISSING = object()
-
-
 def ready_unit(
     session: Session,
     *,
     key: str = "dispatch-unit",
     conformance: dict[str, object] | object = MISSING,
+    target_repository: str | None = PILOT_REPOSITORY,
 ):
-    if conformance is MISSING:
-        enforcement_snapshot = {
-            "conformance": {
-                "status": "green",
-                "accepted_standards": [],
-                "standards_touched": ["project-standards"],
-            }
-        }
-    elif conformance is None:
-        enforcement_snapshot = {}
-    else:
-        enforcement_snapshot = {"conformance": conformance}
+    enforcement_snapshot: dict[str, object] = {}
     revision = register_revision(
         session,
         package_id=f"pkg-{key}",
@@ -103,7 +114,7 @@ def ready_unit(
         title="Dispatch work",
         outcome="Runner opens a PR",
         required_capability="repository_write",
-        authority=AUTHORITY,
+        authority=authority(target_repository, conformance),
         max_attempts=3,
         approved_by=HUMAN.actor_id,
         approved_at=NOW,
@@ -308,3 +319,124 @@ def test_human_gate_age_out_records_blocked_evidence_without_auto_proceeding(
     assert replay[0].id == records[0].id
     assert records[0].status == "blocked"
     assert records[0].reason_code == "human_gate_aged_out"
+
+
+def test_dispatch_routes_to_the_units_own_target_repository(migrated_session: Session) -> None:
+    unit = ready_unit(migrated_session, key="fanout-brain", target_repository="AlobarQuest/brain")
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(allowed_target_repositories=frozenset({"AlobarQuest/brain"})),
+        github,
+    )
+
+    assert record.status == "dispatched"
+    assert record.target_repository == "AlobarQuest/brain"
+    assert github.calls[0]["repository"] == "AlobarQuest/brain"
+
+
+def test_fanout_units_route_to_their_own_repositories_in_one_process(
+    migrated_session: Session,
+) -> None:
+    """Routing must be per-unit, never process-global.
+
+    A process-global target would silently send every unit of a fan-out to whichever
+    repository was configured at startup — a runner opening a dependency PR against the
+    wrong repo, which fails open rather than closed.
+    """
+    allowed = frozenset({"AlobarQuest/brain", "AlobarQuest/security-standards"})
+    brain = ready_unit(migrated_session, key="fanout-a", target_repository="AlobarQuest/brain")
+    standards = ready_unit(
+        migrated_session, key="fanout-b", target_repository="AlobarQuest/security-standards"
+    )
+    github = FakeGitHubDispatcher([])
+
+    first = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(brain.id),
+        settings(allowed_target_repositories=allowed),
+        github,
+    )
+    second = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(standards.id),
+        settings(allowed_target_repositories=allowed),
+        github,
+    )
+
+    assert first.target_repository == "AlobarQuest/brain"
+    assert second.target_repository == "AlobarQuest/security-standards"
+    assert [call["repository"] for call in github.calls] == [
+        "AlobarQuest/brain",
+        "AlobarQuest/security-standards",
+    ]
+
+
+def test_dispatch_blocks_when_unit_declares_no_target_repository(
+    migrated_session: Session,
+) -> None:
+    unit = ready_unit(migrated_session, key="no-target", target_repository=None)
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(migrated_session, dispatch_command(unit.id), settings(), github)
+
+    assert record.status == "blocked"
+    assert record.reason_code == "target_repository_missing"
+    assert github.calls == []
+
+
+def test_dispatch_blocks_when_target_repository_is_not_allowlisted(
+    migrated_session: Session,
+) -> None:
+    unit = ready_unit(migrated_session, key="off-list", target_repository="AlobarQuest/private")
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(migrated_session, dispatch_command(unit.id), settings(), github)
+
+    assert record.status == "blocked"
+    assert record.reason_code == "target_repository_not_allowed"
+    assert github.calls == []
+
+
+def test_dispatch_allowlist_is_empty_by_default(migrated_session: Session) -> None:
+    """Fail closed: an unconfigured allowlist dispatches nowhere."""
+    unit = ready_unit(migrated_session, key="empty-allowlist")
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(allowed_target_repositories=frozenset()),
+        github,
+    )
+
+    assert record.status == "blocked"
+    assert record.reason_code == "target_repository_not_allowed"
+    assert github.calls == []
+
+
+def test_dispatch_replay_is_idempotent_against_the_per_unit_repository(
+    migrated_session: Session,
+) -> None:
+    """Idempotent replay must compare the resolved per-unit repo, not a global setting."""
+    unit = ready_unit(migrated_session, key="replay-repo", target_repository="AlobarQuest/brain")
+    allowed = frozenset({"AlobarQuest/brain"})
+    github = FakeGitHubDispatcher([])
+
+    first = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(allowed_target_repositories=allowed),
+        github,
+    )
+    replay = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(allowed_target_repositories=allowed),
+        github,
+    )
+
+    assert replay.id == first.id
+    assert len(github.calls) == 1

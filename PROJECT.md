@@ -19,6 +19,12 @@ required_checks:
 
 ## Backlog
 
+- [ ] (P1) Rotate the production orchestrator-postgres password — exposed in a Claude session transcript 2026-07-09 (internal-Coolify-network-only exposure); rotate DB password, update ORCHESTRATOR_DATABASE_URL in Coolify, redeploy, verify /health/ready — added 2026-07-09
+- [ ] (P2) `is_expansion()` (kernel/authority.py) has zero call sites in src/ — verify the CLAUDE.md invariant "authority-expanding standing-context updates require a named human approval" is actually wired to it, or remove the dead function — added 2026-07-09
+- [ ] (P2) Work units created via the direct path (`POST /revisions/{id}/work-units`) are not stamped with `constraints.work_unit_id`, so factory-runner will reject them. Either stamp there too or document the path as non-dispatchable — added 2026-07-09
+- [ ] (P2) Provide a helper that computes `authority.conformance` from real repo state (`security_scan.cli.scan` + `portfolio.compliance.build_rows`, both importable and local-only) so decomposition authors do not hand-type the claim — added 2026-07-09
+- [ ] (P3) Tighten the dispatch conformance gate: the `standards_touched ⊆ accepted_standards` branch is a tautology if a producer ever echoes `accepted = touched`. Consider requiring `status == "green"` and treating acceptance as evidence rather than a bypass — added 2026-07-09
+
 ## Future plans
 
 ## Known Non-obvious Invariants

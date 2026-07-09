@@ -12,6 +12,7 @@ from orchestrator.persistence.models import (
     DecompositionProposal,
     DecompositionProposalAcMapping,
     DecompositionProposalDependency,
+    DecompositionProposalUnit,
     Dependency,
     Event,
     PackageAcceptanceCriterion,
@@ -299,7 +300,10 @@ def test_proposal_idempotency_conflicts_when_raw_unit_authority_differs(
     first = submit_decomposition_proposal(migrated_session, command, worker_actor())
     replay = submit_decomposition_proposal(migrated_session, command, worker_actor())
 
-    assert normalize_authority(raw_authority) == normalize_authority(conflicting_raw_authority)
+    # Constraint values are covered by the authority fingerprint, so these two envelopes
+    # are no longer normalization-identical. Raw-payload replay identity is still what
+    # catches differences the fingerprint cannot see (unknown field *values*).
+    assert normalize_authority(raw_authority) != normalize_authority(conflicting_raw_authority)
     assert replay.id == first.id
 
     with pytest.raises(DomainError) as error:
@@ -675,8 +679,13 @@ def test_approved_decomposition_preserves_raw_unit_authority_payload(
     unit = migrated_session.scalar(select(WorkUnit).where(WorkUnit.unit_key == "unit-1"))
 
     assert unit is not None
-    assert unit.authority == raw_authority
-    assert unit.authority_fingerprint == authority_fingerprint(normalize_authority(raw_authority))
+    # The author's raw payload survives verbatim (it is not replaced by normalized()),
+    # carrying only the server-owned work_unit_id stamp.
+    assert unit.authority == {
+        **raw_authority,
+        "constraints": {**raw_authority["constraints"], "work_unit_id": str(unit.id)},
+    }
+    assert unit.authority_fingerprint == authority_fingerprint(normalize_authority(unit.authority))
 
 
 def test_second_approval_is_rejected(migrated_session: Session) -> None:
@@ -945,3 +954,184 @@ def test_rejects_approval_when_proposal_not_proposed(migrated_session: Session) 
         )
 
     assert error.value.code == "decomposition_proposal_state_invalid"
+
+
+def _proposal_units(
+    session: Session, proposal_id: uuid.UUID
+) -> dict[str, DecompositionProposalUnit]:
+    rows = session.scalars(
+        select(DecompositionProposalUnit).where(
+            DecompositionProposalUnit.proposal_id == proposal_id
+        )
+    )
+    return {row.unit_key: row for row in rows}
+
+
+def _fanout_units() -> tuple[ProposedUnit, ...]:
+    def unit(unit_key: str, repository: str) -> ProposedUnit:
+        payload = {
+            "capabilities": {"repo.edit": "allowed"},
+            "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+            "constraints": {
+                "target_repository": repository,
+                "allowed_commands": ["make check"],
+            },
+        }
+        return ProposedUnit(
+            unit_key=unit_key,
+            title=f"Bump dependency in {repository}",
+            outcome="Dependency updated and checks green.",
+            required_capability="repo.edit",
+            authority=normalize_authority(payload),
+            authority_payload=payload,
+        )
+
+    return (unit("unit-1", "AlobarQuest/brain"), unit("unit-2", "AlobarQuest/security-standards"))
+
+
+def test_proposal_stamps_each_unit_authority_with_its_future_work_unit_id(
+    migrated_session: Session,
+) -> None:
+    """The runner refuses an envelope that does not name its own unit, and an author
+    cannot know the UUID. The orchestrator must stamp it at propose time, so the
+    approver reviews the same envelope the runner will receive."""
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(revision.id, ac_ids, proposed_units=_fanout_units(), dependencies=()),
+        worker_actor(),
+    )
+
+    units = _proposal_units(migrated_session, proposal.id)
+    for unit_key, row in units.items():
+        expected = str(uuid.uuid5(proposal.id, unit_key))
+        assert row.authority["constraints"]["work_unit_id"] == expected
+        # stamping must not disturb the author's other constraints
+        assert row.authority["constraints"]["allowed_commands"] == ["make check"]
+
+    # each unit binds to a different repo AND a different id -> distinct fingerprints
+    assert units["unit-1"].authority_fingerprint != units["unit-2"].authority_fingerprint
+
+
+def test_approved_unit_authority_names_its_own_id(migrated_session: Session) -> None:
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(revision.id, ac_ids, proposed_units=_fanout_units(), dependencies=()),
+        worker_actor(),
+    )
+    proposal_units = _proposal_units(migrated_session, proposal.id)
+
+    approve_decomposition_proposal(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="Approved for draft activation.",
+        idempotency_key="proposal-approve-fanout",
+    )
+
+    units = tuple(
+        migrated_session.scalars(
+            select(WorkUnit).where(WorkUnit.work_package_revision_id == revision.id)
+        )
+    )
+    assert len(units) == 2
+    for unit in units:
+        assert unit.authority["constraints"]["work_unit_id"] == str(unit.id)
+        # the fingerprint the human approves is the one the proposal displayed
+        assert unit.authority_fingerprint == proposal_units[unit.unit_key].authority_fingerprint
+
+    repositories = {unit.authority["constraints"]["target_repository"] for unit in units}
+    assert repositories == {"AlobarQuest/brain", "AlobarQuest/security-standards"}
+
+
+def test_proposal_rejects_author_supplied_work_unit_id(migrated_session: Session) -> None:
+    """The work_unit_id constraint is server-owned; an author cannot know it, so a
+    supplied value is always a mistake and must never be silently overwritten."""
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    payload = {
+        "capabilities": {"repo.edit": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {
+            "target_repository": "AlobarQuest/brain",
+            "work_unit_id": str(uuid.uuid4()),
+        },
+    }
+
+    with pytest.raises(DomainError) as error:
+        submit_decomposition_proposal(
+            migrated_session,
+            proposal_command(
+                revision.id,
+                ac_ids,
+                dependencies=(),
+                proposed_units=(
+                    ProposedUnit(
+                        unit_key="unit-1",
+                        title="Bump dependency",
+                        outcome="Dependency updated.",
+                        required_capability="repo.edit",
+                        authority=normalize_authority(payload),
+                        authority_payload=payload,
+                    ),
+                    ProposedUnit(
+                        unit_key="unit-2",
+                        title="Implement tests",
+                        outcome="Covered by tests.",
+                        required_capability="repository_write",
+                        authority=AUTHORITY,
+                    ),
+                ),
+            ),
+            worker_actor(),
+        )
+
+    assert error.value.code == "authority_work_unit_id_forbidden"
+
+
+def test_proposal_rejects_malformed_conformance(migrated_session: Session) -> None:
+    """Conformance is fingerprinted, so a malformed claim must be rejected at proposal
+    time rather than approved as an opaque unknown field."""
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    payload = {
+        "capabilities": {"repo.edit": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {"target_repository": "AlobarQuest/brain"},
+        "conformance": {"status": "green", "standards_touched": ["project"]},
+    }
+
+    with pytest.raises(DomainError) as error:
+        submit_decomposition_proposal(
+            migrated_session,
+            proposal_command(
+                revision.id,
+                ac_ids,
+                dependencies=(),
+                proposed_units=(
+                    ProposedUnit(
+                        unit_key="unit-1",
+                        title="Bump dependency",
+                        outcome="Dependency updated.",
+                        required_capability="repo.edit",
+                        authority=normalize_authority(payload),
+                        authority_payload=payload,
+                    ),
+                    ProposedUnit(
+                        unit_key="unit-2",
+                        title="Implement tests",
+                        outcome="Covered by tests.",
+                        required_capability="repository_write",
+                        authority=AUTHORITY,
+                    ),
+                ),
+            ),
+            worker_actor(),
+        )
+
+    assert error.value.code == "authority_conformance_invalid"
+    assert "accepted_standards" in error.value.message

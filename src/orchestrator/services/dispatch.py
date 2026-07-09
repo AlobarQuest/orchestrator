@@ -23,7 +23,7 @@ class DispatchSettings:
     enabled: bool
     allowed_change_classes: frozenset[str]
     enabled_capabilities: frozenset[str]
-    target_repository: str
+    allowed_target_repositories: frozenset[str]
     workflow_id: str
     workflow_ref: str
     github_token: str | None
@@ -122,7 +122,7 @@ def _dispatch_work_unit(
         select(DispatchRecord).where(DispatchRecord.idempotency_key == command.idempotency_key)
     )
     if existing is not None:
-        _validate_idempotent_record(existing, command, settings)
+        _validate_idempotent_record(session, existing, command, settings)
         return existing
 
     unit = session.scalar(select(WorkUnit).where(WorkUnit.id == command.unit_id).with_for_update())
@@ -150,7 +150,8 @@ def _dispatch_work_unit(
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
 
-    blocked_reason = _blocked_reason(unit, revision, settings)
+    repository = _target_repository(unit)
+    blocked_reason = _blocked_reason(unit, settings)
     if blocked_reason is not None:
         return _record_dispatch(
             session,
@@ -158,15 +159,16 @@ def _dispatch_work_unit(
             unit,
             revision,
             settings,
+            repository=repository,
             status="skipped" if blocked_reason == "dispatch_disabled" else "blocked",
             reason_code=blocked_reason,
-            payload=_payload(unit, settings),
+            payload=_payload(unit, settings, repository),
         )
 
-    payload = _payload(unit, settings)
+    payload = _payload(unit, settings, repository)
     try:
         result = dispatcher.dispatch_workflow(
-            repository=settings.target_repository,
+            repository=repository,
             workflow_id=settings.workflow_id,
             ref=settings.workflow_ref,
             inputs=payload["workflow_dispatch"]["inputs"],
@@ -180,6 +182,7 @@ def _dispatch_work_unit(
             unit,
             revision,
             settings,
+            repository=repository,
             status=status,
             reason_code="failure_signature_circuit_open" if status == "blocked" else error.code,
             failure_signature=signature,
@@ -192,6 +195,7 @@ def _dispatch_work_unit(
         unit,
         revision,
         settings,
+        repository=repository,
         status="dispatched",
         payload=payload,
         github_run_id=result.get("workflow_run_id"),
@@ -251,6 +255,7 @@ def age_out_human_gates(
                 unit,
                 revision,
                 settings,
+                repository=_target_repository(unit),
                 status="blocked",
                 reason_code="human_gate_aged_out",
                 payload={
@@ -269,12 +274,20 @@ def _authorize_dispatch_actor(actor: ActorContext) -> None:
 
 
 def _validate_idempotent_record(
-    record: DispatchRecord, command: DispatchCommand, settings: DispatchSettings
+    session: Session,
+    record: DispatchRecord,
+    command: DispatchCommand,
+    settings: DispatchSettings,
 ) -> None:
+    # The routed repository is a property of the unit, so compare the record against the
+    # repository this command's unit resolves to — never against a process-wide setting,
+    # which would make a legitimate replay look like a conflict.
+    unit = session.get(WorkUnit, command.unit_id)
+    expected_repository = _target_repository(unit) if unit is not None else None
     if (
         record.work_unit_id != command.unit_id
         or record.runner_attempt != command.runner_attempt
-        or record.target_repository != settings.target_repository
+        or (expected_repository is not None and record.target_repository != expected_repository)
         or record.workflow_id != settings.workflow_id
         or record.workflow_ref != settings.workflow_ref
     ):
@@ -285,11 +298,7 @@ def _validate_idempotent_record(
         )
 
 
-def _blocked_reason(
-    unit: WorkUnit,
-    revision: WorkPackageRevision,
-    settings: DispatchSettings,
-) -> str | None:
+def _blocked_reason(unit: WorkUnit, settings: DispatchSettings) -> str | None:
     if not settings.enabled:
         return "dispatch_disabled"
     if not settings.github_token:
@@ -305,17 +314,45 @@ def _blocked_reason(
         return "change_class_not_allowed"
     if normalize_authority(unit.authority).level_for(unit.required_capability) != "allowed":
         return "capability_not_authorized"
-    return _conformance_blocked_reason(revision.enforcement_snapshot)
+    target_repository = _target_repository(unit)
+    if not target_repository:
+        return "target_repository_missing"
+    if target_repository not in settings.allowed_target_repositories:
+        return "target_repository_not_allowed"
+    return _conformance_blocked_reason(unit)
 
 
 def _change_class(unit: WorkUnit) -> str:
-    raw = unit.authority.get("change_class")
-    return raw if isinstance(raw, str) and raw else unit.required_capability
+    return normalize_authority(unit.authority).change_class or unit.required_capability
 
 
-def _conformance_blocked_reason(snapshot: Mapping[str, Any]) -> str | None:
-    conformance = snapshot.get("conformance")
-    if not isinstance(conformance, Mapping):
+def _target_repository(unit: WorkUnit) -> str:
+    """Routing is a property of the unit, never of the process.
+
+    The runner refuses to act unless the workflow it runs in IS the unit's target repo,
+    so a process-global target would misroute every fan-out unit rather than fail.
+    """
+    constraints = unit.authority.get("constraints", {})
+    if not isinstance(constraints, Mapping):
+        return ""
+    repository = constraints.get("target_repository")
+    return repository if isinstance(repository, str) else ""
+
+
+def _conformance_blocked_reason(unit: WorkUnit) -> str | None:
+    """Conformance is attested per unit, against that unit's own target repository.
+
+    The package revision's enforcement snapshot cannot carry this: it is written once at
+    intake, before decomposition has chosen the target repositories, so one snapshot could
+    not honestly describe a fan-out across several repos. The unit's envelope can, and
+    because the envelope is fingerprinted, the human's authority approval attests it.
+
+    `accepted_standards` must come from a real waiver source (project-standards
+    `exceptions:` frontmatter, security-standards `.security-scan-allow.toml`) — never
+    echoed from `standards_touched`, or the subset branch below admits everything.
+    """
+    conformance = normalize_authority(unit.authority).conformance
+    if conformance is None:
         return "conformance_missing"
     touched = _string_set(conformance.get("standards_touched"))
     accepted = _string_set(conformance.get("accepted_standards"))
@@ -359,14 +396,14 @@ def _next_runner_attempt(session: Session, unit: WorkUnit) -> int:
     return max(unit.attempt_count, latest or 0) + 1
 
 
-def _payload(unit: WorkUnit, settings: DispatchSettings) -> dict[str, Any]:
+def _payload(unit: WorkUnit, settings: DispatchSettings, repository: str) -> dict[str, Any]:
     inputs = {
         "work_unit_id": str(unit.id),
         "orchestrator_url": settings.orchestrator_url,
     }
     return {
         "workflow_dispatch": {
-            "repository": settings.target_repository,
+            "repository": repository,
             "workflow_id": settings.workflow_id,
             "ref": settings.workflow_ref,
             "inputs": inputs,
@@ -386,6 +423,7 @@ def _record_dispatch(
     revision: WorkPackageRevision,
     settings: DispatchSettings,
     *,
+    repository: str,
     status: str,
     payload: Mapping[str, Any],
     reason_code: str | None = None,
@@ -400,7 +438,7 @@ def _record_dispatch(
         status=status,
         reason_code=reason_code,
         idempotency_key=command.idempotency_key,
-        target_repository=settings.target_repository,
+        target_repository=repository,
         workflow_id=settings.workflow_id,
         workflow_ref=settings.workflow_ref,
         github_run_id=github_run_id,
@@ -421,7 +459,7 @@ def _record_dispatch(
             "dispatch_record_id": str(record.id),
             "runner_attempt": command.runner_attempt,
             "reason_code": reason_code,
-            "target_repository": settings.target_repository,
+            "target_repository": repository,
             "workflow_id": settings.workflow_id,
             "workflow_ref": settings.workflow_ref,
             "github_run_id": github_run_id,

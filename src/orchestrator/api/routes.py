@@ -487,7 +487,7 @@ def dispatch_route(
         enabled=settings.dispatch_enabled,
         allowed_change_classes=settings.dispatch_allowed_change_classes,
         enabled_capabilities=settings.dispatch_enabled_capabilities,
-        target_repository=settings.dispatch_target_repository,
+        allowed_target_repositories=settings.dispatch_allowed_target_repositories,
         workflow_id=settings.dispatch_workflow_id,
         workflow_ref=settings.dispatch_workflow_ref,
         github_token=settings.github_dispatch_token,

@@ -246,9 +246,13 @@ def test_decomposition_proposal_list_and_get_expose_review_projection(
     body = detail.json()
     assert body["id"] == first["id"]
     assert [unit["unit_key"] for unit in body["proposed_units"]] == ["unit-1", "unit-2"]
+    # The proposal displays the envelope the runner will be served, work_unit_id included.
     assert body["proposed_units"][0]["authority"] == {
         "capabilities": {"repository_write": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": None,
+        "conformance": None,
+        "constraints": {"work_unit_id": str(uuid.uuid5(uuid.UUID(body["id"]), "unit-1"))},
         "unknown_fields": [],
     }
     assert [

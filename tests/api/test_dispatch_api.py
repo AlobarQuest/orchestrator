@@ -11,7 +11,21 @@ import orchestrator.api.routes as routes
 from orchestrator.api.dependencies import AuthConfig, get_session
 from orchestrator.config import Settings, get_settings
 from orchestrator.main import create_app
-from tests.api.test_lifecycle_api import AUTHORITY, HUMAN, SYSTEM
+from tests.api.test_lifecycle_api import AUTHORITY as BASE_AUTHORITY
+from tests.api.test_lifecycle_api import HUMAN, SYSTEM
+
+TARGET_REPOSITORY = "AlobarQuest/orchestrator"
+# Dispatch routes per-unit, so a dispatchable unit must declare its target repository.
+AUTHORITY = {
+    **BASE_AUTHORITY,
+    "constraints": {"target_repository": TARGET_REPOSITORY},
+    # Conformance is attested per unit, against that unit's own target repository.
+    "conformance": {
+        "status": "green",
+        "accepted_standards": [],
+        "standards_touched": ["project-standards"],
+    },
+}
 
 
 class FakeGitHubActionsDispatcher:
@@ -48,6 +62,7 @@ def dispatch_client(
             dispatch_enabled=True,
             dispatch_allowed_change_classes=frozenset({"repository_write"}),
             dispatch_enabled_capabilities=frozenset({"repository_write"}),
+            dispatch_allowed_target_repositories=frozenset({TARGET_REPOSITORY}),
             github_dispatch_token="test-token",
         )
 
@@ -75,13 +90,7 @@ def register_ready_unit(db_client: TestClient, *, key: str = "dispatch-api") -> 
             "approved_by": "devon",
             "approved_at": datetime(2026, 7, 8, tzinfo=UTC).isoformat(),
             "approval_event_id": str(uuid.uuid4()),
-            "enforcement_snapshot": {
-                "conformance": {
-                    "status": "green",
-                    "accepted_standards": [],
-                    "standards_touched": ["project-standards"],
-                }
-            },
+            "enforcement_snapshot": {},
             "authority": AUTHORITY,
             "registry_version": 1,
         },
@@ -167,6 +176,8 @@ def test_dispatch_api_calls_configured_workflow(dispatch_client: TestClient) -> 
     assert response.status_code == 200
     assert response.json()["status"] == "dispatched"
     assert response.json()["github_run_id"] == "api-run"
+    assert response.json()["target_repository"] == TARGET_REPOSITORY
+    assert FakeGitHubActionsDispatcher.calls[0]["repository"] == TARGET_REPOSITORY
     assert FakeGitHubActionsDispatcher.calls[0]["inputs"] == {
         "work_unit_id": unit_id,
         "orchestrator_url": "https://sds.alobar.net",
