@@ -23,7 +23,8 @@ FROM python:3.12-slim AS runtime
 
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
-    ORCHESTRATOR_REGISTRY_BUNDLE=/app/registry-bundle.json
+    ORCHESTRATOR_REGISTRY_BUNDLE=/app/registry-bundle.json \
+    SECURITY_STANDARDS_DIR=/app/security-standards
 WORKDIR /app
 
 RUN groupadd --system orchestrator \
@@ -31,6 +32,9 @@ RUN groupadd --system orchestrator \
 COPY --from=builder --chown=orchestrator:orchestrator /app/.venv /app/.venv
 COPY --from=builder --chown=orchestrator:orchestrator /app/src /app/src
 COPY --from=builder --chown=orchestrator:orchestrator /app/registry-bundle.json /app/registry-bundle.json
+COPY --from=registry --chown=orchestrator:orchestrator /agents /app/security-standards/registry/agents
+COPY --from=registry --chown=orchestrator:orchestrator /src /app/security-standards/src
+COPY --from=registry --chown=orchestrator:orchestrator /schema /app/security-standards/schema
 COPY --chown=orchestrator:orchestrator alembic.ini /app/alembic.ini
 COPY --chown=orchestrator:orchestrator migrations /app/migrations
 

@@ -96,18 +96,37 @@ def build_bundle_from_artifact(
         raise RegistryValidationError("registry artifact contains invalid text") from error
     if REVISION_PATTERN.fullmatch(source_revision) is None or recorded_revision != source_revision:
         raise RegistryValidationError("registry artifact does not match source revision")
-    return _bundle_from_entries(entries, source_revision)
+    actor_entries = [
+        (Path(name).name, content) for name, content in entries if name.startswith("agents/")
+    ]
+    return _bundle_from_entries(actor_entries, source_revision)
 
 
 def _artifact_content(artifact_dir: Path) -> tuple[bytes, list[tuple[str, bytes]]]:
     revision_path = artifact_dir / "SOURCE_REVISION"
     agent_dir = artifact_dir / "agents"
-    if artifact_dir.is_symlink() or revision_path.is_symlink() or agent_dir.is_symlink():
+    src_dir = artifact_dir / "src"
+    schema_dir = artifact_dir / "schema"
+    if (
+        artifact_dir.is_symlink()
+        or revision_path.is_symlink()
+        or agent_dir.is_symlink()
+        or src_dir.is_symlink()
+        or schema_dir.is_symlink()
+    ):
         raise RegistryValidationError("registry artifact must not contain a symlink")
     try:
         revision_content = revision_path.read_bytes()
     except OSError as error:
         raise RegistryValidationError("registry artifact has no source revision") from error
+    entries: list[tuple[str, bytes]] = []
+    entries.extend(_agent_artifact_entries(agent_dir))
+    for relative_dir in (Path("src/agent_registry"), Path("src/factory_events"), Path("schema")):
+        entries.extend(_runtime_artifact_entries(artifact_dir, relative_dir))
+    return revision_content, entries
+
+
+def _agent_artifact_entries(agent_dir: Path) -> list[tuple[str, bytes]]:
     entries: list[tuple[str, bytes]] = []
     try:
         paths = sorted(agent_dir.iterdir())
@@ -117,7 +136,25 @@ def _artifact_content(artifact_dir: Path) -> tuple[bytes, list[tuple[str, bytes]
         if path.is_symlink() or not path.is_file() or path.suffix != ".yaml":
             raise RegistryValidationError(f"invalid registry identity artifact: {path.name}")
         entries.append((f"agents/{path.name}", path.read_bytes()))
-    return revision_content, entries
+    return entries
+
+
+def _runtime_artifact_entries(
+    artifact_dir: Path,
+    relative_dir: Path,
+) -> list[tuple[str, bytes]]:
+    directory = artifact_dir / relative_dir
+    if directory.is_symlink() or not directory.is_dir():
+        raise RegistryValidationError(f"registry artifact missing runtime path: {relative_dir}")
+    entries: list[tuple[str, bytes]] = []
+    for path in sorted(directory.rglob("*")):
+        if path.is_symlink():
+            raise RegistryValidationError("registry artifact must not contain a symlink")
+        if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        name = path.relative_to(artifact_dir).as_posix()
+        entries.append((name, path.read_bytes()))
+    return entries
 
 
 def _bundle_from_entries(entries: list[tuple[str, str]], source_revision: str) -> dict[str, Any]:

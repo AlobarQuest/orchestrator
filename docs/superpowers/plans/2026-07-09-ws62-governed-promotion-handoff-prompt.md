@@ -51,8 +51,10 @@ permanent.
   - records bounded deployment evidence/events;
   - does not merge, deploy, enable dispatch automation, or promote brain
     knowledge.
-- WS-6.1 observation ingestion is expected to be COMPLETE+MERGED before WS-6.2
-  implementation starts:
+- WS-6.1 observation ingestion is COMPLETE+MERGED in `AlobarQuest/orchestrator`
+  PR #23, merge commit `102e7c660072988a787f3f2d062edcaeb5e418ad`, but the
+  2026-07-09 production closeout found a runtime packaging defect in
+  event-publication queueing:
   - PR: `AlobarQuest/orchestrator` #23;
   - branch before merge: `codex/ws61-observation-ingestion`;
   - migration: `0012_ws61_observations`;
@@ -85,18 +87,32 @@ permanent.
     `(source_system, source_reference, normalized_fact_hash)`;
   - conflicting same-source-reference facts reject as `observation_conflict`;
   - no supersession model;
+  - production image deployed during the first closeout attempt:
+    `ghcr.io/alobarquest/orchestrator:102e7c6-ws61-closeout-amd64`;
+  - production image digest:
+    `sha256:49a855b02b94bb06b27b0d2d719251705a347835ddbef252fd947d60a1bd5fa9`;
+  - production Alembic current/head after first closeout attempt:
+    `0012_ws61_observations`;
+  - production closeout observation:
+    `a89d0d76-8989-4657-a57b-de9a9f461da8`;
+  - closeout observation event:
+    `467dafed-dfc8-4a0a-bb4b-b8c714915a6b`;
+  - event-publication queueing for that event currently returns HTTP 500
+    because the deployed runtime image lacks the `factory_events` helper module;
+  - fix branch:
+    `codex/ws61-closeout-runtime-event-publications`;
   - no new secret, runtime credential, BWS manifest entry, env file, collector,
     polling loop, lifecycle mutation, brain write, follow-up work generation,
     automatic merge, or automatic deployment.
 - Production orchestrator canonical API: `https://sds.alobar.net`.
-- Production image after Phase 5 closeout:
-  - tag: `ghcr.io/alobarquest/orchestrator:a6161e6-phase5-closeout-amd64`;
-  - digest: `sha256:eff74a3ec424efc7b984c0132251e2aa9b851bf031ae9e24cc7bbedf3e0bf052`;
-  - source merge commit: `a6161e603686d8e85a4e7e80e4cdee30a624be79`.
-- Production Alembic current/head after Phase 5 closeout:
-  - `0011_ws53_deploy_obs`.
-- If Devon has already completed WS-6.1 closeout before this session, verify and
-  update the production facts before relying on production observations.
+- Production image after first WS-6.1 closeout attempt:
+  - tag: `ghcr.io/alobarquest/orchestrator:102e7c6-ws61-closeout-amd64`;
+  - digest: `sha256:49a855b02b94bb06b27b0d2d719251705a347835ddbef252fd947d60a1bd5fa9`;
+  - source merge commit: `102e7c660072988a787f3f2d062edcaeb5e418ad`.
+- Production Alembic current/head after first WS-6.1 closeout attempt:
+  - `0012_ws61_observations`.
+- Do not rely on production event-publication projections for WS-6.1 until the
+  runtime packaging fix is merged and deployed.
 - Phase 5 production closeout backup:
   - command: `/Users/devon/Projects/vps-backup/backup.sh`;
   - restic snapshot: `e8f5089f`;
