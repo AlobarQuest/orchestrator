@@ -155,7 +155,7 @@
 **Files:**
 - Create: `tests/architecture/test_ws61_scope_guards.py`
 - Create: `docs/operations/observation-ingestion.md`
-- Create: `docs/superpowers/plans/2026-07-08-ws62-governed-promotion-handoff-prompt.md`
+- Create: `docs/superpowers/plans/2026-07-09-ws62-governed-promotion-handoff-prompt.md`
 
 **Interfaces:**
 - Documents operational boundaries and the WS-6.2 handoff.
@@ -190,4 +190,3 @@
   - Verify there is no lifecycle mutation, work generation, deployment, merge, tracker canonicalization, or brain promotion.
   - Verify no source-specific collector or background polling was introduced.
   - Verify no new secret, env file, BWS manifest entry, or GitHub Actions secret reference was introduced.
-
