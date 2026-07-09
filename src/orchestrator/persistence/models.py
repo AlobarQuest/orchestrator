@@ -100,6 +100,10 @@ OBSERVATION_STATUSES = (
     "observed",
 )
 OBSERVATION_SEVERITIES = ("info", "warning", "critical")
+KNOWLEDGE_PROMOTION_TARGET_BRAINS = ("code", "infra")
+KNOWLEDGE_PROMOTION_TARGET_TYPES = ("lesson", "rule")
+KNOWLEDGE_PROMOTION_AUTHORITIES = ("informational", "recommended", "required")
+KNOWLEDGE_PROMOTION_ACTIONS = ("submitted_to_brain", "rejected")
 
 
 class WorkPackage(UUIDPrimaryKey, Base):
@@ -768,6 +772,102 @@ class EventPublication(UUIDPrimaryKey, Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class KnowledgePromotionProposal(UUIDPrimaryKey, Base):
+    __tablename__ = "knowledge_promotion_proposals"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        UniqueConstraint("proposal_hash"),
+        UniqueConstraint("correlation_identity"),
+        CheckConstraint(
+            f"target_brain IN {KNOWLEDGE_PROMOTION_TARGET_BRAINS!r}",
+            name="ck_knowledge_promotion_proposals_target_brain",
+        ),
+        CheckConstraint(
+            f"target_type IN {KNOWLEDGE_PROMOTION_TARGET_TYPES!r}",
+            name="ck_knowledge_promotion_proposals_target_type",
+        ),
+        CheckConstraint(
+            f"authority IN {KNOWLEDGE_PROMOTION_AUTHORITIES!r}",
+            name="ck_knowledge_promotion_proposals_authority",
+        ),
+        CheckConstraint(
+            "correlation_identity <> '' AND correlation_summary <> '' "
+            "AND proposed_by <> '' AND idempotency_key <> '' AND proposal_hash <> ''",
+            name="ck_knowledge_promotion_proposals_required_text",
+        ),
+    )
+
+    correlation_identity: Mapped[str] = mapped_column(String)
+    source_observation_ids: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    source_observation_hashes: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    release_artifact_binding_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    deployment_observation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    work_unit_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    package_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    correlation_summary: Mapped[str] = mapped_column(Text)
+    target_brain: Mapped[str] = mapped_column(String)
+    target_type: Mapped[str] = mapped_column(String)
+    authority: Mapped[str] = mapped_column(String)
+    applicability: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    proposed_payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    provenance: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    proposal_hash: Mapped[str] = mapped_column(String)
+    proposed_by: Mapped[str] = mapped_column(String)
+    proposed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
+    idempotency_key: Mapped[str] = mapped_column(String)
+
+
+class KnowledgePromotionProposalAction(UUIDPrimaryKey, Base):
+    __tablename__ = "knowledge_promotion_proposal_actions"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        UniqueConstraint("event_id"),
+        UniqueConstraint("proposal_id", "action"),
+        CheckConstraint(
+            f"action IN {KNOWLEDGE_PROMOTION_ACTIONS!r}",
+            name="ck_knowledge_promotion_proposal_actions_action",
+        ),
+        CheckConstraint(
+            "action_by <> '' AND idempotency_key <> ''",
+            name="ck_knowledge_promotion_proposal_actions_required_text",
+        ),
+    )
+
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("knowledge_promotion_proposals.id"))
+    action: Mapped[str] = mapped_column(String)
+    brain_record_id: Mapped[str | None] = mapped_column(String)
+    brain_status: Mapped[str | None] = mapped_column(String)
+    brain_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    reason: Mapped[str | None] = mapped_column(Text)
+    action_by: Mapped[str] = mapped_column(String)
+    action_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
+    idempotency_key: Mapped[str] = mapped_column(String)
 
 
 class PackageAcceptanceCriterion(UUIDPrimaryKey, Base):

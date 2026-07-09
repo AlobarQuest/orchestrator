@@ -362,6 +362,10 @@ def _factory_action(event: Event) -> str | None:
         return "orchestrator.post_deploy_verification_created"
     if event.action == "observation.recorded":
         return "orchestrator.observation_recorded"
+    if event.action == "knowledge_promotion.proposed":
+        return "orchestrator.knowledge_promotion_proposed"
+    if event.action == "knowledge_promotion.submitted_to_brain":
+        return "orchestrator.knowledge_promotion_submitted_to_brain"
     if event.action == "work_unit.transitioned" and event.to_state == "submitted":
         return "orchestrator.work_unit_submitted"
     return None
