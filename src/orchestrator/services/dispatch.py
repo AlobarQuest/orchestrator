@@ -1,6 +1,6 @@
 import hashlib
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -13,6 +13,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
+from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import ActorContext
 
 ORCHESTRATOR_URL = "https://sds.alobar.net"
@@ -26,7 +27,9 @@ class DispatchSettings:
     allowed_target_repositories: frozenset[str]
     workflow_id: str
     workflow_ref: str
-    github_token: str | None
+    # Whether the App credentials are configured — never the credentials themselves, so no
+    # secret can reach a log, a repr, or a dispatch payload through this object.
+    github_app_configured: bool
     failure_signature_threshold: int = 3
     orchestrator_url: str = ORCHESTRATOR_URL
     human_gate_age_out_seconds: int | None = None
@@ -60,8 +63,8 @@ class GitHubDispatchError(Exception):
 
 
 class GitHubActionsDispatcher:
-    def __init__(self, token: str, *, timeout: float = 10.0) -> None:
-        self._token = token
+    def __init__(self, token_provider: Callable[[], str], *, timeout: float = 10.0) -> None:
+        self._token_provider = token_provider
         self._timeout = timeout
 
     def dispatch_workflow(
@@ -75,12 +78,18 @@ class GitHubActionsDispatcher:
         url = (
             f"https://api.github.com/repos/{repository}/actions/workflows/{workflow_id}/dispatches"
         )
+        # Minting happens inside the error envelope: a credential failure must land in a
+        # DispatchRecord like any other, not escape as a 500 that records nothing.
+        try:
+            token = self._token_provider()
+        except GitHubAppTokenError as error:
+            raise GitHubDispatchError("app_token_mint", error.code) from error
         try:
             response = httpx.post(
                 url,
                 headers={
                     "Accept": "application/vnd.github+json",
-                    "Authorization": f"Bearer {self._token}",
+                    "Authorization": f"Bearer {token}",
                     "X-GitHub-Api-Version": "2022-11-28",
                 },
                 json={"ref": ref, "inputs": dict(inputs)},
@@ -301,8 +310,8 @@ def _validate_idempotent_record(
 def _blocked_reason(unit: WorkUnit, settings: DispatchSettings) -> str | None:
     if not settings.enabled:
         return "dispatch_disabled"
-    if not settings.github_token:
-        return "github_dispatch_token_missing"
+    if not settings.github_app_configured:
+        return "github_app_credentials_missing"
     if unit.state != "ready":
         return "work_unit_not_ready"
     if unit.authority_approval_id is None:

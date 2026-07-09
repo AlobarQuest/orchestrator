@@ -123,6 +123,7 @@ from orchestrator.services.event_publications import (
     retry_event_publication,
 )
 from orchestrator.services.evidence import append_evidence, list_evidence, record_adjudication
+from orchestrator.services.github_app import github_app_credentials, token_provider_for
 from orchestrator.services.infra_links import (
     InfraLaneLinkCommand,
     list_infra_lane_links,
@@ -483,6 +484,9 @@ def dispatch_route(
     session: SessionDep,
     settings: SettingsDep,
 ) -> object:
+    # One resolution feeds both the admission gate and the minter, so the gate can never
+    # attest to credentials the dispatcher does not actually use.
+    credentials = github_app_credentials(settings)
     dispatch_settings = DispatchSettings(
         enabled=settings.dispatch_enabled,
         allowed_change_classes=settings.dispatch_allowed_change_classes,
@@ -490,12 +494,12 @@ def dispatch_route(
         allowed_target_repositories=settings.dispatch_allowed_target_repositories,
         workflow_id=settings.dispatch_workflow_id,
         workflow_ref=settings.dispatch_workflow_ref,
-        github_token=settings.github_dispatch_token,
+        github_app_configured=credentials is not None,
         failure_signature_threshold=settings.dispatch_failure_signature_threshold,
         orchestrator_url=settings.dispatch_orchestrator_url,
         human_gate_age_out_seconds=settings.dispatch_human_gate_age_out_seconds,
     )
-    dispatcher = GitHubActionsDispatcher(settings.github_dispatch_token or "")
+    dispatcher = GitHubActionsDispatcher(token_provider_for(credentials))
     return dispatch_work_unit(
         session,
         DispatchCommand(

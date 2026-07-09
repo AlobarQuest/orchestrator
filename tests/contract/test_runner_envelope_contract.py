@@ -96,7 +96,7 @@ def _dispatch_settings() -> DispatchSettings:
         allowed_target_repositories=frozenset({TARGET_REPOSITORY}),
         workflow_id=".github/workflows/factory-runner-pilot.yml",
         workflow_ref="main",
-        github_token="test-token",
+        github_app_configured=True,
     )
 
 

@@ -12,6 +12,7 @@ WS42_DISPATCH_PATHS = {
     Path("src/orchestrator/config.py"),
     Path("src/orchestrator/persistence/models.py"),
     Path("src/orchestrator/services/dispatch.py"),
+    Path("src/orchestrator/services/github_app.py"),
 }
 WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/deployment_observations.py"),
