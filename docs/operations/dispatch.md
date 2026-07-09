@@ -19,9 +19,11 @@ than fail closed.
 `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` bounds where dispatch may route.
 It is empty by default, so an unconfigured orchestrator dispatches nowhere.
 
-Every target repository must host the caller workflow at `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`
-and carry the `FACTORY_RUNNER_TOKEN`, `FACTORY_RUNNER_CREDENTIAL_KEY_ID`, and
-`ANTHROPIC_API_KEY` secrets.
+Every target repository must host the caller workflow at `.github/workflows/` under the file
+name `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`, and carry the `FACTORY_RUNNER_TOKEN`,
+`FACTORY_RUNNER_CREDENTIAL_KEY_ID`, and `ANTHROPIC_API_KEY` secrets. The caller workflow must
+declare exactly the inputs dispatch sends (`work_unit_id`); GitHub rejects the whole dispatch
+with `422 Unexpected inputs provided` otherwise.
 
 ## Runtime Controls
 
@@ -32,7 +34,9 @@ Dispatch is fail-closed by default.
 - `ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES`: allowlisted change classes.
 - `ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES`: allowlisted runner capabilities.
 - `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`: allowlisted target repos. Empty by default.
-- `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`: workflow file or ID, default `.github/workflows/factory-runner-pilot.yml`.
+- `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`: workflow **file name** or numeric ID, default
+  `factory-runner-pilot.yml`. Not a path — `POST /actions/workflows/{workflow_id}/dispatches`
+  answers 404 for a path, which is indistinguishable from a missing workflow.
 - `ORCHESTRATOR_DISPATCH_WORKFLOW_REF`: workflow ref, default `main`.
 - `ORCHESTRATOR_DISPATCH_ORCHESTRATOR_URL`: callback URL, default `https://sds.alobar.net`.
 - `ORCHESTRATOR_GITHUB_APP_ID`: the dispatch GitHub App's numeric app id.

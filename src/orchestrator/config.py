@@ -13,7 +13,10 @@ class Settings(BaseSettings):
     # Dispatch routes to each unit's own constraints.target_repository; this allowlist
     # bounds where it may route. Empty (the default) dispatches nowhere.
     dispatch_allowed_target_repositories: frozenset[str] = Field(default_factory=frozenset)
-    dispatch_workflow_id: str = ".github/workflows/factory-runner-pilot.yml"
+    # The workflow-dispatch endpoint takes a workflow file NAME or numeric id, not a path.
+    # A path adds URL segments and GitHub answers 404, which is indistinguishable from a
+    # missing workflow and opens the failure-signature circuit breaker after three tries.
+    dispatch_workflow_id: str = "factory-runner-pilot.yml"
     dispatch_workflow_ref: str = "main"
     # Dispatch authenticates as a GitHub App: an installation token expires hourly, so the
     # orchestrator mints one rather than holding a static bearer token. The PEM is base64

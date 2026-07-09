@@ -78,7 +78,7 @@ def settings(**overrides: object) -> DispatchSettings:
         "allowed_change_classes": frozenset({"repository_write"}),
         "enabled_capabilities": frozenset({"repository_write"}),
         "allowed_target_repositories": frozenset({PILOT_REPOSITORY}),
-        "workflow_id": ".github/workflows/factory-runner-pilot.yml",
+        "workflow_id": "factory-runner-pilot.yml",
         "workflow_ref": "main",
         "github_app_configured": True,
         "failure_signature_threshold": 3,
@@ -187,12 +187,9 @@ def test_dispatch_sends_ws41_workflow_dispatch_once(migrated_session: Session) -
     assert first.github_run_id == "12345"
     assert len(github.calls) == 1
     assert github.calls[0]["repository"] == "AlobarQuest/orchestrator"
-    assert github.calls[0]["workflow_id"] == ".github/workflows/factory-runner-pilot.yml"
+    assert github.calls[0]["workflow_id"] == "factory-runner-pilot.yml"
     assert github.calls[0]["ref"] == "main"
-    assert github.calls[0]["inputs"] == {
-        "work_unit_id": str(unit.id),
-        "orchestrator_url": "https://sds.alobar.net",
-    }
+    assert github.calls[0]["inputs"] == {"work_unit_id": str(unit.id)}
 
 
 def test_dispatch_blocks_unknown_conformance_without_calling_github(
@@ -499,7 +496,7 @@ def test_dispatcher_sends_the_minted_installation_token(monkeypatch: pytest.Monk
 
     dispatcher.dispatch_workflow(
         repository=PILOT_REPOSITORY,
-        workflow_id=".github/workflows/factory-runner-pilot.yml",
+        workflow_id="factory-runner-pilot.yml",
         ref="main",
         inputs={"work_unit_id": "u1"},
     )

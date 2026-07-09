@@ -188,10 +188,7 @@ def test_dispatch_api_calls_configured_workflow(dispatch_client: TestClient) -> 
     assert response.json()["github_run_id"] == "api-run"
     assert response.json()["target_repository"] == TARGET_REPOSITORY
     assert FakeGitHubActionsDispatcher.calls[0]["repository"] == TARGET_REPOSITORY
-    assert FakeGitHubActionsDispatcher.calls[0]["inputs"] == {
-        "work_unit_id": unit_id,
-        "orchestrator_url": "https://sds.alobar.net",
-    }
+    assert FakeGitHubActionsDispatcher.calls[0]["inputs"] == {"work_unit_id": unit_id}
 
 
 def test_dispatch_api_mints_with_the_credentials_the_admission_gate_attested(

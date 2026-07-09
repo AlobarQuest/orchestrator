@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy import select
@@ -75,9 +76,10 @@ class GitHubActionsDispatcher:
         ref: str,
         inputs: Mapping[str, str],
     ) -> Mapping[str, str | None]:
-        url = (
-            f"https://api.github.com/repos/{repository}/actions/workflows/{workflow_id}/dispatches"
-        )
+        # A bare file name is unchanged by quoting; a path becomes one segment rather than
+        # three, so a misconfigured workflow_id fails loudly rather than as a bare 404.
+        quoted = quote(workflow_id, safe="")
+        url = f"https://api.github.com/repos/{repository}/actions/workflows/{quoted}/dispatches"
         # Minting happens inside the error envelope: a credential failure must land in a
         # DispatchRecord like any other, not escape as a 500 that records nothing.
         try:
@@ -406,16 +408,17 @@ def _next_runner_attempt(session: Session, unit: WorkUnit) -> int:
 
 
 def _payload(unit: WorkUnit, settings: DispatchSettings, repository: str) -> dict[str, Any]:
-    inputs = {
-        "work_unit_id": str(unit.id),
-        "orchestrator_url": settings.orchestrator_url,
-    }
+    # Only inputs the caller workflow declares: GitHub rejects the whole dispatch with 422
+    # `Unexpected inputs provided` otherwise. The callback URL is not one of them — the
+    # caller workflow passes it to the reusable workflow itself.
+    inputs = {"work_unit_id": str(unit.id)}
     return {
         "workflow_dispatch": {
             "repository": repository,
             "workflow_id": settings.workflow_id,
             "ref": settings.workflow_ref,
             "inputs": inputs,
+            "orchestrator_url": settings.orchestrator_url,
         },
         "provenance_required": {
             "trailers": ["SDS-Unit", "SDS-Package-Rev"],

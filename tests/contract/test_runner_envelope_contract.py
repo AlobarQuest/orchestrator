@@ -94,7 +94,7 @@ def _dispatch_settings() -> DispatchSettings:
         allowed_change_classes=frozenset({CHANGE_CLASS}),
         enabled_capabilities=frozenset({CAPABILITY}),
         allowed_target_repositories=frozenset({TARGET_REPOSITORY}),
-        workflow_id=".github/workflows/factory-runner-pilot.yml",
+        workflow_id="factory-runner-pilot.yml",
         workflow_ref="main",
         github_app_configured=True,
     )
