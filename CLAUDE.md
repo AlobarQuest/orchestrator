@@ -64,5 +64,24 @@ style of that module.
   --platform linux/amd64 --push` or a multi-arch build for `sds.alobar.net`, and
   verify the running container image/digest after Coolify reports deployment
   finished.
+- Production `/api` is M2M-only at the proxy: the Traefik dynamic config
+  (`/data/coolify/proxy/dynamic/orchestrator.yaml` on the VPS) strips
+  `X-authentik-*` headers from `/api` routes, so human-actor API routes are
+  unreachable from a browser session unless a dedicated router applies the
+  `/review` middleware chain (strip → Authentik forward-auth → proxy marker) to
+  those paths — see the `orchestrator-promotion-human` router (WS-6.3). Quirk:
+  the first same-origin POST behind forward-auth can return the app's 401
+  (fetch follows the auth 302 and degrades to GET); the immediate retry works.
+- Production observation ingestion requires an `ActorRole.SYSTEM` actor. The
+  standing M2M credential is worker-role, so closeout-style observations use a
+  temporary credential: merge into `ORCHESTRATOR_M2M_CREDENTIALS` + map it in
+  `ORCHESTRATOR_M2M_ROLES`, restart, use, then revert. Verify EVERY env write
+  landed before restarting — a roles entry without its matching credential
+  fails startup validation closed and takes production down.
+- Coolify's env PATCH endpoint intermittently 500s on this app; the reliable
+  fallback is delete-by-env-uuid + recreate. All `/envs` API responses include
+  `real_value` for every variable (DB URLs with passwords) — parse them
+  in-process and print only whitelisted fields, never through ad-hoc shell
+  pipelines.
 
 <!-- code-standards:end -->
