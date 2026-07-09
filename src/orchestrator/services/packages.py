@@ -110,7 +110,7 @@ def record_approval(
     )
     session.add(approval)
     session.flush()
-    if subject_type == "authority" and standing_context is None:
+    if subject_type == "authority" and not standing_context:
         unit.authority_approval_id = approval.id
     session.add(
         Event(

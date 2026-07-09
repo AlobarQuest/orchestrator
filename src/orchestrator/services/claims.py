@@ -514,9 +514,11 @@ def _claim_context_replay_matches(
     claim: Claim,
     standing_context: dict[str, Any] | None,
 ) -> bool:
+    # A claim made with an empty standing context stores no snapshot, so a replay of that
+    # same claim must compare equal — otherwise the retry raises idempotency_conflict.
     if claim.context_snapshot_id is None:
-        return standing_context is None
-    if standing_context is None:
+        return not standing_context
+    if not standing_context:
         return False
     snapshot = session.get(ContextSnapshot, claim.context_snapshot_id)
     return snapshot is not None and snapshot.context_fingerprint == context_fingerprint(

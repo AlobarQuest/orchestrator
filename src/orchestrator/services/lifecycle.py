@@ -265,7 +265,10 @@ def _execution_context_snapshot_id(
     claim: Claim,
     command: TransitionCommand,
 ) -> uuid.UUID | None:
-    if command.standing_context is None:
+    # Empty means "none supplied", exactly as in the claim path: `runner_brief` serves `{}`
+    # and a worker echoes it back into `start`. Treating `{}` as a supplied-but-incomplete
+    # context rejected the value the orchestrator itself had served.
+    if not command.standing_context:
         if _has_required_context(revision):
             raise DomainError("context_missing_required", "standing context is incomplete", None)
         return None
