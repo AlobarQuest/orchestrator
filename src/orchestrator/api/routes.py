@@ -41,6 +41,10 @@ from orchestrator.api.schemas import (
     EvidenceResponse,
     InfraLaneLinkCommandModel,
     InfraLaneLinkResponse,
+    KnowledgePromotionProposalActionResponse,
+    KnowledgePromotionProposalCommandModel,
+    KnowledgePromotionProposalResponse,
+    KnowledgePromotionSubmitCommandModel,
     LeaseResponse,
     LifecycleCommand,
     ObservationCommandModel,
@@ -123,6 +127,17 @@ from orchestrator.services.infra_links import (
     InfraLaneLinkCommand,
     list_infra_lane_links,
     record_infra_lane_link,
+)
+from orchestrator.services.knowledge_promotions import (
+    HttpBrainProposalClient,
+    KnowledgePromotionProposalCommand,
+    KnowledgePromotionProposalFilters,
+    KnowledgePromotionSubmitCommand,
+    create_knowledge_promotion_proposal,
+    list_knowledge_promotion_proposals,
+    proposal_actions,
+    proposal_state,
+    submit_knowledge_promotion_to_brain,
 )
 from orchestrator.services.lifecycle import (
     ActorContext,
@@ -709,6 +724,96 @@ def observations(
     )
 
 
+@router.post(
+    "/knowledge-promotion-proposals",
+    response_model=KnowledgePromotionProposalResponse,
+    status_code=201,
+)
+def create_knowledge_promotion(
+    body: KnowledgePromotionProposalCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    result = _raise_error(
+        create_knowledge_promotion_proposal(
+            session,
+            KnowledgePromotionProposalCommand(
+                actor=actor,
+                correlation_identity=body.correlation_identity,
+                source_observation_ids=body.source_observation_ids,
+                release_artifact_binding_id=body.release_artifact_binding_id,
+                deployment_observation_id=body.deployment_observation_id,
+                work_unit_id=body.work_unit_id,
+                package_revision_id=body.package_revision_id,
+                correlation_summary=body.correlation_summary,
+                target_brain=body.target_brain,
+                target_type=body.target_type,
+                authority=body.authority,
+                applicability=body.applicability,
+                proposed_payload=body.proposed_payload,
+                provenance=body.provenance,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+            ),
+        )
+    )
+    return _knowledge_promotion_response(session, result)
+
+
+@router.get(
+    "/knowledge-promotion-proposals",
+    response_model=list[KnowledgePromotionProposalResponse],
+)
+def knowledge_promotions(
+    _actor: ActorDep,
+    session: SessionDep,
+    target_brain: str | None = None,
+    target_type: str | None = None,
+    state: str | None = None,
+) -> object:
+    return [
+        _knowledge_promotion_response(session, row)
+        for row in list_knowledge_promotion_proposals(
+            session,
+            KnowledgePromotionProposalFilters(
+                target_brain=target_brain,
+                target_type=target_type,
+                state=state,
+            ),
+        )
+    ]
+
+
+@router.post(
+    "/knowledge-promotion-proposals/{proposal_id}/submit-to-brain",
+    response_model=KnowledgePromotionProposalActionResponse,
+)
+def submit_knowledge_promotion(
+    proposal_id: UUID,
+    body: KnowledgePromotionSubmitCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    client = HttpBrainProposalClient(
+        target_urls=settings.brain_proposal_target_urls,
+        credentials=settings.brain_proposal_credentials,
+        timeout_seconds=settings.brain_proposal_timeout_seconds,
+    )
+    return _raise_error(
+        submit_knowledge_promotion_to_brain(
+            session,
+            KnowledgePromotionSubmitCommand(
+                actor=actor,
+                proposal_id=proposal_id,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+            ),
+            client,
+        )
+    )
+
+
 @router.get("/status-ledger", response_model=list[StatusLedgerRowResponse])
 def status_ledger_route(
     _actor: ActorDep,
@@ -1243,6 +1348,36 @@ def _proposal_payloads(
             ],
         }
     return payloads
+
+
+def _knowledge_promotion_response(session: Session, proposal) -> dict[str, object]:
+    return {
+        "id": proposal.id,
+        "correlation_identity": proposal.correlation_identity,
+        "source_observation_ids": proposal.source_observation_ids,
+        "source_observation_hashes": proposal.source_observation_hashes,
+        "release_artifact_binding_id": proposal.release_artifact_binding_id,
+        "deployment_observation_id": proposal.deployment_observation_id,
+        "work_unit_id": proposal.work_unit_id,
+        "package_revision_id": proposal.package_revision_id,
+        "correlation_summary": proposal.correlation_summary,
+        "target_brain": proposal.target_brain,
+        "target_type": proposal.target_type,
+        "authority": proposal.authority,
+        "applicability": proposal.applicability,
+        "proposed_payload": proposal.proposed_payload,
+        "provenance": proposal.provenance,
+        "proposal_hash": proposal.proposal_hash,
+        "proposed_by": proposal.proposed_by,
+        "proposed_at": proposal.proposed_at,
+        "event_id": proposal.event_id,
+        "idempotency_key": proposal.idempotency_key,
+        "state": proposal_state(session, proposal.id),
+        "actions": [
+            KnowledgePromotionProposalActionResponse.model_validate(action).model_dump(mode="json")
+            for action in proposal_actions(session, proposal.id)
+        ],
+    }
 
 
 def _proposed_unit(command: ProposedUnitCommand) -> ProposedUnit:

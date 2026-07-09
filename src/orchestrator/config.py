@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     dispatch_failure_signature_threshold: int = 3
     dispatch_orchestrator_url: str = "https://sds.alobar.net"
     dispatch_human_gate_age_out_seconds: int | None = None
+    brain_proposal_target_urls: dict[str, str] = Field(default_factory=dict)
+    brain_proposal_credentials: dict[str, str] = Field(default_factory=dict)
+    brain_proposal_timeout_seconds: float = 10.0
 
 
 @lru_cache

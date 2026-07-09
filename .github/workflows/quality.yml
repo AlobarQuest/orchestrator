@@ -55,5 +55,5 @@ jobs:
           docker build
           --build-context registry=tests/fixtures/security-standards
           --build-arg SECURITY_STANDARDS_REVISION=0123456789abcdef0123456789abcdef01234567
-          --build-arg REGISTRY_ARTIFACT_SHA256=00e17cb8e9841ccc8d892f0ca5b7ee240a23721c62d2d0f2236b5777ddab7d69
+          --build-arg REGISTRY_ARTIFACT_SHA256=258e4757bf84361afe847dc72ecc83452b4229d699dbf593fad50e365e80fbce
           -t orchestrator:quality .

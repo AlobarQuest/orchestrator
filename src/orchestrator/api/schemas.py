@@ -166,6 +166,26 @@ class ObservationCommandModel(CommandBase):
     payload_digest: str | None = None
 
 
+class KnowledgePromotionProposalCommandModel(CommandBase):
+    correlation_identity: str = Field(min_length=1, max_length=200)
+    source_observation_ids: list[UUID] = Field(min_length=1)
+    release_artifact_binding_id: UUID | None = None
+    deployment_observation_id: UUID | None = None
+    work_unit_id: UUID | None = None
+    package_revision_id: UUID | None = None
+    correlation_summary: str = Field(min_length=1, max_length=700)
+    target_brain: str = Field(min_length=1)
+    target_type: str = Field(min_length=1)
+    authority: str = Field(min_length=1)
+    applicability: dict[str, Any] = Field(default_factory=dict)
+    proposed_payload: dict[str, Any]
+    provenance: dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgePromotionSubmitCommandModel(CommandBase):
+    pass
+
+
 class VerifyCommandModel(CommandBase):
     pass
 
@@ -499,6 +519,49 @@ class ObservationResponse(BaseModel):
     recorded_by: str
     event_id: UUID
     idempotency_key: str
+
+
+class KnowledgePromotionProposalActionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    proposal_id: UUID
+    action: str
+    brain_record_id: str | None
+    brain_status: str | None
+    brain_response: dict[str, Any] | None
+    reason: str | None
+    action_by: str
+    action_at: datetime
+    event_id: UUID
+    idempotency_key: str
+
+
+class KnowledgePromotionProposalResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    correlation_identity: str
+    source_observation_ids: list[str]
+    source_observation_hashes: list[str]
+    release_artifact_binding_id: UUID | None
+    deployment_observation_id: UUID | None
+    work_unit_id: UUID | None
+    package_revision_id: UUID | None
+    correlation_summary: str
+    target_brain: str
+    target_type: str
+    authority: str
+    applicability: dict[str, Any]
+    proposed_payload: dict[str, Any]
+    provenance: dict[str, Any]
+    proposal_hash: str
+    proposed_by: str
+    proposed_at: datetime
+    event_id: UUID
+    idempotency_key: str
+    state: str | None = None
+    actions: list[KnowledgePromotionProposalActionResponse] = Field(default_factory=list)
 
 
 class EventPublicationQueueCommand(CommandBase):

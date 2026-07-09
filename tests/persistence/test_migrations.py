@@ -200,6 +200,64 @@ def test_ws34_event_publication_table_exists(migrated_engine) -> None:
     } <= columns
 
 
+def test_ws62_knowledge_promotion_tables_exist(migrated_engine) -> None:
+    inspector = inspect(migrated_engine)
+
+    assert "knowledge_promotion_proposals" in inspector.get_table_names()
+    assert "knowledge_promotion_proposal_actions" in inspector.get_table_names()
+    proposal_columns = {
+        column["name"] for column in inspector.get_columns("knowledge_promotion_proposals")
+    }
+    assert {
+        "id",
+        "correlation_identity",
+        "source_observation_ids",
+        "source_observation_hashes",
+        "correlation_summary",
+        "target_brain",
+        "target_type",
+        "authority",
+        "applicability",
+        "proposed_payload",
+        "provenance",
+        "proposal_hash",
+        "proposed_by",
+        "proposed_at",
+        "event_id",
+        "idempotency_key",
+    } <= proposal_columns
+    action_columns = {
+        column["name"] for column in inspector.get_columns("knowledge_promotion_proposal_actions")
+    }
+    assert {
+        "id",
+        "proposal_id",
+        "action",
+        "brain_record_id",
+        "brain_status",
+        "brain_response",
+        "action_by",
+        "action_at",
+        "event_id",
+        "idempotency_key",
+    } <= action_columns
+
+    with migrated_engine.connect() as connection:
+        triggers = set(
+            connection.scalars(
+                text(
+                    "SELECT tgname FROM pg_trigger WHERE tgname IN ("
+                    "'reject_knowledge_promotion_proposals_mutation', "
+                    "'reject_knowledge_promotion_proposal_actions_mutation')"
+                )
+            )
+        )
+    assert triggers == {
+        "reject_knowledge_promotion_proposals_mutation",
+        "reject_knowledge_promotion_proposal_actions_mutation",
+    }
+
+
 def test_ws42_dispatch_records_table_exists(migrated_engine) -> None:
     inspector = inspect(migrated_engine)
 
