@@ -1,20 +1,25 @@
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import orchestrator.services.dispatch as dispatch_module
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event
 from orchestrator.services.dispatch import (
     DispatchCommand,
     DispatchSettings,
+    GitHubActionsDispatcher,
     GitHubDispatchError,
     age_out_human_gates,
     dispatch_work_unit,
 )
+from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 from orchestrator.services.packages import (
     record_approval,
@@ -75,7 +80,7 @@ def settings(**overrides: object) -> DispatchSettings:
         "allowed_target_repositories": frozenset({PILOT_REPOSITORY}),
         "workflow_id": ".github/workflows/factory-runner-pilot.yml",
         "workflow_ref": "main",
-        "github_token": "test-token",
+        "github_app_configured": True,
         "failure_signature_threshold": 3,
     }
     values.update(overrides)
@@ -440,3 +445,91 @@ def test_dispatch_replay_is_idempotent_against_the_per_unit_repository(
 
     assert replay.id == first.id
     assert len(github.calls) == 1
+
+
+# --- WS-6.4.0c: the dispatch credential is a minted GitHub App installation token ---
+
+
+def test_dispatch_fails_closed_when_github_app_credentials_are_missing(
+    migrated_session: Session,
+) -> None:
+    unit = ready_unit(migrated_session)
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(github_app_configured=False),
+        github,
+    )
+
+    assert record.status == "blocked"
+    assert record.reason_code == "github_app_credentials_missing"
+    assert github.calls == []
+
+
+def test_dispatch_disabled_short_circuits_before_the_credentials_check(
+    migrated_session: Session,
+) -> None:
+    """The kill-switch proof runs on production before any App credential exists."""
+    unit = ready_unit(migrated_session)
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(enabled=False, github_app_configured=False),
+        github,
+    )
+
+    assert record.status == "skipped"
+    assert record.reason_code == "dispatch_disabled"
+    assert github.calls == []
+
+
+def test_dispatcher_sends_the_minted_installation_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return SimpleNamespace(status_code=204)
+
+    monkeypatch.setattr(dispatch_module.httpx, "post", fake_post)
+    dispatcher = GitHubActionsDispatcher(lambda: "ghs_minted")
+
+    dispatcher.dispatch_workflow(
+        repository=PILOT_REPOSITORY,
+        workflow_id=".github/workflows/factory-runner-pilot.yml",
+        ref="main",
+        inputs={"work_unit_id": "u1"},
+    )
+
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Authorization"] == "Bearer ghs_minted"
+
+
+def test_a_mint_failure_is_recorded_as_a_dispatch_failure_and_never_calls_github(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit = ready_unit(migrated_session)
+
+    def unreachable(url: str, **kwargs: object) -> object:
+        raise AssertionError("GitHub must not be called when the token cannot be minted")
+
+    def explode() -> str:
+        raise GitHubAppTokenError("private_key_invalid")
+
+    monkeypatch.setattr(dispatch_module.httpx, "post", unreachable)
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        GitHubActionsDispatcher(explode),
+    )
+
+    assert record.status == "failed"
+    assert record.reason_code == "app_token_mint"
+    assert record.failure_signature is not None
+    assert record.failure_signature.startswith("workflow_dispatch:app_token_mint:")

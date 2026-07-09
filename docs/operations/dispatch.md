@@ -35,7 +35,10 @@ Dispatch is fail-closed by default.
 - `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`: workflow file or ID, default `.github/workflows/factory-runner-pilot.yml`.
 - `ORCHESTRATOR_DISPATCH_WORKFLOW_REF`: workflow ref, default `main`.
 - `ORCHESTRATOR_DISPATCH_ORCHESTRATOR_URL`: callback URL, default `https://sds.alobar.net`.
-- `ORCHESTRATOR_GITHUB_DISPATCH_TOKEN`: least-privilege GitHub credential for Actions dispatch.
+- `ORCHESTRATOR_GITHUB_APP_ID`: the dispatch GitHub App's numeric app id.
+- `ORCHESTRATOR_GITHUB_APP_INSTALLATION_ID`: the installation id of that App on the target repos.
+- `ORCHESTRATOR_GITHUB_APP_PRIVATE_KEY_B64`: the App's private-key PEM, base64 encoded so it stays
+  a single-line variable. Embedded newlines from a wrapping encoder are tolerated.
 - `ORCHESTRATOR_DISPATCH_FAILURE_SIGNATURE_THRESHOLD`: same-signature failure threshold, default `3`.
 - `ORCHESTRATOR_DISPATCH_HUMAN_GATE_AGE_OUT_SECONDS`: optional age-out evidence threshold for human-gate states.
 
@@ -46,12 +49,19 @@ The GitHub credential must be provided only through the approved BWS/Coolify sec
 path. Do not store raw tokens in tracked files, prompts, logs, package YAML,
 evidence, PR bodies, or generated artifacts.
 
+Dispatch authenticates as a GitHub App. An App JWT cannot call the workflow-dispatch
+endpoint and an installation access token expires hourly, so the orchestrator mints an
+installation token on demand and caches it until shortly before expiry. Missing or
+partially-set App variables block admission (`github_app_credentials_missing`); a key that
+is present but unusable fails at mint time and is recorded as a dispatch failure with
+reason code `app_token_mint`.
+
 ## Admission
 
 A work unit is dispatchable only when all of these are true:
 
 - the global kill switch is enabled;
-- the GitHub dispatch credential is configured;
+- the GitHub App dispatch credentials are configured;
 - the unit is `ready`;
 - an approved authority envelope is recorded on the unit;
 - the unit capability and change class are allowlisted;

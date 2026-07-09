@@ -1,9 +1,10 @@
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
@@ -11,6 +12,7 @@ import orchestrator.api.routes as routes
 from orchestrator.api.dependencies import AuthConfig, get_session
 from orchestrator.config import Settings, get_settings
 from orchestrator.main import create_app
+from orchestrator.services.github_app import GitHubAppTokenError, reset_token_providers
 from tests.api.test_lifecycle_api import AUTHORITY as BASE_AUTHORITY
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM
 
@@ -28,11 +30,15 @@ AUTHORITY = {
 }
 
 
+# The provider the route handed the dispatcher, captured for the credential-agreement test.
+CAPTURED_TOKEN_PROVIDERS: list[Callable[[], str]] = []
+
+
 class FakeGitHubActionsDispatcher:
     calls: list[dict[str, object]] = []
 
-    def __init__(self, _token: str) -> None:
-        pass
+    def __init__(self, token_provider: Callable[[], str]) -> None:
+        CAPTURED_TOKEN_PROVIDERS.append(token_provider)
 
     def dispatch_workflow(self, **kwargs: object) -> dict[str, str]:
         self.calls.append(kwargs)
@@ -49,6 +55,8 @@ def dispatch_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
     FakeGitHubActionsDispatcher.calls = []
+    CAPTURED_TOKEN_PROVIDERS.clear()
+    reset_token_providers()
     monkeypatch.setattr(routes, "GitHubActionsDispatcher", FakeGitHubActionsDispatcher)
     app = create_app(auth_config)
 
@@ -63,7 +71,9 @@ def dispatch_client(
             dispatch_allowed_change_classes=frozenset({"repository_write"}),
             dispatch_enabled_capabilities=frozenset({"repository_write"}),
             dispatch_allowed_target_repositories=frozenset({TARGET_REPOSITORY}),
-            github_dispatch_token="test-token",
+            github_app_id="123456",
+            github_app_installation_id="78901234",
+            github_app_private_key_b64=SecretStr("cGVt"),
         )
 
     app.dependency_overrides[get_session] = database_session
@@ -182,3 +192,31 @@ def test_dispatch_api_calls_configured_workflow(dispatch_client: TestClient) -> 
         "work_unit_id": unit_id,
         "orchestrator_url": "https://sds.alobar.net",
     }
+
+
+def test_dispatch_api_mints_with_the_credentials_the_admission_gate_attested(
+    dispatch_client: TestClient,
+) -> None:
+    """The gate reads the injected settings; the minter must read the very same ones.
+
+    A provider built from process settings instead would carry no credentials at all, and
+    would fail `app_credentials_missing` while the gate had just attested `configured`.
+    """
+    unit_id = register_ready_unit(dispatch_client, key="dispatch-api-credentials")
+    response = dispatch_client.post(
+        f"/api/v1/work-units/{unit_id}/dispatch",
+        headers=SYSTEM,
+        json={
+            "idempotency_key": "dispatch-api-credentials",
+            "expected_version": 2,
+            "runner_attempt": 1,
+        },
+    )
+    assert response.status_code == 200
+
+    assert len(CAPTURED_TOKEN_PROVIDERS) == 1
+    with pytest.raises(GitHubAppTokenError) as excinfo:
+        CAPTURED_TOKEN_PROVIDERS[0]()
+
+    # `cGVt` decodes to b"pem", which is not a usable key — but it IS the injected one.
+    assert excinfo.value.code == "private_key_invalid"

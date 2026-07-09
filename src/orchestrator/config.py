@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,7 +15,12 @@ class Settings(BaseSettings):
     dispatch_allowed_target_repositories: frozenset[str] = Field(default_factory=frozenset)
     dispatch_workflow_id: str = ".github/workflows/factory-runner-pilot.yml"
     dispatch_workflow_ref: str = "main"
-    github_dispatch_token: str | None = None
+    # Dispatch authenticates as a GitHub App: an installation token expires hourly, so the
+    # orchestrator mints one rather than holding a static bearer token. The PEM is base64
+    # encoded so it stays a single-line environment variable.
+    github_app_id: str | None = None
+    github_app_installation_id: str | None = None
+    github_app_private_key_b64: SecretStr | None = None
     dispatch_failure_signature_threshold: int = 3
     dispatch_orchestrator_url: str = "https://sds.alobar.net"
     dispatch_human_gate_age_out_seconds: int | None = None

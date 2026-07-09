@@ -67,7 +67,7 @@ def test_ws61_observation_service_does_not_merge_deploy_or_call_external_tools()
         "record_adjudication",
         "dispatch_work_unit",
         "orchestrator_dispatch_enabled=true",
-        "orchestrator_github_dispatch_token",
+        "orchestrator_github_app",
     )
     matches = [value for value in forbidden if value in source]
 

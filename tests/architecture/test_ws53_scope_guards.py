@@ -61,7 +61,7 @@ def test_ws53_observation_service_does_not_merge_deploy_or_call_external_tools()
         "todoist",
         "brain",
         "orchestrator_dispatch_enabled=true",
-        "orchestrator_github_dispatch_token",
+        "orchestrator_github_app",
     )
     matches = [value for value in forbidden if value in source]
 
