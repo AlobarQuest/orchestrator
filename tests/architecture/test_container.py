@@ -29,6 +29,16 @@ def test_runtime_image_copies_only_declared_application_artifacts() -> None:
     assert "/app/registry-bundle.json" in runtime
 
 
+def test_runtime_image_carries_pinned_factory_event_helpers() -> None:
+    dockerfile = Path("Dockerfile").read_text()
+    runtime = dockerfile.split("FROM python:3.12-slim AS runtime", 1)[1]
+
+    assert "SECURITY_STANDARDS_DIR=/app/security-standards" in runtime
+    assert "/agents /app/security-standards/registry/agents" in runtime
+    assert "/src /app/security-standards/src" in runtime
+    assert "/schema /app/security-standards/schema" in runtime
+
+
 def test_compose_uses_postgres_16_and_explicit_web_startup() -> None:
     compose = yaml.safe_load(Path("docker-compose.yml").read_text())
     services = compose["services"]

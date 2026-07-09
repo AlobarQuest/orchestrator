@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from orchestrator.identity.registry import RegistryAdapter, RegistryValidationError
-from scripts.build_registry_bundle import build_bundle, write_bundle
+from scripts.build_registry_bundle import (
+    artifact_digest,
+    build_bundle,
+    build_bundle_from_artifact,
+    write_bundle,
+)
 
 REVISION = "0123456789abcdef0123456789abcdef01234567"
 
@@ -238,6 +243,22 @@ prohibited: []
     generated = build_bundle(registry_dir, revision)
 
     assert [value["agent_id"] for value in generated["actors"]] == ["worker"]
+
+
+def test_registry_artifact_digest_covers_runtime_helpers(tmp_path: Path) -> None:
+    artifact = tmp_path / "artifact"
+    fixture = Path("tests/fixtures/security-standards")
+    subprocess.run(["cp", "-R", str(fixture), str(artifact)], check=True)
+    revision = (artifact / "SOURCE_REVISION").read_text().strip()
+
+    first_digest = artifact_digest(artifact)
+    generated = build_bundle_from_artifact(artifact, revision, first_digest)
+    (artifact / "src" / "factory_events" / "envelope.py").write_text("changed\n")
+
+    assert [value["agent_id"] for value in generated["actors"]] == ["devon", "worker"]
+    assert artifact_digest(artifact) != first_digest
+    with pytest.raises(RegistryValidationError, match="digest"):
+        build_bundle_from_artifact(artifact, revision, first_digest)
 
 
 def test_generator_rejects_empty_registry(tmp_path: Path) -> None:
