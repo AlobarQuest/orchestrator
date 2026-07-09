@@ -57,6 +57,49 @@ INFRA_LANE_LINK_STATUSES = (
     "failed",
     "cancelled",
 )
+OBSERVATION_SOURCE_SYSTEMS = (
+    "deployment_observation",
+    "watchtower",
+    "ops_dashboard",
+    "healthchecks",
+    "uptime_monitor",
+    "github",
+    "drift_digest",
+)
+OBSERVATION_TRUST_CLASSIFICATIONS = ("orchestrator", "delivery_system", "monitor", "external")
+OBSERVATION_SUBJECT_TYPES = (
+    "service",
+    "repo",
+    "deployment",
+    "release_binding",
+    "deployment_observation",
+    "work_unit",
+    "package_revision",
+    "endpoint",
+    "monitor",
+    "external_run",
+)
+OBSERVATION_TYPES = (
+    "deployment",
+    "health",
+    "uptime",
+    "github_check",
+    "github_pr",
+    "drift",
+    "metric",
+    "alert",
+    "inventory",
+)
+OBSERVATION_STATUSES = (
+    "passed",
+    "failed",
+    "degraded",
+    "healthy",
+    "unhealthy",
+    "unknown",
+    "observed",
+)
+OBSERVATION_SEVERITIES = ("info", "warning", "critical")
 
 
 class WorkPackage(UUIDPrimaryKey, Base):
@@ -614,6 +657,74 @@ class DeploymentObservation(UUIDPrimaryKey, Base):
         default=list,
         server_default=text("'[]'::jsonb"),
     )
+    idempotency_key: Mapped[str] = mapped_column(String)
+
+
+class Observation(UUIDPrimaryKey, Base):
+    __tablename__ = "observations"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        UniqueConstraint(
+            "source_system",
+            "source_reference",
+            "normalized_fact_hash",
+            name="uq_observations_source_fact",
+        ),
+        CheckConstraint(
+            f"source_system IN {OBSERVATION_SOURCE_SYSTEMS!r}",
+            name="ck_observations_source_system",
+        ),
+        CheckConstraint(
+            f"trust_classification IN {OBSERVATION_TRUST_CLASSIFICATIONS!r}",
+            name="ck_observations_trust_classification",
+        ),
+        CheckConstraint(
+            f"subject_type IN {OBSERVATION_SUBJECT_TYPES!r}",
+            name="ck_observations_subject_type",
+        ),
+        CheckConstraint(
+            f"observation_type IN {OBSERVATION_TYPES!r}",
+            name="ck_observations_type",
+        ),
+        CheckConstraint(
+            f"status IN {OBSERVATION_STATUSES!r}",
+            name="ck_observations_status",
+        ),
+        CheckConstraint(
+            f"severity IN {OBSERVATION_SEVERITIES!r}",
+            name="ck_observations_severity",
+        ),
+        CheckConstraint(
+            "source_reference <> '' AND subject_reference <> '' AND summary <> '' "
+            "AND normalized_fact_hash <> '' AND recorded_by <> '' AND idempotency_key <> ''",
+            name="ck_observations_required_text",
+        ),
+    )
+
+    source_system: Mapped[str] = mapped_column(String)
+    source_reference: Mapped[str] = mapped_column(Text)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    trust_classification: Mapped[str] = mapped_column(String)
+    subject_type: Mapped[str] = mapped_column(String)
+    subject_reference: Mapped[str] = mapped_column(Text)
+    environment: Mapped[str | None] = mapped_column(String)
+    observation_type: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)
+    severity: Mapped[str] = mapped_column(String)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    summary: Mapped[str] = mapped_column(Text)
+    facts: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    normalized_fact_hash: Mapped[str] = mapped_column(String)
+    payload_digest: Mapped[str | None] = mapped_column(String)
+    recorded_by: Mapped[str] = mapped_column(String)
+    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
     idempotency_key: Mapped[str] = mapped_column(String)
 
 

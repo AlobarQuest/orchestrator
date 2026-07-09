@@ -149,6 +149,23 @@ class DeploymentObservationCommandModel(CommandBase):
     status_summary: dict[str, Any]
 
 
+class ObservationCommandModel(CommandBase):
+    source_system: str = Field(min_length=1)
+    source_reference: str = Field(min_length=1)
+    source_url: str | None = None
+    trust_classification: str = Field(min_length=1)
+    subject_type: str = Field(min_length=1)
+    subject_reference: str = Field(min_length=1)
+    environment: str | None = None
+    observation_type: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    severity: str = Field(min_length=1)
+    observed_at: datetime
+    summary: str = Field(min_length=1)
+    facts: dict[str, Any]
+    payload_digest: str | None = None
+
+
 class VerifyCommandModel(CommandBase):
     pass
 
@@ -456,6 +473,31 @@ class DeploymentObservationResponse(BaseModel):
     event_id: UUID
     post_deploy_event_id: UUID
     evidence_ids: list[str]
+    idempotency_key: str
+
+
+class ObservationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    source_system: str
+    source_reference: str
+    source_url: str | None
+    trust_classification: str
+    subject_type: str
+    subject_reference: str
+    environment: str | None
+    observation_type: str
+    status: str
+    severity: str
+    observed_at: datetime
+    received_at: datetime
+    summary: str
+    facts: dict[str, Any]
+    normalized_fact_hash: str
+    payload_digest: str | None
+    recorded_by: str
+    event_id: UUID
     idempotency_key: str
 
 

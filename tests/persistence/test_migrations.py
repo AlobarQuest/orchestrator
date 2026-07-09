@@ -661,3 +661,39 @@ def test_work_unit_authority_upgrade_prefers_proposal_unit_authority_when_availa
     assert str(units["unit-1"].id) == decomposition_unit_id
     assert units["unit-1"].authority == raw_unit_authority
     assert units["manual-unit"].authority == normalize_authority(fallback_authority).normalized()
+
+
+def test_ws61_observations_table_exists(migrated_engine) -> None:
+    inspector = inspect(migrated_engine)
+
+    assert "observations" in inspector.get_table_names()
+    columns = {column["name"] for column in inspector.get_columns("observations")}
+    assert {
+        "id",
+        "source_system",
+        "source_reference",
+        "source_url",
+        "trust_classification",
+        "subject_type",
+        "subject_reference",
+        "environment",
+        "observation_type",
+        "status",
+        "severity",
+        "observed_at",
+        "received_at",
+        "summary",
+        "facts",
+        "normalized_fact_hash",
+        "payload_digest",
+        "recorded_by",
+        "event_id",
+        "idempotency_key",
+    } <= columns
+
+    unique_constraints = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("observations")
+    }
+    assert ("idempotency_key",) in unique_constraints
+    assert ("source_system", "source_reference", "normalized_fact_hash") in unique_constraints
