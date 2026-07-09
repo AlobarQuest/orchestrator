@@ -150,3 +150,12 @@ style of that module.
   never borrow an unrelated identity for a durable credential. `token_hash` is
   `sha256(bearer_token)`; Coolify stores only the hash, so the hash is safe to
   handle and the token must never leave BWS.
+- **`make check` exit 0 does not prove the tests ran.** The vendored Makefile runs
+  `pytest; rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 5 ]; then exit $$rc; fi` — exit
+  code **5 means "no tests collected"** and is deliberately swallowed so a TS-only
+  repo can share the target. A misconfigured `testpaths`, a collection error in a
+  `conftest.py`, or a tool resolved from the wrong venv can therefore produce a
+  green `make check` having executed nothing. Read the collected-test count, in CI
+  as well as locally (`collected N items`), not just the exit code. This is the
+  local twin of the portfolio-wide invariant that `uv sync` installs no extras and
+  `quality.yml` guards every tool with `command -v`.
