@@ -717,7 +717,13 @@ def test_work_unit_authority_upgrade_prefers_proposal_unit_authority_when_availa
         }
 
     assert str(units["unit-1"].id) == decomposition_unit_id
-    assert units["unit-1"].authority == raw_unit_authority
+    assert units["unit-1"].authority == {
+        **raw_unit_authority,
+        "constraints": {
+            **raw_unit_authority["constraints"],
+            "work_unit_id": decomposition_unit_id,
+        },
+    }
     assert units["manual-unit"].authority == normalize_authority(fallback_authority).normalized()
 
 

@@ -10,7 +10,9 @@ class Settings(BaseSettings):
     dispatch_enabled: bool = False
     dispatch_allowed_change_classes: frozenset[str] = Field(default_factory=frozenset)
     dispatch_enabled_capabilities: frozenset[str] = Field(default_factory=frozenset)
-    dispatch_target_repository: str = "AlobarQuest/orchestrator"
+    # Dispatch routes to each unit's own constraints.target_repository; this allowlist
+    # bounds where it may route. Empty (the default) dispatches nowhere.
+    dispatch_allowed_target_repositories: frozenset[str] = Field(default_factory=frozenset)
     dispatch_workflow_id: str = ".github/workflows/factory-runner-pilot.yml"
     dispatch_workflow_ref: str = "main"
     github_dispatch_token: str | None = None

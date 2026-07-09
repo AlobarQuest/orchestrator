@@ -28,7 +28,6 @@ AUTHORITY = {
     },
     "budgets": {"max_attempts": 3, "max_llm_calls": 4},
     "constraints": {
-        "work_unit_id": "unit-1",
         "target_repository": "AlobarQuest/orchestrator",
         "allowed_commands": ["make check"],
     },
@@ -228,7 +227,12 @@ def test_runner_brief_scopes_ac_mapping_to_active_approved_proposal(
     assert response.status_code == 200
     body = response.json()
     assert [criterion["ac_id"] for criterion in body["acceptance_criteria"]] == ["AC-001"]
-    assert body["authority"]["envelope"] == approved_authority
+    # The brief serves the envelope the approver saw, carrying the orchestrator's
+    # work_unit_id stamp — this is exactly what the runner validates against.
+    assert body["authority"]["envelope"] == {
+        **approved_authority,
+        "constraints": {**approved_authority["constraints"], "work_unit_id": unit_id},
+    }
     assert body["target"]["repository"] == "AlobarQuest/orchestrator"
 
 

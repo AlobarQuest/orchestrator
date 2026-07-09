@@ -130,6 +130,9 @@ def test_package_intake_get_returns_persisted_intake_projection(db_client: TestC
     assert body["authority"] == {
         "capabilities": {"repository_write": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": None,
+        "conformance": None,
+        "constraints": {},
         "unknown_fields": [],
     }
     assert [criterion["ac_id"] for criterion in body["acceptance_criteria"]] == [
