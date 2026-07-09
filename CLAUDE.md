@@ -38,8 +38,16 @@ the cleanest, most idiomatic existing module in this repo
 When writing new code, mirror the structure, naming conventions, and documentation
 style of that module.
 
+<!-- code-standards:end -->
+
 ## Known Non-obvious Invariants
 
+- **Everything in this section must stay BELOW `<!-- code-standards:end -->`.**
+  `code_standards.stanza.inject_stanza` replaces the whole `start`…`end` block in
+  place and preserves only what surrounds it, and the canonical stanza template
+  contains no invariants section. Until 2026-07-09 these bullets lived *inside*
+  the block, one `code-standards init`/`sync` away from silent deletion.
+  Verify with: re-rendering the block over this file must be a no-op.
 - On this machine, repo-local agent instructions live in `CLAUDE.md`. Treat
   `AGENTS.md` references from generic agent tooling as equivalent to checking
   `CLAUDE.md` unless a repo explicitly provides both files.
@@ -83,5 +91,29 @@ style of that module.
   `real_value` for every variable (DB URLs with passwords) — parse them
   in-process and print only whitelisted fields, never through ad-hoc shell
   pipelines.
-
-<!-- code-standards:end -->
+- The work-unit authority envelope is a **cross-repo contract** with
+  `AlobarQuest/factory-runner`, not a local data shape. It is pinned by a
+  byte-identical `tests/fixtures/runner_authority_envelope.json` in both repos
+  and the same `CONTRACT_SHA256` in `tests/contract/test_runner_envelope_contract.py`
+  here and `tests/test_orchestrator_envelope_contract.py` there. Changing the
+  envelope means changing both repos together; a one-sided edit fails the repo
+  that was not updated. Before WS-6.4.0 no test crossed this boundary, and the
+  two sides had silently diverged into mutually unsatisfiable fixtures.
+- `AuthorityEnvelope.normalized()` defines what a human's authority approval
+  actually attests. Fields outside `KNOWN_FIELDS` contribute only their *names*
+  to the fingerprint, never their values — so a field carrying real authority
+  (where code ships, which change class, what conformance was claimed) MUST be a
+  known field. **Adding to `KNOWN_FIELDS` rewrites every authority fingerprint**,
+  so its cost is proportional to the live ledger: free on 2026-07-09 (2 completed
+  units, empty ledger), expensive later. No data migration is needed for existing
+  units — every `authority_fingerprint()` call site is at write/activation time,
+  and readiness compares stored columns rather than recomputing.
+- factory-runner refuses to act unless `target_repo == current_repo`: it may only
+  mutate the repository it checked out (`factory_runner/authority.py`). Dispatch
+  must therefore resolve the target repository **per work unit**, from
+  `authority.constraints.target_repository`, never from a process-global setting.
+  A global target does not fail closed — it silently misroutes every fan-out unit
+  to whichever repo was configured at process start.
+- `src/orchestrator/kernel/` may not contain the string literal `dispatch`,
+  `merge`, or other WS-4.2/mutation terms — `tests/architecture/test_ws32_scope_guards.py`
+  scans runtime string literals, **including docstrings**, not just code.
