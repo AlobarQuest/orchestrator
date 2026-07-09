@@ -93,8 +93,11 @@ def ready_unit(
     key: str = "dispatch-unit",
     conformance: dict[str, object] | object = MISSING,
     target_repository: str | None = PILOT_REPOSITORY,
+    enforcement_snapshot: dict[str, object] | None = None,
 ):
-    enforcement_snapshot: dict[str, object] = {}
+    # Revisions are append-only at the database level, so a test that needs a different
+    # enforcement snapshot must register it, not mutate it afterwards.
+    enforcement_snapshot = {} if enforcement_snapshot is None else enforcement_snapshot
     revision = register_revision(
         session,
         package_id=f"pkg-{key}",

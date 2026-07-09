@@ -388,7 +388,11 @@ def _claim_context_snapshot(
     revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
-    if standing_context is None:
+    # An empty standing context means "none supplied", not "one supplied that is missing
+    # everything". `runner_brief` serves `{}` when the revision requires no context, and a
+    # worker passes that value straight back — so treating `{}` as a real context made the
+    # orchestrator reject the exact value it had just served.
+    if not standing_context:
         if _has_required_context(revision):
             raise DomainError("context_missing_required", "standing context is incomplete", None)
         return None
