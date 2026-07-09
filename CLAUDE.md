@@ -117,3 +117,36 @@ style of that module.
 - `src/orchestrator/kernel/` may not contain the string literal `dispatch`,
   `merge`, or other WS-4.2/mutation terms — `tests/architecture/test_ws32_scope_guards.py`
   scans runtime string literals, **including docstrings**, not just code.
+- The **envelope contract and the workflow contract are different contracts.**
+  WS-6.4.0's shared-fixture test validates the authority envelope across both
+  repos and never executes the workflow. Two independent workflow bugs shipped
+  under a green suite and blocked every dispatch until 2026-07-09: factory-runner
+  was private (a reusable workflow called from repo X runs with X's
+  `GITHUB_TOKEN`, so `uv tool install git+https://…` could not authenticate), and
+  the workflow ran `./scripts/run-factory-task.sh`, which exists only in
+  factory-runner's tree while `actions/checkout` checks out the **caller's** repo.
+  A reusable workflow may only invoke things reachable from the caller's working
+  directory — i.e. the installed console script. factory-runner is now public;
+  keep it public or the install breaks again. Its Actions access policy was also
+  `access_level: none`, so **no repo could call it at all** — that, not
+  credentials, is why the pilot sat at "merged, credentialed, not dispatched".
+- **`sds.alobar.net` is NOT Cloudflare-proxied** — it answers `server: uvicorn`
+  behind Traefik directly. The portfolio-wide invariant that Cloudflare 403s
+  default Python User-Agents with `error code: 1010` does **not** apply here;
+  factory-runner's `httpx` default UA authenticates fine (verified from a
+  GitHub-hosted runner, 2026-07-09). Do not misdiagnose a failure here as that.
+- **Write `ORCHESTRATOR_M2M_CREDENTIALS` before `ORCHESTRATOR_M2M_ROLES`, and
+  verify each from inside the container before the next restart.** `main.py`
+  raises when `set(roles) ⊄ set(credentials)` — it fails **closed**, so the
+  container will not boot. A half-applied credentials write leaves roles absent,
+  which is a healthy configuration; a half-applied roles write is an outage (this
+  is the WS-6.3 ~3-minute 503). There is no ordering of the two that can strand
+  production, at the cost of one extra restart. Never "save a restart".
+- The registry bundle is built from the **git tree** at `SECURITY_STANDARDS_REVISION`,
+  not from a working copy, and is baked into the image. A credential's `agent_id`
+  must resolve to an actor in that bundle, and `ActorContext(identity.actor_id, role)`
+  means **every event is attributed to that `agent_id` forever**. Adding an actor
+  therefore requires a merged security-standards commit plus an image rebuild —
+  never borrow an unrelated identity for a durable credential. `token_hash` is
+  `sha256(bearer_token)`; Coolify stores only the hash, so the hash is safe to
+  handle and the token must never leave BWS.
