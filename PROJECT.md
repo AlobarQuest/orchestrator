@@ -25,6 +25,8 @@ required_checks:
 - [ ] (P2) Provide a helper that computes `authority.conformance` from real repo state (`security_scan.cli.scan` + `portfolio.compliance.build_rows`, both importable and local-only) so decomposition authors do not hand-type the claim — added 2026-07-09
 - [ ] (P3) Tighten the dispatch conformance gate: the `standards_touched ⊆ accepted_standards` branch is a tautology if a producer ever echoes `accepted = touched`. Consider requiring `status == "green"` and treating acceptance as evidence rather than a bypass — added 2026-07-09
 
+- [ ] (P1) Attestation audit: enumerate every place the system ATTESTS rather than REFUSES, and make each fail closed. The refusal layers held during the WS-6.4 canary (authority tool scoping denied WebSearch; the change-detection guard refused a hollow PR; decomposition_already_approved refused a silent repair; the kill switch blocked dispatch). The attestation layers did not: `make check` exits 0 having verified nothing, pytest exit 5 is swallowed, finalize records a literal 'passed'. A false attestation is not caught by the gates above it — it is trusted by them. Conformance already has this rule (accepted_standards must never echo standards_touched) precisely because someone saw the tautology coming; generalize it. Evidence: ~/docs/software-delivery-system/2026-07-10-ws64-revision2-envelope-evidence.md — added 2026-07-10
+- [ ] (2) Split FACTORY_RUNNER_TOKEN into per-repo worker credentials. One shared credential is currently written into 6 repos' Actions secrets (WS-6.4a, Devon's call for the MVP), so revoking one repo's access means rotating all six. Same agent_id, distinct credential_key_ids. — added 2026-07-10
 ## Future plans
 
 ## Known Non-obvious Invariants
