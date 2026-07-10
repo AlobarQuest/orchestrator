@@ -159,3 +159,45 @@ style of that module.
   as well as locally (`collected N items`), not just the exit code. This is the
   local twin of the portfolio-wide invariant that `uv sync` installs no extras and
   `quality.yml` guards every tool with `command -v`.
+- **`constraints.allowed_commands` is an ordered command list the worker re-executes,
+  not a permission set.** `finalize-run` runs **every** entry, in envelope order,
+  and only then checks `git status` before committing. So (a) anything authorized
+  *will* run again at finalize — there is no coding-phase-only grant; and (b) a
+  mutator listed after the verifier means the recorded evidence (`"make check:
+  passed"`) attests to a tree that is not the one pushed. Order mutators first,
+  the verifier last.
+- **An envelope that authorizes no mutating command cannot produce a diff, and the
+  authority approval that blessed it cannot be taken back.** `approve_decomposition_proposal`
+  raises `decomposition_already_approved` while an `ApprovedDecomposition` has
+  `superseded_at IS NULL`, no supersede route is exposed, and unit `authority` has no
+  mutation path — so a wrong envelope costs a whole new package revision plus a fresh
+  human approval per unit. Before spending any of that, dry-run each unit against its
+  real target repo, read-only: prove the mutator yields a diff (`uv lock --upgrade
+  --dry-run`, `npm outdated`) and prove the verifier actually executes tools (no
+  `"… not installed — skipping"`, a real `collected N items`). Verifying a manifest's
+  *type* is not verifying an upgrade is *available*: a `==` pin makes `uv lock
+  --upgrade` a silent no-op, and the unit then dies on the same `no changes to submit`
+  guard the envelope was rewritten to avoid. The general failure is **authored intent
+  never validated against executable reality**; WS-6.4 hit it three times.
+- **That dry-run rule is necessary but NOT sufficient — it passed all three WS-6.4 defects.**
+  Add three clauses. (1) **Run the ordered list twice** in one checkout: `finalize-run`
+  re-executes every `allowed_commands` entry before `git status`, and `uv venv` is not
+  idempotent (`uv venv --clear` is). (2) **Name every site of a pin**: `uv` resolves
+  `[dependency-groups]` and `[project.optional-dependencies]` jointly, so bumping one of
+  two identical `==` pins is *unsatisfiable*, not merely inconsistent. (3) **Control for
+  the environment** — run the verifier against an *unmodified* clean clone first, or a
+  runner-environment failure reads as an update-induced one.
+- **`make check` cannot pass on a bare runner: it needs Postgres, `SECURITY_STANDARDS_DIR`,
+  and a migrated database.** `tests/conftest.py` connects to `127.0.0.1:5432`, and
+  `factory_events` (which lives in `security-standards`, not in this repo's dependencies)
+  is importable only via `SECURITY_STANDARDS_DIR` pointing at
+  `tests/fixtures/security-standards`. `quality.yml` supplies a `postgres:16-alpine`
+  service, both DB URLs, that env var, and a prior `alembic upgrade head`;
+  `factory-runner-pilot.yml` supplies none of them. A clean clone in a bare environment
+  fails `18 failed, 836 passed` with `ModuleNotFoundError: No module named 'factory_events'`
+  — *unmodified*, so this is never evidence a dependency update broke anything.
+  Consequently **`make check` must never appear in this repo's authority envelope**: with
+  no `.venv` it exits 0 having verified nothing, and with one it hard-fails at finalize.
+  Its envelope verifies `uv sync` + `uv lock --check`; its tests are gated by its own
+  named check on the pull-request head, which is where AC-001..006 already place that
+  evidence. **Exit 0 from `make check` is never proof tests ran — read the collected count.**
