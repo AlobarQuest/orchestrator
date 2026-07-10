@@ -77,6 +77,10 @@ class EvidenceCommand(CommandBase):
     payload: dict[str, Any] | None = None
     source_revision: str = Field(min_length=1)
     context_snapshot_id: UUID | None = None
+    # A later attempt supersedes the current evidence for its AC rather than first-writing
+    # over it. The service resolves which row to supersede from current_evidence, so the
+    # caller signals only intent. Default False preserves first-write behavior.
+    supersede: bool = False
 
 
 class PreflightCommandModel(CommandBase):

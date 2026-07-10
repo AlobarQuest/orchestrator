@@ -122,7 +122,12 @@ from orchestrator.services.event_publications import (
     queue_event_publications,
     retry_event_publication,
 )
-from orchestrator.services.evidence import append_evidence, list_evidence, record_adjudication
+from orchestrator.services.evidence import (
+    append_evidence,
+    list_evidence,
+    record_adjudication,
+    supersede_evidence,
+)
 from orchestrator.services.github_app import github_app_credentials, token_provider_for
 from orchestrator.services.infra_links import (
     InfraLaneLinkCommand,
@@ -1133,12 +1138,14 @@ def evidence(
     actor: ActorDep,
     session: SessionDep,
 ) -> object:
+    fields = body.model_dump()
+    store = supersede_evidence if fields.pop("supersede") else append_evidence
     return _raise_error(
-        append_evidence(
+        store(
             session,
             work_unit_id=unit_id,
             actor=actor,
-            **body.model_dump(),
+            **fields,
         )
     )
 
