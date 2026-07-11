@@ -707,3 +707,16 @@ def reconcile_detect(
         ),
         json_output,
     )
+
+
+@app.command("recover-evidence")
+def recover_evidence(
+    unit_id: Annotated[str, typer.Argument()],
+    attempt: Annotated[int, typer.Option("--attempt", min=1)],
+    data: DataOption,
+    json_output: JsonOption = False,
+) -> None:
+    """Attach evidence from an attempt whose lease expired, without redoing the work."""
+    _post_data(
+        f"/api/v1/work-units/{unit_id}/attempts/{attempt}/recover-evidence", data, json_output
+    )

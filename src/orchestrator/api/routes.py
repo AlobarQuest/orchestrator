@@ -58,6 +58,7 @@ from orchestrator.api.schemas import (
     ReclaimCommand,
     ReconciliationDetectCommand,
     ReconciliationDetectResponse,
+    RecoverEvidenceCommand,
     ReleaseArtifactCommandModel,
     ReleaseArtifactResponse,
     RenewCommand,
@@ -129,6 +130,7 @@ from orchestrator.services.evidence import (
     append_evidence,
     list_evidence,
     record_adjudication,
+    recover_evidence,
     supersede_evidence,
 )
 from orchestrator.services.github_app import github_app_credentials, token_provider_for
@@ -726,6 +728,30 @@ def create_observation(
     if isinstance(result, Observation):
         detect_observation_conditions(session, result, actor)
     return _raise_error(result)
+
+
+@router.post(
+    "/work-units/{unit_id}/attempts/{attempt}/recover-evidence",
+    response_model=EvidenceResponse,
+    status_code=201,
+)
+def recover_evidence_route(
+    unit_id: UUID,
+    attempt: int,
+    body: RecoverEvidenceCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """AC-004. SYSTEM/operator only -- never the expired worker."""
+    return _raise_error(
+        recover_evidence(
+            session,
+            work_unit_id=unit_id,
+            attempt=attempt,
+            actor=actor,
+            **body.model_dump(),
+        )
+    )
 
 
 @router.post("/reconciliation/detect", response_model=ReconciliationDetectResponse)

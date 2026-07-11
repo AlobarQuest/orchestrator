@@ -849,6 +849,17 @@ class DecompositionProposalResponse(BaseModel):
     retained_acs: list[DecompositionProposalRetainedAcResponse]
 
 
+class RecoverEvidenceCommand(CommandBase):
+    """Note there is NO lease_token: the whole scenario is that the lease is gone."""
+
+    work_package_revision_id: UUID
+    ac_id: str = Field(min_length=1)
+    evidence_type: str = Field(min_length=1)
+    stable_ref: str | None = None
+    payload: dict[str, Any] | None = None
+    source_revision: str = Field(min_length=1)
+
+
 class ReconciliationDetectCommand(CommandBase):
     """The detect-pass carries the same idempotency contract as every other /api/v1 mutation.
 
