@@ -40,6 +40,9 @@ Consequences of this shape:
 - The orchestrator stays **push-only and loop-free**. Its only new logic is
   conflict-detection on observation ingest (record `reconciliation_required` when a
   pushed observation disagrees with stored state) plus operator recovery commands.
+  **⚠️ Amended 2026-07-11 — see the Amendment section below. This bullet is inaccurate
+  on two counts: the split-brain detection mechanism, and the omission of the recovery,
+  dead-letter, and consistency-check surfaces.**
 - The runner **reports only** — it pushes observations and never sets canonical
   lifecycle state, mirroring the standing invariant that workers never declare
   completion. Deterministic gates and the operator decide recovery.
@@ -81,3 +84,71 @@ One additional small deployable/process to build and operate, and reconciliation
 reconciles against *reported* reality delivered by the runner — i.e. it trusts the runner
 as a SYSTEM actor, the same trust model as every existing observation. Both costs were
 judged well worth actually closing drift while keeping the canonical core inviolate.
+
+---
+
+## Amendment — 2026-07-11 (WS-P2.1 design approval, AC-012)
+
+**Status:** Accepted. Approved by Devon at the AC-012 gate and recorded as a chained
+factory event (`package.design_approved`, `evt-728df5d0afd34572aa96e5794a3002ce`).
+**Design:** `docs/superpowers/specs/2026-07-11-wsp21-recovery-controls-drills-design.md` (v4).
+
+The Decision above stands in full: reconciliation is performed by a separate,
+report-only runner; the orchestrator stays push-only and loop-free; there is no
+projection-rebuild engine. Two statements in the Consequences need correcting, both
+found by the adversarial architecture review that AC-012 mandates.
+
+### 1. Conflict detection is *hybrid*, not uniformly "on observation ingest"
+
+The original bullet says the orchestrator's "only new logic is conflict-detection **on
+observation ingest**." That is achievable for most paths but **provably impossible for
+one**:
+
+| Path | Where detection runs | Why |
+|---|---|---|
+| `github_pr` (AC-001) | **on ingest** (post-commit, own transaction) | as originally intended |
+| `github_check` (AC-002) | **on ingest** (post-commit, own transaction) | as originally intended |
+| `digest_divergence` | **on ingest**, incl. on a *rejected* ingest (recorded at the route layer) | the digest guard raises and rolls back, so the condition must be written outside that transaction |
+| **`deploy_split_brain` (AC-003)** | **operator/runner-invoked detect-pass** | **not knowable at ingest under any design** |
+
+The split-brain case is structural, not a shortcut: the post-deploy verification unit is
+minted `SUBMITTED` *inside* the deployment-ingest transaction (zero seconds old), and
+`_validated_subject` requires the bound implementation unit already be `COMPLETED`.
+"Deployment succeeded while verification timed out" is a statement about **elapsed time**
+and cannot be true at the instant of ingest. It is therefore detected by a detect-pass
+(`POST /api/v1/reconciliation/detect`) comparing elapsed-since-`SUBMITTED` against a
+configurable threshold — plus, to close the case ADR-0002 rejects Alternative A for
+(drift *nobody reported*), a runner-reported deploy for a release binding that has **no**
+post-deploy verification unit at all.
+
+Detection is also, critically, **never inside the ingest transaction** — a rejected ingest
+would roll the condition back and erase it.
+
+**Every invariant this ADR exists to protect is preserved.** The detect-pass makes no
+outbound call (it is a pure database read plus an append-only write) and is invoked on
+demand — it is not a background loop, scheduler, or cron. Only the *mechanism* narrows;
+the guarantee does not.
+
+**Governance note:** the approved package (`ws-p2.1-recovery-controls-drills` rev 1, hash
+`135af657…`) carries "reconciliation-on-ingest" in its title and `scope.included`. The
+acceptance criteria themselves are mechanism-neutral — they require that the orchestrator
+*records* a `reconciliation_required` condition, not where detection runs — so all ACs
+remain satisfiable and the gate chain (intake, decomposition, per-unit authority approval)
+is undisturbed. The residual AC-003 deviation was approved knowingly and is recorded in the
+tamper-evident factory-events chain rather than only in prose.
+
+### 2. The orchestrator gains more than conflict detection + recovery commands
+
+The original bullet undercounts the in-process surface. WS-P2.1 also adds, all reachable
+only through public API/CLI and none of them a background loop or an outbound call:
+
+- an append-only `reconciliation_conditions` / `reconciliation_resolutions` model, with an
+  operator resolution surface (a condition with no resolution row is *open*);
+- a **dead-letter view** over terminally-failed/blocked units, failed/blocked dispatch
+  records, and derived open failure-signature circuit breakers, plus operator
+  retry/requeue/cancel that compose only existing guarded transitions;
+- a **lease-expired evidence-attach recovery** path (SYSTEM/operator, never the expired
+  worker; it supersedes the current evidence head rather than forking the supersession
+  chain, which would otherwise wedge the unit permanently);
+- a **projection-vs-source consistency check** (an operator-invocable audit — a *check*,
+  never a rebuild, exactly as the "Related narrowing" section requires).
