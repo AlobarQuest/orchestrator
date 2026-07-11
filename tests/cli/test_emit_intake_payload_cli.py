@@ -79,15 +79,22 @@ def test_emit_payload_fails_on_unapproved_package(tmp_path: Path) -> None:
             "package-intake-1",
             "--out",
             str(out),
+            "--json",
         ],
     )
     assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"]["code"] == "package_source_error"
     assert not out.exists()
 
 
-def test_emit_payload_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_emit_payload_reports_write_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     _pass_verification(monkeypatch)
-    first = CliRunner().invoke(app, ["emit-intake-payload", *_BASE_ARGS, "--json"])
-    second = CliRunner().invoke(app, ["emit-intake-payload", *_BASE_ARGS, "--json"])
-    assert first.exit_code == 0
-    assert first.stdout == second.stdout
+    out = tmp_path / "missing-dir" / "intake.json"
+    result = CliRunner().invoke(
+        app, ["emit-intake-payload", *_BASE_ARGS, "--out", str(out), "--json"]
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"]["code"] == "output_write_failed"
+    assert not out.exists()
