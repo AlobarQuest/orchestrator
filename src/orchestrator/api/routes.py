@@ -82,6 +82,7 @@ from orchestrator.persistence.models import (
     DecompositionProposalRetainedAc,
     DecompositionProposalUnit,
     Event,
+    Observation,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
@@ -171,6 +172,7 @@ from orchestrator.services.packages import (
     register_revision,
     resolve_dependency_command,
 )
+from orchestrator.services.reconciliation_detection import detect_observation_conditions
 from orchestrator.services.release_artifacts import (
     ReleaseArtifactCommand,
     list_release_artifacts,
@@ -679,30 +681,35 @@ def create_observation(
     actor: ActorDep,
     session: SessionDep,
 ) -> object:
-    return _raise_error(
-        record_observation(
-            session,
-            ObservationCommand(
-                actor=actor,
-                source_system=body.source_system,
-                source_reference=body.source_reference,
-                source_url=body.source_url,
-                trust_classification=body.trust_classification,
-                subject_type=body.subject_type,
-                subject_reference=body.subject_reference,
-                environment=body.environment,
-                observation_type=body.observation_type,
-                status=body.status,
-                severity=body.severity,
-                observed_at=body.observed_at,
-                summary=body.summary,
-                facts=body.facts,
-                payload_digest=body.payload_digest,
-                idempotency_key=body.idempotency_key,
-                expected_version=body.expected_version,
-            ),
-        )
+    result = record_observation(
+        session,
+        ObservationCommand(
+            actor=actor,
+            source_system=body.source_system,
+            source_reference=body.source_reference,
+            source_url=body.source_url,
+            trust_classification=body.trust_classification,
+            subject_type=body.subject_type,
+            subject_reference=body.subject_reference,
+            environment=body.environment,
+            observation_type=body.observation_type,
+            status=body.status,
+            severity=body.severity,
+            observed_at=body.observed_at,
+            summary=body.summary,
+            facts=body.facts,
+            payload_digest=body.payload_digest,
+            idempotency_key=body.idempotency_key,
+            expected_version=body.expected_version,
+        ),
     )
+    # Post-commit, in the NEXT transaction: record_observation has already committed, so a
+    # rejected ingest never reaches detection and a detection failure cannot roll the
+    # observation back. Detection never raises, so a forged correlation cannot turn a valid
+    # observation into a rejected ingest.
+    if isinstance(result, Observation):
+        detect_observation_conditions(session, result, actor)
+    return _raise_error(result)
 
 
 @router.get("/observations", response_model=list[ObservationResponse])
