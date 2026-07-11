@@ -875,3 +875,18 @@ class ReconciliationDetectResponse(BaseModel):
     conditions_recorded: int
     skipped_correlations: int
     suppressed_duplicates: int
+
+
+class DeadLetterEntryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source: str
+    work_unit_id: UUID
+    unit_key: str
+    unit_state: str
+    reason_code: str | None
+    detail: str | None
+    attempt_count: int
+    max_attempts: int
+    requeue_eligible: bool
+    occurred_at: datetime | None

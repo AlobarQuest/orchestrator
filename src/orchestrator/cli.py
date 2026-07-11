@@ -720,3 +720,9 @@ def recover_evidence(
     _post_data(
         f"/api/v1/work-units/{unit_id}/attempts/{attempt}/recover-evidence", data, json_output
     )
+
+
+@app.command("dead-letter")
+def dead_letter(json_output: JsonOption = False) -> None:
+    """List terminal failures: failed/blocked units, failed dispatches, open circuit breakers."""
+    _run(lambda: request("GET", "/api/v1/dead-letter"), json_output)

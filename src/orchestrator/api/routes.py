@@ -17,6 +17,7 @@ from orchestrator.api.schemas import (
     ApprovalResponse,
     ClaimCommand,
     ContextSnapshotResponse,
+    DeadLetterEntryResponse,
     DecompositionDecisionCommand,
     DecompositionProposalAcMappingResponse,
     DecompositionProposalDependencyResponse,
@@ -97,6 +98,7 @@ from orchestrator.services.claims import (
     renew_claim,
 )
 from orchestrator.services.context import PreflightCommand, record_preflight
+from orchestrator.services.dead_letter import dead_letter
 from orchestrator.services.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
@@ -153,6 +155,7 @@ from orchestrator.services.knowledge_promotions import (
 from orchestrator.services.lifecycle import (
     ActorContext,
     TransitionCommand,
+    require_operator_actor,
     transition_unit,
     unit_history,
 )
@@ -891,6 +894,20 @@ def submit_knowledge_promotion(
             ),
             client,
         )
+    )
+
+
+@router.get("/dead-letter", response_model=list[DeadLetterEntryResponse])
+def dead_letter_route(
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """AC-005. Read-only: terminal failures made visible."""
+    require_operator_actor(actor)
+    return dead_letter(
+        session,
+        failure_signature_threshold=settings.dispatch_failure_signature_threshold,
     )
 
 

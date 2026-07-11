@@ -101,3 +101,36 @@ def test_application_defines_no_event_publisher_or_dispatch_objects() -> None:
         )
 
     assert not forbidden.intersection(identifiers)
+
+
+def test_production_get_route_inventory_is_explicit() -> None:
+    """The POST inventory has always been pinned; the GET surface was not.
+
+    WS-P2.1 adds read surfaces that enumerate failures and divergence, so a new GET must be added
+    here DELIBERATELY -- the same discipline the POST set has always had.
+    """
+    paths = create_app().openapi()["paths"]
+    observed = {
+        path
+        for path, operations in paths.items()
+        if "get" in operations and path.startswith("/api/v1/")
+    }
+
+    assert observed == {
+        "/api/v1/dead-letter",
+        "/api/v1/decomposition-proposals/{proposal_id}",
+        "/api/v1/event-publications",
+        "/api/v1/knowledge-promotion-proposals",
+        "/api/v1/observations",
+        "/api/v1/package-intakes/{revision_id}",
+        "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        "/api/v1/release-artifacts/{binding_id}/deployment-observations",
+        "/api/v1/status-ledger",
+        "/api/v1/work-units/{unit_id}/context-snapshots",
+        "/api/v1/work-units/{unit_id}/evidence",
+        "/api/v1/work-units/{unit_id}/history",
+        "/api/v1/work-units/{unit_id}/infra-lane-links",
+        "/api/v1/work-units/{unit_id}/readiness",
+        "/api/v1/work-units/{unit_id}/release-artifacts",
+        "/api/v1/work-units/{unit_id}/runner-brief",
+    }

@@ -63,6 +63,16 @@ class TransitionResult:
     event_id: uuid.UUID
 
 
+def require_operator_actor(actor: ActorContext) -> None:
+    """Read surfaces that enumerate failure signatures are operator-only.
+
+    SYSTEM is the M2M lane and HUMAN is the review lane; a worker or verifier credential has no
+    business enumerating another unit's failures.
+    """
+    if actor.role not in {ActorRole.SYSTEM, ActorRole.HUMAN}:
+        raise DomainError("role_forbidden", "only an operator may read this surface", None)
+
+
 def unit_history(session: Session, unit_id: uuid.UUID) -> tuple[Event, ...]:
     if session.get(WorkUnit, unit_id) is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
