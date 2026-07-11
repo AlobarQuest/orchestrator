@@ -134,3 +134,37 @@ def test_deployment_observation_api_rejects_worker_verifier_and_conflict(
     assert first.status_code == 201
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "deployment_observation_conflict"
+
+
+def test_a_digest_mismatch_is_rejected_and_the_condition_survives_the_rollback(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """The digest guard raises and the ingest service rolls back. A condition written inside that
+    transaction would be erased along with the rejected observation -- so it is written at the
+    route layer, in its own transaction. The ingest STAYS rejected."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from orchestrator.persistence.models import DeploymentObservation, ReconciliationCondition
+
+    binding_id = release_artifact(db_client, migrated_engine)
+    body = observation_body(key="digest-divergence-1") | {
+        "observed_artifact_digest": "sha256:" + "f" * 64,  # not the bound digest
+    }
+
+    response = db_client.post(
+        f"/api/v1/release-artifacts/{binding_id}/deployment-observations",
+        headers=SYSTEM,
+        json=body,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "deployment_observation_digest_mismatch"
+    with Session(migrated_engine) as session:
+        # The ingest really was rejected: no observation, no post-deploy unit.
+        assert list(session.scalars(select(DeploymentObservation))) == []
+        # ...and the condition survived the service's rollback.
+        rows = list(session.scalars(select(ReconciliationCondition)))
+        assert [row.condition_type for row in rows] == ["digest_divergence"]
+        assert rows[0].observed_state["observed_artifact_digest"] == "sha256:" + "f" * 64
+        assert rows[0].stored_state["artifact_digest"] == DIGEST

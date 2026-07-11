@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import WorkUnitState
-from orchestrator.persistence.models import Observation, WorkUnit
+from orchestrator.persistence.models import Observation, ReleaseArtifactBinding, WorkUnit
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.pr_bindings import get_pr_binding
 from orchestrator.services.reconciliation import (
@@ -30,6 +30,8 @@ from orchestrator.services.reconciliation import (
 
 EXTERNAL_MERGE_ALARM = "external_merge_alarm"
 PR_STATE_DIVERGENCE = "pr_state_divergence"
+CHECK_RESULT_FLIP = "check_result_flip"
+DIGEST_DIVERGENCE = "digest_divergence"
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
@@ -70,11 +72,11 @@ def detect_observation_conditions(
     the next transaction -- a rejected ingest never reaches it, and a detection failure cannot
     roll the observation back."""
     try:
-        if (
-            observation.observation_type == "github_pr"
-            and observation.subject_type == "work_unit"
-        ):
-            return _detect_pull_request(session, observation, actor)
+        if observation.subject_type == "work_unit":
+            if observation.observation_type == "github_pr":
+                return _detect_pull_request(session, observation, actor)
+            if observation.observation_type == "github_check":
+                return _detect_check(session, observation, actor)
         return DetectionCounters()
     except Exception:
         session.rollback()
@@ -241,3 +243,151 @@ def _pull_request_facts(facts: dict[str, Any]) -> dict[str, Any] | None:
     ):
         return None
     return {"pr_number": number, "head_sha": head_sha, "state": state, "merged": merged}
+
+
+def _detect_check(
+    session: Session,
+    observation: Observation,
+    actor: ActorContext,
+) -> DetectionCounters:
+    """AC-002. A check that was GREEN at the head verification actually read, and is now RED,
+    contradicts what verification concluded. A check that simply fails was never green -- that is
+    an ordinary red build, not reality disagreeing with stored state."""
+    unit = _correlated_unit(session, observation)
+    if unit is None:
+        return SKIPPED
+    facts = _check_facts(observation.facts)
+    if facts is None:
+        return SKIPPED
+    binding = get_pr_binding(session, unit.id)
+    if binding is None or binding.pr_number != facts["pr_number"]:
+        return SKIPPED
+    # Newest wins PER CHECK NAME: Security going red says nothing about Quality.
+    current = _current_observation(
+        session,
+        observation.subject_reference,
+        "github_check",
+        ("check_name", facts["check_name"]),
+    )
+    if current != observation:
+        return DetectionCounters()
+
+    read_head = binding.verification_read_head_sha
+    if read_head is None or facts["conclusion"] != "failure":
+        return DetectionCounters()
+    if not _was_green_at(session, observation, facts["check_name"], read_head):
+        return DetectionCounters()
+
+    return _record(
+        session,
+        actor,
+        unit,
+        observation,
+        condition_type=CHECK_RESULT_FLIP,
+        key_facts={"check_name": facts["check_name"]},
+        stored_state={
+            "check_name": facts["check_name"],
+            "conclusion": "success",
+            "head_sha": read_head,
+        },
+        observed_state=facts,
+        detail="check succeeded when verification read it and has since failed",
+    )
+
+
+def _was_green_at(
+    session: Session,
+    observation: Observation,
+    check_name: str,
+    read_head: str,
+) -> bool:
+    """AC-002's supersession is COMPUTED over the append-only rows, not stored: an earlier
+    observation for this (unit, check) that was `success` on the head verification read."""
+    earlier = session.scalar(
+        select(Observation.id)
+        .where(
+            Observation.id != observation.id,
+            Observation.subject_type == "work_unit",
+            Observation.subject_reference == observation.subject_reference,
+            Observation.observation_type == "github_check",
+            Observation.facts["check_name"].astext == check_name,
+            Observation.facts["conclusion"].astext == "success",
+            Observation.facts["head_sha"].astext == read_head,
+        )
+        .limit(1)
+    )
+    return earlier is not None
+
+
+def _check_facts(facts: dict[str, Any]) -> dict[str, Any] | None:
+    number = facts.get("pr_number")
+    head_sha = facts.get("head_sha")
+    check_name = facts.get("check_name")
+    conclusion = facts.get("conclusion")
+    if (
+        not isinstance(number, int)
+        or isinstance(number, bool)
+        or not isinstance(head_sha, str)
+        or SHA.fullmatch(head_sha) is None
+        or not isinstance(check_name, str)
+        or not check_name.strip()
+        or not isinstance(conclusion, str)
+        or not conclusion.strip()
+    ):
+        return None
+    return {
+        "pr_number": number,
+        "head_sha": head_sha,
+        "check_name": check_name,
+        "conclusion": conclusion,
+    }
+
+
+def record_digest_divergence(
+    session: Session,
+    *,
+    actor: ActorContext,
+    release_artifact_binding_id: uuid.UUID,
+    observed_artifact_digest: str,
+    environment: str,
+) -> DetectionCounters:
+    """AC-003's digest half, and it CANNOT live inside the ingest service.
+
+    The digest guard raises `deployment_observation_digest_mismatch` and the deployment-ingest
+    service rolls the transaction back, so a condition written in there would be erased along
+    with the rejected observation. This is therefore called from the ROUTE, in its own
+    transaction, after the DomainError has been caught -- and the ingest stays rejected.
+
+    Never raises: the caller still has a rejection to return.
+    """
+    try:
+        binding = session.get(ReleaseArtifactBinding, release_artifact_binding_id)
+        if binding is None:
+            return SKIPPED
+        outcome = record_reconciliation_condition(
+            session,
+            ConditionCommand(
+                actor=actor,
+                work_unit_id=binding.work_unit_id,
+                observation_kind="deployment",
+                condition_type=DIGEST_DIVERGENCE,
+                key_facts={"release_artifact_binding_id": str(binding.id)},
+                stored_state={
+                    "artifact_digest": binding.artifact_digest,
+                    "release_artifact_binding_id": str(binding.id),
+                },
+                observed_state={
+                    "observed_artifact_digest": observed_artifact_digest,
+                    "environment": environment,
+                },
+                detail="observed artifact digest does not match the immutable release binding",
+            ),
+        )
+        if not isinstance(outcome, ConditionOutcome):
+            return SKIPPED
+        if outcome.suppressed:
+            return DetectionCounters(suppressed_duplicates=1)
+        return DetectionCounters(conditions_recorded=1)
+    except Exception:
+        session.rollback()
+        return SKIPPED

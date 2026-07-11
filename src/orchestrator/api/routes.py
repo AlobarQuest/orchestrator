@@ -172,7 +172,10 @@ from orchestrator.services.packages import (
     register_revision,
     resolve_dependency_command,
 )
-from orchestrator.services.reconciliation_detection import detect_observation_conditions
+from orchestrator.services.reconciliation_detection import (
+    detect_observation_conditions,
+    record_digest_divergence,
+)
 from orchestrator.services.release_artifacts import (
     ReleaseArtifactCommand,
     list_release_artifacts,
@@ -638,29 +641,39 @@ def create_deployment_observation(
     actor: ActorDep,
     session: SessionDep,
 ) -> object:
-    return _raise_error(
-        record_deployment_observation(
-            session,
-            DeploymentObservationCommand(
-                release_artifact_binding_id=binding_id,
-                actor=actor,
-                environment=body.environment,
-                base_url=body.base_url,
-                observed_artifact_digest=body.observed_artifact_digest,
-                deployment_ref=body.deployment_ref,
-                deployment_url=body.deployment_url,
-                deployer=body.deployer,
-                observed_at=body.observed_at,
-                probe_summary=body.probe_summary,
-                route_summary=body.route_summary,
-                auth_summary=body.auth_summary,
-                dispatch_summary=body.dispatch_summary,
-                status_summary=body.status_summary,
-                idempotency_key=body.idempotency_key,
-                expected_version=body.expected_version,
-            ),
-        )
+    result = record_deployment_observation(
+        session,
+        DeploymentObservationCommand(
+            release_artifact_binding_id=binding_id,
+            actor=actor,
+            environment=body.environment,
+            base_url=body.base_url,
+            observed_artifact_digest=body.observed_artifact_digest,
+            deployment_ref=body.deployment_ref,
+            deployment_url=body.deployment_url,
+            deployer=body.deployer,
+            observed_at=body.observed_at,
+            probe_summary=body.probe_summary,
+            route_summary=body.route_summary,
+            auth_summary=body.auth_summary,
+            dispatch_summary=body.dispatch_summary,
+            status_summary=body.status_summary,
+            idempotency_key=body.idempotency_key,
+            expected_version=body.expected_version,
+        ),
     )
+    # The digest guard RAISES and the ingest service rolls back, so a condition written in there
+    # would be erased with the rejected observation. Record it here instead, in its own
+    # transaction -- and the ingest stays rejected.
+    if isinstance(result, DomainError) and result.code == "deployment_observation_digest_mismatch":
+        record_digest_divergence(
+            session,
+            actor=actor,
+            release_artifact_binding_id=binding_id,
+            observed_artifact_digest=body.observed_artifact_digest,
+            environment=body.environment,
+        )
+    return _raise_error(result)
 
 
 @router.get(
