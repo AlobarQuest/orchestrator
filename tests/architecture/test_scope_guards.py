@@ -76,6 +76,7 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/review/units/{unit_id}/review",
         "/review/units/{unit_id}/cancel",
         "/review/units/{unit_id}/retry",
+        "/review/reconciliation/conditions/{condition_id}/resolution",
         "/review/decomposition-proposals/{proposal_id}/approve",
         "/review/decomposition-proposals/{proposal_id}/reject",
         "/review/decomposition-proposals/{proposal_id}/require-revision",

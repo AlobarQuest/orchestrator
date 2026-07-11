@@ -33,6 +33,7 @@ from orchestrator.persistence.models import (
     EventPublication,
     Evidence,
     PackageAcceptanceCriterion,
+    ReconciliationCondition,
     WorkPackageRevision,
     WorkUnit,
 )
@@ -44,6 +45,11 @@ from orchestrator.services.decomposition import (
 )
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 from orchestrator.services.packages import evaluate_readiness, record_approval
+from orchestrator.services.reconciliation import (
+    ResolutionCommand,
+    open_conditions,
+    record_resolution,
+)
 
 router = APIRouter(prefix="/review", include_in_schema=False)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -410,6 +416,27 @@ def detail(
     context["csrf_tokens"] = {
         action: _issue_token(request, actor, unit_id, action, key) for action, key in keys.items()
     }
+    # Open reconciliation conditions, each with its own CSRF token bound to that condition --
+    # a recovery surface an operator cannot actually act on is not a recovery surface.
+    conditions = open_conditions(session, unit_id)
+    condition_keys = {str(row.id): str(uuid.uuid4()) for row in conditions}
+    context["open_conditions"] = tuple(
+        {
+            "id": row.id,
+            "condition_type": row.condition_type,
+            "observation_kind": row.observation_kind,
+            "detail": row.detail,
+            "detected_at": row.detected_at,
+            "stored_state": row.stored_state,
+            "observed_state": row.observed_state,
+        }
+        for row in conditions
+    )
+    context["condition_idempotency_keys"] = condition_keys
+    context["condition_csrf_tokens"] = {
+        str(row.id): _issue_token(request, actor, row.id, "resolve", condition_keys[str(row.id)])
+        for row in conditions
+    }
     return _render(request, "unit.html", context)
 
 
@@ -571,6 +598,45 @@ def retry(
         reason=reason,
         idempotency_key=idempotency_key,
         expected_version=expected_version,
+    )
+    if isinstance(result, DomainError):
+        raise result
+    return _redirect(unit_id)
+
+
+@router.post("/reconciliation/conditions/{condition_id}/resolution")
+def resolve_reconciliation_condition(
+    request: Request,
+    condition_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    decision: Annotated[str, Form(min_length=1)],
+    rationale: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    """Close a reconciliation condition. HUMAN-only, and deliberately on /review.
+
+    Detection never auto-resolves -- a resolution is an operator decision. It lives here rather
+    than on /api because production strips the Authentik headers from /api, so a human actor
+    cannot reach an /api route at all.
+    """
+    _human(actor)
+    _require_form(request, actor, condition_id, "resolve", csrf_token, idempotency_key, confirm)
+    condition = session.get(ReconciliationCondition, condition_id)
+    if condition is None:
+        raise DomainError("condition_not_found", "reconciliation condition does not exist", None)
+    unit_id = condition.work_unit_id
+    result = record_resolution(
+        session,
+        ResolutionCommand(
+            actor=actor,
+            condition_id=condition_id,
+            decision=decision,
+            rationale=rationale,
+            idempotency_key=idempotency_key,
+        ),
     )
     if isinstance(result, DomainError):
         raise result
