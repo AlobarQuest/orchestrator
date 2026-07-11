@@ -182,9 +182,7 @@ def _load_intake_payload(path: Path, source_repository: str) -> JsonObject:
         raise CliError({"code": "package_source_error", "message": str(error)}) from error
 
 
-def _build_intake_payload(
-    path: Path, source_repository: str, idempotency_key: str
-) -> JsonObject:
+def _build_intake_payload(path: Path, source_repository: str, idempotency_key: str) -> JsonObject:
     return {
         **_load_intake_payload(path, source_repository),
         "idempotency_key": idempotency_key,
@@ -240,6 +238,35 @@ def intake_package(
     def operation() -> Any:
         payload = _build_intake_payload(Path(path), source_repository, idempotency_key)
         return request("POST", "/api/v1/package-intakes", payload)
+
+    _run(operation, json_output)
+
+
+@app.command("emit-intake-payload")
+def emit_intake_payload(
+    path: Path,
+    source_repository: Annotated[str, typer.Option("--source-repository")],
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", help="Write the payload to a file instead of stdout."),
+    ] = None,
+    json_output: JsonOption = False,
+) -> None:
+    def operation() -> Any:
+        payload = _build_intake_payload(Path(path), source_repository, idempotency_key)
+        if out is None:
+            return payload
+        try:
+            out.write_text(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as error:
+            raise CliError(
+                {"code": "output_write_failed", "message": f"could not write {out}"}
+            ) from error
+        return {"written": str(out)}
 
     _run(operation, json_output)
 
