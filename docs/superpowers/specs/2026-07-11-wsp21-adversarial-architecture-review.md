@@ -1,9 +1,14 @@
 # WS-P2.1 — Adversarial architecture review and resolutions (AC-012)
 
 **Date:** 2026-07-11
-**Reviewed design:** `2026-07-11-wsp21-recovery-controls-drills-design.md` (v1 → revised to v2)
+**Reviewed design:** `2026-07-11-wsp21-recovery-controls-drills-design.md` (v1 → v2 → v3 → **v4**)
 **Gate:** AC-012 — adversarial architecture review before implementation; findings resolved in the approved design.
-**Verdict on v1:** APPROVABLE-WITH-CHANGES — 3 blockers, 8 majors, plus minors. All resolved in v2 (this document records each finding and its resolution). The v2 design's reworked AC-002/AC-003 detection path was re-reviewed (see §Re-review).
+**Rounds:** three, across **two independent reviewers**.
+- **Round 1** (v1): 3 blockers + 8 majors. Root cause: detection coupled to the ingest transaction.
+- **Round 2** (v2, re-review of the fixes): 2 new majors + 9 minors — including a fabricated ADR quote and an AC-004 guard that made AC-004's own scenario unreachable.
+- **Round 3** (second, independent reviewer): **1 data-corruption blocker the first reviewer missed** (B-A) + 1 governance blocker (B-B) + 6 majors + 9 minors.
+
+**All findings are resolved in v4.** Every round's findings and resolutions are recorded below.
 
 ## Root cause
 
