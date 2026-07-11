@@ -182,6 +182,16 @@ def _load_intake_payload(path: Path, source_repository: str) -> JsonObject:
         raise CliError({"code": "package_source_error", "message": str(error)}) from error
 
 
+def _build_intake_payload(
+    path: Path, source_repository: str, idempotency_key: str
+) -> JsonObject:
+    return {
+        **_load_intake_payload(path, source_repository),
+        "idempotency_key": idempotency_key,
+        "expected_version": 0,
+    }
+
+
 def _load_protocol_fixture_payload(path: Path, source_repository: str) -> JsonObject:
     try:
         return load_protocol_fixture_intake_payload(path, source_repository=source_repository)
@@ -228,11 +238,7 @@ def intake_package(
     json_output: JsonOption = False,
 ) -> None:
     def operation() -> Any:
-        payload = {
-            **_load_intake_payload(Path(path), source_repository),
-            "idempotency_key": idempotency_key,
-            "expected_version": 0,
-        }
+        payload = _build_intake_payload(Path(path), source_repository, idempotency_key)
         return request("POST", "/api/v1/package-intakes", payload)
 
     _run(operation, json_output)
