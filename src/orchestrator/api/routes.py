@@ -63,6 +63,7 @@ from orchestrator.api.schemas import (
     ReleaseArtifactCommandModel,
     ReleaseArtifactResponse,
     RenewCommand,
+    RequeueCommand,
     RetryCommand,
     RevisionRegistration,
     RevisionResponse,
@@ -96,6 +97,7 @@ from orchestrator.services.claims import (
     claim_unit,
     reclaim_expired_claim,
     renew_claim,
+    requeue_unit,
 )
 from orchestrator.services.context import PreflightCommand, record_preflight
 from orchestrator.services.dead_letter import dead_letter
@@ -755,6 +757,17 @@ def recover_evidence_route(
             **body.model_dump(),
         )
     )
+
+
+@router.post("/work-units/{unit_id}/requeue", response_model=UnitResponse)
+def requeue(
+    unit_id: UUID,
+    body: RequeueCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """AC-006. SYSTEM recovery for the NOT-exhausted case; `retry` owns the exhausted one."""
+    return _raise_error(requeue_unit(session, unit_id, actor, **body.model_dump()))
 
 
 @router.post("/reconciliation/detect", response_model=ReconciliationDetectResponse)

@@ -890,3 +890,7 @@ class DeadLetterEntryResponse(BaseModel):
     max_attempts: int
     requeue_eligible: bool
     occurred_at: datetime | None
+
+
+class RequeueCommand(CommandBase):
+    reason: str = Field(min_length=1)

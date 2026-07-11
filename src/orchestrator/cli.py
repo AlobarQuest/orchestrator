@@ -726,3 +726,26 @@ def recover_evidence(
 def dead_letter(json_output: JsonOption = False) -> None:
     """List terminal failures: failed/blocked units, failed dispatches, open circuit breakers."""
     _run(lambda: request("GET", "/api/v1/dead-letter"), json_output)
+
+
+@app.command("requeue")
+def requeue(
+    unit_id: Annotated[str, typer.Argument()],
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    reason: Annotated[str, typer.Option("--reason")],
+    expected_version: Annotated[int, typer.Option("--expected-version", min=0)] = 0,
+    json_output: JsonOption = False,
+) -> None:
+    """Return a failed or blocked unit to READY. Refuses when the attempt budget is exhausted."""
+    _run(
+        lambda: request(
+            "POST",
+            f"/api/v1/work-units/{unit_id}/requeue",
+            {
+                "idempotency_key": idempotency_key,
+                "expected_version": expected_version,
+                "reason": reason,
+            },
+        ),
+        json_output,
+    )

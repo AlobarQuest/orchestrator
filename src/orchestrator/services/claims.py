@@ -273,7 +273,7 @@ def _perform_reclaim(
 
     release_claim(claim, terminal_reason="lease_expired", released_at=now)
     correlation_id = uuid.uuid4()
-    eligibility_error = _reclaim_eligibility_error(session, unit)
+    eligibility_error = _readiness_eligibility_error(session, unit)
     failed_payload: dict[str, object] = {
         "expired_claim_id": str(claim.id),
         "attempt": claim.attempt,
@@ -483,7 +483,10 @@ def _validate_expired_active_claim(unit: WorkUnit, claim: Claim, now: datetime) 
         raise DomainError("claim_not_active", "work unit has no active claim", None)
 
 
-def _reclaim_eligibility_error(session: Session, unit: WorkUnit) -> DomainError | None:
+def _readiness_eligibility_error(session: Session, unit: WorkUnit) -> DomainError | None:
+    """Shared by reclaim AND requeue. Both must refuse to land a unit in READY that cannot
+    actually be claimed -- a READY unit that claim_unit rejects is invisible in the failed-units
+    view and unrunnable at the same time."""
     if unit.attempt_count >= unit.max_attempts:
         return DomainError("attempts_exhausted", "attempt budget is exhausted", "approve_retry")
     if evaluate_readiness(session, unit.id).status is not ReadinessStatus.READY:
@@ -738,3 +741,96 @@ def _idempotency_conflict() -> DomainError:
         "idempotency key belongs to a different operation",
         "use a new idempotency key",
     )
+
+
+REQUEUE_SOURCE_STATES = {WorkUnitState.FAILED, WorkUnitState.BLOCKED}
+
+
+def requeue_unit(
+    session: Session,
+    unit_id: uuid.UUID,
+    actor: ActorContext,
+    *,
+    reason: str,
+    idempotency_key: str,
+    expected_version: int | None = None,
+) -> WorkUnit | DomainError:
+    """AC-006. SYSTEM recovery for the NOT-exhausted case; `authorize_retry` owns the exhausted
+    one, and it already exists twice -- this is the only genuinely new recovery action.
+
+    The target state is HARDCODED READY. Eligibility is checked BEFORE the transition, using the
+    same check reclaim uses: a unit requeued past its attempt budget (or with an unresolved
+    dependency) would land READY, be rejected by `claim_unit`, and drop out of the failed-units
+    dead-letter view at the same moment -- invisible AND unrunnable.
+    """
+    try:
+        unit = _locked_unit(session, unit_id)
+        replay = _requeue_replay(session, unit, actor, reason, idempotency_key, expected_version)
+        if replay is not None:
+            session.commit()
+            return replay
+        if actor.role is not ActorRole.SYSTEM:
+            raise DomainError("role_forbidden", "only the system may requeue work", None)
+        if expected_version is not None:
+            _require_version(unit, expected_version)
+        if WorkUnitState(unit.state) not in REQUEUE_SOURCE_STATES:
+            raise DomainError(
+                "requeue_not_allowed",
+                "only failed or blocked work may be requeued",
+                None,
+                current_state=unit.state,
+                current_version=unit.version,
+            )
+        eligibility_error = _readiness_eligibility_error(session, unit)
+        if eligibility_error is not None:
+            raise eligibility_error
+
+        _transition(
+            session,
+            unit,
+            WorkUnitState.READY,
+            # The operator is ATTRIBUTED; the role is forced SYSTEM for edge authorization --
+            # FAILED->READY and BLOCKED->READY are SYSTEM edges.
+            actor=ActorContext(actor.actor_id, ActorRole.SYSTEM),
+            idempotency_key=idempotency_key,
+            occurred_at=TransactionClock().now(session),
+            payload={
+                "requeued_by": actor.actor_id,
+                "reason": reason,
+                "attempt_count": unit.attempt_count,
+                "max_attempts": unit.max_attempts,
+                "expected_version": expected_version,
+            },
+        )
+        session.commit()
+        return unit
+    except DomainError as error:
+        session.rollback()
+        return error
+    except Exception:
+        session.rollback()
+        raise
+
+
+def _requeue_replay(
+    session: Session,
+    unit: WorkUnit,
+    actor: ActorContext,
+    reason: str,
+    idempotency_key: str,
+    expected_version: int | None,
+) -> WorkUnit | None:
+    event = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
+    if event is None:
+        return None
+    expected = (
+        event.subject_id == unit.id
+        and event.to_state == WorkUnitState.READY
+        and event.payload.get("requeued_by") == actor.actor_id
+        and event.payload.get("reason") == reason
+        and event.payload.get("expected_version") == expected_version
+        and actor.role is ActorRole.SYSTEM
+    )
+    if not expected:
+        raise _idempotency_conflict()
+    return unit
