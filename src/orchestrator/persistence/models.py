@@ -105,6 +105,12 @@ KNOWLEDGE_PROMOTION_TARGET_TYPES = ("lesson", "rule")
 KNOWLEDGE_PROMOTION_AUTHORITIES = ("informational", "recommended", "required")
 KNOWLEDGE_PROMOTION_ACTIONS = ("submitted_to_brain", "rejected")
 
+# `release_artifacts` writes one evidence row per binding under this constant ac_id, always with
+# supersedes_evidence_id IS NULL. A unit may legitimately carry several bindings, so this triple
+# genuinely has MANY unsuperseded rows -- it is append-only bookkeeping, never superseded, never
+# adjudicated, never passed to current_evidence()/_terminal(). The single-head index carves it out.
+EVIDENCE_HEAD_BOOKKEEPING_AC_ID = "release-artifact"
+
 
 class WorkPackage(UUIDPrimaryKey, Base):
     __tablename__ = "work_packages"
@@ -368,6 +374,29 @@ class Evidence(UUIDPrimaryKey, Base):
             name="ck_evidence_reference_or_payload",
         ),
         CheckConstraint("attempt > 0", name="ck_evidence_positive_attempt"),
+        # Exactly one unsuperseded head per (revision, unit, ac) -- for evidence that
+        # participates in supersession. _store_evidence's evidence_already_exists check is the
+        # only code preventing a second head, and any writer that bypasses it (evidence recovery
+        # must, because _validate_attempt rejects a SYSTEM actor with an expired lease) would
+        # fork the supersession chain. Two heads make _terminal raise, so the AC can never be
+        # adjudicated and no further evidence can be written -- and this table is append-only, so
+        # the row could never be repaired and the unit could never complete.
+        #
+        # `release_artifacts` is carved out: it writes one row per binding under the constant
+        # ac_id 'release-artifact', and a unit may legitimately carry several bindings, so that
+        # triple genuinely has MANY unsuperseded rows. Those rows are never superseded, never
+        # adjudicated, and never passed to current_evidence()/_terminal(). Including them breaks
+        # every multi-binding unit.
+        Index(
+            "uq_evidence_unsuperseded_head",
+            "work_package_revision_id",
+            "work_unit_id",
+            "ac_id",
+            unique=True,
+            postgresql_where=text(
+                f"supersedes_evidence_id IS NULL AND ac_id <> '{EVIDENCE_HEAD_BOOKKEEPING_AC_ID}'"
+            ),
+        ),
     )
 
     work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
@@ -1017,3 +1046,130 @@ class ApprovedDecomposition(UUIDPrimaryKey, Base):
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     superseded_by: Mapped[str | None] = mapped_column(String)
     supersession_reason: Mapped[str | None] = mapped_column(Text)
+
+
+RECONCILIATION_OBSERVATION_KINDS = ("github_pr", "github_check", "deployment")
+RECONCILIATION_CONDITION_TYPES = (
+    "external_merge_alarm",
+    "pr_state_divergence",
+    "check_result_flip",
+    "deploy_split_brain",
+    "digest_divergence",
+)
+RECONCILIATION_DECISIONS = ("accepted", "corrected", "dismissed")
+
+
+class ReconciliationCondition(UUIDPrimaryKey, Base):
+    """A recorded divergence between pushed reality and stored lifecycle state.
+
+    Append-only. Recording one never writes `work_units` and never transitions: detection
+    surfaces a condition for an operator decision, it never auto-un-completes a completed unit
+    and never auto-resolves.
+    """
+
+    __tablename__ = "reconciliation_conditions"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_reconciliation_conditions_idempotency"),
+        UniqueConstraint(
+            "work_unit_id",
+            "observation_kind",
+            "normalized_divergence_hash",
+            name="uq_reconciliation_conditions_divergence",
+        ),
+        CheckConstraint(
+            f"observation_kind IN {RECONCILIATION_OBSERVATION_KINDS!r}",
+            name="ck_reconciliation_conditions_observation_kind",
+        ),
+        CheckConstraint(
+            f"condition_type IN {RECONCILIATION_CONDITION_TYPES!r}",
+            name="ck_reconciliation_conditions_type",
+        ),
+        CheckConstraint(
+            "resolution_generation >= 0", name="ck_reconciliation_conditions_generation"
+        ),
+        CheckConstraint(
+            "lineage_hash <> '' AND normalized_divergence_hash <> '' "
+            "AND detail <> '' AND idempotency_key <> ''",
+            name="ck_reconciliation_conditions_required_text",
+        ),
+    )
+
+    work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
+    observation_kind: Mapped[str] = mapped_column(String)
+    observation_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("observations.id"))
+    deployment_observation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("deployment_observations.id")
+    )
+    condition_type: Mapped[str] = mapped_column(String)
+    stored_state: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    observed_state: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    # Generation-free identity of a divergence, so the resolution count for a lineage is a plain
+    # equality join. The divergence hash below folds the generation in, so it cannot group.
+    lineage_hash: Mapped[str] = mapped_column(String)
+    resolution_generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    normalized_divergence_hash: Mapped[str] = mapped_column(String)
+    detail: Mapped[str] = mapped_column(Text)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
+    idempotency_key: Mapped[str] = mapped_column(String)
+
+
+class ReconciliationResolution(UUIDPrimaryKey, Base):
+    """An operator's decision on a condition. Append-only; a condition resolves exactly once.
+
+    An OPEN condition is one with no resolution row -- a set difference, mirroring evidence
+    supersession. There is no status column to drift.
+    """
+
+    __tablename__ = "reconciliation_resolutions"
+    __table_args__ = (
+        UniqueConstraint("condition_id", name="uq_reconciliation_resolutions_condition"),
+        UniqueConstraint("idempotency_key", name="uq_reconciliation_resolutions_idempotency"),
+        CheckConstraint(
+            f"decision IN {RECONCILIATION_DECISIONS!r}",
+            name="ck_reconciliation_resolutions_decision",
+        ),
+        CheckConstraint(
+            "resolved_by <> '' AND rationale <> '' AND idempotency_key <> ''",
+            name="ck_reconciliation_resolutions_required_text",
+        ),
+    )
+
+    condition_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("reconciliation_conditions.id"))
+    resolved_by: Mapped[str] = mapped_column(String)
+    decision: Mapped[str] = mapped_column(String)
+    rationale: Mapped[str] = mapped_column(Text)
+    resolved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
+    idempotency_key: Mapped[str] = mapped_column(String)
+
+
+class UnitPrBinding(Base):
+    """A work unit's pull-request head.
+
+    Deliberately NOT append-only. `head_sha` is mutable and worker-written: a rebase or
+    force-push before verification is normal and must not alarm.
+    `verification_read_head_sha` is the alarm-arming field and is write-once, enforced by the
+    service guard rather than a trigger -- which is exactly why the row must stay UPDATE-able
+    for `head_sha`. A later worker push therefore cannot disarm the post-verification alarm.
+    """
+
+    __tablename__ = "unit_pr_binding"
+    __table_args__ = (
+        CheckConstraint("pr_number > 0", name="ck_unit_pr_binding_positive_pr_number"),
+        CheckConstraint("head_sha <> ''", name="ck_unit_pr_binding_head_sha"),
+    )
+
+    work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"), primary_key=True)
+    pr_number: Mapped[int] = mapped_column(Integer)
+    head_sha: Mapped[str] = mapped_column(String)
+    verification_read_head_sha: Mapped[str | None] = mapped_column(String)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
