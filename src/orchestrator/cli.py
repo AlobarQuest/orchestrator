@@ -691,3 +691,19 @@ def list_evidence(unit_id: str, json_output: JsonOption = False) -> None:
 @app.command()
 def history(unit_id: str, json_output: JsonOption = False) -> None:
     _run(lambda: request("GET", f"/api/v1/work-units/{unit_id}/history"), json_output)
+
+
+@app.command("reconcile-detect")
+def reconcile_detect(
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    json_output: JsonOption = False,
+) -> None:
+    """Run the reconciliation detect-pass. Records conditions; sets no lifecycle state."""
+    _run(
+        lambda: request(
+            "POST",
+            "/api/v1/reconciliation/detect",
+            {"idempotency_key": idempotency_key, "expected_version": 0},
+        ),
+        json_output,
+    )

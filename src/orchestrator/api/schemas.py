@@ -847,3 +847,20 @@ class DecompositionProposalResponse(BaseModel):
     dependencies: list[DecompositionProposalDependencyResponse]
     ac_mappings: list[DecompositionProposalAcMappingResponse]
     retained_acs: list[DecompositionProposalRetainedAcResponse]
+
+
+class ReconciliationDetectCommand(CommandBase):
+    """The detect-pass carries the same idempotency contract as every other /api/v1 mutation.
+
+    Its conditions dedup on the divergence hash regardless of this key, so a duplicate delivery
+    surfaces as `suppressed_duplicates` rather than a second row -- but the uniform contract is
+    not something a write path gets to opt out of.
+    """
+
+
+class ReconciliationDetectResponse(BaseModel):
+    """Counters, not just a status. Fail-open is counted, so a miss is observable."""
+
+    conditions_recorded: int
+    skipped_correlations: int
+    suppressed_duplicates: int

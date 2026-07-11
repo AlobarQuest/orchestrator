@@ -16,6 +16,10 @@ WS42_DISPATCH_PATHS = {
 }
 WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/deployment_observations.py"),
+    # WS-P2.1 AC-003: deploy_split_brain is DEFINED over post-deploy verification units -- it
+    # reads post_deploy_work_unit_id and the elapsed time since that unit went SUBMITTED. It
+    # reads that state; it never dispatches, deploys, or merges.
+    Path("src/orchestrator/services/reconciliation_detection.py"),
     Path("src/orchestrator/services/event_publications.py"),
     Path("src/orchestrator/services/evidence.py"),
     Path("src/orchestrator/services/lifecycle.py"),

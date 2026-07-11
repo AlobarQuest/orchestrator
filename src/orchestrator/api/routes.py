@@ -56,6 +56,8 @@ from orchestrator.api.schemas import (
     ProposedUnitCommand,
     ReadinessResponse,
     ReclaimCommand,
+    ReconciliationDetectCommand,
+    ReconciliationDetectResponse,
     ReleaseArtifactCommandModel,
     ReleaseArtifactResponse,
     RenewCommand,
@@ -174,6 +176,7 @@ from orchestrator.services.packages import (
 )
 from orchestrator.services.reconciliation_detection import (
     detect_observation_conditions,
+    detect_reconciliation_conditions,
     record_digest_divergence,
 )
 from orchestrator.services.release_artifacts import (
@@ -723,6 +726,28 @@ def create_observation(
     if isinstance(result, Observation):
         detect_observation_conditions(session, result, actor)
     return _raise_error(result)
+
+
+@router.post("/reconciliation/detect", response_model=ReconciliationDetectResponse)
+def reconciliation_detect(
+    body: ReconciliationDetectCommand,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """AC-003. Operator/runner-invoked: creates no unit and sets no lifecycle state."""
+    _require_zero_expected_version(body.expected_version, "reconciliation detection")
+    if actor.role is not ActorRole.SYSTEM:
+        raise DomainError(
+            "role_forbidden",
+            "only the orchestrator system actor may run reconciliation detection",
+            None,
+        )
+    return detect_reconciliation_conditions(
+        session,
+        actor,
+        stall_seconds=settings.reconcile_split_brain_stall_seconds,
+    ).as_dict()
 
 
 @router.get("/observations", response_model=list[ObservationResponse])
