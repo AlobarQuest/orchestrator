@@ -7,7 +7,7 @@ from typing import Any, Protocol
 from urllib.parse import quote
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -186,7 +186,14 @@ def _dispatch_work_unit(
         )
     except GitHubDispatchError as error:
         signature = failure_signature("workflow_dispatch", error.code, error.message)
-        status = "blocked" if _opens_circuit(session, unit.id, signature, settings) else "failed"
+        status = (
+            "blocked"
+            if circuit_open(
+                signature_failure_count(session, unit.id, signature) + 1,
+                settings.failure_signature_threshold,
+            )
+            else "failed"
+        )
         return _record_dispatch(
             session,
             command,
@@ -381,20 +388,32 @@ def _string_set(value: object) -> set[str]:
     return {item for item in value if isinstance(item, str)}
 
 
-def _opens_circuit(
-    session: Session,
-    unit_id: uuid.UUID,
-    signature: str,
-    settings: DispatchSettings,
-) -> bool:
-    failures = session.scalars(
-        select(DispatchRecord).where(
-            DispatchRecord.work_unit_id == unit_id,
-            DispatchRecord.failure_signature == signature,
-            DispatchRecord.status.in_(("failed", "blocked")),
+def signature_failure_count(session: Session, unit_id: uuid.UUID, signature: str) -> int:
+    """Failures ALREADY on disk for this (unit, failure signature). At rest -- no `+ 1`."""
+    return (
+        session.scalar(
+            select(func.count())
+            .select_from(DispatchRecord)
+            .where(
+                DispatchRecord.work_unit_id == unit_id,
+                DispatchRecord.failure_signature == signature,
+                DispatchRecord.status.in_(("failed", "blocked")),
+            )
         )
-    ).all()
-    return len(failures) + 1 >= settings.failure_signature_threshold
+        or 0
+    )
+
+
+def circuit_open(count: int, threshold: int) -> bool:
+    """One predicate, two call sites with different tenses.
+
+    Dispatch is PROSPECTIVE: it is about to write the failure it is judging, so it passes
+    `count + 1`. A read-only view (the AC-005 dead-letter surface) reads what is already there,
+    so it passes `count`. Putting the `+ 1` inside this function would show that view a breaker
+    open one failure early; putting it at both call sites would double-count. It lives at the
+    dispatch call site, and only there.
+    """
+    return count >= threshold
 
 
 def _next_runner_attempt(session: Session, unit: WorkUnit) -> int:
