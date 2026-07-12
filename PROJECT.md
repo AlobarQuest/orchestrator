@@ -19,6 +19,7 @@ required_checks:
 
 ## Backlog
 
+- [ ] (P2) A worker that never reports its PR binding is INVISIBLE to conflict detection: no binding -> the runner has no PR to poll -> no observation -> no condition, and not even a counted `skipped_correlation`. Surveillance evasion, contained today only by Devon's manual merge gate. Fix fail-closed rather than with a new condition type: a unit whose authority includes PR-creating capability must not reach SUBMITTED without a `unit_pr_binding` row — added 2026-07-12
 - [ ] (P1) Rotate the production orchestrator-postgres password — exposed in a Claude session transcript 2026-07-09 (internal-Coolify-network-only exposure); rotate DB password, update ORCHESTRATOR_DATABASE_URL in Coolify, redeploy, verify /health/ready — added 2026-07-09
 - [ ] (P2) `is_expansion()` (kernel/authority.py) has zero call sites in src/ — verify the CLAUDE.md invariant "authority-expanding standing-context updates require a named human approval" is actually wired to it, or remove the dead function — added 2026-07-09
 - [ ] (P2) Work units created via the direct path (`POST /revisions/{id}/work-units`) are not stamped with `constraints.work_unit_id`, so factory-runner will reject them. Either stamp there too or document the path as non-dispatchable — added 2026-07-09
