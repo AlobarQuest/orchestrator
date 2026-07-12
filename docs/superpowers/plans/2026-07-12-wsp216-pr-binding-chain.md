@@ -1,10 +1,10 @@
 # WS-P2.16 — The PR-Binding Chain + Cross-Boundary Vocabulary Enforcement
 
-**Date:** 2026-07-12 · **Revision 3** (revisions 1 and 2 were both KILLED in adversarial review)
+**Date:** 2026-07-12 · **Revision 4** (revisions 1, 2 and 3 were EACH KILLED in adversarial review)
 **Repos:** `AlobarQuest/orchestrator`, `AlobarQuest/factory-runner`
 **Blocks:** all of Wave 2 (program exit criterion #6)
 
-> **Three reviews, three kills, and every kill landed on the section written with most confidence.**
+> **Four reviews, four kills, and every kill landed on the section written with most confidence.**
 >
 > - **Rev 1** prescribed a D3 fix that `failed_closed` every automated AC (§2.4); planned to dispatch
 >   to a repo with no dispatchable workflow (§5.2); proposed a detector whose green was reachable by
@@ -17,14 +17,25 @@
 >   and command-blind — a **fail-open** that would auto-pass *"the tests pass"* on evidence that
 >   `uv sync` ran. And its guard predicate was satisfiable by a **stale binding** from a previous
 >   attempt (§3.4).
+> - **Rev 3** shipped D3's "safe half" — and **pointed it at the wrong schema**. It said validate
+>   `schemas.py:75`, which is **`EvidenceCommand.evidence_type`** (the *evidence-row* vocabulary,
+>   `runner.pr.opened`), not `PackageAcceptanceCriterionCommand.evidence_type` (`:698`, the *criterion*
+>   vocabulary). The two fields are **byte-identical** declarations. Implemented as written it 422s
+>   **every** evidence submission and strands **every** unit in `EXECUTING`. **This plan documented
+>   that exact two-vocabulary confusion as blind-spot 5 — and then committed it three paragraphs
+>   later.** Its `attempt` column also had no semantics for the SYSTEM writer, the *only* repair path.
 >
-> **Every one of these passed a careful read.** They were found only by adversarial review against
-> executable reality. The dead versions are kept, because *why* they were wrong is the most useful
-> content in this file.
+> **Every one of these passed a careful read. Four times.** They were found only by adversarial review
+> against executable reality. The dead versions are kept, because *why* they were wrong is the most
+> useful content in this file.
 >
-> **Rev 3 (Devon, 2026-07-12):** D3 ships only its **behavior-preserving half**; the deterministic
-> evaluator is deferred to its own workstream (§3.5). The guard gets an **`attempt` column** so it
-> cannot be satisfied by a ghost (§3.4).
+> **The pattern is the lesson, and it is now unmistakable:** *knowing* the failure class does not
+> protect you from it. Rev 3 named the trap and fell in it. **Only the review caught it.**
+>
+> **Rev 4 (Devon, 2026-07-12):** D3 ships only its behavior-preserving half, aimed at **`schemas.py:698`**
+> with the evidence-row fields **explicitly out of scope**; the deterministic evaluator is deferred to
+> its own workstream (§3.5). The guard gets a **nullable `attempt` column** with defined SYSTEM
+> semantics (§3.4). §4.0 records what four reviews have confirmed **sound**.
 
 ---
 
@@ -251,7 +262,29 @@ wrong head, and the guard built to prevent exactly this certified it as fine.**
 
 **Fix (Devon, 2026-07-12): add an `attempt` column to `unit_pr_binding`.** `upsert_pr_binding` records
 it — the route **already accepts `attempt`** (`schemas.py:908`), it is simply not stored. The guard
-then requires a binding written **for the current attempt**. One additive column, one migration.
+then requires a binding written **for the current attempt**.
+
+⚠ **It is NOT "one additive column" — the SYSTEM writer needs a defined semantics, and SYSTEM is the
+ONLY repair path.** `_authorize_write` (`pr_bindings.py:182-183`) **early-returns for
+`ActorRole.SYSTEM`**: SYSTEM may write a binding with **no attempt and no lease token** (*"SYSTEM may
+write without a claim: it is the operator's repair path"*, `:67`), and real call sites do exactly that.
+So:
+
+- **`NOT NULL`** → every SYSTEM binding write raises `IntegrityError`. **The operator repair path 500s.**
+- **Nullable, with the guard requiring `binding.attempt == unit.attempt_count`** → a SYSTEM binding
+  written with `attempt=None` can **never** satisfy the guard, so a unit stuck at
+  `EXECUTING → SUBMITTED` **cannot be unblocked by the one actor authorized to unblock it** — while
+  §3.4 simultaneously forbids the alternative ("must not suggest fabricating a binding"). **A guard
+  that is unrecoverable by design.**
+
+**Decision: the column is NULLABLE, and the guard requires `binding.attempt == unit.attempt_count`.**
+An operator repairing a unit **must supply the real attempt** — the field already exists on the route
+and is simply optional. Supplying the true attempt for a PR that genuinely exists is *repair*, not
+fabrication; leaving it `NULL` fails **closed**. Document this as the operator's obligation.
+
+*Migration safety:* nullable ⇒ safe on a non-empty table, so the migration does not depend on
+`unit_pr_binding` being empty in production (per §1 it should be, but **do not infer** that — a
+nullable column makes it moot).
 
 **Why capability-keyed, stated honestly (rev 2 overclaimed):**
 
@@ -340,10 +373,40 @@ accidental: today these five land on `judgment_required` by **falling off the en
 indistinguishable from a typo. After this, they land there **because we said so** — and a **typo does
 not.**
 
-**(b) Validate `evidence_type` at intake** against `DETERMINISTIC_TYPES ∪ JUDGMENT_TYPES`. An unknown
-type becomes a **named error at the gate** instead of a silent `judgment_required` at verify.
-(`schemas.py:75` is today a free `str = Field(min_length=1)`.) **This is the entire safety win**, and
-it is real: it is the difference between a silent misroute and a rejection a human can fix.
+**(b) Validate the CRITERION's `evidence_type` at package intake** against
+`DETERMINISTIC_TYPES ∪ JUDGMENT_TYPES`. An unknown type becomes a **named error at the gate** instead
+of a silent `judgment_required` at verify. **This is the entire safety win.**
+
+> ☠ **REV 3 CITED THE WRONG SCHEMA AND IT WOULD HAVE HALTED THE FACTORY.** Rev 3 said `schemas.py:75`.
+> That is **`EvidenceCommand.evidence_type`** — the **evidence-row** type on the worker's
+> `POST /work-units/{id}/evidence`. The runner hardcodes `evidence_type="runner.pr.opened"`
+> (`factory-runner/evidence.py:88`), which is in **neither set**. Constraining `:75` **422s every
+> evidence submission**, `_finalize_workspace` raises before `client.submit` is reached, and every
+> unit strands in `EXECUTING` → lease expiry → burns an attempt → `FAILED`. **For every unit.**
+>
+> **The two fields are byte-identical (`evidence_type: str = Field(min_length=1)`), which is exactly
+> why a careful read slides past it.** This is §3.6.4's blind-spot 5 — the evidence-row vocabulary vs
+> the criterion vocabulary — *documented in this plan and then committed by it three paragraphs later.*
+
+**TARGET — exactly one field:**
+
+- ✅ **`PackageAcceptanceCriterionCommand.evidence_type`** (**`schemas.py:698`**), reached via
+  `PackageIntakeRegistration.acceptance_criteria` (`:720`) → `services/package_intake.py:329`, the only
+  place criteria are built from a package.
+
+**EXPLICITLY OUT OF SCOPE — these speak the EVIDENCE-ROW vocabulary, not the criterion vocabulary:**
+
+- ❌ `EvidenceCommand.evidence_type` (`schemas.py:75`) — `runner.pr.opened`
+- ❌ `RecoverEvidenceCommand.evidence_type` (`schemas.py:857`) — the SYSTEM repair path
+- ❌ `services/evidence.py`'s writer-supplied type — `verifier.finding` (`verifier.py:177`)
+
+Correlating those two vocabularies is **blind-spot 5, and it is backlogged.** Do not "helpfully"
+extend the validation to them.
+
+⚠ **Budget the fixture churn — rev 3 budgeted none.** `review_note` is used as a **criterion**
+`evidence_type` in `tests/api/test_package_intake_api.py:56` and `tests/api/test_decomposition_api.py:62,290`,
+and it is in neither set. Either add it to `JUDGMENT_TYPES` or migrate those fixtures. §3.2 budgets ~73
+capability fixtures; this clause must budget its own.
 
 **(c) Normalize case in exactly one place** — `evaluate_criterion` does `.strip().lower()` (`:50`);
 intake does not.
@@ -436,6 +499,37 @@ blindness.
 **Deferred to their own workstreams (P1 backlog):** the deterministic evidence evaluator (§3.5 — needs
 per-AC evidence from the runner + evidence-row-type keying + a command-aware evaluator); the `ac_id`
 UUID/string collision; evidence-row `evidence_type` correlation (§3.6.4).
+
+### 4.0 VERIFIED SOUND — do not re-litigate these
+
+Four reviews have now confirmed these by reading the code. They are settled; a fifth reviewer should
+spend its budget elsewhere.
+
+- **The attempt arithmetic is sound; a worker cannot lie about it.** `claim_unit`
+  (`services/claims.py:74,77`) does `unit.attempt_count += 1` then `Claim(attempt=unit.attempt_count)`
+  (reclaim likewise, `:665,668`), so `claim.attempt == unit.attempt_count` for the live claim, always.
+  The runner sends `attempt = int(claim["attempt"])` (`factory-runner/cli.py:257`) and reuses it at
+  finalize (`:516`). `_authorize_write` → `validate_active_claim` (`claims.py:839-877`) takes the
+  highest-attempt claim `FOR UPDATE` and requires a matching attempt **and** lease-token hash **and**
+  state ∈ {CLAIMED, EXECUTING}. `arm_verification_head` arms on `unit.attempt_count`
+  (`pr_bindings.py:110`) — **the same number the guard compares against.** No off-by-one.
+- **"Run start" really is before `EXECUTING`.** `_prepare_claimed_workspace`
+  (`factory-runner/cli.py:238-273`) calls `validate_authority` at `:238` and checks
+  `permissions.can_claim` at `:247` — both `raise typer.Exit(1)` — and only *then* calls
+  `client.claim` (`:251`) and `client.start` (`:263`, the transition to `EXECUTING`). A
+  `can_create_pr` refusal beside the `can_claim` check fires with the unit still in `READY`. **Nothing
+  is stranded.** (Note: if it *did* fire, the workflow fails while the unit stays `READY` → the
+  dispatcher retries → three failures → `circuit_open`. Acceptable; worth one sentence in the AC.)
+- **§3.5(a) is genuinely a runtime no-op.** `DETERMINISTIC_TYPES` and `JUDGMENT_TYPES` have **exactly
+  one consumer between them** — `evaluate_criterion` line 51 (grep confirms; `_target_state`,
+  `_replay_evaluation`, adjudication routing, dead-letter and reporting all key on `status`/`outcome`,
+  never on set membership). All five package types today take the *second* disjunct
+  (`not in DETERMINISTIC_TYPES`); afterwards they take the *first* (`in JUDGMENT_TYPES`). Same return.
+- **Generated post-deploy criteria are safe — and here is WHY, so nobody re-derives it.**
+  `verifier_criteria.py:108-138` emits `release.deployment_observed`, `production.health`,
+  `production.route_presence`, `production.auth_behavior`, `production.dispatch_posture` — **all five
+  are already in `DETERMINISTIC_TYPES`** with evaluators — and they are constructed **directly as ORM
+  rows** (`:141`), so they never traverse the intake schema at all. Safe on both counts.
 
 ### 4.1 Two landmines nobody had written down
 
