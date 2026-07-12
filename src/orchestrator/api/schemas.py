@@ -138,6 +138,21 @@ class ReleaseArtifactCommandModel(CommandBase):
     summary: dict[str, Any] | None = None
 
 
+class StartProductionDrillCommand(CommandBase):
+    model_config = ConfigDict(extra="forbid")
+
+    revision_id: UUID
+    image_ref: str = Field(min_length=1)
+    image_digest: str = Field(min_length=1)
+    openapi_digest: str = Field(min_length=1)
+
+
+class CloseProductionDrillCommand(CommandBase):
+    model_config = ConfigDict(extra="forbid")
+
+    closure_reason: str = Field(min_length=1)
+
+
 class DeploymentObservationCommandModel(CommandBase):
     environment: str = Field(min_length=1)
     base_url: str = Field(min_length=1)
@@ -469,6 +484,21 @@ class ReleaseArtifactResponse(BaseModel):
     event_id: UUID
     evidence_id: UUID
     idempotency_key: str
+
+
+class ProductionDrillRunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    revision_id: UUID
+    owner_actor_id: str
+    opened_at: datetime
+    closed_at: datetime | None
+    status: str
+    image_ref: str
+    image_digest: str
+    openapi_digest: str
+    closure_reason: str | None
 
 
 class DeploymentObservationResponse(BaseModel):

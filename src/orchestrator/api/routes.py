@@ -58,6 +58,7 @@ from orchestrator.api.schemas import (
     PrBindingCommand,
     PrBindingResponse,
     PreflightCommandModel,
+    ProductionDrillRunResponse,
     ProposedUnitCommand,
     ReadinessResponse,
     ReclaimCommand,
@@ -72,6 +73,7 @@ from orchestrator.api.schemas import (
     RevisionRegistration,
     RevisionResponse,
     RunnerBriefResponse,
+    StartProductionDrillCommand,
     StatusLedgerRowResponse,
     TransitionResponse,
     UnitRegistration,
@@ -188,6 +190,11 @@ from orchestrator.services.packages import (
     resolve_dependency_command,
 )
 from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
+from orchestrator.services.production_drills import (
+    StartProductionDrill,
+    production_drill_run,
+    start_production_drill,
+)
 from orchestrator.services.reconciliation_detection import (
     detect_observation_conditions,
     detect_reconciliation_conditions,
@@ -254,6 +261,41 @@ def _parse_datetime_filter(value: str | None, field: str) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:
         raise DomainError("observation_invalid", f"{field} is invalid", None) from error
+
+
+@router.post(
+    "/production-drills",
+    response_model=ProductionDrillRunResponse,
+    status_code=201,
+)
+def create_production_drill(
+    body: StartProductionDrillCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        start_production_drill(
+            session,
+            StartProductionDrill(
+                revision_id=body.revision_id,
+                actor=actor,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+                image_ref=body.image_ref,
+                image_digest=body.image_digest,
+                openapi_digest=body.openapi_digest,
+            ),
+        )
+    )
+
+
+@router.get("/production-drills/{run_id}", response_model=ProductionDrillRunResponse)
+def get_production_drill(
+    run_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(production_drill_run(session, run_id))
 
 
 @router.post("/revisions", response_model=RevisionResponse, status_code=201)

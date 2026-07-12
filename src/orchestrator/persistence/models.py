@@ -104,6 +104,7 @@ KNOWLEDGE_PROMOTION_TARGET_BRAINS = ("code", "infra")
 KNOWLEDGE_PROMOTION_TARGET_TYPES = ("lesson", "rule")
 KNOWLEDGE_PROMOTION_AUTHORITIES = ("informational", "recommended", "required")
 KNOWLEDGE_PROMOTION_ACTIONS = ("submitted_to_brain", "rejected")
+PRODUCTION_DRILL_RUN_STATUSES = ("open", "asserting", "closed", "failed")
 
 # `release_artifacts` writes one evidence row per binding under this constant ac_id, always with
 # supersedes_evidence_id IS NULL. A unit may legitimately carry several bindings, so this triple
@@ -170,6 +171,27 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
     verification_mode: Mapped[str | None] = mapped_column(String)
     verification_limitations: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSONB)
     work_package: Mapped[WorkPackage] = relationship()
+
+
+class ProductionDrillRun(UUIDPrimaryKey, Base):
+    __tablename__ = "production_drill_runs"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN {PRODUCTION_DRILL_RUN_STATUSES!r}",
+            name="ck_production_drill_runs_status",
+        ),
+    )
+
+    revision_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_package_revisions.id"))
+    owner_actor_id: Mapped[str] = mapped_column(String)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String)
+    image_ref: Mapped[str] = mapped_column(String)
+    image_digest: Mapped[str] = mapped_column(String)
+    openapi_digest: Mapped[str] = mapped_column(String)
+    closure_reason: Mapped[str | None] = mapped_column(Text)
+    revision: Mapped[WorkPackageRevision] = relationship()
 
 
 WORK_UNIT_STATES = (
