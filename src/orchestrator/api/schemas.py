@@ -847,3 +847,127 @@ class DecompositionProposalResponse(BaseModel):
     dependencies: list[DecompositionProposalDependencyResponse]
     ac_mappings: list[DecompositionProposalAcMappingResponse]
     retained_acs: list[DecompositionProposalRetainedAcResponse]
+
+
+class RecoverEvidenceCommand(CommandBase):
+    """Note there is NO lease_token: the whole scenario is that the lease is gone."""
+
+    work_package_revision_id: UUID
+    ac_id: str = Field(min_length=1)
+    evidence_type: str = Field(min_length=1)
+    stable_ref: str | None = None
+    payload: dict[str, Any] | None = None
+    source_revision: str = Field(min_length=1)
+
+
+class ReconciliationDetectCommand(CommandBase):
+    """The detect-pass carries the same idempotency contract as every other /api/v1 mutation.
+
+    Its conditions dedup on the divergence hash regardless of this key, so a duplicate delivery
+    surfaces as `suppressed_duplicates` rather than a second row -- but the uniform contract is
+    not something a write path gets to opt out of.
+    """
+
+
+class ReconciliationDetectResponse(BaseModel):
+    """Counters, not just a status. Fail-open is counted, so a miss is observable."""
+
+    conditions_recorded: int
+    skipped_correlations: int
+    suppressed_duplicates: int
+
+
+class DeadLetterEntryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source: str
+    work_unit_id: UUID
+    unit_key: str
+    unit_state: str
+    reason_code: str | None
+    detail: str | None
+    attempt_count: int
+    max_attempts: int
+    requeue_eligible: bool
+    occurred_at: datetime | None
+
+
+class RequeueCommand(CommandBase):
+    reason: str = Field(min_length=1)
+
+
+class PrBindingCommand(CommandBase):
+    """The worker reporting the pull request it opened, and its current head.
+
+    `attempt` and `lease_token` are how the worker proves it holds this unit's claim -- the same
+    proof recording evidence demands. Without it, any worker could rewrite any unit's expected
+    head, and the expected head is the only thing divergence is measured against.
+    """
+
+    pr_number: int = Field(gt=0)
+    head_sha: str = Field(min_length=1)
+    attempt: int | None = Field(default=None, gt=0)
+    lease_token: str | None = Field(default=None, min_length=1)
+
+
+class PrBindingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    work_unit_id: UUID
+    pr_number: int
+    head_sha: str
+    verification_read_head_sha: str | None
+    verification_read_attempt: int | None
+
+
+class ConsistencyFindingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    check: str
+    work_unit_id: UUID | None
+    subject: str
+    detail: str
+    observed: str
+    expected: str
+
+
+class ConsistencyReportResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    checked_at: datetime
+    divergent: bool
+    findings: list[ConsistencyFindingResponse]
+
+
+class InFlightUnitModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    work_unit_id: UUID
+    unit_key: str
+    state: str
+    version: int
+    attempt_count: int
+    work_package_revision_id: UUID
+    pr_number: int | None
+    head_sha: str | None
+    verification_read_head_sha: str | None
+
+
+class ReleaseBindingModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    binding_id: UUID
+    work_unit_id: UUID
+    work_unit_state: str
+    source_repository: str
+    artifact_digest: str
+    has_post_deploy_unit: bool
+    post_deploy_unit_state: str | None
+    post_deploy_unit_created_at: datetime | None
+
+
+class InFlightUnitsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    units: list[InFlightUnitModel]
+    release_bindings: list[ReleaseBindingModel]

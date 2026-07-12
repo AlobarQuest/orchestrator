@@ -1,5 +1,6 @@
 import secrets
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -63,6 +64,16 @@ class TransitionResult:
     event_id: uuid.UUID
 
 
+def require_operator_actor(actor: ActorContext) -> None:
+    """Read surfaces that enumerate failure signatures are operator-only.
+
+    SYSTEM is the M2M lane and HUMAN is the review lane; a worker or verifier credential has no
+    business enumerating another unit's failures.
+    """
+    if actor.role not in {ActorRole.SYSTEM, ActorRole.HUMAN}:
+        raise DomainError("role_forbidden", "only an operator may read this surface", None)
+
+
 def unit_history(session: Session, unit_id: uuid.UUID) -> tuple[Event, ...]:
     if session.get(WorkUnit, unit_id) is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
@@ -78,9 +89,18 @@ def transition_unit(
     command: TransitionCommand,
     *,
     clock: Clock | None = None,
+    after: Callable[[Session, WorkUnit], None] | None = None,
 ) -> TransitionResult:
+    """`after` runs inside the transition's transaction, holding the unit row lock, and only for
+    a real transition -- an idempotent replay skips it, because its effect already happened.
+
+    It exists so a caller can attach a side effect to a specific transition (the SUBMIT route
+    arms the PR head) without this module having to know about that caller's concern. Inverting
+    it -- importing the side effect here -- would make lifecycle depend on services that already
+    depend on lifecycle.
+    """
     try:
-        result = _perform_transition(session, command, clock or TransactionClock())
+        result = _perform_transition(session, command, clock or TransactionClock(), after)
         session.commit()
         return result
     except Exception:
@@ -89,7 +109,10 @@ def transition_unit(
 
 
 def _perform_transition(
-    session: Session, command: TransitionCommand, clock: Clock
+    session: Session,
+    command: TransitionCommand,
+    clock: Clock,
+    after: Callable[[Session, WorkUnit], None] | None = None,
 ) -> TransitionResult:
     unit = session.execute(
         select(WorkUnit).where(WorkUnit.id == command.unit_id).with_for_update()
@@ -142,6 +165,9 @@ def _perform_transition(
     event = _transition_event(command, unit, source, revision.registry_version, occurred_at)
     session.add(event)
     session.flush()
+    if after is not None:
+        after(session, unit)
+        session.flush()
     return TransitionResult(unit.id, command.target, next_version, event.id)
 
 
@@ -327,7 +353,7 @@ def _transition_guards(
     return TransitionGuards(
         approval_recorded,
         _completion_satisfied(
-            _required_ac_ids(session, revision, unit),
+            required_ac_ids(session, revision, unit),
             adjudications,
             occurred_at,
         ),
@@ -352,7 +378,7 @@ def _completion_satisfied(
     )
 
 
-def _required_ac_ids(
+def required_ac_ids(
     session: Session,
     revision: WorkPackageRevision,
     unit: WorkUnit,
@@ -394,7 +420,7 @@ def _required_ac_ids(
     )
     if has_approved_decomposition:
         return mapped_ac_ids
-    return _package_required_ac_ids(revision.enforcement_snapshot)
+    return _packagerequired_ac_ids(revision.enforcement_snapshot)
 
 
 def _is_generated_post_deploy_unit(
@@ -411,7 +437,7 @@ def _is_generated_post_deploy_unit(
     return observation is not None
 
 
-def _package_required_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[str, ...] | None:
+def _packagerequired_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[str, ...] | None:
     value = enforcement_snapshot.get("acceptance_criteria")
     if not isinstance(value, list) or not value:
         return None

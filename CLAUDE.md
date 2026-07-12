@@ -201,3 +201,20 @@ style of that module.
   Its envelope verifies `uv sync` + `uv lock --check`; its tests are gated by its own
   named check on the pull-request head, which is where AC-001..006 already place that
   evidence. **Exit 0 from `make check` is never proof tests ran — read the collected count.**
+
+- **A service that FLUSHES but never COMMITS looks correct in tests and is dead in production.**
+  `upsert_pr_binding` (WS-P2.1) flushed and returned; the HTTP response carried the right values,
+  because the ORM hands back the instance it is holding, while the row was discarded when the
+  request-scoped session closed. Ten unit tests passed — they assert in-session, where the flush is
+  visible. Request entry points in this repo OWN their transaction and must `session.commit()`
+  (see `claim_unit`, `requeue_unit`, `record_observation`); functions invoked INSIDE another
+  transaction (`arm_verification_head`, called from the SUBMIT transition) must never commit. A
+  test that asserts persistence must `expire_all()` and re-read, or it is asserting that a call
+  returned an object.
+- **A test fixture calling a service is not evidence the service has a caller.** WS-P2.1's PR-binding
+  writers had no production call site at all: every reference in the approved plan was a test. The
+  binding table was never written, the reconciliation runner (which discovers PRs to poll FROM those
+  rows) had nothing to poll, and AC-001/AC-002 detection was never reached — silent, not merely
+  blind, since `skipped_correlations` never incremented either. Green unit tests said nothing. When
+  adding a service that another subsystem READS, grep for its production caller before believing it
+  works — and prefer a drill that drives the public API, which is what actually caught this.

@@ -25,6 +25,7 @@ dependencies = [
 
 [project.scripts]
 orchestrator = "orchestrator.cli:app"
+reconciliation-runner = "reconciliation_runner.cli:app"
 
 [dependency-groups]
 dev = [

@@ -16,7 +16,9 @@ from orchestrator.api.schemas import (
     ApprovalCommand,
     ApprovalResponse,
     ClaimCommand,
+    ConsistencyReportResponse,
     ContextSnapshotResponse,
+    DeadLetterEntryResponse,
     DecompositionDecisionCommand,
     DecompositionProposalAcMappingResponse,
     DecompositionProposalDependencyResponse,
@@ -39,6 +41,7 @@ from orchestrator.api.schemas import (
     EventResponse,
     EvidenceCommand,
     EvidenceResponse,
+    InFlightUnitsResponse,
     InfraLaneLinkCommandModel,
     InfraLaneLinkResponse,
     KnowledgePromotionProposalActionResponse,
@@ -52,13 +55,19 @@ from orchestrator.api.schemas import (
     PackageAcceptanceCriterionResponse,
     PackageIntakeRegistration,
     PackageIntakeResponse,
+    PrBindingCommand,
+    PrBindingResponse,
     PreflightCommandModel,
     ProposedUnitCommand,
     ReadinessResponse,
     ReclaimCommand,
+    ReconciliationDetectCommand,
+    ReconciliationDetectResponse,
+    RecoverEvidenceCommand,
     ReleaseArtifactCommandModel,
     ReleaseArtifactResponse,
     RenewCommand,
+    RequeueCommand,
     RetryCommand,
     RevisionRegistration,
     RevisionResponse,
@@ -82,6 +91,7 @@ from orchestrator.persistence.models import (
     DecompositionProposalRetainedAc,
     DecompositionProposalUnit,
     Event,
+    Observation,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
@@ -91,8 +101,11 @@ from orchestrator.services.claims import (
     claim_unit,
     reclaim_expired_claim,
     renew_claim,
+    requeue_unit,
 )
+from orchestrator.services.consistency import check_consistency
 from orchestrator.services.context import PreflightCommand, record_preflight
+from orchestrator.services.dead_letter import dead_letter
 from orchestrator.services.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
@@ -126,9 +139,11 @@ from orchestrator.services.evidence import (
     append_evidence,
     list_evidence,
     record_adjudication,
+    recover_evidence,
     supersede_evidence,
 )
 from orchestrator.services.github_app import github_app_credentials, token_provider_for
+from orchestrator.services.in_flight import in_flight_snapshot
 from orchestrator.services.infra_links import (
     InfraLaneLinkCommand,
     list_infra_lane_links,
@@ -148,6 +163,7 @@ from orchestrator.services.knowledge_promotions import (
 from orchestrator.services.lifecycle import (
     ActorContext,
     TransitionCommand,
+    require_operator_actor,
     transition_unit,
     unit_history,
 )
@@ -170,6 +186,12 @@ from orchestrator.services.packages import (
     register_dependency_command,
     register_revision,
     resolve_dependency_command,
+)
+from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
+from orchestrator.services.reconciliation_detection import (
+    detect_observation_conditions,
+    detect_reconciliation_conditions,
+    record_digest_divergence,
 )
 from orchestrator.services.release_artifacts import (
     ReleaseArtifactCommand,
@@ -636,29 +658,39 @@ def create_deployment_observation(
     actor: ActorDep,
     session: SessionDep,
 ) -> object:
-    return _raise_error(
-        record_deployment_observation(
-            session,
-            DeploymentObservationCommand(
-                release_artifact_binding_id=binding_id,
-                actor=actor,
-                environment=body.environment,
-                base_url=body.base_url,
-                observed_artifact_digest=body.observed_artifact_digest,
-                deployment_ref=body.deployment_ref,
-                deployment_url=body.deployment_url,
-                deployer=body.deployer,
-                observed_at=body.observed_at,
-                probe_summary=body.probe_summary,
-                route_summary=body.route_summary,
-                auth_summary=body.auth_summary,
-                dispatch_summary=body.dispatch_summary,
-                status_summary=body.status_summary,
-                idempotency_key=body.idempotency_key,
-                expected_version=body.expected_version,
-            ),
-        )
+    result = record_deployment_observation(
+        session,
+        DeploymentObservationCommand(
+            release_artifact_binding_id=binding_id,
+            actor=actor,
+            environment=body.environment,
+            base_url=body.base_url,
+            observed_artifact_digest=body.observed_artifact_digest,
+            deployment_ref=body.deployment_ref,
+            deployment_url=body.deployment_url,
+            deployer=body.deployer,
+            observed_at=body.observed_at,
+            probe_summary=body.probe_summary,
+            route_summary=body.route_summary,
+            auth_summary=body.auth_summary,
+            dispatch_summary=body.dispatch_summary,
+            status_summary=body.status_summary,
+            idempotency_key=body.idempotency_key,
+            expected_version=body.expected_version,
+        ),
     )
+    # The digest guard RAISES and the ingest service rolls back, so a condition written in there
+    # would be erased with the rejected observation. Record it here instead, in its own
+    # transaction -- and the ingest stays rejected.
+    if isinstance(result, DomainError) and result.code == "deployment_observation_digest_mismatch":
+        record_digest_divergence(
+            session,
+            actor=actor,
+            release_artifact_binding_id=binding_id,
+            observed_artifact_digest=body.observed_artifact_digest,
+            environment=body.environment,
+        )
+    return _raise_error(result)
 
 
 @router.get(
@@ -679,30 +711,120 @@ def create_observation(
     actor: ActorDep,
     session: SessionDep,
 ) -> object:
+    result = record_observation(
+        session,
+        ObservationCommand(
+            actor=actor,
+            source_system=body.source_system,
+            source_reference=body.source_reference,
+            source_url=body.source_url,
+            trust_classification=body.trust_classification,
+            subject_type=body.subject_type,
+            subject_reference=body.subject_reference,
+            environment=body.environment,
+            observation_type=body.observation_type,
+            status=body.status,
+            severity=body.severity,
+            observed_at=body.observed_at,
+            summary=body.summary,
+            facts=body.facts,
+            payload_digest=body.payload_digest,
+            idempotency_key=body.idempotency_key,
+            expected_version=body.expected_version,
+        ),
+    )
+    # Post-commit, in the NEXT transaction: record_observation has already committed, so a
+    # rejected ingest never reaches detection and a detection failure cannot roll the
+    # observation back. Detection never raises, so a forged correlation cannot turn a valid
+    # observation into a rejected ingest.
+    if isinstance(result, Observation):
+        detect_observation_conditions(session, result, actor)
+    return _raise_error(result)
+
+
+@router.post(
+    "/work-units/{unit_id}/attempts/{attempt}/recover-evidence",
+    response_model=EvidenceResponse,
+    status_code=201,
+)
+def recover_evidence_route(
+    unit_id: UUID,
+    attempt: int,
+    body: RecoverEvidenceCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """AC-004. SYSTEM/operator only -- never the expired worker."""
     return _raise_error(
-        record_observation(
+        recover_evidence(
             session,
-            ObservationCommand(
-                actor=actor,
-                source_system=body.source_system,
-                source_reference=body.source_reference,
-                source_url=body.source_url,
-                trust_classification=body.trust_classification,
-                subject_type=body.subject_type,
-                subject_reference=body.subject_reference,
-                environment=body.environment,
-                observation_type=body.observation_type,
-                status=body.status,
-                severity=body.severity,
-                observed_at=body.observed_at,
-                summary=body.summary,
-                facts=body.facts,
-                payload_digest=body.payload_digest,
-                idempotency_key=body.idempotency_key,
-                expected_version=body.expected_version,
-            ),
+            work_unit_id=unit_id,
+            attempt=attempt,
+            actor=actor,
+            **body.model_dump(),
         )
     )
+
+
+@router.post("/work-units/{unit_id}/requeue", response_model=UnitResponse)
+def requeue(
+    unit_id: UUID,
+    body: RequeueCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """AC-006. SYSTEM recovery for the NOT-exhausted case; `retry` owns the exhausted one."""
+    return _raise_error(requeue_unit(session, unit_id, actor, **body.model_dump()))
+
+
+@router.post("/work-units/{unit_id}/pr-binding", response_model=PrBindingResponse)
+def pr_binding(
+    unit_id: UUID,
+    body: PrBindingCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """The worker reports the PR it opened, and re-reports the head after every push.
+
+    This is the orchestrator's EXPECTATION of the pull request. It is deliberately written by our
+    own side of the ledger and never derived from an observation: if observed reality wrote the
+    expectation, an attacker's push would silently become the expected head and no divergence
+    could ever fire.
+    """
+    _require_zero_expected_version(body.expected_version, "pr binding")
+    return _raise_error(
+        upsert_pr_binding(
+            session,
+            actor=actor,
+            work_unit_id=unit_id,
+            pr_number=body.pr_number,
+            head_sha=body.head_sha,
+            attempt=body.attempt,
+            lease_token=body.lease_token,
+        )
+    )
+
+
+@router.post("/reconciliation/detect", response_model=ReconciliationDetectResponse)
+def reconciliation_detect(
+    body: ReconciliationDetectCommand,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """AC-003. Operator/runner-invoked: creates no unit and sets no lifecycle state."""
+    _require_zero_expected_version(body.expected_version, "reconciliation detection")
+    if actor.role is not ActorRole.SYSTEM:
+        raise DomainError(
+            "role_forbidden",
+            "only the orchestrator system actor may run reconciliation detection",
+            None,
+        )
+    return detect_reconciliation_conditions(
+        session,
+        actor,
+        stall_seconds=settings.reconcile_split_brain_stall_seconds,
+    ).as_dict()
 
 
 @router.get("/observations", response_model=list[ObservationResponse])
@@ -820,6 +942,40 @@ def submit_knowledge_promotion(
             ),
             client,
         )
+    )
+
+
+@router.get("/in-flight-units", response_model=InFlightUnitsResponse)
+def in_flight_units(
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """AC-009. The reconciliation runner's read surface. Read-only."""
+    require_operator_actor(actor)
+    return in_flight_snapshot(session)
+
+
+@router.get("/consistency-check", response_model=ConsistencyReportResponse)
+def consistency_check(
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """AC-008. Reports projection-vs-source divergence. Never repairs."""
+    require_operator_actor(actor)
+    return check_consistency(session)
+
+
+@router.get("/dead-letter", response_model=list[DeadLetterEntryResponse])
+def dead_letter_route(
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """AC-005. Read-only: terminal failures made visible."""
+    require_operator_actor(actor)
+    return dead_letter(
+        session,
+        failure_signature_threshold=settings.dispatch_failure_signature_threshold,
     )
 
 
@@ -1025,6 +1181,15 @@ def command(
             lease_token=body.lease_token,
             standing_context=body.standing_context,
             context_snapshot_id=body.context_snapshot_id,
+        ),
+        # Submitting is the moment the worker hands a head over to be adjudicated, so it is the
+        # moment the divergence alarm is armed -- in the SAME transaction, holding the unit row
+        # lock. Arming later, at verify time, would re-read the head and silently adopt any push
+        # that landed in between as the new expectation, which is exactly what must never happen.
+        after=(
+            (lambda db, unit: arm_verification_head(db, unit, actor=actor))
+            if target is WorkUnitState.SUBMITTED
+            else None
         ),
     )
 

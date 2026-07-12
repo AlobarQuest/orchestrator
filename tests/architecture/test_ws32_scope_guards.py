@@ -8,6 +8,10 @@ from pathlib import Path
 SOURCE_ROOT = Path("src/orchestrator")
 WS42_DISPATCH_PATHS = {
     Path("src/orchestrator/api/routes.py"),
+    # WS-P2.1 AC-005: the dead-letter view READS DispatchRecord rows and re-applies the shared
+    # failure-signature predicate to derive open circuit breakers. It reads that state; it never
+    # dispatches, deploys, or merges.
+    Path("src/orchestrator/services/dead_letter.py"),
     Path("src/orchestrator/api/schemas.py"),
     Path("src/orchestrator/config.py"),
     Path("src/orchestrator/persistence/models.py"),
@@ -16,6 +20,14 @@ WS42_DISPATCH_PATHS = {
 }
 WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/deployment_observations.py"),
+    # WS-P2.1 AC-003: deploy_split_brain is DEFINED over post-deploy verification units -- it
+    # reads post_deploy_work_unit_id and the elapsed time since that unit went SUBMITTED. It
+    # reads that state; it never dispatches, deploys, or merges.
+    Path("src/orchestrator/services/reconciliation_detection.py"),
+    # WS-P2.1 AC-009: the runner's read surface reports whether a release binding has a
+    # post-deploy verification unit -- has_post_deploy_unit=False IS the deploy-nobody-reported
+    # signal. It reads that state; it never dispatches, deploys, or merges.
+    Path("src/orchestrator/services/in_flight.py"),
     Path("src/orchestrator/services/event_publications.py"),
     Path("src/orchestrator/services/evidence.py"),
     Path("src/orchestrator/services/lifecycle.py"),

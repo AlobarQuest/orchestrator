@@ -691,3 +691,70 @@ def list_evidence(unit_id: str, json_output: JsonOption = False) -> None:
 @app.command()
 def history(unit_id: str, json_output: JsonOption = False) -> None:
     _run(lambda: request("GET", f"/api/v1/work-units/{unit_id}/history"), json_output)
+
+
+@app.command("reconcile-detect")
+def reconcile_detect(
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    json_output: JsonOption = False,
+) -> None:
+    """Run the reconciliation detect-pass. Records conditions; sets no lifecycle state."""
+    _run(
+        lambda: request(
+            "POST",
+            "/api/v1/reconciliation/detect",
+            {"idempotency_key": idempotency_key, "expected_version": 0},
+        ),
+        json_output,
+    )
+
+
+@app.command("recover-evidence")
+def recover_evidence(
+    unit_id: Annotated[str, typer.Argument()],
+    attempt: Annotated[int, typer.Option("--attempt", min=1)],
+    data: DataOption,
+    json_output: JsonOption = False,
+) -> None:
+    """Attach evidence from an attempt whose lease expired, without redoing the work."""
+    _post_data(
+        f"/api/v1/work-units/{unit_id}/attempts/{attempt}/recover-evidence", data, json_output
+    )
+
+
+@app.command("dead-letter")
+def dead_letter(json_output: JsonOption = False) -> None:
+    """List terminal failures: failed/blocked units, failed dispatches, open circuit breakers."""
+    _run(lambda: request("GET", "/api/v1/dead-letter"), json_output)
+
+
+@app.command("requeue")
+def requeue(
+    unit_id: Annotated[str, typer.Argument()],
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    reason: Annotated[str, typer.Option("--reason")],
+    expected_version: Annotated[int, typer.Option("--expected-version", min=0)] = 0,
+    json_output: JsonOption = False,
+) -> None:
+    """Return a failed or blocked unit to READY. Refuses when the attempt budget is exhausted."""
+    _run(
+        lambda: request(
+            "POST",
+            f"/api/v1/work-units/{unit_id}/requeue",
+            {
+                "idempotency_key": idempotency_key,
+                "expected_version": expected_version,
+                "reason": reason,
+            },
+        ),
+        json_output,
+    )
+
+
+@app.command("check-consistency")
+def check_consistency(json_output: JsonOption = False) -> None:
+    """Report projection-vs-source divergence. Exits 1 when divergent -- never repairs."""
+    report = request("GET", "/api/v1/consistency-check")
+    _emit(report, json_output)
+    if isinstance(report, dict) and report.get("divergent"):
+        raise typer.Exit(code=1)

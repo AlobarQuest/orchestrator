@@ -1,14 +1,16 @@
 import uuid
 from datetime import timedelta
 
+import pytest
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.leases import LEASE_DURATION, hash_lease_token
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Claim, ContextSnapshot
-from orchestrator.services.claims import LeaseGrant, claim_unit, renew_claim
+from orchestrator.services.claims import LeaseGrant, claim_unit, release_claim, renew_claim
 from orchestrator.services.lifecycle import ActorContext
 from tests.services.test_context_preflight import register_context_unit, valid_context
 
@@ -230,3 +232,56 @@ def test_hash_lease_token_is_stable_and_one_way() -> None:
     assert len(digest) == 64
     assert token not in digest
     assert LEASE_DURATION == timedelta(minutes=15)
+
+
+def test_release_claim_is_the_single_writer_of_released_at_and_terminal_reason(
+    migrated_session: Session, ready_unit
+) -> None:
+    grant = claim_unit(migrated_session, ready_unit.id, worker(), "claim-release-1")
+    assert isinstance(grant, LeaseGrant)
+    claim = migrated_session.get(Claim, grant.claim_id)
+    assert claim is not None
+    assert claim.released_at is None
+    assert claim.terminal_reason is None
+
+    now = TransactionClock().now(migrated_session)
+    release_claim(claim, terminal_reason="lease_expired", released_at=now)
+    migrated_session.flush()
+
+    assert claim.released_at == now
+    assert claim.terminal_reason == "lease_expired"
+
+
+def test_release_claim_rejects_a_blank_terminal_reason(
+    migrated_session: Session, ready_unit
+) -> None:
+    grant = claim_unit(migrated_session, ready_unit.id, worker(), "claim-release-2")
+    assert isinstance(grant, LeaseGrant)
+    claim = migrated_session.get(Claim, grant.claim_id)
+    assert claim is not None
+
+    with pytest.raises(DomainError) as error:
+        release_claim(
+            claim, terminal_reason="", released_at=TransactionClock().now(migrated_session)
+        )
+
+    assert error.value.code == "terminal_reason_required"
+
+
+def test_release_claim_refuses_an_already_released_claim(
+    migrated_session: Session, ready_unit
+) -> None:
+    """A silent double-release would rewrite the terminal reason. Having one writer is exactly
+    what prevents evidence recovery and reclaim from racing to release the same claim."""
+    grant = claim_unit(migrated_session, ready_unit.id, worker(), "claim-release-3")
+    assert isinstance(grant, LeaseGrant)
+    claim = migrated_session.get(Claim, grant.claim_id)
+    assert claim is not None
+    now = TransactionClock().now(migrated_session)
+    release_claim(claim, terminal_reason="lease_expired", released_at=now)
+
+    with pytest.raises(DomainError) as error:
+        release_claim(claim, terminal_reason="recovered_from_expired_lease", released_at=now)
+
+    assert error.value.code == "claim_already_released"
+    assert claim.terminal_reason == "lease_expired"

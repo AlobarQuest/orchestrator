@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     brain_proposal_target_urls: dict[str, str] = Field(default_factory=dict)
     brain_proposal_credentials: dict[str, str] = Field(default_factory=dict)
     brain_proposal_timeout_seconds: float = 10.0
+    # How long a post-deploy verification unit may sit in SUBMITTED before the reconciliation
+    # detect-pass calls it a deploy_split_brain. AC-003 is time-elapsed by nature -- the unit is
+    # minted SUBMITTED inside the deployment-ingest transaction, so "verification stalled" cannot
+    # be true at ingest under any design, and this threshold is the only thing that distinguishes
+    # a normal in-progress verification from a split brain. Production must sit above a normal
+    # verification's worst case; the AC-010 drill sets it low via the env var so it needs no sleep.
+    reconcile_split_brain_stall_seconds: int = 900
 
 
 @lru_cache

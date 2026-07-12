@@ -10,14 +10,17 @@ from sqlalchemy.orm import Session
 import orchestrator.services.dispatch as dispatch_module
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import Event
+from orchestrator.persistence.models import DispatchRecord, Event
 from orchestrator.services.dispatch import (
     DispatchCommand,
     DispatchSettings,
     GitHubActionsDispatcher,
     GitHubDispatchError,
     age_out_human_gates,
+    circuit_open,
     dispatch_work_unit,
+    failure_signature,
+    signature_failure_count,
 )
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
@@ -533,3 +536,76 @@ def test_a_mint_failure_is_recorded_as_a_dispatch_failure_and_never_calls_github
     assert record.reason_code == "app_token_mint"
     assert record.failure_signature is not None
     assert record.failure_signature.startswith("workflow_dispatch:app_token_mint:")
+
+
+def test_circuit_open_is_a_pure_at_rest_predicate() -> None:
+    assert circuit_open(2, 3) is False
+    assert circuit_open(3, 3) is True
+    assert circuit_open(4, 3) is True
+
+
+def test_prospective_and_at_rest_predicates_differ_by_exactly_one_failure(
+    migrated_session: Session,
+) -> None:
+    """Dispatch counts the failure it is ABOUT to write; a read-only view counts what is already
+    on disk. Reusing dispatch's call site at rest would show a breaker open one failure early --
+    which is why the `+ 1` lives at the dispatch call site and never inside `circuit_open`."""
+    unit = ready_unit(migrated_session, key="offbyone")
+    signature = failure_signature("workflow_dispatch", "workflow_not_found", "404")
+    for attempt in (1, 2):
+        migrated_session.add(
+            DispatchRecord(
+                work_unit_id=unit.id,
+                work_package_revision_id=unit.work_package_revision_id,
+                runner_attempt=attempt,
+                status="failed",
+                reason_code="workflow_not_found",
+                idempotency_key=f"dispatch-offbyone-{attempt}",
+                target_repository=PILOT_REPOSITORY,
+                workflow_id="factory-runner-pilot.yml",
+                workflow_ref="main",
+                failure_signature=signature,
+                payload={},
+            )
+        )
+    migrated_session.commit()
+
+    count = signature_failure_count(migrated_session, unit.id, signature)
+
+    assert count == 2
+    assert circuit_open(count + 1, 3) is True  # prospective: the next failure opens it
+    assert circuit_open(count, 3) is False  # at rest: not yet open
+
+
+def test_signature_failure_count_is_scoped_to_the_unit_and_signature(
+    migrated_session: Session,
+) -> None:
+    unit = ready_unit(migrated_session, key="scoped")
+    other = ready_unit(migrated_session, key="scoped-other")
+    signature = failure_signature("workflow_dispatch", "workflow_not_found", "404")
+    other_signature = failure_signature("workflow_dispatch", "forbidden", "403")
+    rows = (
+        (unit, 1, "failed", signature),
+        (unit, 2, "blocked", signature),
+        (unit, 3, "failed", other_signature),  # different signature
+        (unit, 4, "dispatched", signature),  # not a failure status
+        (other, 1, "failed", signature),  # different unit
+    )
+    for index, (target, attempt, status, sig) in enumerate(rows):
+        migrated_session.add(
+            DispatchRecord(
+                work_unit_id=target.id,
+                work_package_revision_id=target.work_package_revision_id,
+                runner_attempt=attempt,
+                status=status,
+                idempotency_key=f"dispatch-scoped-{index}",
+                target_repository=PILOT_REPOSITORY,
+                workflow_id="factory-runner-pilot.yml",
+                workflow_ref="main",
+                failure_signature=sig,
+                payload={},
+            )
+        )
+    migrated_session.commit()
+
+    assert signature_failure_count(migrated_session, unit.id, signature) == 2

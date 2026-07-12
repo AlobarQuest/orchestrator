@@ -761,3 +761,82 @@ def test_ws61_observations_table_exists(migrated_engine) -> None:
     }
     assert ("idempotency_key",) in unique_constraints
     assert ("source_system", "source_reference", "normalized_fact_hash") in unique_constraints
+
+
+def test_wsp21_recovery_tables_exist(migrated_engine) -> None:
+    inspector = inspect(migrated_engine)
+    tables = inspector.get_table_names()
+
+    assert "reconciliation_conditions" in tables
+    assert "reconciliation_resolutions" in tables
+    assert "unit_pr_binding" in tables
+
+    condition_columns = {c["name"] for c in inspector.get_columns("reconciliation_conditions")}
+    assert {
+        "id",
+        "work_unit_id",
+        "observation_kind",
+        "observation_id",
+        "deployment_observation_id",
+        "condition_type",
+        "stored_state",
+        "observed_state",
+        "lineage_hash",
+        "resolution_generation",
+        "normalized_divergence_hash",
+        "detail",
+        "detected_at",
+        "event_id",
+        "idempotency_key",
+    } <= condition_columns
+
+    condition_uniques = {
+        tuple(c["column_names"])
+        for c in inspector.get_unique_constraints("reconciliation_conditions")
+    }
+    assert ("idempotency_key",) in condition_uniques
+    assert ("work_unit_id", "observation_kind", "normalized_divergence_hash") in condition_uniques
+
+    resolution_uniques = {
+        tuple(c["column_names"])
+        for c in inspector.get_unique_constraints("reconciliation_resolutions")
+    }
+    # A condition is resolvable exactly once; a recurrence mints a NEW condition.
+    assert ("condition_id",) in resolution_uniques
+    assert ("idempotency_key",) in resolution_uniques
+
+    with migrated_engine.connect() as connection:
+        triggers = set(
+            connection.scalars(
+                text(
+                    "SELECT tgname FROM pg_trigger WHERE tgname IN ("
+                    "'reject_reconciliation_conditions_mutation', "
+                    "'reject_reconciliation_resolutions_mutation', "
+                    "'reject_unit_pr_binding_mutation')"
+                )
+            )
+        )
+    # unit_pr_binding is deliberately NOT append-only: head_sha is mutable (design 1.6).
+    assert triggers == {
+        "reject_reconciliation_conditions_mutation",
+        "reject_reconciliation_resolutions_mutation",
+    }
+
+
+def test_wsp21_evidence_unsuperseded_head_index_exists(migrated_engine) -> None:
+    """The partial unique index is what structurally forecloses a SECOND supersession head.
+
+    Two heads make _terminal raise, which means the AC can never be adjudicated and no further
+    evidence can be written -- and `evidence` is append-only, so the row could never be repaired
+    and the unit could never complete.
+    """
+    indexes = {i["name"]: i for i in inspect(migrated_engine).get_indexes("evidence")}
+    head_index = indexes["uq_evidence_unsuperseded_head"]
+
+    assert head_index["unique"] is True
+    assert head_index["column_names"] == [
+        "work_package_revision_id",
+        "work_unit_id",
+        "ac_id",
+    ]
+    assert "supersedes_evidence_id IS NULL" in head_index["dialect_options"]["postgresql_where"]
