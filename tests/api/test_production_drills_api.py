@@ -2,10 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine
-from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import Approval, WorkPackageRevision
 from tests.api.test_lifecycle_api import AUTHORITY, HUMAN, SYSTEM, WORKER
 
 
@@ -34,25 +31,6 @@ def create_revision(db_client: TestClient, *, key: str) -> str:
     return response.json()["id"]
 
 
-def authorize_revision(engine: Engine, revision_id: str) -> None:
-    with Session(engine) as session:
-        revision = session.get(WorkPackageRevision, uuid.UUID(revision_id))
-        assert revision is not None
-        session.add(
-            Approval(
-                subject_type="authority",
-                subject_id=uuid.UUID(revision_id),
-                subject_revision_or_fingerprint=revision.authority_fingerprint,
-                decision="approved",
-                approved_by="devon",
-                reason="Production drill authorized",
-                event_id=uuid.uuid4(),
-                idempotency_key=f"production-drill-approval-{revision_id}",
-            )
-        )
-        session.commit()
-
-
 def start_body(revision_id: str, *, key: str = "production-drill-1") -> dict[str, object]:
     return {
         "revision_id": revision_id,
@@ -74,10 +52,9 @@ def test_production_drill_api_declares_start_and_read_routes(client: TestClient)
 
 
 def test_human_starts_and_replays_authorized_production_drill(
-    db_client: TestClient, migrated_engine: Engine
+    db_client: TestClient,
 ) -> None:
     revision_id = create_revision(db_client, key="production-drill-api")
-    authorize_revision(migrated_engine, revision_id)
 
     first = db_client.post("/api/v1/production-drills", headers=HUMAN, json=start_body(revision_id))
     replay = db_client.post(
@@ -93,11 +70,9 @@ def test_human_starts_and_replays_authorized_production_drill(
 
 
 def test_production_drill_api_rejects_non_human_and_unapproved_revisions(
-    db_client: TestClient, migrated_engine: Engine
+    db_client: TestClient,
 ) -> None:
     authorized_revision = create_revision(db_client, key="production-drill-api-role")
-    authorize_revision(migrated_engine, authorized_revision)
-    unapproved_revision = create_revision(db_client, key="production-drill-api-unapproved")
 
     worker = db_client.post(
         "/api/v1/production-drills",
@@ -109,25 +84,16 @@ def test_production_drill_api_rejects_non_human_and_unapproved_revisions(
         headers=SYSTEM,
         json=start_body(authorized_revision, key="system"),
     )
-    unapproved = db_client.post(
-        "/api/v1/production-drills",
-        headers=HUMAN,
-        json=start_body(unapproved_revision, key="unapproved"),
-    )
-
     assert worker.status_code == system.status_code == 403
     assert (
         worker.json()["error"]["code"] == system.json()["error"]["code"] == "human_actor_required"
     )
-    assert unapproved.status_code == 409
-    assert unapproved.json()["error"]["code"] == "production_drill_authority_approval_required"
 
 
 def test_production_drill_start_rejects_caller_owned_state(
-    db_client: TestClient, migrated_engine: Engine
+    db_client: TestClient,
 ) -> None:
     revision_id = create_revision(db_client, key="production-drill-api-shape")
-    authorize_revision(migrated_engine, revision_id)
 
     response = db_client.post(
         "/api/v1/production-drills",

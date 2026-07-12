@@ -1,14 +1,16 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Approval, Event, ProductionDrillRun, WorkPackageRevision
+from orchestrator.persistence.models import Event, ProductionDrillRun, WorkPackageRevision
 from orchestrator.services.lifecycle import ActorContext
+
+PRODUCTION_DRILL_IDEMPOTENCY_LOCK_NAMESPACE = 0x5044524C
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,7 @@ def _start_production_drill(session: Session, command: StartProductionDrill) -> 
             current_version=0,
         )
     payload = _command_payload(command)
+    _lock_idempotency_key(session, command.idempotency_key)
     existing_event = session.scalar(
         select(Event).where(Event.idempotency_key == command.idempotency_key)
     )
@@ -65,12 +68,7 @@ def _start_production_drill(session: Session, command: StartProductionDrill) -> 
     revision = session.get(WorkPackageRevision, command.revision_id, with_for_update=True)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
-    if not _has_authority_approval(session, revision):
-        raise DomainError(
-            "production_drill_authority_approval_required",
-            "an approved authority decision for this package revision is required",
-            "record authority approval before starting the production drill",
-        )
+    authorization = _revision_approval_provenance(revision)
 
     now = TransactionClock().now(session)
     run_id = uuid.uuid4()
@@ -83,7 +81,7 @@ def _start_production_drill(session: Session, command: StartProductionDrill) -> 
             subject_id=run_id,
             from_state=None,
             to_state="open",
-            payload={"command": payload},
+            payload={"command": payload, "authorization": authorization},
             correlation_id=uuid.uuid4(),
             idempotency_key=command.idempotency_key,
         )
@@ -113,18 +111,28 @@ def _require_human(actor: ActorContext) -> None:
         )
 
 
-def _has_authority_approval(session: Session, revision: WorkPackageRevision) -> bool:
-    return (
-        session.scalar(
-            select(Approval.id).where(
-                Approval.subject_type == "authority",
-                Approval.subject_id == revision.id,
-                Approval.subject_revision_or_fingerprint == revision.authority_fingerprint,
-                Approval.decision == "approved",
-            )
-        )
-        is not None
+def _lock_idempotency_key(session: Session, idempotency_key: str) -> None:
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(:namespace, hashtext(:idempotency_key))"),
+        {
+            "namespace": PRODUCTION_DRILL_IDEMPOTENCY_LOCK_NAMESPACE,
+            "idempotency_key": idempotency_key,
+        },
     )
+
+
+def _revision_approval_provenance(revision: WorkPackageRevision) -> dict[str, str]:
+    if not revision.approved_by or revision.approved_at is None or not revision.approval_event_id:
+        raise DomainError(
+            "production_drill_revision_approval_required",
+            "an approved package revision is required to start a production drill",
+            "register an approved package revision before starting the production drill",
+        )
+    return {
+        "revision_approved_by": revision.approved_by,
+        "revision_approved_at": revision.approved_at.isoformat(),
+        "revision_approval_event_id": revision.approval_event_id,
+    }
 
 
 def _replayed_run(session: Session, event: Event, payload: dict[str, object]) -> ProductionDrillRun:
