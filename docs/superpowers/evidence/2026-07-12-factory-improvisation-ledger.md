@@ -310,6 +310,61 @@ alone brings the factory down.
 
 ---
 
+### #14 — 🔴🔴 **PRODUCTION IS RUNNING PRE-WS-P2.1 CODE. Exit criteria are marked MET on MERGE, not on DEPLOY.** `doc-vs-reality`. **BLOCKING.**
+
+**The largest finding of the run, and it was found only by trying to use the system.**
+
+`recover-evidence` returned **HTTP 404**. The route exists in `main` (`api/routes.py:744`). It is **not
+in production.** A diff of production's live OpenAPI against the merged code:
+
+| route | in `main` | in production |
+|---|---|---|
+| `recover-evidence` | ✅ | ❌ **ABSENT** |
+| `dead-letter` | ✅ | ❌ **ABSENT** |
+| `requeue` | ✅ | ❌ **ABSENT** |
+| `reconciliation/detect` | ✅ | ❌ **ABSENT** |
+| **`pr-binding`** | ✅ | ❌ **ABSENT** |
+| `consistency-check` | ✅ | ❌ **ABSENT** |
+
+Production runs `ghcr.io/alobarquest/orchestrator:d6d73b3-ws64-verifier-amd64` — a **WS-6.4-era image**.
+**WS-P2.1 (PR #47) and WS-P2.15 (PR #50) are merged to `main` and have never been deployed.**
+
+**What this invalidates:**
+
+1. **Program exit criterion #7 — *"Operator status and recovery controls exist"* — is marked
+   **MET 2026-07-12**, citing *"dead-letter view, `requeue`, `recover-evidence`, consistency check,
+   detect-pass."* **Not one of them exists in production.** The recovery controls do not exist where
+   recovery would happen.
+2. **Criterion #5 (drills) MET** — the five drills run against a **local** orchestrator. They prove
+   local behaviour. They have never exercised production.
+3. **WS-P2.16's entire subject is not deployed.** Every handoff says *"the route exists, is reachable,
+   and nothing calls it."* It exists **in code**. In production it **404s**. **Even a perfectly
+   correct `pr_binding` call from factory-runner would have failed** — and six adversarial reviews of
+   the WS-P2.16 plan never caught it, because every one of them read the repository instead of asking
+   production what it was running.
+
+**This is the same defect class as everything else today, at program scale: an attestation nobody
+forced to correspond to reality.** "Merged" was recorded as "done." Nothing checks.
+
+---
+
+### #15 — The runner's evidence limit could not even be worked around, because the workaround is not deployed. `missing-command`.
+
+The plan for the five evidence-less ACs (#P4) was to backfill them through `recover-evidence` — the
+designed SYSTEM path that needs no lease, *"used for real"* in WS-P2.15's closeout (against a **local**
+orchestrator, it now turns out). **It 404s in production (#14).**
+
+So the five ACs **cannot be given evidence at all.** Devon's call (2026-07-12): adjudicate them
+out-of-band and merge, deploy after.
+
+**Made honest rather than false:** each adjudication's `rationale` states explicitly that the evidence
+exists (named tests, CI run URL, head SHA) and that **the orchestrator could not hold it because
+`recover-evidence` is absent from the production image.** The attestation carries its own caveat into
+the permanent ledger. That is the difference between recording a gap and papering over one — and it is
+precisely the distinction the program's open P1 *attestation audit* exists to enforce.
+
+---
+
 ## Confirmations / falsifications of the pre-registered predictions
 
 *(filled in as the run proceeds — see the plan's §7 for the seven predictions)*

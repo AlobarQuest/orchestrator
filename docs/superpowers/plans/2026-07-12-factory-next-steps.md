@@ -27,6 +27,35 @@ problem is that the declared contract cannot be followed without leaving it thir
 
 ---
 
+## P0 — Before anything else
+
+### 0. 🔴 **DEPLOY. Production is running pre-WS-P2.1 code, and exit criteria were marked MET on MERGE.**
+
+Production runs `ghcr.io/alobarquest/orchestrator:d6d73b3-ws64-verifier-amd64` — a **WS-6.4-era image**.
+WS-P2.1 (PR #47) and WS-P2.15 (PR #50) are merged to `main` and **have never been deployed**. Absent
+from production: `recover-evidence`, `dead-letter`, `requeue`, `reconciliation/detect`,
+`consistency-check`, and **`pr-binding`**.
+
+**Consequences, all of which were being carried as facts:**
+
+- **Exit criterion #7 — *"Operator status and recovery controls exist"* — is marked MET, citing five
+  routes. None of them exists in production.** The recovery controls do not exist where recovery
+  happens.
+- **Criterion #5 (drills) MET** — the drills run against a **local** orchestrator. They have never
+  touched production.
+- **WS-P2.16's subject is not deployed.** Every handoff says *"the route exists, is reachable, and
+  nothing calls it."* It exists **in code**; in production it **404s**. A perfectly correct
+  `pr_binding` call would have failed anyway — and **six adversarial reviews of the WS-P2.16 plan
+  missed this, because every one of them read the repository instead of asking production what it was
+  running.**
+
+**Do this first, in its own session** (it is an infra mutation): deploy `main`, verify the routes are
+live against the OpenAPI, re-run the drills **against production**, and only then re-baseline the exit
+criteria. **Add a check that fails when a criterion is marked MET on a route production does not
+serve** — "merged" was recorded as "done", and nothing checks.
+
+---
+
 ## P0 — Fix these together or the factory stops
 
 ### 1. The masked pair: `evidence_type` × one-evidence-row-per-unit
