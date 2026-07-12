@@ -4,7 +4,7 @@
 **Subject:** the `conformance-claim-helper` feature (orchestrator `PROJECT.md` P2)
 **Lane:** local-heavy
 **Started:** 2026-07-12
-**Status:** IN PROGRESS — phase: authoring → awaiting Devon's package approval
+**Status:** IN PROGRESS — phase: decomposition → awaiting Devon's decomposition approval (IRREVERSIBLE)
 
 > **The rule:** follow the contract, do not fix it. Every wall gets recorded and routed around.
 > Fixes are the *output* of this run, not part of it.
@@ -67,15 +67,99 @@ API; it must *first* resolve one of:
 
 ---
 
+### #3 — `ac_id` means the database UUID at decomposition and the human string everywhere else. **P1 CONFIRMED.** `vocabulary`. Would have been blocking at the irreversible gate.
+
+| | |
+|---|---|
+| **phase** | decomposition |
+| **wanted** | Map package acceptance criteria to the unit. |
+| **contract offered** | A field named **`ac_id`** (`AcMappingCommandModel.ac_id: str`, `RetainedAcCommandModel.ac_id: str`). |
+| **what we did instead** | Passed the criterion's **database UUID**, because `services/decomposition.py` builds its lookup as `criteria_by_id = {str(criterion.id): criterion ...}` — keyed on `criterion.id` (UUID), while `criterion.ac_id` is the human string `"AC-001"`. **Same field name, opposite meaning.** Passing what the field is named yields a bare `package_acceptance_criterion_not_found` with no hint. |
+| **root cause** | `services/decomposition.py`, `criteria_by_id` keyed on `str(criterion.id)`. |
+| **class** | `vocabulary` |
+| **blocking?** | Not for us — **only because the run predicted it and read the source first.** For anyone who trusts the field name, this fails **at the one gate that cannot be undone** (`decomposition_already_approved` has no supersede route; the recovery is a whole new package revision plus a fresh human approval per unit). |
+
+**Already backlogged (P2) — this run is its first live confirmation in production.**
+
+---
+
+### #4 — The package→unit authority projection is manual, and NOTHING checks it. `unexpressible-in-envelope`. Routed around.
+
+| | |
+|---|---|
+| **phase** | decomposition |
+| **wanted** | Give the unit an authority envelope derived from the grant Devon approved at package level. |
+| **contract offered** | Nothing. The package's grant is the **registry vocabulary** (`repository_read`, `repository_write`, `test_execution`, `pr_open`, `event_emit`); the unit envelope wants the **runner vocabulary** (`repo.read`, `repo.edit`, `command.run`, `github.pr.create`, …). ADR-0001 defers the projection to *"the decomposition author"* — i.e. to hand-typing. |
+| **what we did instead** | Hand-projected the five registry terms into six runner capabilities and wrote them into the unit envelope. |
+| **root cause** | ADR-0001's deferred projection; no code relates the two vocabularies. |
+| **class** | `unexpressible-in-envelope` |
+| **blocking?** | No — and that is the problem. |
+
+**The live intake response proves the hole, in production data.** The package's authority normalised to:
+
+```
+"capabilities": {}, "unknown_fields": ["allowed", "prohibited", "requires_approval"]
+```
+
+**Every term Devon approved is in `unknown_fields`, and `capabilities` is empty.** Per this repo's own
+invariant, unknown fields contribute **only their names** to the fingerprint, never their values. So the
+revision's `authority_fingerprint` does not attest *what the package actually grants*. (The package
+*content hash* still covers it, so this is not a tamper hole — but the fingerprint the unit approvals
+chain to does not carry the grant.)
+
+**Consequence:** nothing would have stopped me granting the unit **more** than the package allows. I
+could have written `"infra_mutation": "allowed"` into the unit envelope and no gate in the system would
+have related it to a package whose `prohibited` list I never touched. **This is exactly the "too lax"
+half WS-P2.16 identified — now confirmed live, on real production data, rather than argued from code.**
+
+---
+
+### #5 — To author the unit I had to hand-type the very claim this feature exists to stop people hand-typing. `unexpressible-in-envelope`. Routed around.
+
+| | |
+|---|---|
+| **phase** | decomposition |
+| **wanted** | An `authority.conformance` claim for the unit. |
+| **contract offered** | A free-form dict the dispatch gate then **trusts** (`_conformance_blocked_reason`). |
+| **what we did instead** | Hand-typed `{"standards_touched": ["project","code","security"], "accepted_standards": [], "status": "green"}` — from memory, exactly as the backlog item complains. |
+| **class** | `unexpressible-in-envelope` |
+| **blocking?** | No. |
+
+**The factory cannot yet build the thing that would stop it hand-typing.** That is not irony for its own
+sake — it is the measurement: the helper under construction is the fix for the gap the run hit while
+constructing it.
+
+---
+
+### #6 — `allowed_commands` cannot express "run the tests," and the envelope is LANE-BLIND. **P3 CONFIRMED at authoring time.** `unexpressible-in-envelope`.
+
+| | |
+|---|---|
+| **phase** | decomposition |
+| **wanted** | Authorize the unit to prove its own tests pass. |
+| **contract offered** | `constraints.allowed_commands` — an ordered list re-executed at finalize, run **shell-less** (`subprocess.run(command.split())`), aborting on any nonzero exit. |
+| **what we did instead** | Wrote `["uv sync", "uv run ruff check src tests", "uv run pyright"]` — lint and types only. **Test evidence had to be pushed out of the envelope entirely**, onto the `Quality` check on the pull-request head (AC-006). |
+| **root cause** | This repo's tests need Postgres + `SECURITY_STANDARDS_DIR`; the envelope can provide neither. Per `CLAUDE.md`, `make check` **must never** appear in this repo's envelope. |
+| **class** | `unexpressible-in-envelope` |
+| **blocking?** | No — routed around via CI. |
+
+**The sharper finding, which the prediction missed: the envelope has no notion of which LANE executes
+it.** One `allowed_commands` list must serve both a local machine (where the full suite *would* run) and
+a bare hosted runner (where it cannot). So it must be written to **the weakest lane**, and a local-heavy
+unit is silently denied verification it could actually perform. There is no way to say *"run the full
+suite when the lane can."*
+
+---
+
 ## Confirmations / falsifications of the pre-registered predictions
 
 *(filled in as the run proceeds — see the plan's §7 for the seven predictions)*
 
 | # | Prediction | Status |
 |---|---|---|
-| P1 | `ac_id` UUID vs `"AC-001"` at decomposition | not yet reached |
+| P1 | `ac_id` UUID vs `"AC-001"` at decomposition | **CONFIRMED** (#3) |
 | P2 | every automated AC → `judgment_required` | not yet reached |
-| P3 | `allowed_commands` cannot express "run the tests" | not yet reached |
+| P3 | `allowed_commands` cannot express "run the tests" | **CONFIRMED** (#6) — and it is worse: the envelope is lane-blind |
 | P4 | a multi-AC unit cannot discharge ACs #2..N | not yet reached |
 | P5 | the 15-minute lease cannot survive a real build | not yet reached |
 | P6 | no `unit_pr_binding` row is written | not yet reached |
