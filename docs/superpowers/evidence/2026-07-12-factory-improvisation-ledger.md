@@ -33,22 +33,37 @@ system's. The skill instructs hand-writing both files. **The gap is real.**
 
 ---
 
-### #2 — A package can only enter the factory by pasting JavaScript into a browser console. `missing-command`. **BLOCKING — routed around.**
+### #2 — Intake is human-only, and no human credential exists. **This blocks WS-P2.9's planned CLI front door.** `unexpressible-in-envelope`. Routed around.
+
+> **NOT a finding:** "there is no nice intake UI." That is **known, planned, and deliberate** — the
+> front door is WS-P2.9 (`factory create/validate/submit/…`, codex recommendation #1, Wave 3), and the
+> system is being built bottom-up on purpose. Logging that would be noise. **The finding below is the
+> constraint that WS-P2.9 will hit, which nobody has written down.**
 
 | | |
 |---|---|
 | **phase** | intake |
 | **wanted** | Register the approved package with the orchestrator. |
-| **contract offered** | **Nothing usable.** Three facts compose into a hole: (1) `services/package_intake.py::_require_human` demands `ActorRole.HUMAN`; (2) **all three production M2M credentials are worker / system / verifier** — *none* is HUMAN, so `orchestrator intake-package` **physically cannot intake against production**; (3) the human web app (`web.py`) has `GET /intakes/{revision_id}` — you can *view* an intake — but **no POST route to create one.** There is no human surface for the one step that requires a human. |
-| **what we did instead** | Emitted the payload offline (`emit-intake-payload`, which works), then generated a `fetch()` snippet for Devon to **paste into browser devtools** while signed in via Alobar ID. Plus the documented quirk: the first same-origin POST behind forward-auth returns 401 (the fetch follows the auth 302 and degrades to GET); the retry works. |
-| **root cause** | `package_intake.py::_require_human` + no HUMAN M2M credential + no `POST /intakes` in `web.py`. |
-| **class** | `missing-command` (a required step has no implemented surface) |
-| **blocking?** | **Yes** — routed around with devtools. **The factory's front door is a browser console.** |
+| **contract offered** | Offline payload generation (`emit-intake-payload`) — which works cleanly. **But no way to submit it non-interactively.** Three facts compose: (1) `services/package_intake.py::_require_human` demands `ActorRole.HUMAN`; (2) **all three production M2M credentials are worker / system / verifier — none is HUMAN**, so `orchestrator intake-package` cannot intake against production *at all*; (3) the human web app has `GET /intakes/{revision_id}` but **no POST route**. |
+| **what we did instead** | Pasted a generated `fetch()` into browser devtools, signed in via Alobar ID. (Plus the documented quirk: the first same-origin POST behind forward-auth 401s — the fetch follows the auth 302 and degrades to GET; the retry works.) |
+| **root cause** | `package_intake.py::_require_human` + no HUMAN credential type + no `POST /intakes` in `web.py`. |
+| **class** | `unexpressible-in-envelope` — the step *requires* a human actor and offers a human no way to act. |
+| **blocking?** | Routed around. |
 
-**This is not a UI nicety.** Intake is step one of the governed lifecycle. Every package that has ever
-entered this system entered it this way, and the previous handoff documented the workaround
-(*"the human POSTs it from a browser"*) as though it were the design. **It is not the design; it is a
-missing route that everyone has been routing around for long enough to forget it is missing.**
+**Why this matters beyond today's friction — it is a design input for WS-P2.9.**
+
+The planned front door is a **CLI** (`factory submit`). **A CLI cannot satisfy `_require_human`.** There
+is no human credential to authenticate as, and the human-actor check is not a UI preference — it is the
+thing that makes the approval attestation mean something. So WS-P2.9 cannot simply wrap the existing
+API; it must *first* resolve one of:
+
+- a **human credential path** for the CLI (a device/OIDC flow against Alobar ID that yields a HUMAN
+  actor), or
+- a **`POST /intakes` human web route** (and then `factory submit` prints a link rather than submitting), or
+- an explicit decision that **intake is permanently browser-only** and the CLI's job stops at
+  `emit-intake-payload`.
+
+**This is a real fork, and it should be decided when WS-P2.9 is scoped — not discovered inside it.**
 
 ---
 
