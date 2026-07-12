@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 import httpx
 import typer
 
-from orchestrator.conformance_claim import compute_conformance_claim
+from orchestrator.conformance_claim import ScannerUnavailableError, compute_conformance_claim
 from orchestrator.package_sources import (
     PackageSourceError,
     load_package_intake_payload,
@@ -768,11 +768,16 @@ def conformance_claim(
 ) -> None:
     """Derive a unit's authority.conformance claim from a repository's real state.
 
-    Local and read-only: it runs the project-standards and security-standards scanners against
-    the checkout and prints the claim, so a decomposition author never types one from memory.
+    Local and read-only: it reads the project-standards compliance matrix for the checkout and
+    prints the claim, so a decomposition author never types one from memory.
     """
 
     def operation() -> Any:
-        return compute_conformance_claim(repo_path).as_authority_conformance()
+        try:
+            return compute_conformance_claim(repo_path).as_authority_conformance()
+        except ScannerUnavailableError as error:
+            # Failing closed is this command's entire value; it must do so legibly, in the same
+            # shape every other error takes, rather than as a traceback and an empty stdout.
+            raise CliError({"code": "scanner_unavailable", "message": str(error)}) from error
 
     _run(operation, json_output)
