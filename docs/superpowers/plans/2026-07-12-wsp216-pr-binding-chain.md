@@ -1,16 +1,30 @@
 # WS-P2.16 — The PR-Binding Chain + Cross-Boundary Vocabulary Enforcement
 
-**Date:** 2026-07-12 · **Revision 2** (revision 1 was KILLED by two independent adversarial reviews)
+**Date:** 2026-07-12 · **Revision 3** (revisions 1 and 2 were both KILLED in adversarial review)
 **Repos:** `AlobarQuest/orchestrator`, `AlobarQuest/factory-runner`
 **Blocks:** all of Wave 2 (program exit criterion #6)
 
-> **Revision 1 was killed, and the kills were correct.** It prescribed a D3 fix that would have
-> `failed_closed` **every automated AC on every factory-built unit** (§2.4); it planned to dispatch a
-> unit to a repo with no dispatchable workflow (§5.2); it proposed a detector whose green was
-> reachable by editing a fixture (§3.5.4); and it pinned a cross-repo fixture by hash without anyone
-> deriving from it — *the exact `can_create_pr` defect it exists to fix* (§3.1). Every one of those
-> passed a careful read. **They were found only by adversarial review against executable reality.**
-> The dead versions are kept, because *why* they were wrong is the most useful content here.
+> **Three reviews, three kills, and every kill landed on the section written with most confidence.**
+>
+> - **Rev 1** prescribed a D3 fix that `failed_closed` every automated AC (§2.4); planned to dispatch
+>   to a repo with no dispatchable workflow (§5.2); proposed a detector whose green was reachable by
+>   editing a fixture (§3.6.3); and pinned a cross-repo fixture by hash that nobody derived from —
+>   *the exact `can_create_pr` defect it exists to fix* (§3.1).
+> - **Rev 2** fixed the evaluator's payload shape and **missed the other half of the same kill**: the
+>   runner writes **one** evidence row per unit (`cli.py:219`, `_first_ac_id`), so promoting
+>   `automated_test` to deterministic `failed_closed`s ACs #2..N on **absent** evidence. Its
+>   replacement evaluator was also **constant-true** (`exit_code` is a hardcoded `0`, `cli.py:486`)
+>   and command-blind — a **fail-open** that would auto-pass *"the tests pass"* on evidence that
+>   `uv sync` ran. And its guard predicate was satisfiable by a **stale binding** from a previous
+>   attempt (§3.4).
+>
+> **Every one of these passed a careful read.** They were found only by adversarial review against
+> executable reality. The dead versions are kept, because *why* they were wrong is the most useful
+> content in this file.
+>
+> **Rev 3 (Devon, 2026-07-12):** D3 ships only its **behavior-preserving half**; the deterministic
+> evaluator is deferred to its own workstream (§3.5). The guard gets an **`attempt` column** so it
+> cannot be satisfied by a ghost (§3.4).
 
 ---
 
@@ -185,9 +199,15 @@ gate uses.**
 
 ### 3.3 factory-runner discharges the binding — hand-built (§5.2)
 
-- **Wire `can_create_pr`.** `validate_authority` computes it (`authority.py:35`) and **nothing reads
-  it** (only `models.py:23` and two tests). Refuse to open a PR when the envelope does not allow
-  `github.pr.create`. This is what makes the capability the guard keys on *mean something*.
+- **Wire `can_create_pr` — and it must FAIL FAST, at run start.** `validate_authority` computes it
+  (`authority.py:35`) and **nothing reads it** (only `models.py:23` and two tests).
+  ⚠ **There is exactly one path to `submit()`** (`cli.py:582`, inside `_finalize_workspace`), and it
+  is **unconditionally preceded by `gh pr create`** (`cli.py:537-547`). Both `finalize-run` and
+  `local_heavy_finalize` funnel through it. So a unit without `github.pr.create` **cannot be run by
+  factory-runner at all.** If the refusal fires at PR-creation time it is an `Exit(1)` *after* the
+  work is done: the runner never calls `submit()`, the unit sits in `EXECUTING` until lease expiry →
+  requeue → **burns an attempt** → repeats → `FAILED`. **Refuse at run start**, before any work, with
+  a named `AuthorityError`. Do not relocate the deadlock into factory-runner.
 - **Add `OrchestratorClient.pr_binding(...)`** — note the real class name is `OrchestratorClient`
   (`client.py:46`), not `PrBindingClient`.
 - **POST it before `client.submit(...)`.**
@@ -212,19 +232,37 @@ Revision 1 introduced `submission_binding_recorded: bool` and **never defined it
 reasoning about "a PR-capable unit" — which only makes sense if it *is* capability-keyed. Resolved:
 
 > **Predicate: `submission_binding_recorded = (envelope does NOT allow github.pr.create) OR (a
-> UnitPrBinding row exists)`.** Capability-keyed, computed in `services/lifecycle.py`, passed to the
-> kernel as a plain `bool`.
+> UnitPrBinding row exists WHOSE `attempt` IS THIS ATTEMPT)`.** Capability-keyed **and
+> attempt-scoped**, computed in `services/lifecycle.py`, passed to the kernel as a plain `bool`.
 
-**Why capability-keyed and not unconditional:**
+☠ **Rev 2's predicate was "a row exists", and it was vacuously satisfiable.** `UnitPrBinding`'s
+primary key is **`work_unit_id` alone** (`models.py:1177`); `pr_number` / `head_sha` carry **no
+attempt column** (only `verification_read_attempt` exists, and it arms the *divergence alarm*, not the
+binding). `upsert_pr_binding` overwrites in place (`pr_bindings.py:82-85`) and **nothing deletes the
+row on `REVISION_REQUIRED`.**
 
-- **Unconditional contradicts an existing, load-bearing contract.** `services/pr_bindings.py:98-100`:
-  *"A unit with no PR binding is a no-op: not every work unit opens a pull request, and those must
-  still be able to submit."*
-- **Unconditional creates a real deadlock** *with our own §3.3 change*: envelope lacks
-  `github.pr.create` → runner refuses to open a PR → no binding → `EXECUTING → SUBMITTED` refused
-  **forever**. Success unreachable.
-- **Capability-keyed is self-consistent:** the guard fires only when the capability is present, and
-  when it is present the runner opens a PR and writes a binding. The two changes interlock.
+*Failure scenario:* attempt 1 opens PR #100, writes binding `(100, head A)`, submits → verifier →
+`REVISION_REQUIRED` → `READY` → re-dispatch. Attempt 2's `pr_binding` POST fails (network, a 422, an
+older console script — recall §5.3: the runner installs from **unpinned** `main`). It proceeds to
+`submit()`. Rev 2's guard: *"a row exists"* → **row (100, A) still there** → **passes**. Then
+`arm_verification_head` (`pr_bindings.py:99-112`) arms attempt 2's cycle on **attempt 1's head A**,
+while the real PR is #101 at head B. **The divergence alarm AC-001 exists to raise is armed at the
+wrong head, and the guard built to prevent exactly this certified it as fine.**
+
+**Fix (Devon, 2026-07-12): add an `attempt` column to `unit_pr_binding`.** `upsert_pr_binding` records
+it — the route **already accepts `attempt`** (`schemas.py:908`), it is simply not stored. The guard
+then requires a binding written **for the current attempt**. One additive column, one migration.
+
+**Why capability-keyed, stated honestly (rev 2 overclaimed):**
+
+- **Unconditional contradicts a load-bearing contract.** `services/pr_bindings.py:98-100`: *"A unit
+  with no PR binding is a no-op: not every work unit opens a pull request, and those must still be
+  able to submit."*
+- ⚠ **The first disjunct is never taken by a factory unit** — every dispatched envelope carries
+  `github.pr.create`, and the runner's only submit path opens a PR (§3.3). Rev 2 claimed "the two
+  changes interlock"; that was **circular**. The disjunct's real purpose is **non-runner submitters**
+  — drills, SYSTEM, human — which is exactly the class `pr_bindings.py`'s contract protects. That is a
+  smaller and truer claim, and it is the one the ACs must make.
 
 **Post-deploy units are not at risk from either variant** — `deployment_observations.py:260`
 constructs them directly in `state=SUBMITTED`; they never traverse `EXECUTING → SUBMITTED`, the only
@@ -253,39 +291,66 @@ from `persistence.models`; it may **not** import `services.pr_bindings`, which i
 reaches `FAILED`/`BLOCKED`/`CANCELLED`; the runner already refuses `no changes to submit`. The only
 path to *success* would be a SYSTEM `upsert_pr_binding` inventing a PR that does not exist.
 
-### 3.5 D3 — the evaluator, designed against the runner's REAL payload
+### 3.5 D3 — the SAFE HALF only. The evaluator is DEFERRED, and here is why.
 
-Per Devon: fix it properly. Three parts, and part (b) is the one revision 1 got fatally wrong.
+> **Rev 2 tried to ship the deterministic evaluator and it was killed. Devon's call (2026-07-12):
+> ship the behavior-preserving half; the evaluator becomes its own workstream.**
 
-**(a) Map all five package types.**
+**Why "just promote `automated_test` to deterministic" cannot ship — BOTH halves must be understood:**
 
-| package `evidence_type` | treatment |
-|---|---|
-| `automated_test` | `DETERMINISTIC_TYPES` + a **new** evaluator (b) |
-| `automated_check` | `DETERMINISTIC_TYPES` + the same evaluator |
-| `human_review` | `JUDGMENT_TYPES` (alias of the existing `human.review`) |
-| `external_attestation` | `JUDGMENT_TYPES` |
-| `observation` | `JUDGMENT_TYPES` |
+1. **Payload shape (rev 1's kill).** `_status_result` (`:65-77`) reads only **top-level** result
+   fields; the runner nests `exit_code` inside `verification[]`
+   (`factory-runner/evidence.py:75-91`). → `failed_closed`.
+2. **Absent evidence (rev 2's kill — the half rev 2 missed).** The runner writes **exactly ONE
+   evidence row per unit**, for AC #1 only: `ac_id = _first_ac_id(brief)`
+   (`factory-runner/cli.py:549`, `:219-223`), with a single `submit_evidence` call (`:569`). But a
+   unit maps to **N** ACs (`decomposition.py:544-560`), and the verifier looks evidence up **per AC**
+   (`verifier.py:110-115`). The moment the type is deterministic, `evaluate_criterion` hits
+   `if evidence is None: return ("failed_closed", ...)` (`:52-53`) for ACs #2..N.
+   → `record_adjudication(outcome="failed")` → `REVISION_REQUIRED` (`verifier.py:210-211`) → the
+   re-attempt writes the same single row → **loop until `max_attempts` → FAILED.**
+   ⚠ **Today those ACs land on `judgment_required` and the unit completes via out-of-band
+   adjudication.** The "fix" turns a working (if ugly) path into a hard failure.
+3. **And the obvious evaluator is a FAIL-OPEN.** `exit_code` is a **hardcoded literal `0`**
+   (`factory-runner/cli.py:486`) and `_run_command` **raises** on any nonzero return (`:153-168`), so
+   no runner payload can ever carry a failure. *"Pass iff every `verification[].exit_code == 0`"* is
+   **constant-true**. It also never checks **which** command ran — `verification_commands` is just
+   `constraints.allowed_commands` (`cli.py:295`). An AC reading *"the full test suite passes"* would
+   be auto-discharged by evidence that **`uv sync` ran**. That is strictly worse than today's loud
+   `judgment_required`.
 
-The last three are **behavior-preserving** (they already fall through to `judgment_required`).
+**A correct D3 therefore requires:** factory-runner writing **one evidence row per mapped AC**; the
+verifier keying on the **evidence row's** `evidence_type` rather than the criterion's (§3.6.4
+blind-spot 5); and a **command-aware** evaluator. That is a workstream, not a unit. **Backlogged P1.**
 
-**(b) The evaluator must read the payload the runner actually writes.** Pass iff **every**
-`verification[].exit_code == 0`; fall back to `_status_result`'s top-level fields when `verification`
-is absent; `failed_closed` when neither is present. **Do not reuse `_status_result` (§2.4).**
+#### What DOES ship — zero behavior change
 
-> **The named test — required, not optional.** Feed `build_pr_opened_evidence`'s **real output**
-> through `evaluate_criterion` on an `automated_test` criterion and assert `passed`. *If an AC names a
-> test, write that test* — WS-P2.15's implementer asserted an outcome, skipped the named test, and the
-> independent verifier found the fix incomplete in minutes.
+**(a) Name all five package types explicitly**, preserving today's outcome exactly:
 
-**(c) Audit the live ledger before shipping.** Enumerate existing `automated_test` evidence and
-confirm each payload satisfies the new evaluator. **Check against the real ledger; do not assert it.**
-Any AC that would flip from `judgment_required` to `failed_closed` is a production regression.
+| package `evidence_type` | treatment | behavior change |
+|---|---|---|
+| `automated_test` | `JUDGMENT_TYPES` | **none** (already `judgment_required`) |
+| `automated_check` | `JUDGMENT_TYPES` | **none** |
+| `human_review` | `JUDGMENT_TYPES` (alias of `human.review`) | **none** |
+| `external_attestation` | `JUDGMENT_TYPES` | **none** |
+| `observation` | `JUDGMENT_TYPES` | **none** |
 
-**(d) Validate `evidence_type` at intake** against `DETERMINISTIC_TYPES ∪ JUDGMENT_TYPES`, so an
-unknown type is a **named error at the gate** rather than a silent `judgment_required` at verify.
-(`schemas.py:75` is today a free `str = Field(min_length=1)`.) Normalize case in **exactly one**
-place — `evaluate_criterion` does `.strip().lower()` (`:50`); intake does not.
+Every row is a no-op *at runtime*. What changes is that the vocabulary becomes **declared** instead of
+accidental: today these five land on `judgment_required` by **falling off the end of a set**, which is
+indistinguishable from a typo. After this, they land there **because we said so** — and a **typo does
+not.**
+
+**(b) Validate `evidence_type` at intake** against `DETERMINISTIC_TYPES ∪ JUDGMENT_TYPES`. An unknown
+type becomes a **named error at the gate** instead of a silent `judgment_required` at verify.
+(`schemas.py:75` is today a free `str = Field(min_length=1)`.) **This is the entire safety win**, and
+it is real: it is the difference between a silent misroute and a rejection a human can fix.
+
+**(c) Normalize case in exactly one place** — `evaluate_criterion` does `.strip().lower()` (`:50`);
+intake does not.
+
+**(d) Assertion D still ships** (§3.6) — `DETERMINISTIC_TYPES ⊆ EVALUATORS ∪ {special cases}`. It is
+what makes the deferred evaluator workstream *safe to attempt later*: the moment someone adds
+`automated_test` to `DETERMINISTIC_TYPES` without an evaluator, the suite goes red.
 
 ### 3.6 The general detector — REVISED after review
 
@@ -362,11 +427,27 @@ blindness.
 | Unit | Repo | Route | Content |
 |---|---|---|---|
 | **U1** | orchestrator | factory | capability vocabulary fixture (derived, §3.1); ingress enforcement of **both** unit fields in `register_approved_unit`; migrate ~73 fixtures + `drill_common.sh` |
-| **U2** | factory-runner | **hand-built** | derive `SUPPORTED_CAPABILITIES` from the fixture; **wire `can_create_pr`**; `OrchestratorClient.pr_binding` (with `expected_version=0` + idempotency key); derive `pr_number`; **POST before `submit`** |
-| **U3** | orchestrator | factory | `submission_binding_recorded` (§3.4) on `EXECUTING → SUBMITTED`; drill driving the **real HTTP surface** |
-| **U4** | orchestrator | factory | the detector (§3.6) + the D3 evaluator (§3.5) + `evidence_type` intake validation |
+| **U2** | factory-runner | **hand-built** | derive `SUPPORTED_CAPABILITIES` from the fixture; **wire `can_create_pr` to refuse at RUN START** (§3.3); `OrchestratorClient.pr_binding` (with `expected_version=0` + idempotency key + **`attempt`**); derive `pr_number`; **POST before `submit`** |
+| **U3** | orchestrator | factory | **`attempt` column migration on `unit_pr_binding`**; `submission_binding_recorded` (§3.4) on `EXECUTING → SUBMITTED`; drill driving the **real HTTP surface** |
+| **U4** | orchestrator | factory | the detector (§3.6) + D3's **safe half** (§3.5): declare the five package types, validate `evidence_type` at intake, assertion D |
 
 **Order:** U1 → U2 → U3. U4 is independent of U3 and may run alongside U2.
+
+**Deferred to their own workstreams (P1 backlog):** the deterministic evidence evaluator (§3.5 — needs
+per-AC evidence from the runner + evidence-row-type keying + a command-aware evaluator); the `ac_id`
+UUID/string collision; evidence-row `evidence_type` correlation (§3.6.4).
+
+### 4.1 Two landmines nobody had written down
+
+- **`TransitionGuards` fields default to `False`** (`kernel/transitions.py:11-13`), and two call sites
+  construct `TransitionGuards()` **bare** — `services/claims.py:717` and `services/evidence.py:1039`.
+  Neither targets `SUBMITTED` today (both target `FAILED`), so a new default-`False` field is
+  **fail-closed and safe now**. But the next `authorize_transition` caller that targets `SUBMITTED`
+  with a bare `TransitionGuards()` is an **instant, silent deadlock**. Say so in the field's comment.
+- **The WS-P2.16 units are grandfathered past their own guard — by accident.** The capability check
+  lives at `register_approved_unit`, so U3/U4 are ingressed *before* U1 deploys and dispatched *after*.
+  It works. **It works only because the gate is at ingress and not at dispatch.** The first implementer
+  who "tightens" it by moving the check to dispatch bricks the workstream mid-flight.
 
 ---
 
@@ -457,10 +538,12 @@ Recoverable, but real. Deploy U3 when no unit is mid-flight, or accept the burne
 | capability ingress | seed a unit with `repository_write` → `unknown_capability` |
 | vocabulary **derivation** | **hardcode `SUPPORTED_CAPABILITIES`** in factory-runner and add a term → red (*not* "flip a byte → hash reds") |
 | two-fixture drift | `capability_vocabulary["runner"] != sorted(envelope["capabilities"])` → red |
-| `can_create_pr` | envelope without `github.pr.create` → runner refuses to open a PR |
+| `can_create_pr` | envelope without `github.pr.create` → runner refuses **at run start**, before doing work (not an `Exit(1)` after the PR step, which strands the unit in `EXECUTING`) |
 | binding written | **delete the `pr_binding` call from `cli.py`** → a drill on the real HTTP surface reds |
 | submit guard | PR-capable unit reaches `EXECUTING` with no binding → submit refused; **and** a retried submit still replays idempotently and still surfaces `version_conflict` |
-| D3 evaluator | feed **real `build_pr_opened_evidence` output** through `evaluate_criterion` on an `automated_test` criterion → `passed` (§3.5) |
+| **stale binding** | **re-submit after `REVISION_REQUIRED` with the attempt-2 `pr_binding` POST suppressed** → submit **refused** (rev 2's guard would have PASSED this — it is the whole reason for the `attempt` column) |
+| `evidence_type` intake | a package declaring `automated_tset` (typo) → **named error at intake**, not a silent `judgment_required` at verify |
+| D3 no-regression | an `automated_test` AC still evaluates to `judgment_required` — **byte-identical behavior to today** (§3.5 ships no evaluator) |
 | detector (D) | add a `DETERMINISTIC_TYPES` member with no `EVALUATORS` entry → red |
 | detector (scan) | add an unregistered, unmarked string-constant set used in a membership test → red |
 
