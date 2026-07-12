@@ -28,17 +28,14 @@ from orchestrator.persistence.models import (
     ApprovedDecomposition,
     DecompositionProposalUnit,
     Dependency,
-    DeploymentObservation,
     Event,
-    ReleaseArtifactBinding,
     WorkPackage,
     WorkPackageRevision,
     WorkUnit,
 )
 from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.services.production_drill_resources import (
-    bind_created_production_drill_resource,
-    bind_production_drill_resource,
+    _bind_created_production_drill_resource,
     require_open_production_drill_run,
     require_production_drill_resource,
 )
@@ -402,42 +399,7 @@ def register_production_drill_unit(
     if existing is not None:
         require_production_drill_resource(session, run_id, "work_unit", unit.id)
     else:
-        bind_created_production_drill_resource(session, run_id, "work_unit", unit.id)
-    return unit
-
-
-def bind_production_drill_release_artifact(
-    session: Session, *, run_id: uuid.UUID, binding_id: uuid.UUID
-) -> ReleaseArtifactBinding:
-    binding = session.get(ReleaseArtifactBinding, binding_id)
-    if binding is None:
-        raise DomainError("release_artifact_not_found", "release artifact does not exist", None)
-    require_production_drill_resource(session, run_id, "work_unit", binding.work_unit_id)
-    bind_production_drill_resource(session, run_id, "release_artifact", binding.id)
-    return binding
-
-
-def bind_production_drill_post_deploy_unit(
-    session: Session, *, run_id: uuid.UUID, unit_id: uuid.UUID
-) -> WorkUnit:
-    unit = session.get(WorkUnit, unit_id)
-    if unit is None:
-        raise DomainError("work_unit_not_found", "work unit does not exist", None)
-    deployment_observation = session.scalar(
-        select(DeploymentObservation).where(
-            DeploymentObservation.post_deploy_work_unit_id == unit.id
-        )
-    )
-    if deployment_observation is None:
-        raise DomainError(
-            "production_drill_resource_not_created",
-            "post-deploy units must be created by a deployment observation",
-            None,
-        )
-    require_production_drill_resource(
-        session, run_id, "deployment_observation", deployment_observation.id
-    )
-    bind_created_production_drill_resource(session, run_id, "work_unit", unit.id)
+        _bind_created_production_drill_resource(session, run_id, "work_unit", unit.id)
     return unit
 
 

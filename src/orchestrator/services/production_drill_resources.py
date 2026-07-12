@@ -26,33 +26,13 @@ RESOURCE_MODELS = {
 }
 
 
-def bind_production_drill_resource(
+def _bind_created_production_drill_resource(
     session: Session,
     run_id: uuid.UUID,
     resource_type: str,
     resource_id: uuid.UUID,
 ) -> ProductionDrillResource:
-    """Bind a synthetic resource while its run is open.
-
-    This is intentionally not part of ordinary lifecycle command signatures: only
-    production-drill commands import this boundary and may introduce a run ID.
-    """
-    if resource_type in {"work_unit", "observation"}:
-        raise DomainError(
-            "production_drill_resource_not_created",
-            "work units and observations must be created by the production drill",
-            None,
-        )
-    return _bind_production_drill_resource(session, run_id, resource_type, resource_id)
-
-
-def bind_created_production_drill_resource(
-    session: Session,
-    run_id: uuid.UUID,
-    resource_type: str,
-    resource_id: uuid.UUID,
-) -> ProductionDrillResource:
-    """Register a resource created by a production-drill command."""
+    """Internal registration used only after a drill writer created its row."""
     return _bind_production_drill_resource(session, run_id, resource_type, resource_id)
 
 

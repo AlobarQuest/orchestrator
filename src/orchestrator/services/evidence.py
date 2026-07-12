@@ -24,7 +24,7 @@ from orchestrator.persistence.models import (
 from orchestrator.services.claims import release_claim, validate_active_claim
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.production_drill_resources import (
-    bind_created_production_drill_resource,
+    _bind_created_production_drill_resource,
     require_production_drill_resource,
 )
 
@@ -70,7 +70,7 @@ def append_evidence(
     expected_version: int | None = None,
     context_snapshot_id: uuid.UUID | None = None,
 ) -> Evidence | DomainError:
-    return _store_evidence(
+    result = _store_evidence(
         session,
         work_package_revision_id=work_package_revision_id,
         work_unit_id=work_unit_id,
@@ -87,6 +87,7 @@ def append_evidence(
         context_snapshot_id=context_snapshot_id,
         supersede=False,
     )
+    return _evidence_result_row(result)
 
 
 def append_production_drill_evidence(
@@ -112,7 +113,7 @@ def supersede_evidence(
     expected_version: int | None = None,
     context_snapshot_id: uuid.UUID | None = None,
 ) -> Evidence | DomainError:
-    return _store_evidence(
+    result = _store_evidence(
         session,
         work_package_revision_id=work_package_revision_id,
         work_unit_id=work_unit_id,
@@ -129,6 +130,7 @@ def supersede_evidence(
         context_snapshot_id=context_snapshot_id,
         supersede=True,
     )
+    return _evidence_result_row(result)
 
 
 def supersede_production_drill_evidence(
@@ -142,9 +144,19 @@ def _store_production_drill_evidence(
 ) -> Evidence | DomainError:
     try:
         require_production_drill_resource(session, run_id, "work_unit", kwargs["work_unit_id"])
-        evidence = _store_evidence(session, **kwargs, supersede=supersede, commit=False)
-        assert not isinstance(evidence, DomainError)
-        bind_created_production_drill_resource(session, run_id, "evidence", evidence.id)
+        kwargs.setdefault("expected_version", None)
+        kwargs.setdefault("context_snapshot_id", None)
+        result = _store_evidence(
+            session, **kwargs, supersede=supersede, commit=False, return_created=True
+        )
+        if isinstance(result, DomainError):
+            raise result
+        assert isinstance(result, tuple)
+        evidence, created = result
+        if not created:
+            require_production_drill_resource(session, run_id, "evidence", evidence.id)
+        else:
+            _bind_created_production_drill_resource(session, run_id, "evidence", evidence.id)
         session.commit()
         return evidence
     except DomainError as error:
@@ -365,7 +377,8 @@ def _store_evidence(
     context_snapshot_id: uuid.UUID | None,
     supersede: bool,
     commit: bool = True,
-) -> Evidence | DomainError:
+    return_created: bool = False,
+) -> Evidence | tuple[Evidence, bool] | DomainError:
     finish = session.commit if commit else _no_op
     command = {
         "ac_id": ac_id,
@@ -389,7 +402,7 @@ def _store_evidence(
         replay = _evidence_replay(session, idempotency_key, command)
         if replay is not None:
             finish()
-            return replay
+            return _evidence_result(replay, created=False, return_created=return_created)
         if expected_version is not None and unit.version != expected_version:
             raise DomainError(
                 "version_conflict",
@@ -454,7 +467,7 @@ def _store_evidence(
             )
         )
         finish()
-        return row
+        return _evidence_result(row, created=True, return_created=return_created)
     except DomainError as error:
         return _handle_evidence_domain_error(session, error, commit)
     except IntegrityError as error:
@@ -466,6 +479,22 @@ def _store_evidence(
 
 def _no_op() -> None:
     return None
+
+
+def _evidence_result(
+    evidence: Evidence, *, created: bool, return_created: bool
+) -> Evidence | tuple[Evidence, bool]:
+    if return_created:
+        return evidence, created
+    return evidence
+
+
+def _evidence_result_row(
+    result: Evidence | tuple[Evidence, bool] | DomainError,
+) -> Evidence | DomainError:
+    if isinstance(result, tuple):
+        return result[0]
+    return result
 
 
 def _handle_evidence_domain_error(

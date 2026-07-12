@@ -19,6 +19,10 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.production_drill_resources import (
+    _bind_created_production_drill_resource,
+    require_production_drill_resource,
+)
 
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533532
 SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -63,7 +67,34 @@ def record_release_artifact(
     command: ReleaseArtifactCommand,
 ) -> ReleaseArtifactBinding | DomainError:
     try:
-        row = _record_release_artifact(session, command)
+        row, _created = _record_release_artifact(session, command)
+        session.commit()
+        return row
+    except DomainError as error:
+        session.rollback()
+        return error
+    except IntegrityError:
+        session.rollback()
+        return DomainError(
+            "release_artifact_conflict",
+            "release artifact binding conflicts with an existing source tuple",
+            "verify digest and provenance before retrying",
+        )
+    except Exception:
+        session.rollback()
+        raise
+
+
+def record_production_drill_release_artifact(
+    session: Session, *, run_id: uuid.UUID, command: ReleaseArtifactCommand
+) -> ReleaseArtifactBinding | DomainError:
+    try:
+        require_production_drill_resource(session, run_id, "work_unit", command.work_unit_id)
+        row, created = _record_release_artifact(session, command)
+        if created:
+            _bind_created_production_drill_resource(session, run_id, "release_artifact", row.id)
+        else:
+            require_production_drill_resource(session, run_id, "release_artifact", row.id)
         session.commit()
         return row
     except DomainError as error:
@@ -98,7 +129,7 @@ def list_release_artifacts(
 def _record_release_artifact(
     session: Session,
     command: ReleaseArtifactCommand,
-) -> ReleaseArtifactBinding:
+) -> tuple[ReleaseArtifactBinding, bool]:
     _authorize_actor(command.actor)
     _validate_command_shape(command)
     payload = _command_payload(command)
@@ -111,7 +142,7 @@ def _record_release_artifact(
     )
     if existing is not None:
         _validate_idempotent_replay(session, existing, payload)
-        return existing
+        return existing, False
     event_with_key = session.scalar(
         select(Event).where(Event.idempotency_key == command.idempotency_key)
     )
@@ -123,7 +154,7 @@ def _record_release_artifact(
     same_tuple = _existing_source_tuple(session, command)
     if same_tuple is not None:
         if _same_binding_facts(same_tuple, command):
-            return same_tuple
+            return same_tuple, False
         raise DomainError(
             "release_artifact_conflict",
             "source tuple is already bound to a different immutable artifact",
@@ -184,7 +215,7 @@ def _record_release_artifact(
     )
     session.add(row)
     session.flush()
-    return row
+    return row, True
 
 
 def _release_evidence(

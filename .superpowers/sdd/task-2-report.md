@@ -74,3 +74,29 @@
 - `uv run pytest tests/services/test_production_drill_resources.py tests/services/test_lifecycle_events.py tests/services/test_lifecycle_guards.py tests/services/test_lifecycle_rollback.py tests/services/test_evidence.py tests/services/test_evidence_recovery.py tests/services/test_observations.py tests/services/test_reconciliation.py tests/services/test_reconciliation_detect_pass.py tests/services/test_reconciliation_detection_check.py tests/services/test_reconciliation_detection_pr.py tests/services/test_deployment_observations.py tests/services/test_package_registration.py -q` -> `123 passed`.
 - `uv run ruff check` on all changed Task 2 service and regression-test files: passed.
 - `git diff --check`: passed.
+
+## Re-review P1 Fix Pass
+
+### Findings Addressed
+
+- Removed the public generic registry binding functions. Resource ownership is now registered
+  only from drill-specific creation writers.
+- Evidence and reconciliation condition writers now distinguish a newly created row from a
+  replay and require existing ownership by the same open run for replays.
+- Added drill-specific release-artifact and deployment-observation writers. They register only
+  records created by that call; replayed release artifacts and deployment observations must
+  already belong to the same run. A newly created deployment observation also binds its derived
+  post-deploy work unit and evidence rows in the same transaction.
+
+### Red Evidence
+
+- Added regressions for removed generic binding, ordinary evidence and reconciliation-condition
+  replay, and ordinary release-artifact and deployment-observation replay.
+- Before implementation, `uv run pytest tests/services/test_production_drill_resources.py -q`
+  failed at collection because the drill-specific release/deployment writer APIs did not exist.
+
+### Green Evidence
+
+- `uv run pytest tests/services/test_production_drill_resources.py tests/services/test_lifecycle_events.py tests/services/test_lifecycle_guards.py tests/services/test_lifecycle_rollback.py tests/services/test_evidence.py tests/services/test_evidence_recovery.py tests/services/test_observations.py tests/services/test_reconciliation.py tests/services/test_reconciliation_detect_pass.py tests/services/test_reconciliation_detection_check.py tests/services/test_reconciliation_detection_pr.py tests/services/test_deployment_observations.py tests/services/test_package_registration.py tests/services/test_release_artifacts.py -q` -> `134 passed`.
+- `uv run ruff check` on all changed Task 2 service and regression-test files: passed.
+- `git diff --check`: passed.
