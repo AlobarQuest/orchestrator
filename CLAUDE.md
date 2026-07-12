@@ -267,3 +267,33 @@ style of that module.
   recreate `orchestrator_test`, so a background run and a foreground run corrupt each other and
   produce a spray of unrelated failures (27 failed / 13 errors, on a tree that passes 1210/1210
   when run alone). Before believing a suite-wide regression, re-run it *alone*.
+
+- **This system has THREE vocabulary mismatches, and nothing checks any of them.** Wherever two
+  vocabularies must agree, assume they don't until you have grepped both sides. All three below
+  surfaced in a single workstream (WS-P2.15) and none was caught by any test:
+
+  1. **`evidence_type: automated_test` matches NOTHING in the verifier.** `DETERMINISTIC_TYPES`
+     is `{test, tests, pytest, runner.verification, gate.summary, security.scan, github.checks,
+     health.probe, …}` and `JUDGMENT_TYPES` is `{human.review, code_review, judgment, manual}`
+     (`services/verifier_evaluators.py`). `automated_test` — which is what intent packages
+     actually declare — is in **neither**, so `evaluate_criterion` falls through to
+     `judgment_required` for **every automated AC, however good the evidence**. This is the real
+     root of the known "judgment_required ACs must be passed out-of-band via the verifier M2M
+     credential / no adjudication form in `/review`" gap. **It is a vocabulary gap, not a UI gap** —
+     fixing the UI would not fix it.
+  2. **`ac_id` means two different things.** `ac_mappings[].ac_id` / `retained_acs[].ac_id` on a
+     decomposition proposal want the criterion's **database UUID** (`services/decomposition.py`
+     builds its lookup on `str(criterion.id)`), while **evidence and adjudication want the human
+     string** `"AC-001"` (`criterion.ac_id`). Same field name, opposite meanings, and the failure
+     is a bare `package_acceptance_criterion_not_found` with no hint.
+  3. **`github.pr.create` is read by NO production code, in either repo.** ADR-0001 says the
+     package-authority → unit-capability projection (`pr_open` → `github.pr.create`) is applied
+     "by the decomposition author", with automated projection deferred. It appears only in tests
+     and fixtures on both sides. A submission guard keyed on it would have been simultaneously
+     too strict (halting the factory) and too lax (invisible to units authored in the registry
+     vocabulary) — **and every acceptance test would have passed while it was both.**
+
+  **Before building anything keyed on a field that crosses a boundary, `grep` for that field in
+  `src/` of every repo that must honour it.** Zero production hits means the field is decoration,
+  and the guard you build on it is decoration too. Three instances in one workstream is not three
+  bugs — it is a missing class of test.
