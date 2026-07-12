@@ -1,10 +1,10 @@
 # WS-P2.16 — The PR-Binding Chain + Cross-Boundary Vocabulary Enforcement
 
-**Date:** 2026-07-12 · **Revision 4** (revisions 1, 2 and 3 were EACH KILLED in adversarial review)
+**Date:** 2026-07-12 · **Revision 5** (revisions 1–4 were EACH KILLED in adversarial review)
 **Repos:** `AlobarQuest/orchestrator`, `AlobarQuest/factory-runner`
 **Blocks:** all of Wave 2 (program exit criterion #6)
 
-> **Four reviews, four kills, and every kill landed on the section written with most confidence.**
+> **Five reviews, five kills, and every kill landed on the section written with most confidence.**
 >
 > - **Rev 1** prescribed a D3 fix that `failed_closed` every automated AC (§2.4); planned to dispatch
 >   to a repo with no dispatchable workflow (§5.2); proposed a detector whose green was reachable by
@@ -32,10 +32,29 @@
 > **The pattern is the lesson, and it is now unmistakable:** *knowing* the failure class does not
 > protect you from it. Rev 3 named the trap and fell in it. **Only the review caught it.**
 >
-> **Rev 4 (Devon, 2026-07-12):** D3 ships only its behavior-preserving half, aimed at **`schemas.py:698`**
-> with the evidence-row fields **explicitly out of scope**; the deterministic evaluator is deferred to
-> its own workstream (§3.5). The guard gets a **nullable `attempt` column** with defined SYSTEM
-> semantics (§3.4). §4.0 records what four reviews have confirmed **sound**.
+> - **Rev 4** finally aimed D3 at the right field — and then **put the capability vocabulary in
+>   `tests/fixtures/` and made PRODUCTION code load it at import.** `tests/` is in **neither** the
+>   orchestrator image (`Dockerfile:32-39`) nor factory-runner's wheel (no `package-data`), so the
+>   container **would not boot** and every dispatched run would `FileNotFoundError`. Its negative
+>   control runs in the source tree and goes **green** (§3.1). Its D1 negative control — for the defect
+>   the whole workstream exists to fix — was **not runnable by any harness that exists** (§6). And its
+>   fixture migration silently reds **drill-2 and drill-4** (§2.1).
+>
+> **Every one of these passed a careful read. Five times.** They were found only by adversarial review
+> against executable reality. The dead versions are kept, because *why* they were wrong is the most
+> useful content in this file.
+>
+> **The pattern is the lesson, and it is now beyond doubt:** *knowing* the failure class does not
+> protect you from it. Rev 3 named the two-vocabulary trap and fell in it. Rev 4 named *"a value
+> computed and never consumed"* and *"a fixture calling a service is not a caller"* — and committed
+> **both**. **Only the review has ever caught this.**
+>
+> **Rev 5 (Devon, 2026-07-12):** the vocabulary becomes a **shipped package resource**, proven present
+> in the wheel and the image (§3.1). D1's control moves **into factory-runner** as a caller assertion
+> (§6). The drill seed migration is taken **faithfully**, budgeting drill-2/drill-4 (§2.1). The
+> detector is **split into U5** — it is ~5× larger than assumed and its predicate needs another pass.
+> The guard's column is `binding_attempt` and the kernel gets a **new clause** (§3.4). §4.0 records
+> what five reviews have confirmed **sound**.
 
 ---
 
@@ -88,9 +107,30 @@ binding"* looks too strict **and** too lax. Both objections are about **order, n
   (`tests/fixtures/runner_authority_envelope.json`) and **no worker writes a binding** — so shipping
   the guard first hard-fails *every* unit at `EXECUTING → SUBMITTED`. **U2 removes this.**
 - **"Too lax":** `scripts/drill_common.sh:235,242-243` seeds `repository_write`, so no drill
-  exercises the guard. **U1 removes this.**
+  exercises the guard.
 
-Neither survives U1 + U2. **Hence: vocabulary → runner writes the binding → guard. Not negotiable.**
+**Hence: vocabulary → runner writes the binding → guard. Not negotiable.**
+
+> ☠ **REV 4 CLAIMED "U1 REMOVES THE TOO-LAX OBJECTION." IT DOES NOT — and the drills are coupled to
+> U1 and U3 in a way no revision modelled.**
+>
+> **Only `drill-3` writes a PR binding** (`drill-3-external-pr-conflict.sh:71,82`). **`drill-2`
+> (`:140`) and `drill-4` (`:75`) submit with NO binding at all.** So the `seed_unit` migration has two
+> possible landings, and rev 4 budgeted neither:
+>
+> - **(a) minimal — seed `{repo.edit: allowed}`.** The guard's first disjunct (*envelope does NOT allow
+>   `github.pr.create`*) is then **always** taken. Drills stay green and **no drill ever executes the
+>   guard's binding branch.** *"Too lax" survives U1 entirely.*
+> - **(b) faithful — seed the full six-capability runner envelope** (incl. `github.pr.create`), which
+>   is what the §2.1 argument actually requires. Then **drill-2 and drill-4 hard-fail at submit.**
+>
+> **Decision: take (b), and budget the drill changes.** Drills 2 and 4 must write a binding before
+> submit — which is *also* what finally gives the guard real drill coverage. **U1 and U3 are therefore
+> coupled through `drill_common.sh`; land the seed change with the guard, not before it.**
+>
+> *(Safe either way: drills don't set `dispatch_enabled`, and `_blocked_reason` returns
+> `dispatch_disabled` **first** (`dispatch.py:259`), so the seed change cannot trigger an outbound
+> GitHub call.)*
 
 ### 2.2 The naive vocabulary allowlist makes the orchestrator reject its OWN units
 
@@ -172,10 +212,36 @@ Mirror the mechanism that pins the authority envelope (`CONTRACT_SHA256`,
 > assert its hash, and leave `SUPPORTED_CAPABILITIES` hardcoded beside it: both repos green,
 > vocabulary still forked, a value computed and never consumed.
 >
-> **So assert DERIVATION.** `SUPPORTED_CAPABILITIES` must be *loaded from* the fixture at import
+> **So assert DERIVATION.** `SUPPORTED_CAPABILITIES` must be *loaded from* the vocabulary at import
 > time, with a named test asserting `SUPPORTED_CAPABILITIES == frozenset(_VOCAB["runner"])`.
 > **Negative control:** hardcode the set and add a term → factory-runner goes red. *Not* "change a
 > byte → the hash test reds", which proves nothing about use.
+
+> ☠☠ **REV 4 PUT THE VOCABULARY IN `tests/fixtures/` AND MADE PRODUCTION CODE LOAD IT. IT IS NOT
+> SHIPPED. THE CONTAINER WOULD NOT BOOT.**
+>
+> - **orchestrator:** `Dockerfile:32-39` copies `.venv`, `src`, `registry-bundle.json`, `alembic.ini`,
+>   `migrations` and the security-standards registry. **`tests/` IS NOT IN THE IMAGE.** The ingress
+>   allowlist is consumed by `services/packages.py` — production code.
+> - **factory-runner:** `pyproject.toml` is setuptools/src-layout with **no
+>   `[tool.setuptools.package-data]` and no MANIFEST**. `uv tool install git+https://…` (§5.3) builds a
+>   wheel containing **only `factory_runner/*.py`**. `authority.py` loading
+>   `../../tests/fixtures/…json` raises **`FileNotFoundError` at import, in every dispatched run, in
+>   every target repo.**
+>
+> **And the negative control cannot see it:** `pytest` and `make check` run **in the source tree**,
+> where `tests/fixtures/` exists. Green in tests, dead in production — *the plan's own recurring
+> failure class, committed by the plan.*
+>
+> **THE VOCABULARY MUST BE A SHIPPED PACKAGE RESOURCE.** Put it *inside the package*:
+> `src/factory_runner/capability_vocabulary.json` (+ `[tool.setuptools.package-data]`) and
+> `src/orchestrator/capability_vocabulary.json`, loaded via `importlib.resources` — or simply a plain
+> Python module, which ships by construction and needs no packaging change at all. **`tests/fixtures/`
+> then asserts equality with the SHIPPED resource**, which is what "derived, not hashed" actually buys.
+>
+> **Prove it ships — in the artifact, not the source tree:** `uv build && unzip -l dist/*.whl | grep
+> capability`, and a check that the file is present in the built image. **A source-tree test is not
+> evidence.**
 
 > ⚠ **Do not create a SECOND source of truth for the same vocabulary.**
 > `tests/fixtures/runner_authority_envelope.json` **already** enumerates all six runner capabilities
@@ -193,9 +259,15 @@ Validate **both** `authority.capabilities` keys **and** `required_capability` in
 `register_approved_unit`. Named error `unknown_capability`, carrying the offending key and the
 accepted set.
 
-**Blast radius (accepted by Devon):** ~73 test fixtures and both `drill_common.sh` seeds move from
-`repository_write` to the runner vocabulary. **Production is already `["repo.edit"]`** — the fixtures
-are test-only drift, so this moves the tests *toward* production, not away.
+**Blast radius (accepted by Devon):** `repository_write` appears **117 times across 32 files** under
+`tests/` (rev 4 said "~73" — it was low), plus both `drill_common.sh` seeds and the **drill-2 /
+drill-4 binding writes** (§2.1). **Production is already `["repo.edit"]`** — the fixtures are test-only
+drift, so this moves the tests *toward* production, not away.
+
+⚠ **A migrated fixture that still passes while asserting nothing is the same defect class as
+everything else here.** When migrating, confirm each fixture's assertion is still *about* something —
+a test that asserted on the old capability string and now silently succeeds has been deleted, not
+migrated.
 
 **State honestly what this buys.** `kernel/authority.py:41-42` — `level_for()` returns `"prohibited"`
 for an unknown capability, so dispatch **already** fails closed (`capability_not_authorized`). D2's
@@ -284,7 +356,38 @@ fabrication; leaving it `NULL` fails **closed**. Document this as the operator's
 
 *Migration safety:* nullable ⇒ safe on a non-empty table, so the migration does not depend on
 `unit_pr_binding` being empty in production (per §1 it should be, but **do not infer** that — a
-nullable column makes it moot).
+nullable column makes it moot). Alembic head is `0014_wsp21_recovery_controls`; `unit_pr_binding` is
+created there (`:177`) and is deliberately **not** append-only, so a nullable `add_column` genuinely
+suffices. It does not interact with `ck_unit_pr_binding_armed_head_has_attempt` (which constrains only
+the `verification_read_*` pair) nor with `record_verification_read_head` (a different column).
+
+⚠ **Name the column `binding_attempt`, not `attempt`.** A bare `attempt` sitting beside
+`verification_read_attempt` on the same table is a confusion waiting to happen — and this workstream
+exists because two fields with the same name meant different things.
+
+**Four mechanics rev 4 left unstated:**
+
+1. **A SYSTEM repair must supply the attempt — make it mandatory on the route for SYSTEM.**
+   `upsert_pr_binding` overwrites fields unconditionally (`pr_bindings.py:82-85`), so a SYSTEM write
+   that fixes only `head_sha` would **NULL a good `binding_attempt`** and make the unit un-submittable.
+   The alternative (write-only-when-not-None) means SYSTEM can never *correct* a wrong attempt. Pick
+   mandatory-for-SYSTEM and say so.
+2. **Against SYSTEM the column is documentation, not enforcement.** `_authorize_write` early-returns
+   for SYSTEM (`:180-183`); only the WORKER branch reaches `validate_active_claim`. So SYSTEM *can*
+   write `binding_attempt = unit.attempt_count` with no claim and no PR — the fabricated binding §3.4
+   forbids, invisible to the guard. **Acceptable (SYSTEM is trusted), but state it.**
+3. **The concurrent-reclaim worry is void — for a reason §3.4 did not give.** `_perform_transition`
+   checks `unit.version != command.expected_version` (`lifecycle.py:128`) **before**
+   `_transition_guards` (`:147`). A reclaim (`claims.py:665`) increments `attempt_count` *and*
+   transitions `EXECUTING → CLAIMED`, bumping `version` — so a stale submit dies on `version_conflict`
+   **before the guard is evaluated**. **No legitimate binding can fail the guard due to a concurrent
+   reclaim.** Write the line, or a sixth reviewer re-opens it.
+4. ☠ **The kernel needs a new CLAUSE, not just a field.** `authorize_transition`
+   (`kernel/transitions.py:73-91`) has **exactly two hardcoded guard clauses** —
+   `AWAITING_APPROVAL → READY` and `target is COMPLETED`. **There is no hook for
+   `EXECUTING → SUBMITTED`.** Adding a `TransitionGuards` field and computing it in services does
+   **nothing** on its own: the kernel would never read it. U3 must add the third clause **in the
+   kernel** — and mind the `dispatch`/`deploy` docstring trap (§3.4).
 
 **Why capability-keyed, stated honestly (rev 2 overclaimed):**
 
@@ -491,10 +594,22 @@ blindness.
 |---|---|---|---|
 | **U1** | orchestrator | factory | capability vocabulary fixture (derived, §3.1); ingress enforcement of **both** unit fields in `register_approved_unit`; migrate ~73 fixtures + `drill_common.sh` |
 | **U2** | factory-runner | **hand-built** | derive `SUPPORTED_CAPABILITIES` from the fixture; **wire `can_create_pr` to refuse at RUN START** (§3.3); `OrchestratorClient.pr_binding` (with `expected_version=0` + idempotency key + **`attempt`**); derive `pr_number`; **POST before `submit`** |
-| **U3** | orchestrator | factory | **`attempt` column migration on `unit_pr_binding`**; `submission_binding_recorded` (§3.4) on `EXECUTING → SUBMITTED`; drill driving the **real HTTP surface** |
-| **U4** | orchestrator | factory | the detector (§3.6) + D3's **safe half** (§3.5): declare the five package types, validate `evidence_type` at intake, assertion D |
+| **U3** | orchestrator | factory | **`binding_attempt` column migration**; `submission_binding_recorded` (§3.4) **incl. a new clause in `authorize_transition`**; **drill-2/drill-4 binding writes** (§2.1) |
+| **U4** | orchestrator | factory | D3's **safe half** (§3.5) — declare the five package types, validate the **criterion's** `evidence_type` at intake (`schemas.py:698`), assertion D |
+| **U5** | orchestrator | factory | the self-discovering vocabulary scan (§3.6) — **split out of U4** |
 
-**Order:** U1 → U2 → U3. U4 is independent of U3 and may run alongside U2.
+**Order:** U1 → U2 → U3. U4 and U5 are independent of U3.
+
+⚠ **U5 is split out because the detector is sized ~5× larger than rev 4 assumed.** An approximation of
+§3.6.2's rule over `src/orchestrator` yields **46 subjects, not ~9** — including `SECRET_KEY_PARTS`
+(×4), `POST_DEPLOY_AC_IDS` (×2), `COMMAND_TARGETS`, `AUTHORITY_PROFILE_RANK`, and ~20
+`persistence/models.py` enum vocabularies whose source of truth is a **DB check-constraint**. Their
+registry entries would read *"in fact this is a legitimate second enumeration, pinned by the DB"* —
+**§3.6.3's own tell for a wrong predicate.** The predicate needs another pass, and **D3's safe half
+must not be held hostage to it.**
+
+Rev 4 also never said what "the vocabulary registry" **is** — a file? a decorator? a constant the test
+imports? U5 must define that before it defines anything else.
 
 **Deferred to their own workstreams (P1 backlog):** the deterministic evidence evaluator (§3.5 — needs
 per-AC evidence from the runner + evidence-row-type keying + a command-aware evaluator); the `ac_id`
@@ -525,6 +640,15 @@ spend its budget elsewhere.
   `_replay_evaluation`, adjudication routing, dead-letter and reporting all key on `status`/`outcome`,
   never on set membership). All five package types today take the *second* disjunct
   (`not in DETERMINISTIC_TYPES`); afterwards they take the *first* (`in JUDGMENT_TYPES`). Same return.
+- **D3's target field and its fixture budget are COMPLETE (review 5).** `PackageAcceptanceCriterion`
+  rows are created in **exactly two** places — `services/package_intake.py:329` and
+  `services/verifier_criteria.py:141` (`grep -rn "PackageAcceptanceCriterion(" src/` finds no others;
+  decomposition creates none, no migration creates any). **Intake-only validation is sufficient.**
+  Complete enumeration of criterion `evidence_type` values in existence: real packages declare
+  `automated_test` (152), `human_review` (52), `automated_check` (8), `observation` (1); orchestrator
+  tests add `review_note`, `test`, `pytest`, `human.review`. Against `DETERMINISTIC ∪ JUDGMENT ∪ {the
+  five}`, **everything passes except `review_note`** — the plan's flagged list is complete. **WS-P2.16's
+  own package passes.**
 - **Generated post-deploy criteria are safe — and here is WHY, so nobody re-derives it.**
   `verifier_criteria.py:108-138` emits `release.deployment_observed`, `production.health`,
   `production.route_presence`, `production.auth_behavior`, `production.dispatch_posture` — **all five
@@ -633,13 +757,35 @@ Recoverable, but real. Deploy U3 when no unit is mid-flight, or accept the burne
 | vocabulary **derivation** | **hardcode `SUPPORTED_CAPABILITIES`** in factory-runner and add a term → red (*not* "flip a byte → hash reds") |
 | two-fixture drift | `capability_vocabulary["runner"] != sorted(envelope["capabilities"])` → red |
 | `can_create_pr` | envelope without `github.pr.create` → runner refuses **at run start**, before doing work (not an `Exit(1)` after the PR step, which strands the unit in `EXECUTING`) |
-| binding written | **delete the `pr_binding` call from `cli.py`** → a drill on the real HTTP surface reds |
+| **binding written (D1 — the headline defect)** | **delete the `pr_binding` call from `cli.py` → a test IN FACTORY-RUNNER reds**, asserting `cli` invokes `client.pr_binding` on the submit path, plus a command-shape contract test mirroring `tests/test_orchestrator_command_contract.py`. **See the warning below.** |
+| vocabulary **ships** | `uv build && unzip -l dist/*.whl \| grep capability` → present; and present in the built image. **A source-tree test is not evidence** (§3.1) |
+| drill coverage of the guard | drill-2 / drill-4 seeded with a PR-capable envelope submit **without** a binding → refused (this is what makes the guard non-vacuous; see §2.1) |
 | submit guard | PR-capable unit reaches `EXECUTING` with no binding → submit refused; **and** a retried submit still replays idempotently and still surfaces `version_conflict` |
 | **stale binding** | **re-submit after `REVISION_REQUIRED` with the attempt-2 `pr_binding` POST suppressed** → submit **refused** (rev 2's guard would have PASSED this — it is the whole reason for the `attempt` column) |
 | `evidence_type` intake | a package declaring `automated_tset` (typo) → **named error at intake**, not a silent `judgment_required` at verify |
 | D3 no-regression | an `automated_test` AC still evaluates to `judgment_required` — **byte-identical behavior to today** (§3.5 ships no evaluator) |
 | detector (D) | add a `DETERMINISTIC_TYPES` member with no `EVALUATORS` entry → red |
 | detector (scan) | add an unregistered, unmarked string-constant set used in a membership test → red |
+
+> ☠ **REV 4's D1 CONTROL WAS NOT IMPLEMENTABLE BY ANY HARNESS THAT EXISTS — and it is the control for
+> the defect this entire workstream exists to fix.**
+>
+> It said: *"delete the `pr_binding` call from `cli.py` → a drill on the real HTTP surface reds."* But:
+>
+> - **factory-runner has no `scripts/`, no drill, no integration harness** — its tests are unit-level.
+> - **The orchestrator's drills speak the HTTP API directly** (`drill-3:71` posts to `/pr-binding`
+>   itself). **No orchestrator drill invokes factory-runner's `cli.py`.** Deleting the call reds
+>   **nothing** in the orchestrator.
+> - **Worse: `drill-3` ALREADY exercises the pr-binding route end-to-end today — and D1 exists
+>   anyway.** A new orchestrator drill on "the real HTTP surface" proves only what drill-3 already
+>   proves: that the *route* works. It says **nothing** about whether the runner *calls* it.
+>
+> **This is the WS-P2.1 defect, verbatim: _"a test fixture calling a service is not evidence the
+> service has a caller."_ The plan quotes that lesson and then wrote a control that embodies it.**
+>
+> **The only control that discharges D1 lives in FACTORY-RUNNER**, asserting the runner's own submit
+> path invokes `client.pr_binding`. The orchestrator drill is still worth having — it proves the guard
+> refuses — but it must not be mistaken for evidence of a caller.
 
 **`make check` green — read the collected-test count.** Exit 0 proves nothing; exit 5 ("no tests
 collected") is swallowed by the vendored Makefile. All drills green. `/code-review` on the diff.
