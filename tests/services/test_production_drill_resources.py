@@ -1,6 +1,9 @@
-from collections.abc import Callable
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from inspect import signature
+from threading import Barrier, Event
+from typing import TypedDict
 
 import pytest
 from sqlalchemy import Engine, select
@@ -8,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import ProductionDrillResource, WorkUnit
 from orchestrator.services.dead_letter import dead_letter
@@ -51,6 +55,19 @@ from tests.services.test_release_artifacts import command as release_artifact_co
 from tests.services.test_release_artifacts import completed_unit
 
 
+class UnitRegistration(TypedDict):
+    revision_id: uuid.UUID
+    unit_key: str
+    title: str
+    outcome: str
+    required_capability: str
+    authority: AuthorityEnvelope
+    approved_by: str
+    approved_at: datetime
+    actor_id: str
+    actor_role: ActorRole
+
+
 def test_ordinary_work_unit_cannot_self_tag_as_production_drill_resource() -> None:
     assert "run_id" not in WorkUnit.__table__.columns
     assert "run_id" not in signature(register_approved_unit).parameters
@@ -68,7 +85,7 @@ def test_concurrent_ordinary_registration_cannot_be_captured_as_drill_work(
     drill = start_production_drill(migrated_session, command(revision.id))
     assert not isinstance(drill, DomainError)
 
-    registration = {
+    registration: UnitRegistration = {
         "revision_id": revision.id,
         "unit_key": "concurrent-drill-unit",
         "title": "Concurrent drill unit",
@@ -80,33 +97,81 @@ def test_concurrent_ordinary_registration_cannot_be_captured_as_drill_work(
         "actor_id": "human-1",
         "actor_role": ActorRole.HUMAN,
     }
-    original_register = packages._register_approved_unit_with_provenance
+    registration_window = Barrier(2)
+    release_drill_registration = Event()
+    ordinary_registration_started = Event()
+    ordinary_registration_committed = Event()
+    original_activation_check = packages._require_allowed_unit_activation
+    drill_registration_paused = Event()
 
-    def register_after_ordinary_creation(session: Session, **kwargs):
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            ordinary = executor.submit(
-                _register_and_commit, migrated_engine, registration, original_register
-            )
-            ordinary.result()
-        return original_register(session, **kwargs)
+    def pause_drill_after_revision_lock(*args, **kwargs) -> None:
+        if not drill_registration_paused.is_set():
+            drill_registration_paused.set()
+            registration_window.wait(timeout=5)
+            assert release_drill_registration.wait(timeout=5)
+        original_activation_check(*args, **kwargs)
 
     monkeypatch.setattr(
-        packages, "_register_approved_unit_with_provenance", register_after_ordinary_creation
+        packages, "_require_allowed_unit_activation", pause_drill_after_revision_lock
     )
 
-    with Session(migrated_engine) as drill_session:
-        with pytest.raises(DomainError) as error:
-            register_production_drill_unit(drill_session, run_id=drill.id, **registration)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        drill_registration = executor.submit(
+            _register_drill_unit_and_commit, migrated_engine, drill.id, registration
+        )
+        ordinary_registration = executor.submit(
+            _register_ordinary_unit_after_barrier,
+            migrated_engine,
+            registration,
+            registration_window,
+            ordinary_registration_started,
+            ordinary_registration_committed,
+        )
+        try:
+            assert ordinary_registration_started.wait(timeout=5)
+            assert not ordinary_registration_committed.wait(timeout=0.25)
+        finally:
+            release_drill_registration.set()
 
-    assert error.value.code == "production_drill_resource_not_owned"
+        drill_unit_id = drill_registration.result(timeout=5)
+        ordinary_unit_id = ordinary_registration.result(timeout=5)
+
+    assert ordinary_unit_id == drill_unit_id
+    resource = migrated_session.scalar(
+        select(ProductionDrillResource).where(
+            ProductionDrillResource.resource_type == "work_unit",
+            ProductionDrillResource.resource_id == drill_unit_id,
+        )
+    )
+    assert resource is not None
+    assert resource.run_id == drill.id
 
 
-def _register_and_commit(
-    engine: Engine, registration: dict[str, object], register: Callable[..., object]
-) -> None:
+def _register_drill_unit_and_commit(
+    engine: Engine, run_id: uuid.UUID, registration: UnitRegistration
+) -> uuid.UUID:
     with Session(engine) as session:
-        register(session, **registration)
+        unit = register_production_drill_unit(session, run_id=run_id, **registration)
+        unit_id = unit.id
         session.commit()
+        return unit_id
+
+
+def _register_ordinary_unit_after_barrier(
+    engine: Engine,
+    registration: UnitRegistration,
+    registration_window: Barrier,
+    registration_started: Event,
+    registration_committed: Event,
+) -> uuid.UUID:
+    registration_window.wait(timeout=5)
+    registration_started.set()
+    with Session(engine) as session:
+        unit = register_approved_unit(session, **registration)
+        unit_id = unit.id
+        session.commit()
+    registration_committed.set()
+    return unit_id
 
 
 def test_resource_cannot_belong_to_two_production_drill_runs(migrated_session: Session) -> None:

@@ -148,3 +148,28 @@
 - Green: `.venv/bin/pytest tests/services/test_production_drill_resources.py tests/services/test_package_registration.py -q` -> `26 passed`.
 - `.venv/bin/ruff check src/orchestrator/services/packages.py tests/services/test_production_drill_resources.py`: passed.
 - `git diff --check`: passed.
+
+## Concurrency Regression Test Quality Fix
+
+### Finding Addressed
+
+- The original registration-race regression started and committed the ordinary registration
+  before the drill writer entered its locked registration path. It verified the final ownership
+  error but did not prove that the revision lock prevented a competing registration from
+  committing in the critical transaction window.
+
+### Resolution
+
+- Replaced the sequential setup with two SQLAlchemy sessions coordinated by a barrier. The drill
+  writer pauses immediately after acquiring its revision `FOR UPDATE` lock; the ordinary writer
+  then crosses the barrier and attempts registration.
+- The regression asserts that the ordinary writer cannot commit until the drill transaction is
+  released, then confirms both writers resolve to the same work unit and that unit is owned by
+  the drill run. Production code remains unchanged.
+
+### Verification
+
+- The prior sequential regression passed but did not exercise a blocked competing transaction.
+- `.venv/bin/pytest tests/services/test_production_drill_resources.py::test_concurrent_ordinary_registration_cannot_be_captured_as_drill_work tests/services/test_package_registration.py -q` -> `12 passed`.
+- `.venv/bin/ruff check tests/services/test_production_drill_resources.py`: passed.
+- `.venv/bin/pyright tests/services/test_production_drill_resources.py`: `0 errors, 0 warnings, 0 informations`.
