@@ -1,7 +1,9 @@
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from inspect import signature
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import Engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -25,7 +27,7 @@ from orchestrator.services.observations import (
     record_observation,
     record_production_drill_observation,
 )
-from orchestrator.services.packages import register_approved_unit
+from orchestrator.services.packages import register_approved_unit, register_production_drill_unit
 from orchestrator.services.production_drills import start_production_drill
 from orchestrator.services.reconciliation import (
     ConditionCommand,
@@ -43,6 +45,7 @@ from tests.services.test_deployment_observations import (
 from tests.services.test_evidence import active_claim, evidence_kwargs
 from tests.services.test_observations import SYSTEM
 from tests.services.test_observations import command as observation_command
+from tests.services.test_package_registration import AUTHORITY, NOW, register_test_revision
 from tests.services.test_production_drills import command
 from tests.services.test_release_artifacts import command as release_artifact_command
 from tests.services.test_release_artifacts import completed_unit
@@ -51,6 +54,59 @@ from tests.services.test_release_artifacts import completed_unit
 def test_ordinary_work_unit_cannot_self_tag_as_production_drill_resource() -> None:
     assert "run_id" not in WorkUnit.__table__.columns
     assert "run_id" not in signature(register_approved_unit).parameters
+
+
+def test_concurrent_ordinary_registration_cannot_be_captured_as_drill_work(
+    migrated_engine: Engine,
+    migrated_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from orchestrator.services import packages
+
+    revision = register_test_revision(migrated_session)
+    migrated_session.commit()
+    drill = start_production_drill(migrated_session, command(revision.id))
+    assert not isinstance(drill, DomainError)
+
+    registration = {
+        "revision_id": revision.id,
+        "unit_key": "concurrent-drill-unit",
+        "title": "Concurrent drill unit",
+        "outcome": "Concurrent drill unit is registered",
+        "required_capability": "repository_write",
+        "authority": AUTHORITY,
+        "approved_by": "human-1",
+        "approved_at": NOW,
+        "actor_id": "human-1",
+        "actor_role": ActorRole.HUMAN,
+    }
+    original_register = packages._register_approved_unit_with_provenance
+
+    def register_after_ordinary_creation(session: Session, **kwargs):
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            ordinary = executor.submit(
+                _register_and_commit, migrated_engine, registration, original_register
+            )
+            ordinary.result()
+        return original_register(session, **kwargs)
+
+    monkeypatch.setattr(
+        packages, "_register_approved_unit_with_provenance", register_after_ordinary_creation
+    )
+
+    with Session(migrated_engine) as drill_session:
+        with pytest.raises(DomainError) as error:
+            register_production_drill_unit(drill_session, run_id=drill.id, **registration)
+
+    assert error.value.code == "production_drill_resource_not_owned"
+
+
+def _register_and_commit(
+    engine: Engine, registration: dict[str, object], register: Callable[..., object]
+) -> None:
+    with Session(engine) as session:
+        register(session, **registration)
+        session.commit()
 
 
 def test_resource_cannot_belong_to_two_production_drill_runs(migrated_session: Session) -> None:

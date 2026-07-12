@@ -57,6 +57,12 @@ class DependencySpec:
         return cls("external_system", condition, external_ref=reference)
 
 
+@dataclass(frozen=True)
+class RegisteredWorkUnit:
+    unit: WorkUnit
+    created: bool
+
+
 def record_approval(
     session: Session,
     *,
@@ -278,6 +284,51 @@ def register_approved_unit(
     idempotency_key: str | None = None,
     expected_version: int | None = None,
 ) -> WorkUnit:
+    return _register_approved_unit_with_provenance(
+        session,
+        revision_id=revision_id,
+        unit_key=unit_key,
+        title=title,
+        outcome=outcome,
+        required_capability=required_capability,
+        authority=authority,
+        authority_payload=authority_payload,
+        max_attempts=max_attempts,
+        approved_by=approved_by,
+        approved_at=approved_at,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        unit_id=unit_id,
+        dependencies=dependencies,
+        activation_source=activation_source,
+        approved_decomposition_id=approved_decomposition_id,
+        idempotency_key=idempotency_key,
+        expected_version=expected_version,
+    ).unit
+
+
+def _register_approved_unit_with_provenance(
+    session: Session,
+    *,
+    revision_id: uuid.UUID,
+    unit_key: str,
+    title: str,
+    outcome: str,
+    required_capability: str,
+    authority: AuthorityEnvelope,
+    authority_payload: Mapping[str, Any] | None = None,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    approved_by: str,
+    approved_at: datetime,
+    actor_id: str,
+    actor_role: ActorRole,
+    unit_id: uuid.UUID | None = None,
+    dependencies: tuple[DependencySpec, ...] = (),
+    activation_source: str = "legacy_manual",
+    approved_decomposition_id: uuid.UUID | None = None,
+    idempotency_key: str | None = None,
+    expected_version: int | None = None,
+) -> RegisteredWorkUnit:
     _require_human(actor_id, actor_role)
     if expected_version not in {None, 0}:
         raise DomainError(
@@ -327,7 +378,7 @@ def register_approved_unit(
         session, idempotency_key, "work_unit.registered", command, WorkUnit
     )
     if replay is not None:
-        return replay
+        return RegisteredWorkUnit(replay, created=False)
     existing_unit = session.scalar(
         select(WorkUnit)
         .where(
@@ -351,7 +402,7 @@ def register_approved_unit(
     if existing_unit is not None:
         if all(getattr(existing_unit, field) == value for field, value in unit_candidate.items()):
             _record_registration(session, existing_unit.id, actor_id, idempotency_key, command)
-            return existing_unit
+            return RegisteredWorkUnit(existing_unit, created=False)
         raise DomainError(
             "unit_conflict",
             "work unit is already registered with different content",
@@ -376,7 +427,7 @@ def register_approved_unit(
     for dependency in dependencies:
         register_dependency(session, work_unit_id=unit.id, spec=dependency)
     _record_registration(session, unit.id, actor_id, idempotency_key, command)
-    return unit
+    return RegisteredWorkUnit(unit, created=True)
 
 
 def register_production_drill_unit(
@@ -389,18 +440,12 @@ def register_production_drill_unit(
             "work unit does not belong to the production drill revision",
             None,
         )
-    existing = session.scalar(
-        select(WorkUnit).where(
-            WorkUnit.work_package_revision_id == run.revision_id,
-            WorkUnit.unit_key == kwargs["unit_key"],
-        )
-    )
-    unit = register_approved_unit(session, **kwargs)
-    if existing is not None:
-        require_production_drill_resource(session, run_id, "work_unit", unit.id)
+    registration = _register_approved_unit_with_provenance(session, **kwargs)
+    if registration.created:
+        bind_created_drill_work_unit(session, run_id, registration.unit)
     else:
-        bind_created_drill_work_unit(session, run_id, unit)
-    return unit
+        require_production_drill_resource(session, run_id, "work_unit", registration.unit.id)
+    return registration.unit
 
 
 def _registration_replay[RegistrationModel: (WorkPackageRevision, WorkUnit)](

@@ -124,3 +124,27 @@
   deployment observations, package registration, and release artifacts: passed.
 - `uv run ruff check` on all changed service and regression-test files: passed.
 - `git diff --check`: passed.
+
+## Registration Provenance Race Fix
+
+### Finding Addressed
+
+- `register_production_drill_unit` previously used an unlocked pre-read to decide whether to
+  bind a work unit. An ordinary registration could commit after that read and before the drill
+  writer's registration call, allowing the drill writer to capture ordinary work.
+
+### Resolution
+
+- The locked unit-registration path now returns private creation provenance with the work unit.
+  The drill writer binds only a row created by that same registration transaction; all existing
+  and idempotent replay rows must already belong to the open drill run.
+- Added a two-session regression that commits ordinary registration in the former interleaving
+  window and verifies the drill writer rejects it as unowned.
+
+### Verification
+
+- Red: the regression initially failed because the drill writer returned successfully and bound
+  the ordinary unit.
+- Green: `.venv/bin/pytest tests/services/test_production_drill_resources.py tests/services/test_package_registration.py -q` -> `26 passed`.
+- `.venv/bin/ruff check src/orchestrator/services/packages.py tests/services/test_production_drill_resources.py`: passed.
+- `git diff --check`: passed.
