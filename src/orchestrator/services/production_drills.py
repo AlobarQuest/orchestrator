@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import exists, select, text
 from sqlalchemy.orm import Session
@@ -12,7 +12,7 @@ from orchestrator.kernel.leases import (
     LEASE_DURATION,
     MIN_PRODUCTION_DRILL_DEADLINE_SECONDS,
 )
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Claim,
     Event,
@@ -49,11 +49,35 @@ class ProductionDrillDeadlines:
     reporting_deadline: timedelta
 
 
+@dataclass(frozen=True)
+class CloseProductionDrill:
+    run_id: uuid.UUID
+    actor: ActorContext
+    idempotency_key: str
+    expected_version: int
+    closure_reason: str
+
+
 def start_production_drill(
     session: Session, command: StartProductionDrill
 ) -> ProductionDrillRun | DomainError:
     try:
         result = _start_production_drill(session, command)
+        session.commit()
+        return result
+    except DomainError as error:
+        session.rollback()
+        return error
+    except Exception:
+        session.rollback()
+        raise
+
+
+def close_production_drill(
+    session: Session, command: CloseProductionDrill
+) -> ProductionDrillRun | DomainError:
+    try:
+        result = _close_production_drill(session, command)
         session.commit()
         return result
     except DomainError as error:
@@ -301,6 +325,129 @@ def _start_production_drill(session: Session, command: StartProductionDrill) -> 
     return run
 
 
+def _close_production_drill(session: Session, command: CloseProductionDrill) -> ProductionDrillRun:
+    _require_human(command.actor)
+    if command.expected_version != 0:
+        raise DomainError(
+            "version_conflict",
+            "production drill close requires expected version 0",
+            "reload",
+            current_version=0,
+        )
+    if not command.closure_reason:
+        raise DomainError(
+            "production_drill_closure_reason_required",
+            "production drill close requires an explicit closure reason",
+            None,
+        )
+
+    payload = _close_command_payload(command)
+    _lock_idempotency_key(session, command.idempotency_key)
+    existing_event = session.scalar(
+        select(Event).where(Event.idempotency_key == command.idempotency_key)
+    )
+    if existing_event is not None:
+        return _replayed_closed_run(session, existing_event, payload)
+
+    run = session.get(ProductionDrillRun, command.run_id, with_for_update=True)
+    if run is None:
+        raise DomainError(
+            "production_drill_run_not_found", "production drill run does not exist", None
+        )
+    if run.status == "closed" and run.closure_reason != command.closure_reason:
+        raise DomainError(
+            "production_drill_closure_reason_conflict",
+            "production drill run already has a different closure reason",
+            None,
+        )
+    if run.status != "open":
+        raise DomainError("production_drill_run_not_open", "production drill run is not open", None)
+
+    now = TransactionClock().now(session)
+    _assert_closeout_invariant(session, run.id, now)
+    resources = session.scalars(
+        select(ProductionDrillResource)
+        .where(ProductionDrillResource.run_id == run.id)
+        .with_for_update()
+    ).all()
+    session.add(
+        Event(
+            occurred_at=now,
+            actor_id=command.actor.actor_id,
+            action="production_drill_closed",
+            subject_type="production_drill_run",
+            subject_id=run.id,
+            from_state="open",
+            to_state="closed",
+            payload={"closure_reason": command.closure_reason, "command": payload},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=command.idempotency_key,
+        )
+    )
+    for resource in resources:
+        resource.closed_at = now
+    run.closed_at = now
+    run.status = "closed"
+    run.closure_reason = command.closure_reason
+    session.flush()
+    _assert_closeout_invariant(session, run.id, now)
+    return run
+
+
+def _assert_closeout_invariant(session: Session, run_id: uuid.UUID, now: datetime) -> None:
+    unit_ids = select(ProductionDrillResource.resource_id).where(
+        ProductionDrillResource.run_id == run_id,
+        ProductionDrillResource.resource_type == "work_unit",
+    )
+    active_claim = session.scalar(
+        select(Claim.id).where(
+            Claim.work_unit_id.in_(unit_ids),
+            Claim.released_at.is_(None),
+            Claim.lease_expires_at > now,
+        )
+    )
+    if active_claim is not None:
+        raise DomainError(
+            "production_drill_assertions_incomplete",
+            "production drill has an active synthetic claim",
+            None,
+        )
+    nonterminal_unit = session.scalar(
+        select(WorkUnit.id).where(
+            WorkUnit.id.in_(unit_ids),
+            WorkUnit.state.not_in(
+                (
+                    WorkUnitState.COMPLETED,
+                    WorkUnitState.FAILED,
+                    WorkUnitState.CANCELLED,
+                )
+            ),
+        )
+    )
+    if nonterminal_unit is not None:
+        raise DomainError(
+            "production_drill_assertions_incomplete",
+            "production drill has a nonterminal synthetic work unit",
+            None,
+        )
+    condition_ids = select(ProductionDrillResource.resource_id).where(
+        ProductionDrillResource.run_id == run_id,
+        ProductionDrillResource.resource_type == "reconciliation_condition",
+    )
+    unresolved_condition = session.scalar(
+        select(ReconciliationCondition.id).where(
+            ReconciliationCondition.id.in_(condition_ids),
+            ~exists().where(ReconciliationResolution.condition_id == ReconciliationCondition.id),
+        )
+    )
+    if unresolved_condition is not None:
+        raise DomainError(
+            "production_drill_assertions_incomplete",
+            "production drill has an unresolved synthetic reconciliation condition",
+            None,
+        )
+
+
 def _require_human(actor: ActorContext) -> None:
     if actor.role is not ActorRole.HUMAN:
         raise DomainError(
@@ -343,6 +490,19 @@ def _replayed_run(session: Session, event: Event, payload: dict[str, object]) ->
     return run
 
 
+def _replayed_closed_run(
+    session: Session, event: Event, payload: dict[str, object]
+) -> ProductionDrillRun:
+    if event.action != "production_drill_closed" or event.subject_type != "production_drill_run":
+        raise _idempotency_conflict()
+    if event.payload.get("command") != payload:
+        raise _idempotency_conflict()
+    run = session.get(ProductionDrillRun, event.subject_id)
+    if run is None or run.status != "closed":
+        raise DomainError("event_invalid", "production drill close event has no closed run", None)
+    return run
+
+
 def _command_payload(command: StartProductionDrill) -> dict[str, object]:
     return {
         "actor_id": command.actor.actor_id,
@@ -354,6 +514,16 @@ def _command_payload(command: StartProductionDrill) -> dict[str, object]:
         "openapi_digest": command.openapi_digest,
         "lease_duration_seconds": command.lease_duration_seconds,
         "reporting_deadline_seconds": command.reporting_deadline_seconds,
+    }
+
+
+def _close_command_payload(command: CloseProductionDrill) -> dict[str, object]:
+    return {
+        "actor_id": command.actor.actor_id,
+        "actor_role": command.actor.role.value,
+        "run_id": str(command.run_id),
+        "expected_version": command.expected_version,
+        "closure_reason": command.closure_reason,
     }
 
 

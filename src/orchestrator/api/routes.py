@@ -16,6 +16,7 @@ from orchestrator.api.schemas import (
     ApprovalCommand,
     ApprovalResponse,
     ClaimCommand,
+    CloseProductionDrillCommand,
     ConsistencyReportResponse,
     ContextSnapshotResponse,
     DeadLetterEntryResponse,
@@ -192,7 +193,9 @@ from orchestrator.services.packages import (
 )
 from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
 from orchestrator.services.production_drills import (
+    CloseProductionDrill,
     StartProductionDrill,
+    close_production_drill,
     production_drill_run,
     production_drill_state,
     start_production_drill,
@@ -311,6 +314,27 @@ def get_production_drill_state(
     if actor.role is ActorRole.WORKER:
         raise DomainError("role_forbidden", "workers may not read production drill state", None)
     return _raise_error(production_drill_state(session, run_id))
+
+
+@router.post("/production-drills/{run_id}/close", response_model=ProductionDrillRunResponse)
+def close_production_drill_route(
+    run_id: UUID,
+    body: CloseProductionDrillCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        close_production_drill(
+            session,
+            CloseProductionDrill(
+                run_id=run_id,
+                actor=actor,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+                closure_reason=body.closure_reason,
+            ),
+        )
+    )
 
 
 @router.post("/revisions", response_model=RevisionResponse, status_code=201)
