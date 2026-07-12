@@ -194,6 +194,41 @@ one except a browser session — for which only ONE of the three gates has a for
 
 ---
 
+### #8 — **`local-heavy-renew` has NEVER worked.** It 422s on every call. **P5 CONFIRMED — and the cause is a dead command, not a short lease.** `doc-vs-reality`. **BLOCKING.**
+
+| | |
+|---|---|
+| **phase** | build |
+| **wanted** | Renew the 15-minute lease so a real build can outlive it. |
+| **contract offered** | `factory-runner local-heavy-renew` — documented in `local-heavy-runtime.md` as *the* mechanism for exactly this. |
+| **what actually happened** | `OrchestratorError: orchestrator request failed: 422 body.expected_version: Input should be a valid integer` |
+| **root cause** | `client.py::renew` declares `expected_version: int \| None = None`; `cli.py::local_heavy_renew` **never passes it** → the body carries `"expected_version": null` → the API's `CommandBase` requires `expected_version: int = Field(ge=0)` → **422, always.** |
+| **class** | `doc-vs-reality` |
+| **blocking?** | **Yes.** There is no working way to extend a lease. |
+
+**This is the run's most important finding so far, and it re-frames P5 entirely.**
+
+The prediction was *"a 15-minute lease cannot survive a real build."* The truth is worse and more
+specific: **the lease is renewable by design, and the renew command is dead.** It has a documented
+contract, a CLI surface, and a client method — and it has *never once succeeded*, because it sends
+`null` where an integer is required.
+
+**This is exactly the WS-P2.1 defect class the whole program has been hardening against** — a surface
+that exists, is documented, is reachable, and *has no working caller*. Green unit tests would not see
+it: the bug is in what the client **omits**, and only a live 422 exposes it.
+
+**And it explains the improvisation nobody could account for.** The established practice —
+*"claim at the evidence-submission push, not at build start"* (Devon, option A) — has always been
+described as a *preference*. **It is not a preference. It is a workaround for a broken command.** The
+contract says claim-then-renew; renew doesn't work; so operators claim late. The improvisation counter
+that WS-P2.2 wants to build would have been counting this every single run, without anyone knowing why.
+
+**Routed around per the run's rule:** let the lease expire and use `local-heavy-reclaim` — which
+**burns an attempt** (`claims.py::_acquire_reclaimed_claim` increments `attempt_count`), against
+`max_attempts: 3`. So a real build in the declared lane costs one of its three attempts *just to exist*.
+
+---
+
 ## Confirmations / falsifications of the pre-registered predictions
 
 *(filled in as the run proceeds — see the plan's §7 for the seven predictions)*
@@ -204,7 +239,7 @@ one except a browser session — for which only ONE of the three gates has a for
 | P2 | every automated AC → `judgment_required` | not yet reached |
 | P3 | `allowed_commands` cannot express "run the tests" | **CONFIRMED** (#6) — and it is worse: the envelope is lane-blind |
 | P4 | a multi-AC unit cannot discharge ACs #2..N | not yet reached |
-| P5 | the 15-minute lease cannot survive a real build | not yet reached |
+| P5 | the 15-minute lease cannot survive a real build | **CONFIRMED** (#8) — and the cause is that `local-heavy-renew` is DEAD, not that the lease is short |
 | P6 | no `unit_pr_binding` row is written | not yet reached |
 | P7 | `finalize` docs claim `runner.verification` evidence; `cli.py` never writes it | not yet reached |
 
