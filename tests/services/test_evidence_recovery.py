@@ -205,9 +205,7 @@ def test_recovery_refuses_a_live_lease(migrated_session: Session, ready_unit) ->
     assert result.code == "lease_not_expired"
 
 
-def test_recovery_refuses_the_expired_worker_itself(
-    migrated_session: Session, ready_unit
-) -> None:
+def test_recovery_refuses_the_expired_worker_itself(migrated_session: Session, ready_unit) -> None:
     """Never the expired worker. Letting it self-serve past its lease would re-open exactly the
     hole the lease exists to close."""
     grant = expired_claim(migrated_session, ready_unit)

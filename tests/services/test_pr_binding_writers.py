@@ -96,7 +96,9 @@ def test_a_worker_holding_the_claim_may_report_its_pr(migrated_session: Session)
     assert binding.verification_read_head_sha is None
 
 
-def test_a_worker_without_the_claim_may_NOT_write_the_expectation(migrated_session: Session) -> None:
+def test_a_worker_without_the_claim_may_NOT_write_the_expectation(
+    migrated_session: Session,
+) -> None:
     """The expectation is the ONLY thing divergence is measured against. A worker that could
     overwrite a unit it does not hold could silently disarm the alarm on that unit."""
     unit, grant = _claimed_unit(migrated_session, "binding-thief")

@@ -93,9 +93,7 @@ def test_a_forged_work_unit_reference_is_skipped_and_counted(migrated_session: S
     valid observation into a rejected ingest -- a denial of service on the observation path.
     """
     unit = bound_unit(migrated_session, "pr-forged")
-    observation = ingest(
-        migrated_session, unit.id, key="pr-forged-1", facts=pr_facts(merged=True)
-    )
+    observation = ingest(migrated_session, unit.id, key="pr-forged-1", facts=pr_facts(merged=True))
     observation.subject_reference = str(uuid.uuid4())  # a work unit that does not exist
 
     counters = detect_observation_conditions(migrated_session, observation, SYSTEM)
@@ -121,9 +119,7 @@ def test_a_pr_number_that_disagrees_with_the_binding_is_skipped(
 def test_a_unit_with_no_pr_binding_is_skipped(migrated_session: Session) -> None:
     unit = register_unit(migrated_session, "pr-unbound")
     migrated_session.commit()
-    observation = ingest(
-        migrated_session, unit.id, key="pr-unbound-1", facts=pr_facts(merged=True)
-    )
+    observation = ingest(migrated_session, unit.id, key="pr-unbound-1", facts=pr_facts(merged=True))
 
     counters = detect_observation_conditions(migrated_session, observation, SYSTEM)
 
@@ -209,8 +205,8 @@ def test_a_head_change_AFTER_verification_read_it_records_a_divergence(
         migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=42, head_sha=HEAD
     )
     record_verification_read_head(
-        migrated_session, actor=SYSTEM, work_unit_id=unit.id, head_sha=HEAD
-    , attempt=1)
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, head_sha=HEAD, attempt=1
+    )
     migrated_session.commit()
     observation = ingest(
         migrated_session, unit.id, key="pr-forcepush-1", facts=pr_facts(head_sha=NEW_HEAD)
