@@ -894,3 +894,22 @@ class DeadLetterEntryResponse(BaseModel):
 
 class RequeueCommand(CommandBase):
     reason: str = Field(min_length=1)
+
+
+class ConsistencyFindingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    check: str
+    work_unit_id: UUID | None
+    subject: str
+    detail: str
+    observed: str
+    expected: str
+
+
+class ConsistencyReportResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    checked_at: datetime
+    divergent: bool
+    findings: list[ConsistencyFindingResponse]

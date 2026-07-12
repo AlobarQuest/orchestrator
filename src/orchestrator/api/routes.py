@@ -16,6 +16,7 @@ from orchestrator.api.schemas import (
     ApprovalCommand,
     ApprovalResponse,
     ClaimCommand,
+    ConsistencyReportResponse,
     ContextSnapshotResponse,
     DeadLetterEntryResponse,
     DecompositionDecisionCommand,
@@ -99,6 +100,7 @@ from orchestrator.services.claims import (
     renew_claim,
     requeue_unit,
 )
+from orchestrator.services.consistency import check_consistency
 from orchestrator.services.context import PreflightCommand, record_preflight
 from orchestrator.services.dead_letter import dead_letter
 from orchestrator.services.decomposition import (
@@ -908,6 +910,16 @@ def submit_knowledge_promotion(
             client,
         )
     )
+
+
+@router.get("/consistency-check", response_model=ConsistencyReportResponse)
+def consistency_check(
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """AC-008. Reports projection-vs-source divergence. Never repairs."""
+    require_operator_actor(actor)
+    return check_consistency(session)
 
 
 @router.get("/dead-letter", response_model=list[DeadLetterEntryResponse])

@@ -337,7 +337,7 @@ def _transition_guards(
     return TransitionGuards(
         approval_recorded,
         _completion_satisfied(
-            _required_ac_ids(session, revision, unit),
+            required_ac_ids(session, revision, unit),
             adjudications,
             occurred_at,
         ),
@@ -362,7 +362,7 @@ def _completion_satisfied(
     )
 
 
-def _required_ac_ids(
+def required_ac_ids(
     session: Session,
     revision: WorkPackageRevision,
     unit: WorkUnit,
@@ -404,7 +404,7 @@ def _required_ac_ids(
     )
     if has_approved_decomposition:
         return mapped_ac_ids
-    return _package_required_ac_ids(revision.enforcement_snapshot)
+    return _packagerequired_ac_ids(revision.enforcement_snapshot)
 
 
 def _is_generated_post_deploy_unit(
@@ -421,7 +421,7 @@ def _is_generated_post_deploy_unit(
     return observation is not None
 
 
-def _package_required_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[str, ...] | None:
+def _packagerequired_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[str, ...] | None:
     value = enforcement_snapshot.get("acceptance_criteria")
     if not isinstance(value, list) or not value:
         return None

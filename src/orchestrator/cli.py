@@ -749,3 +749,12 @@ def requeue(
         ),
         json_output,
     )
+
+
+@app.command("check-consistency")
+def check_consistency(json_output: JsonOption = False) -> None:
+    """Report projection-vs-source divergence. Exits 1 when divergent -- never repairs."""
+    report = request("GET", "/api/v1/consistency-check")
+    _emit(report, json_output)
+    if isinstance(report, dict) and report.get("divergent"):
+        raise typer.Exit(code=1)
