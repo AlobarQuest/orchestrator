@@ -1,127 +1,35 @@
-# Task 3 Report: Context Preflight Service for WS-3.3
-
-## Status
-
-Completed on branch `codex/ws33-design`.
-Commit: `feat: add WS-3.3 context preflight service`
-
-## Files Changed
-
-- `src/orchestrator/services/context.py`
-- `tests/services/test_context_preflight.py`
+# Task 3 Report: Run-Scoped Assertions and Timing Controls
 
 ## Scope
 
-- Added `PreflightCommand`.
-- Added `record_preflight(session, command, actor)`.
-- Added `require_claim_context(...)` and `require_execution_context(...)`.
-- Recorded context snapshots and local events in one transaction.
-- Kept the slice service-only: no API, CLI, claim/start/evidence integration,
-  dispatch, external publication, fixture intake, or status ledger.
+Implemented the Task 3 production-drill control contract only. No runner or closeout behavior
+was added.
 
-## Red Evidence
+## Red/Green Evidence
 
-Command:
+- Red: `test_deadline_controls_are_bounded_without_mutating_global_thresholds` initially expected
+  validation-style status codes; the API correctly surfaced the service-domain rejections as 409.
+  The test was corrected to assert both the 409 response and the precise error codes.
+- Green: `uv run pytest tests/services/test_production_drill_controls.py
+  tests/api/test_production_drill_controls_api.py tests/services/test_production_drills.py
+  tests/services/test_production_drill_resources.py tests/api/test_production_drills_api.py
+  tests/architecture/test_drill_scripts.py -q` completed with `54 passed`.
+- Green: focused Ruff check completed with no findings and `git diff --check` completed cleanly.
 
-```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/services/test_context_preflight.py -q
-```
+## Tests Added
 
-Observed result:
+- Service deadline floor and configured-ceiling rejection.
+- Drill-unit lease duration selection with ordinary `LEASE_DURATION` unchanged.
+- State projection run isolation.
+- API worker rejection, deadline rejection/error codes, and unchanged global reporting thresholds.
 
-- Failed during collection with `ModuleNotFoundError: No module named 'orchestrator.services.context'`.
+## Commit
 
-## Green Evidence
+`feat: add production drill timing controls`
 
-Command:
+## Concerns
 
-```bash
-PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/kernel/test_context_policy.py tests/services/test_context_preflight.py -q
-```
-
-Observed result:
-
-- `17 passed in 1.58s`
-
-Additional checks:
-
-```bash
-PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/services/context.py tests/services/test_context_preflight.py
-PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/services/context.py tests/services/test_context_preflight.py
-```
-
-Observed result:
-
-- Ruff: `All checks passed!`
-- Pyright: `0 errors, 0 warnings, 0 informations`
-
-## Concerns / Deviations
-
-- Required context tests create package revisions with required context at insert time because `work_package_revisions` is append-only.
-- Allowed capabilities are derived from required context, `WorkUnit.required_capability`, and any allowed capabilities present in the revision authority snapshot.
-- Execution preflight helper support records claim-bound snapshots when called with purpose `execution`, but no lifecycle integration was added in this task.
-
-## Fix Pass
-
-Findings addressed:
-
-- Authority-expanding context approval now accepts the authority fingerprint produced by the existing `record_approval(subject_type="authority")` path.
-- Execution preflight now requires active claim credentials: actor, attempt, lease token hash, unreleased status, and unexpired lease.
-
-Red evidence:
-
-```bash
-PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/services/test_context_preflight.py -q
-```
-
-Observed result:
-
-- `3 failed, 5 passed`
-- Real authority approval returned `context_approval_mismatch`.
-- `PreflightCommand` rejected `attempt` and `lease_token` keyword arguments.
-
-Green evidence:
-
-```bash
-PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/kernel/test_context_policy.py tests/services/test_context_preflight.py -q
-PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/services/context.py tests/services/test_context_preflight.py
-PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/services/context.py tests/services/test_context_preflight.py
-```
-
-Observed result:
-
-- Pytest: `19 passed in 4.89s`
-- Ruff: `All checks passed!`
-- Pyright: `0 errors, 0 warnings, 0 informations`
-
-## Fix Pass 2
-
-Finding addressed:
-
-- Execution preflight idempotent replay now revalidates active claim credentials
-  before returning an existing snapshot.
-
-Red evidence:
-
-```bash
-PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/services/test_context_preflight.py::test_execution_preflight_replay_revalidates_active_claim_credentials -q
-```
-
-Observed result:
-
-- Failed because replay with missing claim credentials returned the prior
-  `ContextSnapshot` instead of `DomainError("active_claim_required")`.
-
-Green evidence:
-
-```bash
-PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/kernel/test_context_policy.py tests/services/test_context_preflight.py -q
-PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/services/context.py tests/services/test_context_preflight.py
-PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/services/context.py tests/services/test_context_preflight.py
-```
-
-Observed result:
-
-- Pytest: `20 passed in 3.43s`
-- Ruff: `All checks passed!`
-- Pyright: `0 errors, 0 warnings, 0 informations`
+- Deadline values are immutable facts in the existing `production_drill.started` authorization
+  event. This avoids global settings mutation and does not require a mutable run column.
+- The state projection uses ORM reads and computes evidence heads as terminal supersession rows
+  (no later evidence references the row); conditions remain open only when no resolution exists.

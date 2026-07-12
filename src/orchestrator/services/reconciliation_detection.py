@@ -24,11 +24,13 @@ from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import (
     DeploymentObservation,
     Observation,
+    ProductionDrillResource,
     ReleaseArtifactBinding,
     WorkUnit,
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.pr_bindings import get_pr_binding
+from orchestrator.services.production_drills import production_drill_deadlines
 from orchestrator.services.reconciliation import (
     ConditionCommand,
     ConditionOutcome,
@@ -406,6 +408,7 @@ def detect_reconciliation_conditions(
     actor: ActorContext,
     *,
     stall_seconds: int,
+    production_drill_run_id: uuid.UUID | None = None,
 ) -> DetectionCounters:
     """AC-003. Operator/runner-invoked: it creates no unit and sets no lifecycle state.
 
@@ -419,7 +422,7 @@ def detect_reconciliation_conditions(
     counters = DetectionCounters()
     for rule in (_detect_stalled_verifications, _detect_unreported_deploys):
         try:
-            counters += rule(session, actor, stall_seconds)
+            counters += rule(session, actor, stall_seconds, production_drill_run_id)
         except Exception:
             session.rollback()
             counters += SKIPPED
@@ -430,6 +433,7 @@ def _detect_stalled_verifications(
     session: Session,
     actor: ActorContext,
     stall_seconds: int,
+    production_drill_run_id: uuid.UUID | None = None,
 ) -> DetectionCounters:
     """A deploy that succeeded while its verification never finished.
 
@@ -437,6 +441,11 @@ def _detect_stalled_verifications(
     exists because an accepted ingest created it -- so no runner-pushed deploy observation is
     needed as a precondition here.
     """
+    if production_drill_run_id is not None:
+        deadlines = production_drill_deadlines(session, production_drill_run_id)
+        if not hasattr(deadlines, "reporting_deadline"):
+            return SKIPPED
+        stall_seconds = int(deadlines.reporting_deadline.total_seconds())
     deadline = TransactionClock().now(session) - timedelta(seconds=stall_seconds)
     stalled = tuple(
         session.execute(
@@ -449,6 +458,19 @@ def _detect_stalled_verifications(
             .order_by(DeploymentObservation.id)
         )
     )
+    if production_drill_run_id is not None:
+        stalled = tuple(
+            row
+            for row in stalled
+            if session.scalar(
+                select(ProductionDrillResource.id).where(
+                    ProductionDrillResource.run_id == production_drill_run_id,
+                    ProductionDrillResource.resource_type == "work_unit",
+                    ProductionDrillResource.resource_id == row[1].id,
+                )
+            )
+            is not None
+        )
     counters = DetectionCounters()
     for observation, unit in stalled:
         counters += _record_split_brain(
@@ -476,6 +498,7 @@ def _detect_unreported_deploys(
     session: Session,
     actor: ActorContext,
     stall_seconds: int,
+    production_drill_run_id: uuid.UUID | None = None,
 ) -> DetectionCounters:
     """The deploy NOBODY reported -- the case ADR-0002 rejects Alternative A over.
 
@@ -484,7 +507,7 @@ def _detect_unreported_deploys(
     A runner-reported deploy for a binding that has no verification unit IS the signal. It needs
     no threshold: nothing was ever ingested, so there is nothing to time out.
     """
-    del stall_seconds
+    del stall_seconds, production_drill_run_id
     reported = tuple(
         session.scalars(
             select(Observation)

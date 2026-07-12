@@ -145,6 +145,8 @@ class StartProductionDrillCommand(CommandBase):
     image_ref: str = Field(min_length=1)
     image_digest: str = Field(min_length=1)
     openapi_digest: str = Field(min_length=1)
+    lease_duration_seconds: int = 60
+    reporting_deadline_seconds: int = 60
 
 
 class CloseProductionDrillCommand(CommandBase):
@@ -499,6 +501,54 @@ class ProductionDrillRunResponse(BaseModel):
     image_digest: str
     openapi_digest: str
     closure_reason: str | None
+
+
+class ProductionDrillClaimStateResponse(BaseModel):
+    id: UUID
+    attempt: int
+    lease_expires_at: datetime
+
+
+class ProductionDrillEvidenceStateResponse(BaseModel):
+    id: UUID
+    work_unit_id: UUID
+    ac_id: str
+    supersedes_evidence_id: UUID | None
+    is_head: bool
+
+
+class ProductionDrillConditionStateResponse(BaseModel):
+    id: UUID
+    work_unit_id: UUID
+    condition_type: str
+    is_open: bool
+
+
+class ProductionDrillObservationStateResponse(BaseModel):
+    id: UUID
+    observation_type: str
+    status: str
+    observed_at: datetime
+
+
+class ProductionDrillUnitStateResponse(BaseModel):
+    id: UUID
+    unit_key: str
+    state: str
+    version: int
+    active_claim: ProductionDrillClaimStateResponse | None
+
+
+class ProductionDrillStateResponse(BaseModel):
+    run_id: UUID
+    status: str
+    closed_at: datetime | None
+    lease_duration_seconds: int
+    reporting_deadline_seconds: int
+    units: list[ProductionDrillUnitStateResponse]
+    evidence: list[ProductionDrillEvidenceStateResponse]
+    observations: list[ProductionDrillObservationStateResponse]
+    conditions: list[ProductionDrillConditionStateResponse]
 
 
 class DeploymentObservationResponse(BaseModel):

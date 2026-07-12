@@ -59,6 +59,7 @@ from orchestrator.api.schemas import (
     PrBindingResponse,
     PreflightCommandModel,
     ProductionDrillRunResponse,
+    ProductionDrillStateResponse,
     ProposedUnitCommand,
     ReadinessResponse,
     ReclaimCommand,
@@ -193,6 +194,7 @@ from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_b
 from orchestrator.services.production_drills import (
     StartProductionDrill,
     production_drill_run,
+    production_drill_state,
     start_production_drill,
 )
 from orchestrator.services.reconciliation_detection import (
@@ -272,6 +274,7 @@ def create_production_drill(
     body: StartProductionDrillCommand,
     actor: ActorDep,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> object:
     return _raise_error(
         start_production_drill(
@@ -284,6 +287,9 @@ def create_production_drill(
                 image_ref=body.image_ref,
                 image_digest=body.image_digest,
                 openapi_digest=body.openapi_digest,
+                lease_duration_seconds=body.lease_duration_seconds,
+                reporting_deadline_seconds=body.reporting_deadline_seconds,
+                max_deadline_seconds=settings.production_drill_max_deadline_seconds,
             ),
         )
     )
@@ -296,6 +302,17 @@ def get_production_drill(
     session: SessionDep,
 ) -> object:
     return _raise_error(production_drill_run(session, run_id))
+
+
+@router.get("/production-drills/{run_id}/state", response_model=ProductionDrillStateResponse)
+def get_production_drill_state(
+    run_id: UUID,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    if actor.role is ActorRole.WORKER:
+        raise DomainError("role_forbidden", "workers may not read production drill state", None)
+    return _raise_error(production_drill_state(session, run_id))
 
 
 @router.post("/revisions", response_model=RevisionResponse, status_code=201)

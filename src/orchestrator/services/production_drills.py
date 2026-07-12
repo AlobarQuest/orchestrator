@@ -1,13 +1,30 @@
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 
-from sqlalchemy import select, text
+from sqlalchemy import exists, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
+from orchestrator.kernel.leases import (
+    LEASE_DURATION,
+    MAX_PRODUCTION_DRILL_DEADLINE_SECONDS,
+    MIN_PRODUCTION_DRILL_DEADLINE_SECONDS,
+)
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Event, ProductionDrillRun, WorkPackageRevision
+from orchestrator.persistence.models import (
+    Claim,
+    Event,
+    Evidence,
+    Observation,
+    ProductionDrillResource,
+    ProductionDrillRun,
+    ReconciliationCondition,
+    ReconciliationResolution,
+    WorkPackageRevision,
+    WorkUnit,
+)
 from orchestrator.services.lifecycle import ActorContext
 
 PRODUCTION_DRILL_IDEMPOTENCY_LOCK_NAMESPACE = 0x5044524C
@@ -22,6 +39,15 @@ class StartProductionDrill:
     image_ref: str
     image_digest: str
     openapi_digest: str
+    lease_duration_seconds: int = MIN_PRODUCTION_DRILL_DEADLINE_SECONDS
+    reporting_deadline_seconds: int = MIN_PRODUCTION_DRILL_DEADLINE_SECONDS
+    max_deadline_seconds: int = MAX_PRODUCTION_DRILL_DEADLINE_SECONDS
+
+
+@dataclass(frozen=True)
+class ProductionDrillDeadlines:
+    lease_duration: timedelta
+    reporting_deadline: timedelta
 
 
 def start_production_drill(
@@ -48,8 +74,174 @@ def production_drill_run(session: Session, run_id: uuid.UUID) -> ProductionDrill
     return run
 
 
+def production_drill_deadlines(
+    session: Session, run_id: uuid.UUID
+) -> ProductionDrillDeadlines | DomainError:
+    run = production_drill_run(session, run_id)
+    if isinstance(run, DomainError):
+        return run
+    event = session.scalar(
+        select(Event).where(
+            Event.action == "production_drill.started",
+            Event.subject_type == "production_drill_run",
+            Event.subject_id == run_id,
+        )
+    )
+    command = event.payload.get("command") if event is not None else None
+    if (
+        event is None
+        or event.actor_id != run.owner_actor_id
+        or not isinstance(command, dict)
+        or command.get("actor_role") != ActorRole.HUMAN.value
+    ):
+        return DomainError(
+            "production_drill_human_authorization_required",
+            "production drill run has no human authorization record",
+            None,
+        )
+    deadlines = event.payload.get("deadlines")
+    if not isinstance(deadlines, dict):
+        return DomainError(
+            "production_drill_deadlines_missing", "production drill deadlines missing", None
+        )
+    try:
+        lease_seconds = int(deadlines["lease_duration_seconds"])
+        reporting_seconds = int(deadlines["reporting_deadline_seconds"])
+    except (KeyError, TypeError, ValueError):
+        return DomainError(
+            "production_drill_deadlines_invalid", "production drill deadlines invalid", None
+        )
+    return ProductionDrillDeadlines(
+        timedelta(seconds=lease_seconds), timedelta(seconds=reporting_seconds)
+    )
+
+
+def lease_duration_for_work_unit(session: Session, unit_id: uuid.UUID) -> timedelta:
+    resource = session.scalar(
+        select(ProductionDrillResource).where(
+            ProductionDrillResource.resource_type == "work_unit",
+            ProductionDrillResource.resource_id == unit_id,
+        )
+    )
+    if resource is None:
+        return LEASE_DURATION
+    deadlines = production_drill_deadlines(session, resource.run_id)
+    if isinstance(deadlines, ProductionDrillDeadlines):
+        return deadlines.lease_duration
+    return LEASE_DURATION
+
+
+def production_drill_state(session: Session, run_id: uuid.UUID) -> dict[str, object] | DomainError:
+    deadlines = production_drill_deadlines(session, run_id)
+    if isinstance(deadlines, DomainError):
+        return deadlines
+    run = session.get(ProductionDrillRun, run_id)
+    assert run is not None
+    unit_ids = select(ProductionDrillResource.resource_id).where(
+        ProductionDrillResource.run_id == run_id,
+        ProductionDrillResource.resource_type == "work_unit",
+    )
+    units = session.scalars(
+        select(WorkUnit).where(WorkUnit.id.in_(unit_ids)).order_by(WorkUnit.id)
+    ).all()
+    now = TransactionClock().now(session)
+    claims = {
+        claim.work_unit_id: claim
+        for claim in session.scalars(
+            select(Claim).where(
+                Claim.work_unit_id.in_(unit_ids),
+                Claim.released_at.is_(None),
+                Claim.lease_expires_at > now,
+            )
+        )
+    }
+    evidence_ids = select(ProductionDrillResource.resource_id).where(
+        ProductionDrillResource.run_id == run_id,
+        ProductionDrillResource.resource_type == "evidence",
+    )
+    evidence = session.scalars(
+        select(Evidence).where(Evidence.id.in_(evidence_ids)).order_by(Evidence.id)
+    ).all()
+    observation_ids = select(ProductionDrillResource.resource_id).where(
+        ProductionDrillResource.run_id == run_id,
+        ProductionDrillResource.resource_type == "observation",
+    )
+    observations = session.scalars(
+        select(Observation).where(Observation.id.in_(observation_ids)).order_by(Observation.id)
+    ).all()
+    condition_ids = select(ProductionDrillResource.resource_id).where(
+        ProductionDrillResource.run_id == run_id,
+        ProductionDrillResource.resource_type == "reconciliation_condition",
+    )
+    conditions = session.scalars(
+        select(ReconciliationCondition)
+        .where(ReconciliationCondition.id.in_(condition_ids))
+        .order_by(ReconciliationCondition.id)
+    ).all()
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "closed_at": run.closed_at,
+        "lease_duration_seconds": int(deadlines.lease_duration.total_seconds()),
+        "reporting_deadline_seconds": int(deadlines.reporting_deadline.total_seconds()),
+        "units": [_unit_state(unit, claims.get(unit.id)) for unit in units],
+        "evidence": [_evidence_state(session, row) for row in evidence],
+        "observations": [_observation_state(row) for row in observations],
+        "conditions": [_condition_state(session, row) for row in conditions],
+    }
+
+
+def _unit_state(unit: WorkUnit, claim: Claim | None) -> dict[str, object]:
+    return {
+        "id": unit.id,
+        "unit_key": unit.unit_key,
+        "state": unit.state,
+        "version": unit.version,
+        "active_claim": (
+            None
+            if claim is None
+            else {
+                "id": claim.id,
+                "attempt": claim.attempt,
+                "lease_expires_at": claim.lease_expires_at,
+            }
+        ),
+    }
+
+
+def _evidence_state(session: Session, row: Evidence) -> dict[str, object]:
+    return {
+        "id": row.id,
+        "work_unit_id": row.work_unit_id,
+        "ac_id": row.ac_id,
+        "supersedes_evidence_id": row.supersedes_evidence_id,
+        "is_head": not session.scalar(exists().where(Evidence.supersedes_evidence_id == row.id)),
+    }
+
+
+def _observation_state(row: Observation) -> dict[str, object]:
+    return {
+        "id": row.id,
+        "observation_type": row.observation_type,
+        "status": row.status,
+        "observed_at": row.observed_at,
+    }
+
+
+def _condition_state(session: Session, row: ReconciliationCondition) -> dict[str, object]:
+    return {
+        "id": row.id,
+        "work_unit_id": row.work_unit_id,
+        "condition_type": row.condition_type,
+        "is_open": not session.scalar(
+            exists().where(ReconciliationResolution.condition_id == row.id)
+        ),
+    }
+
+
 def _start_production_drill(session: Session, command: StartProductionDrill) -> ProductionDrillRun:
     _require_human(command.actor)
+    _require_deadlines(command)
     if command.expected_version != 0:
         raise DomainError(
             "version_conflict",
@@ -81,7 +273,11 @@ def _start_production_drill(session: Session, command: StartProductionDrill) -> 
             subject_id=run_id,
             from_state=None,
             to_state="open",
-            payload={"command": payload, "authorization": authorization},
+            payload={
+                "command": payload,
+                "authorization": authorization,
+                "deadlines": _deadline_payload(command),
+            },
             correlation_id=uuid.uuid4(),
             idempotency_key=command.idempotency_key,
         )
@@ -155,7 +351,32 @@ def _command_payload(command: StartProductionDrill) -> dict[str, object]:
         "image_ref": command.image_ref,
         "image_digest": command.image_digest,
         "openapi_digest": command.openapi_digest,
+        "lease_duration_seconds": command.lease_duration_seconds,
+        "reporting_deadline_seconds": command.reporting_deadline_seconds,
     }
+
+
+def _deadline_payload(command: StartProductionDrill) -> dict[str, int]:
+    return {
+        "lease_duration_seconds": command.lease_duration_seconds,
+        "reporting_deadline_seconds": command.reporting_deadline_seconds,
+    }
+
+
+def _require_deadlines(command: StartProductionDrill) -> None:
+    for value in (command.lease_duration_seconds, command.reporting_deadline_seconds):
+        if value < MIN_PRODUCTION_DRILL_DEADLINE_SECONDS:
+            raise DomainError(
+                "production_drill_deadline_too_short",
+                "production drill deadlines must be at least 60 seconds",
+                None,
+            )
+        if value > command.max_deadline_seconds:
+            raise DomainError(
+                "production_drill_deadline_too_long",
+                "production drill deadline exceeds configured maximum",
+                None,
+            )
 
 
 def _idempotency_conflict() -> DomainError:
