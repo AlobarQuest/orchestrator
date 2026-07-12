@@ -124,9 +124,17 @@ style of that module.
   `authority.constraints.target_repository`, never from a process-global setting.
   A global target does not fail closed — it silently misroutes every fan-out unit
   to whichever repo was configured at process start.
-- `src/orchestrator/kernel/` may not contain the string literal `dispatch`,
-  `merge`, or other WS-4.2/mutation terms — `tests/architecture/test_ws32_scope_guards.py`
-  scans runtime string literals, **including docstrings**, not just code.
+- **The scope guard covers ALL of `src/orchestrator/`, not just `kernel/`** — an earlier
+  version of this bullet said `kernel/`, and that is wrong.
+  `tests/architecture/test_ws32_scope_guards.py` walks `SOURCE_ROOT = src/orchestrator`
+  and scans runtime string literals **including docstrings**, minus an explicit
+  per-file allowlist (`WS42_DISPATCH_PATHS`, `WS53_POST_DEPLOY_PATHS`, …). So a
+  brand-new module anywhere under `src/orchestrator/` may not contain the bare
+  words `dispatch` or `deploy` **in prose**. This bites documentation, not logic:
+  a module whose whole reason for existing is the conformance *admission gate*
+  may not say the word for the gate it serves, and must reach for a synonym.
+  Verified empirically 2026-07-12 (`conformance_claim.py` reddened the guard on
+  its module docstring alone).
 - The **envelope contract and the workflow contract are different contracts.**
   WS-6.4.0's shared-fixture test validates the authority envelope across both
   repos and never executes the workflow. Two independent workflow bugs shipped
@@ -308,3 +316,33 @@ style of that module.
   `src/` of every repo that must honour it.** Zero production hits means the field is decoration,
   and the guard you build on it is decoration too. Three instances in one workstream is not three
   bugs — it is a missing class of test.
+
+- **MERGED IS NOT DEPLOYED. Ask production what it is running before you reason about
+  what it can do.** On 2026-07-12 production was serving
+  `ghcr.io/alobarquest/orchestrator:d6d73b3-ws64-verifier-amd64` — a WS-6.4-era image —
+  while WS-P2.1 (PR #47) and WS-P2.15 (PR #50) had been merged to `main` for days.
+  `recover-evidence`, `dead-letter`, `requeue`, `reconciliation/detect`,
+  `consistency-check` and **`pr-binding`** were all **absent from production** and
+  returned 404, though every one of them exists in `main`. Program exit criterion #7
+  ("operator status and recovery controls exist") was marked **MET**, citing five routes
+  **none of which production served**; the five recovery drills that marked criterion #5
+  MET run against a **local** orchestrator and had never touched production. WS-P2.16's
+  entire subject — the `pr-binding` route — was undeployed, so a perfectly correct
+  worker call would have 404'd; **six adversarial reviews of the WS-P2.16 plan missed
+  this, because every one of them read the repository instead of asking production.**
+  The check is one command and it is not optional:
+  `curl -s https://sds.alobar.net/openapi.json | python3 -c "import sys,json; print(sorted(json.load(sys.stdin)['paths']))"`.
+  A green suite on `main` says nothing about the machine that serves traffic.
+
+- **There are TWO kinds of approval, and the `/review` button records the one readiness
+  does not want.** `POST /review/units/{id}/approval` (`web.py`) hardcodes
+  `subject_type="action"` — which satisfies the `AWAITING_APPROVAL → READY` transition
+  guard. But readiness and dispatch both require an **`authority`** approval:
+  `subject_type="authority"`, bound to `subject_revision_or_fingerprint ==
+  unit.authority_fingerprint`, setting `unit.authority_approval_id`
+  (`persistence/repositories.py::exact_authority_approval`). **There is no authority-approval
+  form anywhere in `/review`**, and `record_approval` calls `_require_human` while **no HUMAN
+  M2M credential exists** — so `orchestrator record-approval` can never run against
+  production either. Every unit's authority approval is therefore given by pasting a
+  `fetch()` into browser devtools. Same shape for package intake (`_require_human`, no POST
+  route). **Three gates require a human; one has a form.**
