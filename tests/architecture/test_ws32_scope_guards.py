@@ -24,6 +24,10 @@ WS53_POST_DEPLOY_PATHS = {
     # reads post_deploy_work_unit_id and the elapsed time since that unit went SUBMITTED. It
     # reads that state; it never dispatches, deploys, or merges.
     Path("src/orchestrator/services/reconciliation_detection.py"),
+    # WS-P2.1 AC-009: the runner's read surface reports whether a release binding has a
+    # post-deploy verification unit -- has_post_deploy_unit=False IS the deploy-nobody-reported
+    # signal. It reads that state; it never dispatches, deploys, or merges.
+    Path("src/orchestrator/services/in_flight.py"),
     Path("src/orchestrator/services/event_publications.py"),
     Path("src/orchestrator/services/evidence.py"),
     Path("src/orchestrator/services/lifecycle.py"),

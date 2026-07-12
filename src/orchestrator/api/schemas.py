@@ -913,3 +913,37 @@ class ConsistencyReportResponse(BaseModel):
     checked_at: datetime
     divergent: bool
     findings: list[ConsistencyFindingResponse]
+
+
+class InFlightUnitModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    work_unit_id: UUID
+    unit_key: str
+    state: str
+    version: int
+    attempt_count: int
+    work_package_revision_id: UUID
+    pr_number: int | None
+    head_sha: str | None
+    verification_read_head_sha: str | None
+
+
+class ReleaseBindingModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    binding_id: UUID
+    work_unit_id: UUID
+    work_unit_state: str
+    source_repository: str
+    artifact_digest: str
+    has_post_deploy_unit: bool
+    post_deploy_unit_state: str | None
+    post_deploy_unit_created_at: datetime | None
+
+
+class InFlightUnitsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    units: list[InFlightUnitModel]
+    release_bindings: list[ReleaseBindingModel]

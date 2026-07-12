@@ -120,6 +120,7 @@ def test_production_get_route_inventory_is_explicit() -> None:
     assert observed == {
         "/api/v1/consistency-check",
         "/api/v1/dead-letter",
+        "/api/v1/in-flight-units",
         "/api/v1/decomposition-proposals/{proposal_id}",
         "/api/v1/event-publications",
         "/api/v1/knowledge-promotion-proposals",

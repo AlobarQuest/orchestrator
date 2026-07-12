@@ -41,6 +41,7 @@ from orchestrator.api.schemas import (
     EventResponse,
     EvidenceCommand,
     EvidenceResponse,
+    InFlightUnitsResponse,
     InfraLaneLinkCommandModel,
     InfraLaneLinkResponse,
     KnowledgePromotionProposalActionResponse,
@@ -140,6 +141,7 @@ from orchestrator.services.evidence import (
     supersede_evidence,
 )
 from orchestrator.services.github_app import github_app_credentials, token_provider_for
+from orchestrator.services.in_flight import in_flight_snapshot
 from orchestrator.services.infra_links import (
     InfraLaneLinkCommand,
     list_infra_lane_links,
@@ -910,6 +912,16 @@ def submit_knowledge_promotion(
             client,
         )
     )
+
+
+@router.get("/in-flight-units", response_model=InFlightUnitsResponse)
+def in_flight_units(
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """AC-009. The reconciliation runner's read surface. Read-only."""
+    require_operator_actor(actor)
+    return in_flight_snapshot(session)
 
 
 @router.get("/consistency-check", response_model=ConsistencyReportResponse)
