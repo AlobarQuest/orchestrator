@@ -151,6 +151,49 @@ suite when the lane can."*
 
 ---
 
+### #7 — **The authority approval — required on EVERY unit — is human-only and has NO human surface.** `missing-command`. **BLOCKING — routed around with devtools.**
+
+| | |
+|---|---|
+| **phase** | authority |
+| **wanted** | Record the per-unit authority approval that readiness and dispatch both require. |
+| **contract offered** | **A button that records the wrong kind of approval.** `web.py`'s `POST /units/{unit_id}/approval` **hardcodes `subject_type="action"`**. There is no authority-approval form anywhere in `/review`. |
+| **what we did instead** | Pasted a second `fetch()` into devtools, POSTing `subject_type: "authority"` to `/api/v1/work-units/{id}/approvals`. |
+| **root cause** | `web.py` approval handler hardcodes `subject_type="action"`; `services/packages.py::record_approval` calls `_require_human`; **no HUMAN M2M credential exists.** |
+| **class** | `missing-command` |
+| **blocking?** | **Yes** — routed around with devtools. |
+
+**Why this is the most structurally serious finding of the run.**
+
+Two *different* approvals exist and only one has a surface:
+
+- **`action`** approval → what the `/review` button records. Satisfies the `AWAITING_APPROVAL → READY`
+  transition guard.
+- **`authority`** approval → `subject_type="authority"`, bound to `subject_revision_or_fingerprint ==
+  unit.authority_fingerprint`, and it sets `unit.authority_approval_id`. **This is the one
+  `exact_authority_approval()` demands** (`persistence/repositories.py:92-103`), the one readiness gates
+  on, and the one `dispatch.py` gates on (`authority_approval_missing`).
+
+Devon clicked Approve in the UI. The system recorded an `action` approval with
+`context_fingerprint: None`. Readiness still returned **`authority_not_approved`** — *"no exact
+authority approval is recorded."* **The human approval surface cannot authorize a unit.**
+
+**And `orchestrator record-approval` cannot either.** It is the CLI command built for exactly this, it
+takes `--subject-type authority`, and it calls `_require_human` — so with only worker/system/verifier
+credentials it **can never run against production.**
+
+**That is now TWO CLI commands that physically cannot execute against production
+(`intake-package`, `record-approval`), and TWO mandatory gates reachable only by pasting JavaScript into
+a browser console — one of them on _every single unit_.** This is not a missing convenience. The
+authority approval is the attestation the entire authority chain hangs from: it is what makes the
+envelope's fingerprint *mean* something. **It has no first-class way to be given.**
+
+**This compounds finding #2 into a single root cause: `ActorRole.HUMAN` is required at three gates
+(intake, authority approval, decomposition decision) and there is no way for a human to authenticate as
+one except a browser session — for which only ONE of the three gates has a form.**
+
+---
+
 ## Confirmations / falsifications of the pre-registered predictions
 
 *(filled in as the run proceeds — see the plan's §7 for the seven predictions)*
