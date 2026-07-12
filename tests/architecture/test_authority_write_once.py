@@ -181,9 +181,7 @@ def test_the_guard_flags_attribute_assignment(fake_src: Path) -> None:
 
 
 def test_the_guard_flags_setattr(fake_src: Path) -> None:
-    offenders = _plant(
-        fake_src, 'def overwrite(unit, env):\n    setattr(unit, "authority", env)\n'
-    )
+    offenders = _plant(fake_src, 'def overwrite(unit, env):\n    setattr(unit, "authority", env)\n')
     assert any("setattr" in offender for offender in offenders), offenders
 
 
