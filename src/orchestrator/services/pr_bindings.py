@@ -84,7 +84,12 @@ def upsert_pr_binding(
         binding.pr_number = pr_number
         binding.head_sha = head_sha
         binding.updated_at = now
-    session.flush()
+    # This is a request entry point, so it owns its transaction and must COMMIT. Flushing alone
+    # makes the response look right -- the ORM returns the object it is holding -- while the row
+    # is discarded when the session closes, leaving the binding table empty and every downstream
+    # alarm dead. `arm_verification_head` is the opposite case: it runs INSIDE the submit
+    # transaction and must never commit.
+    session.commit()
     return binding
 
 

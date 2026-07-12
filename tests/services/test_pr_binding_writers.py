@@ -80,9 +80,16 @@ def _submit(session: Session, unit, grant, *, key: str, actor: ActorContext = WO
 
 
 def test_a_worker_holding_the_claim_may_report_its_pr(migrated_session: Session) -> None:
+    """Asserts the row PERSISTS, not merely that the call returned an object.
+
+    The first version of this writer only flushed. The response looked correct -- the ORM hands
+    back the instance it is holding -- while the row was discarded when the session closed, so
+    the binding table stayed empty and every alarm downstream of it was dead. An in-session
+    assertion cannot see that. Expiring the identity map and re-reading can.
+    """
     unit, grant = _claimed_unit(migrated_session, "binding-worker")
 
-    binding = upsert_pr_binding(
+    upsert_pr_binding(
         migrated_session,
         actor=WORKER,
         work_unit_id=unit.id,
@@ -92,6 +99,9 @@ def test_a_worker_holding_the_claim_may_report_its_pr(migrated_session: Session)
         lease_token=grant.lease_token,
     )
 
+    migrated_session.expire_all()
+    binding = get_pr_binding(migrated_session, unit.id)
+    assert binding is not None
     assert (binding.pr_number, binding.head_sha) == (42, HEAD_1)
     assert binding.verification_read_head_sha is None
 
