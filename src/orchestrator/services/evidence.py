@@ -24,7 +24,7 @@ from orchestrator.persistence.models import (
 from orchestrator.services.claims import release_claim, validate_active_claim
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.production_drill_resources import (
-    bind_production_drill_resource,
+    bind_created_production_drill_resource,
     require_production_drill_resource,
 )
 
@@ -144,7 +144,7 @@ def _store_production_drill_evidence(
         require_production_drill_resource(session, run_id, "work_unit", kwargs["work_unit_id"])
         evidence = _store_evidence(session, **kwargs, supersede=supersede, commit=False)
         assert not isinstance(evidence, DomainError)
-        bind_production_drill_resource(session, run_id, "evidence", evidence.id)
+        bind_created_production_drill_resource(session, run_id, "evidence", evidence.id)
         session.commit()
         return evidence
     except DomainError as error:

@@ -4,14 +4,39 @@ import pytest
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import WorkUnitState
-from orchestrator.persistence.models import WorkUnit
+from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.persistence.models import ProductionDrillResource, WorkUnit
 from orchestrator.services.dead_letter import dead_letter
+from orchestrator.services.deployment_observations import record_deployment_observation
 from orchestrator.services.in_flight import in_flight_snapshot
+from orchestrator.services.lifecycle import (
+    ActorContext,
+    TransitionCommand,
+    transition_production_drill_unit,
+)
+from orchestrator.services.observations import (
+    record_observation,
+    record_production_drill_observation,
+)
 from orchestrator.services.packages import register_approved_unit
-from orchestrator.services.production_drill_resources import bind_production_drill_resource
+from orchestrator.services.production_drill_resources import (
+    bind_created_production_drill_resource,
+    bind_production_drill_resource,
+)
 from orchestrator.services.production_drills import start_production_drill
+from orchestrator.services.reconciliation import (
+    ConditionCommand,
+    record_production_drill_reconciliation_condition,
+)
 from tests.services.test_dependencies import register_unit
+from tests.services.test_deployment_observations import (
+    observation_command as deployment_observation_command,
+)
+from tests.services.test_deployment_observations import (
+    release_binding,
+)
+from tests.services.test_observations import SYSTEM
+from tests.services.test_observations import command as observation_command
 from tests.services.test_production_drills import command
 
 
@@ -31,11 +56,138 @@ def test_resource_cannot_belong_to_two_production_drill_runs(migrated_session: S
     assert not isinstance(first, DomainError)
     assert not isinstance(second, DomainError)
 
-    bind_production_drill_resource(migrated_session, first.id, "work_unit", unit.id)
+    bind_created_production_drill_resource(migrated_session, first.id, "work_unit", unit.id)
     migrated_session.commit()
 
     with pytest.raises(DomainError, match="resource already belongs to a production drill run"):
-        bind_production_drill_resource(migrated_session, second.id, "work_unit", unit.id)
+        bind_created_production_drill_resource(migrated_session, second.id, "work_unit", unit.id)
+
+
+def test_existing_ordinary_work_unit_cannot_be_captured_by_a_drill(
+    migrated_session: Session,
+) -> None:
+    unit = register_unit(migrated_session, "ordinary-unit")
+    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    assert not isinstance(drill, DomainError)
+
+    with pytest.raises(DomainError, match="must be created by the production drill"):
+        bind_production_drill_resource(migrated_session, drill.id, "work_unit", unit.id)
+
+
+def test_ordinary_observation_idempotency_replay_cannot_be_captured_by_a_drill(
+    migrated_session: Session,
+) -> None:
+    unit = register_unit(migrated_session, "ordinary-observation")
+    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    assert not isinstance(drill, DomainError)
+    ordinary = record_observation(migrated_session, observation_command(key="ordinary-observation"))
+    assert not isinstance(ordinary, DomainError)
+
+    replay = record_production_drill_observation(
+        migrated_session,
+        run_id=drill.id,
+        command=observation_command(key="ordinary-observation"),
+    )
+
+    assert isinstance(replay, DomainError)
+    assert replay.code == "production_drill_resource_not_owned"
+
+
+def test_drill_condition_rejects_an_ordinary_observation_reference(
+    migrated_session: Session,
+) -> None:
+    unit = register_unit(migrated_session, "condition-owned-unit")
+    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    assert not isinstance(drill, DomainError)
+    ordinary = record_observation(
+        migrated_session, observation_command(key="condition-observation")
+    )
+    assert not isinstance(ordinary, DomainError)
+    migrated_session.add(
+        ProductionDrillResource(
+            run_id=drill.id,
+            resource_type="work_unit",
+            resource_id=unit.id,
+        )
+    )
+    migrated_session.commit()
+
+    result = record_production_drill_reconciliation_condition(
+        migrated_session,
+        run_id=drill.id,
+        command=ConditionCommand(
+            actor=SYSTEM,
+            work_unit_id=unit.id,
+            observation_kind="github_check",
+            condition_type="check_result_flip",
+            key_facts={"check_name": "Quality"},
+            stored_state={"conclusion": "success"},
+            observed_state={"conclusion": "failure"},
+            detail="Synthetic check changed after verification",
+            observation_id=ordinary.id,
+        ),
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "production_drill_resource_not_owned"
+
+
+def test_drill_condition_rejects_an_ordinary_deployment_observation_reference(
+    migrated_session: Session,
+) -> None:
+    unit, binding = release_binding(migrated_session, key="condition-deployment")
+    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    assert not isinstance(drill, DomainError)
+    migrated_session.add(
+        ProductionDrillResource(
+            run_id=drill.id,
+            resource_type="work_unit",
+            resource_id=unit.id,
+        )
+    )
+    deployment = record_deployment_observation(
+        migrated_session,
+        deployment_observation_command(binding, key="condition-deployment-observation"),
+    )
+    assert not isinstance(deployment, DomainError)
+
+    result = record_production_drill_reconciliation_condition(
+        migrated_session,
+        run_id=drill.id,
+        command=ConditionCommand(
+            actor=SYSTEM,
+            work_unit_id=unit.id,
+            observation_kind="deployment",
+            condition_type="deploy_split_brain",
+            key_facts={"environment": "production"},
+            stored_state={"state": "submitted"},
+            observed_state={"state": "stalled"},
+            detail="Synthetic deployment verification stalled",
+            deployment_observation_id=deployment.id,
+        ),
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "production_drill_resource_not_owned"
+
+
+def test_drill_lifecycle_control_rejects_an_ordinary_work_unit(migrated_session: Session) -> None:
+    unit = register_unit(migrated_session, "ordinary-lifecycle")
+    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    assert not isinstance(drill, DomainError)
+
+    with pytest.raises(DomainError, match="does not belong to the production drill run"):
+        transition_production_drill_unit(
+            migrated_session,
+            run_id=drill.id,
+            command=TransitionCommand(
+                unit_id=unit.id,
+                target=WorkUnitState.SUBMITTED,
+                actor=ActorContext("human-1", ActorRole.HUMAN),
+                expected_version=unit.version,
+                idempotency_key="ordinary-lifecycle",
+            ),
+        )
 
 
 def test_ordinary_projections_hide_drill_resources_by_default(migrated_session: Session) -> None:
@@ -45,7 +197,7 @@ def test_ordinary_projections_hide_drill_resources_by_default(migrated_session: 
     )
     assert not isinstance(drill, DomainError)
     unit.state = WorkUnitState.FAILED
-    bind_production_drill_resource(migrated_session, drill.id, "work_unit", unit.id)
+    bind_created_production_drill_resource(migrated_session, drill.id, "work_unit", unit.id)
     migrated_session.commit()
 
     default_dead_letter = dead_letter(

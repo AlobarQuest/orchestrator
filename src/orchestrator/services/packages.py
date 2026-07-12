@@ -28,6 +28,7 @@ from orchestrator.persistence.models import (
     ApprovedDecomposition,
     DecompositionProposalUnit,
     Dependency,
+    DeploymentObservation,
     Event,
     ReleaseArtifactBinding,
     WorkPackage,
@@ -36,6 +37,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.services.production_drill_resources import (
+    bind_created_production_drill_resource,
     bind_production_drill_resource,
     require_open_production_drill_run,
     require_production_drill_resource,
@@ -390,8 +392,17 @@ def register_production_drill_unit(
             "work unit does not belong to the production drill revision",
             None,
         )
+    existing = session.scalar(
+        select(WorkUnit).where(
+            WorkUnit.work_package_revision_id == run.revision_id,
+            WorkUnit.unit_key == kwargs["unit_key"],
+        )
+    )
     unit = register_approved_unit(session, **kwargs)
-    bind_production_drill_resource(session, run_id, "work_unit", unit.id)
+    if existing is not None:
+        require_production_drill_resource(session, run_id, "work_unit", unit.id)
+    else:
+        bind_created_production_drill_resource(session, run_id, "work_unit", unit.id)
     return unit
 
 
@@ -412,7 +423,21 @@ def bind_production_drill_post_deploy_unit(
     unit = session.get(WorkUnit, unit_id)
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
-    bind_production_drill_resource(session, run_id, "work_unit", unit.id)
+    deployment_observation = session.scalar(
+        select(DeploymentObservation).where(
+            DeploymentObservation.post_deploy_work_unit_id == unit.id
+        )
+    )
+    if deployment_observation is None:
+        raise DomainError(
+            "production_drill_resource_not_created",
+            "post-deploy units must be created by a deployment observation",
+            None,
+        )
+    require_production_drill_resource(
+        session, run_id, "deployment_observation", deployment_observation.id
+    )
+    bind_created_production_drill_resource(session, run_id, "work_unit", unit.id)
     return unit
 
 

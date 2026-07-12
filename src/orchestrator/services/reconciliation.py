@@ -42,7 +42,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.production_drill_resources import (
-    bind_production_drill_resource,
+    bind_created_production_drill_resource,
     require_production_drill_resource,
 )
 
@@ -143,8 +143,19 @@ def record_production_drill_reconciliation_condition(
 ) -> ConditionOutcome | DomainError:
     try:
         require_production_drill_resource(session, run_id, "work_unit", command.work_unit_id)
+        if command.observation_id is not None:
+            require_production_drill_resource(
+                session, run_id, "observation", command.observation_id
+            )
+        if command.deployment_observation_id is not None:
+            require_production_drill_resource(
+                session,
+                run_id,
+                "deployment_observation",
+                command.deployment_observation_id,
+            )
         outcome = _record_condition(session, command)
-        bind_production_drill_resource(
+        bind_created_production_drill_resource(
             session, run_id, "reconciliation_condition", outcome.condition.id
         )
         session.commit()
