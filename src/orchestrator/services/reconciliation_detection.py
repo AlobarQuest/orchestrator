@@ -443,7 +443,7 @@ def _detect_stalled_verifications(
     """
     if production_drill_run_id is not None:
         deadlines = production_drill_deadlines(session, production_drill_run_id)
-        if not hasattr(deadlines, "reporting_deadline"):
+        if isinstance(deadlines, DomainError):
             return SKIPPED
         stall_seconds = int(deadlines.reporting_deadline.total_seconds())
     deadline = TransactionClock().now(session) - timedelta(seconds=stall_seconds)
@@ -462,14 +462,12 @@ def _detect_stalled_verifications(
         stalled = tuple(
             row
             for row in stalled
-            if session.scalar(
-                select(ProductionDrillResource.id).where(
-                    ProductionDrillResource.run_id == production_drill_run_id,
-                    ProductionDrillResource.resource_type == "work_unit",
-                    ProductionDrillResource.resource_id == row[1].id,
-                )
+            if _run_owns_resource(
+                session, production_drill_run_id, "work_unit", row[1].id
             )
-            is not None
+            and _run_owns_resource(
+                session, production_drill_run_id, "deployment_observation", row[0].id
+            )
         )
     counters = DetectionCounters()
     for observation, unit in stalled:
@@ -507,7 +505,7 @@ def _detect_unreported_deploys(
     A runner-reported deploy for a binding that has no verification unit IS the signal. It needs
     no threshold: nothing was ever ingested, so there is nothing to time out.
     """
-    del stall_seconds, production_drill_run_id
+    del stall_seconds
     reported = tuple(
         session.scalars(
             select(Observation)
@@ -520,9 +518,17 @@ def _detect_unreported_deploys(
     )
     counters = DetectionCounters()
     for observation in reported:
+        if production_drill_run_id is not None and not _run_owns_resource(
+            session, production_drill_run_id, "observation", observation.id
+        ):
+            continue
         binding = _correlated_binding(session, observation)
         if binding is None:
             counters += SKIPPED
+            continue
+        if production_drill_run_id is not None and not _run_owns_resource(
+            session, production_drill_run_id, "release_artifact", binding.id
+        ):
             continue
         already_verified = session.scalar(
             select(DeploymentObservation.id)
@@ -593,3 +599,21 @@ def _correlated_binding(
     except ValueError:
         return None
     return session.get(ReleaseArtifactBinding, binding_id)
+
+
+def _run_owns_resource(
+    session: Session,
+    run_id: uuid.UUID,
+    resource_type: str,
+    resource_id: uuid.UUID,
+) -> bool:
+    return (
+        session.scalar(
+            select(ProductionDrillResource.id).where(
+                ProductionDrillResource.run_id == run_id,
+                ProductionDrillResource.resource_type == resource_type,
+                ProductionDrillResource.resource_id == resource_id,
+            )
+        )
+        is not None
+    )

@@ -33,3 +33,23 @@ was added.
   event. This avoids global settings mutation and does not require a mutable run column.
 - The state projection uses ORM reads and computes evidence heads as terminal supersession rows
   (no later evidence references the row); conditions remain open only when no resolution exists.
+
+## Review Fix Pass
+
+- Removed the caller-controlled deadline maximum from `StartProductionDrill`; validation now
+  reads `production_drill_max_deadline_seconds` from the service configuration.
+- Run-scoped reconciliation now requires every deployment input it processes to belong to the
+  requested run: units and deployment observations for stalled verification, and observations
+  plus release artifacts for unreported deployments.
+- Added regression coverage for a forged deadline ceiling and a deployment report owned by a
+  different drill run.
+
+Verification:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" pytest tests/services/test_production_drill_controls.py tests/api/test_production_drill_controls_api.py tests/services/test_production_drills.py tests/services/test_production_drill_resources.py tests/api/test_production_drills_api.py tests/services/test_reconciliation_detect_pass.py tests/architecture/test_drill_scripts.py -q
+PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/api/routes.py src/orchestrator/services/production_drills.py src/orchestrator/services/reconciliation_detection.py tests/services/test_production_drill_controls.py
+PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/services/production_drills.py src/orchestrator/services/reconciliation_detection.py tests/services/test_production_drill_controls.py
+```
+
+Results: `62 passed`; Ruff and Pyright reported no findings.

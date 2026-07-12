@@ -6,10 +6,10 @@ from sqlalchemy import exists, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
+from orchestrator.config import get_settings
 from orchestrator.errors import DomainError
 from orchestrator.kernel.leases import (
     LEASE_DURATION,
-    MAX_PRODUCTION_DRILL_DEADLINE_SECONDS,
     MIN_PRODUCTION_DRILL_DEADLINE_SECONDS,
 )
 from orchestrator.kernel.states import ActorRole
@@ -41,7 +41,6 @@ class StartProductionDrill:
     openapi_digest: str
     lease_duration_seconds: int = MIN_PRODUCTION_DRILL_DEADLINE_SECONDS
     reporting_deadline_seconds: int = MIN_PRODUCTION_DRILL_DEADLINE_SECONDS
-    max_deadline_seconds: int = MAX_PRODUCTION_DRILL_DEADLINE_SECONDS
 
 
 @dataclass(frozen=True)
@@ -215,7 +214,9 @@ def _evidence_state(session: Session, row: Evidence) -> dict[str, object]:
         "work_unit_id": row.work_unit_id,
         "ac_id": row.ac_id,
         "supersedes_evidence_id": row.supersedes_evidence_id,
-        "is_head": not session.scalar(exists().where(Evidence.supersedes_evidence_id == row.id)),
+        "is_head": not session.scalar(
+            select(exists().where(Evidence.supersedes_evidence_id == row.id))
+        ),
     }
 
 
@@ -234,7 +235,7 @@ def _condition_state(session: Session, row: ReconciliationCondition) -> dict[str
         "work_unit_id": row.work_unit_id,
         "condition_type": row.condition_type,
         "is_open": not session.scalar(
-            exists().where(ReconciliationResolution.condition_id == row.id)
+            select(exists().where(ReconciliationResolution.condition_id == row.id))
         ),
     }
 
@@ -364,6 +365,7 @@ def _deadline_payload(command: StartProductionDrill) -> dict[str, int]:
 
 
 def _require_deadlines(command: StartProductionDrill) -> None:
+    max_deadline_seconds = get_settings().production_drill_max_deadline_seconds
     for value in (command.lease_duration_seconds, command.reporting_deadline_seconds):
         if value < MIN_PRODUCTION_DRILL_DEADLINE_SECONDS:
             raise DomainError(
@@ -371,7 +373,7 @@ def _require_deadlines(command: StartProductionDrill) -> None:
                 "production drill deadlines must be at least 60 seconds",
                 None,
             )
-        if value > command.max_deadline_seconds:
+        if value > max_deadline_seconds:
             raise DomainError(
                 "production_drill_deadline_too_long",
                 "production drill deadline exceeds configured maximum",

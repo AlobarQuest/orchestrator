@@ -274,7 +274,6 @@ def create_production_drill(
     body: StartProductionDrillCommand,
     actor: ActorDep,
     session: SessionDep,
-    settings: SettingsDep,
 ) -> object:
     return _raise_error(
         start_production_drill(
@@ -289,7 +288,6 @@ def create_production_drill(
                 openapi_digest=body.openapi_digest,
                 lease_duration_seconds=body.lease_duration_seconds,
                 reporting_deadline_seconds=body.reporting_deadline_seconds,
-                max_deadline_seconds=settings.production_drill_max_deadline_seconds,
             ),
         )
     )
