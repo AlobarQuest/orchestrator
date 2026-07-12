@@ -173,3 +173,30 @@
 - `.venv/bin/pytest tests/services/test_production_drill_resources.py::test_concurrent_ordinary_registration_cannot_be_captured_as_drill_work tests/services/test_package_registration.py -q` -> `12 passed`.
 - `.venv/bin/ruff check tests/services/test_production_drill_resources.py`: passed.
 - `.venv/bin/pyright tests/services/test_production_drill_resources.py`: `0 errors, 0 warnings, 0 informations`.
+
+## P2 Regression Correction
+
+### Findings Addressed
+
+- The prior concurrency test used a timeout-based non-commit assertion rather than proving that
+  the ordinary session had attempted the real revision `FOR UPDATE` lock.
+- Ownership also needs independent coverage when revision locking is intact: a previously
+  committed ordinary unit must never be bound by a drill writer.
+
+### Resolution
+
+- The race test now pauses the drill writer only after it has acquired the revision lock. A
+  SQLAlchemy execution listener signals when the ordinary session is about to issue its own
+  revision `FOR UPDATE` query; the drill transaction is released only after that signal. No
+  sleep-based scheduling assertion remains.
+- A separate regression commits an ordinary unit before the drill registration. It requires
+  `production_drill_resource_not_owned` and verifies that no drill binding was created.
+
+### Verification
+
+- Red: replacing the existing-unit ownership check with a drill binding made the new ordinary
+  unit regression fail because no `DomainError` was raised. The production code was restored.
+- `.venv/bin/pytest tests/services/test_production_drill_resources.py tests/services/test_package_registration.py -q` -> `27 passed`.
+- `.venv/bin/ruff check tests/services/test_production_drill_resources.py`: passed.
+- `.venv/bin/pyright tests/services/test_production_drill_resources.py`: `0 errors, 0 warnings, 0 informations`.
+- `git diff --check`: passed.

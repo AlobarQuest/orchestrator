@@ -2,11 +2,11 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from inspect import signature
-from threading import Barrier, Event
+from threading import Event, get_ident
 from typing import TypedDict
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -73,6 +73,28 @@ def test_ordinary_work_unit_cannot_self_tag_as_production_drill_resource() -> No
     assert "run_id" not in signature(register_approved_unit).parameters
 
 
+def test_drill_registration_rejects_an_existing_ordinary_unit_with_revision_locking(
+    migrated_session: Session,
+) -> None:
+    revision = register_test_revision(migrated_session)
+    drill = start_production_drill(migrated_session, command(revision.id))
+    assert not isinstance(drill, DomainError)
+    registration = _unit_registration(revision.id, "ordinary-before-drill")
+    ordinary = register_approved_unit(migrated_session, **registration)
+    migrated_session.commit()
+
+    with pytest.raises(DomainError) as error:
+        register_production_drill_unit(migrated_session, run_id=drill.id, **registration)
+
+    assert error.value.code == "production_drill_resource_not_owned"
+    assert migrated_session.scalar(
+        select(ProductionDrillResource).where(
+            ProductionDrillResource.resource_type == "work_unit",
+            ProductionDrillResource.resource_id == ordinary.id,
+        )
+    ) is None
+
+
 def test_concurrent_ordinary_registration_cannot_be_captured_as_drill_work(
     migrated_engine: Engine,
     migrated_session: Session,
@@ -85,56 +107,64 @@ def test_concurrent_ordinary_registration_cannot_be_captured_as_drill_work(
     drill = start_production_drill(migrated_session, command(revision.id))
     assert not isinstance(drill, DomainError)
 
-    registration: UnitRegistration = {
-        "revision_id": revision.id,
-        "unit_key": "concurrent-drill-unit",
-        "title": "Concurrent drill unit",
-        "outcome": "Concurrent drill unit is registered",
-        "required_capability": "repository_write",
-        "authority": AUTHORITY,
-        "approved_by": "human-1",
-        "approved_at": NOW,
-        "actor_id": "human-1",
-        "actor_role": ActorRole.HUMAN,
-    }
-    registration_window = Barrier(2)
+    registration = _unit_registration(revision.id, "concurrent-drill-unit")
     release_drill_registration = Event()
-    ordinary_registration_started = Event()
-    ordinary_registration_committed = Event()
+    ordinary_revision_lock_attempted = Event()
+    ordinary_worker_ready = Event()
     original_activation_check = packages._require_allowed_unit_activation
     drill_registration_paused = Event()
+    ordinary_thread_ids: list[int] = []
 
     def pause_drill_after_revision_lock(*args, **kwargs) -> None:
         if not drill_registration_paused.is_set():
             drill_registration_paused.set()
-            registration_window.wait(timeout=5)
             assert release_drill_registration.wait(timeout=5)
         original_activation_check(*args, **kwargs)
+
+    def signal_ordinary_revision_lock_attempt(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: object,
+    ) -> None:
+        if (
+            get_ident() in ordinary_thread_ids
+            and "FROM work_package_revisions" in statement
+            and "FOR UPDATE" in statement
+        ):
+            ordinary_revision_lock_attempted.set()
 
     monkeypatch.setattr(
         packages, "_require_allowed_unit_activation", pause_drill_after_revision_lock
     )
+    event.listen(migrated_engine, "before_cursor_execute", signal_ordinary_revision_lock_attempt)
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        drill_registration = executor.submit(
-            _register_drill_unit_and_commit, migrated_engine, drill.id, registration
-        )
-        ordinary_registration = executor.submit(
-            _register_ordinary_unit_after_barrier,
-            migrated_engine,
-            registration,
-            registration_window,
-            ordinary_registration_started,
-            ordinary_registration_committed,
-        )
-        try:
-            assert ordinary_registration_started.wait(timeout=5)
-            assert not ordinary_registration_committed.wait(timeout=0.25)
-        finally:
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            drill_registration = executor.submit(
+                _register_drill_unit_and_commit, migrated_engine, drill.id, registration
+            )
+            assert drill_registration_paused.wait(timeout=5)
+            ordinary_registration = executor.submit(
+                _register_ordinary_unit_and_commit,
+                migrated_engine,
+                registration,
+                ordinary_thread_ids,
+                ordinary_worker_ready,
+            )
+            assert ordinary_worker_ready.wait(timeout=5)
+            assert ordinary_revision_lock_attempted.wait(timeout=5)
             release_drill_registration.set()
 
-        drill_unit_id = drill_registration.result(timeout=5)
-        ordinary_unit_id = ordinary_registration.result(timeout=5)
+            drill_unit_id = drill_registration.result(timeout=5)
+            ordinary_unit_id = ordinary_registration.result(timeout=5)
+    finally:
+        release_drill_registration.set()
+        event.remove(
+            migrated_engine, "before_cursor_execute", signal_ordinary_revision_lock_attempt
+        )
 
     assert ordinary_unit_id == drill_unit_id
     resource = migrated_session.scalar(
@@ -147,6 +177,21 @@ def test_concurrent_ordinary_registration_cannot_be_captured_as_drill_work(
     assert resource.run_id == drill.id
 
 
+def _unit_registration(revision_id: uuid.UUID, unit_key: str) -> UnitRegistration:
+    return {
+        "revision_id": revision_id,
+        "unit_key": unit_key,
+        "title": "Concurrent drill unit",
+        "outcome": "Concurrent drill unit is registered",
+        "required_capability": "repository_write",
+        "authority": AUTHORITY,
+        "approved_by": "human-1",
+        "approved_at": NOW,
+        "actor_id": "human-1",
+        "actor_role": ActorRole.HUMAN,
+    }
+
+
 def _register_drill_unit_and_commit(
     engine: Engine, run_id: uuid.UUID, registration: UnitRegistration
 ) -> uuid.UUID:
@@ -157,20 +202,18 @@ def _register_drill_unit_and_commit(
         return unit_id
 
 
-def _register_ordinary_unit_after_barrier(
+def _register_ordinary_unit_and_commit(
     engine: Engine,
     registration: UnitRegistration,
-    registration_window: Barrier,
-    registration_started: Event,
-    registration_committed: Event,
+    thread_ids: list[int],
+    worker_ready: Event,
 ) -> uuid.UUID:
-    registration_window.wait(timeout=5)
-    registration_started.set()
     with Session(engine) as session:
+        thread_ids.append(get_ident())
+        worker_ready.set()
         unit = register_approved_unit(session, **registration)
         unit_id = unit.id
         session.commit()
-    registration_committed.set()
     return unit_id
 
 
