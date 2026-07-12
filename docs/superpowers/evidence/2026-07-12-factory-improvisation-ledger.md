@@ -4,7 +4,7 @@
 **Subject:** the `conformance-claim-helper` feature (orchestrator `PROJECT.md` P2)
 **Lane:** local-heavy
 **Started:** 2026-07-12
-**Status:** IN PROGRESS — phase: decomposition → awaiting Devon's decomposition approval (IRREVERSIBLE)
+**Status:** RUN COMPLETE through `awaiting_review`. **13 improvisations. All 7 predictions CONFIRMED.** PR #51 open.
 
 > **The rule:** follow the contract, do not fix it. Every wall gets recorded and routed around.
 > Fixes are the *output* of this run, not part of it.
@@ -229,6 +229,87 @@ that WS-P2.2 wants to build would have been counting this every single run, with
 
 ---
 
+### #9 — 🔴 **The runner commits its own lease token into the pull request.** `doc-vs-reality`. **SECURITY. Remediated.**
+
+| | |
+|---|---|
+| **phase** | finalize |
+| **what happened** | `local-heavy-finalize` runs `git add -A`, which swept in its own workspace `.sds-local-heavy/` — including **`run.json`, which contains `lease_token`** — and committed and **pushed it** to PR #51. |
+| **contract said** | `local-heavy-runtime.md`: *"writes a **gitignored** local workspace at `.sds-local-heavy/`"*. |
+| **reality** | **`.sds-local-heavy/` is not in the orchestrator's `.gitignore`, and factory-runner never adds it.** The claim that it is gitignored is simply false. |
+| **root cause** | `cli.py::_finalize_workspace` → `git add -A` with no exclusion of its own workspace dir; no repo-side gitignore; no runner-side gitignore write. |
+| **class** | `doc-vs-reality` |
+| **blocking?** | No — **but it is a credential exposure, and safety overrides the run's "do not fix" rule.** |
+
+**Exposure assessment (disclosed to Devon immediately).** Repository is **private**. The token is
+**ephemeral** — scoped to attempt 1, expired 20:16:33Z — and the unit had already reached `submitted`,
+so the claim was consumed. Nothing rotatable. Practical risk: minimal. **A credential in git history is
+still unacceptable**, so the workspace was removed from the branch (amend + `--force-with-lease`) and
+`.sds-local-heavy/` added to `.gitignore`.
+
+⚠ **This fires on EVERY local-heavy run, in EVERY repository that does not gitignore the directory.**
+The fix belongs in factory-runner (exclude its own workspace from `git add`), not in each repo's
+`.gitignore`. **The lane that does all of this factory's real work leaks its claim credential into the
+pull request by default.**
+
+---
+
+### #10 — The declared branch is decoration. `doc-vs-reality`. Non-blocking.
+
+The package declares `profile_fields.branch: sds/conformance-claim-helper`. The runner ignores it and
+uses `sds/{unit_id[:8]}-attempt-{n}` (`cli.py`). **`profile_fields.branch` is never read by anything.**
+
+---
+
+### #11 — The head the orchestrator believes in is already wrong, and nothing can tell. **P6 CONFIRMED.** `missing-command`.
+
+The orchestrator recorded evidence with `head_sha: 5c82a74…`. Remediating #9 force-pushed the branch;
+the real head is now `9e0288ec…`. **The PR head has diverged from the orchestrator's expectation** —
+which is *precisely* the condition the PR-binding + divergence alarm exists to detect.
+
+**No `unit_pr_binding` row was written** (factory-runner's client has no such call), so
+`arm_verification_head` was a no-op, and **nothing in the system will ever notice.** WS-P2.16's subject,
+reproduced live and unaided, on the first real unit through the lane.
+
+---
+
+### #12 — The WS-5.1 verifier has no CLI command. `missing-command`. Routed around.
+
+`orchestrator verify` is the **lifecycle transition** (→ `VERIFYING`). The **verifier itself** —
+WS-5.1, which evaluates each AC against evidence — is `POST /work-units/{id}/verify`, and **the CLI does
+not expose it.** Ran it by hand-rolling an `httpx` call with the verifier credential.
+
+---
+
+### #13 — 🔴 **Two bugs, each masking the other. P2 CONFIRMED — and it validates the WS-P2.16 review's kill, in production.** `vocabulary`.
+
+The verifier's verdict on all six mapped ACs:
+
+| AC | evidence | verifier says |
+|---|---|---|
+| AC-001 | **present** (`f645738a…`) | `judgment_required` — *"automated_test requires review"* |
+| AC-002 … AC-006 | **`evidence_id: null` — NONE** | `judgment_required` — *"automated_test requires review"* |
+
+**The vocabulary check fires BEFORE the evidence-is-missing check** (`verifier_evaluators.py:51-53`). So
+an AC with **no evidence whatsoever** is *indistinguishable* from one that is fully evidenced. The
+verifier cannot tell *"nothing was submitted"* from *"I cannot evaluate what was submitted."*
+
+**Therefore the `evidence_type` bug is currently MASKING the one-evidence-row-per-unit bug (#P4).**
+
+And therefore — **"just add `automated_test` to `DETERMINISTIC_TYPES`"**, which is what revisions 1 and 2
+of the WS-P2.16 plan proposed, and what the P1 backlog item *literally instructed a future session to
+do* until it was corrected today — **would flip AC-002..AC-006 from `judgment_required` to
+`failed_closed`** → `REVISION_REQUIRED` → the re-attempt writes the same single evidence row →
+`REVISION_REQUIRED` again → **`max_attempts` → FAILED. On every multi-AC unit. The factory stops.**
+
+The fourth adversarial review predicted this from the code. **This run demonstrated it in production, on
+a real unit, with real evidence.** The two defects have been holding each other up, and either one fixed
+alone brings the factory down.
+
+**This single result justifies the entire diagnostic.**
+
+---
+
 ## Confirmations / falsifications of the pre-registered predictions
 
 *(filled in as the run proceeds — see the plan's §7 for the seven predictions)*
@@ -236,12 +317,12 @@ that WS-P2.2 wants to build would have been counting this every single run, with
 | # | Prediction | Status |
 |---|---|---|
 | P1 | `ac_id` UUID vs `"AC-001"` at decomposition | **CONFIRMED** (#3) |
-| P2 | every automated AC → `judgment_required` | not yet reached |
+| P2 | every automated AC → `judgment_required` | **CONFIRMED** (#13) — and it MASKS P4 |
 | P3 | `allowed_commands` cannot express "run the tests" | **CONFIRMED** (#6) — and it is worse: the envelope is lane-blind |
-| P4 | a multi-AC unit cannot discharge ACs #2..N | not yet reached |
+| P4 | a multi-AC unit cannot discharge ACs #2..N | **CONFIRMED** — 1 evidence row for 6 mapped ACs |
 | P5 | the 15-minute lease cannot survive a real build | **CONFIRMED** (#8) — and the cause is that `local-heavy-renew` is DEAD, not that the lease is short |
-| P6 | no `unit_pr_binding` row is written | not yet reached |
-| P7 | `finalize` docs claim `runner.verification` evidence; `cli.py` never writes it | not yet reached |
+| P6 | no `unit_pr_binding` row is written | **CONFIRMED** (#11) — and the head has ALREADY diverged, undetected |
+| P7 | `finalize` docs claim `runner.verification` evidence; `cli.py` never writes it | **CONFIRMED** — only `runner.pr.opened` was written |
 
 ---
 
