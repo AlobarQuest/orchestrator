@@ -33,6 +33,25 @@ system's. The skill instructs hand-writing both files. **The gap is real.**
 
 ---
 
+### #2 — A package can only enter the factory by pasting JavaScript into a browser console. `missing-command`. **BLOCKING — routed around.**
+
+| | |
+|---|---|
+| **phase** | intake |
+| **wanted** | Register the approved package with the orchestrator. |
+| **contract offered** | **Nothing usable.** Three facts compose into a hole: (1) `services/package_intake.py::_require_human` demands `ActorRole.HUMAN`; (2) **all three production M2M credentials are worker / system / verifier** — *none* is HUMAN, so `orchestrator intake-package` **physically cannot intake against production**; (3) the human web app (`web.py`) has `GET /intakes/{revision_id}` — you can *view* an intake — but **no POST route to create one.** There is no human surface for the one step that requires a human. |
+| **what we did instead** | Emitted the payload offline (`emit-intake-payload`, which works), then generated a `fetch()` snippet for Devon to **paste into browser devtools** while signed in via Alobar ID. Plus the documented quirk: the first same-origin POST behind forward-auth returns 401 (the fetch follows the auth 302 and degrades to GET); the retry works. |
+| **root cause** | `package_intake.py::_require_human` + no HUMAN M2M credential + no `POST /intakes` in `web.py`. |
+| **class** | `missing-command` (a required step has no implemented surface) |
+| **blocking?** | **Yes** — routed around with devtools. **The factory's front door is a browser console.** |
+
+**This is not a UI nicety.** Intake is step one of the governed lifecycle. Every package that has ever
+entered this system entered it this way, and the previous handoff documented the workaround
+(*"the human POSTs it from a browser"*) as though it were the design. **It is not the design; it is a
+missing route that everyone has been routing around for long enough to forget it is missing.**
+
+---
+
 ## Confirmations / falsifications of the pre-registered predictions
 
 *(filled in as the run proceeds — see the plan's §7 for the seven predictions)*
