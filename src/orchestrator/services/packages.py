@@ -35,7 +35,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.services.production_drill_resources import (
-    _bind_created_production_drill_resource,
+    bind_created_drill_work_unit,
     require_open_production_drill_run,
     require_production_drill_resource,
 )
@@ -399,7 +399,7 @@ def register_production_drill_unit(
     if existing is not None:
         require_production_drill_resource(session, run_id, "work_unit", unit.id)
     else:
-        _bind_created_production_drill_resource(session, run_id, "work_unit", unit.id)
+        bind_created_drill_work_unit(session, run_id, unit)
     return unit
 
 

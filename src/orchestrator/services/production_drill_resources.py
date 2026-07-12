@@ -25,15 +25,70 @@ RESOURCE_MODELS = {
     "deployment_observation": DeploymentObservation,
 }
 
+def bind_created_drill_work_unit(
+    session: Session,
+    run_id: uuid.UUID,
+    unit: WorkUnit,
+) -> ProductionDrillResource:
+    return _bind_created_resource(session, run_id, "work_unit", unit, WorkUnit)
 
-def _bind_created_production_drill_resource(
+
+def bind_created_drill_evidence(
+    session: Session, run_id: uuid.UUID, evidence: Evidence
+) -> ProductionDrillResource:
+    return _bind_created_resource(session, run_id, "evidence", evidence, Evidence)
+
+
+def bind_created_drill_observation(
+    session: Session, run_id: uuid.UUID, observation: Observation
+) -> ProductionDrillResource:
+    return _bind_created_resource(session, run_id, "observation", observation, Observation)
+
+
+def bind_created_drill_reconciliation_condition(
+    session: Session, run_id: uuid.UUID, condition: ReconciliationCondition
+) -> ProductionDrillResource:
+    return _bind_created_resource(
+        session, run_id, "reconciliation_condition", condition, ReconciliationCondition
+    )
+
+
+def bind_created_drill_release_artifact(
+    session: Session, run_id: uuid.UUID, artifact: ReleaseArtifactBinding
+) -> ProductionDrillResource:
+    return _bind_created_resource(
+        session, run_id, "release_artifact", artifact, ReleaseArtifactBinding
+    )
+
+
+def bind_created_drill_deployment_observation(
+    session: Session, run_id: uuid.UUID, observation: DeploymentObservation
+) -> ProductionDrillResource:
+    return _bind_created_resource(
+        session, run_id, "deployment_observation", observation, DeploymentObservation
+    )
+
+
+def _bind_created_resource[
+    ResourceModel: (
+        WorkUnit,
+        Evidence,
+        Observation,
+        ReconciliationCondition,
+        ReleaseArtifactBinding,
+        DeploymentObservation,
+    )
+](
     session: Session,
     run_id: uuid.UUID,
     resource_type: str,
-    resource_id: uuid.UUID,
+    resource: ResourceModel,
+    expected_model: type[ResourceModel],
 ) -> ProductionDrillResource:
-    """Internal registration used only after a drill writer created its row."""
-    return _bind_production_drill_resource(session, run_id, resource_type, resource_id)
+    """Register a row created by the writer that holds the concrete resource type."""
+    if not isinstance(resource, expected_model):
+        raise TypeError(f"expected {expected_model.__name__} for {resource_type}")
+    return _bind_production_drill_resource(session, run_id, resource_type, resource.id)
 
 
 def _bind_production_drill_resource(
@@ -113,6 +168,22 @@ def is_not_production_drill_resource(resource_type: str, resource_id: object):
         ProductionDrillResource.resource_type == resource_type,
         ProductionDrillResource.resource_id == resource_id,
     )
+
+
+def reject_production_drill_resource(
+    session: Session, resource_type: str, resource_id: uuid.UUID
+) -> None:
+    if session.scalar(
+        select(ProductionDrillResource.id).where(
+            ProductionDrillResource.resource_type == resource_type,
+            ProductionDrillResource.resource_id == resource_id,
+        )
+    ) is not None:
+        raise DomainError(
+            "production_drill_resource_requires_drill_writer",
+            "production drill resources must use the production drill writer",
+            None,
+        )
 
 
 def require_open_production_drill_run(session: Session, run_id: uuid.UUID) -> ProductionDrillRun:

@@ -26,7 +26,10 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.production_drill_resources import require_production_drill_resource
+from orchestrator.services.production_drill_resources import (
+    reject_production_drill_resource,
+    require_production_drill_resource,
+)
 
 POST_DEPLOY_AC_IDS = (
     "post-deploy-artifact",
@@ -101,6 +104,7 @@ def transition_unit(
     depend on lifecycle.
     """
     try:
+        reject_production_drill_resource(session, "work_unit", command.unit_id)
         result = _perform_transition(session, command, clock or TransactionClock(), after)
         session.commit()
         return result
@@ -119,7 +123,13 @@ def transition_production_drill_unit(
 ) -> TransitionResult:
     """Transition only a work unit owned by an open production drill run."""
     require_production_drill_resource(session, run_id, "work_unit", command.unit_id)
-    return transition_unit(session, command, clock=clock, after=after)
+    try:
+        result = _perform_transition(session, command, clock or TransactionClock(), after)
+        session.commit()
+        return result
+    except Exception:
+        session.rollback()
+        raise
 
 
 def _perform_transition(

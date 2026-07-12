@@ -24,7 +24,7 @@ from orchestrator.persistence.models import (
 from orchestrator.services.claims import release_claim, validate_active_claim
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.production_drill_resources import (
-    _bind_created_production_drill_resource,
+    bind_created_drill_evidence,
     require_production_drill_resource,
 )
 
@@ -156,7 +156,7 @@ def _store_production_drill_evidence(
         if not created:
             require_production_drill_resource(session, run_id, "evidence", evidence.id)
         else:
-            _bind_created_production_drill_resource(session, run_id, "evidence", evidence.id)
+            bind_created_drill_evidence(session, run_id, evidence)
         session.commit()
         return evidence
     except DomainError as error:

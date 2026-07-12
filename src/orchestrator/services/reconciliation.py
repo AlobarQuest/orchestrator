@@ -42,7 +42,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.production_drill_resources import (
-    _bind_created_production_drill_resource,
+    bind_created_drill_reconciliation_condition,
     require_production_drill_resource,
 )
 
@@ -160,9 +160,7 @@ def record_production_drill_reconciliation_condition(
                 session, run_id, "reconciliation_condition", outcome.condition.id
             )
         else:
-            _bind_created_production_drill_resource(
-                session, run_id, "reconciliation_condition", outcome.condition.id
-            )
+            bind_created_drill_reconciliation_condition(session, run_id, outcome.condition)
         session.commit()
         return outcome
     except DomainError as error:

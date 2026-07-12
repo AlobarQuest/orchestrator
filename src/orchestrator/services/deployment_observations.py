@@ -24,7 +24,9 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.production_drill_resources import (
-    _bind_created_production_drill_resource,
+    bind_created_drill_deployment_observation,
+    bind_created_drill_evidence,
+    bind_created_drill_work_unit,
     require_production_drill_resource,
 )
 from orchestrator.services.release_artifacts import SHA256_DIGEST
@@ -105,16 +107,14 @@ def record_production_drill_deployment_observation(
         if not created:
             require_production_drill_resource(session, run_id, "deployment_observation", row.id)
         else:
-            _bind_created_production_drill_resource(
-                session, run_id, "deployment_observation", row.id
-            )
-            _bind_created_production_drill_resource(
-                session, run_id, "work_unit", row.post_deploy_work_unit_id
-            )
+            bind_created_drill_deployment_observation(session, run_id, row)
+            post_deploy_unit = session.get(WorkUnit, row.post_deploy_work_unit_id)
+            assert post_deploy_unit is not None
+            bind_created_drill_work_unit(session, run_id, post_deploy_unit)
             for evidence_id in row.evidence_ids:
-                _bind_created_production_drill_resource(
-                    session, run_id, "evidence", uuid.UUID(evidence_id)
-                )
+                evidence = session.get(Evidence, uuid.UUID(evidence_id))
+                assert evidence is not None
+                bind_created_drill_evidence(session, run_id, evidence)
         session.commit()
         return row
     except DomainError as error:

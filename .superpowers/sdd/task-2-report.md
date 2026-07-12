@@ -36,6 +36,7 @@
   - lifecycle guards, evidence, observations, reconciliation, release artifacts,
     in-flight, and dead-letter suites
 - `git diff --check`: passed.
+
 - Reviewed the diff against `~/Developer/code-standards/STANDARDS.md`; no suppression
   comments or unresolved review findings remain.
 
@@ -99,4 +100,27 @@
 
 - `uv run pytest tests/services/test_production_drill_resources.py tests/services/test_lifecycle_events.py tests/services/test_lifecycle_guards.py tests/services/test_lifecycle_rollback.py tests/services/test_evidence.py tests/services/test_evidence_recovery.py tests/services/test_observations.py tests/services/test_reconciliation.py tests/services/test_reconciliation_detect_pass.py tests/services/test_reconciliation_detection_check.py tests/services/test_reconciliation_detection_pr.py tests/services/test_deployment_observations.py tests/services/test_package_registration.py tests/services/test_release_artifacts.py -q` -> `134 passed`.
 - `uv run ruff check` on all changed Task 2 service and regression-test files: passed.
+- `git diff --check`: passed.
+
+## Final P1 Fix Pass
+
+### Findings Addressed
+
+- Ordinary `transition_unit` now rejects a work unit owned by any production drill; the
+  run-scoped `transition_production_drill_unit` remains the only lifecycle path for it.
+- Replaced the generic `(resource_type, resource_id)` creation binder with concrete-resource
+  registration APIs, so each drill writer supplies its actual ORM resource rather than a
+  caller-selected type/id pair.
+- Drill release-artifact creation now registers both the binding and its generated evidence.
+  A replay verifies ownership of both records before it succeeds.
+
+### Green Evidence
+
+- Added inverse regressions for ordinary lifecycle rejection with a successful drill-wrapper
+  transition, and for release-artifact evidence registration plus missing-evidence replay
+  rejection.
+- `uv run pytest tests/services/test_production_drill_resources.py -q` -> `14 passed`.
+- Focused Task 2 service suite, including lifecycle, evidence, observations, reconciliation,
+  deployment observations, package registration, and release artifacts: passed.
+- `uv run ruff check` on all changed service and regression-test files: passed.
 - `git diff --check`: passed.

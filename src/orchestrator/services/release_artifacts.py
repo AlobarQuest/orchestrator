@@ -20,7 +20,8 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.production_drill_resources import (
-    _bind_created_production_drill_resource,
+    bind_created_drill_evidence,
+    bind_created_drill_release_artifact,
     require_production_drill_resource,
 )
 
@@ -92,9 +93,13 @@ def record_production_drill_release_artifact(
         require_production_drill_resource(session, run_id, "work_unit", command.work_unit_id)
         row, created = _record_release_artifact(session, command)
         if created:
-            _bind_created_production_drill_resource(session, run_id, "release_artifact", row.id)
+            bind_created_drill_release_artifact(session, run_id, row)
+            evidence = session.get(Evidence, row.evidence_id)
+            assert evidence is not None
+            bind_created_drill_evidence(session, run_id, evidence)
         else:
             require_production_drill_resource(session, run_id, "release_artifact", row.id)
+            require_production_drill_resource(session, run_id, "evidence", row.evidence_id)
         session.commit()
         return row
     except DomainError as error:

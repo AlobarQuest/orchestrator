@@ -1,6 +1,7 @@
 from inspect import signature
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,7 @@ from orchestrator.services.lifecycle import (
     ActorContext,
     TransitionCommand,
     transition_production_drill_unit,
+    transition_unit,
 )
 from orchestrator.services.observations import (
     record_observation,
@@ -43,6 +45,7 @@ from tests.services.test_observations import SYSTEM
 from tests.services.test_observations import command as observation_command
 from tests.services.test_production_drills import command
 from tests.services.test_release_artifacts import command as release_artifact_command
+from tests.services.test_release_artifacts import completed_unit
 
 
 def test_ordinary_work_unit_cannot_self_tag_as_production_drill_resource() -> None:
@@ -79,6 +82,35 @@ def test_resource_registry_exposes_no_generic_direct_binding_api() -> None:
 
     assert not hasattr(resources, "bind_production_drill_resource")
     assert not hasattr(resources, "bind_created_production_drill_resource")
+    assert not hasattr(resources, "_bind_created_production_drill_resource")
+
+
+def test_ordinary_transition_rejects_a_drill_owned_unit_but_drill_wrapper_allows_it(
+    migrated_session: Session,
+) -> None:
+    unit = register_unit(migrated_session, "drill-lifecycle-boundary")
+    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    assert not isinstance(drill, DomainError)
+    migrated_session.add(
+        ProductionDrillResource(run_id=drill.id, resource_type="work_unit", resource_id=unit.id)
+    )
+    migrated_session.commit()
+    lifecycle_command = TransitionCommand(
+        unit_id=unit.id,
+        target=WorkUnitState.READY,
+        actor=ActorContext("system-1", ActorRole.SYSTEM),
+        expected_version=unit.version,
+        idempotency_key="drill-lifecycle-boundary",
+    )
+
+    with pytest.raises(DomainError) as error:
+        transition_unit(migrated_session, lifecycle_command)
+
+    assert error.value.code == "production_drill_resource_requires_drill_writer"
+    transitioned = transition_production_drill_unit(
+        migrated_session, run_id=drill.id, command=lifecycle_command
+    )
+    assert transitioned.state is WorkUnitState.READY
 
 
 def test_ordinary_observation_idempotency_replay_cannot_be_captured_by_a_drill(
@@ -172,6 +204,41 @@ def test_ordinary_release_artifact_replay_cannot_be_captured_by_a_drill(
         migrated_session,
         run_id=drill.id,
         command=release_artifact_command(unit, key="ordinary-release-replay-binding"),
+    )
+
+    assert isinstance(replay, DomainError)
+    assert replay.code == "production_drill_resource_not_owned"
+
+
+def test_drill_release_artifact_binds_generated_evidence_and_requires_it_on_replay(
+    migrated_session: Session,
+) -> None:
+    unit = completed_unit(migrated_session, key="drill-release-evidence")
+    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    assert not isinstance(drill, DomainError)
+    migrated_session.add(
+        ProductionDrillResource(run_id=drill.id, resource_type="work_unit", resource_id=unit.id)
+    )
+    migrated_session.commit()
+    artifact_command = release_artifact_command(unit, key="drill-release-evidence")
+    artifact = record_production_drill_release_artifact(
+        migrated_session, run_id=drill.id, command=artifact_command
+    )
+    assert not isinstance(artifact, DomainError)
+
+    evidence_resource = migrated_session.scalar(
+        select(ProductionDrillResource).where(
+            ProductionDrillResource.run_id == drill.id,
+            ProductionDrillResource.resource_type == "evidence",
+            ProductionDrillResource.resource_id == artifact.evidence_id,
+        )
+    )
+    assert evidence_resource is not None
+    migrated_session.delete(evidence_resource)
+    migrated_session.commit()
+
+    replay = record_production_drill_release_artifact(
+        migrated_session, run_id=drill.id, command=artifact_command
     )
 
     assert isinstance(replay, DomainError)

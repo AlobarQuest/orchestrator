@@ -26,7 +26,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.production_drill_resources import (
-    _bind_created_production_drill_resource,
+    bind_created_drill_observation,
     require_production_drill_resource,
 )
 from orchestrator.services.release_artifacts import SHA256_DIGEST
@@ -112,7 +112,7 @@ def record_production_drill_observation(
         if not created:
             require_production_drill_resource(session, run_id, "observation", observation.id)
         else:
-            _bind_created_production_drill_resource(session, run_id, "observation", observation.id)
+            bind_created_drill_observation(session, run_id, observation)
         session.commit()
         return observation
     except DomainError as error:
