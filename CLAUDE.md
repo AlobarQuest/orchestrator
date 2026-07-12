@@ -286,12 +286,23 @@ style of that module.
      builds its lookup on `str(criterion.id)`), while **evidence and adjudication want the human
      string** `"AC-001"` (`criterion.ac_id`). Same field name, opposite meanings, and the failure
      is a bare `package_acceptance_criterion_not_found` with no hint.
-  3. **`github.pr.create` is read by NO production code, in either repo.** ADR-0001 says the
-     package-authority → unit-capability projection (`pr_open` → `github.pr.create`) is applied
-     "by the decomposition author", with automated projection deferred. It appears only in tests
-     and fixtures on both sides. A submission guard keyed on it would have been simultaneously
-     too strict (halting the factory) and too lax (invisible to units authored in the registry
-     vocabulary) — **and every acceptance test would have passed while it was both.**
+  3. **`github.pr.create` is validated as a NAME and ignored as a PERMISSION — and the orchestrator
+     does neither.** Be precise here, because a first draft of this entry was wrong:
+     - **orchestrator:** `grep -rn "github.pr.create" src/` → **zero hits.** Nothing reads it, and
+       **nothing validates capability names at ingress at all** (`_validate_unit_constraints`
+       checks `constraints` and `conformance` only). ADR-0001 defers the
+       package-authority → unit-capability projection (`pr_open` → `github.pr.create`) to "the
+       decomposition author". So the orchestrator will accept **any string** as a capability.
+     - **factory-runner:** *does* validate names — `SUPPORTED_CAPABILITIES` +
+       `_validate_capabilities` raise `AuthorityError` on an unknown key. But it then computes
+       `can_create_pr=_allowed(envelope, "github.pr.create")` into `RunnerPermissions`
+       (`authority.py:35`) **and nothing ever reads it** — the runner opens a PR without consulting
+       the permission it just derived.
+
+     A submission guard keyed on this capability would have been simultaneously **too strict**
+     (every dispatched unit carries it and none has a binding → the factory halts) and **too lax**
+     (the orchestrator would admit a registry-vocabulary envelope the guard can't see) — **and every
+     acceptance test would have passed while it was both.** WS-P2.16 closes it.
 
   **Before building anything keyed on a field that crosses a boundary, `grep` for that field in
   `src/` of every repo that must honour it.** Zero production hits means the field is decoration,
