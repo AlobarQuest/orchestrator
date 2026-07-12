@@ -1157,19 +1157,26 @@ class UnitPrBinding(Base):
 
     Deliberately NOT append-only. `head_sha` is mutable and worker-written: a rebase or
     force-push before verification is normal and must not alarm.
-    `verification_read_head_sha` is the alarm-arming field and is write-once, enforced by the
-    service guard rather than a trigger -- which is exactly why the row must stay UPDATE-able
-    for `head_sha`. A later worker push therefore cannot disarm the post-verification alarm.
+    `verification_read_head_sha` is the alarm-arming field, and it is write-once WITHIN a
+    verification cycle -- keyed by `verification_read_attempt` -- enforced by the service guard
+    rather than a trigger, which is exactly why the row must stay UPDATE-able for `head_sha`. A
+    later worker push therefore cannot disarm the alarm for the cycle already under way, while
+    the next attempt's submit legitimately re-arms it.
     """
 
     __tablename__ = "unit_pr_binding"
     __table_args__ = (
         CheckConstraint("pr_number > 0", name="ck_unit_pr_binding_positive_pr_number"),
         CheckConstraint("head_sha <> ''", name="ck_unit_pr_binding_head_sha"),
+        CheckConstraint(
+            "(verification_read_head_sha IS NULL) = (verification_read_attempt IS NULL)",
+            name="ck_unit_pr_binding_armed_head_has_attempt",
+        ),
     )
 
     work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"), primary_key=True)
     pr_number: Mapped[int] = mapped_column(Integer)
     head_sha: Mapped[str] = mapped_column(String)
     verification_read_head_sha: Mapped[str | None] = mapped_column(String)
+    verification_read_attempt: Mapped[int | None] = mapped_column(Integer)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

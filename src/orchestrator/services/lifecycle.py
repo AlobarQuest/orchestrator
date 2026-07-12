@@ -1,5 +1,6 @@
 import secrets
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -88,9 +89,18 @@ def transition_unit(
     command: TransitionCommand,
     *,
     clock: Clock | None = None,
+    after: Callable[[Session, WorkUnit], None] | None = None,
 ) -> TransitionResult:
+    """`after` runs inside the transition's transaction, holding the unit row lock, and only for
+    a real transition -- an idempotent replay skips it, because its effect already happened.
+
+    It exists so a caller can attach a side effect to a specific transition (the SUBMIT route
+    arms the PR head) without this module having to know about that caller's concern. Inverting
+    it -- importing the side effect here -- would make lifecycle depend on services that already
+    depend on lifecycle.
+    """
     try:
-        result = _perform_transition(session, command, clock or TransactionClock())
+        result = _perform_transition(session, command, clock or TransactionClock(), after)
         session.commit()
         return result
     except Exception:
@@ -99,7 +109,10 @@ def transition_unit(
 
 
 def _perform_transition(
-    session: Session, command: TransitionCommand, clock: Clock
+    session: Session,
+    command: TransitionCommand,
+    clock: Clock,
+    after: Callable[[Session, WorkUnit], None] | None = None,
 ) -> TransitionResult:
     unit = session.execute(
         select(WorkUnit).where(WorkUnit.id == command.unit_id).with_for_update()
@@ -152,6 +165,9 @@ def _perform_transition(
     event = _transition_event(command, unit, source, revision.registry_version, occurred_at)
     session.add(event)
     session.flush()
+    if after is not None:
+        after(session, unit)
+        session.flush()
     return TransitionResult(unit.id, command.target, next_version, event.id)
 
 

@@ -8,11 +8,13 @@ from orchestrator.persistence.models import (
     Evidence,
     ReconciliationCondition,
     ReconciliationResolution,
+    UnitPrBinding,
     WorkUnit,
 )
 from orchestrator.services.claims import requeue_unit
 from orchestrator.services.evidence import recover_evidence
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.pr_bindings import get_pr_binding, upsert_pr_binding
 from orchestrator.services.reconciliation import (
     ConditionCommand,
     ConditionOutcome,
@@ -134,3 +136,32 @@ def test_a_duplicate_requeue_replays(migrated_session: Session) -> None:
     assert isinstance(replay, WorkUnit)
     assert replay.version == first.version  # the replay did not transition a second time
     assert worker() is not None
+
+
+def test_a_duplicate_pr_binding_report_replays(migrated_session: Session) -> None:
+    """A worker re-reporting the same PR head -- a retried webhook, a re-run step -- must leave
+    one row saying one thing, not two rows or a moved expectation.
+
+    The binding is an UPSERT keyed by work_unit_id and taken FOR UPDATE, so the duplicate is
+    absorbed by the row lock rather than by an idempotency key: there is exactly one row per unit
+    by construction, and re-reporting the same head is a no-op. What must never happen is the
+    duplicate ARMING a head or moving one already armed -- reporting is not submitting.
+    """
+    unit = register_unit(migrated_session, "idem-pr-binding")
+    head = "c" * 40
+
+    first = upsert_pr_binding(
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=9, head_sha=head
+    )
+    replay = upsert_pr_binding(
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=9, head_sha=head
+    )
+    migrated_session.commit()
+
+    assert (replay.pr_number, replay.head_sha) == (first.pr_number, first.head_sha)
+    assert replay.verification_read_head_sha is None, "reporting a head must never arm it"
+    bindings = migrated_session.scalar(
+        select(func.count()).select_from(UnitPrBinding).where(UnitPrBinding.work_unit_id == unit.id)
+    )
+    assert bindings == 1
+    assert get_pr_binding(migrated_session, unit.id) is not None

@@ -1,4 +1,3 @@
-import secrets
 import uuid
 from datetime import datetime
 from typing import Any
@@ -22,7 +21,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.claims import release_claim
+from orchestrator.services.claims import release_claim, validate_active_claim
 from orchestrator.services.lifecycle import ActorContext
 
 NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
@@ -356,7 +355,7 @@ def _store_evidence(
                 current_version=unit.version,
             )
         _validate_evidence_fields(stable_ref, payload, evidence_type, source_revision)
-        claim = _validate_attempt(session, unit, actor, attempt, lease_token)
+        claim = validate_active_claim(session, unit, actor, attempt, lease_token)
         bound_context_snapshot_id = _resolve_context_snapshot_id(
             session,
             unit,
@@ -590,41 +589,6 @@ def _validate_evidence_fields(
         raise DomainError(
             "evidence_invalid", "evidence type and source revision are required", None
         )
-
-
-def _validate_attempt(
-    session: Session,
-    unit: WorkUnit,
-    actor: ActorContext,
-    attempt: int,
-    lease_token: str,
-) -> Claim:
-    if actor.role is not ActorRole.WORKER:
-        raise DomainError("role_forbidden", "only workers may record evidence", None)
-    claim = session.scalar(
-        select(Claim)
-        .where(Claim.work_unit_id == unit.id)
-        .order_by(Claim.attempt.desc())
-        .limit(1)
-        .with_for_update()
-    )
-    now = TransactionClock().now(session)
-    if claim is None:
-        raise DomainError("claim_not_owned", "claim credentials do not match", None)
-    owned = (
-        claim.attempt == attempt
-        and claim.claimed_by == actor.actor_id
-        and secrets.compare_digest(claim.lease_token_hash, hash_lease_token(lease_token))
-    )
-    if not owned:
-        raise DomainError("claim_not_owned", "claim credentials do not match", None)
-    if (
-        claim.released_at is not None
-        or claim.lease_expires_at <= now
-        or WorkUnitState(unit.state) not in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}
-    ):
-        raise DomainError("claim_not_active", "work unit has no active claim", None)
-    return claim
 
 
 def _resolve_context_snapshot_id(
@@ -941,9 +905,7 @@ def recover_evidence(
         # writes the second head.
         _lock_evidence_head(session, work_unit_id, ac_id)
         _lock_idempotency_key(session, idempotency_key)
-        unit, _revision = _validated_subject(
-            session, work_package_revision_id, work_unit_id, ac_id
-        )
+        unit, _revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         replay = _evidence_replay(session, idempotency_key, command, action="evidence.recovered")
         if replay is not None:
             session.commit()
@@ -1039,9 +1001,7 @@ def _authorize_recovery(actor: ActorContext) -> None:
         )
 
 
-def _recoverable_claim(
-    session: Session, unit: WorkUnit, attempt: int, now: datetime
-) -> Claim:
+def _recoverable_claim(session: Session, unit: WorkUnit, attempt: int, now: datetime) -> Claim:
     claim = session.scalar(
         select(Claim)
         .where(Claim.work_unit_id == unit.id, Claim.attempt == attempt)

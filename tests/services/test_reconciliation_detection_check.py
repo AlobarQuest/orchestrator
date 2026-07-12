@@ -40,7 +40,7 @@ def verified_unit(session: Session, key: str, *, read_head: str | None = HEAD):
     if read_head is not None:
         record_verification_read_head(
             session, actor=SYSTEM, work_unit_id=unit.id, head_sha=read_head
-        )
+        , attempt=1)
     session.commit()
     return unit
 

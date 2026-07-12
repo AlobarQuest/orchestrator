@@ -55,6 +55,8 @@ from orchestrator.api.schemas import (
     PackageAcceptanceCriterionResponse,
     PackageIntakeRegistration,
     PackageIntakeResponse,
+    PrBindingCommand,
+    PrBindingResponse,
     PreflightCommandModel,
     ProposedUnitCommand,
     ReadinessResponse,
@@ -185,6 +187,7 @@ from orchestrator.services.packages import (
     register_revision,
     resolve_dependency_command,
 )
+from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
 from orchestrator.services.reconciliation_detection import (
     detect_observation_conditions,
     detect_reconciliation_conditions,
@@ -774,6 +777,34 @@ def requeue(
     return _raise_error(requeue_unit(session, unit_id, actor, **body.model_dump()))
 
 
+@router.post("/work-units/{unit_id}/pr-binding", response_model=PrBindingResponse)
+def pr_binding(
+    unit_id: UUID,
+    body: PrBindingCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """The worker reports the PR it opened, and re-reports the head after every push.
+
+    This is the orchestrator's EXPECTATION of the pull request. It is deliberately written by our
+    own side of the ledger and never derived from an observation: if observed reality wrote the
+    expectation, an attacker's push would silently become the expected head and no divergence
+    could ever fire.
+    """
+    _require_zero_expected_version(body.expected_version, "pr binding")
+    return _raise_error(
+        upsert_pr_binding(
+            session,
+            actor=actor,
+            work_unit_id=unit_id,
+            pr_number=body.pr_number,
+            head_sha=body.head_sha,
+            attempt=body.attempt,
+            lease_token=body.lease_token,
+        )
+    )
+
+
 @router.post("/reconciliation/detect", response_model=ReconciliationDetectResponse)
 def reconciliation_detect(
     body: ReconciliationDetectCommand,
@@ -1150,6 +1181,15 @@ def command(
             lease_token=body.lease_token,
             standing_context=body.standing_context,
             context_snapshot_id=body.context_snapshot_id,
+        ),
+        # Submitting is the moment the worker hands a head over to be adjudicated, so it is the
+        # moment the divergence alarm is armed -- in the SAME transaction, holding the unit row
+        # lock. Arming later, at verify time, would re-read the head and silently adopt any push
+        # that landed in between as the new expectation, which is exactly what must never happen.
+        after=(
+            (lambda db, unit: arm_verification_head(db, unit, actor=actor))
+            if target is WorkUnitState.SUBMITTED
+            else None
         ),
     )
 

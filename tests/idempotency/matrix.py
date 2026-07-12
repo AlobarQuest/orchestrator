@@ -184,4 +184,10 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         ROW_LOCK,
         "tests/idempotency/test_wsp21_ingress_idempotency.py::test_a_duplicate_requeue_replays",
     ),
+    MatrixRow(
+        "pr binding report",
+        "/api/v1/work-units/{unit_id}/pr-binding",
+        ROW_LOCK,
+        "tests/idempotency/test_wsp21_ingress_idempotency.py::test_a_duplicate_pr_binding_report_replays",
+    ),
 )

@@ -834,3 +834,44 @@ def _requeue_replay(
     if not expected:
         raise _idempotency_conflict()
     return unit
+
+
+def validate_active_claim(
+    session: Session,
+    unit: WorkUnit,
+    actor: ActorContext,
+    attempt: int,
+    lease_token: str,
+) -> Claim:
+    """The caller holds this unit's live claim -- or it does not act.
+
+    Shared by evidence recording and PR-binding reporting: both are worker assertions about a
+    unit the worker must currently own. One definition of ownership is what stops a worker from
+    writing over a unit it never claimed.
+    """
+    if actor.role is not ActorRole.WORKER:
+        raise DomainError("role_forbidden", "only workers may act on a claim", None)
+    claim = session.scalar(
+        select(Claim)
+        .where(Claim.work_unit_id == unit.id)
+        .order_by(Claim.attempt.desc())
+        .limit(1)
+        .with_for_update()
+    )
+    now = TransactionClock().now(session)
+    if claim is None:
+        raise DomainError("claim_not_owned", "claim credentials do not match", None)
+    owned = (
+        claim.attempt == attempt
+        and claim.claimed_by == actor.actor_id
+        and secrets.compare_digest(claim.lease_token_hash, hash_lease_token(lease_token))
+    )
+    if not owned:
+        raise DomainError("claim_not_owned", "claim credentials do not match", None)
+    if (
+        claim.released_at is not None
+        or claim.lease_expires_at <= now
+        or WorkUnitState(unit.state) not in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}
+    ):
+        raise DomainError("claim_not_active", "work unit has no active claim", None)
+    return claim

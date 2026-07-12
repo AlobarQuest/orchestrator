@@ -896,6 +896,30 @@ class RequeueCommand(CommandBase):
     reason: str = Field(min_length=1)
 
 
+class PrBindingCommand(CommandBase):
+    """The worker reporting the pull request it opened, and its current head.
+
+    `attempt` and `lease_token` are how the worker proves it holds this unit's claim -- the same
+    proof recording evidence demands. Without it, any worker could rewrite any unit's expected
+    head, and the expected head is the only thing divergence is measured against.
+    """
+
+    pr_number: int = Field(gt=0)
+    head_sha: str = Field(min_length=1)
+    attempt: int | None = Field(default=None, gt=0)
+    lease_token: str | None = Field(default=None, min_length=1)
+
+
+class PrBindingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    work_unit_id: UUID
+    pr_number: int
+    head_sha: str
+    verification_read_head_sha: str | None
+    verification_read_attempt: int | None
+
+
 class ConsistencyFindingResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

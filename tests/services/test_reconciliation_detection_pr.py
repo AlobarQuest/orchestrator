@@ -210,7 +210,7 @@ def test_a_head_change_AFTER_verification_read_it_records_a_divergence(
     )
     record_verification_read_head(
         migrated_session, actor=SYSTEM, work_unit_id=unit.id, head_sha=HEAD
-    )
+    , attempt=1)
     migrated_session.commit()
     observation = ingest(
         migrated_session, unit.id, key="pr-forcepush-1", facts=pr_facts(head_sha=NEW_HEAD)

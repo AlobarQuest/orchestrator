@@ -63,6 +63,11 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/reconciliation/detect",
         "/api/v1/work-units/{unit_id}/attempts/{attempt}/recover-evidence",
         "/api/v1/work-units/{unit_id}/requeue",
+        # WS-P2.1: the worker's report of the PR it opened. This is the orchestrator's
+        # EXPECTATION of the pull request -- written by our own side, never derived from an
+        # observation, because an expectation written by observed reality can never diverge
+        # from it.
+        "/api/v1/work-units/{unit_id}/pr-binding",
         "/api/v1/knowledge-promotion-proposals",
         "/api/v1/knowledge-promotion-proposals/{proposal_id}/submit-to-brain",
         "/api/v1/work-units/{unit_id}/commands/{command}",

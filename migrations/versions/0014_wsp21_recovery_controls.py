@@ -184,9 +184,21 @@ def upgrade() -> None:
         sa.Column("pr_number", sa.Integer(), nullable=False),
         sa.Column("head_sha", sa.String(), nullable=False),
         sa.Column("verification_read_head_sha", sa.String(), nullable=True),
+        # The attempt the armed head belongs to. Arming is write-once WITHIN a verification cycle
+        # and re-arms on the next one: the revision loop (REVISION_REQUIRED -> READY -> push ->
+        # SUBMITTED) is a main-line path, so a head armed once per UNIT would make every
+        # legitimate revision push raise pr_state_divergence until the unit completed -- teaching
+        # the operator that the alarm means "revision in progress" and destroying its signal.
+        # Keying write-once on the attempt keeps the anti-tamper property (nothing can move the
+        # armed head inside a live cycle) without alarming on our own iteration.
+        sa.Column("verification_read_attempt", sa.Integer(), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.CheckConstraint("pr_number > 0", name="ck_unit_pr_binding_positive_pr_number"),
         sa.CheckConstraint("head_sha <> ''", name="ck_unit_pr_binding_head_sha"),
+        sa.CheckConstraint(
+            "(verification_read_head_sha IS NULL) = (verification_read_attempt IS NULL)",
+            name="ck_unit_pr_binding_armed_head_has_attempt",
+        ),
     )
 
     # reject_append_only_mutation() already exists (0001_ws31_core) -- do not recreate it.
