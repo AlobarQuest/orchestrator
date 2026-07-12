@@ -5,7 +5,13 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import Event, ProductionDrillResource, WorkUnit
+from orchestrator.persistence.models import (
+    Claim,
+    Event,
+    ProductionDrillResource,
+    ReconciliationResolution,
+    WorkUnit,
+)
 from orchestrator.services.claims import claim_unit
 from orchestrator.services.lifecycle import (
     ActorContext,
@@ -17,7 +23,10 @@ from orchestrator.services.production_drills import (
     close_production_drill,
     start_production_drill,
 )
-from orchestrator.services.reconciliation import record_production_drill_reconciliation_condition
+from orchestrator.services.reconciliation import (
+    record_production_drill_reconciliation_condition,
+    record_reconciliation_condition,
+)
 from tests.services.test_dependencies import register_unit
 from tests.services.test_production_drills import HUMAN, command
 from tests.services.test_reconciliation import flip
@@ -38,7 +47,7 @@ def close_command(
     )
 
 
-def test_close_rejects_incomplete_run_owned_assertion(migrated_session: Session) -> None:
+def test_close_cancels_incomplete_run_owned_assertion(migrated_session: Session) -> None:
     unit = register_unit(migrated_session, "incomplete-drill-assertion")
     run = start_production_drill(migrated_session, command(unit.work_package_revision_id))
     assert not isinstance(run, DomainError)
@@ -49,8 +58,18 @@ def test_close_rejects_incomplete_run_owned_assertion(migrated_session: Session)
 
     result = close_production_drill(migrated_session, close_command(run.id))
 
-    assert isinstance(result, DomainError)
-    assert result.code == "production_drill_assertions_incomplete"
+    assert not isinstance(result, DomainError)
+    closed = migrated_session.get(WorkUnit, unit.id)
+    assert closed is not None
+    assert closed.state == WorkUnitState.CANCELLED
+    transition = migrated_session.scalar(
+        select(Event).where(
+            Event.action == "work_unit.transitioned",
+            Event.subject_id == unit.id,
+        )
+    )
+    assert transition is not None
+    assert transition.payload["reason"] == "production_drill_closed"
 
 
 def test_close_ignores_ordinary_unit_and_emits_explicit_audit_event(
@@ -117,7 +136,7 @@ def test_close_requires_a_human_actor(migrated_session: Session) -> None:
     assert result.code == "human_actor_required"
 
 
-def test_close_rejects_an_active_claim_even_when_the_unit_is_terminal(
+def test_close_releases_active_claim_and_cancels_owned_unit(
     migrated_session: Session,
 ) -> None:
     unit = register_unit(migrated_session, "active-claim-closeout")
@@ -147,16 +166,19 @@ def test_close_rejects_an_active_claim_even_when_the_unit_is_terminal(
         expected_version=unit.version,
     )
     assert not isinstance(claim, DomainError)
-    unit.state = WorkUnitState.FAILED
-    migrated_session.commit()
-
     result = close_production_drill(migrated_session, close_command(run.id))
 
-    assert isinstance(result, DomainError)
-    assert result.code == "production_drill_assertions_incomplete"
+    assert not isinstance(result, DomainError)
+    released = migrated_session.scalar(select(Claim).where(Claim.work_unit_id == unit.id))
+    assert released is not None
+    assert released.released_at is not None
+    assert released.terminal_reason == "production_drill_closed"
+    closed = migrated_session.get(WorkUnit, unit.id)
+    assert closed is not None
+    assert closed.state == WorkUnitState.CANCELLED
 
 
-def test_close_rejects_an_unresolved_run_owned_condition(migrated_session: Session) -> None:
+def test_close_resolves_only_run_owned_condition(migrated_session: Session) -> None:
     unit = register_unit(migrated_session, "unresolved-condition-closeout")
     run = start_production_drill(migrated_session, command(unit.work_package_revision_id))
     assert not isinstance(run, DomainError)
@@ -172,7 +194,25 @@ def test_close_rejects_an_unresolved_run_owned_condition(migrated_session: Sessi
     )
     assert not isinstance(condition, DomainError)
 
+    ordinary_unit = register_unit(migrated_session, "ordinary-condition-closeout")
+    ordinary_unit.state = WorkUnitState.COMPLETED
+    migrated_session.commit()
+    ordinary_condition = record_reconciliation_condition(migrated_session, flip(ordinary_unit.id))
+    assert not isinstance(ordinary_condition, DomainError)
+
     result = close_production_drill(migrated_session, close_command(run.id))
 
-    assert isinstance(result, DomainError)
-    assert result.code == "production_drill_assertions_incomplete"
+    assert not isinstance(result, DomainError)
+    resolution = migrated_session.scalar(
+        select(ReconciliationResolution).where(
+            ReconciliationResolution.condition_id == condition.condition.id
+        )
+    )
+    assert resolution is not None
+    assert resolution.decision == "dismissed"
+    assert resolution.rationale == "production_drill_closed: all assertions reviewed"
+    assert migrated_session.scalar(
+        select(ReconciliationResolution).where(
+            ReconciliationResolution.condition_id == ordinary_condition.condition.id
+        )
+    ) is None

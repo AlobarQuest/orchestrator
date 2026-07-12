@@ -265,6 +265,19 @@ def record_resolution(
         raise
 
 
+def resolve_production_drill_condition(
+    session: Session,
+    *,
+    run_id: uuid.UUID,
+    command: ResolutionCommand,
+) -> ReconciliationResolution:
+    """Resolve a registered drill condition inside its caller's transaction."""
+    require_production_drill_resource(
+        session, run_id, "reconciliation_condition", command.condition_id
+    )
+    return _record_resolution(session, command)
+
+
 def _record_resolution(session: Session, command: ResolutionCommand) -> ReconciliationResolution:
     _authorize_human(command.actor)
     if command.decision not in RECONCILIATION_DECISIONS:

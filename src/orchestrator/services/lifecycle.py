@@ -132,6 +132,53 @@ def transition_production_drill_unit(
         raise
 
 
+def close_production_drill_unit(
+    session: Session,
+    *,
+    run_id: uuid.UUID,
+    unit_id: uuid.UUID,
+    actor: ActorContext,
+    idempotency_key: str,
+    reason: str,
+) -> TransitionResult | None:
+    """Cancel one nonterminal synthetic unit as part of a human drill closeout.
+
+    This deliberately bypasses the ordinary graph only inside the drill-owned closeout boundary:
+    a production drill must be able to terminate its disposable assertions from every lifecycle
+    state without granting that authority to ordinary work.
+    """
+    if actor.role is not ActorRole.HUMAN:
+        raise DomainError("human_actor_required", "only a human may close a production drill", None)
+    require_production_drill_resource(session, run_id, "work_unit", unit_id)
+    unit = session.execute(
+        select(WorkUnit).where(WorkUnit.id == unit_id).with_for_update()
+    ).scalar_one()
+    source = WorkUnitState(unit.state)
+    if source in {WorkUnitState.COMPLETED, WorkUnitState.FAILED, WorkUnitState.CANCELLED}:
+        return None
+
+    occurred_at = TransactionClock().now(session)
+    unit.state = WorkUnitState.CANCELLED
+    unit.version += 1
+    event = _transition_event(
+        TransitionCommand(
+            unit_id=unit.id,
+            target=WorkUnitState.CANCELLED,
+            actor=actor,
+            expected_version=unit.version - 1,
+            idempotency_key=idempotency_key,
+            reason=reason,
+        ),
+        unit,
+        source,
+        _registry_version(session, unit),
+        occurred_at,
+    )
+    session.add(event)
+    session.flush()
+    return TransitionResult(unit.id, WorkUnitState.CANCELLED, unit.version, event.id)
+
+
 def _perform_transition(
     session: Session,
     command: TransitionCommand,
@@ -193,6 +240,13 @@ def _perform_transition(
         after(session, unit)
         session.flush()
     return TransitionResult(unit.id, command.target, next_version, event.id)
+
+
+def _registry_version(session: Session, unit: WorkUnit) -> int:
+    revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
+    if revision is None:
+        raise DomainError("revision_not_found", "package revision does not exist", None)
+    return revision.registry_version
 
 
 def _transition_event(

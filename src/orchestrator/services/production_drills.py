@@ -25,7 +25,11 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.lifecycle import ActorContext, close_production_drill_unit
+from orchestrator.services.reconciliation import (
+    ResolutionCommand,
+    resolve_production_drill_condition,
+)
 
 PRODUCTION_DRILL_IDEMPOTENCY_LOCK_NAMESPACE = 0x5044524C
 
@@ -364,7 +368,8 @@ def _close_production_drill(session: Session, command: CloseProductionDrill) -> 
         raise DomainError("production_drill_run_not_open", "production drill run is not open", None)
 
     now = TransactionClock().now(session)
-    _assert_closeout_invariant(session, run.id, now)
+    _close_run_owned_work(session, run.id, command, now)
+    _resolve_run_owned_conditions(session, run.id, command)
     resources = session.scalars(
         select(ProductionDrillResource)
         .where(ProductionDrillResource.run_id == run.id)
@@ -446,6 +451,72 @@ def _assert_closeout_invariant(session: Session, run_id: uuid.UUID, now: datetim
             "production drill has an unresolved synthetic reconciliation condition",
             None,
         )
+
+
+def _close_run_owned_work(
+    session: Session, run_id: uuid.UUID, command: CloseProductionDrill, now: datetime
+) -> None:
+    # `claims` imports the drill lease policy, so defer this dependency until both modules load.
+    from orchestrator.services.claims import release_claim
+
+    unit_ids = session.scalars(
+        select(ProductionDrillResource.resource_id)
+        .where(
+            ProductionDrillResource.run_id == run_id,
+            ProductionDrillResource.resource_type == "work_unit",
+        )
+        .order_by(ProductionDrillResource.resource_id)
+    ).all()
+    for unit_id in unit_ids:
+        claims = session.scalars(
+            select(Claim)
+            .where(
+                Claim.work_unit_id == unit_id,
+                Claim.released_at.is_(None),
+                Claim.lease_expires_at > now,
+            )
+            .with_for_update()
+        ).all()
+        for claim in claims:
+            release_claim(claim, terminal_reason="production_drill_closed", released_at=now)
+        close_production_drill_unit(
+            session,
+            run_id=run_id,
+            unit_id=unit_id,
+            actor=command.actor,
+            idempotency_key=f"{command.idempotency_key}:unit:{unit_id}",
+            reason="production_drill_closed",
+        )
+
+
+def _resolve_run_owned_conditions(
+    session: Session, run_id: uuid.UUID, command: CloseProductionDrill
+) -> None:
+    condition_ids = session.scalars(
+        select(ProductionDrillResource.resource_id)
+        .where(
+            ProductionDrillResource.run_id == run_id,
+            ProductionDrillResource.resource_type == "reconciliation_condition",
+        )
+        .order_by(ProductionDrillResource.resource_id)
+    ).all()
+    for condition_id in condition_ids:
+        if session.scalar(
+            select(ReconciliationResolution.id).where(
+                ReconciliationResolution.condition_id == condition_id
+            )
+        ) is None:
+            resolve_production_drill_condition(
+                session,
+                run_id=run_id,
+                command=ResolutionCommand(
+                    actor=command.actor,
+                    condition_id=condition_id,
+                    decision="dismissed",
+                    rationale=f"production_drill_closed: {command.closure_reason}",
+                    idempotency_key=f"{command.idempotency_key}:condition:{condition_id}",
+                ),
+            )
 
 
 def _require_human(actor: ActorContext) -> None:
