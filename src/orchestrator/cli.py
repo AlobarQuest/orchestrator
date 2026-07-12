@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 import httpx
 import typer
 
+from orchestrator.conformance_claim import compute_conformance_claim
 from orchestrator.package_sources import (
     PackageSourceError,
     load_package_intake_payload,
@@ -758,3 +759,20 @@ def check_consistency(json_output: JsonOption = False) -> None:
     _emit(report, json_output)
     if isinstance(report, dict) and report.get("divergent"):
         raise typer.Exit(code=1)
+
+
+@app.command("conformance-claim")
+def conformance_claim(
+    repo_path: Path,
+    json_output: JsonOption = False,
+) -> None:
+    """Derive a unit's authority.conformance claim from a repository's real state.
+
+    Local and read-only: it runs the project-standards and security-standards scanners against
+    the checkout and prints the claim, so a decomposition author never types one from memory.
+    """
+
+    def operation() -> Any:
+        return compute_conformance_claim(repo_path).as_authority_conformance()
+
+    _run(operation, json_output)
