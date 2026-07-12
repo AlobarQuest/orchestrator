@@ -53,3 +53,19 @@ PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/services/production_drills.
 ```
 
 Results: `62 passed`; Ruff and Pyright reported no findings.
+
+## Re-review Fix
+
+- Removed the unused `MAX_PRODUCTION_DRILL_DEADLINE_SECONDS` kernel constant and its
+  stale comment. The configured service setting remains the sole deadline ceiling.
+
+Verification:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" pytest tests/services/test_production_drill_controls.py tests/api/test_production_drill_controls_api.py tests/services/test_production_drills.py tests/services/test_production_drill_resources.py tests/api/test_production_drills_api.py tests/services/test_reconciliation_detect_pass.py tests/architecture/test_drill_scripts.py -q
+PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/kernel/leases.py tests/services/test_production_drill_controls.py tests/api/test_production_drill_controls_api.py
+PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/kernel/leases.py tests/services/test_production_drill_controls.py tests/api/test_production_drill_controls_api.py
+git diff --check
+```
+
+Results: `62 passed`; Ruff, Pyright, and whitespace validation reported no findings.
