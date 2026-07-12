@@ -92,13 +92,33 @@ def _mutations(root: Path) -> list[str]:
                     and node.args[1].value == AUTHORITY
                 ):
                     offenders.append(f"{where} setattr(..., '{AUTHORITY}', ...)")
-                # 3. update(WorkUnit).values(authority=...)
+                # 3. update(WorkUnit).values(authority=...) -- keyword OR positional dict.
+                # `.values({"authority": ...})` is the same statement written the other way, and
+                # a guard that only sees the keyword form is a guard you evade by reformatting.
+                if isinstance(func, ast.Attribute) and func.attr == "values":
+                    if any(kw.arg == AUTHORITY for kw in node.keywords):
+                        offenders.append(f"{where} bulk update .values({AUTHORITY}=...)")
+                    if any(
+                        isinstance(arg, ast.Dict)
+                        and any(
+                            isinstance(key, ast.Constant) and key.value == AUTHORITY
+                            for key in arg.keys
+                            if key is not None
+                        )
+                        for arg in node.args
+                    ):
+                        offenders.append(f'{where} bulk update .values({{"{AUTHORITY}": ...}})')
+                # SQLAlchemy's escape hatch for in-place JSON edits. Without flag_modified the ORM
+                # does not notice a mutated dict -- so its PRESENCE is the tell that someone is
+                # deliberately persisting one.
                 if (
-                    isinstance(func, ast.Attribute)
-                    and func.attr == "values"
-                    and any(kw.arg == AUTHORITY for kw in node.keywords)
+                    isinstance(func, ast.Name)
+                    and func.id == "flag_modified"
+                    and len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Constant)
+                    and node.args[1].value == AUTHORITY
                 ):
-                    offenders.append(f"{where} bulk update .values({AUTHORITY}=...)")
+                    offenders.append(f"{where} flag_modified(..., '{AUTHORITY}')")
                 # in-place dict API: x.authority.update(...) / .setdefault(...) / .pop(...)
                 if (
                     isinstance(func, ast.Attribute)
@@ -199,6 +219,30 @@ def test_the_guard_flags_in_place_dict_api(fake_src: Path) -> None:
         fake_src, 'def overwrite(unit):\n    unit.authority.update({"budgets": {}})\n'
     )
     assert any("in-place" in offender for offender in offenders), offenders
+
+
+def test_the_guard_flags_a_positional_dict_bulk_update(fake_src: Path) -> None:
+    """The same statement written the other way. A guard you evade by reformatting is not one."""
+    offenders = _plant(
+        fake_src,
+        "def overwrite(session, env):\n"
+        '    session.execute(update(WorkUnit).values({"authority": env}))\n',
+    )
+    assert any("bulk update" in offender for offender in offenders), offenders
+
+
+def test_the_guard_flags_flag_modified(fake_src: Path) -> None:
+    """SQLAlchemy's escape hatch for persisting an in-place JSON edit.
+
+    Without `flag_modified` the ORM never notices a mutated dict, so its presence is the tell
+    that someone means the mutation to stick.
+    """
+    offenders = _plant(
+        fake_src,
+        'def persist(unit):\n    unit.authority["budgets"]["max_attempts"] = 9\n'
+        '    flag_modified(unit, "authority")\n',
+    )
+    assert any("flag_modified" in offender for offender in offenders), offenders
 
 
 def test_the_guard_is_quiet_on_an_unrelated_assignment(fake_src: Path) -> None:
