@@ -524,7 +524,6 @@ def dispatch_route(
         github_app_configured=credentials is not None,
         failure_signature_threshold=settings.dispatch_failure_signature_threshold,
         orchestrator_url=settings.dispatch_orchestrator_url,
-        human_gate_age_out_seconds=settings.dispatch_human_gate_age_out_seconds,
     )
     dispatcher = GitHubActionsDispatcher(token_provider_for(credentials))
     return dispatch_work_unit(
@@ -971,11 +970,15 @@ def dead_letter_route(
     session: SessionDep,
     settings: SettingsDep,
 ) -> object:
-    """AC-005. Read-only: terminal failures made visible."""
+    """Read-only: terminal failures AND stalled approval gates made visible.
+
+    The stalled-approval threshold takes no parameter and has no off switch (WS-P2.15).
+    """
     require_operator_actor(actor)
     return dead_letter(
         session,
         failure_signature_threshold=settings.dispatch_failure_signature_threshold,
+        stalled_approval_seconds=settings.dead_letter_stalled_approval_seconds,
     )
 
 

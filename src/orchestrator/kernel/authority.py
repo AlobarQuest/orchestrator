@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-RESTRICTION = {"prohibited": 0, "requires_approval": 1, "allowed": 2}
 # constraints, change_class and conformance are the envelope fields dispatch routes and
 # admits on (target repository, change-class allowlist, conformance of that repository).
 # They must enter the fingerprint by value, or an approved fingerprint would cover an
@@ -17,11 +16,6 @@ KNOWN_BUDGETS = frozenset({"max_attempts", "max_llm_calls"})
 class AuthorityBudgets:
     max_attempts: int | None
     max_llm_calls: int | None
-
-    def expands(self, old: "AuthorityBudgets") -> bool:
-        return _limit_expands(old.max_attempts, self.max_attempts) or _limit_expands(
-            old.max_llm_calls, self.max_llm_calls
-        )
 
 
 @dataclass(frozen=True)
@@ -109,26 +103,6 @@ def authority_fingerprint(envelope: AuthorityEnvelope) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def is_expansion(old: AuthorityEnvelope, new: AuthorityEnvelope) -> bool:
-    if new.unknown_fields:
-        return True
-    capabilities = set(old.capabilities) | set(new.capabilities)
-    for capability in capabilities:
-        old_level = RESTRICTION.get(old.level_for(capability))
-        new_level = RESTRICTION.get(new.level_for(capability))
-        if old_level is None or new_level is None:
-            return True
-        if new_level > old_level:
-            return True
-    return new.budgets.expands(old.budgets)
-
-
-def _limit_expands(old: int | None, new: int | None) -> bool:
-    if old is None:
-        return False
-    return new is None or new > old
-
-
 def _budget_value(value: Any) -> int | None:
     return value if _is_budget_value(value) else None
 
@@ -142,8 +116,13 @@ def _optional_change_class(value: Mapping[str, Any]) -> tuple[str | None, bool]:
 
     A null means "absent", so that normalized() — which emits these fields explicitly and
     is stored verbatim as some units' envelope — round-trips without inventing unknown
-    fields. A malformed value is reported as an unknown field, which is_expansion treats
-    as expanding and every admission gate treats as fail-closed.
+    fields. A malformed value is reported as an unknown field.
+
+    NOTE (WS-P2.15): nothing reads `unknown_fields`. It used to feed `is_expansion()`, which
+    had no production caller and is now deleted. So an unknown field is RECORDED, not acted
+    on — this docstring previously claimed "every admission gate treats it as fail-closed",
+    which was already false. Before adding such a gate, see
+    tests/architecture/test_authority_write_once.py.
     """
     raw = value.get("change_class")
     if raw is None:
@@ -166,8 +145,8 @@ def _is_canonicalizable(value: Mapping[str, Any]) -> bool:
     """Constraint values must survive the fingerprint's canonical JSON encoding.
 
     Anything json cannot encode would raise inside authority_fingerprint, so it is
-    rejected here and surfaces as an unknown field (which is_expansion treats as
-    expanding).
+    rejected here and surfaces as an unknown field — which is recorded, but which nothing
+    currently acts on (see _optional_change_class).
     """
     try:
         json.dumps(value, sort_keys=True)

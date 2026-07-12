@@ -240,11 +240,15 @@ def _post_deploy_work_unit(
         uuid.NAMESPACE_URL,
         f"sds:post-deploy:{binding.id}:{command.environment}",
     )
+    # No "unknown_fields" key here: it is not itself a KNOWN_FIELD, so passing it made
+    # normalize_authority record an unknown field literally named "unknown_fields" --
+    # every post-deploy unit was minted with a self-referential envelope that is not a
+    # fixed point of normalisation. Harmless only while nothing reads unknown_fields
+    # (WS-P2.15), and a landmine under any future fail-closed unknown-fields gate.
     authority = normalize_authority(
         {
             "capabilities": {"post_deploy_verification": "allowed"},
             "budgets": {"max_attempts": 1},
-            "unknown_fields": [],
         }
     )
     unit = WorkUnit(

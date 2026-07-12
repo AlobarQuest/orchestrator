@@ -26,7 +26,13 @@ class Settings(BaseSettings):
     github_app_private_key_b64: SecretStr | None = None
     dispatch_failure_signature_threshold: int = 3
     dispatch_orchestrator_url: str = "https://sds.alobar.net"
-    dispatch_human_gate_age_out_seconds: int | None = None
+    # How long a human approval gate may go unanswered before the dead-letter view reports it as
+    # a stalled approval. A plain int with NO "off" value, on purpose: its predecessor
+    # (dispatch_human_gate_age_out_seconds: int | None = None) defaulted to None, and that None
+    # is why the age-out it configured sat unwired and invisible for an entire workstream. A
+    # reporting obligation that can be switched off is one that will be. Reporting only --
+    # nothing here transitions a unit, because silence is never approval.
+    dead_letter_stalled_approval_seconds: int = 604_800  # 7 days
     brain_proposal_target_urls: dict[str, str] = Field(default_factory=dict)
     brain_proposal_credentials: dict[str, str] = Field(default_factory=dict)
     brain_proposal_timeout_seconds: float = 10.0
