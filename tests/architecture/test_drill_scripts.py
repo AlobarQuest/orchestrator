@@ -91,9 +91,9 @@ def test_the_harness_refuses_to_run_against_the_test_database() -> None:
     erase a concurrent test run's database, and the failure would look like a flaky test."""
     source = HARNESS.read_text()
     assert 'DRILL_DB="orchestrator_drill"' in source
-    assert "orchestrator_test" not in source.replace(
-        "orchestrator_test, which", ""
-    ).replace("at it would erase", "")
+    assert "orchestrator_test" not in source.replace("orchestrator_test, which", "").replace(
+        "at it would erase", ""
+    )
 
 
 @pytest.mark.parametrize("drill", DRILLS, ids=lambda p: p.name)

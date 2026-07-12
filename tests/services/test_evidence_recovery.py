@@ -209,7 +209,9 @@ def test_recovery_refuses_the_expired_worker_itself(migrated_session: Session, r
     """Never the expired worker. Letting it self-serve past its lease would re-open exactly the
     hole the lease exists to close."""
     grant = expired_claim(migrated_session, ready_unit)
-    command = recovery_kwargs(ready_unit, grant.attempt, "rec-worker") | {"actor": worker()}
+    command: dict[str, Any] = recovery_kwargs(ready_unit, grant.attempt, "rec-worker") | {
+        "actor": worker()
+    }
 
     result = recover_evidence(migrated_session, **command)
 
