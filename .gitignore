@@ -11,3 +11,6 @@ __pycache__/
 *.db
 build/
 *.egg-info/
+
+# factory-runner local-heavy workspace: carries the claim lease token; never commit it.
+.sds-local-heavy/
