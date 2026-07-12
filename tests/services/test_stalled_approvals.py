@@ -141,3 +141,24 @@ def test_the_stalled_approval_threshold_has_no_off_switch() -> None:
         "the nullable age-out knob is back; it is the mechanism by which this guard "
         "previously went silent"
     )
+
+
+def test_the_deleted_config_knob_cannot_fail_startup_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting a config field must not brick the next deploy.
+
+    Production Coolify may still carry `ORCHESTRATOR_DISPATCH_HUMAN_GATE_AGE_OUT_SECONDS` from
+    before WS-P2.15 deleted the field it fed. If Settings rejected unknown environment variables,
+    the very next deploy would fail closed and take production down -- an outage caused by a
+    DELETION, which is the last place anyone would look for it.
+
+    It does not, because pydantic-settings ignores extras. That is load-bearing, so it is pinned
+    here rather than left as a happy accident.
+    """
+    monkeypatch.setenv("ORCHESTRATOR_DISPATCH_HUMAN_GATE_AGE_OUT_SECONDS", "3600")
+
+    settings = Settings(database_url="postgresql://unused/unused")
+
+    assert not hasattr(settings, "dispatch_human_gate_age_out_seconds")
+    assert settings.dead_letter_stalled_approval_seconds > 0

@@ -142,14 +142,13 @@ class CallGraph:
         return edges
 
     def roots(self) -> set[tuple[str, str]]:
-        return {
-            (self._module(path), name)
+        entry_modules = {
+            self._module(path)
             for path in self.files
             if str(path.relative_to(self.root)) in ENTRY_MODULES
             or _under(path, self.root, ENTRY_PACKAGES)
-            for (module, name) in self.defs
-            if module == self._module(path)
         }
+        return {(module, name) for (module, name) in self.defs if module in entry_modules}
 
     def reachable(self) -> set[tuple[str, str]]:
         seen: set[tuple[str, str]] = set()
