@@ -26,7 +26,23 @@ class Settings(BaseSettings):
     github_app_private_key_b64: SecretStr | None = None
     dispatch_failure_signature_threshold: int = 3
     dispatch_orchestrator_url: str = "https://sds.alobar.net"
-    dispatch_human_gate_age_out_seconds: int | None = None
+    # How long a human approval gate may go unanswered before the dead-letter view reports it as
+    # a stalled approval. A plain int with NO "off" value, on purpose: its predecessor
+    # (dispatch_human_gate_age_out_seconds: int | None = None) defaulted to None, and that None
+    # is why the age-out it configured sat unwired and invisible for an entire workstream. A
+    # reporting obligation that can be switched off is one that will be. Reporting only --
+    # nothing here transitions a unit, because silence is never approval.
+    # BOUNDED, not merely non-nullable. Without an upper bound the type says "cannot be switched
+    # off" while the reachable config space says otherwise: 999_999_999 silences the report as
+    # effectively as `None` ever did. The verifier who adjudicated this package made exactly that
+    # point. A cap of 30 days makes the claim true of the values an operator can actually set --
+    # silencing is now impossible rather than merely unfashionable.
+    # The cap is the point; the floor is not. A LARGE value silences the report (that is the
+    # failure mode), while 0 merely reports everything -- maximally on, and what drill 5 uses so
+    # it needs no sleep. So: 0 <= x <= 30 days.
+    dead_letter_stalled_approval_seconds: int = Field(
+        default=604_800, ge=0, le=2_592_000
+    )  # 7 days; capped at 30
     brain_proposal_target_urls: dict[str, str] = Field(default_factory=dict)
     brain_proposal_credentials: dict[str, str] = Field(default_factory=dict)
     brain_proposal_timeout_seconds: float = 10.0

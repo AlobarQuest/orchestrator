@@ -2,7 +2,6 @@ import hashlib
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from urllib.parse import quote
 
@@ -33,7 +32,6 @@ class DispatchSettings:
     github_app_configured: bool
     failure_signature_threshold: int = 3
     orchestrator_url: str = ORCHESTRATOR_URL
-    human_gate_age_out_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -225,65 +223,6 @@ def failure_signature(stage: str, code: str, message: str) -> str:
     normalized = " ".join(message.lower().split())
     digest = hashlib.sha256(normalized.encode()).hexdigest()[:16]
     return f"{stage}:{code}:{digest}"
-
-
-def age_out_human_gates(
-    session: Session,
-    settings: DispatchSettings,
-    actor: ActorContext,
-    *,
-    now: datetime | None = None,
-) -> tuple[DispatchRecord, ...]:
-    _authorize_dispatch_actor(actor)
-    if settings.human_gate_age_out_seconds is None:
-        return ()
-    cutoff = (now or datetime.now(UTC)) - timedelta(seconds=settings.human_gate_age_out_seconds)
-    units = session.scalars(
-        select(WorkUnit)
-        .where(
-            WorkUnit.state.in_(("awaiting_approval", "awaiting_review")),
-            WorkUnit.updated_at <= cutoff,
-        )
-        .order_by(WorkUnit.updated_at, WorkUnit.id)
-        .with_for_update()
-    ).all()
-    records: list[DispatchRecord] = []
-    for unit in units:
-        idempotency_key = f"human-gate-age-out:{unit.id}:{unit.version}"
-        existing = session.scalar(
-            select(DispatchRecord).where(DispatchRecord.idempotency_key == idempotency_key)
-        )
-        if existing is not None:
-            records.append(existing)
-            continue
-        revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
-        if revision is None:
-            raise DomainError("revision_not_found", "package revision does not exist", None)
-        command = DispatchCommand(
-            unit_id=unit.id,
-            runner_attempt=_next_runner_attempt(session, unit),
-            actor=actor,
-            idempotency_key=idempotency_key,
-            expected_version=unit.version,
-        )
-        records.append(
-            _record_dispatch(
-                session,
-                command,
-                unit,
-                revision,
-                settings,
-                repository=_target_repository(unit),
-                status="blocked",
-                reason_code="human_gate_aged_out",
-                payload={
-                    "human_gate_state": unit.state,
-                    "age_out_cutoff": cutoff.isoformat(),
-                },
-            )
-        )
-    session.commit()
-    return tuple(records)
 
 
 def _authorize_dispatch_actor(actor: ActorContext) -> None:

@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +16,6 @@ from orchestrator.services.dispatch import (
     DispatchSettings,
     GitHubActionsDispatcher,
     GitHubDispatchError,
-    age_out_human_gates,
     circuit_open,
     dispatch_work_unit,
     failure_signature,
@@ -294,39 +293,6 @@ def test_dispatch_records_canonical_event(migrated_session: Session) -> None:
     assert event.action == "dispatch.dispatched"
     assert event.subject_id == unit.id
     assert event.payload["dispatch_record_id"] == str(record.id)
-
-
-def test_human_gate_age_out_records_blocked_evidence_without_auto_proceeding(
-    migrated_session: Session,
-) -> None:
-    unit = ready_unit(migrated_session, key="human-gate")
-    persisted = migrated_session.get(type(unit), unit.id)
-    assert persisted is not None
-    persisted.state = "awaiting_approval"
-    persisted.version = 3
-    migrated_session.commit()
-    evaluation_time = datetime.now(UTC) + timedelta(days=2)
-
-    records = age_out_human_gates(
-        migrated_session,
-        settings(human_gate_age_out_seconds=3600),
-        SYSTEM,
-        now=evaluation_time,
-    )
-    replay = age_out_human_gates(
-        migrated_session,
-        settings(human_gate_age_out_seconds=3600),
-        SYSTEM,
-        now=evaluation_time,
-    )
-
-    refreshed = migrated_session.get(type(unit), unit.id)
-    assert refreshed is not None
-    assert refreshed.state == "awaiting_approval"
-    assert len(records) == len(replay) == 1
-    assert replay[0].id == records[0].id
-    assert records[0].status == "blocked"
-    assert records[0].reason_code == "human_gate_aged_out"
 
 
 def test_dispatch_routes_to_the_units_own_target_repository(migrated_session: Session) -> None:

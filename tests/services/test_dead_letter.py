@@ -18,6 +18,10 @@ from orchestrator.services.dispatch import (
 )
 from tests.services.test_dependencies import register_unit
 
+# Long enough that nothing in these fixtures is stale; the stalled-approval
+# report has its own tests.
+STALLED_APPROVAL_SECONDS = 604_800
+
 SIGNATURE = failure_signature("workflow_dispatch", "github_api", "status:500")
 THRESHOLD = 3
 
@@ -79,7 +83,11 @@ def test_the_at_rest_breaker_is_the_prospective_one_minus_exactly_one_failure(
 
     breakers = [
         entry
-        for entry in dead_letter(migrated_session, failure_signature_threshold=THRESHOLD)
+        for entry in dead_letter(
+            migrated_session,
+            failure_signature_threshold=THRESHOLD,
+            stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+        )
         if entry.source == "circuit_breaker"
     ]
     assert breakers == []
@@ -89,7 +97,11 @@ def test_the_at_rest_breaker_is_the_prospective_one_minus_exactly_one_failure(
 
     breakers = [
         entry
-        for entry in dead_letter(migrated_session, failure_signature_threshold=THRESHOLD)
+        for entry in dead_letter(
+            migrated_session,
+            failure_signature_threshold=THRESHOLD,
+            stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+        )
         if entry.source == "circuit_breaker"
     ]
     assert [(entry.work_unit_id, entry.reason_code, entry.detail) for entry in breakers] == [
@@ -108,7 +120,11 @@ def test_terminal_and_blocked_units_are_enumerated(migrated_session: Session) ->
     healthy.state = WorkUnitState.READY
     migrated_session.commit()
 
-    entries = dead_letter(migrated_session, failure_signature_threshold=THRESHOLD)
+    entries = dead_letter(
+        migrated_session,
+        failure_signature_threshold=THRESHOLD,
+        stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+    )
 
     units = {entry.work_unit_id: entry for entry in entries if entry.source == "work_unit"}
     assert set(units) == {failed.id, blocked.id, cancelled.id}
@@ -126,7 +142,11 @@ def test_failed_and_blocked_dispatch_records_are_enumerated(migrated_session: Se
     _fail_dispatch(migrated_session, unit, 3, "dispatched")  # not a failure
     migrated_session.commit()
 
-    entries = dead_letter(migrated_session, failure_signature_threshold=THRESHOLD)
+    entries = dead_letter(
+        migrated_session,
+        failure_signature_threshold=THRESHOLD,
+        stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+    )
 
     dispatches = [entry for entry in entries if entry.source == "dispatch_record"]
     assert len(dispatches) == 2
@@ -146,7 +166,11 @@ def test_requeue_eligibility_reflects_the_attempt_budget(migrated_session: Sessi
 
     entries = {
         entry.work_unit_id: entry
-        for entry in dead_letter(migrated_session, failure_signature_threshold=THRESHOLD)
+        for entry in dead_letter(
+            migrated_session,
+            failure_signature_threshold=THRESHOLD,
+            stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+        )
         if entry.source == "work_unit"
     }
 
@@ -160,7 +184,11 @@ def test_the_view_is_read_only(migrated_session: Session) -> None:
     migrated_session.commit()
     before = (unit.state, unit.version)
 
-    dead_letter(migrated_session, failure_signature_threshold=THRESHOLD)
+    dead_letter(
+        migrated_session,
+        failure_signature_threshold=THRESHOLD,
+        stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+    )
 
     migrated_session.expire_all()
     refreshed = migrated_session.get(WorkUnit, unit.id)
@@ -169,4 +197,11 @@ def test_the_view_is_read_only(migrated_session: Session) -> None:
 
 
 def test_a_clean_database_yields_an_empty_view(migrated_session: Session) -> None:
-    assert dead_letter(migrated_session, failure_signature_threshold=THRESHOLD) == ()
+    assert (
+        dead_letter(
+            migrated_session,
+            failure_signature_threshold=THRESHOLD,
+            stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+        )
+        == ()
+    )

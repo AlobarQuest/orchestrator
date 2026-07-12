@@ -153,10 +153,31 @@ criterion.
 
 ## Related findings, not fixed here
 
-- `is_expansion()` (`kernel/authority.py`) has **zero call sites in `src/`**. The CLAUDE.md
-  invariant "authority-expanding standing-context updates require a named human approval bound
-  to the exact standing-context fingerprint" may not be wired to the kernel function that
-  detects expansion. Filed, not fixed — it is out of WS-6.4.0's scope.
+- ~~`is_expansion()` (`kernel/authority.py`) has **zero call sites in `src/`**.~~
+  **RESOLVED by WS-P2.15 (2026-07-12): the function is DELETED.** The resolution matters more
+  than the deletion, so state it precisely — a false equivalence here would be worse than the
+  dead function:
+
+  - The CLAUDE.md invariant **is** enforced, but by `classify_context_update()`
+    (`kernel/context.py`) via `services/context.py::_effective_decision`, which requires an
+    `Approval` with a named `approved_by` bound to the exact `context_fingerprint`.
+  - **It is NOT the same check.** `classify_context_update()` compares *standing contexts* —
+    capability **sets** and authority-profile **rank**. `is_expansion()` compared *authority
+    envelopes* — capability **levels**, **budgets** (`max_attempts`, `max_llm_calls`), and
+    fail-closed on unknown fields. **Budget and capability-level expansion have NO detector.**
+  - That is safe for exactly one reason, and it is **structural, not behavioural**: a work
+    unit's `authority` envelope is **write-once**. It is assigned only at construction (two
+    sites: `services/packages.py`, `services/deployment_observations.py`), so there is no "old
+    vs new" for an envelope comparison to compare. The live budget-raising path (`retry`,
+    `services/claims.py`) raises the **column** `unit.max_attempts` and never touched the
+    envelope — `is_expansion()` never saw it either.
+  - **`tests/architecture/test_authority_write_once.py` now enforces that premise**, scanning
+    attribute assignment, `setattr`, bulk `update().values()`, and in-place JSON mutation. **If
+    WS-P2.4 (cost controls) introduces a path that raises a unit's budget by mutating the
+    envelope, that test goes red and forces a fail-closed check to ship with it.**
+
+  Read that last point as the actual decision: the guard was replaced by a structural invariant
+  that fails loudly, rather than a latent function nobody called.
 - The dispatch gate's `touched ⊆ accepted` branch is only as honest as its producer. Nothing
   structurally prevents a future producer from echoing `accepted = touched`. A tighter gate
   (requiring `status == "green"` and treating acceptance as evidence rather than a bypass) is

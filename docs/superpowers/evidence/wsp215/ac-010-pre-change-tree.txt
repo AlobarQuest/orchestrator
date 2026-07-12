@@ -1,0 +1,7 @@
+# AC-010 — the guard, run against the pre-change tree (main @ 062b260 + the guard file only)
+# It independently identifies BOTH previously-unwired guards. Nothing told it to look for them.
+
+E           orchestrator.kernel.authority.is_expansion (orchestrator/kernel/authority.py:112)
+E           orchestrator.services.dispatch.age_out_human_gates (orchestrator/services/dispatch.py:230)
+E       assert not ['orchestrator.kernel.authority.is_expansion (orchestrator/kernel/authority.py:112)', 'orchestrator.services.dispatch.age_out_human_gates (orchestrator/services/dispatch.py:230)']
+1 failed, 7 passed in 0.39s

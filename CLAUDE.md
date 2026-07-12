@@ -53,7 +53,17 @@ style of that module.
   `CLAUDE.md` unless a repo explicitly provides both files.
 - Generic authority approvals satisfy work-unit readiness only. Authority-expanding
   standing-context updates require a named human approval bound to the exact
-  standing-context fingerprint.
+  standing-context fingerprint — enforced by `classify_context_update()`
+  (`kernel/context.py`) via `services/context.py::_effective_decision`.
+  **That is the STANDING-CONTEXT check, and it is not the whole story.** It compares
+  capability *sets* and authority-profile *rank*. It does **not** check capability
+  *levels* or *budgets*. **Work-unit envelope expansion — including budget expansion —
+  has NO detector at all.** `is_expansion()` was that detector; it had zero callers and
+  WS-P2.15 deleted it. This is safe only because the envelope is **write-once** (assigned
+  at construction, in exactly two places), which
+  `tests/architecture/test_authority_write_once.py` now enforces. **If you add a path that
+  raises a unit's budget or capabilities by mutating the envelope, that test will fail —
+  and you must ship a fail-closed expansion check with it.** Do not "fix" the test.
 - Protocol smoke tests may manipulate time or lease expiry as deterministic fixture
   setup. Runtime recovery behavior itself must go through public API/CLI surfaces,
   not private service shortcuts.
@@ -218,3 +228,42 @@ style of that module.
   blind, since `skipped_correlations` never incremented either. Green unit tests said nothing. When
   adding a service that another subsystem READS, grep for its production caller before believing it
   works — and prefer a drill that drives the public API, which is what actually caught this.
+
+- **`tests/architecture/test_unreachable_guards.py` now answers "can production actually get
+  here?" — and its PREDICATE is the whole design.** WS-P2.15 prototyped two wrong ones first,
+  and both looked fine. (1) *Reference-counting* ("referenced nowhere outside its defining
+  module") flags 11 of 93, eight being public helpers whose callers live in the same module —
+  their allowlist entries would read *"in fact it is called"*, which is the predicate being
+  **wrong** masquerading as an exemption being **justified**. (2) *Name-keyed reachability*
+  flags 3 of 93, looks excellent, and is **blind to 12 of its own subjects**: `cli.py` is a pure
+  HTTP client (it imports **zero** services) whose typer commands are **named identically** to
+  the services they proxy, so seeding roots by NAME marks the *service* reachable via the mere
+  existence of its CLI command. Delete the `dead_letter` route entirely — the WS-P2.1 defect
+  reconstructed — and a name-keyed graph **does not notice**. Hence: nodes are import-resolved
+  `(module, symbol)`. **The guard covers ONE of the two failures WS-P2.1 produced** — it cannot
+  see an endpoint that is reachable but that no *client* calls (that is WS-P2.16 + drills), nor
+  one that is called but wrong (that is the commit/re-read discipline). An allowlist entry that
+  would read "in fact it is called" means the predicate is broken; fix the predicate.
+
+- **`work_units.updated_at` cannot be back-dated — a DB trigger rewrites it on EVERY update.**
+  `set_work_unit_updated_at` (migration 0001) sets `NEW.updated_at = now()` on any UPDATE, so a
+  test or drill that "ages" a unit by writing `updated_at` is silently overwritten and its
+  assertion quietly tests nothing. Exercise staleness by **shrinking the threshold**, never by
+  ageing the row (`reconcile_split_brain_stall_seconds` and
+  `dead_letter_stalled_approval_seconds` are both env-overridable for exactly this). The upside:
+  for a unit parked in an approval state, nothing else touches the row, so `updated_at` genuinely
+  IS "when it entered that state".
+
+- **A nullable, default-disabled threshold is how a guard goes silent.** `age_out_human_gates`
+  was fully implemented, fully unit-tested, and configured by
+  `dispatch_human_gate_age_out_seconds: int | None = None` — it returned `()` immediately when
+  `None`, and it was `None` in production. It reported nothing for an entire workstream and had
+  no production caller either. WS-P2.15 deleted it and made its replacement's threshold a plain
+  `int` with a real default and **no off value**. A reporting obligation that can be switched off
+  is one that will be. **A dead config knob is the same defect as a dead function** — delete both
+  together.
+
+- **Never run two pytest suites against the test database concurrently.** The fixtures drop and
+  recreate `orchestrator_test`, so a background run and a foreground run corrupt each other and
+  produce a spray of unrelated failures (27 failed / 13 errors, on a tree that passes 1210/1210
+  when run alone). Before believing a suite-wide regression, re-run it *alone*.

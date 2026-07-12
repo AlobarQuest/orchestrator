@@ -40,9 +40,14 @@ FORBIDDEN = {
 }
 
 
-def test_there_are_four_drills() -> None:
-    """AC-010 promises four scripted drills. A drill that is deleted must be noticed."""
-    assert len(DRILLS) == 4, [drill.name for drill in DRILLS]
+def test_the_drills_are_all_present() -> None:
+    """A drill that is deleted must be noticed.
+
+    WS-P2.1 promised four (crash, evidence recovery, external PR conflict, deploy split-brain).
+    WS-P2.15 adds the fifth: a human approval gate nobody answers -- the one failure mode where
+    doing nothing IS the bug, and where the system must report rather than resolve.
+    """
+    assert len(DRILLS) == 5, [drill.name for drill in DRILLS]
 
 
 @pytest.mark.parametrize("drill", DRILLS, ids=lambda p: p.name)

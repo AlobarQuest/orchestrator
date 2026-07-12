@@ -1,17 +1,39 @@
-"""The dead-letter view (AC-005): terminal failures made visible.
+"""The dead-letter view: terminal failures AND stalled approval gates made visible.
 
 Derived LIVE from the source tables. There is no materialized dead-letter queue, so there is
 nothing to drift out of sync with the reality it reports. Read-only: this module performs no
 write, no transition, and no commit.
+
+WS-P2.15 widened the view's contract. It used to report only terminal failures. It now also
+reports STALLED APPROVAL GATES -- a unit sitting in `awaiting_approval` or `awaiting_review`
+that no human has answered past a threshold.
+
+Two things about that, both deliberate:
+
+  * It is a DERIVED READ, not a written record. A stalled gate is not an event that happened;
+    it is a fact about the present -- a predicate over (state, updated_at). The predecessor
+    design wrote a `blocked` DispatchRecord instead, which (a) could not use runner_attempt=0
+    (`CheckConstraint("runner_attempt > 0")`), and (b) with any other runner_attempt silently
+    consumed a dispatch slot, so a later genuine dispatch of the same unit would be
+    short-circuited into returning the stale record and never dispatch. When every variant of
+    a mechanism is broken, the mechanism is wrong. `_open_circuit_breakers` below is the
+    precedent: also derived, also unpersisted.
+
+  * SILENCE IS NEVER APPROVAL. This REPORTS. It transitions nothing, and it cannot: every edge
+    out of an approval state requires a named HUMAN actor (asserted in
+    tests/kernel/test_approval_edges_require_a_human.py). A stalled gate is therefore reported
+    and NOT requeue-eligible -- which falls out of the existing `_requeue_eligible` predicate
+    for free, since an approval state is not in REQUEUE_STATES.
 """
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from orchestrator.clock import TransactionClock
 from orchestrator.persistence.models import Claim, DispatchRecord, WorkUnit
 from orchestrator.services.dispatch import circuit_open
 
@@ -20,6 +42,8 @@ DEAD_LETTER_DISPATCH_STATUSES = ("failed", "blocked")
 # `blocked` is here because requeue TARGETS it. An action whose subject is invisible in the
 # surface it is offered from is not an operator affordance.
 REQUEUE_STATES = ("failed", "blocked")
+# The gates a human must answer. Nothing here can be answered by time passing.
+APPROVAL_STATES = ("awaiting_approval", "awaiting_review")
 
 
 @dataclass(frozen=True)
@@ -40,11 +64,48 @@ def dead_letter(
     session: Session,
     *,
     failure_signature_threshold: int,
+    stalled_approval_seconds: int,
 ) -> tuple[DeadLetterEntry, ...]:
+    """`stalled_approval_seconds` is a plain int on purpose. It has no "off" value.
+
+    Its predecessor was `int | None = None`, and that None is precisely why the age-out it
+    configured sat unwired and invisible for an entire workstream. A reporting obligation that
+    can be switched off is a reporting obligation that will be.
+    """
     return (
         *_terminal_units(session),
         *_failed_dispatch_records(session),
         *_open_circuit_breakers(session, failure_signature_threshold),
+        *_stalled_approvals(session, stalled_approval_seconds),
+    )
+
+
+def _stalled_approvals(
+    session: Session, stalled_approval_seconds: int
+) -> tuple[DeadLetterEntry, ...]:
+    """A human gate nobody answered. Reported, never resolved -- silence is not approval."""
+    cutoff = TransactionClock().now(session) - timedelta(seconds=stalled_approval_seconds)
+    units = session.scalars(
+        select(WorkUnit)
+        .where(WorkUnit.state.in_(APPROVAL_STATES), WorkUnit.updated_at <= cutoff)
+        .order_by(WorkUnit.updated_at, WorkUnit.id)
+    ).all()
+    return tuple(
+        DeadLetterEntry(
+            source="stalled_approval",
+            work_unit_id=unit.id,
+            unit_key=unit.unit_key,
+            unit_state=unit.state,
+            reason_code="approval_unanswered",
+            detail=f"awaiting a human decision since {unit.updated_at.isoformat()}",
+            attempt_count=unit.attempt_count,
+            max_attempts=unit.max_attempts,
+            # False, from the existing predicate: an approval state is not a REQUEUE_STATE.
+            # A stalled gate needs a human decision, not a retry.
+            requeue_eligible=_requeue_eligible(unit),
+            occurred_at=unit.updated_at,
+        )
+        for unit in units
     )
 
 

@@ -20,6 +20,10 @@ from tests.services.test_claims import worker
 from tests.services.test_dependencies import register_unit
 from tests.services.test_reclaim import authorize_readiness
 
+# Long enough that nothing in these fixtures is stale; the stalled-approval
+# report has its own tests.
+STALLED_APPROVAL_SECONDS = 604_800
+
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 WORKER = ActorContext("worker-1", ActorRole.WORKER)
 
@@ -87,7 +91,11 @@ def test_requeue_refuses_an_exhausted_unit_and_it_stays_visible(
     assert refreshed.state == WorkUnitState.FAILED  # unchanged
     visible = {
         entry.work_unit_id
-        for entry in dead_letter(migrated_session, failure_signature_threshold=3)
+        for entry in dead_letter(
+            migrated_session,
+            failure_signature_threshold=3,
+            stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+        )
         if entry.source == "work_unit"
     }
     assert unit.id in visible  # still visible, still actionable via retry
