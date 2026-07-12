@@ -105,6 +105,14 @@ KNOWLEDGE_PROMOTION_TARGET_TYPES = ("lesson", "rule")
 KNOWLEDGE_PROMOTION_AUTHORITIES = ("informational", "recommended", "required")
 KNOWLEDGE_PROMOTION_ACTIONS = ("submitted_to_brain", "rejected")
 PRODUCTION_DRILL_RUN_STATUSES = ("open", "asserting", "closed", "failed")
+PRODUCTION_DRILL_RESOURCE_TYPES = (
+    "work_unit",
+    "evidence",
+    "observation",
+    "reconciliation_condition",
+    "release_artifact",
+    "deployment_observation",
+)
 
 # `release_artifacts` writes one evidence row per binding under this constant ac_id, always with
 # supersedes_evidence_id IS NULL. A unit may legitimately carry several bindings, so this triple
@@ -192,6 +200,26 @@ class ProductionDrillRun(UUIDPrimaryKey, Base):
     openapi_digest: Mapped[str] = mapped_column(String)
     closure_reason: Mapped[str | None] = mapped_column(Text)
     revision: Mapped[WorkPackageRevision] = relationship()
+
+
+class ProductionDrillResource(UUIDPrimaryKey, Base):
+    __tablename__ = "production_drill_resources"
+    __table_args__ = (
+        UniqueConstraint(
+            "resource_type", "resource_id", name="uq_production_drill_resources_owner"
+        ),
+        CheckConstraint(
+            f"resource_type IN {PRODUCTION_DRILL_RESOURCE_TYPES!r}",
+            name="ck_production_drill_resources_type",
+        ),
+    )
+
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("production_drill_runs.id"))
+    resource_type: Mapped[str] = mapped_column(String)
+    resource_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    run: Mapped[ProductionDrillRun] = relationship()
 
 
 WORK_UNIT_STATES = (

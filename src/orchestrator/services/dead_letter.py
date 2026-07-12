@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.persistence.models import Claim, DispatchRecord, WorkUnit
 from orchestrator.services.dispatch import circuit_open
+from orchestrator.services.production_drill_resources import is_not_production_drill_resource
 
 DEAD_LETTER_UNIT_STATES = ("failed", "blocked", "cancelled")
 DEAD_LETTER_DISPATCH_STATUSES = ("failed", "blocked")
@@ -65,6 +66,7 @@ def dead_letter(
     *,
     failure_signature_threshold: int,
     stalled_approval_seconds: int,
+    include_production_drill_resources: bool = False,
 ) -> tuple[DeadLetterEntry, ...]:
     """`stalled_approval_seconds` is a plain int on purpose. It has no "off" value.
 
@@ -73,23 +75,27 @@ def dead_letter(
     can be switched off is a reporting obligation that will be.
     """
     return (
-        *_terminal_units(session),
-        *_failed_dispatch_records(session),
-        *_open_circuit_breakers(session, failure_signature_threshold),
-        *_stalled_approvals(session, stalled_approval_seconds),
+        *_terminal_units(session, include_production_drill_resources),
+        *_failed_dispatch_records(session, include_production_drill_resources),
+        *_open_circuit_breakers(
+            session, failure_signature_threshold, include_production_drill_resources
+        ),
+        *_stalled_approvals(session, stalled_approval_seconds, include_production_drill_resources),
     )
 
 
 def _stalled_approvals(
-    session: Session, stalled_approval_seconds: int
+    session: Session, stalled_approval_seconds: int, include_production_drill_resources: bool
 ) -> tuple[DeadLetterEntry, ...]:
     """A human gate nobody answered. Reported, never resolved -- silence is not approval."""
     cutoff = TransactionClock().now(session) - timedelta(seconds=stalled_approval_seconds)
-    units = session.scalars(
+    statement = (
         select(WorkUnit)
         .where(WorkUnit.state.in_(APPROVAL_STATES), WorkUnit.updated_at <= cutoff)
-        .order_by(WorkUnit.updated_at, WorkUnit.id)
-    ).all()
+    )
+    if not include_production_drill_resources:
+        statement = statement.where(is_not_production_drill_resource("work_unit", WorkUnit.id))
+    units = session.scalars(statement.order_by(WorkUnit.updated_at, WorkUnit.id)).all()
     return tuple(
         DeadLetterEntry(
             source="stalled_approval",
@@ -109,12 +115,13 @@ def _stalled_approvals(
     )
 
 
-def _terminal_units(session: Session) -> tuple[DeadLetterEntry, ...]:
-    units = session.scalars(
-        select(WorkUnit)
-        .where(WorkUnit.state.in_(DEAD_LETTER_UNIT_STATES))
-        .order_by(WorkUnit.unit_key, WorkUnit.id)
-    ).all()
+def _terminal_units(
+    session: Session, include_production_drill_resources: bool
+) -> tuple[DeadLetterEntry, ...]:
+    statement = select(WorkUnit).where(WorkUnit.state.in_(DEAD_LETTER_UNIT_STATES))
+    if not include_production_drill_resources:
+        statement = statement.where(is_not_production_drill_resource("work_unit", WorkUnit.id))
+    units = session.scalars(statement.order_by(WorkUnit.unit_key, WorkUnit.id)).all()
     return tuple(_unit_entry(session, unit) for unit in units)
 
 
@@ -139,12 +146,18 @@ def _unit_entry(session: Session, unit: WorkUnit) -> DeadLetterEntry:
     )
 
 
-def _failed_dispatch_records(session: Session) -> tuple[DeadLetterEntry, ...]:
-    rows = session.execute(
+def _failed_dispatch_records(
+    session: Session, include_production_drill_resources: bool
+) -> tuple[DeadLetterEntry, ...]:
+    statement = (
         select(DispatchRecord, WorkUnit)
         .join(WorkUnit, WorkUnit.id == DispatchRecord.work_unit_id)
         .where(DispatchRecord.status.in_(DEAD_LETTER_DISPATCH_STATUSES))
-        .order_by(WorkUnit.unit_key, DispatchRecord.runner_attempt, DispatchRecord.id)
+    )
+    if not include_production_drill_resources:
+        statement = statement.where(is_not_production_drill_resource("work_unit", WorkUnit.id))
+    rows = session.execute(
+        statement.order_by(WorkUnit.unit_key, DispatchRecord.runner_attempt, DispatchRecord.id)
     ).all()
     return tuple(
         DeadLetterEntry(
@@ -166,6 +179,7 @@ def _failed_dispatch_records(session: Session) -> tuple[DeadLetterEntry, ...]:
 def _open_circuit_breakers(
     session: Session,
     failure_signature_threshold: int,
+    include_production_drill_resources: bool,
 ) -> tuple[DeadLetterEntry, ...]:
     """Derived -- there is no persisted breaker entity; "open" is a predicate over the records.
 
@@ -174,7 +188,7 @@ def _open_circuit_breakers(
     report a breaker open one failure early -- flagging a unit as circuit-broken while it still
     has a dispatch left. One shared predicate, two tenses; the `+ 1` lives only at dispatch.
     """
-    grouped = session.execute(
+    statement = (
         select(
             DispatchRecord.work_unit_id,
             DispatchRecord.failure_signature,
@@ -185,7 +199,13 @@ def _open_circuit_breakers(
             DispatchRecord.status.in_(DEAD_LETTER_DISPATCH_STATUSES),
         )
         .group_by(DispatchRecord.work_unit_id, DispatchRecord.failure_signature)
-        .order_by(DispatchRecord.work_unit_id, DispatchRecord.failure_signature)
+    )
+    if not include_production_drill_resources:
+        statement = statement.where(
+            is_not_production_drill_resource("work_unit", DispatchRecord.work_unit_id)
+        )
+    grouped = session.execute(
+        statement.order_by(DispatchRecord.work_unit_id, DispatchRecord.failure_signature)
     ).all()
     entries: list[DeadLetterEntry] = []
     for unit_id, signature, failures in grouped:

@@ -23,6 +23,10 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.claims import release_claim, validate_active_claim
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.production_drill_resources import (
+    bind_production_drill_resource,
+    require_production_drill_resource,
+)
 
 NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57503338
@@ -85,6 +89,12 @@ def append_evidence(
     )
 
 
+def append_production_drill_evidence(
+    session: Session, *, run_id: uuid.UUID, **kwargs: Any
+) -> Evidence | DomainError:
+    return _store_production_drill_evidence(session, run_id, kwargs, supersede=False)
+
+
 def supersede_evidence(
     session: Session,
     *,
@@ -119,6 +129,38 @@ def supersede_evidence(
         context_snapshot_id=context_snapshot_id,
         supersede=True,
     )
+
+
+def supersede_production_drill_evidence(
+    session: Session, *, run_id: uuid.UUID, **kwargs: Any
+) -> Evidence | DomainError:
+    return _store_production_drill_evidence(session, run_id, kwargs, supersede=True)
+
+
+def _store_production_drill_evidence(
+    session: Session, run_id: uuid.UUID, kwargs: dict[str, Any], *, supersede: bool
+) -> Evidence | DomainError:
+    try:
+        require_production_drill_resource(session, run_id, "work_unit", kwargs["work_unit_id"])
+        evidence = _store_evidence(session, **kwargs, supersede=supersede, commit=False)
+        assert not isinstance(evidence, DomainError)
+        bind_production_drill_resource(session, run_id, "evidence", evidence.id)
+        session.commit()
+        return evidence
+    except DomainError as error:
+        session.rollback()
+        return error
+    except IntegrityError as error:
+        session.rollback()
+        del error
+        return DomainError(
+            "evidence_conflict",
+            "evidence conflicts with an existing record",
+            "reload the current evidence before retrying",
+        )
+    except Exception:
+        session.rollback()
+        raise
 
 
 def append_verifier_evidence(
@@ -322,7 +364,9 @@ def _store_evidence(
     expected_version: int | None,
     context_snapshot_id: uuid.UUID | None,
     supersede: bool,
+    commit: bool = True,
 ) -> Evidence | DomainError:
+    finish = session.commit if commit else _no_op
     command = {
         "ac_id": ac_id,
         "actor_id": actor.actor_id,
@@ -344,7 +388,7 @@ def _store_evidence(
         unit, revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         replay = _evidence_replay(session, idempotency_key, command)
         if replay is not None:
-            session.commit()
+            finish()
             return replay
         if expected_version is not None and unit.version != expected_version:
             raise DomainError(
@@ -409,17 +453,46 @@ def _store_evidence(
                 idempotency_key,
             )
         )
-        session.commit()
+        finish()
         return row
     except DomainError as error:
-        session.rollback()
-        return error
+        return _handle_evidence_domain_error(session, error, commit)
     except IntegrityError as error:
-        session.rollback()
-        return _evidence_race_result(session, idempotency_key, command, error)
+        return _handle_evidence_integrity_error(session, idempotency_key, command, error, commit)
     except Exception:
-        session.rollback()
+        _rollback_evidence_write(session, commit)
         raise
+
+
+def _no_op() -> None:
+    return None
+
+
+def _handle_evidence_domain_error(
+    session: Session, error: DomainError, commit: bool
+) -> DomainError:
+    if not commit:
+        raise error
+    session.rollback()
+    return error
+
+
+def _handle_evidence_integrity_error(
+    session: Session,
+    idempotency_key: str,
+    command: dict[str, Any],
+    error: IntegrityError,
+    commit: bool,
+) -> Evidence | DomainError:
+    if not commit:
+        raise error
+    session.rollback()
+    return _evidence_race_result(session, idempotency_key, command, error)
+
+
+def _rollback_evidence_write(session: Session, commit: bool) -> None:
+    if commit:
+        session.rollback()
 
 
 def _store_verifier_evidence(

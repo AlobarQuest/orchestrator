@@ -29,11 +29,17 @@ from orchestrator.persistence.models import (
     DecompositionProposalUnit,
     Dependency,
     Event,
+    ReleaseArtifactBinding,
     WorkPackage,
     WorkPackageRevision,
     WorkUnit,
 )
 from orchestrator.persistence.repositories import PackageRepository
+from orchestrator.services.production_drill_resources import (
+    bind_production_drill_resource,
+    require_open_production_drill_run,
+    require_production_drill_resource,
+)
 
 
 @dataclass(frozen=True)
@@ -371,6 +377,42 @@ def register_approved_unit(
     for dependency in dependencies:
         register_dependency(session, work_unit_id=unit.id, spec=dependency)
     _record_registration(session, unit.id, actor_id, idempotency_key, command)
+    return unit
+
+
+def register_production_drill_unit(
+    session: Session, *, run_id: uuid.UUID, **kwargs: Any
+) -> WorkUnit:
+    run = require_open_production_drill_run(session, run_id)
+    if kwargs["revision_id"] != run.revision_id:
+        raise DomainError(
+            "production_drill_resource_revision_mismatch",
+            "work unit does not belong to the production drill revision",
+            None,
+        )
+    unit = register_approved_unit(session, **kwargs)
+    bind_production_drill_resource(session, run_id, "work_unit", unit.id)
+    return unit
+
+
+def bind_production_drill_release_artifact(
+    session: Session, *, run_id: uuid.UUID, binding_id: uuid.UUID
+) -> ReleaseArtifactBinding:
+    binding = session.get(ReleaseArtifactBinding, binding_id)
+    if binding is None:
+        raise DomainError("release_artifact_not_found", "release artifact does not exist", None)
+    require_production_drill_resource(session, run_id, "work_unit", binding.work_unit_id)
+    bind_production_drill_resource(session, run_id, "release_artifact", binding.id)
+    return binding
+
+
+def bind_production_drill_post_deploy_unit(
+    session: Session, *, run_id: uuid.UUID, unit_id: uuid.UUID
+) -> WorkUnit:
+    unit = session.get(WorkUnit, unit_id)
+    if unit is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    bind_production_drill_resource(session, run_id, "work_unit", unit.id)
     return unit
 
 

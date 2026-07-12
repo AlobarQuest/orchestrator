@@ -41,6 +41,10 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.production_drill_resources import (
+    bind_production_drill_resource,
+    require_production_drill_resource,
+)
 
 # Distinct from evidence (0x57503338), observations (0x57533631) and the evidence-head recovery
 # lock (0x57503232), so a lock taken here can never serialize against an unrelated ingress.
@@ -123,6 +127,32 @@ def record_reconciliation_condition(
     except IntegrityError:
         # Constraint-name agnostic on purpose: the idempotency and divergence uniques are
         # equivalent by key derivation, and which one PostgreSQL reports is not contractual.
+        session.rollback()
+        return DomainError(
+            "reconciliation_conflict",
+            "condition conflicts with an existing reconciliation condition",
+            "re-run detection; an equivalent condition is already recorded",
+        )
+    except Exception:
+        session.rollback()
+        raise
+
+
+def record_production_drill_reconciliation_condition(
+    session: Session, *, run_id: uuid.UUID, command: ConditionCommand
+) -> ConditionOutcome | DomainError:
+    try:
+        require_production_drill_resource(session, run_id, "work_unit", command.work_unit_id)
+        outcome = _record_condition(session, command)
+        bind_production_drill_resource(
+            session, run_id, "reconciliation_condition", outcome.condition.id
+        )
+        session.commit()
+        return outcome
+    except DomainError as error:
+        session.rollback()
+        return error
+    except IntegrityError:
         session.rollback()
         return DomainError(
             "reconciliation_conflict",

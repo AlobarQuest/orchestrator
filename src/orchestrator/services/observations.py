@@ -25,6 +25,7 @@ from orchestrator.persistence.models import (
     Observation,
 )
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.production_drill_resources import bind_production_drill_resource
 from orchestrator.services.release_artifacts import SHA256_DIGEST
 
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533631
@@ -85,6 +86,29 @@ def record_observation(session: Session, command: ObservationCommand) -> Observa
         row = _record_observation(session, command)
         session.commit()
         return row
+    except DomainError as error:
+        session.rollback()
+        return error
+    except IntegrityError:
+        session.rollback()
+        return DomainError(
+            "observation_conflict",
+            "observation conflicts with an existing source reference",
+            "verify normalized facts before retrying",
+        )
+    except Exception:
+        session.rollback()
+        raise
+
+
+def record_production_drill_observation(
+    session: Session, *, run_id: uuid.UUID, command: ObservationCommand
+) -> Observation | DomainError:
+    try:
+        observation = _record_observation(session, command)
+        bind_production_drill_resource(session, run_id, "observation", observation.id)
+        session.commit()
+        return observation
     except DomainError as error:
         session.rollback()
         return error

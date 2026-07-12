@@ -24,6 +24,7 @@ from orchestrator.persistence.models import (
     UnitPrBinding,
     WorkUnit,
 )
+from orchestrator.services.production_drill_resources import is_not_production_drill_resource
 
 IN_FLIGHT_STATES = (
     WorkUnitState.READY,
@@ -74,20 +75,27 @@ def in_flight_snapshot(
     session: Session,
     *,
     completed_binding_window_hours: int = COMPLETED_BINDING_WINDOW_HOURS,
+    include_production_drill_resources: bool = False,
 ) -> InFlightSnapshot:
     return InFlightSnapshot(
-        units=_in_flight_units(session),
-        release_bindings=_release_bindings(session, completed_binding_window_hours),
+        units=_in_flight_units(session, include_production_drill_resources),
+        release_bindings=_release_bindings(
+            session, completed_binding_window_hours, include_production_drill_resources
+        ),
     )
 
 
-def _in_flight_units(session: Session) -> tuple[InFlightUnitView, ...]:
-    rows = session.execute(
+def _in_flight_units(
+    session: Session, include_production_drill_resources: bool
+) -> tuple[InFlightUnitView, ...]:
+    statement = (
         select(WorkUnit, UnitPrBinding)
         .outerjoin(UnitPrBinding, UnitPrBinding.work_unit_id == WorkUnit.id)
         .where(WorkUnit.state.in_([state.value for state in IN_FLIGHT_STATES]))
-        .order_by(WorkUnit.created_at, WorkUnit.id)
-    ).all()
+    )
+    if not include_production_drill_resources:
+        statement = statement.where(is_not_production_drill_resource("work_unit", WorkUnit.id))
+    rows = session.execute(statement.order_by(WorkUnit.created_at, WorkUnit.id)).all()
     return tuple(
         InFlightUnitView(
             work_unit_id=unit.id,
@@ -107,17 +115,26 @@ def _in_flight_units(session: Session) -> tuple[InFlightUnitView, ...]:
 
 
 def _release_bindings(
-    session: Session, completed_binding_window_hours: int
+    session: Session,
+    completed_binding_window_hours: int,
+    include_production_drill_resources: bool,
 ) -> tuple[ReleaseBindingView, ...]:
     cutoff = datetime.now(UTC) - timedelta(hours=completed_binding_window_hours)
-    rows = session.execute(
+    statement = (
         select(ReleaseArtifactBinding, WorkUnit)
         .join(WorkUnit, WorkUnit.id == ReleaseArtifactBinding.work_unit_id)
         .where(
             WorkUnit.state.in_([state.value for state in IN_FLIGHT_STATES])
             | (ReleaseArtifactBinding.recorded_at >= cutoff)
         )
-        .order_by(ReleaseArtifactBinding.recorded_at, ReleaseArtifactBinding.id)
+    )
+    if not include_production_drill_resources:
+        statement = statement.where(
+            is_not_production_drill_resource("work_unit", WorkUnit.id),
+            is_not_production_drill_resource("release_artifact", ReleaseArtifactBinding.id),
+        )
+    rows = session.execute(
+        statement.order_by(ReleaseArtifactBinding.recorded_at, ReleaseArtifactBinding.id)
     ).all()
 
     views: list[ReleaseBindingView] = []
