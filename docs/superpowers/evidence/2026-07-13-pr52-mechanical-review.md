@@ -155,8 +155,9 @@ The pipeline's aggregate status was not captured independently; without `pipefai
 `tee`, not the scanner. The scanner component status was captured immediately from zsh
 `pipestatus[1]` as `1`. Its log shows that bare `python3` resolved to Apple's Python 3.9 and failed
 importing standard-library `tomllib` before any scan ran. The subsequent literal `rg` command exited
-`1` because the failure log contained no BLOCK summary. The security-standards repository itself
-documents this interpreter hazard and requires Python 3.12 or its repository virtual environment.
+`1` because the failure log contained no BLOCK summary. The security-standards package requires
+Python 3.12 or newer; this shell's bare `python3` does not satisfy that requirement, so the
+repository virtual environment was used for the supported rerun.
 
 The supported equivalent was then run:
 
