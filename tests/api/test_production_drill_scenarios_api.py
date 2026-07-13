@@ -4,7 +4,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.api.test_lifecycle_api import HUMAN, OTHER_SYSTEM, SYSTEM, WORKER
-from tests.api.test_production_drills_api import create_revision, start_body
+from tests.api.test_production_drills_api import (
+    create_revision,
+    record_runtime_observation,
+    start_body,
+)
 
 SCENARIOS = (
     "crash_recovery",
@@ -25,8 +29,11 @@ FAILURE_CODES = (
 
 def _run(client: TestClient, *, key: str) -> str:
     revision_id = create_revision(client, key=key)
+    runtime_observation_id = record_runtime_observation(client, key=key)
     response = client.post(
-        "/api/v1/production-drills", headers=HUMAN, json=start_body(revision_id, key=f"{key}-start")
+        "/api/v1/production-drills",
+        headers=HUMAN,
+        json=start_body(revision_id, runtime_observation_id, key=f"{key}-start"),
     )
     assert response.status_code == 201
     return response.json()["id"]

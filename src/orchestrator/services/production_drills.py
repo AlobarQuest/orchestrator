@@ -55,9 +55,11 @@ from orchestrator.services.release_artifacts import (
     ReleaseArtifactCommand,
     record_production_drill_release_artifact,
 )
+from orchestrator.services.runtime_observations import get_runtime_observation
 
 PRODUCTION_DRILL_IDEMPOTENCY_LOCK_NAMESPACE = 0x5044524C
 _SCENARIO_ATOMIC_SESSION_KEY = "production_drill_scenario_atomic"
+MAX_RUNTIME_OBSERVATION_AGE = timedelta(minutes=5)
 
 
 @contextmanager
@@ -78,9 +80,7 @@ class StartProductionDrill:
     actor: ActorContext
     idempotency_key: str
     expected_version: int
-    image_ref: str
-    image_digest: str
-    openapi_digest: str
+    runtime_observation_id: uuid.UUID
     lease_duration_seconds: int = MIN_PRODUCTION_DRILL_DEADLINE_SECONDS
     reporting_deadline_seconds: int = MIN_PRODUCTION_DRILL_DEADLINE_SECONDS
 
@@ -420,6 +420,10 @@ def _start_production_drill(session: Session, command: StartProductionDrill) -> 
     authorization = _revision_approval_provenance(revision)
 
     now = TransactionClock().now(session)
+    runtime_observation = get_runtime_observation(session, command.runtime_observation_id)
+    if isinstance(runtime_observation, DomainError):
+        raise runtime_observation
+    _require_fresh_runtime_observation(runtime_observation.observed_at, now)
     run_id = uuid.uuid4()
     session.add(
         Event(
@@ -447,9 +451,10 @@ def _start_production_drill(session: Session, command: StartProductionDrill) -> 
         opened_at=now,
         closed_at=None,
         status="open",
-        image_ref=command.image_ref,
-        image_digest=command.image_digest,
-        openapi_digest=command.openapi_digest,
+        image_ref=runtime_observation.configured_image_ref,
+        image_digest=runtime_observation.observed_image_digest,
+        openapi_digest=runtime_observation.openapi_sha256,
+        runtime_observation_id=runtime_observation.id,
         closure_reason=None,
     )
     session.add(run)
@@ -1534,9 +1539,7 @@ def _command_payload(command: StartProductionDrill) -> dict[str, object]:
         "actor_role": command.actor.role.value,
         "revision_id": str(command.revision_id),
         "expected_version": command.expected_version,
-        "image_ref": command.image_ref,
-        "image_digest": command.image_digest,
-        "openapi_digest": command.openapi_digest,
+        "runtime_observation_id": str(command.runtime_observation_id),
         "lease_duration_seconds": command.lease_duration_seconds,
         "reporting_deadline_seconds": command.reporting_deadline_seconds,
     }
@@ -1595,6 +1598,16 @@ def _require_deadlines(command: StartProductionDrill) -> None:
                 "production drill deadline exceeds configured maximum",
                 None,
             )
+
+
+def _require_fresh_runtime_observation(observed_at: datetime, now: datetime) -> None:
+    age = now - observed_at
+    if age < timedelta(0) or age > MAX_RUNTIME_OBSERVATION_AGE:
+        raise DomainError(
+            "runtime_observation_stale",
+            "production drill start requires a runtime observation from the last five minutes",
+            "record a fresh runtime observation before starting the production drill",
+        )
 
 
 def _idempotency_conflict() -> DomainError:

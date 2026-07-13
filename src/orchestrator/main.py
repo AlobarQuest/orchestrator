@@ -75,7 +75,14 @@ def load_auth_config() -> AuthConfig | None:
         production_drill_credential_key_id = _required_environment(
             "ORCHESTRATOR_PRODUCTION_DRILL_CREDENTIAL_KEY_ID"
         )
-        if roles.get(production_drill_credential_key_id) is not ActorRole.SYSTEM:
+        runtime_observer_credential_key_id = _required_environment(
+            "ORCHESTRATOR_RUNTIME_OBSERVER_CREDENTIAL_KEY_ID"
+        )
+        if (
+            roles.get(production_drill_credential_key_id) is not ActorRole.SYSTEM
+            or roles.get(runtime_observer_credential_key_id) is not ActorRole.SYSTEM
+            or runtime_observer_credential_key_id == production_drill_credential_key_id
+        ):
             raise RuntimeError("invalid runtime authentication configuration")
         marker = _required_environment("ORCHESTRATOR_PROXY_MARKER")
         csrf_secret = _required_environment("ORCHESTRATOR_CSRF_SECRET").encode()
@@ -91,6 +98,7 @@ def load_auth_config() -> AuthConfig | None:
             email_to_actor=email_to_actor,
             m2m_roles=roles,
             production_drill_credential_key_id=production_drill_credential_key_id,
+            runtime_observer_credential_key_id=runtime_observer_credential_key_id,
             credential_key_header=os.environ.get(
                 "ORCHESTRATOR_CREDENTIAL_KEY_HEADER", "X-Credential-Key-Id"
             ),

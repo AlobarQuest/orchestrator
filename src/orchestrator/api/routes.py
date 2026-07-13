@@ -9,7 +9,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from orchestrator.api.dependencies import get_actor, get_production_drill_actor, get_session
+from orchestrator.api.dependencies import (
+    get_actor,
+    get_production_drill_actor,
+    get_runtime_observer_actor,
+    get_session,
+)
 from orchestrator.api.schemas import (
     AdjudicationCommand,
     AdjudicationResponse,
@@ -77,6 +82,8 @@ from orchestrator.api.schemas import (
     RevisionRegistration,
     RevisionResponse,
     RunnerBriefResponse,
+    RuntimeObservationCommandModel,
+    RuntimeObservationResponse,
     StartProductionDrillCommand,
     StatusLedgerRowResponse,
     TransitionResponse,
@@ -217,6 +224,10 @@ from orchestrator.services.release_artifacts import (
     record_release_artifact,
 )
 from orchestrator.services.runner_brief import runner_brief
+from orchestrator.services.runtime_observations import (
+    RuntimeObservationCommand,
+    record_runtime_observation,
+)
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 
@@ -276,6 +287,33 @@ def _parse_datetime_filter(value: str | None, field: str) -> datetime | None:
 
 
 @router.post(
+    "/runtime-observations",
+    response_model=RuntimeObservationResponse,
+    status_code=201,
+)
+def create_runtime_observation(
+    body: RuntimeObservationCommandModel,
+    actor: Annotated[ActorContext, Depends(get_runtime_observer_actor)],
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        record_runtime_observation(
+            session,
+            RuntimeObservationCommand(
+                actor=actor,
+                container_id=body.container_id,
+                configured_image_ref=body.configured_image_ref,
+                observed_image_digest=body.observed_image_digest,
+                openapi_sha256=body.openapi_sha256,
+                observed_at=body.observed_at,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+            ),
+        )
+    )
+
+
+@router.post(
     "/production-drills",
     response_model=ProductionDrillRunResponse,
     status_code=201,
@@ -293,9 +331,7 @@ def create_production_drill(
                 actor=actor,
                 idempotency_key=body.idempotency_key,
                 expected_version=body.expected_version,
-                image_ref=body.image_ref,
-                image_digest=body.image_digest,
-                openapi_digest=body.openapi_digest,
+                runtime_observation_id=body.runtime_observation_id,
                 lease_duration_seconds=body.lease_duration_seconds,
                 reporting_deadline_seconds=body.reporting_deadline_seconds,
             ),

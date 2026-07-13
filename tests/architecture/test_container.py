@@ -61,14 +61,23 @@ def test_runtime_auth_loads_embedded_registry_and_fails_closed(
     monkeypatch.setenv("ORCHESTRATOR_REGISTRY_BUNDLE", str(bundle))
     monkeypatch.setenv(
         "ORCHESTRATOR_M2M_CREDENTIALS",
-        json.dumps({"worker-key": {"agent_id": "worker", "token_hash": "a" * 64}}),
+        json.dumps(
+            {
+                "worker-key": {"agent_id": "worker", "token_hash": "a" * 64},
+                "observer-key": {"agent_id": "runtime-observer", "token_hash": "b" * 64},
+            }
+        ),
     )
     monkeypatch.setenv("ORCHESTRATOR_TRUSTED_PROXY_IPS", '["127.0.0.1"]')
     monkeypatch.setenv("ORCHESTRATOR_PROXY_MARKER", "trusted-marker")
     monkeypatch.setenv("ORCHESTRATOR_EMAIL_TO_ACTOR", '{"devon@example.invalid":"devon"}')
-    monkeypatch.setenv("ORCHESTRATOR_M2M_ROLES", '{"worker-key":"system"}')
+    monkeypatch.setenv(
+        "ORCHESTRATOR_M2M_ROLES",
+        '{"worker-key":"system","observer-key":"system"}',
+    )
     monkeypatch.setenv("ORCHESTRATOR_CSRF_SECRET", "x" * 32)
     monkeypatch.setenv("ORCHESTRATOR_PRODUCTION_DRILL_CREDENTIAL_KEY_ID", "worker-key")
+    monkeypatch.setenv("ORCHESTRATOR_RUNTIME_OBSERVER_CREDENTIAL_KEY_ID", "observer-key")
 
     config = load_auth_config()
 
@@ -76,6 +85,11 @@ def test_runtime_auth_loads_embedded_registry_and_fails_closed(
     assert config.registry.source_revision == "0123456789abcdef0123456789abcdef01234567"
     assert config.m2m_credentials["worker-key"].agent_id == "worker"
     assert config.production_drill_credential_key_id == "worker-key"
+    assert config.runtime_observer_credential_key_id == "observer-key"
+    monkeypatch.setenv("ORCHESTRATOR_RUNTIME_OBSERVER_CREDENTIAL_KEY_ID", "worker-key")
+    with pytest.raises(RuntimeError, match="runtime authentication configuration"):
+        load_auth_config()
+    monkeypatch.setenv("ORCHESTRATOR_RUNTIME_OBSERVER_CREDENTIAL_KEY_ID", "observer-key")
     monkeypatch.delenv("ORCHESTRATOR_CSRF_SECRET")
     with pytest.raises(RuntimeError, match="runtime authentication configuration"):
         load_auth_config()

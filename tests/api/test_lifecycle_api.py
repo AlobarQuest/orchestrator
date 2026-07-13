@@ -63,6 +63,10 @@ OTHER_SYSTEM = {
     "Authorization": "Bearer system-alt-token",
     "X-Credential-Key-Id": "system-alt-key",
 }
+RUNTIME_OBSERVER = {
+    "Authorization": "Bearer runtime-observer-token",
+    "X-Credential-Key-Id": "runtime-observer-key",
+}
 VERIFIER = {
     "Authorization": "Bearer verifier-token",
     "X-Credential-Key-Id": "verifier-key",

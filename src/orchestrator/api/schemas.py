@@ -142,11 +142,19 @@ class StartProductionDrillCommand(CommandBase):
     model_config = ConfigDict(extra="forbid")
 
     revision_id: UUID
-    image_ref: str = Field(min_length=1)
-    image_digest: str = Field(min_length=1)
-    openapi_digest: str = Field(min_length=1)
+    runtime_observation_id: UUID
     lease_duration_seconds: int = 60
     reporting_deadline_seconds: int = 60
+
+
+class RuntimeObservationCommandModel(CommandBase):
+    model_config = ConfigDict(extra="forbid")
+
+    container_id: str = Field(min_length=1)
+    configured_image_ref: str = Field(min_length=1)
+    observed_image_digest: str = Field(min_length=1)
+    openapi_sha256: str = Field(min_length=1)
+    observed_at: datetime
 
 
 class CloseProductionDrillCommand(CommandBase):
@@ -517,10 +525,29 @@ class ProductionDrillRunResponse(BaseModel):
     opened_at: datetime
     closed_at: datetime | None
     status: str
+    runtime_observation_id: UUID | None
     image_ref: str
     image_digest: str
     openapi_digest: str
     closure_reason: str | None
+
+
+class RuntimeObservationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    target: str
+    coolify_application_id: str
+    container_id: str
+    configured_image_ref: str
+    observed_image_digest: str
+    openapi_sha256: str
+    observed_at: datetime
+    observer_actor_id: str
+    observer_credential_key_id: str
+    recorded_at: datetime
+    event_id: UUID
+    idempotency_key: str
 
 
 class ProductionDrillClaimStateResponse(BaseModel):

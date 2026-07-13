@@ -28,6 +28,7 @@ class AuthConfig:
     email_to_actor: Mapping[str, str]
     m2m_roles: Mapping[str, ActorRole] | None = None
     production_drill_credential_key_id: str | None = None
+    runtime_observer_credential_key_id: str | None = None
     credential_key_header: str = "X-Credential-Key-Id"
     csrf_secret: bytes | None = None
 
@@ -99,6 +100,24 @@ def get_production_drill_actor(request: Request) -> ActorContext:
         raise DomainError(
             "role_forbidden",
             "only the configured production drill system credential may run drill controls",
+            None,
+        )
+    return actor
+
+
+def get_runtime_observer_actor(request: Request) -> ActorContext:
+    """Authorize the credential that can attest the running deployment."""
+    actor = get_actor(request)
+    config = getattr(request.app.state, "auth_config", None)
+    if (
+        not isinstance(config, AuthConfig)
+        or config.runtime_observer_credential_key_id is None
+        or actor.role is not ActorRole.SYSTEM
+        or actor.credential_key_id != config.runtime_observer_credential_key_id
+    ):
+        raise DomainError(
+            "role_forbidden",
+            "only the configured runtime observer credential may record runtime observations",
             None,
         )
     return actor
