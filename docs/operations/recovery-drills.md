@@ -69,3 +69,40 @@ docker exec -it drill-pg-<pid> psql -U postgres -d orchestrator_drill
 ```
 
 The drill's log (server output included) is in the temp directory it printed on startup.
+
+## Production drills
+
+Production drills use a separate runner and a HUMAN-authorized run; the local harness above must
+never be pointed at production. Before invoking it, a human starts the run in the browser-backed
+production drill flow, records its UUID, and verifies the approved recovery-drills package
+revision, deployed image digest, and expected availability window.
+
+The runner is pinned to `https://sds.alobar.net`. It retrieves its dedicated credential from BWS
+at runtime using `ORCHESTRATOR_PRODUCTION_DRILL_SECRET_UUID`; the secret value is a JSON object
+containing `ORCHESTRATOR_PRODUCTION_DRILL_TOKEN` and its credential-key ID. Source
+`BWS_ACCESS_TOKEN` through the approved Keychain helper or a gitignored environment file. Do not
+place either bearer material in a shell history, command argument, evidence file, or log.
+
+```bash
+scripts/run-production-drills.sh --run-id <human-started-run-uuid> \
+  --evidence-file /tmp/production-drill-evidence.json
+```
+
+The runner first checks production OpenAPI route presence and `/health/ready`; it refuses to
+continue if either preflight fails. The crash-recovery case stops immediately before the one
+intentional availability interruption unless the human includes `--approve-live-restart`. That
+approval also requires the approved executable restart hook in
+`ORCHESTRATOR_PRODUCTION_DRILL_RESTART_COMMAND`; check readiness immediately before and after it.
+
+```bash
+scripts/run-production-drills.sh --run-id <human-started-run-uuid> \
+  --approve-live-restart \
+  --evidence-file /tmp/production-drill-evidence.json
+```
+
+The evidence file is machine-readable JSON containing the run ID, a unique idempotency prefix,
+and redacted assertion results. On failure the runner requests audited run closeout. Closeout is
+human-gated by the API, so an unproven closeout leaves the run visibly failed and open for human
+review in the evidence file; the runner does not manufacture a successful closure. Retain the
+evidence file with the human approval record and the run-scoped state response. Do not create
+Task 6 production evidence until the reviewed deployment session has completed the drills.
