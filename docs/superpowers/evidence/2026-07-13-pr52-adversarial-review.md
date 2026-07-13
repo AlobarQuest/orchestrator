@@ -46,14 +46,19 @@ Ordinary claim and renewal paths call `lease_duration_for_work_unit()`
 `src/orchestrator/services/claims.py:677`). That helper unconditionally queries
 `ProductionDrillResource` (`src/orchestrator/services/production_drills.py:258-264`), whose table is
 created only by migration 0016 (`migrations/versions/0016_production_drill_resources.py:26-48`).
-Ordinary lifecycle, web queue, and in-flight paths also acquired production-drill-resource queries.
+Ordinary lifecycle transition, web queue, and in-flight paths independently query the same table
+(`src/orchestrator/services/lifecycle.py:108`, `src/orchestrator/web.py:164-169`,
+`src/orchestrator/services/in_flight.py:88-98`, `src/orchestrator/services/in_flight.py:117-138`).
 
 - **Triggering sequence:** run PR #52 code against a schema at 0015 or earlier.
 - **Observable failure:** PostgreSQL raises `UndefinedTable` during ordinary claim, lifecycle,
-  queue, or in-flight operations while the database-independent readiness endpoint may remain
-  green.
+  queue, or in-flight operations if traffic reaches the application. The readiness endpoint does
+  compare the database revision with the code head and returns 503 for the 0015/0017 mismatch
+  (`src/orchestrator/api/health.py:27-48`); the review therefore rejects the narrower premise that
+  readiness can remain green in this exact revision-mismatch sequence.
 - **Smallest proving test:** migrate a disposable database to 0015, create an ordinary READY unit,
-  then exercise claim, review queue, and in-flight reads with PR #52 code.
+  assert readiness returns 503, then directly exercise claim, review queue, and in-flight reads with
+  PR #52 code and assert each query of the absent table fails.
 
 #### A-P1-3 — Downgrade removes synthetic ownership markers but leaves ordinary-domain rows
 
@@ -63,15 +68,14 @@ Crash-recovery attempt one leaves such a unit CLAIMED
 (`src/orchestrator/services/production_drills.py:559-585`). Migration 0016 downgrade drops the
 ownership table (`migrations/versions/0016_production_drill_resources.py:54-56`) and migration 0015
 downgrade drops the run table (`migrations/versions/0015_production_drill_runs.py:71-77`), but neither
-removes the synthetic work units, claims, evidence, observations, release facts, deployment facts,
-or reconciliation facts. Before PR #52, `_in_flight_units()` returned every active work unit
+removes the synthetic `WorkUnit` or its `Claim`. Before PR #52, `_in_flight_units()` returned every
+active work unit
 (`1f0a236^1:src/orchestrator/services/in_flight.py:84-106`).
 
-- **Triggering sequence:** persist crash-recovery attempt one or another drill scenario, then
-  downgrade to 0014 and run the pre-PR application.
-- **Observable failure:** synthetic rows survive without ownership markers, become
-  indistinguishable to pre-PR projections, and a stranded claim becomes eligible for ordinary
-  recovery.
+- **Triggering sequence:** persist crash-recovery attempt one, then downgrade to 0014 and run the
+  pre-PR application.
+- **Observable failure:** the synthetic work unit and claim survive without their ownership marker,
+  and the pre-PR in-flight projection exposes the synthetic unit as ordinary active work.
 - **Smallest proving test:** persist attempt one, downgrade to 0014, prove the work unit and claim
   remain while their ownership marker is gone, then prove the pre-PR in-flight query returns the
   synthetic unit.
@@ -263,21 +267,60 @@ and sleep (`tests/services/test_production_drill_scenarios.py:51-63`).
 - **Smallest counterexample:** impose an intermediary timeout shorter than the 60-second synchronous
   scenario request; no current composed test proves recovery or correct reporting.
 
-### Production-file necessity conclusion
+### Production-file necessity audit
 
-Reviewer B found no clearly unrelated production path. `src/orchestrator/web.py` only partially
-implements R5 isolation. `src/orchestrator/config.py` and `src/orchestrator/kernel/leases.py`
-implement the deadline mechanism whose external boundedness predicate remains false. The remaining
-production paths are reachable from the proposed drill subsystem. Reachability does not establish
-that their requirements are satisfied.
+This audit covers all **23** PR #52 production application paths from the Task 2 trace. “Necessary”
+means the changed behavior directly supplies part of R1-R10 and cannot simply be omitted from this
+implementation while preserving that requirement. It does not mean the implementation satisfies
+the requirement. “Defensive support” means the change supports this implementation but is not
+itself required by R1-R10; a different local structure could omit it. This judgment is based on
+predicate contribution, not mere import or call-graph reachability.
+
+| # | Production path | R1-R10 necessity judgment under Reviewer B's lens | Task 2 comparison |
+|---:|---|---|---|
+| 1 | `src/orchestrator/api/dependencies.py` | **Necessary but insufficient (R3).** Exact-key endpoint checks are necessary to distinguish the runner and observer at their dedicated writes, but they do not constrain either SYSTEM key on the rest of the API (B-P1-6). | Agrees with `required`; qualifies Task 2's R3 mapping as endpoint-local. |
+| 2 | `src/orchestrator/api/routes.py` | **Necessary but currently undeliverable (R1, R2, R3, R4, R7, R8).** Public observation, run, state, scenario, fail, and close interfaces are needed, but the documented proxy makes the HUMAN start/close predicates unreachable (B-P1-1). | Agrees with `required`; adds that route existence does not satisfy R1. |
+| 3 | `src/orchestrator/api/schemas.py` | **Necessary (R1, R2, R4, R6, R8).** Fixed command and response shapes prevent caller-selected scenario/target/executor inputs and expose bounded state, though schema validation cannot prove external provenance. | Agrees with `required`; no classification disagreement. |
+| 4 | `src/orchestrator/config.py` | **Not independently necessary; defensive support only.** It supplies a configurable deadline maximum, but R1-R10 do not require this setting and its lack of a hard upper bound leaves the boundedness predicate false (B-P2-1). | Agrees with Task 2's `defensive`/`none`; no disagreement. |
+| 5 | `src/orchestrator/kernel/leases.py` | **Not independently necessary; defensive support only.** The added minimum-deadline constant supports validation but is not itself an R1-R10 contract surface and does not cure B-P2-1. | Agrees with Task 2's `defensive`/`none`; no disagreement. |
+| 6 | `src/orchestrator/main.py` | **Necessary but rollout-unsafe (R3, R9).** Loading distinct SYSTEM IDs is part of authority separation, but making both mandatory at import violates the partial-rollout predicate (A-P1-1/B-P1-7). | Agrees with `required`; Task 2 mapped only R3, while this review also treats its rollout behavior as directly relevant negative evidence for R9. |
+| 7 | `src/orchestrator/persistence/models.py` | **Necessary (R1, R2, R5, R8).** Durable run, provenance, observation, and resource-ownership models are required for retained authorization and audit; their existence does not make downgrade retention-safe. | Agrees with `required`; no classification disagreement. |
+| 8 | `src/orchestrator/services/claims.py` | **Necessary (R4, R7).** Run-scoped lease duration and reclaim integration are required for the fixed crash scenario, although the scenario proves expiry/reclaim rather than restart (B-P1-3). | Agrees with `required`; qualifies the external predicate. |
+| 9 | `src/orchestrator/services/dead_letter.py` | **Necessary (R4, R5, R8).** Run-scoped reads and ordinary dead-letter exclusion are direct synthetic-isolation behavior; they do not prove isolation in other projections (B-P1-5). | Agrees with `required`; narrows any inference beyond dead-letter. |
+| 10 | `src/orchestrator/services/deployment_observations.py` | **Necessary but leaks delivery facts (R4, R5, R8).** Atomic creation of the fixed deployment observation and generated unit is part of deploy-split-brain, but its ordinary event writer feeds A-P1-4. | Agrees with `required`; adds an R5 delivery failure. |
+| 11 | `src/orchestrator/services/evidence.py` | **Necessary (R4, R5, R8).** Fixed evidence recovery must create and supersede run-owned retained evidence; direct review projections still expose it by UUID (B-P1-5). | Agrees with `required`; qualifies R5 completeness. |
+| 12 | `src/orchestrator/services/in_flight.py` | **Necessary (R5).** Default exclusion of run-owned work and release bindings is a direct ordinary-projection guard, and its dependency on migration 0016 creates A-P1-2 rollout coupling. | Agrees with `required`; no classification disagreement. |
+| 13 | `src/orchestrator/services/lifecycle.py` | **Necessary (R3, R4, R5, R8).** Separate drill writers and ordinary-writer rejection enforce ownership and actor boundaries; close can nevertheless manufacture terminality (B-P1-4). | Agrees with `required`; qualifies R8 satisfaction. |
+| 14 | `src/orchestrator/services/observations.py` | **Necessary (R4, R5).** The external-conflict scenario needs a run-owned observation writer; ownership does not prevent ordinary event/publication or direct-projection leakage elsewhere. | Agrees with `required`; no classification disagreement. |
+| 15 | `src/orchestrator/services/packages.py` | **Necessary (R1, R4, R5).** Fixed namespaced template registration and HUMAN delegation bind scenario work to the approved revision; durable ordinary-domain rows make marker-stripping rollback unsafe (A-P1-3). | Agrees with `required`; adds rollback consequence. |
+| 16 | `src/orchestrator/services/pr_bindings.py` | **Not independently necessary; defensive transaction support.** Commit suppression lets the external-conflict scenario share one transaction, but R1-R10 require atomic results rather than this specific session-info mechanism. | Agrees with Task 2's `defensive`/`none`; no disagreement. |
+| 17 | `src/orchestrator/services/production_drill_resources.py` | **Necessary but incomplete (R4, R5, R8).** Durable ownership and ordinary-writer rejection are the core synthetic namespace, but not every ordinary projection or export consults it (A-P1-4/B-P1-5). | Agrees with `required`; qualifies R5/R8 completeness. |
+| 18 | `src/orchestrator/services/production_drills.py` | **Necessary but fails several predicates (R1, R2, R3, R4, R5, R7, R8).** It owns the run and five scenarios, yet accepts stale-deployment provenance, does not prove restart, and permits empty closeout (B-P1-2/B-P1-3/B-P1-4). | Agrees with `required`; necessity is not acceptance of its combined 1,630-line boundary or contract sufficiency. |
+| 19 | `src/orchestrator/services/reconciliation.py` | **Necessary (R4, R5, R8).** Run-owned condition creation/resolution is required for fixed conflict scenarios and closeout; closeout still need not prove every scenario ran. | Agrees with `required`; qualifies R8 satisfaction. |
+| 20 | `src/orchestrator/services/reconciliation_detection.py` | **Necessary (R4, R5).** Run-scoped detection is required to exercise the real deploy-split-brain predicate without ordinary facts; its synchronous deadline inherits B-P2-1/B-P2-2. | Agrees with `required`; no classification disagreement. |
+| 21 | `src/orchestrator/services/release_artifacts.py` | **Necessary but leaks delivery facts (R4, R5).** A run-owned release binding is part of deploy-split-brain, but its normal event enters the unfiltered publication path (A-P1-4). | Agrees with `required`; adds an R5 delivery failure. |
+| 22 | `src/orchestrator/services/runtime_observations.py` | **Necessary but does not prove R2/R3.** Immutable ingestion is needed to bind retained facts, but it accepts shape-valid caller fields and the trusted producer is absent (A-P2-1/B-P1-2); endpoint identity is not global least privilege (B-P1-6). | Agrees with `required`; qualifies Task 2's already-partial R2/R3 mapping. |
+| 23 | `src/orchestrator/web.py` | **Necessary but incomplete (R5).** Queue exclusion directly protects one ordinary HUMAN projection, while detail and evidence-pack remain accessible by synthetic UUID (B-P1-5). | Agrees with `required`; explicitly rejects treating this one exclusion as complete R5 isolation. |
+
+Totals: **20 necessary** paths (several insufficient or harmful as implemented), **3 defensive
+support paths not independently necessary**, and **0 accidental or unrelated** paths. This matches
+Task 2's path-level required/defensive classifications. The disagreements are about requirement
+satisfaction and scope, not the labels: Reviewer B adds R9 negative evidence to `main.py`, rejects
+complete R5/R8 implications for several required paths, and rejects complete R2/R3 implications for
+the observation and credential paths.
 
 ## Rejected Findings
 
-None. Every reviewer premise was found in the merged code or in the three prior evidence documents.
-Where a premise depended on a documented production boundary rather than a locally exercised live
-system, the finding says so explicitly. Where a configured maximum exists, B-P2-1 is narrowed to
-the verified absence of an independent hard upper bound rather than claiming that no validation
-exists.
+- **Rejected qualification from A-P1-2:** the reviewer's premise that readiness may stay green with
+  PR #52 code on schema 0015 is false. Readiness reads the database revision and compares it with
+  the code's Alembic head (`src/orchestrator/api/health.py:27-48`), so that exact mismatch returns
+  503. The underlying `UndefinedTable` consequence remains valid if traffic reaches the application,
+  because the cited ordinary paths query the missing 0016 table.
+
+No other finding was rejected. Where a premise depended on a documented production boundary rather
+than a locally exercised live system, the finding says so explicitly. Where a configured maximum
+exists, B-P2-1 is narrowed to the verified absence of an independent hard upper bound rather than
+claiming that no validation exists.
 
 ## Reconciled Findings
 
