@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import ProductionDrillResource, WorkUnit
+from orchestrator.persistence.models import ProductionDrillResource, WorkPackageRevision, WorkUnit
 from orchestrator.services.dead_letter import dead_letter
 from orchestrator.services.deployment_observations import (
     record_deployment_observation,
@@ -32,7 +32,10 @@ from orchestrator.services.observations import (
     record_production_drill_observation,
 )
 from orchestrator.services.packages import register_approved_unit, register_production_drill_unit
-from orchestrator.services.production_drills import start_production_drill
+from orchestrator.services.production_drills import (
+    RECOVERY_DRILLS_PACKAGE_ID,
+    start_production_drill,
+)
 from orchestrator.services.reconciliation import (
     ConditionCommand,
     record_production_drill_reconciliation_condition,
@@ -49,13 +52,20 @@ from tests.services.test_deployment_observations import (
 from tests.services.test_evidence import active_claim, evidence_kwargs
 from tests.services.test_observations import SYSTEM
 from tests.services.test_observations import command as observation_command
-from tests.services.test_package_registration import AUTHORITY, NOW, register_test_revision
+from tests.services.test_package_registration import (
+    AUTHORITY,
+    NOW,
+    register_production_drill_revision,
+)
 from tests.services.test_production_drills import command, runtime_observation
 from tests.services.test_release_artifacts import command as release_artifact_command
 from tests.services.test_release_artifacts import completed_unit
 
 
 def drill_command(session: Session, revision_id: uuid.UUID, *, key: str = "drill-1"):
+    revision = session.get(WorkPackageRevision, revision_id)
+    if revision is None or revision.work_package.package_id != RECOVERY_DRILLS_PACKAGE_ID:
+        revision_id = register_production_drill_revision(session).id
     return command(
         revision_id,
         key=key,
@@ -84,7 +94,7 @@ def test_ordinary_work_unit_cannot_self_tag_as_production_drill_resource() -> No
 def test_drill_registration_rejects_an_existing_ordinary_unit_with_revision_locking(
     migrated_session: Session,
 ) -> None:
-    revision = register_test_revision(migrated_session)
+    revision = register_production_drill_revision(migrated_session)
     drill = start_production_drill(migrated_session, drill_command(migrated_session, revision.id))
     assert not isinstance(drill, DomainError)
     registration = _unit_registration(revision.id, "ordinary-before-drill")
@@ -113,7 +123,7 @@ def test_concurrent_ordinary_registration_cannot_be_captured_as_drill_work(
 ) -> None:
     from orchestrator.services import packages
 
-    revision = register_test_revision(migrated_session)
+    revision = register_production_drill_revision(migrated_session)
     migrated_session.commit()
     drill = start_production_drill(migrated_session, drill_command(migrated_session, revision.id))
     assert not isinstance(drill, DomainError)

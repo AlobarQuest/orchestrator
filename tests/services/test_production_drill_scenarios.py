@@ -28,7 +28,7 @@ from orchestrator.services.production_drills import (
     run_production_drill_scenario,
     start_production_drill,
 )
-from tests.services.test_package_registration import register_test_revision
+from tests.services.test_package_registration import register_production_drill_revision
 from tests.services.test_production_drills import SYSTEM, command, runtime_observation
 
 SCENARIOS = (
@@ -66,7 +66,7 @@ def _advance_run_time(monkeypatch: pytest.MonkeyPatch, run, modules: tuple[objec
 def test_system_scenario_is_audited_and_returns_only_its_run_state(
     migrated_session: Session,
 ) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
 
@@ -94,7 +94,7 @@ def test_system_scenario_is_audited_and_returns_only_its_run_state(
 def test_crash_recovery_requires_a_second_post_restart_invocation_to_reclaim(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(
         migrated_session, drill_command(migrated_session, revision_id, key="crash-two-phase")
     )
@@ -145,7 +145,7 @@ def test_crash_recovery_requires_a_second_post_restart_invocation_to_reclaim(
 def test_every_successful_scenario_remains_human_closeable(
     migrated_session: Session, scenario: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(
         migrated_session, drill_command(migrated_session, revision_id, key="closeable-run")
     )
@@ -183,7 +183,7 @@ def test_every_successful_scenario_remains_human_closeable(
 def test_evidence_recovery_expires_the_run_lease_locks_out_worker_and_recovers(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(
         migrated_session, drill_command(migrated_session, revision_id, key="expired-recovery")
     )
@@ -225,7 +225,7 @@ def test_evidence_recovery_expires_the_run_lease_locks_out_worker_and_recovers(
 
 
 def test_external_pr_conflict_uses_real_binding_and_detection(migrated_session: Session) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(
         migrated_session, drill_command(migrated_session, revision_id, key="real-pr-conflict-run")
     )
@@ -261,7 +261,7 @@ def test_external_pr_conflict_uses_real_binding_and_detection(migrated_session: 
 def test_late_scenario_failure_rolls_back_all_synthetic_resources(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(
         migrated_session, drill_command(migrated_session, revision_id, key="atomic-failure-run")
     )
@@ -288,7 +288,7 @@ def test_deploy_split_brain_waits_then_detects_only_run_owned_resources(
 ) -> None:
     import orchestrator.services.reconciliation_detection as detection
 
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(
         migrated_session, drill_command(migrated_session, revision_id, key="deploy-e2e-run")
     )
@@ -328,7 +328,7 @@ def test_deploy_split_brain_waits_then_detects_only_run_owned_resources(
 def test_system_fail_records_an_event_and_does_not_close_resources(
     migrated_session: Session,
 ) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
 
@@ -354,7 +354,7 @@ def test_system_fail_records_an_event_and_does_not_close_resources(
 
 
 def test_human_cannot_execute_a_system_scenario(migrated_session: Session) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
 
@@ -376,7 +376,7 @@ def test_human_cannot_execute_a_system_scenario(migrated_session: Session) -> No
 def test_scenario_creates_only_fixed_run_owned_resources_and_replays_exactly(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     first = start_production_drill(
         migrated_session, drill_command(migrated_session, revision_id, key="scenario-first")
     )
@@ -427,7 +427,7 @@ def test_scenario_creates_only_fixed_run_owned_resources_and_replays_exactly(
 def test_every_scenario_replay_conflict_and_cross_run_are_fail_closed(
     migrated_session: Session, scenario: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     first = start_production_drill(
         migrated_session, drill_command(migrated_session, revision_id, key=f"matrix-{scenario}-1")
     )
@@ -460,7 +460,7 @@ def test_every_scenario_replay_conflict_and_cross_run_are_fail_closed(
 
 
 def test_scenarios_reject_runs_failed_by_the_system(migrated_session: Session) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
     failed = fail_production_drill(
@@ -494,7 +494,7 @@ def test_scenarios_reject_runs_failed_by_the_system(migrated_session: Session) -
 def test_fail_rejects_an_unredacted_diagnostic_in_the_service(
     migrated_session: Session,
 ) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
 
@@ -517,7 +517,7 @@ def test_fail_rejects_an_unredacted_diagnostic_in_the_service(
 def test_unavailable_fixed_scenario_terminal_fails_before_resource_or_scenario_mutation(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
     scenario = RunProductionDrillScenario(
@@ -550,7 +550,7 @@ def test_unavailable_fixed_scenario_terminal_fails_before_resource_or_scenario_m
 def test_direct_system_registration_cannot_select_an_arbitrary_drill_template(
     migrated_session: Session,
 ) -> None:
-    revision = register_test_revision(migrated_session)
+    revision = register_production_drill_revision(migrated_session)
     run = start_production_drill(migrated_session, drill_command(migrated_session, revision.id))
     assert not isinstance(run, DomainError)
 
@@ -583,7 +583,7 @@ def test_direct_system_registration_cannot_select_an_arbitrary_drill_template(
 def test_split_brain_wait_uses_only_the_persisted_run_deadline(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    revision_id = register_test_revision(migrated_session).id
+    revision_id = register_production_drill_revision(migrated_session).id
     run = start_production_drill(
         migrated_session, drill_command(migrated_session, revision_id, key="bounded-wait")
     )

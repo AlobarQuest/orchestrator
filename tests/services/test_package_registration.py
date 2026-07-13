@@ -22,6 +22,7 @@ from orchestrator.services.packages import (
     register_approved_unit,
     register_revision,
 )
+from orchestrator.services.production_drills import RECOVERY_DRILLS_PACKAGE_ID
 
 AUTHORITY = AuthorityEnvelope(
     capabilities={"repository_write": "allowed"},
@@ -31,10 +32,14 @@ NOW = datetime(2026, 7, 5, tzinfo=UTC)
 APPROVAL_EVENT_ID = str(uuid.UUID(int=1))
 
 
-def register_test_revision(session: Session) -> WorkPackageRevision:
+def register_test_revision(
+    session: Session,
+    *,
+    package_id: str = "pkg-1",
+) -> WorkPackageRevision:
     return register_revision(
         session,
-        package_id="pkg-1",
+        package_id=package_id,
         source_repository="owner/repo",
         revision=1,
         content_hash="sha256:one",
@@ -49,6 +54,10 @@ def register_test_revision(session: Session) -> WorkPackageRevision:
         actor_id="human-1",
         actor_role=ActorRole.HUMAN,
     )
+
+
+def register_production_drill_revision(session: Session) -> WorkPackageRevision:
+    return register_test_revision(session, package_id=RECOVERY_DRILLS_PACKAGE_ID)
 
 
 def test_revision_registration_is_idempotent_and_normalized(

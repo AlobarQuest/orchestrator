@@ -9,13 +9,18 @@ import orchestrator.services.production_drills as production_drills
 from orchestrator.config import Settings
 from orchestrator.errors import DomainError
 from orchestrator.kernel.leases import LEASE_DURATION
-from orchestrator.persistence.models import ProductionDrillResource, ReconciliationCondition
+from orchestrator.persistence.models import (
+    ProductionDrillResource,
+    ReconciliationCondition,
+    WorkPackageRevision,
+)
 from orchestrator.services.observations import (
     ObservationCommand,
     record_production_drill_observation,
 )
 from orchestrator.services.packages import register_production_drill_unit
 from orchestrator.services.production_drills import (
+    RECOVERY_DRILLS_PACKAGE_ID,
     StartProductionDrill,
     lease_duration_for_work_unit,
     production_drill_state,
@@ -23,7 +28,7 @@ from orchestrator.services.production_drills import (
 )
 from orchestrator.services.reconciliation_detection import detect_reconciliation_conditions
 from orchestrator.services.release_artifacts import record_production_drill_release_artifact
-from tests.services.test_package_registration import AUTHORITY, register_test_revision
+from tests.services.test_package_registration import AUTHORITY, register_production_drill_revision
 from tests.services.test_production_drills import HUMAN, SYSTEM, command, runtime_observation
 from tests.services.test_release_artifacts import command as release_artifact_command
 from tests.services.test_release_artifacts import completed_unit
@@ -32,6 +37,9 @@ from tests.services.test_release_artifacts import completed_unit
 def drill_command(
     session: Session, revision_id: uuid.UUID, *, key: str = "drill-1"
 ) -> StartProductionDrill:
+    revision = session.get(WorkPackageRevision, revision_id)
+    if revision is None or revision.work_package.package_id != RECOVERY_DRILLS_PACKAGE_ID:
+        revision_id = register_production_drill_revision(session).id
     return command(
         revision_id,
         key=key,
@@ -43,7 +51,7 @@ def drill_command(
 def test_production_drill_rejects_deadlines_below_the_minimum(
     migrated_session: Session, seconds: int
 ) -> None:
-    revision = register_test_revision(migrated_session)
+    revision = register_production_drill_revision(migrated_session)
     result = start_production_drill(
         migrated_session,
         StartProductionDrill(
@@ -62,7 +70,7 @@ def test_production_drill_rejects_deadlines_below_the_minimum(
 def test_production_drill_uses_the_configured_deadline_maximum_not_command_input(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    revision = register_test_revision(migrated_session)
+    revision = register_production_drill_revision(migrated_session)
     monkeypatch.setattr(
         production_drills,
         "get_settings",
@@ -87,7 +95,7 @@ def test_production_drill_uses_the_configured_deadline_maximum_not_command_input
 def test_production_drill_command_rejects_a_forged_deadline_maximum(
     migrated_session: Session,
 ) -> None:
-    revision = register_test_revision(migrated_session)
+    revision = register_production_drill_revision(migrated_session)
 
     with pytest.raises(TypeError, match="max_deadline_seconds"):
         StartProductionDrill(
@@ -101,7 +109,7 @@ def test_production_drill_command_rejects_a_forged_deadline_maximum(
 def test_registered_drill_unit_uses_its_run_lease_without_changing_ordinary_duration(
     migrated_session: Session,
 ) -> None:
-    revision = register_test_revision(migrated_session)
+    revision = register_production_drill_revision(migrated_session)
     drill = start_production_drill(
         migrated_session,
         StartProductionDrill(
@@ -132,7 +140,7 @@ def test_registered_drill_unit_uses_its_run_lease_without_changing_ordinary_dura
 
 
 def test_state_is_scoped_to_the_requested_run(migrated_session: Session) -> None:
-    revision = register_test_revision(migrated_session)
+    revision = register_production_drill_revision(migrated_session)
     first = start_production_drill(
         migrated_session, drill_command(migrated_session, revision.id, key="state-first")
     )

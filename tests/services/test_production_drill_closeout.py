@@ -10,6 +10,7 @@ from orchestrator.persistence.models import (
     Event,
     ProductionDrillResource,
     ReconciliationResolution,
+    WorkPackageRevision,
     WorkUnit,
 )
 from orchestrator.services.claims import claim_unit
@@ -19,6 +20,7 @@ from orchestrator.services.lifecycle import (
     transition_production_drill_unit,
 )
 from orchestrator.services.production_drills import (
+    RECOVERY_DRILLS_PACKAGE_ID,
     CloseProductionDrill,
     close_production_drill,
     start_production_drill,
@@ -28,11 +30,15 @@ from orchestrator.services.reconciliation import (
     record_reconciliation_condition,
 )
 from tests.services.test_dependencies import register_unit
+from tests.services.test_package_registration import register_production_drill_revision
 from tests.services.test_production_drills import HUMAN, command, runtime_observation
 from tests.services.test_reconciliation import flip
 
 
 def drill_command(session: Session, revision_id: uuid.UUID, *, key: str = "drill-1"):
+    revision = session.get(WorkPackageRevision, revision_id)
+    if revision is None or revision.work_package.package_id != RECOVERY_DRILLS_PACKAGE_ID:
+        revision_id = register_production_drill_revision(session).id
     return command(
         revision_id,
         key=key,

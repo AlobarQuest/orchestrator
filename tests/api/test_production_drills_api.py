@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import UTC, datetime
 
@@ -18,6 +19,7 @@ def create_revision(
     key: str,
     package_id: str = "ws-p2.1-recovery-controls-drills",
 ) -> str:
+    revision_seed = hashlib.sha256(key.encode()).hexdigest()
     response = db_client.post(
         "/api/v1/revisions",
         headers=HUMAN,
@@ -26,10 +28,10 @@ def create_revision(
             "expected_version": 0,
             "package_id": package_id,
             "source_repository": "AlobarQuest/orchestrator",
-            "revision": 1,
-            "content_hash": "sha256:production-drill",
+            "revision": int(revision_seed[:7], 16) + 1,
+            "content_hash": f"sha256:{revision_seed}",
             "source_path": "intent.md",
-            "source_commit": "abc123",
+            "source_commit": revision_seed[:40],
             "approved_by": "devon",
             "approved_at": datetime(2026, 7, 12, tzinfo=UTC).isoformat(),
             "approval_event_id": str(uuid.uuid4()),
