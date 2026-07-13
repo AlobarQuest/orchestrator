@@ -24,9 +24,19 @@ from orchestrator.services.production_drills import (
 from orchestrator.services.reconciliation_detection import detect_reconciliation_conditions
 from orchestrator.services.release_artifacts import record_production_drill_release_artifact
 from tests.services.test_package_registration import AUTHORITY, register_test_revision
-from tests.services.test_production_drills import HUMAN, SYSTEM, command
+from tests.services.test_production_drills import HUMAN, SYSTEM, command, runtime_observation
 from tests.services.test_release_artifacts import command as release_artifact_command
 from tests.services.test_release_artifacts import completed_unit
+
+
+def drill_command(
+    session: Session, revision_id: uuid.UUID, *, key: str = "drill-1"
+) -> StartProductionDrill:
+    return command(
+        revision_id,
+        key=key,
+        runtime_observation_id=runtime_observation(session, key=key),
+    )
 
 
 @pytest.mark.parametrize("seconds", [0, -1, 59])
@@ -38,7 +48,7 @@ def test_production_drill_rejects_deadlines_below_the_minimum(
         migrated_session,
         StartProductionDrill(
             **{
-                **command(revision.id).__dict__,
+                **drill_command(migrated_session, revision.id).__dict__,
                 "lease_duration_seconds": seconds,
                 "reporting_deadline_seconds": 60,
             }
@@ -64,7 +74,7 @@ def test_production_drill_uses_the_configured_deadline_maximum_not_command_input
         migrated_session,
         StartProductionDrill(
             **{
-                **command(revision.id).__dict__,
+                **drill_command(migrated_session, revision.id).__dict__,
                 "lease_duration_seconds": 61,
             }
         ),
@@ -80,7 +90,12 @@ def test_production_drill_command_rejects_a_forged_deadline_maximum(
     revision = register_test_revision(migrated_session)
 
     with pytest.raises(TypeError, match="max_deadline_seconds"):
-        StartProductionDrill(**{**command(revision.id).__dict__, "max_deadline_seconds": 86_400})
+        StartProductionDrill(
+            **{
+                **drill_command(migrated_session, revision.id).__dict__,
+                "max_deadline_seconds": 86_400,
+            }
+        )
 
 
 def test_registered_drill_unit_uses_its_run_lease_without_changing_ordinary_duration(
@@ -89,7 +104,12 @@ def test_registered_drill_unit_uses_its_run_lease_without_changing_ordinary_dura
     revision = register_test_revision(migrated_session)
     drill = start_production_drill(
         migrated_session,
-        StartProductionDrill(**{**command(revision.id).__dict__, "lease_duration_seconds": 61}),
+        StartProductionDrill(
+            **{
+                **drill_command(migrated_session, revision.id).__dict__,
+                "lease_duration_seconds": 61,
+            }
+        ),
     )
     assert not isinstance(drill, DomainError)
     unit = register_production_drill_unit(
@@ -113,8 +133,12 @@ def test_registered_drill_unit_uses_its_run_lease_without_changing_ordinary_dura
 
 def test_state_is_scoped_to_the_requested_run(migrated_session: Session) -> None:
     revision = register_test_revision(migrated_session)
-    first = start_production_drill(migrated_session, command(revision.id, key="state-first"))
-    second = start_production_drill(migrated_session, command(revision.id, key="state-second"))
+    first = start_production_drill(
+        migrated_session, drill_command(migrated_session, revision.id, key="state-first")
+    )
+    second = start_production_drill(
+        migrated_session, drill_command(migrated_session, revision.id, key="state-second")
+    )
     assert not isinstance(first, DomainError)
     assert not isinstance(second, DomainError)
 
@@ -130,10 +154,12 @@ def test_run_scoped_reconciliation_ignores_another_runs_deployment_report(
 ) -> None:
     unit = completed_unit(migrated_session, key="cross-run-deployment")
     first = start_production_drill(
-        migrated_session, command(unit.work_package_revision_id, key="run-a")
+        migrated_session,
+        drill_command(migrated_session, unit.work_package_revision_id, key="run-a"),
     )
     second = start_production_drill(
-        migrated_session, command(unit.work_package_revision_id, key="run-b")
+        migrated_session,
+        drill_command(migrated_session, unit.work_package_revision_id, key="run-b"),
     )
     assert not isinstance(first, DomainError)
     assert not isinstance(second, DomainError)

@@ -50,9 +50,17 @@ from tests.services.test_evidence import active_claim, evidence_kwargs
 from tests.services.test_observations import SYSTEM
 from tests.services.test_observations import command as observation_command
 from tests.services.test_package_registration import AUTHORITY, NOW, register_test_revision
-from tests.services.test_production_drills import command
+from tests.services.test_production_drills import command, runtime_observation
 from tests.services.test_release_artifacts import command as release_artifact_command
 from tests.services.test_release_artifacts import completed_unit
+
+
+def drill_command(session: Session, revision_id: uuid.UUID, *, key: str = "drill-1"):
+    return command(
+        revision_id,
+        key=key,
+        runtime_observation_id=runtime_observation(session, key=key),
+    )
 
 
 class UnitRegistration(TypedDict):
@@ -77,7 +85,7 @@ def test_drill_registration_rejects_an_existing_ordinary_unit_with_revision_lock
     migrated_session: Session,
 ) -> None:
     revision = register_test_revision(migrated_session)
-    drill = start_production_drill(migrated_session, command(revision.id))
+    drill = start_production_drill(migrated_session, drill_command(migrated_session, revision.id))
     assert not isinstance(drill, DomainError)
     registration = _unit_registration(revision.id, "ordinary-before-drill")
     ordinary = register_approved_unit(migrated_session, **registration)
@@ -107,7 +115,7 @@ def test_concurrent_ordinary_registration_cannot_be_captured_as_drill_work(
 
     revision = register_test_revision(migrated_session)
     migrated_session.commit()
-    drill = start_production_drill(migrated_session, command(revision.id))
+    drill = start_production_drill(migrated_session, drill_command(migrated_session, revision.id))
     assert not isinstance(drill, DomainError)
 
     registration = _unit_registration(revision.id, "concurrent-drill-unit")
@@ -223,8 +231,8 @@ def _register_ordinary_unit_and_commit(
 def test_resource_cannot_belong_to_two_production_drill_runs(migrated_session: Session) -> None:
     unit = register_unit(migrated_session, "resource-owner")
     package_revision_id = unit.work_package_revision_id
-    first_run = command(package_revision_id, key="first-resource-run")
-    second_run = command(package_revision_id, key="second-resource-run")
+    first_run = drill_command(migrated_session, package_revision_id, key="first-resource-run")
+    second_run = drill_command(migrated_session, package_revision_id, key="second-resource-run")
 
     first = start_production_drill(migrated_session, first_run)
     second = start_production_drill(migrated_session, second_run)
@@ -256,7 +264,9 @@ def test_ordinary_transition_rejects_a_drill_owned_unit_but_drill_wrapper_allows
     migrated_session: Session,
 ) -> None:
     unit = register_unit(migrated_session, "drill-lifecycle-boundary")
-    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    drill = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(drill, DomainError)
     migrated_session.add(
         ProductionDrillResource(run_id=drill.id, resource_type="work_unit", resource_id=unit.id)
@@ -284,7 +294,9 @@ def test_ordinary_observation_idempotency_replay_cannot_be_captured_by_a_drill(
     migrated_session: Session,
 ) -> None:
     unit = register_unit(migrated_session, "ordinary-observation")
-    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    drill = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(drill, DomainError)
     ordinary = record_observation(migrated_session, observation_command(key="ordinary-observation"))
     assert not isinstance(ordinary, DomainError)
@@ -302,7 +314,9 @@ def test_ordinary_observation_idempotency_replay_cannot_be_captured_by_a_drill(
 def test_ordinary_evidence_idempotency_replay_cannot_be_captured_by_a_drill(
     migrated_session: Session, ready_unit
 ) -> None:
-    drill = start_production_drill(migrated_session, command(ready_unit.work_package_revision_id))
+    drill = start_production_drill(
+        migrated_session, drill_command(migrated_session, ready_unit.work_package_revision_id)
+    )
     assert not isinstance(drill, DomainError)
     migrated_session.add(
         ProductionDrillResource(
@@ -325,7 +339,9 @@ def test_ordinary_evidence_idempotency_replay_cannot_be_captured_by_a_drill(
 
 def test_ordinary_condition_replay_cannot_be_captured_by_a_drill(migrated_session: Session) -> None:
     unit = register_unit(migrated_session, "ordinary-condition-replay")
-    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    drill = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(drill, DomainError)
     migrated_session.add(
         ProductionDrillResource(
@@ -360,7 +376,9 @@ def test_ordinary_release_artifact_replay_cannot_be_captured_by_a_drill(
     migrated_session: Session,
 ) -> None:
     unit, _ordinary_binding = release_binding(migrated_session, key="ordinary-release-replay")
-    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    drill = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(drill, DomainError)
     migrated_session.add(
         ProductionDrillResource(run_id=drill.id, resource_type="work_unit", resource_id=unit.id)
@@ -381,7 +399,9 @@ def test_drill_release_artifact_binds_generated_evidence_and_requires_it_on_repl
     migrated_session: Session,
 ) -> None:
     unit = completed_unit(migrated_session, key="drill-release-evidence")
-    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    drill = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(drill, DomainError)
     migrated_session.add(
         ProductionDrillResource(run_id=drill.id, resource_type="work_unit", resource_id=unit.id)
@@ -416,7 +436,9 @@ def test_ordinary_deployment_observation_replay_cannot_be_captured_by_a_drill(
     migrated_session: Session,
 ) -> None:
     unit, binding = release_binding(migrated_session, key="ordinary-deployment-replay")
-    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    drill = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(drill, DomainError)
     migrated_session.add_all(
         (
@@ -451,7 +473,9 @@ def test_drill_condition_rejects_an_ordinary_observation_reference(
     migrated_session: Session,
 ) -> None:
     unit = register_unit(migrated_session, "condition-owned-unit")
-    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    drill = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(drill, DomainError)
     ordinary = record_observation(
         migrated_session, observation_command(key="condition-observation")
@@ -490,7 +514,9 @@ def test_drill_condition_rejects_an_ordinary_deployment_observation_reference(
     migrated_session: Session,
 ) -> None:
     unit, binding = release_binding(migrated_session, key="condition-deployment")
-    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    drill = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(drill, DomainError)
     migrated_session.add(
         ProductionDrillResource(
@@ -527,7 +553,9 @@ def test_drill_condition_rejects_an_ordinary_deployment_observation_reference(
 
 def test_drill_lifecycle_control_rejects_an_ordinary_work_unit(migrated_session: Session) -> None:
     unit = register_unit(migrated_session, "ordinary-lifecycle")
-    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    drill = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(drill, DomainError)
 
     with pytest.raises(DomainError, match="does not belong to the production drill run"):
@@ -546,7 +574,9 @@ def test_drill_lifecycle_control_rejects_an_ordinary_work_unit(migrated_session:
 
 def test_ordinary_projections_hide_drill_resources_by_default(migrated_session: Session) -> None:
     unit = register_unit(migrated_session, "hidden-drill-resource")
-    drill = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    drill = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(drill, DomainError)
     unit.state = WorkUnitState.FAILED
     migrated_session.add(

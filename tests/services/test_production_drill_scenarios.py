@@ -1,3 +1,4 @@
+import uuid
 from types import SimpleNamespace
 from typing import cast
 
@@ -28,7 +29,7 @@ from orchestrator.services.production_drills import (
     start_production_drill,
 )
 from tests.services.test_package_registration import register_test_revision
-from tests.services.test_production_drills import SYSTEM, command
+from tests.services.test_production_drills import SYSTEM, command, runtime_observation
 
 SCENARIOS = (
     "crash_recovery",
@@ -37,6 +38,14 @@ SCENARIOS = (
     "deploy_split_brain",
     "stalled_approval",
 )
+
+
+def drill_command(session: Session, revision_id: uuid.UUID, *, key: str = "drill-1"):
+    return command(
+        revision_id,
+        key=key,
+        runtime_observation_id=runtime_observation(session, key=key),
+    )
 
 
 def _advance_run_time(monkeypatch: pytest.MonkeyPatch, run, modules: tuple[object, ...]) -> None:
@@ -58,7 +67,7 @@ def test_system_scenario_is_audited_and_returns_only_its_run_state(
     migrated_session: Session,
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id))
+    run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
 
     result = run_production_drill_scenario(
@@ -86,7 +95,9 @@ def test_crash_recovery_requires_a_second_post_restart_invocation_to_reclaim(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id, key="crash-two-phase"))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, revision_id, key="crash-two-phase")
+    )
     assert not isinstance(run, DomainError)
 
     prepared = run_production_drill_scenario(
@@ -135,7 +146,9 @@ def test_every_successful_scenario_remains_human_closeable(
     migrated_session: Session, scenario: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id, key="closeable-run"))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, revision_id, key="closeable-run")
+    )
     assert not isinstance(run, DomainError)
     import orchestrator.services.claims as claims
     import orchestrator.services.dead_letter as dead_letter
@@ -171,7 +184,9 @@ def test_evidence_recovery_expires_the_run_lease_locks_out_worker_and_recovers(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id, key="expired-recovery"))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, revision_id, key="expired-recovery")
+    )
     assert not isinstance(run, DomainError)
 
     import orchestrator.services.claims as claims
@@ -211,7 +226,9 @@ def test_evidence_recovery_expires_the_run_lease_locks_out_worker_and_recovers(
 
 def test_external_pr_conflict_uses_real_binding_and_detection(migrated_session: Session) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id, key="real-pr-conflict-run"))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, revision_id, key="real-pr-conflict-run")
+    )
     assert not isinstance(run, DomainError)
     result = run_production_drill_scenario(
         migrated_session,
@@ -245,7 +262,9 @@ def test_late_scenario_failure_rolls_back_all_synthetic_resources(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id, key="atomic-failure-run"))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, revision_id, key="atomic-failure-run")
+    )
     assert not isinstance(run, DomainError)
 
     def fail_after_unit(*_args, **_kwargs) -> None:
@@ -270,7 +289,9 @@ def test_deploy_split_brain_waits_then_detects_only_run_owned_resources(
     import orchestrator.services.reconciliation_detection as detection
 
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id, key="deploy-e2e-run"))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, revision_id, key="deploy-e2e-run")
+    )
     assert not isinstance(run, DomainError)
     waits: list[float] = []
 
@@ -308,7 +329,7 @@ def test_system_fail_records_an_event_and_does_not_close_resources(
     migrated_session: Session,
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id))
+    run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
 
     result = fail_production_drill(
@@ -334,7 +355,7 @@ def test_system_fail_records_an_event_and_does_not_close_resources(
 
 def test_human_cannot_execute_a_system_scenario(migrated_session: Session) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id))
+    run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
 
     result = run_production_drill_scenario(
@@ -356,8 +377,12 @@ def test_scenario_creates_only_fixed_run_owned_resources_and_replays_exactly(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
-    first = start_production_drill(migrated_session, command(revision_id, key="scenario-first"))
-    second = start_production_drill(migrated_session, command(revision_id, key="scenario-second"))
+    first = start_production_drill(
+        migrated_session, drill_command(migrated_session, revision_id, key="scenario-first")
+    )
+    second = start_production_drill(
+        migrated_session, drill_command(migrated_session, revision_id, key="scenario-second")
+    )
     assert not isinstance(first, DomainError)
     assert not isinstance(second, DomainError)
     import orchestrator.services.claims as claims
@@ -404,10 +429,10 @@ def test_every_scenario_replay_conflict_and_cross_run_are_fail_closed(
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
     first = start_production_drill(
-        migrated_session, command(revision_id, key=f"matrix-{scenario}-1")
+        migrated_session, drill_command(migrated_session, revision_id, key=f"matrix-{scenario}-1")
     )
     second = start_production_drill(
-        migrated_session, command(revision_id, key=f"matrix-{scenario}-2")
+        migrated_session, drill_command(migrated_session, revision_id, key=f"matrix-{scenario}-2")
     )
     assert not isinstance(first, DomainError)
     assert not isinstance(second, DomainError)
@@ -436,7 +461,7 @@ def test_every_scenario_replay_conflict_and_cross_run_are_fail_closed(
 
 def test_scenarios_reject_runs_failed_by_the_system(migrated_session: Session) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id))
+    run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
     failed = fail_production_drill(
         migrated_session,
@@ -470,7 +495,7 @@ def test_fail_rejects_an_unredacted_diagnostic_in_the_service(
     migrated_session: Session,
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id))
+    run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
 
     result = fail_production_drill(
@@ -493,7 +518,7 @@ def test_unavailable_fixed_scenario_terminal_fails_before_resource_or_scenario_m
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id))
+    run = start_production_drill(migrated_session, drill_command(migrated_session, revision_id))
     assert not isinstance(run, DomainError)
     scenario = RunProductionDrillScenario(
         run_id=run.id,
@@ -526,7 +551,7 @@ def test_direct_system_registration_cannot_select_an_arbitrary_drill_template(
     migrated_session: Session,
 ) -> None:
     revision = register_test_revision(migrated_session)
-    run = start_production_drill(migrated_session, command(revision.id))
+    run = start_production_drill(migrated_session, drill_command(migrated_session, revision.id))
     assert not isinstance(run, DomainError)
 
     with pytest.raises(DomainError) as error:
@@ -559,7 +584,9 @@ def test_split_brain_wait_uses_only_the_persisted_run_deadline(
     migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
-    run = start_production_drill(migrated_session, command(revision_id, key="bounded-wait"))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, revision_id, key="bounded-wait")
+    )
     assert not isinstance(run, DomainError)
     waits: list[float] = []
 

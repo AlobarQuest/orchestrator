@@ -28,8 +28,16 @@ from orchestrator.services.reconciliation import (
     record_reconciliation_condition,
 )
 from tests.services.test_dependencies import register_unit
-from tests.services.test_production_drills import HUMAN, command
+from tests.services.test_production_drills import HUMAN, command, runtime_observation
 from tests.services.test_reconciliation import flip
+
+
+def drill_command(session: Session, revision_id: uuid.UUID, *, key: str = "drill-1"):
+    return command(
+        revision_id,
+        key=key,
+        runtime_observation_id=runtime_observation(session, key=key),
+    )
 
 
 def close_command(
@@ -49,7 +57,9 @@ def close_command(
 
 def test_close_cancels_incomplete_run_owned_assertion(migrated_session: Session) -> None:
     unit = register_unit(migrated_session, "incomplete-drill-assertion")
-    run = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(run, DomainError)
     migrated_session.add(
         ProductionDrillResource(run_id=run.id, resource_type="work_unit", resource_id=unit.id)
@@ -76,7 +86,9 @@ def test_close_ignores_ordinary_unit_and_emits_explicit_audit_event(
     migrated_session: Session,
 ) -> None:
     ordinary_unit = register_unit(migrated_session, "ordinary-closeout-unit")
-    run = start_production_drill(migrated_session, command(ordinary_unit.work_package_revision_id))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, ordinary_unit.work_package_revision_id)
+    )
     assert not isinstance(run, DomainError)
 
     result = close_production_drill(migrated_session, close_command(run.id))
@@ -102,7 +114,9 @@ def test_close_ignores_ordinary_unit_and_emits_explicit_audit_event(
 
 def test_close_replay_rejects_a_second_distinct_reason(migrated_session: Session) -> None:
     unit = register_unit(migrated_session, "close-reason-idempotency")
-    run = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(run, DomainError)
 
     first = close_production_drill(migrated_session, close_command(run.id, reason="reviewed"))
@@ -118,7 +132,9 @@ def test_close_replay_rejects_a_second_distinct_reason(migrated_session: Session
 
 def test_close_requires_a_human_actor(migrated_session: Session) -> None:
     unit = register_unit(migrated_session, "human-closeout")
-    run = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(run, DomainError)
 
     result = close_production_drill(
@@ -140,7 +156,9 @@ def test_close_releases_active_claim_and_cancels_owned_unit(
     migrated_session: Session,
 ) -> None:
     unit = register_unit(migrated_session, "active-claim-closeout")
-    run = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(run, DomainError)
     migrated_session.add(
         ProductionDrillResource(run_id=run.id, resource_type="work_unit", resource_id=unit.id)
@@ -180,7 +198,9 @@ def test_close_releases_active_claim_and_cancels_owned_unit(
 
 def test_close_resolves_only_run_owned_condition(migrated_session: Session) -> None:
     unit = register_unit(migrated_session, "unresolved-condition-closeout")
-    run = start_production_drill(migrated_session, command(unit.work_package_revision_id))
+    run = start_production_drill(
+        migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
+    )
     assert not isinstance(run, DomainError)
     unit.state = WorkUnitState.COMPLETED
     migrated_session.add(
