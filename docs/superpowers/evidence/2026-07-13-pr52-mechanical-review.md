@@ -142,32 +142,40 @@ an independent test failure, but it raises the cost and risk of proving the cont
 
 ## Security Scan
 
-The prescribed command was run exactly:
+The prescribed pipeline and follow-up assertion were run exactly:
 
 ```bash
 PYTHONPATH="$HOME/Projects/security-standards/src" \
-  python3 -m security_scan.cli . --category security
+  python3 -m security_scan.cli . --category security 2>&1 | \
+  tee /tmp/pr52-security-scan.log
+rg -n '0 BLOCK' /tmp/pr52-security-scan.log
 ```
 
-Exit status: `1` before scanning. On this shell, bare `python3` resolved to Apple's Python 3.9 and
-failed importing standard-library `tomllib`. The security-standards repository itself documents
-this interpreter hazard and requires Python 3.12 or its repository virtual environment.
+The pipeline's aggregate status was not captured independently; without `pipefail`, it represents
+`tee`, not the scanner. The scanner component status was captured immediately from zsh
+`pipestatus[1]` as `1`. Its log shows that bare `python3` resolved to Apple's Python 3.9 and failed
+importing standard-library `tomllib` before any scan ran. The subsequent literal `rg` command exited
+`1` because the failure log contained no BLOCK summary. The security-standards repository itself
+documents this interpreter hazard and requires Python 3.12 or its repository virtual environment.
 
 The supported equivalent was then run:
 
 ```bash
 PYTHONPATH="$HOME/Projects/security-standards/src" \
   /Users/devon/Projects/security-standards/.venv/bin/python \
-  -m security_scan.cli . --category security
+  -m security_scan.cli . --category security 2>&1 | \
+  tee /tmp/pr52-security-scan-supported.log
 ```
 
-Exit status: `0`. The JSON summary reported **0 BLOCK, 0 WARN, and 1 INFO**. The INFO is the
-scanner's judgment-only reminder to verify BWS machine-account scope; this review did not retrieve
-credentials or expand into infrastructure inspection.
+The supported scanner component status, again captured from `pipestatus[1]`, was `0`. Its JSON
+summary reported **0 BLOCK, 0 WARN, and 1 INFO**. The INFO is the scanner's judgment-only reminder
+to verify BWS machine-account scope; this review did not retrieve credentials or expand into
+infrastructure inspection.
 
-The checkpoint's literal `rg -n '0 BLOCK'` guard exits `1` because the current scanner emits JSON
-as `"BLOCK": 0`, not the phrase `0 BLOCK`. The authoritative scanner exit and JSON counts are
-clean; both the bare-interpreter invocation and text-format assertion are stale harness assumptions.
+Running the checkpoint's literal `rg -n '0 BLOCK'` guard against the supported JSON log also exited
+`1`, because the current scanner emits `"BLOCK": 0`, not the phrase `0 BLOCK`. The supported
+scanner component status and JSON counts are clean; both the bare-interpreter invocation and
+text-format assertion are stale harness assumptions.
 
 ## Startup And Rollback
 
