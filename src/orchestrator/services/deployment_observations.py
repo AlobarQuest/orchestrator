@@ -79,7 +79,8 @@ def record_deployment_observation(
 ) -> DeploymentObservation | DomainError:
     try:
         row, _created = _record_deployment_observation(session, command)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return row
     except DomainError as error:
         session.rollback()
@@ -115,7 +116,8 @@ def record_production_drill_deployment_observation(
                 evidence = session.get(Evidence, uuid.UUID(evidence_id))
                 assert evidence is not None
                 bind_created_drill_evidence(session, run_id, evidence)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return row
     except DomainError as error:
         session.rollback()

@@ -119,7 +119,8 @@ def record_reconciliation_condition(
     would let a malformed correlation take down the observation ingest path."""
     try:
         outcome = _record_condition(session, command)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return outcome
     except DomainError as error:
         session.rollback()
@@ -161,7 +162,8 @@ def record_production_drill_reconciliation_condition(
             )
         else:
             bind_created_drill_reconciliation_condition(session, run_id, outcome.condition)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return outcome
     except DomainError as error:
         session.rollback()

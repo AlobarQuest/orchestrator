@@ -106,7 +106,8 @@ def transition_unit(
     try:
         reject_production_drill_resource(session, "work_unit", command.unit_id)
         result = _perform_transition(session, command, clock or TransactionClock(), after)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return result
     except Exception:
         session.rollback()
@@ -125,7 +126,8 @@ def transition_production_drill_unit(
     require_production_drill_resource(session, run_id, "work_unit", command.unit_id)
     try:
         result = _perform_transition(session, command, clock or TransactionClock(), after)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return result
     except Exception:
         session.rollback()

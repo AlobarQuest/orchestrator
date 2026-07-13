@@ -56,7 +56,8 @@ def claim_unit(
             standing_context=standing_context,
         )
         if replay is not None:
-            session.commit()
+            if not session.info.get("production_drill_scenario_atomic"):
+                session.commit()
             return replay
         if expected_version is not None:
             _require_version(unit, expected_version)
@@ -101,7 +102,8 @@ def claim_unit(
                 ),
             },
         )
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return LeaseGrant(
             claim.id,
             claim.attempt,

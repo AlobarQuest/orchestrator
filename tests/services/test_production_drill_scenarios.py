@@ -7,9 +7,16 @@ from sqlalchemy.orm import Session
 import orchestrator.services.production_drills as production_drills
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Event, ProductionDrillResource
+from orchestrator.persistence.models import (
+    Event,
+    ProductionDrillResource,
+    ReconciliationCondition,
+    WorkUnit,
+)
 from orchestrator.services.packages import register_production_drill_unit
+from orchestrator.services.pr_bindings import get_pr_binding
 from orchestrator.services.production_drills import (
+    CloseProductionDrill,
     FailProductionDrill,
     RunProductionDrillScenario,
     fail_production_drill,
@@ -46,6 +53,115 @@ def test_system_scenario_is_audited_and_returns_only_its_run_state(
     )
     assert event is not None
     assert event.action == "production_drill.scenario.crash_recovery"
+
+
+def test_successful_scenario_remains_human_closeable(migrated_session: Session) -> None:
+    revision_id = register_test_revision(migrated_session).id
+    run = start_production_drill(migrated_session, command(revision_id, key="closeable-run"))
+    assert not isinstance(run, DomainError)
+    result = run_production_drill_scenario(
+        migrated_session,
+        RunProductionDrillScenario(run.id, "crash_recovery", SYSTEM, "closeable-scenario", 0),
+    )
+    assert not isinstance(result, DomainError)
+    assert result["status"] == "asserting"
+    closed = production_drills.close_production_drill(
+        migrated_session,
+        CloseProductionDrill(
+            run.id, type(SYSTEM)("human-1", ActorRole.HUMAN), "closeable-close", 0, "reviewed"
+        ),
+    )
+    assert not isinstance(closed, DomainError)
+    assert closed.status == "closed"
+
+
+def test_external_pr_conflict_uses_real_binding_and_detection(migrated_session: Session) -> None:
+    revision_id = register_test_revision(migrated_session).id
+    run = start_production_drill(migrated_session, command(revision_id, key="real-pr-conflict-run"))
+    assert not isinstance(run, DomainError)
+    result = run_production_drill_scenario(
+        migrated_session,
+        RunProductionDrillScenario(run.id, "external_pr_conflict", SYSTEM, "real-pr-conflict", 0),
+    )
+    assert not isinstance(result, DomainError)
+    unit = migrated_session.scalar(
+        select(WorkUnit).where(WorkUnit.unit_key.contains("external_pr_conflict"))
+    )
+    assert unit is not None
+    binding = get_pr_binding(migrated_session, unit.id)
+    assert binding is not None
+    assert binding.verification_read_head_sha == binding.head_sha
+    condition = migrated_session.scalar(
+        select(ReconciliationCondition).where(
+            ReconciliationCondition.work_unit_id == unit.id,
+            ReconciliationCondition.condition_type == "external_merge_alarm",
+        )
+    )
+    assert condition is not None
+    assert condition.observation_id is not None
+    assert condition.observed_state["merged"] is True
+
+
+def test_late_scenario_failure_rolls_back_all_synthetic_resources(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    revision_id = register_test_revision(migrated_session).id
+    run = start_production_drill(migrated_session, command(revision_id, key="atomic-failure-run"))
+    assert not isinstance(run, DomainError)
+
+    def fail_after_unit(*_args, **_kwargs) -> None:
+        raise DomainError("late_fixed_failure", "forced late scenario failure", None)
+
+    monkeypatch.setattr(production_drills, "_execute_fixed_evidence_recovery", fail_after_unit)
+    result = run_production_drill_scenario(
+        migrated_session,
+        RunProductionDrillScenario(run.id, "evidence_recovery", SYSTEM, "atomic-failure", 0),
+    )
+    assert not isinstance(result, DomainError)
+    assert result["status"] == "failed"
+    assert result["units"] == []
+    assert result["evidence"] == []
+    assert result["observations"] == []
+    assert result["conditions"] == []
+
+
+def test_deploy_split_brain_waits_then_detects_only_run_owned_resources(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import orchestrator.services.reconciliation_detection as detection
+
+    revision_id = register_test_revision(migrated_session).id
+    run = start_production_drill(migrated_session, command(revision_id, key="deploy-e2e-run"))
+    assert not isinstance(run, DomainError)
+    waits: list[float] = []
+
+    class PastDeadlineClock:
+        def now(self, _session: Session):
+            return run.opened_at + production_drills.timedelta(seconds=120)
+
+    monkeypatch.setattr(production_drills, "TransactionClock", PastDeadlineClock)
+    monkeypatch.setattr(detection, "TransactionClock", PastDeadlineClock)
+    monkeypatch.setattr(production_drills.time, "sleep", waits.append)
+    result = run_production_drill_scenario(
+        migrated_session,
+        RunProductionDrillScenario(run.id, "deploy_split_brain", SYSTEM, "deploy-e2e", 0),
+    )
+
+    assert not isinstance(result, DomainError)
+    assert waits == []
+    assert len(result["deployment_observations"]) == 1
+    assert any(
+        row["condition_type"] == "deploy_split_brain" and row["is_open"]
+        for row in result["conditions"]
+    )
+    owned = migrated_session.scalars(
+        select(ProductionDrillResource).where(ProductionDrillResource.run_id == run.id)
+    ).all()
+    assert {row.resource_type for row in owned} >= {
+        "deployment_observation",
+        "reconciliation_condition",
+        "work_unit",
+    }
 
 
 def test_system_fail_records_an_event_and_does_not_close_resources(

@@ -157,7 +157,8 @@ def _store_production_drill_evidence(
             require_production_drill_resource(session, run_id, "evidence", evidence.id)
         else:
             bind_created_drill_evidence(session, run_id, evidence)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return evidence
     except DomainError as error:
         session.rollback()
@@ -269,7 +270,8 @@ def record_adjudication(
         del revision
         replay = _adjudication_replay(session, idempotency_key, command)
         if replay is not None:
-            session.commit()
+            if not session.info.get("production_drill_scenario_atomic"):
+                session.commit()
             return replay
         if expected_version is not None and unit.version != expected_version:
             raise DomainError(
@@ -328,7 +330,8 @@ def record_adjudication(
                 idempotency_key,
             )
         )
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return row
     except DomainError as error:
         session.rollback()
@@ -608,7 +611,8 @@ def _store_verifier_evidence(
                 idempotency_key,
             )
         )
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return row
     except DomainError as error:
         session.rollback()

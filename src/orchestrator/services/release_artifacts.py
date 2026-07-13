@@ -69,7 +69,8 @@ def record_release_artifact(
 ) -> ReleaseArtifactBinding | DomainError:
     try:
         row, _created = _record_release_artifact(session, command)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return row
     except DomainError as error:
         session.rollback()
@@ -100,7 +101,8 @@ def record_production_drill_release_artifact(
         else:
             require_production_drill_resource(session, run_id, "release_artifact", row.id)
             require_production_drill_resource(session, run_id, "evidence", row.evidence_id)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return row
     except DomainError as error:
         session.rollback()

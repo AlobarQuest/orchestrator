@@ -87,7 +87,8 @@ class ObservationFilters:
 def record_observation(session: Session, command: ObservationCommand) -> Observation | DomainError:
     try:
         row, _ = _record_observation(session, command)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return row
     except DomainError as error:
         session.rollback()
@@ -113,7 +114,8 @@ def record_production_drill_observation(
             require_production_drill_resource(session, run_id, "observation", observation.id)
         else:
             bind_created_drill_observation(session, run_id, observation)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return observation
     except DomainError as error:
         session.rollback()

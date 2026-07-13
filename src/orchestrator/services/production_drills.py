@@ -1,6 +1,7 @@
 import re
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -47,9 +48,7 @@ from orchestrator.services.packages import (
     _register_fixed_production_drill_template_unit,
 )
 from orchestrator.services.reconciliation import (
-    ConditionCommand,
     ResolutionCommand,
-    record_production_drill_reconciliation_condition,
     resolve_production_drill_condition,
 )
 from orchestrator.services.release_artifacts import (
@@ -58,6 +57,19 @@ from orchestrator.services.release_artifacts import (
 )
 
 PRODUCTION_DRILL_IDEMPOTENCY_LOCK_NAMESPACE = 0x5044524C
+_SCENARIO_ATOMIC_SESSION_KEY = "production_drill_scenario_atomic"
+
+
+@contextmanager
+def _scenario_atomic(session: Session):
+    """Make a fixed scenario one durable operation despite service-level public wrappers."""
+    if session.info.get(_SCENARIO_ATOMIC_SESSION_KEY):  # pragma: no cover - internal misuse guard
+        raise RuntimeError("production drill scenario transaction is already active")
+    session.info[_SCENARIO_ATOMIC_SESSION_KEY] = True
+    try:
+        yield
+    finally:
+        session.info.pop(_SCENARIO_ATOMIC_SESSION_KEY, None)
 
 
 @dataclass(frozen=True)
@@ -163,7 +175,8 @@ def run_production_drill_scenario(
     session: Session, command: RunProductionDrillScenario
 ) -> dict[str, object] | DomainError:
     try:
-        _run_production_drill_scenario(session, command)
+        with _scenario_atomic(session):
+            _run_production_drill_scenario(session, command)
         session.commit()
         return production_drill_state(session, command.run_id)
     except DomainError as error:
@@ -476,6 +489,11 @@ def _run_production_drill_scenario(session: Session, command: RunProductionDrill
     try:
         _execute_fixed_scenario(session, run, command)
     except DomainError as error:
+        # A scenario either becomes fully durable below or leaves no synthetic mutation behind.
+        # The failure event is intentionally written only after the scenario transaction rolls back.
+        session.rollback()
+        run = session.get(ProductionDrillRun, command.run_id, with_for_update=True)
+        assert run is not None
         _record_scenario_terminal_failure(session, run, command, error)
         return
     now = TransactionClock().now(session)
@@ -515,13 +533,96 @@ def _execute_fixed_scenario(
         _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
         return
 
+    if command.scenario == "evidence_recovery":
+        _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
+        _execute_fixed_evidence_recovery(session, run, unit, command)
+        return
+
+    if command.scenario == "deploy_split_brain":
+        _execute_fixed_deploy_split_brain(session, run, unit, command)
+        return
+    if command.scenario == "external_pr_conflict":
+        _execute_fixed_external_pr_conflict(session, run, unit, command)
+        return
+    if command.scenario == "stalled_approval":
+        _execute_fixed_stalled_approval(session, run, unit, command)
+        return
+    raise AssertionError(f"unhandled production drill scenario {command.scenario}")
+
+
+def _execute_fixed_external_pr_conflict(
+    session: Session, run: ProductionDrillRun, unit: WorkUnit, command: RunProductionDrillScenario
+) -> None:
+    """Exercise the real PR binding, submit, observation, and detection path."""
+    from orchestrator.services.claims import claim_unit
+    from orchestrator.services.evidence import append_production_drill_evidence
+    from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
+    from orchestrator.services.production_drill_resources import (
+        bind_created_drill_reconciliation_condition,
+    )
+    from orchestrator.services.reconciliation_detection import detect_observation_conditions
+
+    worker = ActorContext("production-drill-worker", ActorRole.WORKER)
+    _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
+    claim = claim_unit(session, unit.id, worker, f"{command.idempotency_key}:claim", unit.version)
+    if isinstance(claim, DomainError):
+        raise claim
+    _transition_fixed_unit(
+        session,
+        run.id,
+        unit,
+        command,
+        WorkUnitState.EXECUTING,
+        worker,
+        claim.attempt,
+        claim.lease_token,
+    )
+    head = "a" * 40
+    upsert_pr_binding(
+        session,
+        actor=worker,
+        work_unit_id=unit.id,
+        pr_number=1,
+        head_sha=head,
+        attempt=claim.attempt,
+        lease_token=claim.lease_token,
+    )
+    evidence = append_production_drill_evidence(
+        session,
+        run_id=run.id,
+        work_package_revision_id=run.revision_id,
+        work_unit_id=unit.id,
+        ac_id="ac-1",
+        attempt=claim.attempt,
+        actor=worker,
+        lease_token=claim.lease_token,
+        evidence_type="production_drill.external_pr_conflict",
+        stable_ref=f"drill://redacted/{run.id}/external-pr",
+        payload={"scenario": command.scenario, "synthetic": True},
+        source_revision="synthetic",
+        expected_version=unit.version,
+        idempotency_key=f"{command.idempotency_key}:evidence",
+    )
+    if isinstance(evidence, DomainError):
+        raise evidence
+    _transition_fixed_unit(
+        session,
+        run.id,
+        unit,
+        command,
+        WorkUnitState.SUBMITTED,
+        worker,
+        claim.attempt,
+        claim.lease_token,
+    )
+    arm_verification_head(session, unit, actor=worker)
     observation = record_production_drill_observation(
         session,
         run_id=run.id,
         command=ObservationCommand(
             actor=command.actor,
             source_system="github",
-            source_reference=f"production-drill:{run.id}:{command.scenario}",
+            source_reference=f"production-drill:{run.id}:pr:1:merged",
             source_url=None,
             trust_classification="delivery_system",
             subject_type="work_unit",
@@ -531,47 +632,87 @@ def _execute_fixed_scenario(
             status="observed",
             severity="warning",
             observed_at=TransactionClock().now(session),
-            summary=f"fixed production drill scenario: {command.scenario}",
-            facts={"scenario": command.scenario, "synthetic": True},
+            summary="synthetic PR merged outside orchestrator",
+            facts={"pr_number": 1, "head_sha": head, "state": "closed", "merged": True},
             payload_digest=None,
             idempotency_key=f"{command.idempotency_key}:observation",
         ),
     )
     if isinstance(observation, DomainError):
         raise observation
-
-    if command.scenario == "evidence_recovery":
-        _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
-        _execute_fixed_evidence_recovery(session, run, unit, command)
-        return
-
-    if command.scenario == "deploy_split_brain":
-        _execute_fixed_deploy_split_brain(session, run, unit, command)
-        return
-
-    _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
-
-    condition_type = {
-        "external_pr_conflict": "external_merge_alarm",
-        "stalled_approval": "check_result_flip",
-    }[command.scenario]
-    outcome = record_production_drill_reconciliation_condition(
-        session,
-        run_id=run.id,
-        command=ConditionCommand(
-            actor=command.actor,
-            work_unit_id=unit.id,
-            observation_kind="github_pr",
-            condition_type=condition_type,
-            key_facts={"run_id": str(run.id), "scenario": command.scenario},
-            stored_state={"scenario": command.scenario, "state": "expected"},
-            observed_state={"scenario": command.scenario, "state": "diverged"},
-            detail=f"fixed production drill reconciliation assertion: {command.scenario}",
-            observation_id=observation.id,
-        ),
+    counters = detect_observation_conditions(session, observation, command.actor)
+    if counters.conditions_recorded != 1:
+        raise DomainError(
+            "production_drill_pr_conflict_not_detected",
+            "fixed PR conflict did not produce its required condition",
+            None,
+        )
+    condition = session.scalar(
+        select(ReconciliationCondition).where(
+            ReconciliationCondition.work_unit_id == unit.id,
+            ReconciliationCondition.observation_id == observation.id,
+            ReconciliationCondition.condition_type == "external_merge_alarm",
+        )
     )
-    if isinstance(outcome, DomainError):
-        raise outcome
+    if condition is None:
+        raise DomainError(
+            "production_drill_pr_conflict_not_detected",
+            "fixed PR conflict condition was not persisted",
+            None,
+        )
+    bind_created_drill_reconciliation_condition(session, run.id, condition)
+
+
+def _execute_fixed_stalled_approval(
+    session: Session, run: ProductionDrillRun, unit: WorkUnit, command: RunProductionDrillScenario
+) -> None:
+    """Create a real HUMAN-only approval gate, then prove it is reported but not requeueable."""
+    from orchestrator.services.claims import claim_unit
+    from orchestrator.services.dead_letter import dead_letter
+
+    worker = ActorContext("production-drill-worker", ActorRole.WORKER)
+    _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
+    claim = claim_unit(session, unit.id, worker, f"{command.idempotency_key}:claim", unit.version)
+    if isinstance(claim, DomainError):
+        raise claim
+    _transition_fixed_unit(
+        session,
+        run.id,
+        unit,
+        command,
+        WorkUnitState.EXECUTING,
+        worker,
+        claim.attempt,
+        claim.lease_token,
+    )
+    _transition_fixed_unit(
+        session,
+        run.id,
+        unit,
+        command,
+        WorkUnitState.AWAITING_APPROVAL,
+        worker,
+        claim.attempt,
+        claim.lease_token,
+    )
+    _wait_for_run_deadline(session, run, unit.updated_at)
+    entries = dead_letter(
+        session,
+        failure_signature_threshold=get_settings().dispatch_failure_signature_threshold,
+        stalled_approval_seconds=get_settings().dead_letter_stalled_approval_seconds,
+        production_drill_run_id=run.id,
+    )
+    stalled = [
+        entry
+        for entry in entries
+        if entry.source == "stalled_approval" and entry.work_unit_id == unit.id
+    ]
+    if len(stalled) != 1 or stalled[0].requeue_eligible:
+        raise DomainError(
+            "production_drill_stalled_approval_not_detected",
+            "fixed approval gate was not reported as non-requeueable",
+            None,
+        )
 
 
 def _register_fixed_scenario_unit(
@@ -870,10 +1011,16 @@ def _complete_fixed_unit(
 def _wait_for_reporting_deadline(
     session: Session, run: ProductionDrillRun, deployment: DeploymentObservation
 ) -> None:
+    _wait_for_run_deadline(session, run, deployment.recorded_at)
+
+
+def _wait_for_run_deadline(
+    session: Session, run: ProductionDrillRun, occurred_at: datetime
+) -> None:
     deadlines = production_drill_deadlines(session, run.id)
     if isinstance(deadlines, DomainError):
         raise deadlines
-    deadline = deployment.recorded_at + deadlines.reporting_deadline
+    deadline = occurred_at + deadlines.reporting_deadline
     remaining = (deadline - TransactionClock().now(session)).total_seconds()
     if remaining > 0:
         time.sleep(remaining)
@@ -1034,7 +1181,7 @@ def _close_production_drill(session: Session, command: CloseProductionDrill) -> 
             "production drill run already has a different closure reason",
             None,
         )
-    if run.status != "open":
+    if run.status not in {"open", "asserting"}:
         raise DomainError("production_drill_run_not_open", "production drill run is not open", None)
 
     now = TransactionClock().now(session)
@@ -1052,7 +1199,7 @@ def _close_production_drill(session: Session, command: CloseProductionDrill) -> 
             action="production_drill_closed",
             subject_type="production_drill_run",
             subject_id=run.id,
-            from_state="open",
+            from_state=run.status,
             to_state="closed",
             payload={"closure_reason": command.closure_reason, "command": payload},
             correlation_id=uuid.uuid4(),

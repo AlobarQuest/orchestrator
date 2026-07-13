@@ -192,6 +192,6 @@ def require_open_production_drill_run(session: Session, run_id: uuid.UUID) -> Pr
         raise DomainError(
             "production_drill_run_not_found", "production drill run does not exist", None
         )
-    if run.status != "open":
+    if run.status not in {"open", "asserting"}:
         raise DomainError("production_drill_run_not_open", "production drill run is not open", None)
     return run
