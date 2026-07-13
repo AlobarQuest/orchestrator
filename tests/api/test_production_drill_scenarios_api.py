@@ -3,7 +3,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.api.test_lifecycle_api import HUMAN, SYSTEM, WORKER
+from tests.api.test_lifecycle_api import HUMAN, OTHER_SYSTEM, SYSTEM, WORKER
 from tests.api.test_production_drills_api import create_revision, start_body
 
 SCENARIOS = (
@@ -45,6 +45,11 @@ def test_scenario_routes_are_system_only_and_reject_arbitrary_payloads(
     worker = db_client.post(
         f"/api/v1/production-drills/{run_id}/scenarios/{scenario}", headers=WORKER, json=body
     )
+    other_system = db_client.post(
+        f"/api/v1/production-drills/{run_id}/scenarios/{scenario}",
+        headers=OTHER_SYSTEM,
+        json=body,
+    )
     arbitrary = db_client.post(
         f"/api/v1/production-drills/{run_id}/scenarios/{scenario}",
         headers=SYSTEM,
@@ -56,6 +61,8 @@ def test_scenario_routes_are_system_only_and_reject_arbitrary_payloads(
 
     assert worker.status_code == 403
     assert worker.json()["error"]["code"] == "role_forbidden"
+    assert other_system.status_code == 403
+    assert other_system.json()["error"]["code"] == "role_forbidden"
     assert arbitrary.status_code == 422
     assert accepted.status_code == 200
     assert accepted.json()["run_id"] == run_id
@@ -171,6 +178,9 @@ def test_every_fail_route_replays_and_rejects_conflict_cross_run_and_unknown_ids
         "diagnostic_ref": f"drill://redacted/{failure_code}",
     }
 
+    other_system = db_client.post(
+        f"/api/v1/production-drills/{first}/fail", headers=OTHER_SYSTEM, json=body
+    )
     accepted = db_client.post(f"/api/v1/production-drills/{first}/fail", headers=SYSTEM, json=body)
     replay = db_client.post(f"/api/v1/production-drills/{first}/fail", headers=SYSTEM, json=body)
     cross_run = db_client.post(
@@ -192,6 +202,8 @@ def test_every_fail_route_replays_and_rejects_conflict_cross_run_and_unknown_ids
         json={**body, "idempotency_key": f"unknown-fail-{failure_code}"},
     )
 
+    assert other_system.status_code == 403
+    assert other_system.json()["error"]["code"] == "role_forbidden"
     assert accepted.status_code == replay.status_code == 200
     assert cross_run.status_code == conflict.status_code == 409
     assert cross_run.json()["error"]["code"] == "idempotency_conflict"

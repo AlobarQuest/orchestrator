@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from orchestrator.api.dependencies import get_actor, get_session
+from orchestrator.api.dependencies import get_actor, get_production_drill_actor, get_session
 from orchestrator.api.schemas import (
     AdjudicationCommand,
     AdjudicationResponse,
@@ -222,6 +222,7 @@ from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[ActorContext, Depends(get_actor)]
+ProductionDrillActorDep = Annotated[ActorContext, Depends(get_production_drill_actor)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
@@ -351,7 +352,7 @@ def run_production_drill_scenario_route(
     run_id: UUID,
     scenario: str,
     body: ProductionDrillScenarioCommand,
-    actor: ActorDep,
+    actor: ProductionDrillActorDep,
     session: SessionDep,
 ) -> object:
     return _raise_error(
@@ -372,7 +373,7 @@ def run_production_drill_scenario_route(
 def fail_production_drill_route(
     run_id: UUID,
     body: FailProductionDrillCommand,
-    actor: ActorDep,
+    actor: ProductionDrillActorDep,
     session: SessionDep,
 ) -> object:
     return _raise_error(

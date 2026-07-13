@@ -47,6 +47,13 @@ def auth_config() -> AuthConfig:
                     "authority_profile": "system-v1",
                 },
                 {
+                    "agent_id": "system-alt",
+                    "version": 1,
+                    "status": "active",
+                    "runtime": "orchestrator",
+                    "authority_profile": "system-v1",
+                },
+                {
                     "agent_id": "verifier",
                     "version": 1,
                     "status": "active",
@@ -67,6 +74,10 @@ def auth_config() -> AuthConfig:
                 agent_id="system",
                 token_hash=hashlib.sha256(b"system-token").hexdigest(),
             ),
+            "system-alt-key": M2MCredential(
+                agent_id="system-alt",
+                token_hash=hashlib.sha256(b"system-alt-token").hexdigest(),
+            ),
             "verifier-key": M2MCredential(
                 agent_id="verifier",
                 token_hash=hashlib.sha256(b"verifier-token").hexdigest(),
@@ -79,8 +90,10 @@ def auth_config() -> AuthConfig:
         email_to_actor={"devon@example.invalid": "devon"},
         m2m_roles={
             "system-key": ActorRole.SYSTEM,
+            "system-alt-key": ActorRole.SYSTEM,
             "verifier-key": ActorRole.VERIFIER,
         },
+        production_drill_credential_key_id="system-key",
         csrf_secret=b"test-only-csrf-secret-with-32-bytes",
     )
 

@@ -44,6 +44,7 @@ POST_DEPLOY_AC_IDS = (
 class ActorContext:
     actor_id: str
     role: ActorRole
+    credential_key_id: str | None = None
 
 
 @dataclass(frozen=True)
