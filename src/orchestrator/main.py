@@ -67,9 +67,19 @@ def load_auth_config(
     production_drill_mode: ProductionDrillMode | None = None,
 ) -> AuthConfig | None:
     mode = production_drill_mode or get_settings().production_drill_mode
+    production_drill_credential_key_id = _optional_environment(
+        "ORCHESTRATOR_PRODUCTION_DRILL_CREDENTIAL_KEY_ID"
+    )
+    runtime_observer_credential_key_id = _optional_environment(
+        "ORCHESTRATOR_RUNTIME_OBSERVER_CREDENTIAL_KEY_ID"
+    )
     bundle_path = os.environ.get("ORCHESTRATOR_REGISTRY_BUNDLE")
     if not bundle_path:
-        if production_drill_enabled(mode):
+        if (
+            production_drill_credential_key_id is not None
+            or runtime_observer_credential_key_id is not None
+            or production_drill_enabled(mode)
+        ):
             raise RuntimeError("invalid runtime authentication configuration")
         return None
     try:
@@ -85,12 +95,6 @@ def load_auth_config(
             role is ActorRole.HUMAN for role in roles.values()
         ):
             raise RuntimeError("invalid runtime authentication configuration")
-        production_drill_credential_key_id = _optional_environment(
-            "ORCHESTRATOR_PRODUCTION_DRILL_CREDENTIAL_KEY_ID"
-        )
-        runtime_observer_credential_key_id = _optional_environment(
-            "ORCHESTRATOR_RUNTIME_OBSERVER_CREDENTIAL_KEY_ID"
-        )
         if (
             production_drill_credential_key_id is None
             and runtime_observer_credential_key_id is None

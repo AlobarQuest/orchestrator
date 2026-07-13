@@ -188,7 +188,7 @@ def test_runtime_auth_loads_distinct_system_drill_credentials_in_every_mode(
         ),
     ],
 )
-def test_runtime_auth_rejects_invalid_drill_credential_mapping_without_logging_ids(
+def test_runtime_auth_rejects_invalid_drill_credential_mapping_without_logging_secrets(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     production_drill_id: str,
@@ -201,8 +201,15 @@ def test_runtime_auth_rejects_invalid_drill_credential_mapping_without_logging_i
 
     with pytest.raises(RuntimeError, match="runtime authentication configuration"):
         load_auth_config(ProductionDrillMode.ENABLED)
-    assert production_drill_id not in caplog.text
-    assert runtime_observer_id not in caplog.text
+    for sensitive_value in (
+        production_drill_id,
+        runtime_observer_id,
+        "a" * 64,
+        "b" * 64,
+        "trusted-marker",
+        "x" * 32,
+    ):
+        assert sensitive_value not in caplog.text
 
 
 @pytest.mark.parametrize("mode", [ProductionDrillMode.OFF, ProductionDrillMode.STANDBY])
@@ -211,12 +218,32 @@ def test_no_auth_development_mode_is_preserved_before_enabled(
     mode: ProductionDrillMode,
 ) -> None:
     monkeypatch.delenv("ORCHESTRATOR_REGISTRY_BUNDLE", raising=False)
+    _set_drill_credential_ids(monkeypatch, None, None)
 
     assert load_auth_config(mode) is None
 
 
+@pytest.mark.parametrize("mode", [ProductionDrillMode.OFF, ProductionDrillMode.STANDBY])
+@pytest.mark.parametrize(
+    ("production_drill_id", "runtime_observer_id"),
+    [("worker-key", None), (None, "observer-key"), ("worker-key", "observer-key")],
+)
+def test_no_registry_rejects_configured_drill_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: ProductionDrillMode,
+    production_drill_id: str | None,
+    runtime_observer_id: str | None,
+) -> None:
+    monkeypatch.delenv("ORCHESTRATOR_REGISTRY_BUNDLE", raising=False)
+    _set_drill_credential_ids(monkeypatch, production_drill_id, runtime_observer_id)
+
+    with pytest.raises(RuntimeError, match="runtime authentication configuration"):
+        load_auth_config(mode)
+
+
 def test_enabled_rejects_missing_registry_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ORCHESTRATOR_REGISTRY_BUNDLE", raising=False)
+    _set_drill_credential_ids(monkeypatch, None, None)
 
     with pytest.raises(RuntimeError, match="runtime authentication configuration"):
         load_auth_config(ProductionDrillMode.ENABLED)
