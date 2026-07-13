@@ -31,14 +31,14 @@ from orchestrator.services.observations import (
     record_observation,
     record_production_drill_observation,
 )
-from orchestrator.services.packages import register_approved_unit, register_production_drill_unit
+from orchestrator.services.packages import _register_production_drill_unit, register_approved_unit
 from orchestrator.services.production_drills import (
     RECOVERY_DRILLS_PACKAGE_ID,
     start_production_drill,
 )
 from orchestrator.services.reconciliation import (
     ConditionCommand,
-    record_production_drill_reconciliation_condition,
+    _record_production_drill_reconciliation_condition,
     record_reconciliation_condition,
 )
 from orchestrator.services.release_artifacts import record_production_drill_release_artifact
@@ -102,7 +102,7 @@ def test_drill_registration_rejects_an_existing_ordinary_unit_with_revision_lock
     migrated_session.commit()
 
     with pytest.raises(DomainError) as error:
-        register_production_drill_unit(migrated_session, run_id=drill.id, **registration)
+        _register_production_drill_unit(migrated_session, run_id=drill.id, **registration)
 
     assert error.value.code == "production_drill_resource_not_owned"
     assert (
@@ -217,7 +217,7 @@ def _register_drill_unit_and_commit(
     engine: Engine, run_id: uuid.UUID, registration: UnitRegistration
 ) -> uuid.UUID:
     with Session(engine) as session:
-        unit = register_production_drill_unit(session, run_id=run_id, **registration)
+        unit = _register_production_drill_unit(session, run_id=run_id, **registration)
         unit_id = unit.id
         session.commit()
         return unit_id
@@ -374,7 +374,7 @@ def test_ordinary_condition_replay_cannot_be_captured_by_a_drill(migrated_sessio
     ordinary = record_reconciliation_condition(migrated_session, condition)
     assert not isinstance(ordinary, DomainError)
 
-    replay = record_production_drill_reconciliation_condition(
+    replay = _record_production_drill_reconciliation_condition(
         migrated_session, run_id=drill.id, command=condition
     )
 
@@ -500,7 +500,7 @@ def test_drill_condition_rejects_an_ordinary_observation_reference(
     )
     migrated_session.commit()
 
-    result = record_production_drill_reconciliation_condition(
+    result = _record_production_drill_reconciliation_condition(
         migrated_session,
         run_id=drill.id,
         command=ConditionCommand(
@@ -541,7 +541,7 @@ def test_drill_condition_rejects_an_ordinary_deployment_observation_reference(
     )
     assert not isinstance(deployment, DomainError)
 
-    result = record_production_drill_reconciliation_condition(
+    result = _record_production_drill_reconciliation_condition(
         migrated_session,
         run_id=drill.id,
         command=ConditionCommand(

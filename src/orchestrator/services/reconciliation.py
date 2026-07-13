@@ -139,7 +139,7 @@ def record_reconciliation_condition(
         raise
 
 
-def record_production_drill_reconciliation_condition(
+def _record_production_drill_reconciliation_condition(
     session: Session, *, run_id: uuid.UUID, command: ConditionCommand
 ) -> ConditionOutcome | DomainError:
     try:

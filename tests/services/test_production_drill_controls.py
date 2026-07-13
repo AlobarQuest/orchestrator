@@ -18,7 +18,7 @@ from orchestrator.services.observations import (
     ObservationCommand,
     record_production_drill_observation,
 )
-from orchestrator.services.packages import register_production_drill_unit
+from orchestrator.services.packages import _register_production_drill_unit
 from orchestrator.services.production_drills import (
     RECOVERY_DRILLS_PACKAGE_ID,
     StartProductionDrill,
@@ -120,7 +120,7 @@ def test_registered_drill_unit_uses_its_run_lease_without_changing_ordinary_dura
         ),
     )
     assert not isinstance(drill, DomainError)
-    unit = register_production_drill_unit(
+    unit = _register_production_drill_unit(
         migrated_session,
         run_id=drill.id,
         revision_id=revision.id,

@@ -456,7 +456,7 @@ def _register_approved_unit_with_provenance(
     return RegisteredWorkUnit(unit, created=True)
 
 
-def register_production_drill_unit(
+def _register_production_drill_unit(
     session: Session,
     *,
     run_id: uuid.UUID,

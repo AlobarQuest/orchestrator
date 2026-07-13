@@ -18,7 +18,7 @@ from orchestrator.persistence.models import (
     ReconciliationCondition,
     WorkUnit,
 )
-from orchestrator.services.packages import register_production_drill_unit
+from orchestrator.services.packages import _register_production_drill_unit
 from orchestrator.services.pr_bindings import get_pr_binding
 from orchestrator.services.production_drills import (
     CloseProductionDrill,
@@ -555,7 +555,7 @@ def test_direct_system_registration_cannot_select_an_arbitrary_drill_template(
     assert not isinstance(run, DomainError)
 
     with pytest.raises(DomainError) as error:
-        register_production_drill_unit(
+        _register_production_drill_unit(
             migrated_session,
             run_id=run.id,
             revision_id=revision.id,

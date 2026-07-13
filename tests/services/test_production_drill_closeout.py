@@ -26,7 +26,7 @@ from orchestrator.services.production_drills import (
     start_production_drill,
 )
 from orchestrator.services.reconciliation import (
-    record_production_drill_reconciliation_condition,
+    _record_production_drill_reconciliation_condition,
     record_reconciliation_condition,
 )
 from tests.services.test_dependencies import register_unit
@@ -213,7 +213,7 @@ def test_close_resolves_only_run_owned_condition(migrated_session: Session) -> N
         ProductionDrillResource(run_id=run.id, resource_type="work_unit", resource_id=unit.id)
     )
     migrated_session.commit()
-    condition = record_production_drill_reconciliation_condition(
+    condition = _record_production_drill_reconciliation_condition(
         migrated_session,
         run_id=run.id,
         command=flip(unit.id),

@@ -133,7 +133,7 @@ def supersede_evidence(
     return _evidence_result_row(result)
 
 
-def supersede_production_drill_evidence(
+def _supersede_production_drill_evidence(
     session: Session, *, run_id: uuid.UUID, **kwargs: Any
 ) -> Evidence | DomainError:
     return _store_production_drill_evidence(session, run_id, kwargs, supersede=True)
