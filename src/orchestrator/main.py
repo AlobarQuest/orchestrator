@@ -8,24 +8,16 @@ from fastapi.responses import JSONResponse
 from orchestrator.api.dependencies import APIAuthenticationError, AuthConfig
 from orchestrator.api.health import router as health_router
 from orchestrator.api.routes import router as api_router
-from orchestrator.config import ProductionDrillMode, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.identity.auth import TOKEN_HASH_PATTERN, M2MCredential
 from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.kernel.states import ActorRole
-from orchestrator.services.production_drill_compatibility import production_drill_enabled
 from orchestrator.web import router as web_router
 
 
-def create_app(
-    auth_config: AuthConfig | None = None,
-    production_drill_mode: ProductionDrillMode | None = None,
-) -> FastAPI:
+def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
     application = FastAPI(title="Orchestrator")
     application.state.auth_config = auth_config
-    application.state.production_drill_mode = (
-        production_drill_mode or get_settings().production_drill_mode
-    )
 
     @application.exception_handler(APIAuthenticationError)
     async def authentication_error_handler(
@@ -45,7 +37,7 @@ def create_app(
     @application.exception_handler(DomainError)
     async def domain_error_handler(_request: Request, error: DomainError) -> JSONResponse:
         status = 404 if error.code.endswith("_not_found") else 409
-        if error.code in {"csrf_unavailable", "production_drill_unavailable"}:
+        if error.code == "csrf_unavailable":
             status = 503
         if error.code in {"role_forbidden", "human_actor_required", "csrf_rejected"}:
             status = 403
@@ -63,24 +55,9 @@ def create_app(
     return application
 
 
-def load_auth_config(
-    production_drill_mode: ProductionDrillMode | None = None,
-) -> AuthConfig | None:
-    mode = production_drill_mode or get_settings().production_drill_mode
-    production_drill_credential_key_id = _optional_environment(
-        "ORCHESTRATOR_PRODUCTION_DRILL_CREDENTIAL_KEY_ID"
-    )
-    runtime_observer_credential_key_id = _optional_environment(
-        "ORCHESTRATOR_RUNTIME_OBSERVER_CREDENTIAL_KEY_ID"
-    )
+def load_auth_config() -> AuthConfig | None:
     bundle_path = os.environ.get("ORCHESTRATOR_REGISTRY_BUNDLE")
     if not bundle_path:
-        if (
-            production_drill_credential_key_id is not None
-            or runtime_observer_credential_key_id is not None
-            or production_drill_enabled(mode)
-        ):
-            raise RuntimeError("invalid runtime authentication configuration")
         return None
     try:
         registry = RegistryAdapter.from_path(Path(bundle_path))
@@ -95,17 +72,13 @@ def load_auth_config(
             role is ActorRole.HUMAN for role in roles.values()
         ):
             raise RuntimeError("invalid runtime authentication configuration")
+        production_drill_credential_key_id = _required_environment(
+            "ORCHESTRATOR_PRODUCTION_DRILL_CREDENTIAL_KEY_ID"
+        )
+        runtime_observer_credential_key_id = _required_environment(
+            "ORCHESTRATOR_RUNTIME_OBSERVER_CREDENTIAL_KEY_ID"
+        )
         if (
-            production_drill_credential_key_id is None
-            and runtime_observer_credential_key_id is None
-        ):
-            if production_drill_enabled(mode):
-                raise RuntimeError("invalid runtime authentication configuration")
-        elif (
-            production_drill_credential_key_id is None or runtime_observer_credential_key_id is None
-        ):
-            raise RuntimeError("invalid runtime authentication configuration")
-        elif (
             roles.get(production_drill_credential_key_id) is not ActorRole.SYSTEM
             or roles.get(runtime_observer_credential_key_id) is not ActorRole.SYSTEM
             or runtime_observer_credential_key_id == production_drill_credential_key_id
@@ -140,10 +113,6 @@ def _required_environment(name: str) -> str:
     if not value:
         raise RuntimeError("invalid runtime authentication configuration")
     return value
-
-
-def _optional_environment(name: str) -> str | None:
-    return os.environ.get(name) or None
 
 
 def _json_object(name: str, *, required: bool = True) -> dict[str, object]:
@@ -211,8 +180,4 @@ def _email_actor_mapping(registry: RegistryAdapter) -> dict[str, str]:
     return mapping
 
 
-_settings = get_settings()
-app = create_app(
-    load_auth_config(_settings.production_drill_mode),
-    _settings.production_drill_mode,
-)
+app = create_app(load_auth_config())

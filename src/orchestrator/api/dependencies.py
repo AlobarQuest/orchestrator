@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from fastapi import Request
 from sqlalchemy.orm import Session
 
-from orchestrator.config import ProductionDrillMode
 from orchestrator.db import session_factory
 from orchestrator.errors import DomainError
 from orchestrator.identity.auth import (
@@ -16,10 +15,6 @@ from orchestrator.identity.auth import (
 from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.kernel.states import ActorRole
 from orchestrator.services.lifecycle import ActorContext
-from orchestrator.services.production_drill_compatibility import (
-    production_drill_enabled,
-    production_drill_schema_active,
-)
 
 
 @dataclass(frozen=True)
@@ -92,49 +87,8 @@ def get_actor(request: Request) -> ActorContext:
     return ActorContext(identity.actor_id, role, identity.credential_key_id)
 
 
-def _production_drill_mode(request: Request) -> ProductionDrillMode:
-    mode = getattr(request.app.state, "production_drill_mode", None)
-    if not isinstance(mode, ProductionDrillMode):
-        raise _production_drill_unavailable()
-    return mode
-
-
-def _production_drill_unavailable() -> DomainError:
-    return DomainError(
-        "production_drill_unavailable",
-        "production drill operations are unavailable in the configured mode",
-        None,
-    )
-
-
-def require_production_drill_schema(request: Request) -> None:
-    if not production_drill_schema_active(_production_drill_mode(request)):
-        raise _production_drill_unavailable()
-
-
-def require_production_drill_enabled(request: Request) -> None:
-    if not production_drill_enabled(_production_drill_mode(request)):
-        raise _production_drill_unavailable()
-
-
-def get_production_drill_read_actor(request: Request) -> ActorContext:
-    require_production_drill_schema(request)
-    return get_actor(request)
-
-
-def get_production_drill_start_actor(request: Request) -> ActorContext:
-    require_production_drill_enabled(request)
-    return get_actor(request)
-
-
-def get_production_drill_close_actor(request: Request) -> ActorContext:
-    require_production_drill_schema(request)
-    return get_actor(request)
-
-
 def get_production_drill_actor(request: Request) -> ActorContext:
     """Authorize the dedicated runner credential for production-drill controls only."""
-    require_production_drill_enabled(request)
     actor = get_actor(request)
     config = getattr(request.app.state, "auth_config", None)
     if (
@@ -153,7 +107,6 @@ def get_production_drill_actor(request: Request) -> ActorContext:
 
 def get_runtime_observer_actor(request: Request) -> ActorContext:
     """Authorize the credential that can attest the running deployment."""
-    require_production_drill_enabled(request)
     actor = get_actor(request)
     config = getattr(request.app.state, "auth_config", None)
     if (

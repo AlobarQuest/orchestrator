@@ -1,5 +1,4 @@
 import uuid
-from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from inspect import signature
@@ -7,22 +6,14 @@ from threading import Event, get_ident
 from typing import TypedDict
 
 import pytest
-from alembic import command as alembic_command
-from alembic.config import Config
 from sqlalchemy import Engine, event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from orchestrator.config import ProductionDrillMode, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import (
-    ProductionDrillResource,
-    ProductionDrillRun,
-    WorkPackageRevision,
-    WorkUnit,
-)
+from orchestrator.persistence.models import ProductionDrillResource, WorkPackageRevision, WorkUnit
 from orchestrator.services.dead_letter import dead_letter
 from orchestrator.services.deployment_observations import (
     record_deployment_observation,
@@ -51,9 +42,6 @@ from orchestrator.services.reconciliation import (
     record_reconciliation_condition,
 )
 from orchestrator.services.release_artifacts import record_production_drill_release_artifact
-from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
-from orchestrator.web import _projection
-from tests.conftest import TEST_DATABASE_URL
 from tests.services.test_dependencies import register_unit
 from tests.services.test_deployment_observations import (
     observation_command as deployment_observation_command,
@@ -96,48 +84,6 @@ class UnitRegistration(TypedDict):
     approved_at: datetime
     actor_id: str
     actor_role: ActorRole
-
-
-def mark_work_unit_as_production_drill_resource(session: Session, unit: WorkUnit) -> None:
-    run = ProductionDrillRun(
-        revision_id=unit.work_package_revision_id,
-        owner_actor_id="human-1",
-        status="open",
-        image_ref="ghcr.io/alobarquest/orchestrator:production",
-        image_digest="ghcr.io/alobarquest/orchestrator@sha256:" + "a" * 64,
-        openapi_digest="sha256:" + "b" * 64,
-    )
-    session.add(run)
-    session.flush()
-    session.add(
-        ProductionDrillResource(
-            run_id=run.id,
-            resource_type="work_unit",
-            resource_id=unit.id,
-        )
-    )
-    session.commit()
-
-
-@pytest.fixture
-def off_schema_0014_session(
-    migrated_engine: Engine,
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[Session]:
-    monkeypatch.setenv(
-        "ORCHESTRATOR_PRODUCTION_DRILL_MODE",
-        ProductionDrillMode.OFF.value,
-    )
-    get_settings.cache_clear()
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
-    alembic_command.downgrade(config, "0014_wsp21_recovery_controls")
-    try:
-        with Session(migrated_engine) as session:
-            yield session
-            session.rollback()
-    finally:
-        alembic_command.upgrade(config, "head")
 
 
 def test_ordinary_work_unit_cannot_self_tag_as_production_drill_resource() -> None:
@@ -636,18 +582,8 @@ def test_drill_lifecycle_control_rejects_an_ordinary_work_unit(migrated_session:
         )
 
 
-@pytest.mark.parametrize(
-    "mode",
-    (ProductionDrillMode.STANDBY, ProductionDrillMode.ENABLED),
-)
-def test_ordinary_projections_hide_drill_resources_by_default(
-    migrated_session: Session,
-    monkeypatch: pytest.MonkeyPatch,
-    mode: ProductionDrillMode,
-) -> None:
-    monkeypatch.setenv("ORCHESTRATOR_PRODUCTION_DRILL_MODE", mode.value)
-    get_settings.cache_clear()
-    unit = register_unit(migrated_session, f"hidden-drill-resource-{mode.value}")
+def test_ordinary_projections_hide_drill_resources_by_default(migrated_session: Session) -> None:
+    unit = register_unit(migrated_session, "hidden-drill-resource")
     drill = start_production_drill(
         migrated_session, drill_command(migrated_session, unit.work_package_revision_id)
     )
@@ -682,35 +618,3 @@ def test_ordinary_projections_hide_drill_resources_by_default(
             migrated_session, include_production_drill_resources=True
         ).units
     }
-
-
-def test_off_mode_status_and_direct_projection_do_not_compile_drill_table_sql(
-    off_schema_0014_session: Session,
-) -> None:
-    unit = register_unit(off_schema_0014_session, "off-projection-without-drill-schema")
-    statements: list[str] = []
-    assert off_schema_0014_session.bind is not None
-
-    def capture_sql(
-        _connection: object,
-        _cursor: object,
-        statement: str,
-        _parameters: object,
-        _context: object,
-        _executemany: object,
-    ) -> None:
-        statements.append(statement)
-
-    event.listen(off_schema_0014_session.bind, "before_cursor_execute", capture_sql)
-    try:
-        ledger = status_ledger(
-            off_schema_0014_session,
-            StatusLedgerFilters(work_unit_id=unit.id, include_inactive=True),
-        )
-        projection = _projection(off_schema_0014_session, unit.id)
-    finally:
-        event.remove(off_schema_0014_session.bind, "before_cursor_execute", capture_sql)
-
-    assert [row.unit_id for row in ledger] == [unit.id]
-    assert projection["unit"].id == unit.id
-    assert "production_drill_resources" not in "\n".join(statements)

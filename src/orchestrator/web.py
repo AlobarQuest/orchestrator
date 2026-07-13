@@ -181,12 +181,7 @@ def queue(request: Request, actor: ActorDep, session: SessionDep) -> HTMLRespons
 
 
 def _projection(session: Session, unit_id: uuid.UUID) -> dict[str, Any]:
-    unit = session.scalar(
-        select(WorkUnit).where(
-            WorkUnit.id == unit_id,
-            is_not_production_drill_resource("work_unit", WorkUnit.id),
-        )
-    )
+    unit = session.get(WorkUnit, unit_id)
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
     revision = session.get(WorkPackageRevision, unit.work_package_revision_id)

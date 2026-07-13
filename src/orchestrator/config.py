@@ -1,14 +1,7 @@
-from enum import StrEnum
 from functools import lru_cache
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-class ProductionDrillMode(StrEnum):
-    OFF = "off"
-    STANDBY = "standby"
-    ENABLED = "enabled"
 
 
 class Settings(BaseSettings):
@@ -61,7 +54,6 @@ class Settings(BaseSettings):
     # verification's worst case; the AC-010 drill sets it low via the env var so it needs no sleep.
     reconcile_split_brain_stall_seconds: int = 900
     production_drill_max_deadline_seconds: int = Field(default=3_600, ge=60)
-    production_drill_mode: ProductionDrillMode = ProductionDrillMode.OFF
 
 
 @lru_cache

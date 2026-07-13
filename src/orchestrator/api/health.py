@@ -4,18 +4,13 @@ from typing import Annotated
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import get_session
-from orchestrator.config import ProductionDrillMode
-from orchestrator.services.production_drill_compatibility import (
-    DRILL_REVISION,
-    PRE_DRILL_REVISION,
-)
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -29,14 +24,8 @@ def live() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def expected_database_head(mode: ProductionDrillMode) -> str:
-    if mode is ProductionDrillMode.OFF:
-        return PRE_DRILL_REVISION
-    return DRILL_REVISION
-
-
 @router.get("/ready", response_model=None)
-def ready(request: Request, session: SessionDep) -> dict[str, str] | JSONResponse:
+def ready(session: SessionDep) -> dict[str, str] | JSONResponse:
     try:
         session.execute(text("SELECT 1"))
         database_heads = MigrationContext.configure(session.connection()).get_current_heads()
@@ -50,21 +39,13 @@ def ready(request: Request, session: SessionDep) -> dict[str, str] | JSONRespons
             content={"status": "unavailable", "reason": "configuration"},
         )
     try:
-        mode = request.app.state.production_drill_mode
-        if not isinstance(mode, ProductionDrillMode):
-            raise TypeError("invalid production drill mode")
         heads = ScriptDirectory.from_config(Config(str(ALEMBIC_CONFIG_PATH))).get_heads()
     except Exception:
         return JSONResponse(
             status_code=503,
             content={"status": "unavailable", "reason": "configuration"},
         )
-    if (
-        len(database_heads) != 1
-        or len(heads) != 1
-        or heads[0] != DRILL_REVISION
-        or database_heads[0] != expected_database_head(mode)
-    ):
+    if len(database_heads) != 1 or len(heads) != 1 or database_heads[0] != heads[0]:
         return JSONResponse(
             status_code=503,
             content={"status": "unavailable", "reason": "migration_drift"},

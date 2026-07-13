@@ -1,17 +1,9 @@
 import uuid
 from datetime import UTC, datetime
 
-import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine
-from sqlalchemy.orm import Session
 
-from orchestrator.config import ProductionDrillMode, get_settings
-from orchestrator.persistence.models import WorkUnit
 from tests.api.test_lifecycle_api import AUTHORITY, HUMAN, SYSTEM, WORKER
-from tests.services.test_production_drill_resources import (
-    mark_work_unit_as_production_drill_resource,
-)
 
 
 def _register_ready_unit(db_client: TestClient, suffix: str = "") -> str:
@@ -134,40 +126,6 @@ def test_status_ledger_get_applies_filters(db_client: TestClient) -> None:
 
     assert response.status_code == 200
     assert [row["unit_id"] for row in response.json()] == [second_unit_id]
-
-
-@pytest.mark.parametrize(
-    "mode",
-    (ProductionDrillMode.STANDBY, ProductionDrillMode.ENABLED),
-)
-def test_status_ledger_api_hides_drill_work_from_default_and_direct_queries(
-    db_client: TestClient,
-    migrated_engine: Engine,
-    monkeypatch: pytest.MonkeyPatch,
-    mode: ProductionDrillMode,
-) -> None:
-    monkeypatch.setenv("ORCHESTRATOR_PRODUCTION_DRILL_MODE", mode.value)
-    get_settings.cache_clear()
-    unit_id = _register_ready_unit(db_client, mode.value)
-    with Session(migrated_engine) as session:
-        unit = session.get(WorkUnit, uuid.UUID(unit_id))
-        assert unit is not None
-        mark_work_unit_as_production_drill_resource(session, unit)
-
-    default_response = db_client.get(
-        "/api/v1/status-ledger",
-        headers=HUMAN,
-        params={"include_inactive": "true"},
-    )
-    direct_response = db_client.get(
-        "/api/v1/status-ledger",
-        headers=HUMAN,
-        params={"work_unit_id": unit_id, "include_inactive": "true"},
-    )
-
-    assert unit_id not in {row["unit_id"] for row in default_response.json()}
-    assert direct_response.status_code == 200
-    assert direct_response.json() == []
 
 
 def test_status_ledger_has_no_mutation_routes() -> None:

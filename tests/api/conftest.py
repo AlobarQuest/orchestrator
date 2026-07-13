@@ -8,7 +8,6 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig, get_session
-from orchestrator.config import ProductionDrillMode
 from orchestrator.identity.auth import M2MCredential
 from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.kernel.states import ActorRole
@@ -114,7 +113,7 @@ def auth_config() -> AuthConfig:
 
 @pytest.fixture
 def client(auth_config: AuthConfig) -> Iterator[TestClient]:
-    app = create_app(auth_config, ProductionDrillMode.ENABLED)
+    app = create_app(auth_config)
 
     def unavailable_session() -> Iterator[Session]:
         yield Mock(spec=Session)
@@ -128,7 +127,7 @@ def client(auth_config: AuthConfig) -> Iterator[TestClient]:
 
 @pytest.fixture
 def db_client(auth_config: AuthConfig, migrated_engine: Engine) -> Iterator[TestClient]:
-    app = create_app(auth_config, ProductionDrillMode.ENABLED)
+    app = create_app(auth_config)
 
     def database_session() -> Iterator[Session]:
         with Session(migrated_engine) as session:

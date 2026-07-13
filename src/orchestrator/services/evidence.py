@@ -25,7 +25,6 @@ from orchestrator.services.claims import release_claim, validate_active_claim
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.production_drill_resources import (
     bind_created_drill_evidence,
-    is_not_production_drill_resource,
     require_production_drill_resource,
 )
 
@@ -43,13 +42,7 @@ POST_DEPLOY_AC_IDS = frozenset(
 
 
 def list_evidence(session: Session, work_unit_id: uuid.UUID) -> tuple[Evidence, ...]:
-    unit = session.scalar(
-        select(WorkUnit).where(
-            WorkUnit.id == work_unit_id,
-            is_not_production_drill_resource("work_unit", WorkUnit.id),
-        )
-    )
-    if unit is None:
+    if session.get(WorkUnit, work_unit_id) is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
     return tuple(
         session.scalars(
