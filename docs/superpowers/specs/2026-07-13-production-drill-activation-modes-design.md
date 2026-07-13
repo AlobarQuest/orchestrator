@@ -1,7 +1,7 @@
 # Production Drill Activation Modes Design
 
 **Date:** 2026-07-13
-**Status:** proposed for written review
+**Status:** approved 2026-07-13
 
 ## Goal
 
