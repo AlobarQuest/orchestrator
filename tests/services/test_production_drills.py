@@ -26,10 +26,10 @@ WORKER = ActorContext("worker-1", ActorRole.WORKER)
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 
 
-def revision(session: Session):
+def revision(session: Session, *, package_id: str = "ws-p2.1-recovery-controls-drills"):
     value = register_revision(
         session,
-        package_id=f"production-drill-{uuid.uuid4()}",
+        package_id=package_id,
         source_repository="AlobarQuest/orchestrator",
         revision=1,
         content_hash="sha256:production-drill",
@@ -136,6 +136,24 @@ def test_non_human_actor_cannot_start_production_drill(
 
     assert isinstance(result, DomainError)
     assert result.code == "human_actor_required"
+
+
+def test_human_cannot_start_production_drill_from_another_approved_package(
+    migrated_session: Session,
+) -> None:
+    package_revision = revision(
+        migrated_session,
+        package_id="unrelated-approved-package",
+    )
+    observation_id = runtime_observation(migrated_session, key="wrong-package")
+
+    result = start_production_drill(
+        migrated_session,
+        command(package_revision.id, runtime_observation_id=observation_id),
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "production_drill_package_required"
 
 
 def test_production_drill_run_provenance_is_database_immutable(

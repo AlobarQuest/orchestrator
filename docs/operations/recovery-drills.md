@@ -75,7 +75,8 @@ The drill's log (server output included) is in the temp directory it printed on 
 Production drills use a separate runner and a HUMAN-authorized run; the local harness above must
 never be pointed at production. Before invoking it, a human starts the run in the browser-backed
 production drill flow, records its UUID, and verifies the approved recovery-drills package
-revision, deployed image digest, and expected availability window.
+revision (`ws-p2.1-recovery-controls-drills`), deployed image digest, and expected availability
+window. An approved revision from any other package cannot authorize a production drill.
 
 Starting a run also requires a fresh immutable runtime observation. The observer capability is a
 separate, read-only prerequisite; follow [runtime observations](runtime-observations.md) rather

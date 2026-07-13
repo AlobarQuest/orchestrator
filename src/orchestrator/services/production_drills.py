@@ -60,6 +60,8 @@ from orchestrator.services.runtime_observations import get_runtime_observation
 PRODUCTION_DRILL_IDEMPOTENCY_LOCK_NAMESPACE = 0x5044524C
 _SCENARIO_ATOMIC_SESSION_KEY = "production_drill_scenario_atomic"
 MAX_RUNTIME_OBSERVATION_AGE = timedelta(minutes=5)
+# Production drills exercise the recovery-controls contract, not arbitrary approved work.
+RECOVERY_DRILLS_PACKAGE_ID = "ws-p2.1-recovery-controls-drills"
 
 
 @contextmanager
@@ -417,6 +419,7 @@ def _start_production_drill(session: Session, command: StartProductionDrill) -> 
     revision = session.get(WorkPackageRevision, command.revision_id, with_for_update=True)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
+    _require_recovery_drills_package(revision)
     authorization = _revision_approval_provenance(revision)
 
     now = TransactionClock().now(session)
@@ -1507,6 +1510,15 @@ def _revision_approval_provenance(revision: WorkPackageRevision) -> dict[str, st
         "revision_approved_at": revision.approved_at.isoformat(),
         "revision_approval_event_id": revision.approval_event_id,
     }
+
+
+def _require_recovery_drills_package(revision: WorkPackageRevision) -> None:
+    if revision.work_package.package_id != RECOVERY_DRILLS_PACKAGE_ID:
+        raise DomainError(
+            "production_drill_package_required",
+            "production drills require an approved recovery-drills package revision",
+            "use an approved revision of ws-p2.1-recovery-controls-drills",
+        )
 
 
 def _replayed_run(session: Session, event: Event, payload: dict[str, object]) -> ProductionDrillRun:

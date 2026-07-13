@@ -12,14 +12,19 @@ from tests.api.test_lifecycle_api import (
 )
 
 
-def create_revision(db_client: TestClient, *, key: str) -> str:
+def create_revision(
+    db_client: TestClient,
+    *,
+    key: str,
+    package_id: str = "ws-p2.1-recovery-controls-drills",
+) -> str:
     response = db_client.post(
         "/api/v1/revisions",
         headers=HUMAN,
         json={
             "idempotency_key": f"{key}-revision",
             "expected_version": 0,
-            "package_id": f"{key}-package",
+            "package_id": package_id,
             "source_repository": "AlobarQuest/orchestrator",
             "revision": 1,
             "content_hash": "sha256:production-drill",
@@ -148,6 +153,27 @@ def test_production_drill_api_rejects_non_human_and_unapproved_revisions(
     assert (
         worker.json()["error"]["code"] == system.json()["error"]["code"] == "human_actor_required"
     )
+
+
+def test_production_drill_api_rejects_another_approved_package(db_client: TestClient) -> None:
+    revision_id = create_revision(
+        db_client,
+        key="production-drill-api-wrong-package",
+        package_id="unrelated-approved-package",
+    )
+    runtime_observation_id = record_runtime_observation(
+        db_client,
+        key="production-drill-api-wrong-package",
+    )
+
+    response = db_client.post(
+        "/api/v1/production-drills",
+        headers=HUMAN,
+        json=start_body(revision_id, runtime_observation_id, key="wrong-package"),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "production_drill_package_required"
 
 
 def test_production_drill_start_rejects_caller_owned_state(
