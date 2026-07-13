@@ -88,11 +88,16 @@ scripts/run-production-drills.sh --run-id <human-started-run-uuid> \
   --evidence-file /tmp/production-drill-evidence.json
 ```
 
-The runner first checks production OpenAPI route presence and `/health/ready`; it refuses to
-continue if either preflight fails. The crash-recovery case stops immediately before the one
-intentional availability interruption unless the human includes `--approve-live-restart`. That
-approval also requires the approved executable restart hook in
-`ORCHESTRATOR_PRODUCTION_DRILL_RESTART_COMMAND`; check readiness immediately before and after it.
+The runner first checks production OpenAPI route presence, including the fixed scenario and
+SYSTEM failure routes, and `/health/ready`; it refuses to continue if either preflight fails. It
+POSTs each fixed scenario command and records the returned run-scoped assertions. It does not
+invoke HUMAN closeout.
+
+This repository deliberately has no executable restart hook, restart command environment
+variable, or generic Coolify control parameter. The crash-recovery availability interruption is
+therefore a fail-closed operator handoff. Without `--approve-live-restart`, the runner completes
+the fixed API assertions, writes evidence with `restart_handoff_required`, and exits `3`. That is
+not a successful production-drill result.
 
 ```bash
 scripts/run-production-drills.sh --run-id <human-started-run-uuid> \
@@ -100,9 +105,17 @@ scripts/run-production-drills.sh --run-id <human-started-run-uuid> \
   --evidence-file /tmp/production-drill-evidence.json
 ```
 
+With that flag, the runner preflights readiness before stopping fail-closed and records a SYSTEM
+`crash_recovery_failed` event. The operator must then use the approved Coolify control surface in
+a separately authorized operations session, verify `/health/ready` after the restart, and retain
+that operation's audit record with the evidence file. Do not add a shell executable path or an
+environment-provided command to bridge this handoff.
+
 The evidence file is machine-readable JSON containing the run ID, a unique idempotency prefix,
-and redacted assertion results. On failure the runner requests audited run closeout. Closeout is
-human-gated by the API, so an unproven closeout leaves the run visibly failed and open for human
-review in the evidence file; the runner does not manufacture a successful closure. Retain the
-evidence file with the human approval record and the run-scoped state response. Do not create
-Task 6 production evidence until the reviewed deployment session has completed the drills.
+redacted assertion results, and the final run-scoped state. After the dedicated credential has
+loaded, any runner failure POSTs the audited SYSTEM `/fail` operation with an enumerated failure
+code and a `drill://redacted/...` diagnostic reference; it never calls `/close`. A malformed run
+ID makes no network request. A credential-bootstrap failure cannot authenticate to `/fail`, so the
+runner writes local redacted bootstrap evidence and leaves the run for HUMAN review. Retain the
+evidence file with the human approval record and the Coolify operation audit record. Do not create
+production evidence until the reviewed deployment session has completed the drills.
