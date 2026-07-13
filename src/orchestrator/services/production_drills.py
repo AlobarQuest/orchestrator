@@ -47,6 +47,7 @@ from orchestrator.services.packages import (
     _ProductionDrillTemplate,
     _register_fixed_production_drill_template_unit,
 )
+from orchestrator.services.production_drill_compatibility import production_drill_schema_active
 from orchestrator.services.reconciliation import (
     ResolutionCommand,
     resolve_production_drill_condition,
@@ -256,6 +257,8 @@ def production_drill_deadlines(
 
 
 def lease_duration_for_work_unit(session: Session, unit_id: uuid.UUID) -> timedelta:
+    if not production_drill_schema_active():
+        return LEASE_DURATION
     resource = session.scalar(
         select(ProductionDrillResource).where(
             ProductionDrillResource.resource_type == "work_unit",

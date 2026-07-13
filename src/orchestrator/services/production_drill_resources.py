@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, select, true
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -15,6 +15,7 @@ from orchestrator.persistence.models import (
     ReleaseArtifactBinding,
     WorkUnit,
 )
+from orchestrator.services.production_drill_compatibility import production_drill_schema_active
 
 RESOURCE_MODELS = {
     "work_unit": WorkUnit,
@@ -165,6 +166,8 @@ def require_production_drill_resource(
 
 
 def is_not_production_drill_resource(resource_type: str, resource_id: object):
+    if not production_drill_schema_active():
+        return true()
     return ~exists().where(
         ProductionDrillResource.resource_type == resource_type,
         ProductionDrillResource.resource_id == resource_id,
@@ -174,6 +177,8 @@ def is_not_production_drill_resource(resource_type: str, resource_id: object):
 def reject_production_drill_resource(
     session: Session, resource_type: str, resource_id: uuid.UUID
 ) -> None:
+    if not production_drill_schema_active():
+        return
     if (
         session.scalar(
             select(ProductionDrillResource.id).where(
