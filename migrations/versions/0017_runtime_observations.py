@@ -87,5 +87,25 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION enforce_production_drill_run_provenance_immutable()
+        RETURNS trigger AS $$
+        BEGIN
+          IF NEW.id IS DISTINCT FROM OLD.id
+             OR NEW.revision_id IS DISTINCT FROM OLD.revision_id
+             OR NEW.owner_actor_id IS DISTINCT FROM OLD.owner_actor_id
+             OR NEW.opened_at IS DISTINCT FROM OLD.opened_at
+             OR NEW.image_ref IS DISTINCT FROM OLD.image_ref
+             OR NEW.image_digest IS DISTINCT FROM OLD.image_digest
+             OR NEW.openapi_digest IS DISTINCT FROM OLD.openapi_digest THEN
+            RAISE EXCEPTION 'production_drill_runs provenance is immutable'
+              USING ERRCODE = 'integrity_constraint_violation';
+          END IF;
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
     op.drop_column("production_drill_runs", "runtime_observation_id")
     op.drop_table("runtime_observations")
