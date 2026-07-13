@@ -53,7 +53,6 @@ class Settings(BaseSettings):
     # a normal in-progress verification from a split brain. Production must sit above a normal
     # verification's worst case; the AC-010 drill sets it low via the env var so it needs no sleep.
     reconcile_split_brain_stall_seconds: int = 900
-    production_drill_max_deadline_seconds: int = Field(default=3_600, ge=60)
 
 
 @lru_cache

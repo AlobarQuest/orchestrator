@@ -23,10 +23,6 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.claims import release_claim, validate_active_claim
 from orchestrator.services.lifecycle import ActorContext
-from orchestrator.services.production_drill_resources import (
-    bind_created_drill_evidence,
-    require_production_drill_resource,
-)
 
 NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57503338
@@ -70,7 +66,7 @@ def append_evidence(
     expected_version: int | None = None,
     context_snapshot_id: uuid.UUID | None = None,
 ) -> Evidence | DomainError:
-    result = _store_evidence(
+    return _store_evidence(
         session,
         work_package_revision_id=work_package_revision_id,
         work_unit_id=work_unit_id,
@@ -87,13 +83,6 @@ def append_evidence(
         context_snapshot_id=context_snapshot_id,
         supersede=False,
     )
-    return _evidence_result_row(result)
-
-
-def append_production_drill_evidence(
-    session: Session, *, run_id: uuid.UUID, **kwargs: Any
-) -> Evidence | DomainError:
-    return _store_production_drill_evidence(session, run_id, kwargs, supersede=False)
 
 
 def supersede_evidence(
@@ -113,7 +102,7 @@ def supersede_evidence(
     expected_version: int | None = None,
     context_snapshot_id: uuid.UUID | None = None,
 ) -> Evidence | DomainError:
-    result = _store_evidence(
+    return _store_evidence(
         session,
         work_package_revision_id=work_package_revision_id,
         work_unit_id=work_unit_id,
@@ -130,52 +119,6 @@ def supersede_evidence(
         context_snapshot_id=context_snapshot_id,
         supersede=True,
     )
-    return _evidence_result_row(result)
-
-
-def _supersede_production_drill_evidence(
-    session: Session, *, run_id: uuid.UUID, **kwargs: Any
-) -> Evidence | DomainError:
-    return _store_production_drill_evidence(session, run_id, kwargs, supersede=True)
-
-
-def _store_production_drill_evidence(
-    session: Session, run_id: uuid.UUID, kwargs: dict[str, Any], *, supersede: bool
-) -> Evidence | DomainError:
-    try:
-        require_production_drill_resource(session, run_id, "work_unit", kwargs["work_unit_id"])
-        kwargs.setdefault("expected_version", None)
-        kwargs.setdefault("context_snapshot_id", None)
-        result = _store_evidence(
-            session, **kwargs, supersede=supersede, commit=False, return_created=True
-        )
-        if isinstance(result, DomainError):
-            raise result
-        assert isinstance(result, tuple)
-        evidence, created = result
-        if not created:
-            require_production_drill_resource(session, run_id, "evidence", evidence.id)
-        else:
-            bind_created_drill_evidence(session, run_id, evidence)
-        if not session.info.get("production_drill_scenario_atomic"):
-            session.commit()
-        return evidence
-    except DomainError as error:
-        if session.info.get("production_drill_scenario_atomic"):
-            return error
-        session.rollback()
-        return error
-    except IntegrityError as error:
-        session.rollback()
-        del error
-        return DomainError(
-            "evidence_conflict",
-            "evidence conflicts with an existing record",
-            "reload the current evidence before retrying",
-        )
-    except Exception:
-        session.rollback()
-        raise
 
 
 def append_verifier_evidence(
@@ -272,8 +215,7 @@ def record_adjudication(
         del revision
         replay = _adjudication_replay(session, idempotency_key, command)
         if replay is not None:
-            if not session.info.get("production_drill_scenario_atomic"):
-                session.commit()
+            session.commit()
             return replay
         if expected_version is not None and unit.version != expected_version:
             raise DomainError(
@@ -332,8 +274,7 @@ def record_adjudication(
                 idempotency_key,
             )
         )
-        if not session.info.get("production_drill_scenario_atomic"):
-            session.commit()
+        session.commit()
         return row
     except DomainError as error:
         session.rollback()
@@ -381,10 +322,7 @@ def _store_evidence(
     expected_version: int | None,
     context_snapshot_id: uuid.UUID | None,
     supersede: bool,
-    commit: bool = True,
-    return_created: bool = False,
-) -> Evidence | tuple[Evidence, bool] | DomainError:
-    finish = session.commit if commit else _no_op
+) -> Evidence | DomainError:
     command = {
         "ac_id": ac_id,
         "actor_id": actor.actor_id,
@@ -406,8 +344,8 @@ def _store_evidence(
         unit, revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         replay = _evidence_replay(session, idempotency_key, command)
         if replay is not None:
-            finish()
-            return _evidence_result(replay, created=False, return_created=return_created)
+            session.commit()
+            return replay
         if expected_version is not None and unit.version != expected_version:
             raise DomainError(
                 "version_conflict",
@@ -471,62 +409,17 @@ def _store_evidence(
                 idempotency_key,
             )
         )
-        finish()
-        return _evidence_result(row, created=True, return_created=return_created)
+        session.commit()
+        return row
     except DomainError as error:
-        return _handle_evidence_domain_error(session, error, commit)
-    except IntegrityError as error:
-        return _handle_evidence_integrity_error(session, idempotency_key, command, error, commit)
-    except Exception:
-        _rollback_evidence_write(session, commit)
-        raise
-
-
-def _no_op() -> None:
-    return None
-
-
-def _evidence_result(
-    evidence: Evidence, *, created: bool, return_created: bool
-) -> Evidence | tuple[Evidence, bool]:
-    if return_created:
-        return evidence, created
-    return evidence
-
-
-def _evidence_result_row(
-    result: Evidence | tuple[Evidence, bool] | DomainError,
-) -> Evidence | DomainError:
-    if isinstance(result, tuple):
-        return result[0]
-    return result
-
-
-def _handle_evidence_domain_error(
-    session: Session, error: DomainError, commit: bool
-) -> DomainError:
-    if not commit:
-        raise error
-    session.rollback()
-    return error
-
-
-def _handle_evidence_integrity_error(
-    session: Session,
-    idempotency_key: str,
-    command: dict[str, Any],
-    error: IntegrityError,
-    commit: bool,
-) -> Evidence | DomainError:
-    if not commit:
-        raise error
-    session.rollback()
-    return _evidence_race_result(session, idempotency_key, command, error)
-
-
-def _rollback_evidence_write(session: Session, commit: bool) -> None:
-    if commit:
         session.rollback()
+        return error
+    except IntegrityError as error:
+        session.rollback()
+        return _evidence_race_result(session, idempotency_key, command, error)
+    except Exception:
+        session.rollback()
+        raise
 
 
 def _store_verifier_evidence(
@@ -613,8 +506,7 @@ def _store_verifier_evidence(
                 idempotency_key,
             )
         )
-        if not session.info.get("production_drill_scenario_atomic"):
-            session.commit()
+        session.commit()
         return row
     except DomainError as error:
         session.rollback()
@@ -1016,8 +908,7 @@ def recover_evidence(
         unit, _revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         replay = _evidence_replay(session, idempotency_key, command, action="evidence.recovered")
         if replay is not None:
-            if not session.info.get("production_drill_scenario_atomic"):
-                session.commit()
+            session.commit()
             return replay
         if expected_version is not None and unit.version != expected_version:
             raise DomainError(
@@ -1084,8 +975,7 @@ def recover_evidence(
                 idempotency_key,
             )
         )
-        if not session.info.get("production_drill_scenario_atomic"):
-            session.commit()
+        session.commit()
         return row
     except DomainError as error:
         session.rollback()

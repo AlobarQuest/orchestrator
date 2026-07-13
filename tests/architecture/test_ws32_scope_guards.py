@@ -34,79 +34,6 @@ WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/verifier_criteria.py"),
     Path("src/orchestrator/services/verifier_evaluators.py"),
 }
-# These are fixed identifiers in the production-drill and runtime-observation contracts. They name
-# the recovery conditions being observed; they do not add a deployment, dispatch, or Coolify
-# control path. Keep this allowlist term-specific so the WS-3.2 boundary still catches any other
-# use of these capability words in the same modules.
-FIXED_DRILL_CONTRACT_TERMS: frozenset[tuple[Path, str, str]] = frozenset(
-    {
-        (
-            Path("src/orchestrator/services/packages.py"),
-            "deploy",
-            "deploy_split_brain",
-        ),
-        (
-            Path("src/orchestrator/services/production_drills.py"),
-            "dispatch",
-            "dispatch_failure_signature_threshold",
-        ),
-        (
-            Path("src/orchestrator/services/production_drills.py"),
-            "dispatch",
-            "dispatch_enabled",
-        ),
-        (
-            Path("src/orchestrator/services/production_drills.py"),
-            "deploy",
-            "/deploy-split-brain",
-        ),
-        (
-            Path("src/orchestrator/services/production_drills.py"),
-            "deploy",
-            "deploy-split-brain",
-        ),
-        (
-            Path("src/orchestrator/services/production_drills.py"),
-            "deploy",
-            "_execute_fixed_deploy_split_brain",
-        ),
-        (
-            Path("src/orchestrator/services/production_drills.py"),
-            "deploy",
-            "deploy_split_brain",
-        ),
-        (
-            Path("src/orchestrator/services/production_drills.py"),
-            "deploy",
-            "deploy_split_brain_failed",
-        ),
-        (
-            Path("src/orchestrator/services/production_drills.py"),
-            "deploy",
-            "fixed deploy split-brain condition was not persisted",
-        ),
-        (
-            Path("src/orchestrator/services/production_drills.py"),
-            "deploy",
-            "fixed deploy split-brain scenario did not produce its required condition",
-        ),
-        (
-            Path("src/orchestrator/services/production_drills.py"),
-            "deploy",
-            "post_deploy_work_unit_id",
-        ),
-        (
-            Path("src/orchestrator/services/production_drills.py"),
-            "deploy",
-            "production_drill.deploy_split_brain",
-        ),
-        (
-            Path("src/orchestrator/services/runtime_observations.py"),
-            "coolify",
-            "coolify_application_id",
-        ),
-    }
-)
 CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
 TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 
@@ -151,10 +78,6 @@ def _match_forbidden_sequence(tokens: tuple[str, ...]) -> str | None:
 
 def _parse_source(path: Path) -> ast.AST:
     return ast.parse(path.read_text(encoding="utf-8"))
-
-
-def _is_fixed_drill_contract_term(term: RuntimeTerm, label: str) -> bool:
-    return (term.path, label, term.value) in FIXED_DRILL_CONTRACT_TERMS
 
 
 def _iter_identifier_terms(path: Path, tree: ast.AST) -> list[RuntimeTerm]:
@@ -220,7 +143,7 @@ def _find_matches(term_kind: str) -> list[str]:
         )
         for term in terms:
             label = _match_forbidden_sequence(term.tokens)
-            if label is None or _is_fixed_drill_contract_term(term, label):
+            if label is None:
                 continue
             matches.add(f"{term.path} [{term.kind}] {term.value!r} matched {label!r}")
     return sorted(matches)

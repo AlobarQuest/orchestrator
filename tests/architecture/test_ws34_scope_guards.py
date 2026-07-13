@@ -7,16 +7,6 @@ from orchestrator.api.routes import router as api_router
 
 SOURCE_ROOT = Path("src/orchestrator")
 PUBLICATION_SERVICE = Path("src/orchestrator/services/event_publications.py")
-# Runtime observations bind the fixed Coolify application identity to an immutable, read-only
-# container/OpenAPI observation. The API schema and persistence model carry that field. These
-# files contain no deployment control surface; keep the exception file-specific.
-RUNTIME_OBSERVATION_COOLIFY_PATHS = frozenset(
-    {
-        Path("src/orchestrator/api/schemas.py"),
-        Path("src/orchestrator/persistence/models.py"),
-        Path("src/orchestrator/services/runtime_observations.py"),
-    }
-)
 
 
 def _source_files() -> tuple[Path, ...]:
@@ -60,7 +50,6 @@ def test_ws34_adds_no_production_deploy_coolify_or_automatic_merge_path() -> Non
         for path in _source_files()
         for value in forbidden
         if value in path.read_text(encoding="utf-8").lower()
-        if not (value == "coolify" and path in RUNTIME_OBSERVATION_COOLIFY_PATHS)
     ]
 
     assert not matches

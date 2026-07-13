@@ -1,71 +1,127 @@
-# Task 3 Report: Run-Scoped Assertions and Timing Controls
+# Task 3 Report: Context Preflight Service for WS-3.3
+
+## Status
+
+Completed on branch `codex/ws33-design`.
+Commit: `feat: add WS-3.3 context preflight service`
+
+## Files Changed
+
+- `src/orchestrator/services/context.py`
+- `tests/services/test_context_preflight.py`
 
 ## Scope
 
-Implemented the Task 3 production-drill control contract only. No runner or closeout behavior
-was added.
+- Added `PreflightCommand`.
+- Added `record_preflight(session, command, actor)`.
+- Added `require_claim_context(...)` and `require_execution_context(...)`.
+- Recorded context snapshots and local events in one transaction.
+- Kept the slice service-only: no API, CLI, claim/start/evidence integration,
+  dispatch, external publication, fixture intake, or status ledger.
 
-## Red/Green Evidence
+## Red Evidence
 
-- Red: `test_deadline_controls_are_bounded_without_mutating_global_thresholds` initially expected
-  validation-style status codes; the API correctly surfaced the service-domain rejections as 409.
-  The test was corrected to assert both the 409 response and the precise error codes.
-- Green: `uv run pytest tests/services/test_production_drill_controls.py
-  tests/api/test_production_drill_controls_api.py tests/services/test_production_drills.py
-  tests/services/test_production_drill_resources.py tests/api/test_production_drills_api.py
-  tests/architecture/test_drill_scripts.py -q` completed with `54 passed`.
-- Green: focused Ruff check completed with no findings and `git diff --check` completed cleanly.
-
-## Tests Added
-
-- Service deadline floor and configured-ceiling rejection.
-- Drill-unit lease duration selection with ordinary `LEASE_DURATION` unchanged.
-- State projection run isolation.
-- API worker rejection, deadline rejection/error codes, and unchanged global reporting thresholds.
-
-## Commit
-
-`feat: add production drill timing controls`
-
-## Concerns
-
-- Deadline values are immutable facts in the existing `production_drill.started` authorization
-  event. This avoids global settings mutation and does not require a mutable run column.
-- The state projection uses ORM reads and computes evidence heads as terminal supersession rows
-  (no later evidence references the row); conditions remain open only when no resolution exists.
-
-## Review Fix Pass
-
-- Removed the caller-controlled deadline maximum from `StartProductionDrill`; validation now
-  reads `production_drill_max_deadline_seconds` from the service configuration.
-- Run-scoped reconciliation now requires every deployment input it processes to belong to the
-  requested run: units and deployment observations for stalled verification, and observations
-  plus release artifacts for unreported deployments.
-- Added regression coverage for a forged deadline ceiling and a deployment report owned by a
-  different drill run.
-
-Verification:
+Command:
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/services/test_production_drill_controls.py tests/api/test_production_drill_controls_api.py tests/services/test_production_drills.py tests/services/test_production_drill_resources.py tests/api/test_production_drills_api.py tests/services/test_reconciliation_detect_pass.py tests/architecture/test_drill_scripts.py -q
-PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/api/routes.py src/orchestrator/services/production_drills.py src/orchestrator/services/reconciliation_detection.py tests/services/test_production_drill_controls.py
-PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/services/production_drills.py src/orchestrator/services/reconciliation_detection.py tests/services/test_production_drill_controls.py
+PATH="$PWD/.venv/bin:$PATH" pytest tests/services/test_context_preflight.py -q
 ```
 
-Results: `62 passed`; Ruff and Pyright reported no findings.
+Observed result:
 
-## Re-review Fix
+- Failed during collection with `ModuleNotFoundError: No module named 'orchestrator.services.context'`.
 
-- Removed the unused `MAX_PRODUCTION_DRILL_DEADLINE_SECONDS` kernel constant and its
-  stale comment. The configured service setting remains the sole deadline ceiling.
+## Green Evidence
 
-Verification:
+Command:
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/services/test_production_drill_controls.py tests/api/test_production_drill_controls_api.py tests/services/test_production_drills.py tests/services/test_production_drill_resources.py tests/api/test_production_drills_api.py tests/services/test_reconciliation_detect_pass.py tests/architecture/test_drill_scripts.py -q
-PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/kernel/leases.py tests/services/test_production_drill_controls.py tests/api/test_production_drill_controls_api.py
-PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/kernel/leases.py tests/services/test_production_drill_controls.py tests/api/test_production_drill_controls_api.py
-git diff --check
+PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/kernel/test_context_policy.py tests/services/test_context_preflight.py -q
 ```
 
-Results: `62 passed`; Ruff, Pyright, and whitespace validation reported no findings.
+Observed result:
+
+- `17 passed in 1.58s`
+
+Additional checks:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/services/context.py tests/services/test_context_preflight.py
+PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/services/context.py tests/services/test_context_preflight.py
+```
+
+Observed result:
+
+- Ruff: `All checks passed!`
+- Pyright: `0 errors, 0 warnings, 0 informations`
+
+## Concerns / Deviations
+
+- Required context tests create package revisions with required context at insert time because `work_package_revisions` is append-only.
+- Allowed capabilities are derived from required context, `WorkUnit.required_capability`, and any allowed capabilities present in the revision authority snapshot.
+- Execution preflight helper support records claim-bound snapshots when called with purpose `execution`, but no lifecycle integration was added in this task.
+
+## Fix Pass
+
+Findings addressed:
+
+- Authority-expanding context approval now accepts the authority fingerprint produced by the existing `record_approval(subject_type="authority")` path.
+- Execution preflight now requires active claim credentials: actor, attempt, lease token hash, unreleased status, and unexpired lease.
+
+Red evidence:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/services/test_context_preflight.py -q
+```
+
+Observed result:
+
+- `3 failed, 5 passed`
+- Real authority approval returned `context_approval_mismatch`.
+- `PreflightCommand` rejected `attempt` and `lease_token` keyword arguments.
+
+Green evidence:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/kernel/test_context_policy.py tests/services/test_context_preflight.py -q
+PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/services/context.py tests/services/test_context_preflight.py
+PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/services/context.py tests/services/test_context_preflight.py
+```
+
+Observed result:
+
+- Pytest: `19 passed in 4.89s`
+- Ruff: `All checks passed!`
+- Pyright: `0 errors, 0 warnings, 0 informations`
+
+## Fix Pass 2
+
+Finding addressed:
+
+- Execution preflight idempotent replay now revalidates active claim credentials
+  before returning an existing snapshot.
+
+Red evidence:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/services/test_context_preflight.py::test_execution_preflight_replay_revalidates_active_claim_credentials -q
+```
+
+Observed result:
+
+- Failed because replay with missing claim credentials returned the prior
+  `ContextSnapshot` instead of `DomainError("active_claim_required")`.
+
+Green evidence:
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@192.168.97.2:5432/orchestrator_test pytest tests/kernel/test_context_policy.py tests/services/test_context_preflight.py -q
+PATH="$PWD/.venv/bin:$PATH" ruff check src/orchestrator/services/context.py tests/services/test_context_preflight.py
+PATH="$PWD/.venv/bin:$PATH" pyright src/orchestrator/services/context.py tests/services/test_context_preflight.py
+```
+
+Observed result:
+
+- Pytest: `20 passed in 3.43s`
+- Ruff: `All checks passed!`
+- Pyright: `0 errors, 0 warnings, 0 informations`
