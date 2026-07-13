@@ -1,6 +1,8 @@
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from orchestrator.config import ProductionDrillMode, get_settings
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Dependency, Event
 from orchestrator.services.claims import LeaseGrant, claim_unit
@@ -10,12 +12,44 @@ from orchestrator.services.packages import DependencySpec
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
 from tests.services.test_context_preflight import register_context_unit, valid_context
 from tests.services.test_dependencies import register_unit
+from tests.services.test_production_drill_resources import (
+    mark_work_unit_as_production_drill_resource,
+)
 from tests.services.test_reclaim import authorize_readiness, expire
 
 WORKER = ActorContext("worker-1", ActorRole.WORKER)
 SECOND_WORKER = ActorContext("worker-2", ActorRole.WORKER)
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 VERIFIER = ActorContext("verifier-1", ActorRole.VERIFIER)
+
+
+@pytest.mark.parametrize(
+    "mode",
+    (ProductionDrillMode.STANDBY, ProductionDrillMode.ENABLED),
+)
+def test_status_ledger_hides_drill_work_from_default_and_direct_queries(
+    migrated_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: ProductionDrillMode,
+) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_PRODUCTION_DRILL_MODE", mode.value)
+    get_settings.cache_clear()
+    ordinary = register_unit(migrated_session, f"ordinary-status-{mode.value}")
+    drill = register_unit(migrated_session, f"drill-status-{mode.value}")
+    mark_work_unit_as_production_drill_resource(migrated_session, drill)
+
+    default_rows = status_ledger(
+        migrated_session,
+        StatusLedgerFilters(include_inactive=True),
+    )
+    direct_rows = status_ledger(
+        migrated_session,
+        StatusLedgerFilters(work_unit_id=drill.id, include_inactive=True),
+    )
+
+    assert ordinary.id in {row.unit_id for row in default_rows}
+    assert drill.id not in {row.unit_id for row in default_rows}
+    assert direct_rows == ()
 
 
 def _claim_and_start(session: Session, unit) -> LeaseGrant:

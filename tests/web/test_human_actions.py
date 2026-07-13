@@ -1,16 +1,48 @@
 import re
 from dataclasses import replace
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig
+from orchestrator.config import ProductionDrillMode, get_settings
 from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.main import create_app
 from orchestrator.persistence.models import Approval, Event, WorkUnit
 from tests.api.test_lifecycle_api import HUMAN, WORKER
+from tests.services.test_production_drill_resources import (
+    mark_work_unit_as_production_drill_resource,
+)
+
+
+@pytest.mark.parametrize(
+    "mode",
+    (ProductionDrillMode.STANDBY, ProductionDrillMode.ENABLED),
+)
+def test_detail_hides_production_drill_work(
+    db_client: TestClient,
+    migrated_engine: Engine,
+    review_unit: WorkUnit,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: ProductionDrillMode,
+) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_PRODUCTION_DRILL_MODE", mode.value)
+    get_settings.cache_clear()
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, review_unit.id)
+        assert unit is not None
+        mark_work_unit_as_production_drill_resource(session, unit)
+
+    queue = db_client.get("/review", headers=HUMAN)
+    response = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+
+    assert queue.status_code == 200
+    assert review_unit.title not in queue.text
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "work_unit_not_found"
 
 
 def test_detail_has_human_actions_but_no_worker_or_creation_controls(

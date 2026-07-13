@@ -15,6 +15,7 @@ from orchestrator.persistence.models import (
     Evidence,
     WorkUnit,
 )
+from orchestrator.services.production_drill_resources import is_not_production_drill_resource
 
 
 @dataclass(frozen=True)
@@ -85,7 +86,7 @@ def status_ledger(
     filters: StatusLedgerFilters | None = None,
 ) -> tuple[StatusLedgerRow, ...]:
     criteria = filters or StatusLedgerFilters()
-    statement = select(WorkUnit)
+    statement = select(WorkUnit).where(is_not_production_drill_resource("work_unit", WorkUnit.id))
     if criteria.work_unit_id is not None:
         statement = statement.where(WorkUnit.id == criteria.work_unit_id)
     if criteria.state is not None:
