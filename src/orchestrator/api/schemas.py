@@ -551,6 +551,12 @@ class ProductionDrillObservationStateResponse(BaseModel):
     observed_at: datetime
 
 
+class ProductionDrillDeploymentObservationStateResponse(BaseModel):
+    id: UUID
+    release_artifact_binding_id: UUID
+    post_deploy_work_unit_id: UUID
+
+
 class ProductionDrillUnitStateResponse(BaseModel):
     id: UUID
     unit_key: str
@@ -568,6 +574,7 @@ class ProductionDrillStateResponse(BaseModel):
     units: list[ProductionDrillUnitStateResponse]
     evidence: list[ProductionDrillEvidenceStateResponse]
     observations: list[ProductionDrillObservationStateResponse]
+    deployment_observations: list[ProductionDrillDeploymentObservationStateResponse]
     conditions: list[ProductionDrillConditionStateResponse]
 
 

@@ -161,6 +161,8 @@ def _store_production_drill_evidence(
             session.commit()
         return evidence
     except DomainError as error:
+        if session.info.get("production_drill_scenario_atomic"):
+            return error
         session.rollback()
         return error
     except IntegrityError as error:
@@ -1014,7 +1016,8 @@ def recover_evidence(
         unit, _revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         replay = _evidence_replay(session, idempotency_key, command, action="evidence.recovered")
         if replay is not None:
-            session.commit()
+            if not session.info.get("production_drill_scenario_atomic"):
+                session.commit()
             return replay
         if expected_version is not None and unit.version != expected_version:
             raise DomainError(
@@ -1081,7 +1084,8 @@ def recover_evidence(
                 idempotency_key,
             )
         )
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return row
     except DomainError as error:
         session.rollback()

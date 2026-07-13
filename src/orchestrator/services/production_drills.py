@@ -605,6 +605,38 @@ def _execute_fixed_external_pr_conflict(
     )
     if isinstance(evidence, DomainError):
         raise evidence
+    # A head change before verification reads it is expected iteration, not divergence.
+    normal_iteration = record_production_drill_observation(
+        session,
+        run_id=run.id,
+        command=ObservationCommand(
+            actor=command.actor,
+            source_system="github",
+            source_reference=f"production-drill:{run.id}:pr:1:normal-iteration",
+            source_url=None,
+            trust_classification="delivery_system",
+            subject_type="work_unit",
+            subject_reference=str(unit.id),
+            environment="production",
+            observation_type="github_pr",
+            status="observed",
+            severity="info",
+            observed_at=TransactionClock().now(session),
+            summary="synthetic PR head changed before verification read it",
+            facts={"pr_number": 1, "head_sha": "c" * 40, "state": "open", "merged": False},
+            payload_digest=None,
+            idempotency_key=f"{command.idempotency_key}:normal-iteration",
+        ),
+    )
+    if isinstance(normal_iteration, DomainError):
+        raise normal_iteration
+    normal_counters = detect_observation_conditions(session, normal_iteration, command.actor)
+    if normal_counters.conditions_recorded != 0:
+        raise DomainError(
+            "production_drill_pr_normal_iteration_alarm",
+            "fixed PR normal iteration unexpectedly produced a condition",
+            None,
+        )
     _transition_fixed_unit(
         session,
         run.id,
@@ -631,7 +663,7 @@ def _execute_fixed_external_pr_conflict(
             observation_type="github_pr",
             status="observed",
             severity="warning",
-            observed_at=TransactionClock().now(session),
+            observed_at=normal_iteration.observed_at + timedelta(microseconds=1),
             summary="synthetic PR merged outside orchestrator",
             facts={"pr_number": 1, "head_sha": head, "state": "closed", "merged": True},
             payload_digest=None,
@@ -754,10 +786,8 @@ def _execute_fixed_evidence_recovery(
 ) -> None:
     # The template owns this synthetic worker identity. Callers never provide it or its lease.
     from orchestrator.services.claims import claim_unit
-    from orchestrator.services.evidence import (
-        append_production_drill_evidence,
-        supersede_production_drill_evidence,
-    )
+    from orchestrator.services.evidence import append_production_drill_evidence, recover_evidence
+    from orchestrator.services.production_drill_resources import bind_created_drill_evidence
 
     worker = ActorContext("production-drill-worker", ActorRole.WORKER)
     claim = claim_unit(
@@ -800,14 +830,46 @@ def _execute_fixed_evidence_recovery(
     )
     if isinstance(evidence, DomainError):
         raise evidence
-    replacement = supersede_production_drill_evidence(
+    _wait_for_lease_expiry(session, claim.expires_at)
+    locked_out = append_production_drill_evidence(
         session,
         run_id=run.id,
-        idempotency_key=f"{command.idempotency_key}:evidence:replacement",
+        idempotency_key=f"{command.idempotency_key}:evidence:worker-lockout",
         **evidence_args,
     )
-    if isinstance(replacement, DomainError):
-        raise replacement
+    if not isinstance(locked_out, DomainError) or locked_out.code != "claim_not_active":
+        raise DomainError(
+            "production_drill_worker_not_locked_out",
+            "expired worker unexpectedly retained evidence write access",
+            None,
+        )
+    recovered = recover_evidence(
+        session,
+        work_package_revision_id=run.revision_id,
+        work_unit_id=unit.id,
+        ac_id="ac-1",
+        attempt=claim.attempt,
+        actor=command.actor,
+        evidence_type="production_drill.evidence_recovery",
+        stable_ref=f"drill://redacted/{run.id}/evidence-recovery",
+        payload={"scenario": "evidence_recovery", "synthetic": True},
+        source_revision="synthetic",
+        idempotency_key=f"{command.idempotency_key}:evidence:recovered",
+    )
+    if isinstance(recovered, DomainError):
+        raise recovered
+    bind_created_drill_evidence(session, run.id, recovered)
+    state = production_drill_state(session, run.id)
+    assert not isinstance(state, DomainError)
+    evidence_state = state["evidence"]
+    assert isinstance(evidence_state, list)
+    heads = [row for row in evidence_state if isinstance(row, dict) and row.get("is_head") is True]
+    if len(heads) != 1 or heads[0].get("id") != recovered.id:
+        raise DomainError(
+            "production_drill_evidence_recovery_invalid_head",
+            "recovered evidence did not leave exactly one superseding head",
+            None,
+        )
 
 
 def _execute_fixed_deploy_split_brain(
@@ -1012,6 +1074,13 @@ def _wait_for_reporting_deadline(
     session: Session, run: ProductionDrillRun, deployment: DeploymentObservation
 ) -> None:
     _wait_for_run_deadline(session, run, deployment.recorded_at)
+
+
+def _wait_for_lease_expiry(session: Session, expires_at: datetime) -> None:
+    """Wait for the persisted, run-scoped claim deadline without backdating records."""
+    remaining = (expires_at - TransactionClock().now(session)).total_seconds()
+    if remaining > 0:
+        time.sleep(remaining)
 
 
 def _wait_for_run_deadline(

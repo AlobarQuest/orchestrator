@@ -30,10 +30,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
+from orchestrator.errors import DomainError
 from orchestrator.persistence.models import Claim, DispatchRecord, ProductionDrillResource, WorkUnit
 from orchestrator.services.dispatch import circuit_open
 from orchestrator.services.production_drill_resources import is_not_production_drill_resource
@@ -107,7 +108,7 @@ def _stalled_approvals(
     if production_drill_run_id is not None:
         statement = statement.where(_run_owned_unit(production_drill_run_id))
         deadlines = production_drill_deadlines(session, production_drill_run_id)
-        if not hasattr(deadlines, "reporting_deadline"):
+        if isinstance(deadlines, DomainError):
             return ()
         cutoff = TransactionClock().now(session) - deadlines.reporting_deadline
     else:
@@ -277,7 +278,7 @@ def _requeue_eligible(unit: WorkUnit) -> bool:
 
 
 def _run_owned_unit(run_id: uuid.UUID):
-    return (
+    return and_(
         ProductionDrillResource.run_id == run_id,
         ProductionDrillResource.resource_type == "work_unit",
         ProductionDrillResource.resource_id == WorkUnit.id,

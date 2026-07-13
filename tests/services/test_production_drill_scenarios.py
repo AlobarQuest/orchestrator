@@ -8,7 +8,9 @@ import orchestrator.services.production_drills as production_drills
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
+    Claim,
     Event,
+    Evidence,
     ProductionDrillResource,
     ReconciliationCondition,
     WorkUnit,
@@ -25,6 +27,29 @@ from orchestrator.services.production_drills import (
 )
 from tests.services.test_package_registration import register_test_revision
 from tests.services.test_production_drills import SYSTEM, command
+
+SCENARIOS = (
+    "crash_recovery",
+    "evidence_recovery",
+    "external_pr_conflict",
+    "deploy_split_brain",
+    "stalled_approval",
+)
+
+
+def _advance_run_time(monkeypatch: pytest.MonkeyPatch, run, modules: tuple[object, ...]) -> None:
+    class RunClock:
+        current = run.opened_at
+
+        def now(self, _session: Session):
+            return self.current
+
+    def advance(seconds: float) -> None:
+        RunClock.current += production_drills.timedelta(seconds=seconds)
+
+    for module in modules:
+        monkeypatch.setattr(module, "TransactionClock", RunClock)
+    monkeypatch.setattr(production_drills.time, "sleep", advance)
 
 
 def test_system_scenario_is_audited_and_returns_only_its_run_state(
@@ -47,7 +72,7 @@ def test_system_scenario_is_audited_and_returns_only_its_run_state(
 
     assert not isinstance(result, DomainError)
     assert result["run_id"] == run.id
-    assert result["status"] == "asserting"
+    assert result["status"] == "asserting", result
     event = migrated_session.scalar(
         select(Event).where(Event.idempotency_key == "scenario-crash-recovery")
     )
@@ -55,24 +80,79 @@ def test_system_scenario_is_audited_and_returns_only_its_run_state(
     assert event.action == "production_drill.scenario.crash_recovery"
 
 
-def test_successful_scenario_remains_human_closeable(migrated_session: Session) -> None:
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_every_successful_scenario_remains_human_closeable(
+    migrated_session: Session, scenario: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     revision_id = register_test_revision(migrated_session).id
     run = start_production_drill(migrated_session, command(revision_id, key="closeable-run"))
     assert not isinstance(run, DomainError)
+    import orchestrator.services.claims as claims
+    import orchestrator.services.dead_letter as dead_letter
+    import orchestrator.services.evidence as evidence_service
+    import orchestrator.services.reconciliation_detection as detection
+
+    _advance_run_time(
+        monkeypatch,
+        run,
+        (production_drills, claims, dead_letter, detection, evidence_service),
+    )
     result = run_production_drill_scenario(
         migrated_session,
-        RunProductionDrillScenario(run.id, "crash_recovery", SYSTEM, "closeable-scenario", 0),
+        RunProductionDrillScenario(run.id, scenario, SYSTEM, f"closeable-{scenario}", 0),
     )
     assert not isinstance(result, DomainError)
-    assert result["status"] == "asserting"
+    assert result["status"] == "asserting", result
     closed = production_drills.close_production_drill(
         migrated_session,
         CloseProductionDrill(
-            run.id, type(SYSTEM)("human-1", ActorRole.HUMAN), "closeable-close", 0, "reviewed"
+            run.id,
+            type(SYSTEM)("human-1", ActorRole.HUMAN),
+            f"closeable-close-{scenario}",
+            0,
+            "reviewed",
         ),
     )
     assert not isinstance(closed, DomainError)
     assert closed.status == "closed"
+
+
+def test_evidence_recovery_expires_the_run_lease_locks_out_worker_and_recovers(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    revision_id = register_test_revision(migrated_session).id
+    run = start_production_drill(migrated_session, command(revision_id, key="expired-recovery"))
+    assert not isinstance(run, DomainError)
+
+    import orchestrator.services.claims as claims
+    import orchestrator.services.evidence as evidence_service
+
+    _advance_run_time(monkeypatch, run, (production_drills, claims, evidence_service))
+
+    result = run_production_drill_scenario(
+        migrated_session,
+        RunProductionDrillScenario(run.id, "evidence_recovery", SYSTEM, "expired-recovery-run", 0),
+    )
+
+    assert not isinstance(result, DomainError)
+    unit = next(row for row in result["units"] if "evidence_recovery" in row["unit_key"])
+    claim = migrated_session.scalar(select(Claim).where(Claim.work_unit_id == unit["id"]))
+    assert claim is not None
+    assert claim.released_at is not None
+    assert claim.terminal_reason == "lease_expired"
+    evidence = migrated_session.scalars(
+        select(Evidence).where(Evidence.work_unit_id == unit["id"]).order_by(Evidence.recorded_at)
+    ).all()
+    assert len(evidence) == 2
+    assert evidence[1].supersedes_evidence_id == evidence[0].id
+    assert sum(row["is_head"] for row in result["evidence"]) == 1
+    assert evidence[1].payload["recovery"]["reason"] == "recovered_from_expired_lease"
+    recovered = migrated_session.scalar(
+        select(Event).where(
+            Event.action == "evidence.recovered", Event.subject_id == evidence[1].id
+        )
+    )
+    assert recovered is not None
 
 
 def test_external_pr_conflict_uses_real_binding_and_detection(migrated_session: Session) -> None:
@@ -84,6 +164,11 @@ def test_external_pr_conflict_uses_real_binding_and_detection(migrated_session: 
         RunProductionDrillScenario(run.id, "external_pr_conflict", SYSTEM, "real-pr-conflict", 0),
     )
     assert not isinstance(result, DomainError)
+    assert result["status"] == "asserting", migrated_session.scalar(
+        select(Event.payload).where(
+            Event.subject_id == run.id, Event.action == "production_drill.failed"
+        )
+    )
     unit = migrated_session.scalar(
         select(WorkUnit).where(WorkUnit.unit_key.contains("external_pr_conflict"))
     )
@@ -213,13 +298,17 @@ def test_human_cannot_execute_a_system_scenario(migrated_session: Session) -> No
 
 
 def test_scenario_creates_only_fixed_run_owned_resources_and_replays_exactly(
-    migrated_session: Session,
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     revision_id = register_test_revision(migrated_session).id
     first = start_production_drill(migrated_session, command(revision_id, key="scenario-first"))
     second = start_production_drill(migrated_session, command(revision_id, key="scenario-second"))
     assert not isinstance(first, DomainError)
     assert not isinstance(second, DomainError)
+    import orchestrator.services.claims as claims
+    import orchestrator.services.evidence as evidence_service
+
+    _advance_run_time(monkeypatch, first, (production_drills, claims, evidence_service))
     scenario = RunProductionDrillScenario(
         run_id=first.id,
         scenario="evidence_recovery",
@@ -252,6 +341,42 @@ def test_scenario_creates_only_fixed_run_owned_resources_and_replays_exactly(
         ).all()
         == []
     )
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_every_scenario_replay_conflict_and_cross_run_are_fail_closed(
+    migrated_session: Session, scenario: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    revision_id = register_test_revision(migrated_session).id
+    first = start_production_drill(
+        migrated_session, command(revision_id, key=f"matrix-{scenario}-1")
+    )
+    second = start_production_drill(
+        migrated_session, command(revision_id, key=f"matrix-{scenario}-2")
+    )
+    assert not isinstance(first, DomainError)
+    assert not isinstance(second, DomainError)
+    monkeypatch.setattr(production_drills, "_execute_fixed_scenario", lambda *_args: None)
+    command_one = RunProductionDrillScenario(first.id, scenario, SYSTEM, f"matrix-{scenario}", 0)
+
+    first_result = run_production_drill_scenario(migrated_session, command_one)
+    replay = run_production_drill_scenario(migrated_session, command_one)
+    cross_run = run_production_drill_scenario(
+        migrated_session,
+        RunProductionDrillScenario(second.id, scenario, SYSTEM, f"matrix-{scenario}", 0),
+    )
+    conflicting_scenario = "crash_recovery" if scenario != "crash_recovery" else "stalled_approval"
+    conflict = run_production_drill_scenario(
+        migrated_session,
+        RunProductionDrillScenario(first.id, conflicting_scenario, SYSTEM, f"matrix-{scenario}", 0),
+    )
+
+    assert not isinstance(first_result, DomainError)
+    assert not isinstance(replay, DomainError)
+    assert isinstance(cross_run, DomainError)
+    assert cross_run.code == "idempotency_conflict"
+    assert isinstance(conflict, DomainError)
+    assert conflict.code == "idempotency_conflict"
 
 
 def test_scenarios_reject_runs_failed_by_the_system(migrated_session: Session) -> None:
