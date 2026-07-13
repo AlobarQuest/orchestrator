@@ -1,9 +1,14 @@
+from types import SimpleNamespace
+
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import orchestrator.services.production_drills as production_drills
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event, ProductionDrillResource
+from orchestrator.services.packages import register_production_drill_unit
 from orchestrator.services.production_drills import (
     FailProductionDrill,
     RunProductionDrillScenario,
@@ -186,3 +191,92 @@ def test_fail_rejects_an_unredacted_diagnostic_in_the_service(
 
     assert isinstance(result, DomainError)
     assert result.code == "production_drill_diagnostic_ref_invalid"
+
+
+def test_unavailable_fixed_scenario_terminal_fails_before_resource_or_scenario_mutation(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    revision_id = register_test_revision(migrated_session).id
+    run = start_production_drill(migrated_session, command(revision_id))
+    assert not isinstance(run, DomainError)
+    scenario = RunProductionDrillScenario(
+        run_id=run.id,
+        scenario="deploy_split_brain",
+        actor=SYSTEM,
+        idempotency_key="unavailable-split-brain",
+        expected_version=0,
+    )
+
+    def unavailable(*_args, **_kwargs) -> None:
+        raise DomainError("fixed_template_unavailable", "synthetic prerequisite unavailable", None)
+
+    monkeypatch.setattr(production_drills, "_preflight_fixed_scenario", unavailable)
+    result = run_production_drill_scenario(migrated_session, scenario)
+
+    assert not isinstance(result, DomainError)
+    assert result["status"] == "failed"
+    assert result["units"] == []
+    assert result["evidence"] == []
+    assert result["observations"] == []
+    assert result["conditions"] == []
+    events = migrated_session.scalars(select(Event).where(Event.subject_id == run.id)).all()
+    assert {event.action for event in events} == {
+        "production_drill.started",
+        "production_drill.failed",
+    }
+
+
+def test_direct_system_registration_cannot_select_an_arbitrary_drill_template(
+    migrated_session: Session,
+) -> None:
+    revision = register_test_revision(migrated_session)
+    run = start_production_drill(migrated_session, command(revision.id))
+    assert not isinstance(run, DomainError)
+
+    with pytest.raises(DomainError) as error:
+        register_production_drill_unit(
+            migrated_session,
+            run_id=run.id,
+            revision_id=revision.id,
+            unit_key="attacker-selected-unit",
+            title="attacker selected",
+            outcome="attacker selected",
+            required_capability="repository_write",
+            authority=revision.enforcement_snapshot["authority"],
+            approved_by=run.owner_actor_id,
+            approved_at=revision.approved_at,
+            actor_id=SYSTEM.actor_id,
+            actor_role=SYSTEM.role,
+            idempotency_key="attacker-selected-unit",
+        )
+
+    assert error.value.code == "human_actor_required"
+    assert (
+        migrated_session.scalars(
+            select(ProductionDrillResource).where(ProductionDrillResource.run_id == run.id)
+        ).all()
+        == []
+    )
+
+
+def test_split_brain_wait_uses_only_the_persisted_run_deadline(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    revision_id = register_test_revision(migrated_session).id
+    run = start_production_drill(migrated_session, command(revision_id, key="bounded-wait"))
+    assert not isinstance(run, DomainError)
+    waits: list[float] = []
+
+    class FixedClock:
+        def now(self, _session: Session):
+            return run.opened_at
+
+    monkeypatch.setattr(production_drills, "TransactionClock", FixedClock)
+    monkeypatch.setattr(production_drills.time, "sleep", waits.append)
+    production_drills._wait_for_reporting_deadline(
+        migrated_session,
+        run,
+        SimpleNamespace(recorded_at=run.opened_at),
+    )
+
+    assert waits == [60.0]

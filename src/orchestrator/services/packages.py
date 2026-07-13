@@ -2,6 +2,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import select
@@ -61,6 +62,16 @@ class DependencySpec:
 class RegisteredWorkUnit:
     unit: WorkUnit
     created: bool
+
+
+class _ProductionDrillTemplate(StrEnum):
+    """The only SYSTEM-created unit shapes delegated by a drill start event."""
+
+    CRASH_RECOVERY = "crash_recovery"
+    EVIDENCE_RECOVERY = "evidence_recovery"
+    EXTERNAL_PR_CONFLICT = "external_pr_conflict"
+    DEPLOY_SPLIT_BRAIN = "deploy_split_brain"
+    STALLED_APPROVAL = "stalled_approval"
 
 
 def record_approval(
@@ -328,9 +339,15 @@ def _register_approved_unit_with_provenance(
     approved_decomposition_id: uuid.UUID | None = None,
     idempotency_key: str | None = None,
     expected_version: int | None = None,
-    allow_system_production_drill_template: bool = False,
+    production_drill_template: _ProductionDrillTemplate | None = None,
 ) -> RegisteredWorkUnit:
-    if allow_system_production_drill_template:
+    if production_drill_template is not None:
+        if not isinstance(production_drill_template, _ProductionDrillTemplate):
+            raise DomainError(
+                "production_drill_template_invalid",
+                "production drill registration requires a fixed internal template",
+                None,
+            )
         if actor_role is not ActorRole.SYSTEM:
             raise DomainError(
                 "role_forbidden",
@@ -443,7 +460,6 @@ def register_production_drill_unit(
     session: Session,
     *,
     run_id: uuid.UUID,
-    system_delegated_template: bool = False,
     **kwargs: Any,
 ) -> WorkUnit:
     run = require_open_production_drill_run(session, run_id)
@@ -455,8 +471,44 @@ def register_production_drill_unit(
         )
     registration = _register_approved_unit_with_provenance(
         session,
-        allow_system_production_drill_template=system_delegated_template,
         **kwargs,
+    )
+    if registration.created:
+        bind_created_drill_work_unit(session, run_id, registration.unit)
+    else:
+        require_production_drill_resource(session, run_id, "work_unit", registration.unit.id)
+    return registration.unit
+
+
+def _register_fixed_production_drill_template_unit(
+    session: Session,
+    *,
+    run_id: uuid.UUID,
+    template: _ProductionDrillTemplate,
+    actor_id: str,
+    actor_role: ActorRole,
+    idempotency_key: str,
+) -> WorkUnit:
+    """Register one audited SYSTEM template; callers cannot supply its content."""
+    run = require_open_production_drill_run(session, run_id)
+    revision = session.get(WorkPackageRevision, run.revision_id, with_for_update=True)
+    if revision is None:
+        raise DomainError("revision_not_found", "package revision does not exist", None)
+    authority = normalize_authority(revision.enforcement_snapshot["authority"])
+    registration = _register_approved_unit_with_provenance(
+        session,
+        revision_id=run.revision_id,
+        unit_key=f"production-drill:{template.value}:{run.id}",
+        title=f"Production drill: {template.value}",
+        outcome=f"Fixed synthetic production-drill assertion for {template.value}",
+        required_capability="repository_write",
+        authority=authority,
+        approved_by=run.owner_actor_id,
+        approved_at=revision.approved_at,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        idempotency_key=idempotency_key,
+        production_drill_template=template,
     )
     if registration.created:
         bind_created_drill_work_unit(session, run_id, registration.unit)

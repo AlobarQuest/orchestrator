@@ -1,4 +1,5 @@
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -9,7 +10,6 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.config import get_settings
 from orchestrator.errors import DomainError
-from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.leases import (
     LEASE_DURATION,
     MIN_PRODUCTION_DRILL_DEADLINE_SECONDS,
@@ -17,6 +17,7 @@ from orchestrator.kernel.leases import (
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Claim,
+    DeploymentObservation,
     Event,
     Evidence,
     Observation,
@@ -26,6 +27,10 @@ from orchestrator.persistence.models import (
     ReconciliationResolution,
     WorkPackageRevision,
     WorkUnit,
+)
+from orchestrator.services.deployment_observations import (
+    DeploymentObservationCommand,
+    record_production_drill_deployment_observation,
 )
 from orchestrator.services.lifecycle import (
     ActorContext,
@@ -37,12 +42,19 @@ from orchestrator.services.observations import (
     ObservationCommand,
     record_production_drill_observation,
 )
-from orchestrator.services.packages import register_production_drill_unit
+from orchestrator.services.packages import (
+    _ProductionDrillTemplate,
+    _register_fixed_production_drill_template_unit,
+)
 from orchestrator.services.reconciliation import (
     ConditionCommand,
     ResolutionCommand,
     record_production_drill_reconciliation_condition,
     resolve_production_drill_condition,
+)
+from orchestrator.services.release_artifacts import (
+    ReleaseArtifactCommand,
+    record_production_drill_release_artifact,
 )
 
 PRODUCTION_DRILL_IDEMPOTENCY_LOCK_NAMESPACE = 0x5044524C
@@ -281,6 +293,15 @@ def production_drill_state(session: Session, run_id: uuid.UUID) -> dict[str, obj
     observations = session.scalars(
         select(Observation).where(Observation.id.in_(observation_ids)).order_by(Observation.id)
     ).all()
+    deployment_ids = select(ProductionDrillResource.resource_id).where(
+        ProductionDrillResource.run_id == run_id,
+        ProductionDrillResource.resource_type == "deployment_observation",
+    )
+    deployments = session.scalars(
+        select(DeploymentObservation)
+        .where(DeploymentObservation.id.in_(deployment_ids))
+        .order_by(DeploymentObservation.id)
+    ).all()
     condition_ids = select(ProductionDrillResource.resource_id).where(
         ProductionDrillResource.run_id == run_id,
         ProductionDrillResource.resource_type == "reconciliation_condition",
@@ -299,6 +320,14 @@ def production_drill_state(session: Session, run_id: uuid.UUID) -> dict[str, obj
         "units": [_unit_state(unit, claims.get(unit.id)) for unit in units],
         "evidence": [_evidence_state(session, row) for row in evidence],
         "observations": [_observation_state(row) for row in observations],
+        "deployment_observations": [
+            {
+                "id": row.id,
+                "release_artifact_binding_id": row.release_artifact_binding_id,
+                "post_deploy_work_unit_id": row.post_deploy_work_unit_id,
+            }
+            for row in deployments
+        ],
         "conditions": [_condition_state(session, row) for row in conditions],
     }
 
@@ -444,7 +473,11 @@ def _run_production_drill_scenario(session: Session, command: RunProductionDrill
         )
     if run.status not in {"open", "asserting"}:
         raise DomainError("production_drill_run_not_open", "production drill run is not open", None)
-    _execute_fixed_scenario(session, run, command)
+    try:
+        _execute_fixed_scenario(session, run, command)
+    except DomainError as error:
+        _record_scenario_terminal_failure(session, run, command, error)
+        return
     now = TransactionClock().now(session)
     session.add(
         Event(
@@ -472,10 +505,11 @@ def _execute_fixed_scenario(
     The human start event authorizes this one SYSTEM path.  Each derived key includes the run and
     fixed scenario name, so neither units nor external references can be selected by the caller.
     """
+    _preflight_fixed_scenario(session, run, command)
     unit = _register_fixed_scenario_unit(session, run, command)
-    _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
 
     if command.scenario == "crash_recovery":
+        _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
         _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.CLAIMED)
         _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.FAILED)
         _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
@@ -507,12 +541,18 @@ def _execute_fixed_scenario(
         raise observation
 
     if command.scenario == "evidence_recovery":
+        _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
         _execute_fixed_evidence_recovery(session, run, unit, command)
         return
 
+    if command.scenario == "deploy_split_brain":
+        _execute_fixed_deploy_split_brain(session, run, unit, command)
+        return
+
+    _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
+
     condition_type = {
         "external_pr_conflict": "external_merge_alarm",
-        "deploy_split_brain": "deploy_split_brain",
         "stalled_approval": "check_result_flip",
     }[command.scenario]
     outcome = record_production_drill_reconciliation_condition(
@@ -537,24 +577,32 @@ def _execute_fixed_scenario(
 def _register_fixed_scenario_unit(
     session: Session, run: ProductionDrillRun, command: RunProductionDrillScenario
 ) -> WorkUnit:
-    revision = session.get(WorkPackageRevision, run.revision_id)
-    assert revision is not None
-    return register_production_drill_unit(
+    return _register_fixed_production_drill_template_unit(
         session,
         run_id=run.id,
-        system_delegated_template=True,
-        revision_id=run.revision_id,
-        unit_key=f"production-drill:{command.scenario}:{run.id}",
-        title=f"Production drill: {command.scenario}",
-        outcome=f"Fixed synthetic production-drill assertion for {command.scenario}",
-        required_capability="repository_write",
-        authority=normalize_authority(revision.enforcement_snapshot["authority"]),
-        approved_by=run.owner_actor_id,
-        approved_at=revision.approved_at,
         actor_id=command.actor.actor_id,
         actor_role=command.actor.role,
         idempotency_key=f"{command.idempotency_key}:unit",
+        template=_ProductionDrillTemplate(command.scenario),
     )
+
+
+def _preflight_fixed_scenario(
+    session: Session, run: ProductionDrillRun, command: RunProductionDrillScenario
+) -> None:
+    """Reject unavailable fixed templates before they create any drill-owned resource."""
+    if session.get(WorkPackageRevision, run.revision_id) is None:
+        raise DomainError("revision_not_found", "package revision does not exist", None)
+    if command.scenario == "deploy_split_brain":
+        deadlines = production_drill_deadlines(session, run.id)
+        if isinstance(deadlines, DomainError):
+            raise deadlines
+        if deadlines.reporting_deadline.total_seconds() <= 0:
+            raise DomainError(
+                "production_drill_deadlines_invalid",
+                "production drill reporting deadline must be positive",
+                None,
+            )
 
 
 def _execute_fixed_evidence_recovery(
@@ -619,6 +667,245 @@ def _execute_fixed_evidence_recovery(
     )
     if isinstance(replacement, DomainError):
         raise replacement
+
+
+def _execute_fixed_deploy_split_brain(
+    session: Session,
+    run: ProductionDrillRun,
+    unit: WorkUnit,
+    command: RunProductionDrillScenario,
+) -> None:
+    """Exercise the real AC-003 path, never a hand-written condition."""
+    from orchestrator.services.reconciliation_detection import detect_reconciliation_conditions
+
+    _complete_fixed_unit(session, run, unit, command)
+    revision = session.get(WorkPackageRevision, run.revision_id)
+    assert revision is not None
+    binding = record_production_drill_release_artifact(
+        session,
+        run_id=run.id,
+        command=ReleaseArtifactCommand(
+            work_unit_id=unit.id,
+            actor=command.actor,
+            package_revision_id=run.revision_id,
+            package_revision_hash=revision.content_hash,
+            source_repository="production-drill/synthetic",
+            implementation_pr_number=1,
+            source_commit="a" * 40,
+            merge_commit="b" * 40,
+            artifact_registry="example.invalid",
+            artifact_repository="production-drill",
+            artifact_name="deploy-split-brain",
+            artifact_digest="sha256:" + "c" * 64,
+            artifact_tag=None,
+            workflow_run_id="production-drill",
+            workflow_run_attempt=1,
+            workflow_path="synthetic",
+            workflow_ref="synthetic",
+            workflow_run_url=None,
+            builder_id="production-drill",
+            builder_class="synthetic",
+            provenance_ref=None,
+            provenance_digest=None,
+            sbom_ref=None,
+            sbom_digest=None,
+            summary={"synthetic": True, "scenario": command.scenario},
+            idempotency_key=f"{command.idempotency_key}:release-artifact",
+            expected_version=unit.version,
+        ),
+    )
+    if isinstance(binding, DomainError):
+        raise binding
+    deployment = record_production_drill_deployment_observation(
+        session,
+        run_id=run.id,
+        command=DeploymentObservationCommand(
+            release_artifact_binding_id=binding.id,
+            actor=command.actor,
+            environment="production-drill",
+            base_url="https://production-drill.invalid",
+            observed_artifact_digest=binding.artifact_digest,
+            deployment_ref=f"production-drill:{run.id}",
+            deployment_url="https://production-drill.invalid/deployments/synthetic",
+            deployer="production-drill",
+            observed_at=TransactionClock().now(session),
+            probe_summary={
+                "probes": [
+                    {
+                        "name": "live",
+                        "method": "GET",
+                        "endpoint": "/health/live",
+                        "expected_status_min": 200,
+                        "expected_status_max": 299,
+                        "status_code": 200,
+                        "observed_at": TransactionClock().now(session).isoformat(),
+                    }
+                ]
+            },
+            route_summary={
+                "routes": [
+                    {"path": "/health/live", "present": True},
+                ]
+            },
+            auth_summary={"missing_m2m_status": 401, "configured_m2m_status": 200},
+            dispatch_summary={"dispatch_enabled": False},
+            status_summary={"status": "observed", "summary": "synthetic production drill"},
+            idempotency_key=f"{command.idempotency_key}:deployment-observation",
+            expected_version=0,
+        ),
+    )
+    if isinstance(deployment, DomainError):
+        raise deployment
+    _wait_for_reporting_deadline(session, run, deployment)
+    counters = detect_reconciliation_conditions(
+        session,
+        command.actor,
+        stall_seconds=0,
+        production_drill_run_id=run.id,
+    )
+    if counters.conditions_recorded != 1:
+        raise DomainError(
+            "production_drill_split_brain_not_detected",
+            "fixed deploy split-brain scenario did not produce its required condition",
+            None,
+        )
+    condition = session.scalar(
+        select(ReconciliationCondition).where(
+            ReconciliationCondition.work_unit_id == deployment.post_deploy_work_unit_id,
+            ReconciliationCondition.condition_type == "deploy_split_brain",
+        )
+    )
+    if condition is None:
+        raise DomainError(
+            "production_drill_split_brain_not_detected",
+            "fixed deploy split-brain condition was not persisted",
+            None,
+        )
+    from orchestrator.services.production_drill_resources import (
+        bind_created_drill_reconciliation_condition,
+        require_production_drill_resource,
+    )
+
+    bind_created_drill_reconciliation_condition(session, run.id, condition)
+    require_production_drill_resource(session, run.id, "reconciliation_condition", condition.id)
+
+
+def _complete_fixed_unit(
+    session: Session,
+    run: ProductionDrillRun,
+    unit: WorkUnit,
+    command: RunProductionDrillScenario,
+) -> None:
+    """Use ordinary role-scoped transitions; no scenario may assign COMPLETED directly."""
+    from orchestrator.services.claims import claim_unit
+    from orchestrator.services.evidence import append_production_drill_evidence, record_adjudication
+
+    worker = ActorContext("production-drill-worker", ActorRole.WORKER)
+    verifier = ActorContext("production-drill-verifier", ActorRole.VERIFIER)
+    _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
+    claim = claim_unit(
+        session,
+        unit.id,
+        worker,
+        f"{command.idempotency_key}:complete:claim",
+        unit.version,
+    )
+    if isinstance(claim, DomainError):
+        raise claim
+    _transition_fixed_unit(
+        session,
+        run.id,
+        unit,
+        command,
+        WorkUnitState.EXECUTING,
+        worker,
+        claim.attempt,
+        claim.lease_token,
+    )
+    evidence = append_production_drill_evidence(
+        session,
+        run_id=run.id,
+        work_package_revision_id=run.revision_id,
+        work_unit_id=unit.id,
+        ac_id="ac-1",
+        attempt=claim.attempt,
+        actor=worker,
+        lease_token=claim.lease_token,
+        evidence_type="production_drill.deploy_split_brain",
+        stable_ref=f"drill://redacted/{run.id}/deploy-split-brain",
+        payload={"scenario": "deploy_split_brain", "synthetic": True},
+        source_revision="synthetic",
+        expected_version=unit.version,
+        idempotency_key=f"{command.idempotency_key}:complete:evidence",
+    )
+    if isinstance(evidence, DomainError):
+        raise evidence
+    _transition_fixed_unit(
+        session,
+        run.id,
+        unit,
+        command,
+        WorkUnitState.SUBMITTED,
+        worker,
+        claim.attempt,
+        claim.lease_token,
+    )
+    adjudication = record_adjudication(
+        session,
+        work_package_revision_id=run.revision_id,
+        work_unit_id=unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=verifier,
+        rationale="fixed synthetic production-drill verification",
+        evidence_id=evidence.id,
+        idempotency_key=f"{command.idempotency_key}:complete:adjudication",
+        expected_version=unit.version,
+    )
+    if isinstance(adjudication, DomainError):
+        raise adjudication
+    _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.COMPLETED, verifier)
+
+
+def _wait_for_reporting_deadline(
+    session: Session, run: ProductionDrillRun, deployment: DeploymentObservation
+) -> None:
+    deadlines = production_drill_deadlines(session, run.id)
+    if isinstance(deadlines, DomainError):
+        raise deadlines
+    deadline = deployment.recorded_at + deadlines.reporting_deadline
+    remaining = (deadline - TransactionClock().now(session)).total_seconds()
+    if remaining > 0:
+        time.sleep(remaining)
+
+
+def _record_scenario_terminal_failure(
+    session: Session,
+    run: ProductionDrillRun,
+    command: RunProductionDrillScenario,
+    error: DomainError,
+) -> None:
+    now = TransactionClock().now(session)
+    session.add(
+        Event(
+            occurred_at=now,
+            actor_id=command.actor.actor_id,
+            action="production_drill.failed",
+            subject_type="production_drill_run",
+            subject_id=run.id,
+            from_state=run.status,
+            to_state="failed",
+            payload={
+                "scenario": command.scenario,
+                "failure_code": f"{command.scenario}_failed",
+                "error": error.code,
+            },
+            correlation_id=uuid.uuid4(),
+            idempotency_key=f"{command.idempotency_key}:terminal-failure",
+        )
+    )
+    run.status = "failed"
+    session.flush()
 
 
 def _transition_fixed_unit(
