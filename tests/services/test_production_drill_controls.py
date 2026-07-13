@@ -80,9 +80,7 @@ def test_production_drill_command_rejects_a_forged_deadline_maximum(
     revision = register_test_revision(migrated_session)
 
     with pytest.raises(TypeError, match="max_deadline_seconds"):
-        StartProductionDrill(
-            **{**command(revision.id).__dict__, "max_deadline_seconds": 86_400}
-        )
+        StartProductionDrill(**{**command(revision.id).__dict__, "max_deadline_seconds": 86_400})
 
 
 def test_registered_drill_unit_uses_its_run_lease_without_changing_ordinary_duration(
@@ -140,11 +138,7 @@ def test_run_scoped_reconciliation_ignores_another_runs_deployment_report(
     assert not isinstance(first, DomainError)
     assert not isinstance(second, DomainError)
     migrated_session.add_all(
-        (
-            ProductionDrillResource(
-                run_id=second.id, resource_type="work_unit", resource_id=unit.id
-            ),
-        )
+        (ProductionDrillResource(run_id=second.id, resource_type="work_unit", resource_id=unit.id),)
     )
     migrated_session.commit()
 

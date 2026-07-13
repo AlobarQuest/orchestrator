@@ -12,7 +12,6 @@ required_openapi_operations=(
     "POST /api/v1/production-drills/{run_id}/fail"
 )
 scenarios=(
-    "crash_recovery"
     "evidence_recovery"
     "external_pr_conflict"
     "deploy_split_brain"
@@ -135,9 +134,6 @@ assert_scenario_state() {
     local predicate
 
     case "$scenario" in
-        crash_recovery)
-            predicate="$base and any(.units[]?; (.unit_key | contains(\$scenario)) and .state == \"ready\")"
-            ;;
         evidence_recovery)
             predicate="$base and (.evidence | length == 2) and ([.evidence[]? | select(.is_head == true)] | length == 1) and any(.evidence[]?; .supersedes_evidence_id != null)"
             ;;
@@ -157,6 +153,21 @@ assert_scenario_state() {
     jq -e --arg run_id "$RUN_ID" --arg scenario "$scenario" "$predicate" <<<"$state" >/dev/null
 }
 
+assert_crash_recovery_state() {
+    local state="$1"
+    local expected_attempt="$2"
+    local require_active_claim="$3"
+
+    jq -e --arg run_id "$RUN_ID" --argjson expected_attempt "$expected_attempt" \
+        --argjson require_active_claim "$require_active_claim" '
+        .run_id == $run_id and .status == "asserting" and any(.units[]?;
+            (.unit_key | contains("crash_recovery")) and
+            .state == "claimed" and .attempt_count == $expected_attempt and
+            ($require_active_claim == false or .active_claim.attempt == $expected_attempt)
+        )
+    ' <<<"$state" >/dev/null
+}
+
 run_scenario() {
     local scenario="$1"
     local payload
@@ -167,6 +178,18 @@ run_scenario() {
     state="$(api_request POST "/api/v1/production-drills/${RUN_ID}/scenarios/${scenario}" "$payload")" || return 1
     assert_scenario_state "$scenario" "$state" || return 1
     record_assertion "$scenario" "passed"
+}
+
+run_crash_recovery_phase() {
+    local expected_attempt="$1"
+    local payload
+    local state
+
+    payload="$(jq -nc --arg key "${IDEMPOTENCY_PREFIX}:scenario:crash_recovery" \
+        '{idempotency_key: $key, expected_version: 0}')"
+    state="$(api_request POST "/api/v1/production-drills/${RUN_ID}/scenarios/crash_recovery" "$payload")" || return 1
+    assert_crash_recovery_state "$state" "$expected_attempt" true || return 1
+    FINAL_STATE_JSON="$state"
 }
 
 record_failure() {
@@ -183,13 +206,14 @@ record_failure() {
 
 RUN_ID=""
 APPROVE_LIVE_RESTART=0
+RESUME_AFTER_RESTART=0
 IDEMPOTENCY_PREFIX="production-drill-bootstrap"
 EVIDENCE_FILE=""
 ASSERTIONS_JSON="${ASSERTIONS_JSON:-[]}"
 FINAL_STATE_JSON='{}'
 
 usage() {
-    printf 'Usage: %s --run-id UUID [--approve-live-restart] [--evidence-file PATH]\n' "$0" >&2
+    printf 'Usage: %s --run-id UUID (--approve-live-restart | --resume-after-restart) [--evidence-file PATH]\n' "$0" >&2
 }
 
 while [ "$#" -gt 0 ]; do
@@ -200,6 +224,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --approve-live-restart)
             APPROVE_LIVE_RESTART=1
+            shift
+            ;;
+        --resume-after-restart)
+            RESUME_AFTER_RESTART=1
             shift
             ;;
         --evidence-file)
@@ -219,6 +247,11 @@ done
 
 if [ -z "$RUN_ID" ]; then
     log "RUN_ID is required; a HUMAN must start the run before this runner is invoked"
+    exit 2
+fi
+
+if [ "$APPROVE_LIVE_RESTART" -eq 1 ] && [ "$RESUME_AFTER_RESTART" -eq 1 ]; then
+    log "choose either restart preparation or post-restart resumption"
     exit 2
 fi
 
@@ -263,6 +296,31 @@ if ! load_drill_credential; then
     exit 1
 fi
 
+if [ "$APPROVE_LIVE_RESTART" -eq 1 ]; then
+    # This request commits the first synthetic lease. The restart itself remains a
+    # separately approved Coolify operation; no executable host control is accepted here.
+    run_crash_recovery_phase 1 || fail_run "crash_recovery_failed" "crash preparation failed"
+    record_assertion "crash_recovery_prepared" "passed"
+    preflight_readiness || fail_run "crash_recovery_failed" "readiness before restart failed"
+    write_evidence "restart_pending" "synthetic lease persisted; perform approved Coolify restart, then resume"
+    log "Coolify operator handoff is required; restart the approved application, then rerun with --resume-after-restart"
+    log "evidence: $EVIDENCE_FILE"
+    exit 4
+fi
+
+if [ "$RESUME_AFTER_RESTART" -ne 1 ]; then
+    write_evidence "restart_approval_required" "run with --approve-live-restart to prepare the controlled restart"
+    log "evidence: $EVIDENCE_FILE"
+    exit 3
+fi
+
+FINAL_STATE_JSON="$(api_request GET "/api/v1/production-drills/${RUN_ID}/state")" || \
+    fail_run "crash_recovery_failed" "post-restart run-scoped state read failed"
+assert_crash_recovery_state "$FINAL_STATE_JSON" 1 false || \
+    fail_run "crash_recovery_failed" "post-restart state lacks the prepared synthetic lease"
+run_crash_recovery_phase 2 || fail_run "crash_recovery_failed" "post-restart lease reclaim failed"
+record_assertion "crash_recovery" "passed"
+
 for scenario in "${scenarios[@]}"; do
     run_scenario "$scenario" || fail_run "${scenario}_failed" "${scenario} scenario failed"
 done
@@ -272,14 +330,6 @@ FINAL_STATE_JSON="$(api_request GET "/api/v1/production-drills/${RUN_ID}/state")
 jq -e --arg run_id "$RUN_ID" '.run_id == $run_id and .status == "asserting"' \
     <<<"$FINAL_STATE_JSON" >/dev/null || fail_run "runner_preflight_failed" "final run-scoped state is invalid"
 
-if [ "$APPROVE_LIVE_RESTART" -eq 1 ]; then
-    preflight_readiness || fail_run "crash_recovery_failed" "readiness preflight before restart failed"
-    # This repository intentionally has no executable restart hook. The approved Coolify action
-    # is an operator handoff, so an approval flag cannot turn into an arbitrary host command.
-    log "Coolify operator handoff is required; perform the approved restart outside this runner"
-    fail_run "crash_recovery_failed" "fixed Coolify control is not configured in this runner"
-fi
-
-write_evidence "restart_handoff_required" "all fixed API scenarios passed; restart requires operator handoff"
+write_evidence "assertions_submitted" "all five fixed production-drill assertions passed; HUMAN closeout remains required"
 log "evidence: $EVIDENCE_FILE"
-exit 3
+exit 0

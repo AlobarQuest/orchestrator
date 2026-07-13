@@ -20,9 +20,10 @@ intentional acceptance condition because a replica does not prove live recovery.
 
 A production drill starts from one human-approved immutable recovery-drills
 package revision. A browser-authenticated HUMAN calls
-`POST /api/v1/production-drills` to create and authorize the run; a dedicated
-SYSTEM drill credential can operate only on that authorized run. A HUMAN closes
-the run after reviewing its submitted assertions. It creates a run with:
+`POST /api/v1/production-drills` to create and authorize the run; that event is
+the immutable authorization record bound to the revision. A dedicated SYSTEM
+drill credential can operate only on that authorized run. A HUMAN closes the
+run after reviewing its submitted assertions. It creates a run with:
 
 - immutable run ID and package-revision reference;
 - exact application image reference, image digest, and OpenAPI digest;
@@ -46,12 +47,34 @@ not mutate global application settings or ordinary work units. This lets the
 evidence-recovery, split-brain, and stalled-approval cases use elapsed time
 without a private database backdate or process-wide threshold override.
 
+## Scenario Control Contract
+
+The runner cannot infer or manufacture scenario state. The orchestrator exposes
+fixed, run-scoped SYSTEM commands for the five named drills; each command
+accepts only its run ID and fixed scenario inputs, creates only registered
+synthetic resources, and returns the run-scoped assertion view. There is no
+generic unit, observation, deadline, or executable-command API.
+
+Creating a run is the Human's explicit delegation to SYSTEM for these five
+templates only. The SYSTEM service may create their namespaced units and
+evidence through an internal production-drill registration path; it cannot
+register an arbitrary unit, select a repository, change authority, or act
+outside that run.
+
+A SYSTEM `fail` command records an audited failure reason and marks the run
+failed without attempting HUMAN closeout. HUMAN closeout remains the only path
+that accepts a successfully completed run. The crash drill's restart is issued
+only through the approved Coolify integration after a runner preflight and an
+explicit flag; the runner never accepts an executable path.
+
 ## Drill Mapping
 
-1. Crash recovery: create a synthetic unit and verify dispatch-disabled state;
-   restart the live application using the approved Coolify control surface;
-   after readiness returns, wait for the run-scoped lease deadline and reclaim
-   through the public API.
+1. Crash recovery: the first fixed command creates and durably claims a
+   synthetic unit; restart the live application using the approved Coolify
+   control surface; after readiness returns, a second fixed command reclaims
+   the persisted expired lease and exposes attempt two in the run-scoped state.
+   The runner accepts no host command: the external restart audit plus the
+   before/after public state are the proof boundary.
 2. Evidence recovery: allow the run-scoped lease to expire, prove the worker is
    locked out, recover the evidence as SYSTEM, and assert one superseding head
    through the run-scoped read model.

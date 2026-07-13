@@ -211,8 +211,11 @@ def test_close_resolves_only_run_owned_condition(migrated_session: Session) -> N
     assert resolution is not None
     assert resolution.decision == "dismissed"
     assert resolution.rationale == "production_drill_closed: all assertions reviewed"
-    assert migrated_session.scalar(
-        select(ReconciliationResolution).where(
-            ReconciliationResolution.condition_id == ordinary_condition.condition.id
+    assert (
+        migrated_session.scalar(
+            select(ReconciliationResolution).where(
+                ReconciliationResolution.condition_id == ordinary_condition.condition.id
+            )
         )
-    ) is None
+        is None
+    )

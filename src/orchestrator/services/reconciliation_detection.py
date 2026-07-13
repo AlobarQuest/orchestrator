@@ -462,9 +462,7 @@ def _detect_stalled_verifications(
         stalled = tuple(
             row
             for row in stalled
-            if _run_owns_resource(
-                session, production_drill_run_id, "work_unit", row[1].id
-            )
+            if _run_owns_resource(session, production_drill_run_id, "work_unit", row[1].id)
             and _run_owns_resource(
                 session, production_drill_run_id, "deployment_observation", row[0].id
             )

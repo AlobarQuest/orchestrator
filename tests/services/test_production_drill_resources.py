@@ -87,12 +87,15 @@ def test_drill_registration_rejects_an_existing_ordinary_unit_with_revision_lock
         register_production_drill_unit(migrated_session, run_id=drill.id, **registration)
 
     assert error.value.code == "production_drill_resource_not_owned"
-    assert migrated_session.scalar(
-        select(ProductionDrillResource).where(
-            ProductionDrillResource.resource_type == "work_unit",
-            ProductionDrillResource.resource_id == ordinary.id,
+    assert (
+        migrated_session.scalar(
+            select(ProductionDrillResource).where(
+                ProductionDrillResource.resource_type == "work_unit",
+                ProductionDrillResource.resource_id == ordinary.id,
+            )
         )
-    ) is None
+        is None
+    )
 
 
 def test_concurrent_ordinary_registration_cannot_be_captured_as_drill_work(

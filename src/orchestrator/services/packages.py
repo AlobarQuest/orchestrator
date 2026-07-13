@@ -512,6 +512,19 @@ def _register_fixed_production_drill_template_unit(
     )
     if registration.created:
         bind_created_drill_work_unit(session, run_id, registration.unit)
+        # The HUMAN start event delegates authority for this exact fixed template.
+        # Materialize that delegation on the synthetic unit so recovery uses the
+        # same readiness predicate as an ordinary reclaim.
+        record_approval(
+            session,
+            unit_id=registration.unit.id,
+            subject_type="authority",
+            actor_id=run.owner_actor_id,
+            actor_role=ActorRole.HUMAN,
+            reason="production_drill_start_delegation",
+            idempotency_key=f"{idempotency_key}:authority",
+            expected_version=registration.unit.version,
+        )
     else:
         require_production_drill_resource(session, run_id, "work_unit", registration.unit.id)
     return registration.unit

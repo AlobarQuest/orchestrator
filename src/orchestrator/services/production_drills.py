@@ -351,6 +351,7 @@ def _unit_state(unit: WorkUnit, claim: Claim | None) -> dict[str, object]:
         "unit_key": unit.unit_key,
         "state": unit.state,
         "version": unit.version,
+        "attempt_count": unit.attempt_count,
         "active_claim": (
             None
             if claim is None
@@ -527,10 +528,7 @@ def _execute_fixed_scenario(
     unit = _register_fixed_scenario_unit(session, run, command)
 
     if command.scenario == "crash_recovery":
-        _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
-        _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.CLAIMED)
-        _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.FAILED)
-        _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
+        _execute_fixed_crash_recovery(session, run, unit, command)
         return
 
     if command.scenario == "evidence_recovery":
@@ -548,6 +546,66 @@ def _execute_fixed_scenario(
         _execute_fixed_stalled_approval(session, run, unit, command)
         return
     raise AssertionError(f"unhandled production drill scenario {command.scenario}")
+
+
+def _execute_fixed_crash_recovery(
+    session: Session,
+    run: ProductionDrillRun,
+    unit: WorkUnit,
+    command: RunProductionDrillScenario,
+) -> None:
+    """Prepare one lease before a restart, then reclaim it after the runner resumes.
+
+    The two invocations are deliberately distinguished by durable unit state, not a
+    caller-supplied phase.  That keeps the public command fixed while ensuring the
+    second invocation exercises the ordinary expired-claim reclaim path.
+    """
+    from orchestrator.services.claims import _perform_reclaim, claim_unit
+
+    worker = ActorContext("production-drill-worker", ActorRole.WORKER)
+    if WorkUnitState(unit.state) is WorkUnitState.DRAFT:
+        _transition_fixed_unit(session, run.id, unit, command, WorkUnitState.READY)
+        claim = claim_unit(
+            session,
+            unit.id,
+            worker,
+            f"{command.idempotency_key}:prepare:claim",
+            unit.version,
+        )
+        if isinstance(claim, DomainError):
+            raise claim
+        return
+
+    if WorkUnitState(unit.state) is not WorkUnitState.CLAIMED:
+        raise DomainError(
+            "production_drill_crash_recovery_invalid_state",
+            "crash recovery resume requires the prepared synthetic claim",
+            None,
+        )
+    claim = session.scalar(
+        select(Claim)
+        .where(Claim.work_unit_id == unit.id, Claim.released_at.is_(None))
+        .with_for_update()
+    )
+    if claim is None:
+        raise DomainError(
+            "production_drill_crash_recovery_claim_missing",
+            "crash recovery resume requires an unreleased synthetic claim",
+            None,
+        )
+    _wait_for_lease_expiry(session, claim.lease_expires_at)
+    # The public reclaim wrapper commits. This scenario is one atomic audited operation,
+    # so it uses the same reclaim implementation inside the surrounding transaction.
+    reclaimed = _perform_reclaim(
+        session,
+        unit.id,
+        command.actor,
+        worker,
+        f"{command.idempotency_key}:resume:reclaim",
+        expected_version=unit.version,
+    )
+    if isinstance(reclaimed, DomainError):
+        raise reclaimed
 
 
 def _execute_fixed_external_pr_conflict(

@@ -25,6 +25,7 @@ RESOURCE_MODELS = {
     "deployment_observation": DeploymentObservation,
 }
 
+
 def bind_created_drill_work_unit(
     session: Session,
     run_id: uuid.UUID,
@@ -173,12 +174,15 @@ def is_not_production_drill_resource(resource_type: str, resource_id: object):
 def reject_production_drill_resource(
     session: Session, resource_type: str, resource_id: uuid.UUID
 ) -> None:
-    if session.scalar(
-        select(ProductionDrillResource.id).where(
-            ProductionDrillResource.resource_type == resource_type,
-            ProductionDrillResource.resource_id == resource_id,
+    if (
+        session.scalar(
+            select(ProductionDrillResource.id).where(
+                ProductionDrillResource.resource_type == resource_type,
+                ProductionDrillResource.resource_id == resource_id,
+            )
         )
-    ) is not None:
+        is not None
+    ):
         raise DomainError(
             "production_drill_resource_requires_drill_writer",
             "production drill resources must use the production drill writer",

@@ -30,6 +30,7 @@ def test_production_runner_is_an_executable_fail_closed_entrypoint() -> None:
     assert "--run-id" in source
     assert "RUN_ID is required" in source
     assert "--approve-live-restart" in source
+    assert "--resume-after-restart" in source
 
 
 def test_production_runner_is_pinned_to_the_single_live_target() -> None:
@@ -77,10 +78,11 @@ def test_production_runner_keeps_bearer_material_out_of_process_arguments() -> N
     assert "authorization: bearer <redacted>" in source.lower()
 
 
-def test_live_restart_is_an_explicit_fail_closed_operator_handoff() -> None:
+def test_live_restart_is_an_explicit_two_phase_operator_handoff() -> None:
     source = production_runner_source()
 
     assert "APPROVE_LIVE_RESTART" in source
+    assert "RESUME_AFTER_RESTART" in source
     assert "preflight_readiness" in source
     assert "Coolify operator handoff is required" in source
     assert "restart_live_application" not in source
@@ -149,7 +151,7 @@ def test_runner_posts_all_fixed_scenarios_and_records_run_scoped_assertions(tmp_
         "  *'/health/ready') printf '%s\\n' '{}' ;;\n"
         "  *'/scenarios/crash_recovery') printf '%s\\n' '{\"run_id\":\""
         + run_id
-        + '","status":"asserting","units":[{"unit_key":"production-drill-crash_recovery","state":"ready"}],"evidence":[],"observations":[],"deployment_observations":[],"conditions":[]}\' ;;\n'  # noqa: E501 - shell mock response must remain one JSON line
+        + '","status":"asserting","units":[{"unit_key":"production-drill-crash_recovery","state":"claimed","attempt_count":1,"active_claim":{"attempt":1}}],"evidence":[],"observations":[],"deployment_observations":[],"conditions":[]}\' ;;\n'  # noqa: E501 - shell mock response must remain one JSON line
         "  *'/scenarios/evidence_recovery') printf '%s\\n' '{\"run_id\":\""
         + run_id
         + '","status":"asserting","units":[{"unit_key":"production-drill-evidence_recovery","state":"executing"}],"evidence":[{"is_head":false},{"is_head":true,"supersedes_evidence_id":"x"}],"observations":[],"deployment_observations":[],"conditions":[]}\' ;;\n'  # noqa: E501 - shell mock response must remain one JSON line
@@ -172,7 +174,14 @@ def test_runner_posts_all_fixed_scenarios_and_records_run_scoped_assertions(tmp_
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
     result = subprocess.run(
-        [str(RUNNER), "--run-id", run_id, "--evidence-file", str(evidence)],
+        [
+            str(RUNNER),
+            "--run-id",
+            run_id,
+            "--approve-live-restart",
+            "--evidence-file",
+            str(evidence),
+        ],
         check=False,
         capture_output=True,
         env={
@@ -183,13 +192,14 @@ def test_runner_posts_all_fixed_scenarios_and_records_run_scoped_assertions(tmp_
         text=True,
     )
 
-    assert result.returncode == 3, result.stderr
+    assert result.returncode == 4, result.stderr
     requests = request_log.read_text()
-    for scenario in SCENARIOS:
-        assert f"/scenarios/{scenario}" in requests
+    assert "/scenarios/crash_recovery" in requests
+    for scenario in SCENARIOS[1:]:
+        assert f"/scenarios/{scenario}" not in requests
     payload = json.loads(evidence.read_text())
-    assert payload["status"] == "restart_handoff_required"
-    assert [item["name"] for item in payload["assertions"]] == list(SCENARIOS)
+    assert payload["status"] == "restart_pending"
+    assert [item["name"] for item in payload["assertions"]] == ["crash_recovery_prepared"]
     assert "test-token" not in evidence.read_text()
 
 
@@ -234,7 +244,14 @@ def test_runner_rejects_a_missing_openapi_operation_before_authenticated_mutatio
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
     result = subprocess.run(
-        [str(RUNNER), "--run-id", run_id, "--evidence-file", str(evidence)],
+        [
+            str(RUNNER),
+            "--run-id",
+            run_id,
+            "--approve-live-restart",
+            "--evidence-file",
+            str(evidence),
+        ],
         check=False,
         capture_output=True,
         env={
@@ -297,7 +314,14 @@ def test_runner_posts_enumerated_redacted_failure_after_a_scenario_error(tmp_pat
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
     result = subprocess.run(
-        [str(RUNNER), "--run-id", run_id, "--evidence-file", str(evidence)],
+        [
+            str(RUNNER),
+            "--run-id",
+            run_id,
+            "--approve-live-restart",
+            "--evidence-file",
+            str(evidence),
+        ],
         check=False,
         capture_output=True,
         env={

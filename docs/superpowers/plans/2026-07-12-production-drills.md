@@ -12,14 +12,14 @@
 
 - Every drill record is append-only and tied to an immutable approved recovery-drills package revision.
 - Production runner reads and writes only public API surfaces; it executes no production SQL.
-- A browser-authenticated HUMAN creates and closes a run; the dedicated SYSTEM credential may operate only on an authorized open run.
+- A browser-authenticated HUMAN creates and closes a run; its creation event is the immutable authorization record bound to the revision, and the dedicated SYSTEM credential may operate only on that authorized open run.
 - All resource controls reject non-drill and cross-run identifiers.
 - The live restart occurs only in drill 1 and requires separate runtime approval.
 - A run cannot pass until its synthetic records are closed with audited reasons.
 
 ---
 
-### Task 1: Persist And Authorize Production Drill Runs
+### Task 1: Persist And Authorize Production Drill Runs [complete]
 
 **Files:**
 - Modify: `src/orchestrator/persistence/models.py`
@@ -34,15 +34,15 @@
 - Produces `ProductionDrillRun` with `id`, `revision_id`, `owner_actor_id`, `opened_at`, `closed_at`, `status`, `image_ref`, `image_digest`, `openapi_digest`, and `closure_reason`.
 - Produces `POST /api/v1/production-drills` and `GET /api/v1/production-drills/{run_id}`.
 
-- [ ] Write failing service tests proving a worker actor, SYSTEM-only actor, missing authority approval, and an unapproved revision each raise a domain error.
+- [ ] Write failing service tests proving a worker actor, SYSTEM-only actor, and an unapproved revision each raise a domain error; assert the successful HUMAN creation event is the authorization record.
 - [ ] Add the model and migration. Use a foreign key to `work_package_revisions`, non-null owner and immutable provenance fields, and a check limiting status to `open`, `asserting`, `closed`, or `failed`.
 - [ ] Add `StartProductionDrillCommand` and `CloseProductionDrillCommand` Pydantic models. A start request includes `revision_id`, idempotency key, image reference/digest, and OpenAPI digest; it cannot supply arbitrary owner or status values.
-- [ ] Implement `start_production_drill()` to require a HUMAN actor and an authority approval recorded against the package revision. Write an event before returning the persisted run.
+- [ ] Implement `start_production_drill()` to require a HUMAN actor and an approved package revision. Write the immutable authorization event before returning the persisted run.
 - [ ] Implement `close_production_drill()` as a HUMAN-only terminal, idempotent transition that requires an explicit closure reason and rejects closure while synthetic records remain open.
 - [ ] Add route/auth tests for successful HUMAN start, replay, rejection cases, and OpenAPI declaration.
 - [ ] Run `uv run pytest tests/services/test_production_drills.py tests/api/test_production_drills_api.py -q`.
 
-### Task 2: Bind Synthetic Resources To A Run
+### Task 2: Bind Synthetic Resources To A Run [complete]
 
 **Files:**
 - Modify: `src/orchestrator/persistence/models.py`
@@ -64,7 +64,7 @@
 - [ ] Ensure ordinary queue/dead-letter/in-flight projections exclude drill-tagged records by default, with an explicit internal opt-in for run-scoped views.
 - [ ] Run the focused service tests and the existing lifecycle, evidence, observation, reconciliation, and release-artifact suites.
 
-### Task 3: Add Run-Scoped Public Assertions And Bounded Time Controls
+### Task 3: Add Run-Scoped Public Assertions And Bounded Time Controls [complete]
 
 **Files:**
 - Modify: `src/orchestrator/api/schemas.py`
@@ -88,7 +88,7 @@
 - [ ] Add API tests that prove state projection cannot leak a different run and that global thresholds are unchanged after a run-control request.
 - [ ] Run focused tests plus `tests/architecture/test_drill_scripts.py` to prove local drills retain their isolation contract.
 
-### Task 4: Close Synthetic Work Without Deletion
+### Task 4: Close Synthetic Work Without Deletion [complete]
 
 **Files:**
 - Modify: `src/orchestrator/services/production_drills.py`
@@ -108,7 +108,26 @@
 - [ ] Add a final invariant that a closed run has no active claim, unresolved run-owned condition, or nonterminal run-owned unit.
 - [ ] Run the closeout tests and persistence append-only tests.
 
-### Task 5: Create The Production Drill Runner
+### Task 5: Add Fixed Run-Scoped Scenario Controls
+
+**Files:**
+- Modify: `src/orchestrator/api/schemas.py`
+- Modify: `src/orchestrator/services/production_drills.py`
+- Modify: `src/orchestrator/api/routes.py`
+- Test: `tests/services/test_production_drill_scenarios.py`
+- Test: `tests/api/test_production_drill_scenarios_api.py`
+
+**Interfaces:**
+- Produces fixed SYSTEM-only scenario commands for `crash_recovery`, `evidence_recovery`, `external_pr_conflict`, `deploy_split_brain`, and `stalled_approval`.
+- Produces a SYSTEM-only `POST /api/v1/production-drills/{run_id}/fail` operation that records an immutable failure event.
+
+- [ ] Write failing tests for non-drill, cross-run, worker, and arbitrary-payload rejection for every command.
+- [ ] Implement each command as a fixed orchestration over existing lifecycle, evidence, observation, reconciliation, release-artifact, and run-resource services. The HUMAN start event delegates SYSTEM authority only for these five fixed templates; command inputs cannot select arbitrary resource IDs, URLs, shell commands, repositories, authority, or deadlines.
+- [ ] Add `fail_production_drill()` that accepts only an enumerated failure code and redacted diagnostic reference, records an event, and terminally marks the run failed without closing or deleting resources.
+- [ ] Add authenticated API routes and exact OpenAPI tests; all scenario responses use the run-scoped state projection.
+- [ ] Run the focused scenario/API suites and affected lifecycle, reconciliation, and append-only tests.
+
+### Task 6: Create The Production Drill Runner
 
 **Files:**
 - Create: `scripts/run-production-drills.sh`
@@ -124,9 +143,9 @@
 
 - [ ] Write architecture tests that the runner targets only `https://sds.alobar.net`, has no SQL/docker/process-kill command, requires a run ID, records a unique idempotency prefix, and refuses to run without a production OpenAPI preflight.
 - [ ] Implement shared HTTP/auth helpers that source the dedicated drill credential at runtime and redact authorization headers from logs.
-- [ ] Implement per-drill functions using only run-scoped endpoints and their existing public lifecycle/recovery routes.
-- [ ] Make drill 1 stop before the Coolify restart unless `--approve-live-restart` is supplied; preflight `health/ready` before and after that restart.
-- [ ] Make runner failure attempt audited run closeout and leave a clear `failed` run if closure cannot be proven.
+- [ ] Implement per-drill functions using only the five fixed run-scoped scenario endpoints and their returned assertions.
+- [ ] Make drill 1 stop before the fixed Coolify restart integration unless `--approve-live-restart` is supplied; preflight `health/ready` before and after that restart, and never accept an executable path.
+- [ ] Make runner failures call the audited SYSTEM `fail` endpoint with an enumerated failure code; it must never attempt HUMAN closeout.
 - [ ] Update operations documentation with preflight, approval, expected availability interruption, cleanup, and evidence locations.
 - [ ] Run architecture tests and a dry-run against a mock HTTP server.
 

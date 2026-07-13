@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from sqlalchemy import select
@@ -6,9 +7,10 @@ from sqlalchemy.orm import Session
 
 import orchestrator.services.production_drills as production_drills
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Claim,
+    DeploymentObservation,
     Event,
     Evidence,
     ProductionDrillResource,
@@ -80,6 +82,54 @@ def test_system_scenario_is_audited_and_returns_only_its_run_state(
     assert event.action == "production_drill.scenario.crash_recovery"
 
 
+def test_crash_recovery_requires_a_second_post_restart_invocation_to_reclaim(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    revision_id = register_test_revision(migrated_session).id
+    run = start_production_drill(migrated_session, command(revision_id, key="crash-two-phase"))
+    assert not isinstance(run, DomainError)
+
+    prepared = run_production_drill_scenario(
+        migrated_session,
+        RunProductionDrillScenario(run.id, "crash_recovery", SYSTEM, "crash-prepare", 0),
+    )
+    assert not isinstance(prepared, DomainError)
+    prepared_state = cast(dict[str, list[dict[str, object]]], prepared)
+    prepared_unit = next(
+        row for row in prepared_state["units"] if "crash_recovery" in str(row["unit_key"])
+    )
+    assert prepared_unit["state"] == WorkUnitState.CLAIMED.value
+    prepared_claim = cast(dict[str, object], prepared_unit["active_claim"])
+    assert prepared_claim["attempt"] == 1
+
+    import orchestrator.services.claims as claims
+
+    _advance_run_time(monkeypatch, run, (production_drills, claims))
+    resumed = run_production_drill_scenario(
+        migrated_session,
+        RunProductionDrillScenario(run.id, "crash_recovery", SYSTEM, "crash-resume", 0),
+    )
+    assert not isinstance(resumed, DomainError)
+    assert resumed["status"] == "asserting", migrated_session.scalar(
+        select(Event.payload)
+        .where(Event.subject_id == run.id, Event.action == "production_drill.failed")
+        .order_by(Event.occurred_at.desc())
+    )
+    resumed_state = cast(dict[str, list[dict[str, object]]], resumed)
+    resumed_unit = next(
+        row for row in resumed_state["units"] if "crash_recovery" in str(row["unit_key"])
+    )
+    assert resumed_unit["state"] == WorkUnitState.CLAIMED.value
+    claims_for_unit = migrated_session.scalars(
+        select(Claim).where(Claim.work_unit_id == prepared_unit["id"]).order_by(Claim.attempt)
+    ).all()
+    assert [(claim.attempt, claim.terminal_reason) for claim in claims_for_unit] == [
+        (1, "lease_expired"),
+        (2, None),
+    ]
+    assert claims_for_unit[1].lease_expires_at > claims_for_unit[1].acquired_at
+
+
 @pytest.mark.parametrize("scenario", SCENARIOS)
 def test_every_successful_scenario_remains_human_closeable(
     migrated_session: Session, scenario: str, monkeypatch: pytest.MonkeyPatch
@@ -135,7 +185,8 @@ def test_evidence_recovery_expires_the_run_lease_locks_out_worker_and_recovers(
     )
 
     assert not isinstance(result, DomainError)
-    unit = next(row for row in result["units"] if "evidence_recovery" in row["unit_key"])
+    state = cast(dict[str, list[dict[str, object]]], result)
+    unit = next(row for row in state["units"] if "evidence_recovery" in str(row["unit_key"]))
     claim = migrated_session.scalar(select(Claim).where(Claim.work_unit_id == unit["id"]))
     assert claim is not None
     assert claim.released_at is not None
@@ -145,8 +196,11 @@ def test_evidence_recovery_expires_the_run_lease_locks_out_worker_and_recovers(
     ).all()
     assert len(evidence) == 2
     assert evidence[1].supersedes_evidence_id == evidence[0].id
-    assert sum(row["is_head"] for row in result["evidence"]) == 1
-    assert evidence[1].payload["recovery"]["reason"] == "recovered_from_expired_lease"
+    assert sum(bool(row["is_head"]) for row in state["evidence"]) == 1
+    assert evidence[1].payload is not None
+    recovery = evidence[1].payload.get("recovery")
+    assert isinstance(recovery, dict)
+    assert recovery["reason"] == "recovered_from_expired_lease"
     recovered = migrated_session.scalar(
         select(Event).where(
             Event.action == "evidence.recovered", Event.subject_id == evidence[1].id
@@ -233,11 +287,12 @@ def test_deploy_split_brain_waits_then_detects_only_run_owned_resources(
     )
 
     assert not isinstance(result, DomainError)
+    state = cast(dict[str, list[dict[str, object]]], result)
     assert waits == []
-    assert len(result["deployment_observations"]) == 1
+    assert len(state["deployment_observations"]) == 1
     assert any(
-        row["condition_type"] == "deploy_split_brain" and row["is_open"]
-        for row in result["conditions"]
+        row["condition_type"] == "deploy_split_brain" and bool(row["is_open"])
+        for row in state["conditions"]
     )
     owned = migrated_session.scalars(
         select(ProductionDrillResource).where(ProductionDrillResource.run_id == run.id)
@@ -517,7 +572,7 @@ def test_split_brain_wait_uses_only_the_persisted_run_deadline(
     production_drills._wait_for_reporting_deadline(
         migrated_session,
         run,
-        SimpleNamespace(recorded_at=run.opened_at),
+        cast(DeploymentObservation, SimpleNamespace(recorded_at=run.opened_at)),
     )
 
     assert waits == [60.0]
