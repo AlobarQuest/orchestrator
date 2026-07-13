@@ -59,8 +59,9 @@ def test_production_runner_preflights_fixed_scenario_and_failure_routes() -> Non
     source = production_runner_source()
 
     assert "/openapi.json" in source
-    assert '"/api/v1/production-drills/{run_id}/scenarios/{scenario}"' in source
-    assert '"/api/v1/production-drills/{run_id}/fail"' in source
+    assert '"GET /api/v1/production-drills/{run_id}/state"' in source
+    assert '"POST /api/v1/production-drills/{run_id}/scenarios/{scenario}"' in source
+    assert '"POST /api/v1/production-drills/{run_id}/fail"' in source
     assert "preflight_openapi" in source
     assert "idempotency_prefix" in source
     assert "uuidgen" in source
@@ -126,11 +127,10 @@ def test_runner_posts_all_fixed_scenarios_and_records_run_scoped_assertions(tmp_
     openapi = json.dumps(
         {
             "paths": {
-                "/health/ready": {},
-                "/api/v1/production-drills/{run_id}": {},
-                "/api/v1/production-drills/{run_id}/state": {},
-                "/api/v1/production-drills/{run_id}/scenarios/{scenario}": {},
-                "/api/v1/production-drills/{run_id}/fail": {},
+                "/health/ready": {"get": {}},
+                "/api/v1/production-drills/{run_id}/state": {"get": {}},
+                "/api/v1/production-drills/{run_id}/scenarios/{scenario}": {"post": {}},
+                "/api/v1/production-drills/{run_id}/fail": {"post": {}},
             }
         }
     )
@@ -193,6 +193,66 @@ def test_runner_posts_all_fixed_scenarios_and_records_run_scoped_assertions(tmp_
     assert "test-token" not in evidence.read_text()
 
 
+def test_runner_rejects_a_missing_openapi_operation_before_authenticated_mutation(
+    tmp_path: Path,
+) -> None:
+    mock_bin = tmp_path / "bin"
+    mock_bin.mkdir()
+    evidence = tmp_path / "evidence.json"
+    request_log = tmp_path / "requests.log"
+    run_id = "00000000-0000-0000-0000-000000000001"
+    openapi = json.dumps(
+        {
+            "paths": {
+                "/health/ready": {"get": {}},
+                "/api/v1/production-drills/{run_id}": {"get": {}},
+                "/api/v1/production-drills/{run_id}/state": {"get": {}},
+                "/api/v1/production-drills/{run_id}/scenarios/{scenario}": {"get": {}},
+                "/api/v1/production-drills/{run_id}/fail": {"get": {}},
+            }
+        }
+    )
+    (mock_bin / "bws").write_text(
+        "#!/bin/bash\nprintf 'credential lookup should not happen\\n' >&2\nexit 1\n"
+    )
+    (mock_bin / "uuidgen").write_text(
+        '#!/bin/bash\nprintf "00000000-0000-0000-0000-000000000002\\n"\n'
+    )
+    (mock_bin / "curl").write_text(
+        "#!/bin/bash\n"
+        'config="${2:?expected curl --config FILE}"\n'
+        'url=$(sed -n \'s/^url = "\\(.*\\)"$/\\1/p\' "$config")\n'
+        'if grep -q \'^header = "Authorization:\' "$config"; then\n'
+        '  printf \'authenticated %s\\n\' "$url" >>"$MOCK_REQUEST_LOG"\n'
+        "  exit 1\n"
+        "fi\n"
+        'printf \'unauthenticated %s\\n\' "$url" >>"$MOCK_REQUEST_LOG"\n'
+        f"case \"$url\" in\n  *'/openapi.json') printf '%s\\n' '{openapi}' ;;\n"
+        "  *) exit 1 ;;\nesac\n"
+    )
+    for path in mock_bin.iterdir():
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+    result = subprocess.run(
+        [str(RUNNER), "--run-id", run_id, "--evidence-file", str(evidence)],
+        check=False,
+        capture_output=True,
+        env={
+            "PATH": f"{mock_bin}:{Path('/usr/bin')}:{Path('/bin')}",
+            "ORCHESTRATOR_PRODUCTION_DRILL_SECRET_UUID": "test-uuid",
+            "MOCK_REQUEST_LOG": str(request_log),
+        },
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "missing required operation: POST" in result.stderr
+    assert request_log.read_text().splitlines() == [
+        "unauthenticated https://sds.alobar.net/openapi.json"
+    ]
+    assert json.loads(evidence.read_text())["detail"] == "runner_preflight_failed"
+
+
 def test_runner_posts_enumerated_redacted_failure_after_a_scenario_error(tmp_path: Path) -> None:
     mock_bin = tmp_path / "bin"
     mock_bin.mkdir()
@@ -207,11 +267,10 @@ def test_runner_posts_enumerated_redacted_failure_after_a_scenario_error(tmp_pat
     openapi = json.dumps(
         {
             "paths": {
-                "/health/ready": {},
-                "/api/v1/production-drills/{run_id}": {},
-                "/api/v1/production-drills/{run_id}/state": {},
-                "/api/v1/production-drills/{run_id}/scenarios/{scenario}": {},
-                "/api/v1/production-drills/{run_id}/fail": {},
+                "/health/ready": {"get": {}},
+                "/api/v1/production-drills/{run_id}/state": {"get": {}},
+                "/api/v1/production-drills/{run_id}/scenarios/{scenario}": {"post": {}},
+                "/api/v1/production-drills/{run_id}/fail": {"post": {}},
             }
         }
     )

@@ -5,12 +5,11 @@ set -euo pipefail
 
 api_base_url="https://sds.alobar.net"
 redacted_authorization="Authorization: Bearer <redacted>"
-required_openapi_paths=(
-    "/health/ready"
-    "/api/v1/production-drills/{run_id}"
-    "/api/v1/production-drills/{run_id}/state"
-    "/api/v1/production-drills/{run_id}/scenarios/{scenario}"
-    "/api/v1/production-drills/{run_id}/fail"
+required_openapi_operations=(
+    "GET /health/ready"
+    "GET /api/v1/production-drills/{run_id}/state"
+    "POST /api/v1/production-drills/{run_id}/scenarios/{scenario}"
+    "POST /api/v1/production-drills/{run_id}/fail"
 )
 scenarios=(
     "crash_recovery"
@@ -85,12 +84,17 @@ api_request() {
 
 preflight_openapi() {
     local openapi
+    local operation
+    local method
     local path
 
     openapi="$(api_request GET /openapi.json)"
-    for path in "${required_openapi_paths[@]}"; do
-        jq -e --arg path "$path" '.paths[$path] != null' <<<"$openapi" >/dev/null || {
-            log "production OpenAPI preflight missing required path: $path"
+    for operation in "${required_openapi_operations[@]}"; do
+        method="${operation%% *}"
+        path="${operation#* }"
+        jq -e --arg path "$path" --arg method "$method" \
+            '.paths[$path][$method | ascii_downcase] != null' <<<"$openapi" >/dev/null || {
+            log "production OpenAPI preflight missing required operation: $method $path"
             return 1
         }
     done
@@ -232,7 +236,7 @@ fail_run() {
     local detail="$2"
 
     log "$detail"
-    if ! record_failure "$failure_code"; then
+    if [ -n "${DRILL_TOKEN:-}" ] && [ -n "${DRILL_CREDENTIAL_KEY_ID:-}" ] && ! record_failure "$failure_code"; then
         log "audited SYSTEM failure could not be recorded"
     fi
     write_evidence "failed" "$failure_code"
@@ -252,12 +256,12 @@ if ! require_command uuidgen; then
     exit 1
 fi
 IDEMPOTENCY_PREFIX="production-drill-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+preflight_openapi || fail_run "runner_preflight_failed" "production OpenAPI preflight failed"
+preflight_readiness || fail_run "runner_preflight_failed" "production readiness preflight failed"
 if ! load_drill_credential; then
     write_bootstrap_evidence "credential_load_failed"
     exit 1
 fi
-preflight_openapi || fail_run "runner_preflight_failed" "production OpenAPI preflight failed"
-preflight_readiness || fail_run "runner_preflight_failed" "production readiness preflight failed"
 
 for scenario in "${scenarios[@]}"; do
     run_scenario "$scenario" || fail_run "${scenario}_failed" "${scenario} scenario failed"
