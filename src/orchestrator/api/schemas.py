@@ -155,6 +155,26 @@ class CloseProductionDrillCommand(CommandBase):
     closure_reason: str = Field(min_length=1)
 
 
+class ProductionDrillScenarioCommand(CommandBase):
+    """A fixed scenario has no caller-selected resources or operational inputs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class FailProductionDrillCommand(CommandBase):
+    model_config = ConfigDict(extra="forbid")
+
+    failure_code: Literal[
+        "runner_preflight_failed",
+        "crash_recovery_failed",
+        "evidence_recovery_failed",
+        "external_pr_conflict_failed",
+        "deploy_split_brain_failed",
+        "stalled_approval_failed",
+    ]
+    diagnostic_ref: str = Field(pattern=r"^drill://redacted/[A-Za-z0-9._/-]{1,200}$")
+
+
 class DeploymentObservationCommandModel(CommandBase):
     environment: str = Field(min_length=1)
     base_url: str = Field(min_length=1)

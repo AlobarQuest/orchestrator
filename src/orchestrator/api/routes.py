@@ -42,6 +42,7 @@ from orchestrator.api.schemas import (
     EventResponse,
     EvidenceCommand,
     EvidenceResponse,
+    FailProductionDrillCommand,
     InFlightUnitsResponse,
     InfraLaneLinkCommandModel,
     InfraLaneLinkResponse,
@@ -60,6 +61,7 @@ from orchestrator.api.schemas import (
     PrBindingResponse,
     PreflightCommandModel,
     ProductionDrillRunResponse,
+    ProductionDrillScenarioCommand,
     ProductionDrillStateResponse,
     ProposedUnitCommand,
     ReadinessResponse,
@@ -194,10 +196,14 @@ from orchestrator.services.packages import (
 from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
 from orchestrator.services.production_drills import (
     CloseProductionDrill,
+    FailProductionDrill,
+    RunProductionDrillScenario,
     StartProductionDrill,
     close_production_drill,
+    fail_production_drill,
     production_drill_run,
     production_drill_state,
+    run_production_drill_scenario,
     start_production_drill,
 )
 from orchestrator.services.reconciliation_detection import (
@@ -332,6 +338,53 @@ def close_production_drill_route(
                 idempotency_key=body.idempotency_key,
                 expected_version=body.expected_version,
                 closure_reason=body.closure_reason,
+            ),
+        )
+    )
+
+
+@router.post(
+    "/production-drills/{run_id}/scenarios/{scenario}",
+    response_model=ProductionDrillStateResponse,
+)
+def run_production_drill_scenario_route(
+    run_id: UUID,
+    scenario: str,
+    body: ProductionDrillScenarioCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        run_production_drill_scenario(
+            session,
+            RunProductionDrillScenario(
+                run_id=run_id,
+                scenario=scenario,
+                actor=actor,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+            ),
+        )
+    )
+
+
+@router.post("/production-drills/{run_id}/fail", response_model=ProductionDrillStateResponse)
+def fail_production_drill_route(
+    run_id: UUID,
+    body: FailProductionDrillCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        fail_production_drill(
+            session,
+            FailProductionDrill(
+                run_id=run_id,
+                actor=actor,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+                failure_code=body.failure_code,
+                diagnostic_ref=body.diagnostic_ref,
             ),
         )
     )

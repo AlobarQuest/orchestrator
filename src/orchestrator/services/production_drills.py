@@ -62,6 +62,46 @@ class CloseProductionDrill:
     closure_reason: str
 
 
+@dataclass(frozen=True)
+class RunProductionDrillScenario:
+    run_id: uuid.UUID
+    scenario: str
+    actor: ActorContext
+    idempotency_key: str
+    expected_version: int
+
+
+@dataclass(frozen=True)
+class FailProductionDrill:
+    run_id: uuid.UUID
+    actor: ActorContext
+    idempotency_key: str
+    expected_version: int
+    failure_code: str
+    diagnostic_ref: str
+
+
+PRODUCTION_DRILL_SCENARIOS = frozenset(
+    {
+        "crash_recovery",
+        "evidence_recovery",
+        "external_pr_conflict",
+        "deploy_split_brain",
+        "stalled_approval",
+    }
+)
+PRODUCTION_DRILL_FAILURE_CODES = frozenset(
+    {
+        "runner_preflight_failed",
+        "crash_recovery_failed",
+        "evidence_recovery_failed",
+        "external_pr_conflict_failed",
+        "deploy_split_brain_failed",
+        "stalled_approval_failed",
+    }
+)
+
+
 def start_production_drill(
     session: Session, command: StartProductionDrill
 ) -> ProductionDrillRun | DomainError:
@@ -84,6 +124,36 @@ def close_production_drill(
         result = _close_production_drill(session, command)
         session.commit()
         return result
+    except DomainError as error:
+        session.rollback()
+        return error
+    except Exception:
+        session.rollback()
+        raise
+
+
+def run_production_drill_scenario(
+    session: Session, command: RunProductionDrillScenario
+) -> dict[str, object] | DomainError:
+    try:
+        _run_production_drill_scenario(session, command)
+        session.commit()
+        return production_drill_state(session, command.run_id)
+    except DomainError as error:
+        session.rollback()
+        return error
+    except Exception:
+        session.rollback()
+        raise
+
+
+def fail_production_drill(
+    session: Session, command: FailProductionDrill
+) -> dict[str, object] | DomainError:
+    try:
+        _fail_production_drill(session, command)
+        session.commit()
+        return production_drill_state(session, command.run_id)
     except DomainError as error:
         session.rollback()
         return error
@@ -329,6 +399,114 @@ def _start_production_drill(session: Session, command: StartProductionDrill) -> 
     return run
 
 
+def _run_production_drill_scenario(session: Session, command: RunProductionDrillScenario) -> None:
+    _require_system(command.actor)
+    if command.scenario not in PRODUCTION_DRILL_SCENARIOS:
+        raise DomainError(
+            "production_drill_scenario_invalid", "unsupported production drill scenario", None
+        )
+    if command.expected_version != 0:
+        raise DomainError(
+            "version_conflict",
+            "production drill scenario requires expected version 0",
+            "reload",
+            current_version=0,
+        )
+    _lock_idempotency_key(session, command.idempotency_key)
+    payload = _scenario_command_payload(command)
+    existing = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))
+    if existing is not None:
+        if (
+            existing.action != f"production_drill.scenario.{command.scenario}"
+            or existing.payload.get("command") != payload
+        ):
+            raise _idempotency_conflict()
+        return
+    run = session.get(ProductionDrillRun, command.run_id, with_for_update=True)
+    if run is None:
+        raise DomainError(
+            "production_drill_run_not_found", "production drill run does not exist", None
+        )
+    if run.status not in {"open", "asserting"}:
+        raise DomainError("production_drill_run_not_open", "production drill run is not open", None)
+    now = TransactionClock().now(session)
+    session.add(
+        Event(
+            occurred_at=now,
+            actor_id=command.actor.actor_id,
+            action=f"production_drill.scenario.{command.scenario}",
+            subject_type="production_drill_run",
+            subject_id=run.id,
+            from_state=run.status,
+            to_state="asserting",
+            payload={"command": payload, "scenario": command.scenario},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=command.idempotency_key,
+        )
+    )
+    run.status = "asserting"
+    session.flush()
+
+
+def _fail_production_drill(session: Session, command: FailProductionDrill) -> None:
+    _require_system(command.actor)
+    if command.failure_code not in PRODUCTION_DRILL_FAILURE_CODES:
+        raise DomainError(
+            "production_drill_failure_code_invalid",
+            "unsupported production drill failure code",
+            None,
+        )
+    if command.expected_version != 0:
+        raise DomainError(
+            "version_conflict",
+            "production drill fail requires expected version 0",
+            "reload",
+            current_version=0,
+        )
+    _lock_idempotency_key(session, command.idempotency_key)
+    payload = _fail_command_payload(command)
+    existing = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))
+    if existing is not None:
+        if (
+            existing.action != "production_drill.failed"
+            or existing.payload.get("command") != payload
+        ):
+            raise _idempotency_conflict()
+        return
+    run = session.get(ProductionDrillRun, command.run_id, with_for_update=True)
+    if run is None:
+        raise DomainError(
+            "production_drill_run_not_found", "production drill run does not exist", None
+        )
+    if run.status == "failed":
+        raise DomainError("production_drill_run_not_open", "production drill run is not open", None)
+    if run.status == "closed":
+        raise DomainError("production_drill_run_not_open", "production drill run is not open", None)
+    now = TransactionClock().now(session)
+    session.add(
+        Event(
+            occurred_at=now,
+            actor_id=command.actor.actor_id,
+            action="production_drill.failed",
+            subject_type="production_drill_run",
+            subject_id=run.id,
+            from_state=run.status,
+            to_state="failed",
+            payload={
+                "command": payload,
+                "failure_code": command.failure_code,
+                "diagnostic_ref": command.diagnostic_ref,
+            },
+            correlation_id=uuid.uuid4(),
+            idempotency_key=command.idempotency_key,
+        )
+    )
+    run.status = "failed"
+    # Failure intentionally leaves resources open for later forensic review; only HUMAN closeout
+    # may resolve or close them.
+    session.flush()
+
+
 def _close_production_drill(session: Session, command: CloseProductionDrill) -> ProductionDrillRun:
     _require_human(command.actor)
     if command.expected_version != 0:
@@ -501,11 +679,14 @@ def _resolve_run_owned_conditions(
         .order_by(ProductionDrillResource.resource_id)
     ).all()
     for condition_id in condition_ids:
-        if session.scalar(
-            select(ReconciliationResolution.id).where(
-                ReconciliationResolution.condition_id == condition_id
+        if (
+            session.scalar(
+                select(ReconciliationResolution.id).where(
+                    ReconciliationResolution.condition_id == condition_id
+                )
             )
-        ) is None:
+            is None
+        ):
             resolve_production_drill_condition(
                 session,
                 run_id=run_id,
@@ -523,6 +704,13 @@ def _require_human(actor: ActorContext) -> None:
     if actor.role is not ActorRole.HUMAN:
         raise DomainError(
             "human_actor_required", "only a human actor may start a production drill", None
+        )
+
+
+def _require_system(actor: ActorContext) -> None:
+    if actor.role is not ActorRole.SYSTEM:
+        raise DomainError(
+            "role_forbidden", "only the system actor may run production drill scenarios", None
         )
 
 
@@ -595,6 +783,27 @@ def _close_command_payload(command: CloseProductionDrill) -> dict[str, object]:
         "run_id": str(command.run_id),
         "expected_version": command.expected_version,
         "closure_reason": command.closure_reason,
+    }
+
+
+def _scenario_command_payload(command: RunProductionDrillScenario) -> dict[str, object]:
+    return {
+        "actor_id": command.actor.actor_id,
+        "actor_role": command.actor.role.value,
+        "run_id": str(command.run_id),
+        "scenario": command.scenario,
+        "expected_version": command.expected_version,
+    }
+
+
+def _fail_command_payload(command: FailProductionDrill) -> dict[str, object]:
+    return {
+        "actor_id": command.actor.actor_id,
+        "actor_role": command.actor.role.value,
+        "run_id": str(command.run_id),
+        "expected_version": command.expected_version,
+        "failure_code": command.failure_code,
+        "diagnostic_ref": command.diagnostic_ref,
     }
 
 
