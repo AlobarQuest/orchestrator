@@ -95,3 +95,62 @@ def test_fail_rejects_workers_and_unrecognized_or_unredacted_inputs(db_client: T
 
     assert worker.status_code == 403
     assert invalid.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    (
+        "runner_preflight_failed",
+        "crash_recovery_failed",
+        "evidence_recovery_failed",
+        "external_pr_conflict_failed",
+        "deploy_split_brain_failed",
+        "stalled_approval_failed",
+    ),
+)
+def test_every_failure_code_requires_a_redacted_diagnostic(
+    db_client: TestClient, failure_code: str
+) -> None:
+    run_id = _run(db_client, key=f"failure-{failure_code}")
+    response = db_client.post(
+        f"/api/v1/production-drills/{run_id}/fail",
+        headers=SYSTEM,
+        json={
+            "idempotency_key": f"{failure_code}-1",
+            "expected_version": 0,
+            "failure_code": failure_code,
+            "diagnostic_ref": "https://unsafe.example/secret",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    (
+        "runner_preflight_failed",
+        "crash_recovery_failed",
+        "evidence_recovery_failed",
+        "external_pr_conflict_failed",
+        "deploy_split_brain_failed",
+        "stalled_approval_failed",
+    ),
+)
+def test_every_failure_code_is_accepted_with_a_redacted_diagnostic(
+    db_client: TestClient, failure_code: str
+) -> None:
+    run_id = _run(db_client, key=f"valid-failure-{failure_code}")
+    response = db_client.post(
+        f"/api/v1/production-drills/{run_id}/fail",
+        headers=SYSTEM,
+        json={
+            "idempotency_key": f"valid-{failure_code}",
+            "expected_version": 0,
+            "failure_code": failure_code,
+            "diagnostic_ref": f"drill://redacted/{failure_code}",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"

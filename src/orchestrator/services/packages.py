@@ -328,8 +328,17 @@ def _register_approved_unit_with_provenance(
     approved_decomposition_id: uuid.UUID | None = None,
     idempotency_key: str | None = None,
     expected_version: int | None = None,
+    allow_system_production_drill_template: bool = False,
 ) -> RegisteredWorkUnit:
-    _require_human(actor_id, actor_role)
+    if allow_system_production_drill_template:
+        if actor_role is not ActorRole.SYSTEM:
+            raise DomainError(
+                "role_forbidden",
+                "only the system may execute a delegated production drill template",
+                None,
+            )
+    else:
+        _require_human(actor_id, actor_role)
     if expected_version not in {None, 0}:
         raise DomainError(
             "version_conflict",
@@ -431,7 +440,11 @@ def _register_approved_unit_with_provenance(
 
 
 def register_production_drill_unit(
-    session: Session, *, run_id: uuid.UUID, **kwargs: Any
+    session: Session,
+    *,
+    run_id: uuid.UUID,
+    system_delegated_template: bool = False,
+    **kwargs: Any,
 ) -> WorkUnit:
     run = require_open_production_drill_run(session, run_id)
     if kwargs["revision_id"] != run.revision_id:
@@ -440,7 +453,11 @@ def register_production_drill_unit(
             "work unit does not belong to the production drill revision",
             None,
         )
-    registration = _register_approved_unit_with_provenance(session, **kwargs)
+    registration = _register_approved_unit_with_provenance(
+        session,
+        allow_system_production_drill_template=system_delegated_template,
+        **kwargs,
+    )
     if registration.created:
         bind_created_drill_work_unit(session, run_id, registration.unit)
     else:
