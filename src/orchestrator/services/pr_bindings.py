@@ -89,7 +89,8 @@ def upsert_pr_binding(
     # is discarded when the session closes, leaving the binding table empty and every downstream
     # alarm dead. `arm_verification_head` is the opposite case: it runs INSIDE the submit
     # transaction and must never commit.
-    session.commit()
+    if not session.info.get("production_drill_scenario_atomic"):
+        session.commit()
     return binding
 
 

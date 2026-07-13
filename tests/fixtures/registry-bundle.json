@@ -15,6 +15,13 @@
       "status": "active",
       "runtime": "runner",
       "authority_profile": "agent-queue-v1"
+    },
+    {
+      "agent_id": "runtime-observer",
+      "version": 1,
+      "status": "active",
+      "runtime": "orchestrator",
+      "authority_profile": "system-v1"
     }
   ]
 }

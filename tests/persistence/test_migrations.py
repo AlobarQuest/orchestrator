@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import WorkUnit
@@ -21,10 +22,20 @@ from orchestrator.services.decomposition import (
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import register_approved_unit, register_revision
+from orchestrator.services.production_drills import start_production_drill
 from tests.conftest import TEST_DATABASE_URL
 from tests.persistence.conftest import alembic_config
 from tests.services.test_package_intake import acceptance_criterion, intake_command
 from tests.services.test_package_registration import AUTHORITY, NOW, register_test_revision
+from tests.services.test_production_drills import (
+    command as production_drill_command,
+)
+from tests.services.test_production_drills import (
+    revision as production_drill_revision,
+)
+from tests.services.test_production_drills import (
+    runtime_observation,
+)
 
 
 def column_default(engine, table: str, column: str) -> str | None:
@@ -102,6 +113,48 @@ def test_default_attempt_budget_migration_is_reversible(migrated_engine) -> None
 
     command.upgrade(config, "head")
     assert column_default(migrated_engine, "work_units", "max_attempts") == "3"
+
+
+def test_runtime_observations_downgrade_restores_prior_provenance_trigger(migrated_engine) -> None:
+    with Session(migrated_engine) as session:
+        package_revision = production_drill_revision(session)
+        observation_id = runtime_observation(session, key="migration-downgrade")
+        run = start_production_drill(
+            session,
+            production_drill_command(
+                package_revision.id,
+                key="migration-downgrade",
+                runtime_observation_id=observation_id,
+            ),
+        )
+        assert not isinstance(run, DomainError)
+        run_id = run.id
+        session.commit()
+
+    config = alembic_config()
+    try:
+        command.downgrade(config, "0016_production_drill_resources")
+
+        with migrated_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE production_drill_runs "
+                    "SET status = 'closed', closed_at = now(), closure_reason = 'completed' "
+                    "WHERE id = :id"
+                ),
+                {"id": run_id},
+            )
+
+        with pytest.raises(IntegrityError):
+            with migrated_engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE production_drill_runs SET image_digest = 'changed' WHERE id = :id"
+                    ),
+                    {"id": run_id},
+                )
+    finally:
+        command.upgrade(config, "head")
 
 
 def test_ws32_tables_exist_after_upgrade(migrated_session) -> None:

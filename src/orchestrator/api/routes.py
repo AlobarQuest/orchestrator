@@ -9,13 +9,19 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from orchestrator.api.dependencies import get_actor, get_session
+from orchestrator.api.dependencies import (
+    get_actor,
+    get_production_drill_actor,
+    get_runtime_observer_actor,
+    get_session,
+)
 from orchestrator.api.schemas import (
     AdjudicationCommand,
     AdjudicationResponse,
     ApprovalCommand,
     ApprovalResponse,
     ClaimCommand,
+    CloseProductionDrillCommand,
     ConsistencyReportResponse,
     ContextSnapshotResponse,
     DeadLetterEntryResponse,
@@ -41,6 +47,7 @@ from orchestrator.api.schemas import (
     EventResponse,
     EvidenceCommand,
     EvidenceResponse,
+    FailProductionDrillCommand,
     InFlightUnitsResponse,
     InfraLaneLinkCommandModel,
     InfraLaneLinkResponse,
@@ -58,6 +65,9 @@ from orchestrator.api.schemas import (
     PrBindingCommand,
     PrBindingResponse,
     PreflightCommandModel,
+    ProductionDrillRunResponse,
+    ProductionDrillScenarioCommand,
+    ProductionDrillStateResponse,
     ProposedUnitCommand,
     ReadinessResponse,
     ReclaimCommand,
@@ -72,6 +82,9 @@ from orchestrator.api.schemas import (
     RevisionRegistration,
     RevisionResponse,
     RunnerBriefResponse,
+    RuntimeObservationCommandModel,
+    RuntimeObservationResponse,
+    StartProductionDrillCommand,
     StatusLedgerRowResponse,
     TransitionResponse,
     UnitRegistration,
@@ -188,6 +201,18 @@ from orchestrator.services.packages import (
     resolve_dependency_command,
 )
 from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
+from orchestrator.services.production_drills import (
+    CloseProductionDrill,
+    FailProductionDrill,
+    RunProductionDrillScenario,
+    StartProductionDrill,
+    close_production_drill,
+    fail_production_drill,
+    production_drill_run,
+    production_drill_state,
+    run_production_drill_scenario,
+    start_production_drill,
+)
 from orchestrator.services.reconciliation_detection import (
     detect_observation_conditions,
     detect_reconciliation_conditions,
@@ -199,11 +224,16 @@ from orchestrator.services.release_artifacts import (
     record_release_artifact,
 )
 from orchestrator.services.runner_brief import runner_brief
+from orchestrator.services.runtime_observations import (
+    RuntimeObservationCommand,
+    record_runtime_observation,
+)
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[ActorContext, Depends(get_actor)]
+ProductionDrillActorDep = Annotated[ActorContext, Depends(get_production_drill_actor)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
@@ -254,6 +284,147 @@ def _parse_datetime_filter(value: str | None, field: str) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:
         raise DomainError("observation_invalid", f"{field} is invalid", None) from error
+
+
+@router.post(
+    "/runtime-observations",
+    response_model=RuntimeObservationResponse,
+    status_code=201,
+)
+def create_runtime_observation(
+    body: RuntimeObservationCommandModel,
+    actor: Annotated[ActorContext, Depends(get_runtime_observer_actor)],
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        record_runtime_observation(
+            session,
+            RuntimeObservationCommand(
+                actor=actor,
+                container_id=body.container_id,
+                configured_image_ref=body.configured_image_ref,
+                observed_image_digest=body.observed_image_digest,
+                openapi_sha256=body.openapi_sha256,
+                observed_at=body.observed_at,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+            ),
+        )
+    )
+
+
+@router.post(
+    "/production-drills",
+    response_model=ProductionDrillRunResponse,
+    status_code=201,
+)
+def create_production_drill(
+    body: StartProductionDrillCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        start_production_drill(
+            session,
+            StartProductionDrill(
+                revision_id=body.revision_id,
+                actor=actor,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+                runtime_observation_id=body.runtime_observation_id,
+                lease_duration_seconds=body.lease_duration_seconds,
+                reporting_deadline_seconds=body.reporting_deadline_seconds,
+            ),
+        )
+    )
+
+
+@router.get("/production-drills/{run_id}", response_model=ProductionDrillRunResponse)
+def get_production_drill(
+    run_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(production_drill_run(session, run_id))
+
+
+@router.get("/production-drills/{run_id}/state", response_model=ProductionDrillStateResponse)
+def get_production_drill_state(
+    run_id: UUID,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    if actor.role is ActorRole.WORKER:
+        raise DomainError("role_forbidden", "workers may not read production drill state", None)
+    return _raise_error(production_drill_state(session, run_id))
+
+
+@router.post("/production-drills/{run_id}/close", response_model=ProductionDrillRunResponse)
+def close_production_drill_route(
+    run_id: UUID,
+    body: CloseProductionDrillCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        close_production_drill(
+            session,
+            CloseProductionDrill(
+                run_id=run_id,
+                actor=actor,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+                closure_reason=body.closure_reason,
+            ),
+        )
+    )
+
+
+@router.post(
+    "/production-drills/{run_id}/scenarios/{scenario}",
+    response_model=ProductionDrillStateResponse,
+)
+def run_production_drill_scenario_route(
+    run_id: UUID,
+    scenario: str,
+    body: ProductionDrillScenarioCommand,
+    actor: ProductionDrillActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        run_production_drill_scenario(
+            session,
+            RunProductionDrillScenario(
+                run_id=run_id,
+                scenario=scenario,
+                actor=actor,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+            ),
+        )
+    )
+
+
+@router.post("/production-drills/{run_id}/fail", response_model=ProductionDrillStateResponse)
+def fail_production_drill_route(
+    run_id: UUID,
+    body: FailProductionDrillCommand,
+    actor: ProductionDrillActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        fail_production_drill(
+            session,
+            FailProductionDrill(
+                run_id=run_id,
+                actor=actor,
+                idempotency_key=body.idempotency_key,
+                expected_version=body.expected_version,
+                failure_code=body.failure_code,
+                diagnostic_ref=body.diagnostic_ref,
+            ),
+        )
+    )
 
 
 @router.post("/revisions", response_model=RevisionResponse, status_code=201)

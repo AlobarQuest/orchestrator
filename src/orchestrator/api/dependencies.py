@@ -5,6 +5,7 @@ from fastapi import Request
 from sqlalchemy.orm import Session
 
 from orchestrator.db import session_factory
+from orchestrator.errors import DomainError
 from orchestrator.identity.auth import (
     AuthenticationError,
     M2MCredential,
@@ -26,6 +27,8 @@ class AuthConfig:
     email_header: str
     email_to_actor: Mapping[str, str]
     m2m_roles: Mapping[str, ActorRole] | None = None
+    production_drill_credential_key_id: str | None = None
+    runtime_observer_credential_key_id: str | None = None
     credential_key_header: str = "X-Credential-Key-Id"
     csrf_secret: bytes | None = None
 
@@ -81,7 +84,43 @@ def get_actor(request: Request) -> ActorContext:
     role = identity.role
     if identity.credential_key_id is not None and config.m2m_roles is not None:
         role = config.m2m_roles.get(identity.credential_key_id, role)
-    return ActorContext(identity.actor_id, role)
+    return ActorContext(identity.actor_id, role, identity.credential_key_id)
+
+
+def get_production_drill_actor(request: Request) -> ActorContext:
+    """Authorize the dedicated runner credential for production-drill controls only."""
+    actor = get_actor(request)
+    config = getattr(request.app.state, "auth_config", None)
+    if (
+        not isinstance(config, AuthConfig)
+        or config.production_drill_credential_key_id is None
+        or actor.role is not ActorRole.SYSTEM
+        or actor.credential_key_id != config.production_drill_credential_key_id
+    ):
+        raise DomainError(
+            "role_forbidden",
+            "only the configured production drill system credential may run drill controls",
+            None,
+        )
+    return actor
+
+
+def get_runtime_observer_actor(request: Request) -> ActorContext:
+    """Authorize the credential that can attest the running deployment."""
+    actor = get_actor(request)
+    config = getattr(request.app.state, "auth_config", None)
+    if (
+        not isinstance(config, AuthConfig)
+        or config.runtime_observer_credential_key_id is None
+        or actor.role is not ActorRole.SYSTEM
+        or actor.credential_key_id != config.runtime_observer_credential_key_id
+    ):
+        raise DomainError(
+            "role_forbidden",
+            "only the configured runtime observer credential may record runtime observations",
+            None,
+        )
+    return actor
 
 
 def _authenticate_machine(

@@ -69,3 +69,57 @@ docker exec -it drill-pg-<pid> psql -U postgres -d orchestrator_drill
 ```
 
 The drill's log (server output included) is in the temp directory it printed on startup.
+
+## Production drills
+
+Production drills use a separate runner and a HUMAN-authorized run; the local harness above must
+never be pointed at production. Before invoking it, a human starts the run in the browser-backed
+production drill flow, records its UUID, and verifies the approved recovery-drills package
+revision (`ws-p2.1-recovery-controls-drills`), deployed image digest, and expected availability
+window. An approved revision from any other package cannot authorize a production drill.
+
+Starting a run also requires a fresh immutable runtime observation. The observer capability is a
+separate, read-only prerequisite; follow [runtime observations](runtime-observations.md) rather
+than substituting a host shell or Docker command.
+
+The runner is pinned to `https://sds.alobar.net`. It retrieves its dedicated credential from BWS
+at runtime using `ORCHESTRATOR_PRODUCTION_DRILL_SECRET_UUID`; the secret value is a JSON object
+containing `ORCHESTRATOR_PRODUCTION_DRILL_TOKEN` and its credential-key ID. Source
+`BWS_ACCESS_TOKEN` through the approved Keychain helper or a gitignored environment file. Do not
+place either bearer material in a shell history, command argument, evidence file, or log.
+
+The crash drill is an explicit two-command protocol. The preparation command first verifies live
+OpenAPI and readiness, then creates one real synthetic lease and exits `4` with
+`restart_pending` evidence. It does not invoke HUMAN closeout.
+
+```bash
+scripts/run-production-drills.sh --run-id <human-started-run-uuid> \
+  --approve-live-restart \
+  --evidence-file /tmp/production-drill-restart-pending.json
+```
+
+The operator then performs the separately approved Coolify restart, retains the Coolify audit
+record, and resumes only after `/health/ready` returns. The resume command requires the persisted
+attempt-one lease, invokes the fixed reclaim command, and verifies a new attempt-two lease before
+running the other four scenarios.
+
+```bash
+scripts/run-production-drills.sh --run-id <human-started-run-uuid> \
+  --resume-after-restart \
+  --evidence-file /tmp/production-drill-evidence.json
+```
+
+This repository deliberately has no executable restart hook, restart command environment
+variable, or generic Coolify control parameter. Do not add a shell executable path or an
+environment-provided command to bridge this handoff. Without either explicit mode the runner
+writes `restart_approval_required` evidence and exits `3`; that is not a successful
+production-drill result.
+
+The evidence file is machine-readable JSON containing the run ID, a unique idempotency prefix,
+redacted assertion results, and the final run-scoped state. After the dedicated credential has
+loaded, any runner failure POSTs the audited SYSTEM `/fail` operation with an enumerated failure
+code and a `drill://redacted/...` diagnostic reference; it never calls `/close`. A malformed run
+ID makes no network request. A credential-bootstrap failure cannot authenticate to `/fail`, so the
+runner writes local redacted bootstrap evidence and leaves the run for HUMAN review. Retain the
+evidence file with the human approval record and the Coolify operation audit record. Do not create
+production evidence until the reviewed deployment session has completed the drills.

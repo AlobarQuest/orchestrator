@@ -23,6 +23,7 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 DRILLS = sorted(SCRIPTS.glob("drill-*.sh"))
 HARNESS = SCRIPTS / "drill_common.sh"
+PRODUCTION_RUNNER = SCRIPTS / "run-production-drills.sh"
 
 # Actions that would reach a system the drill does not own.
 #
@@ -48,6 +49,11 @@ def test_the_drills_are_all_present() -> None:
     doing nothing IS the bug, and where the system must report rather than resolve.
     """
     assert len(DRILLS) == 5, [drill.name for drill in DRILLS]
+
+
+def test_local_drill_harness_never_starts_the_production_runner() -> None:
+    """The local and production drill contracts have incompatible authority boundaries."""
+    assert PRODUCTION_RUNNER.name not in (SCRIPTS / "run-drills.sh").read_text()
 
 
 @pytest.mark.parametrize("drill", DRILLS, ids=lambda p: p.name)

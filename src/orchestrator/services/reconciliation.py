@@ -41,6 +41,10 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.production_drill_resources import (
+    bind_created_drill_reconciliation_condition,
+    require_production_drill_resource,
+)
 
 # Distinct from evidence (0x57503338), observations (0x57533631) and the evidence-head recovery
 # lock (0x57503232), so a lock taken here can never serialize against an unrelated ingress.
@@ -115,7 +119,8 @@ def record_reconciliation_condition(
     would let a malformed correlation take down the observation ingest path."""
     try:
         outcome = _record_condition(session, command)
-        session.commit()
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return outcome
     except DomainError as error:
         session.rollback()
@@ -123,6 +128,47 @@ def record_reconciliation_condition(
     except IntegrityError:
         # Constraint-name agnostic on purpose: the idempotency and divergence uniques are
         # equivalent by key derivation, and which one PostgreSQL reports is not contractual.
+        session.rollback()
+        return DomainError(
+            "reconciliation_conflict",
+            "condition conflicts with an existing reconciliation condition",
+            "re-run detection; an equivalent condition is already recorded",
+        )
+    except Exception:
+        session.rollback()
+        raise
+
+
+def _record_production_drill_reconciliation_condition(
+    session: Session, *, run_id: uuid.UUID, command: ConditionCommand
+) -> ConditionOutcome | DomainError:
+    try:
+        require_production_drill_resource(session, run_id, "work_unit", command.work_unit_id)
+        if command.observation_id is not None:
+            require_production_drill_resource(
+                session, run_id, "observation", command.observation_id
+            )
+        if command.deployment_observation_id is not None:
+            require_production_drill_resource(
+                session,
+                run_id,
+                "deployment_observation",
+                command.deployment_observation_id,
+            )
+        outcome = _record_condition(session, command)
+        if outcome.suppressed:
+            require_production_drill_resource(
+                session, run_id, "reconciliation_condition", outcome.condition.id
+            )
+        else:
+            bind_created_drill_reconciliation_condition(session, run_id, outcome.condition)
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
+        return outcome
+    except DomainError as error:
+        session.rollback()
+        return error
+    except IntegrityError:
         session.rollback()
         return DomainError(
             "reconciliation_conflict",
@@ -219,6 +265,19 @@ def record_resolution(
     except Exception:
         session.rollback()
         raise
+
+
+def resolve_production_drill_condition(
+    session: Session,
+    *,
+    run_id: uuid.UUID,
+    command: ResolutionCommand,
+) -> ReconciliationResolution:
+    """Resolve a registered drill condition inside its caller's transaction."""
+    require_production_drill_resource(
+        session, run_id, "reconciliation_condition", command.condition_id
+    )
+    return _record_resolution(session, command)
 
 
 def _record_resolution(session: Session, command: ResolutionCommand) -> ReconciliationResolution:

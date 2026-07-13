@@ -24,11 +24,13 @@ from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import (
     DeploymentObservation,
     Observation,
+    ProductionDrillResource,
     ReleaseArtifactBinding,
     WorkUnit,
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.pr_bindings import get_pr_binding
+from orchestrator.services.production_drills import production_drill_deadlines
 from orchestrator.services.reconciliation import (
     ConditionCommand,
     ConditionOutcome,
@@ -406,6 +408,7 @@ def detect_reconciliation_conditions(
     actor: ActorContext,
     *,
     stall_seconds: int,
+    production_drill_run_id: uuid.UUID | None = None,
 ) -> DetectionCounters:
     """AC-003. Operator/runner-invoked: it creates no unit and sets no lifecycle state.
 
@@ -419,7 +422,7 @@ def detect_reconciliation_conditions(
     counters = DetectionCounters()
     for rule in (_detect_stalled_verifications, _detect_unreported_deploys):
         try:
-            counters += rule(session, actor, stall_seconds)
+            counters += rule(session, actor, stall_seconds, production_drill_run_id)
         except Exception:
             session.rollback()
             counters += SKIPPED
@@ -430,6 +433,7 @@ def _detect_stalled_verifications(
     session: Session,
     actor: ActorContext,
     stall_seconds: int,
+    production_drill_run_id: uuid.UUID | None = None,
 ) -> DetectionCounters:
     """A deploy that succeeded while its verification never finished.
 
@@ -437,6 +441,11 @@ def _detect_stalled_verifications(
     exists because an accepted ingest created it -- so no runner-pushed deploy observation is
     needed as a precondition here.
     """
+    if production_drill_run_id is not None:
+        deadlines = production_drill_deadlines(session, production_drill_run_id)
+        if isinstance(deadlines, DomainError):
+            return SKIPPED
+        stall_seconds = int(deadlines.reporting_deadline.total_seconds())
     deadline = TransactionClock().now(session) - timedelta(seconds=stall_seconds)
     stalled = tuple(
         session.execute(
@@ -449,6 +458,15 @@ def _detect_stalled_verifications(
             .order_by(DeploymentObservation.id)
         )
     )
+    if production_drill_run_id is not None:
+        stalled = tuple(
+            row
+            for row in stalled
+            if _run_owns_resource(session, production_drill_run_id, "work_unit", row[1].id)
+            and _run_owns_resource(
+                session, production_drill_run_id, "deployment_observation", row[0].id
+            )
+        )
     counters = DetectionCounters()
     for observation, unit in stalled:
         counters += _record_split_brain(
@@ -476,6 +494,7 @@ def _detect_unreported_deploys(
     session: Session,
     actor: ActorContext,
     stall_seconds: int,
+    production_drill_run_id: uuid.UUID | None = None,
 ) -> DetectionCounters:
     """The deploy NOBODY reported -- the case ADR-0002 rejects Alternative A over.
 
@@ -497,9 +516,17 @@ def _detect_unreported_deploys(
     )
     counters = DetectionCounters()
     for observation in reported:
+        if production_drill_run_id is not None and not _run_owns_resource(
+            session, production_drill_run_id, "observation", observation.id
+        ):
+            continue
         binding = _correlated_binding(session, observation)
         if binding is None:
             counters += SKIPPED
+            continue
+        if production_drill_run_id is not None and not _run_owns_resource(
+            session, production_drill_run_id, "release_artifact", binding.id
+        ):
             continue
         already_verified = session.scalar(
             select(DeploymentObservation.id)
@@ -570,3 +597,21 @@ def _correlated_binding(
     except ValueError:
         return None
     return session.get(ReleaseArtifactBinding, binding_id)
+
+
+def _run_owns_resource(
+    session: Session,
+    run_id: uuid.UUID,
+    resource_type: str,
+    resource_id: uuid.UUID,
+) -> bool:
+    return (
+        session.scalar(
+            select(ProductionDrillResource.id).where(
+                ProductionDrillResource.run_id == run_id,
+                ProductionDrillResource.resource_type == resource_type,
+                ProductionDrillResource.resource_id == resource_id,
+            )
+        )
+        is not None
+    )

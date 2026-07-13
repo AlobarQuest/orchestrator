@@ -23,6 +23,12 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.production_drill_resources import (
+    bind_created_drill_deployment_observation,
+    bind_created_drill_evidence,
+    bind_created_drill_work_unit,
+    require_production_drill_resource,
+)
 from orchestrator.services.release_artifacts import SHA256_DIGEST
 
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533533
@@ -72,8 +78,46 @@ def record_deployment_observation(
     command: DeploymentObservationCommand,
 ) -> DeploymentObservation | DomainError:
     try:
-        row = _record_deployment_observation(session, command)
-        session.commit()
+        row, _created = _record_deployment_observation(session, command)
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
+        return row
+    except DomainError as error:
+        session.rollback()
+        return error
+    except IntegrityError:
+        session.rollback()
+        return DomainError(
+            "deployment_observation_conflict",
+            "deployment observation conflicts with an existing binding/environment",
+            "verify deployment facts before retrying",
+        )
+    except Exception:
+        session.rollback()
+        raise
+
+
+def record_production_drill_deployment_observation(
+    session: Session, *, run_id: uuid.UUID, command: DeploymentObservationCommand
+) -> DeploymentObservation | DomainError:
+    try:
+        require_production_drill_resource(
+            session, run_id, "release_artifact", command.release_artifact_binding_id
+        )
+        row, created = _record_deployment_observation(session, command)
+        if not created:
+            require_production_drill_resource(session, run_id, "deployment_observation", row.id)
+        else:
+            bind_created_drill_deployment_observation(session, run_id, row)
+            post_deploy_unit = session.get(WorkUnit, row.post_deploy_work_unit_id)
+            assert post_deploy_unit is not None
+            bind_created_drill_work_unit(session, run_id, post_deploy_unit)
+            for evidence_id in row.evidence_ids:
+                evidence = session.get(Evidence, uuid.UUID(evidence_id))
+                assert evidence is not None
+                bind_created_drill_evidence(session, run_id, evidence)
+        if not session.info.get("production_drill_scenario_atomic"):
+            session.commit()
         return row
     except DomainError as error:
         session.rollback()
@@ -112,7 +156,7 @@ def list_deployment_observations(
 def _record_deployment_observation(
     session: Session,
     command: DeploymentObservationCommand,
-) -> DeploymentObservation:
+) -> tuple[DeploymentObservation, bool]:
     _authorize_actor(command.actor)
     command = _normalized_command(command)
     _validate_command_shape(command)
@@ -126,7 +170,7 @@ def _record_deployment_observation(
     )
     if existing is not None:
         _validate_idempotent_replay(session, existing, payload)
-        return existing
+        return existing, False
     event_with_key = session.scalar(
         select(Event).where(Event.idempotency_key == command.idempotency_key)
     )
@@ -144,7 +188,7 @@ def _record_deployment_observation(
     )
     if same_environment is not None:
         if _same_observation_facts(same_environment, command):
-            return same_environment
+            return same_environment, False
         raise DomainError(
             "deployment_observation_conflict",
             "release binding and environment already have different deployment facts",
@@ -227,7 +271,7 @@ def _record_deployment_observation(
     )
     session.add(row)
     session.flush()
-    return row
+    return row, True
 
 
 def _post_deploy_work_unit(

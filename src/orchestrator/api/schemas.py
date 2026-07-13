@@ -138,6 +138,51 @@ class ReleaseArtifactCommandModel(CommandBase):
     summary: dict[str, Any] | None = None
 
 
+class StartProductionDrillCommand(CommandBase):
+    model_config = ConfigDict(extra="forbid")
+
+    revision_id: UUID
+    runtime_observation_id: UUID
+    lease_duration_seconds: int = 60
+    reporting_deadline_seconds: int = 60
+
+
+class RuntimeObservationCommandModel(CommandBase):
+    model_config = ConfigDict(extra="forbid")
+
+    container_id: str = Field(min_length=1)
+    configured_image_ref: str = Field(min_length=1)
+    observed_image_digest: str = Field(min_length=1)
+    openapi_sha256: str = Field(min_length=1)
+    observed_at: datetime
+
+
+class CloseProductionDrillCommand(CommandBase):
+    model_config = ConfigDict(extra="forbid")
+
+    closure_reason: str = Field(min_length=1)
+
+
+class ProductionDrillScenarioCommand(CommandBase):
+    """A fixed scenario has no caller-selected resources or operational inputs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class FailProductionDrillCommand(CommandBase):
+    model_config = ConfigDict(extra="forbid")
+
+    failure_code: Literal[
+        "runner_preflight_failed",
+        "crash_recovery_failed",
+        "evidence_recovery_failed",
+        "external_pr_conflict_failed",
+        "deploy_split_brain_failed",
+        "stalled_approval_failed",
+    ]
+    diagnostic_ref: str = Field(pattern=r"^drill://redacted/[A-Za-z0-9._/-]{1,200}$")
+
+
 class DeploymentObservationCommandModel(CommandBase):
     environment: str = Field(min_length=1)
     base_url: str = Field(min_length=1)
@@ -469,6 +514,95 @@ class ReleaseArtifactResponse(BaseModel):
     event_id: UUID
     evidence_id: UUID
     idempotency_key: str
+
+
+class ProductionDrillRunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    revision_id: UUID
+    owner_actor_id: str
+    opened_at: datetime
+    closed_at: datetime | None
+    status: str
+    runtime_observation_id: UUID | None
+    image_ref: str
+    image_digest: str
+    openapi_digest: str
+    closure_reason: str | None
+
+
+class RuntimeObservationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    target: str
+    coolify_application_id: str
+    container_id: str
+    configured_image_ref: str
+    observed_image_digest: str
+    openapi_sha256: str
+    observed_at: datetime
+    observer_actor_id: str
+    observer_credential_key_id: str
+    recorded_at: datetime
+    event_id: UUID
+    idempotency_key: str
+
+
+class ProductionDrillClaimStateResponse(BaseModel):
+    id: UUID
+    attempt: int
+    lease_expires_at: datetime
+
+
+class ProductionDrillEvidenceStateResponse(BaseModel):
+    id: UUID
+    work_unit_id: UUID
+    ac_id: str
+    supersedes_evidence_id: UUID | None
+    is_head: bool
+
+
+class ProductionDrillConditionStateResponse(BaseModel):
+    id: UUID
+    work_unit_id: UUID
+    condition_type: str
+    is_open: bool
+
+
+class ProductionDrillObservationStateResponse(BaseModel):
+    id: UUID
+    observation_type: str
+    status: str
+    observed_at: datetime
+
+
+class ProductionDrillDeploymentObservationStateResponse(BaseModel):
+    id: UUID
+    release_artifact_binding_id: UUID
+    post_deploy_work_unit_id: UUID
+
+
+class ProductionDrillUnitStateResponse(BaseModel):
+    id: UUID
+    unit_key: str
+    state: str
+    version: int
+    active_claim: ProductionDrillClaimStateResponse | None
+
+
+class ProductionDrillStateResponse(BaseModel):
+    run_id: UUID
+    status: str
+    closed_at: datetime | None
+    lease_duration_seconds: int
+    reporting_deadline_seconds: int
+    units: list[ProductionDrillUnitStateResponse]
+    evidence: list[ProductionDrillEvidenceStateResponse]
+    observations: list[ProductionDrillObservationStateResponse]
+    deployment_observations: list[ProductionDrillDeploymentObservationStateResponse]
+    conditions: list[ProductionDrillConditionStateResponse]
 
 
 class DeploymentObservationResponse(BaseModel):

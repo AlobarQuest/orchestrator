@@ -28,6 +28,36 @@ class MatrixRow:
 
 COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
     MatrixRow(
+        "runtime observation",
+        "/api/v1/runtime-observations",
+        ADVISORY_LOCK,
+        "tests/services/test_runtime_observations.py::test_idempotency_replays_only_identical_observation",
+    ),
+    MatrixRow(
+        "production drill start",
+        "/api/v1/production-drills",
+        ADVISORY_LOCK,
+        "tests/services/test_production_drills.py::test_human_starts_authorized_production_drill_and_replays_exactly",
+    ),
+    MatrixRow(
+        "production drill closeout",
+        "/api/v1/production-drills/{run_id}/close",
+        ADVISORY_LOCK,
+        "tests/api/test_production_drill_closeout_api.py::test_human_closes_empty_production_drill_and_replays_exactly",
+    ),
+    MatrixRow(
+        "production drill scenario",
+        "/api/v1/production-drills/{run_id}/scenarios/{scenario}",
+        ADVISORY_LOCK,
+        "tests/api/test_production_drill_scenarios_api.py::test_every_scenario_route_replays_and_rejects_conflict_cross_run_and_unknown_ids",
+    ),
+    MatrixRow(
+        "production drill failure",
+        "/api/v1/production-drills/{run_id}/fail",
+        ADVISORY_LOCK,
+        "tests/api/test_production_drill_scenarios_api.py::test_every_fail_route_replays_and_rejects_conflict_cross_run_and_unknown_ids",
+    ),
+    MatrixRow(
         "lifecycle transition",
         "/api/v1/work-units/{unit_id}/commands/{command}",
         ROW_LOCK,
