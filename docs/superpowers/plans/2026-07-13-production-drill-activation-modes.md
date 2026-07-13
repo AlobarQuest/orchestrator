@@ -32,6 +32,7 @@
 - Modify: `src/orchestrator/api/dependencies.py`
 - Modify: `tests/test_config.py`
 - Modify: `tests/architecture/test_container.py`
+- Modify: `tests/conftest.py`
 - Modify: `tests/api/conftest.py`
 
 **Interfaces:**
@@ -94,6 +95,11 @@
 
 - [ ] **Step 6: Preserve existing API fixture behavior explicitly**
 
+  Add an autouse fixture in `tests/conftest.py` that sets the test process to `enabled` and clears
+  `get_settings()` before and after each test. This preserves the intent of the existing PR #52
+  service tests without changing the production default. New mode-specific tests override the
+  environment and clear the same cache explicitly.
+
   Change `tests/api/conftest.py` fixtures that exercise PR #52 routes to call:
 
   ```python
@@ -108,7 +114,7 @@
 
   ```bash
   uv run pytest tests/test_config.py tests/architecture/test_container.py tests/api/test_production_drills_api.py -q
-  uv run ruff check src/orchestrator/config.py src/orchestrator/services/production_drill_compatibility.py src/orchestrator/main.py src/orchestrator/api/dependencies.py tests/test_config.py tests/architecture/test_container.py tests/api/conftest.py
+  uv run ruff check src/orchestrator/config.py src/orchestrator/services/production_drill_compatibility.py src/orchestrator/main.py src/orchestrator/api/dependencies.py tests/test_config.py tests/architecture/test_container.py tests/conftest.py tests/api/conftest.py
   uv run pyright src/orchestrator/config.py src/orchestrator/services/production_drill_compatibility.py src/orchestrator/main.py src/orchestrator/api/dependencies.py
   ```
 
@@ -117,7 +123,7 @@
 - [ ] **Step 8: Commit Task 1**
 
   ```bash
-  git add src/orchestrator/config.py src/orchestrator/services/production_drill_compatibility.py src/orchestrator/main.py src/orchestrator/api/dependencies.py tests/test_config.py tests/architecture/test_container.py tests/api/conftest.py
+  git add src/orchestrator/config.py src/orchestrator/services/production_drill_compatibility.py src/orchestrator/main.py src/orchestrator/api/dependencies.py tests/test_config.py tests/architecture/test_container.py tests/conftest.py tests/api/conftest.py
   git commit -m "feat: add production drill activation modes"
   ```
 
