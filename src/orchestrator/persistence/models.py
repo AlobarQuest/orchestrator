@@ -198,6 +198,9 @@ class ProductionDrillRun(UUIDPrimaryKey, Base):
     image_ref: Mapped[str] = mapped_column(String)
     image_digest: Mapped[str] = mapped_column(String)
     openapi_digest: Mapped[str] = mapped_column(String)
+    runtime_observation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("runtime_observations.id")
+    )
     closure_reason: Mapped[str | None] = mapped_column(Text)
     revision: Mapped[WorkPackageRevision] = relationship()
 
@@ -740,6 +743,35 @@ class DeploymentObservation(UUIDPrimaryKey, Base):
         default=list,
         server_default=text("'[]'::jsonb"),
     )
+    idempotency_key: Mapped[str] = mapped_column(String)
+
+
+class RuntimeObservation(UUIDPrimaryKey, Base):
+    __tablename__ = "runtime_observations"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        CheckConstraint(
+            "target <> '' AND coolify_application_id <> '' AND container_id <> '' "
+            "AND configured_image_ref <> '' AND observed_image_digest <> '' "
+            "AND openapi_sha256 <> '' AND observer_actor_id <> '' "
+            "AND observer_credential_key_id <> ''",
+            name="ck_runtime_observations_required_text",
+        ),
+    )
+
+    target: Mapped[str] = mapped_column(Text)
+    coolify_application_id: Mapped[str] = mapped_column(String)
+    container_id: Mapped[str] = mapped_column(String)
+    configured_image_ref: Mapped[str] = mapped_column(Text)
+    observed_image_digest: Mapped[str] = mapped_column(String)
+    openapi_sha256: Mapped[str] = mapped_column(String)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    observer_actor_id: Mapped[str] = mapped_column(String)
+    observer_credential_key_id: Mapped[str] = mapped_column(String)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
     idempotency_key: Mapped[str] = mapped_column(String)
 
 
