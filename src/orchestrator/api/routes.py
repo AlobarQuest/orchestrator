@@ -12,8 +12,13 @@ from sqlalchemy.orm import Session
 from orchestrator.api.dependencies import (
     get_actor,
     get_production_drill_actor,
+    get_production_drill_close_actor,
+    get_production_drill_read_actor,
+    get_production_drill_start_actor,
     get_runtime_observer_actor,
     get_session,
+    require_production_drill_enabled,
+    require_production_drill_schema,
 )
 from orchestrator.api.schemas import (
     AdjudicationCommand,
@@ -234,6 +239,13 @@ from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[ActorContext, Depends(get_actor)]
 ProductionDrillActorDep = Annotated[ActorContext, Depends(get_production_drill_actor)]
+ProductionDrillCloseActorDep = Annotated[
+    ActorContext, Depends(get_production_drill_close_actor)
+]
+ProductionDrillReadActorDep = Annotated[ActorContext, Depends(get_production_drill_read_actor)]
+ProductionDrillStartActorDep = Annotated[
+    ActorContext, Depends(get_production_drill_start_actor)
+]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
@@ -290,6 +302,7 @@ def _parse_datetime_filter(value: str | None, field: str) -> datetime | None:
     "/runtime-observations",
     response_model=RuntimeObservationResponse,
     status_code=201,
+    dependencies=[Depends(require_production_drill_enabled)],
 )
 def create_runtime_observation(
     body: RuntimeObservationCommandModel,
@@ -317,10 +330,11 @@ def create_runtime_observation(
     "/production-drills",
     response_model=ProductionDrillRunResponse,
     status_code=201,
+    dependencies=[Depends(require_production_drill_enabled)],
 )
 def create_production_drill(
     body: StartProductionDrillCommand,
-    actor: ActorDep,
+    actor: ProductionDrillStartActorDep,
     session: SessionDep,
 ) -> object:
     return _raise_error(
@@ -339,19 +353,27 @@ def create_production_drill(
     )
 
 
-@router.get("/production-drills/{run_id}", response_model=ProductionDrillRunResponse)
+@router.get(
+    "/production-drills/{run_id}",
+    response_model=ProductionDrillRunResponse,
+    dependencies=[Depends(require_production_drill_schema)],
+)
 def get_production_drill(
     run_id: UUID,
-    _actor: ActorDep,
+    _actor: ProductionDrillReadActorDep,
     session: SessionDep,
 ) -> object:
     return _raise_error(production_drill_run(session, run_id))
 
 
-@router.get("/production-drills/{run_id}/state", response_model=ProductionDrillStateResponse)
+@router.get(
+    "/production-drills/{run_id}/state",
+    response_model=ProductionDrillStateResponse,
+    dependencies=[Depends(require_production_drill_schema)],
+)
 def get_production_drill_state(
     run_id: UUID,
-    actor: ActorDep,
+    actor: ProductionDrillReadActorDep,
     session: SessionDep,
 ) -> object:
     if actor.role is ActorRole.WORKER:
@@ -359,11 +381,15 @@ def get_production_drill_state(
     return _raise_error(production_drill_state(session, run_id))
 
 
-@router.post("/production-drills/{run_id}/close", response_model=ProductionDrillRunResponse)
+@router.post(
+    "/production-drills/{run_id}/close",
+    response_model=ProductionDrillRunResponse,
+    dependencies=[Depends(require_production_drill_schema)],
+)
 def close_production_drill_route(
     run_id: UUID,
     body: CloseProductionDrillCommand,
-    actor: ActorDep,
+    actor: ProductionDrillCloseActorDep,
     session: SessionDep,
 ) -> object:
     return _raise_error(
@@ -383,6 +409,7 @@ def close_production_drill_route(
 @router.post(
     "/production-drills/{run_id}/scenarios/{scenario}",
     response_model=ProductionDrillStateResponse,
+    dependencies=[Depends(require_production_drill_enabled)],
 )
 def run_production_drill_scenario_route(
     run_id: UUID,
@@ -405,7 +432,11 @@ def run_production_drill_scenario_route(
     )
 
 
-@router.post("/production-drills/{run_id}/fail", response_model=ProductionDrillStateResponse)
+@router.post(
+    "/production-drills/{run_id}/fail",
+    response_model=ProductionDrillStateResponse,
+    dependencies=[Depends(require_production_drill_enabled)],
+)
 def fail_production_drill_route(
     run_id: UUID,
     body: FailProductionDrillCommand,

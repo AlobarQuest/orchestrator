@@ -45,7 +45,7 @@ def create_app(
     @application.exception_handler(DomainError)
     async def domain_error_handler(_request: Request, error: DomainError) -> JSONResponse:
         status = 404 if error.code.endswith("_not_found") else 409
-        if error.code == "csrf_unavailable":
+        if error.code in {"csrf_unavailable", "production_drill_unavailable"}:
             status = 503
         if error.code in {"role_forbidden", "human_actor_required", "csrf_rejected"}:
             status = 403

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import get_session
 from orchestrator.main import app, create_app
+from orchestrator.services.production_drill_compatibility import DRILL_REVISION
 
 
 def test_liveness_does_not_require_database() -> None:
@@ -45,13 +46,13 @@ def test_readiness_resolves_alembic_config_independent_of_cwd(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "orchestrator.api.health.MigrationContext.configure",
-        lambda _connection: Mock(get_current_heads=lambda: ("head",)),
+        lambda _connection: Mock(get_current_heads=lambda: (DRILL_REVISION,)),
     )
     observed: dict[str, str] = {}
 
     def script_from_config(config):
         observed["config_file"] = config.config_file_name
-        return Mock(get_heads=lambda: ["head"])
+        return Mock(get_heads=lambda: [DRILL_REVISION])
 
     monkeypatch.setattr("orchestrator.api.health.ScriptDirectory.from_config", script_from_config)
 
