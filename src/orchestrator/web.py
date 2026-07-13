@@ -45,7 +45,6 @@ from orchestrator.services.decomposition import (
 )
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 from orchestrator.services.packages import evaluate_readiness, record_approval
-from orchestrator.services.production_drill_resources import is_not_production_drill_resource
 from orchestrator.services.reconciliation import (
     ResolutionCommand,
     open_conditions,
@@ -161,13 +160,7 @@ def _require_form(
 def queue(request: Request, actor: ActorDep, session: SessionDep) -> HTMLResponse:
     _human(actor)
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    units = tuple(
-        session.scalars(
-            select(WorkUnit)
-            .where(is_not_production_drill_resource("work_unit", WorkUnit.id))
-            .order_by(WorkUnit.state, WorkUnit.created_at)
-        )
-    )
+    units = tuple(session.scalars(select(WorkUnit).order_by(WorkUnit.state, WorkUnit.created_at)))
     for unit in units:
         readiness = evaluate_readiness(session, unit.id, for_update=False)
         grouped[unit.state].append(

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.context import context_fingerprint
-from orchestrator.kernel.leases import hash_lease_token
+from orchestrator.kernel.leases import LEASE_DURATION, hash_lease_token
 from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
@@ -25,7 +25,6 @@ from orchestrator.persistence.models import (
 from orchestrator.services.context import PreflightCommand, require_claim_context
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import evaluate_readiness
-from orchestrator.services.production_drills import lease_duration_for_work_unit
 
 
 @dataclass(frozen=True)
@@ -56,8 +55,7 @@ def claim_unit(
             standing_context=standing_context,
         )
         if replay is not None:
-            if not session.info.get("production_drill_scenario_atomic"):
-                session.commit()
+            session.commit()
             return replay
         if expected_version is not None:
             _require_version(unit, expected_version)
@@ -82,7 +80,7 @@ def claim_unit(
             idempotency_key=idempotency_key,
             context_snapshot_id=context_snapshot.id if context_snapshot is not None else None,
             acquired_at=now,
-            lease_expires_at=now + lease_duration_for_work_unit(session, unit.id),
+            lease_expires_at=now + LEASE_DURATION,
         )
         session.add(claim)
         session.flush()
@@ -102,8 +100,7 @@ def claim_unit(
                 ),
             },
         )
-        if not session.info.get("production_drill_scenario_atomic"):
-            session.commit()
+        session.commit()
         return LeaseGrant(
             claim.id,
             claim.attempt,
@@ -149,7 +146,7 @@ def renew_claim(
         if WorkUnitState(unit.state) not in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}:
             raise DomainError("claim_not_active", "work unit has no active claim", None)
         claim.renewed_at = now
-        claim.lease_expires_at = now + lease_duration_for_work_unit(session, unit.id)
+        claim.lease_expires_at = now + LEASE_DURATION
         if idempotency_key is not None:
             session.add(
                 Event(
@@ -674,7 +671,7 @@ def _acquire_reclaimed_claim(
         idempotency_key=idempotency_key,
         context_snapshot_id=context_snapshot.id if context_snapshot is not None else None,
         acquired_at=now,
-        lease_expires_at=now + lease_duration_for_work_unit(session, unit.id),
+        lease_expires_at=now + LEASE_DURATION,
     )
     session.add(claim)
     session.flush()

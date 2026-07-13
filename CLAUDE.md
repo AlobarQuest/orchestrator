@@ -177,10 +177,6 @@ style of that module.
   as well as locally (`collected N items`), not just the exit code. This is the
   local twin of the portfolio-wide invariant that `uv sync` installs no extras and
   `quality.yml` guards every tool with `command -v`.
-- **A pull request is not verified until CI reaches a terminal result.** Creating
-  a PR and seeing jobs start proves only dispatch. Monitor every required check to
-  `success` or `failure`; inspect and repair any failure before reporting the PR
-  gate as an external wait or asking for merge.
 - **`constraints.allowed_commands` is an ordered command list the worker re-executes,
   not a permission set.** `finalize-run` runs **every** entry, in envelope order,
   and only then checks `git status` before committing. So (a) anything authorized

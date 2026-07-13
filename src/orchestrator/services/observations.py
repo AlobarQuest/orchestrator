@@ -25,10 +25,6 @@ from orchestrator.persistence.models import (
     Observation,
 )
 from orchestrator.services.lifecycle import ActorContext
-from orchestrator.services.production_drill_resources import (
-    bind_created_drill_observation,
-    require_production_drill_resource,
-)
 from orchestrator.services.release_artifacts import SHA256_DIGEST
 
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533631
@@ -86,37 +82,9 @@ class ObservationFilters:
 
 def record_observation(session: Session, command: ObservationCommand) -> Observation | DomainError:
     try:
-        row, _ = _record_observation(session, command)
-        if not session.info.get("production_drill_scenario_atomic"):
-            session.commit()
+        row = _record_observation(session, command)
+        session.commit()
         return row
-    except DomainError as error:
-        session.rollback()
-        return error
-    except IntegrityError:
-        session.rollback()
-        return DomainError(
-            "observation_conflict",
-            "observation conflicts with an existing source reference",
-            "verify normalized facts before retrying",
-        )
-    except Exception:
-        session.rollback()
-        raise
-
-
-def record_production_drill_observation(
-    session: Session, *, run_id: uuid.UUID, command: ObservationCommand
-) -> Observation | DomainError:
-    try:
-        observation, created = _record_observation(session, command)
-        if not created:
-            require_production_drill_resource(session, run_id, "observation", observation.id)
-        else:
-            bind_created_drill_observation(session, run_id, observation)
-        if not session.info.get("production_drill_scenario_atomic"):
-            session.commit()
-        return observation
     except DomainError as error:
         session.rollback()
         return error
@@ -162,7 +130,7 @@ def canonical_fact_hash(command: ObservationCommand) -> str:
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _record_observation(session: Session, command: ObservationCommand) -> tuple[Observation, bool]:
+def _record_observation(session: Session, command: ObservationCommand) -> Observation:
     _authorize_actor(command.actor)
     command = _normalized_command(command)
     _validate_command(command)
@@ -175,7 +143,7 @@ def _record_observation(session: Session, command: ObservationCommand) -> tuple[
     )
     if existing is not None:
         _validate_idempotent_replay(session, existing, payload)
-        return existing, False
+        return existing
 
     event_with_key = session.scalar(
         select(Event).where(Event.idempotency_key == command.idempotency_key)
@@ -193,7 +161,7 @@ def _record_observation(session: Session, command: ObservationCommand) -> tuple[
         .with_for_update()
     )
     if same_fact is not None:
-        return same_fact, False
+        return same_fact
 
     same_source = session.scalar(
         select(Observation)
@@ -252,7 +220,7 @@ def _record_observation(session: Session, command: ObservationCommand) -> tuple[
     )
     session.add(row)
     session.flush()
-    return row, True
+    return row
 
 
 def _authorize_actor(actor: ActorContext) -> None:

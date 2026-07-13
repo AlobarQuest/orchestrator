@@ -59,14 +59,6 @@ def test_every_api_mutation_requires_idempotency_key_and_expected_version() -> N
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
 WORKER = {"Authorization": "Bearer fixture-token", "X-Credential-Key-Id": "worker-key"}
 SYSTEM = {"Authorization": "Bearer system-token", "X-Credential-Key-Id": "system-key"}
-OTHER_SYSTEM = {
-    "Authorization": "Bearer system-alt-token",
-    "X-Credential-Key-Id": "system-alt-key",
-}
-RUNTIME_OBSERVER = {
-    "Authorization": "Bearer runtime-observer-token",
-    "X-Credential-Key-Id": "runtime-observer-key",
-}
 VERIFIER = {
     "Authorization": "Bearer verifier-token",
     "X-Credential-Key-Id": "verifier-key",

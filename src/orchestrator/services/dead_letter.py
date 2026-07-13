@@ -30,15 +30,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
-from orchestrator.errors import DomainError
-from orchestrator.persistence.models import Claim, DispatchRecord, ProductionDrillResource, WorkUnit
+from orchestrator.persistence.models import Claim, DispatchRecord, WorkUnit
 from orchestrator.services.dispatch import circuit_open
-from orchestrator.services.production_drill_resources import is_not_production_drill_resource
-from orchestrator.services.production_drills import production_drill_deadlines
 
 DEAD_LETTER_UNIT_STATES = ("failed", "blocked", "cancelled")
 DEAD_LETTER_DISPATCH_STATUSES = ("failed", "blocked")
@@ -68,8 +65,6 @@ def dead_letter(
     *,
     failure_signature_threshold: int,
     stalled_approval_seconds: int,
-    include_production_drill_resources: bool = False,
-    production_drill_run_id: uuid.UUID | None = None,
 ) -> tuple[DeadLetterEntry, ...]:
     """`stalled_approval_seconds` is a plain int on purpose. It has no "off" value.
 
@@ -78,45 +73,23 @@ def dead_letter(
     can be switched off is a reporting obligation that will be.
     """
     return (
-        *_terminal_units(session, include_production_drill_resources, production_drill_run_id),
-        *_failed_dispatch_records(
-            session, include_production_drill_resources, production_drill_run_id
-        ),
-        *_open_circuit_breakers(
-            session,
-            failure_signature_threshold,
-            include_production_drill_resources,
-            production_drill_run_id,
-        ),
-        *_stalled_approvals(
-            session,
-            stalled_approval_seconds,
-            include_production_drill_resources,
-            production_drill_run_id,
-        ),
+        *_terminal_units(session),
+        *_failed_dispatch_records(session),
+        *_open_circuit_breakers(session, failure_signature_threshold),
+        *_stalled_approvals(session, stalled_approval_seconds),
     )
 
 
 def _stalled_approvals(
-    session: Session,
-    stalled_approval_seconds: int,
-    include_production_drill_resources: bool,
-    production_drill_run_id: uuid.UUID | None = None,
+    session: Session, stalled_approval_seconds: int
 ) -> tuple[DeadLetterEntry, ...]:
     """A human gate nobody answered. Reported, never resolved -- silence is not approval."""
-    statement = select(WorkUnit).where(WorkUnit.state.in_(APPROVAL_STATES))
-    if production_drill_run_id is not None:
-        statement = statement.where(_run_owned_unit(production_drill_run_id))
-        deadlines = production_drill_deadlines(session, production_drill_run_id)
-        if isinstance(deadlines, DomainError):
-            return ()
-        cutoff = TransactionClock().now(session) - deadlines.reporting_deadline
-    else:
-        cutoff = TransactionClock().now(session) - timedelta(seconds=stalled_approval_seconds)
-    statement = statement.where(WorkUnit.updated_at <= cutoff)
-    if production_drill_run_id is None and not include_production_drill_resources:
-        statement = statement.where(is_not_production_drill_resource("work_unit", WorkUnit.id))
-    units = session.scalars(statement.order_by(WorkUnit.updated_at, WorkUnit.id)).all()
+    cutoff = TransactionClock().now(session) - timedelta(seconds=stalled_approval_seconds)
+    units = session.scalars(
+        select(WorkUnit)
+        .where(WorkUnit.state.in_(APPROVAL_STATES), WorkUnit.updated_at <= cutoff)
+        .order_by(WorkUnit.updated_at, WorkUnit.id)
+    ).all()
     return tuple(
         DeadLetterEntry(
             source="stalled_approval",
@@ -136,17 +109,12 @@ def _stalled_approvals(
     )
 
 
-def _terminal_units(
-    session: Session,
-    include_production_drill_resources: bool,
-    production_drill_run_id: uuid.UUID | None = None,
-) -> tuple[DeadLetterEntry, ...]:
-    statement = select(WorkUnit).where(WorkUnit.state.in_(DEAD_LETTER_UNIT_STATES))
-    if production_drill_run_id is not None:
-        statement = statement.where(_run_owned_unit(production_drill_run_id))
-    elif not include_production_drill_resources:
-        statement = statement.where(is_not_production_drill_resource("work_unit", WorkUnit.id))
-    units = session.scalars(statement.order_by(WorkUnit.unit_key, WorkUnit.id)).all()
+def _terminal_units(session: Session) -> tuple[DeadLetterEntry, ...]:
+    units = session.scalars(
+        select(WorkUnit)
+        .where(WorkUnit.state.in_(DEAD_LETTER_UNIT_STATES))
+        .order_by(WorkUnit.unit_key, WorkUnit.id)
+    ).all()
     return tuple(_unit_entry(session, unit) for unit in units)
 
 
@@ -171,22 +139,12 @@ def _unit_entry(session: Session, unit: WorkUnit) -> DeadLetterEntry:
     )
 
 
-def _failed_dispatch_records(
-    session: Session,
-    include_production_drill_resources: bool,
-    production_drill_run_id: uuid.UUID | None = None,
-) -> tuple[DeadLetterEntry, ...]:
-    statement = (
+def _failed_dispatch_records(session: Session) -> tuple[DeadLetterEntry, ...]:
+    rows = session.execute(
         select(DispatchRecord, WorkUnit)
         .join(WorkUnit, WorkUnit.id == DispatchRecord.work_unit_id)
         .where(DispatchRecord.status.in_(DEAD_LETTER_DISPATCH_STATUSES))
-    )
-    if production_drill_run_id is not None:
-        statement = statement.where(_run_owned_unit(production_drill_run_id))
-    elif not include_production_drill_resources:
-        statement = statement.where(is_not_production_drill_resource("work_unit", WorkUnit.id))
-    rows = session.execute(
-        statement.order_by(WorkUnit.unit_key, DispatchRecord.runner_attempt, DispatchRecord.id)
+        .order_by(WorkUnit.unit_key, DispatchRecord.runner_attempt, DispatchRecord.id)
     ).all()
     return tuple(
         DeadLetterEntry(
@@ -208,8 +166,6 @@ def _failed_dispatch_records(
 def _open_circuit_breakers(
     session: Session,
     failure_signature_threshold: int,
-    include_production_drill_resources: bool,
-    production_drill_run_id: uuid.UUID | None = None,
 ) -> tuple[DeadLetterEntry, ...]:
     """Derived -- there is no persisted breaker entity; "open" is a predicate over the records.
 
@@ -218,7 +174,7 @@ def _open_circuit_breakers(
     report a breaker open one failure early -- flagging a unit as circuit-broken while it still
     has a dispatch left. One shared predicate, two tenses; the `+ 1` lives only at dispatch.
     """
-    statement = (
+    grouped = session.execute(
         select(
             DispatchRecord.work_unit_id,
             DispatchRecord.failure_signature,
@@ -229,19 +185,7 @@ def _open_circuit_breakers(
             DispatchRecord.status.in_(DEAD_LETTER_DISPATCH_STATUSES),
         )
         .group_by(DispatchRecord.work_unit_id, DispatchRecord.failure_signature)
-    )
-    if production_drill_run_id is not None:
-        statement = statement.where(
-            ProductionDrillResource.run_id == production_drill_run_id,
-            ProductionDrillResource.resource_type == "work_unit",
-            ProductionDrillResource.resource_id == DispatchRecord.work_unit_id,
-        )
-    elif not include_production_drill_resources:
-        statement = statement.where(
-            is_not_production_drill_resource("work_unit", DispatchRecord.work_unit_id)
-        )
-    grouped = session.execute(
-        statement.order_by(DispatchRecord.work_unit_id, DispatchRecord.failure_signature)
+        .order_by(DispatchRecord.work_unit_id, DispatchRecord.failure_signature)
     ).all()
     entries: list[DeadLetterEntry] = []
     for unit_id, signature, failures in grouped:
@@ -275,11 +219,3 @@ def _requeue_eligible(unit: WorkUnit) -> bool:
     raises the budget) is the operator's path for that case.
     """
     return unit.state in REQUEUE_STATES and unit.attempt_count < unit.max_attempts
-
-
-def _run_owned_unit(run_id: uuid.UUID):
-    return and_(
-        ProductionDrillResource.run_id == run_id,
-        ProductionDrillResource.resource_type == "work_unit",
-        ProductionDrillResource.resource_id == WorkUnit.id,
-    )
