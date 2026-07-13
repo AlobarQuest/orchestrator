@@ -54,7 +54,7 @@ Ordinary lifecycle transition, web queue, and in-flight paths independently quer
 - **Observable failure:** PostgreSQL raises `UndefinedTable` during ordinary claim, lifecycle,
   queue, or in-flight operations if traffic reaches the application. The readiness endpoint does
   compare the database revision with the code head and returns 503 for the 0015/0017 mismatch
-  (`src/orchestrator/api/health.py:27-48`); the review therefore rejects the narrower premise that
+  (`src/orchestrator/api/health.py:27-52`); the review therefore rejects the narrower premise that
   readiness can remain green in this exact revision-mismatch sequence.
 - **Smallest proving test:** migrate a disposable database to 0015, create an ordinary READY unit,
   assert readiness returns 503, then directly exercise claim, review queue, and in-flight reads with
@@ -313,7 +313,7 @@ the observation and credential paths.
 
 - **Rejected qualification from A-P1-2:** the reviewer's premise that readiness may stay green with
   PR #52 code on schema 0015 is false. Readiness reads the database revision and compares it with
-  the code's Alembic head (`src/orchestrator/api/health.py:27-48`), so that exact mismatch returns
+  the code's Alembic head (`src/orchestrator/api/health.py:27-52`), so that exact mismatch returns
   503. The underlying `UndefinedTable` consequence remains valid if traffic reaches the application,
   because the cited ordinary paths query the missing 0016 table.
 
