@@ -77,6 +77,10 @@ never be pointed at production. Before invoking it, a human starts the run in th
 production drill flow, records its UUID, and verifies the approved recovery-drills package
 revision, deployed image digest, and expected availability window.
 
+Starting a run also requires a fresh immutable runtime observation. The observer capability is a
+separate, read-only prerequisite; follow [runtime observations](runtime-observations.md) rather
+than substituting a host shell or Docker command.
+
 The runner is pinned to `https://sds.alobar.net`. It retrieves its dedicated credential from BWS
 at runtime using `ORCHESTRATOR_PRODUCTION_DRILL_SECRET_UUID`; the secret value is a JSON object
 containing `ORCHESTRATOR_PRODUCTION_DRILL_TOKEN` and its credential-key ID. Source
