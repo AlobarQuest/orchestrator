@@ -1,14 +1,15 @@
 # Phase 2 Stabilization Recovery Design
 
 **Date:** 2026-07-13
-**Status:** approved direction; written specification pending Devon review
+**Status:** approved 2026-07-13
 
 ## Goal
 
 Restore one trustworthy, evidence-backed program state before any further Phase 2 work or
-infrastructure mutation. The stabilization must determine whether PR #52's production-drill
-subsystem should be kept, narrowed, or reverted, then leave a dependency-ordered implementation
-plan for the selected path.
+infrastructure mutation, then execute every item in the July 12 remediation order without changing
+its dependency constraints. The first checkpoint determines whether PR #52's production-drill
+subsystem should be kept, narrowed, or reverted; later remediation phases receive separate plans
+instead of becoming one unsafe "fix the factory" workstream.
 
 ## Problem Statement
 
@@ -76,6 +77,45 @@ The checkpoint ends with one explicit disposition:
 
 Devon approves the disposition before an implementation plan is written for deployment or revert.
 
+## Relationship To The July 12 Remediation Order
+
+`docs/superpowers/plans/2026-07-12-remediation-order.md` remains the authoritative defect list and
+dependency order. This design does not replace or renumber it.
+
+The repository-only PR #52 review is a **recovery preflight inside the open Phase 0 boundary**, not a
+new remediation phase and not the factory program's original Phase 0. It exists because the prior
+session changed `main` after the remediation order was written: deploying current `main` now also
+deploys an unproven production-drill subsystem and a new fail-closed startup contract. The preflight
+decides what `main` must contain before remediation item 0.1 can honestly complete.
+
+After the preflight, work continues in this exact sequence:
+
+| Sequence | Authoritative remediation scope | Planning boundary |
+|---|---|---|
+| 1 | Phase 0 items 0.1-0.5 | Finish production truth, drills, scorecard rebaseline, and the executable production-attestation guard in a separately authorized infrastructure session plus its repository closeout. |
+| 2 | Phase 1 items 1.1-1.2 | Fix factory-runner workspace exclusion and `local-heavy-renew`; test the real HTTP adapter. |
+| 3 | Phase 2 items 2.1-2.4 | Ship the per-mapped-AC writer, evidence-row evaluator, command-aware result capture, and evidence vocabulary mapping as one atomic workstream. |
+| 4 | Ongoing meta-fix | Pull the WS-P2.2 improvisation counter forward immediately after Phase 2. |
+| 5 | Phase 3 items 3.1-3.2 | Obtain Devon's HUMAN-path decision, then implement only that selected browser/CLI boundary. |
+| 6 | Phase 4 items 4.1-4.6 | Execute WS-P2.16 in its fixed internal order, including local-heavy coverage. |
+| 7 | Phase 5 items 5.1-5.3 | Resolve `ac_id`, authority projection, and self-discovering vocabulary coherence as their own workstream. |
+| 8 | Phase 6 items 6.1-6.5 | Remove the five bounded ergonomics improvisations without widening runner authority. |
+
+Each row receives its own specification or implementation plan before code changes. Completing one
+row never implies completion of the next.
+
+### Load-Bearing Constraints Preserved
+
+- Nothing in Phases 1-6 starts until Phase 0 is production-proven and rebaselined.
+- Phase 1 lands before later factory runs because its defects fire on every local-heavy run.
+- Phase 2 items 2.1-2.4 ship whole; fixing evidence vocabulary alone can halt every multi-AC unit.
+- The improvisation counter follows Phase 2 rather than waiting for the rest of WS-P2.2.
+- Phase 3 stops for Devon's decision before implementation.
+- Phase 4 executes 4.1 through 4.6 in order; the submit guard cannot precede vocabulary enforcement
+  and a real factory-runner PR-binding writer.
+- The hosted runner's deliberate narrowness is not treated as a defect.
+- Infrastructure mutation, repository investigation, and CI triage remain separate sessions.
+
 ## Stabilization Components
 
 ### 1. Truth Reconciliation
@@ -137,11 +177,14 @@ No infrastructure mutation follows automatically. Devon reviews and approves the
 
 ### 5. Planning Boundary
 
-After approval, create one implementation plan for the selected repository changes. Deployment,
-credential provisioning, observer provisioning, production drill execution, and the controlled
-restart remain a separate infrastructure-mutation session with fresh explicit authorization.
+After approval, create one implementation plan for the recovery preflight and selected repository
+changes. Deployment, credential provisioning, observer provisioning, production drill execution,
+and the controlled restart remain a separate infrastructure-mutation session with fresh explicit
+authorization. After Phase 0 closes, create the Phase 1 plan; continue one dependency-bounded plan at
+a time through the sequence above.
 
-Remediation Phase 1 and forward Phase 2 work remain blocked until Phase 0 is honestly closed.
+Remediation Phase 1 and forward program Phase 2 work remain blocked until remediation Phase 0 is
+honestly closed.
 
 ## Verification Strategy
 
@@ -164,7 +207,8 @@ DB-backed suites run sequentially because fixtures recreate the shared test sche
 - No production deployment, restart, credential creation, BWS mutation, Coolify mutation, or
   observer provisioning.
 - No execution of production drills.
-- No implementation of remediation Phases 1-6 or WS-P2.16.
+- No implementation of remediation Phases 1-6 or WS-P2.16 inside the recovery preflight; they remain
+  mandatory later planning boundaries in this design.
 - No rewrite of PR #52 history and no deletion of its evidence.
 - No claim that the MVP or later Phase 2 work is production-proven without retained evidence.
 - No broad orchestrator refactor unrelated to the selected disposition.
@@ -180,6 +224,9 @@ The stabilization checkpoint produces:
 5. a detailed implementation plan for the approved disposition;
 6. an updated handoff that preserves the fresh infrastructure-session boundary.
 
+After that checkpoint, the program produces one reviewed plan and one retained evidence package for
+each remaining remediation row in the sequence table.
+
 ## Success Criteria
 
 The checkpoint is complete only when:
@@ -189,4 +236,6 @@ The checkpoint is complete only when:
 - every PR #52 production component traces to a requirement or is marked for removal;
 - full checks, security scan, standards review, and planted-defect tests have recorded outcomes;
 - Devon has approved keep, narrow, or revert;
-- the next implementation plan contains no infrastructure mutation mixed with repository work.
+- the next implementation plan contains no infrastructure mutation mixed with repository work;
+- all items 0.1-6.5 and the improvisation counter have an explicit planning boundary and none are
+  silently absorbed into the PR #52 disposition.
