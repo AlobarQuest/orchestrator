@@ -43,6 +43,11 @@ def test_production_post_route_inventory_is_explicit() -> None:
         if isinstance(route, APIRoute) and "POST" in (route.methods or set())
     )
     assert observed == {
+        "/api/v1/runtime-observations",
+        "/api/v1/production-drills",
+        "/api/v1/production-drills/{run_id}/close",
+        "/api/v1/production-drills/{run_id}/scenarios/{scenario}",
+        "/api/v1/production-drills/{run_id}/fail",
         "/api/v1/package-intakes",
         "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
         "/api/v1/decomposition-proposals/{proposal_id}/approve",
@@ -132,6 +137,8 @@ def test_production_get_route_inventory_is_explicit() -> None:
         "/api/v1/observations",
         "/api/v1/package-intakes/{revision_id}",
         "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        "/api/v1/production-drills/{run_id}",
+        "/api/v1/production-drills/{run_id}/state",
         "/api/v1/release-artifacts/{binding_id}/deployment-observations",
         "/api/v1/status-ledger",
         "/api/v1/work-units/{unit_id}/context-snapshots",
