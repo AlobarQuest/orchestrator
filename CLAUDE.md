@@ -42,6 +42,11 @@ style of that module.
 
 ## Known Non-obvious Invariants
 
+- Dependency-update repo.edit authority is not executable unless the fingerprinted envelope
+  declares a non-empty mutation_commands list that is an ordered subset of allowed_commands.
+  Proposal admission and dispatch both enforce this; existing approved envelopes are never
+  rewritten to comply.
+
 - **Everything in this section must stay BELOW `<!-- code-standards:end -->`.**
   `code_standards.stanza.inject_stanza` replaces the whole `start`…`end` block in
   place and preserves only what surrounds it, and the canonical stanza template

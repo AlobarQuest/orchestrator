@@ -2,10 +2,14 @@ import re
 import uuid
 
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import DecompositionProposal, WorkPackageRevision
+from orchestrator.persistence.models import (
+    DecompositionProposal,
+    DecompositionProposalUnit,
+    WorkPackageRevision,
+)
 from orchestrator.services.decomposition import submit_decomposition_proposal
 from orchestrator.services.package_intake import register_package_intake
 from tests.api.test_lifecycle_api import HUMAN
@@ -76,6 +80,50 @@ def test_proposal_page_shows_ac_mapping_and_decision_controls(
     assert "Reject" in page.text
     assert "dispatch" not in page.text.lower()
     assert "merge" not in page.text.lower()
+
+
+def test_proposal_page_renders_normalized_authority_envelope(
+    db_client: TestClient,
+    migrated_engine: Engine,
+) -> None:
+    _, proposal = _seed_intake_and_proposal(migrated_engine)
+    authority = {
+        "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "target_repository": "AlobarQuest/change-manager",
+            "allowed_commands": [
+                "uv add --dev 'httpx2>=2.6.0'",
+                "uv sync --locked",
+                "uv run make check",
+            ],
+            "mutation_commands": ["uv add --dev 'httpx2>=2.6.0'"],
+        },
+        "conformance": {"status": "green", "standards_touched": [], "accepted_standards": []},
+    }
+    with Session(migrated_engine) as session:
+        unit = session.scalar(
+            select(DecompositionProposalUnit).where(
+                DecompositionProposalUnit.proposal_id == proposal.id
+            )
+        )
+        assert unit is not None
+        unit.authority = authority
+        session.commit()
+
+    page = db_client.get(f"/review/decomposition-proposals/{proposal.id}", headers=HUMAN)
+
+    assert page.status_code == 200
+    for value in (
+        "AlobarQuest/change-manager",
+        "dependency-update",
+        "uv add --dev &#39;httpx2&gt;=2.6.0&#39;",
+        "uv sync --locked",
+        "uv run make check",
+        "mutation_commands",
+    ):
+        assert value in page.text
 
 
 def test_approve_form_requires_human_confirmation_and_records_decision(

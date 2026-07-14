@@ -22,6 +22,7 @@ from orchestrator.kernel.readiness import (
     ReadinessFacts,
     evaluate_readiness_facts,
 )
+from orchestrator.kernel.runner_authority import dependency_update_authority_violation
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
@@ -70,6 +71,10 @@ def record_approval(
     unit = PackageRepository(session).unit_for_update(unit_id)
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    if subject_type == "authority":
+        violation = dependency_update_authority_violation(normalize_authority(unit.authority))
+        if violation is not None:
+            raise DomainError(violation.code, violation.message, violation.remediation)
     existing = session.scalar(select(Approval).where(Approval.idempotency_key == idempotency_key))
     fingerprint = _approval_fingerprint(unit, subject_type, standing_context, expected_version)
     if existing is not None:

@@ -45,6 +45,18 @@
   </tbody>
 </table>
 
+{% for unit in units %}
+<h3>Authority envelope: {{ unit.unit_key }}</h3>
+<dl>
+  <dt>Capabilities</dt><dd><ul>{% for capability, level in unit.authority.capabilities.items() %}<li>{{ capability }}: {{ level }}</li>{% endfor %}</ul></dd>
+  <dt>Budgets</dt><dd><ul>{% for name, value in unit.authority.budgets.items() %}<li>{{ name }}: {{ value }}</li>{% endfor %}</ul></dd>
+  <dt>Change class</dt><dd>{{ unit.authority.change_class }}</dd>
+  <dt>Conformance</dt><dd>{% if unit.authority.conformance %}<ul>{% for name, value in unit.authority.conformance.items() %}<li>{{ name }}: {{ value }}</li>{% endfor %}</ul>{% else %}None{% endif %}</dd>
+  <dt>Constraints</dt><dd><ul>{% for name, value in unit.authority.constraints.items() %}<li>{{ name }}: {% if value is sequence and value is not string %}<ol>{% for command in value %}<li><code>{{ command }}</code></li>{% endfor %}</ol>{% else %}{{ value }}{% endif %}</li>{% endfor %}</ul></dd>
+  <dt>Fingerprint</dt><dd><code>{{ unit.authority_fingerprint }}</code></dd>
+</dl>
+{% endfor %}
+
 <h2>Dependencies</h2>
 <table>
   <caption>Internal and external dependencies in the proposal</caption>

@@ -5,7 +5,7 @@ from threading import Barrier
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, event, text
+from sqlalchemy import Engine, event, func, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -16,7 +16,7 @@ from orchestrator.kernel.authority import (
     normalize_authority,
 )
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import WorkPackageRevision
+from orchestrator.persistence.models import Approval, Event, WorkPackageRevision
 from orchestrator.services.packages import (
     record_approval,
     register_approved_unit,
@@ -376,6 +376,48 @@ def test_authority_approval_idempotency_binds_expected_version(
 
     assert first.subject_revision_or_fingerprint == unit.authority_fingerprint
     assert error.value.code == "idempotency_conflict"
+
+
+def test_authority_approval_rejects_legacy_invalid_dependency_update_envelope(
+    migrated_session: Session,
+) -> None:
+    revision = register_test_revision(migrated_session)
+    unit = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="invalid-authority",
+        title="Invalid authority",
+        outcome="Authority remains unapproved.",
+        required_capability="repository_write",
+        authority=AUTHORITY,
+        approved_by="human-1",
+        approved_at=NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    unit.authority = {
+        "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {"allowed_commands": ["uv sync --locked"]},
+    }
+    migrated_session.flush()
+
+    with pytest.raises(DomainError) as error:
+        record_approval(
+            migrated_session,
+            unit_id=unit.id,
+            subject_type="authority",
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+            reason="approve legacy envelope",
+            idempotency_key="invalid-authority-approval",
+            expected_version=unit.version,
+        )
+
+    assert error.value.code == "authority_mutation_commands_invalid"
+    assert migrated_session.scalar(select(func.count()).select_from(Approval)) == 0
+    assert migrated_session.scalar(select(func.count()).select_from(Event)) == 0
 
 
 def test_concurrent_identical_first_registration_converges(

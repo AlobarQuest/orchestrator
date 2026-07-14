@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
+from orchestrator.kernel.runner_authority import dependency_update_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
 from orchestrator.services.github_app import GitHubAppTokenError
@@ -169,7 +170,7 @@ def _dispatch_work_unit(
             revision,
             settings,
             repository=repository,
-            status="skipped" if blocked_reason == "dispatch_disabled" else "blocked",
+            status="skipped" if _is_skipped_reason(blocked_reason) else "blocked",
             reason_code=blocked_reason,
             payload=_payload(unit, settings, repository),
         )
@@ -276,7 +277,21 @@ def _blocked_reason(unit: WorkUnit, settings: DispatchSettings) -> str | None:
         return "target_repository_missing"
     if target_repository not in settings.allowed_target_repositories:
         return "target_repository_not_allowed"
-    return _conformance_blocked_reason(unit)
+    return _authority_violation_reason(unit) or _conformance_blocked_reason(unit)
+
+
+def _is_skipped_reason(reason: str) -> bool:
+    return reason == "dispatch_disabled" or reason in {
+        "authority_command_run_required",
+        "authority_allowed_commands_invalid",
+        "authority_mutation_commands_invalid",
+        "authority_mutation_command_not_allowed",
+    }
+
+
+def _authority_violation_reason(unit: WorkUnit) -> str | None:
+    violation = dependency_update_authority_violation(normalize_authority(unit.authority))
+    return violation.code if violation is not None else None
 
 
 def _change_class(unit: WorkUnit) -> str:

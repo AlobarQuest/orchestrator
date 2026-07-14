@@ -84,6 +84,102 @@ def _form(page: str, unit_id: object, action: str) -> tuple[str, str]:
     return token.group(1), key.group(1)
 
 
+def _dependency_update_authority() -> dict[str, object]:
+    return {
+        "capabilities": {
+            "repository_write": "allowed",
+            "repo.edit": "allowed",
+            "command.run": "allowed",
+        },
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "target_repository": "AlobarQuest/change-manager",
+            "allowed_commands": [
+                "uv add --dev 'httpx2>=2.6.0'",
+                "uv sync --locked",
+                "uv run make check",
+            ],
+            "mutation_commands": ["uv add --dev 'httpx2>=2.6.0'"],
+        },
+    }
+
+
+def test_authority_approval_records_the_unit_fingerprint(
+    db_client: TestClient, migrated_engine: Engine, review_unit: WorkUnit
+) -> None:
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, review_unit.id)
+        assert unit is not None
+        unit.authority = _dependency_update_authority()
+        session.commit()
+        session.refresh(unit)
+        expected_version = unit.version
+        expected_fingerprint = unit.authority_fingerprint
+
+    page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+    token, key = _form(page.text, review_unit.id, "authority-approval")
+    response = db_client.post(
+        f"/review/units/{review_unit.id}/authority-approval",
+        headers=HUMAN,
+        data={
+            "csrf_token": token,
+            "idempotency_key": key,
+            "expected_version": str(expected_version),
+            "reason": "Approved exact authority envelope.",
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, review_unit.id)
+        approval = session.scalar(select(Approval).where(Approval.idempotency_key == key))
+        assert unit is not None and approval is not None
+        assert approval.subject_type == "authority"
+        assert approval.subject_revision_or_fingerprint == expected_fingerprint
+        assert approval.approved_by == "devon"
+        assert approval.reason == "Approved exact authority envelope."
+        assert unit.authority_approval_id == approval.id
+
+
+def test_invalid_legacy_authority_hides_and_rejects_authority_approval(
+    db_client: TestClient, migrated_engine: Engine, review_unit: WorkUnit
+) -> None:
+    invalid = _dependency_update_authority()
+    invalid["constraints"] = {"allowed_commands": ["uv sync --locked"]}
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, review_unit.id)
+        assert unit is not None
+        unit.authority = invalid
+        session.commit()
+        session.refresh(unit)
+        expected_version = unit.version
+
+    page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+
+    assert "Approve this authority envelope" not in page.text
+    assert "authority_mutation_commands_invalid" in page.text
+    response = db_client.post(
+        f"/review/units/{review_unit.id}/authority-approval",
+        headers=HUMAN,
+        data={
+            "csrf_token": "unused",
+            "idempotency_key": "invalid-authority-post",
+            "expected_version": str(expected_version),
+            "reason": "cannot approve invalid authority",
+            "confirm": "yes",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "authority_mutation_commands_invalid"
+    with Session(migrated_engine) as session:
+        assert session.scalar(select(func.count()).select_from(Approval)) == 1
+        assert session.scalar(select(func.count()).select_from(Event)) == 0
+
+
 def test_inactive_human_and_worker_posts_are_denied(
     auth_config: AuthConfig,
     db_client: TestClient,

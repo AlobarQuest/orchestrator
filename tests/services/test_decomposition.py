@@ -156,6 +156,46 @@ def test_proposal_requires_total_ac_disposition(migrated_session: Session) -> No
     assert error.value.code == "decomposition_proposal_ac_coverage_invalid"
 
 
+def test_proposal_rejects_invalid_dependency_update_authority_before_persistence(
+    migrated_session: Session,
+) -> None:
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    invalid_payload = {
+        "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {"allowed_commands": ["uv sync --locked"]},
+    }
+    violation = dependency_update_authority_violation(normalize_authority(invalid_payload))
+    assert violation is not None
+
+    with pytest.raises(DomainError) as error:
+        submit_decomposition_proposal(
+            migrated_session,
+            proposal_command(
+                revision.id,
+                ac_ids,
+                proposed_units=(
+                    ProposedUnit(
+                        unit_key="unit-1",
+                        title="Update dependency",
+                        outcome="Dependency is updated.",
+                        required_capability="repository_write",
+                        authority=AUTHORITY,
+                        authority_payload=invalid_payload,
+                    ),
+                ),
+                dependencies=(),
+                ac_mappings=(AcMapping(ac_id=str(ac_ids["AC-001"]), unit_key="unit-1"),),
+            ),
+            worker_actor(),
+        )
+
+    assert error.value.code == violation.code
+    assert migrated_session.scalar(select(func.count()).select_from(DecompositionProposal)) == 0
+
+
 def test_proposal_rejects_internal_dependency_cycle(migrated_session: Session) -> None:
     revision = register_intaken_revision(migrated_session)
     ac_ids = package_ac_ids(migrated_session, revision.id)

@@ -179,6 +179,39 @@ def test_dispatch_fails_closed_when_global_switch_disabled(migrated_session: Ses
     assert github.calls == []
 
 
+def test_dispatch_skips_legacy_invalid_dependency_update_authority(
+    migrated_session: Session,
+) -> None:
+    unit = ready_unit(migrated_session, key="legacy-invalid-authority")
+    unit.authority = {
+        "capabilities": {
+            "repository_write": "allowed",
+            "repo.edit": "allowed",
+            "command.run": "allowed",
+        },
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "target_repository": PILOT_REPOSITORY,
+            "allowed_commands": ["uv sync --locked"],
+        },
+        "conformance": GREEN_CONFORMANCE,
+    }
+    migrated_session.flush()
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(allowed_change_classes=frozenset({"dependency-update"})),
+        github,
+    )
+
+    assert record.status == "skipped"
+    assert record.reason_code == "authority_mutation_commands_invalid"
+    assert github.calls == []
+
+
 def test_dispatch_sends_ws41_workflow_dispatch_once(migrated_session: Session) -> None:
     unit = ready_unit(migrated_session)
     github = FakeGitHubDispatcher([])

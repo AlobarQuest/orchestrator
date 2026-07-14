@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig, get_actor, get_session
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import normalize_authority
+from orchestrator.kernel.runner_authority import dependency_update_authority_violation
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
@@ -196,8 +198,20 @@ def _projection(session: Session, unit_id: uuid.UUID) -> dict[str, Any]:
             select(Event).where(Event.subject_id == unit.id).order_by(Event.occurred_at, Event.id)
         )
     )
+    authority = normalize_authority(unit.authority).normalized()
+    violation = dependency_update_authority_violation(normalize_authority(unit.authority))
     return {
         "unit": unit,
+        "authority": authority,
+        "authority_violation": (
+            {
+                "code": violation.code,
+                "message": violation.message,
+                "remediation": violation.remediation,
+            }
+            if violation is not None
+            else None
+        ),
         "revision": revision,
         "dependencies": tuple(
             session.scalars(select(Dependency).where(Dependency.work_unit_id == unit.id))
@@ -315,12 +329,24 @@ def _decomposition_proposal_projection(session: Session, proposal_id: uuid.UUID)
         )
     revision = session.get(WorkPackageRevision, proposal.work_package_revision_id)
     assert revision is not None
-    units = tuple(
+    proposal_units = tuple(
         session.scalars(
             select(DecompositionProposalUnit)
             .where(DecompositionProposalUnit.proposal_id == proposal.id)
             .order_by(DecompositionProposalUnit.unit_key)
         )
+    )
+    units = tuple(
+        {
+            "unit_key": unit.unit_key,
+            "title": unit.title,
+            "outcome": unit.outcome,
+            "required_capability": unit.required_capability,
+            "max_attempts": unit.max_attempts,
+            "authority_fingerprint": unit.authority_fingerprint,
+            "authority": normalize_authority(unit.authority).normalized(),
+        }
+        for unit in proposal_units
     )
     dependencies = tuple(
         session.scalars(
@@ -411,7 +437,10 @@ def detail(
 ) -> HTMLResponse:
     _human(actor)
     context = _projection(session, unit_id)
-    keys = {action: str(uuid.uuid4()) for action in ("approval", "review", "cancel", "retry")}
+    actions = ["approval", "review", "cancel", "retry"]
+    if context["authority_violation"] is None:
+        actions.append("authority_approval")
+    keys = {action: str(uuid.uuid4()) for action in actions}
     context["idempotency_keys"] = keys
     context["csrf_tokens"] = {
         action: _issue_token(request, actor, unit_id, action, key) for action, key in keys.items()
@@ -498,6 +527,48 @@ def approve(
         session,
         unit_id=unit_id,
         subject_type="action",
+        actor_id=actor.actor_id,
+        actor_role=actor.role,
+        reason=reason,
+        idempotency_key=idempotency_key,
+        expected_version=expected_version,
+    )
+    session.commit()
+    return _redirect(unit_id)
+
+
+@router.post("/units/{unit_id}/authority-approval")
+def approve_authority(
+    request: Request,
+    unit_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    expected_version: Annotated[int, Form()],
+    reason: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    _human(actor)
+    unit = session.get(WorkUnit, unit_id)
+    if unit is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    violation = dependency_update_authority_violation(normalize_authority(unit.authority))
+    if violation is not None:
+        raise DomainError(violation.code, violation.message, violation.remediation)
+    _require_form(
+        request,
+        actor,
+        unit_id,
+        "authority_approval",
+        csrf_token,
+        idempotency_key,
+        confirm,
+    )
+    record_approval(
+        session,
+        unit_id=unit_id,
+        subject_type="authority",
         actor_id=actor.actor_id,
         actor_role=actor.role,
         reason=reason,
