@@ -214,6 +214,90 @@ def reclaim_expired_claim(
         raise
 
 
+def recover_expired_claim(
+    session: Session,
+    unit_id: uuid.UUID,
+    actor: ActorContext,
+    idempotency_key: str,
+    *,
+    expected_version: int | None = None,
+) -> WorkUnit | DomainError:
+    try:
+        result = _perform_expired_claim_recovery(
+            session, unit_id, actor, idempotency_key, expected_version=expected_version
+        )
+        session.commit()
+        return result
+    except DomainError as error:
+        session.rollback()
+        return error
+    except Exception:
+        session.rollback()
+        raise
+
+
+def _perform_expired_claim_recovery(
+    session: Session,
+    unit_id: uuid.UUID,
+    actor: ActorContext,
+    idempotency_key: str,
+    *,
+    expected_version: int | None = None,
+) -> WorkUnit | DomainError:
+    unit = _locked_unit(session, unit_id)
+    replay = _expired_claim_recovery_replay(session, unit, actor, idempotency_key, expected_version)
+    if replay is not None:
+        return replay
+    if expected_version is not None:
+        _require_version(unit, expected_version)
+    if actor.role is not ActorRole.SYSTEM:
+        raise DomainError("role_forbidden", "only the system may recover expired claims", None)
+    claim = _current_claim(session, unit.id)
+    if claim is None:
+        raise DomainError("claim_not_found", "work unit has no claim", None)
+    now = TransactionClock().now(session)
+    _validate_expired_active_claim(unit, claim, now)
+
+    release_claim(claim, terminal_reason="lease_expired", released_at=now)
+    correlation_id = uuid.uuid4()
+    eligibility_error = _readiness_eligibility_error(session, unit)
+    failed_payload: dict[str, object] = {
+        "expired_claim_id": str(claim.id),
+        "attempt": claim.attempt,
+        "recovery_actor_id": actor.actor_id,
+        "reason": "lease_expired",
+        "expected_version": expected_version,
+    }
+    if eligibility_error is not None:
+        failed_payload["result_error_code"] = eligibility_error.code
+    _transition(
+        session,
+        unit,
+        WorkUnitState.FAILED,
+        actor=actor,
+        idempotency_key=f"{idempotency_key}:failed",
+        occurred_at=now,
+        correlation_id=correlation_id,
+        payload=failed_payload,
+    )
+    if eligibility_error is not None:
+        return eligibility_error
+    _transition(
+        session,
+        unit,
+        WorkUnitState.READY,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        occurred_at=now,
+        correlation_id=correlation_id,
+        payload={
+            "recovery_actor_id": actor.actor_id,
+            "expected_version": expected_version,
+        },
+    )
+    return unit
+
+
 def _perform_reclaim(
     session: Session,
     unit_id: uuid.UUID,
@@ -610,6 +694,55 @@ def _reclaim_error_replay(
         "work unit is no longer ready after lease expiry",
         "resolve_readiness",
     )
+
+
+def _expired_claim_recovery_replay(
+    session: Session,
+    unit: WorkUnit,
+    actor: ActorContext,
+    idempotency_key: str,
+    expected_version: int | None,
+) -> WorkUnit | DomainError | None:
+    ready_event = session.scalar(select(Event).where(Event.idempotency_key == idempotency_key))
+    failed_event = session.scalar(
+        select(Event).where(Event.idempotency_key == f"{idempotency_key}:failed")
+    )
+    if ready_event is None and failed_event is None:
+        return None
+    failed_matches = (
+        failed_event is not None
+        and failed_event.subject_id == unit.id
+        and failed_event.from_state in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}
+        and failed_event.to_state == WorkUnitState.FAILED
+        and failed_event.payload.get("recovery_actor_id") == actor.actor_id
+        and failed_event.payload.get("expected_version") == expected_version
+        and actor.role is ActorRole.SYSTEM
+    )
+    if not failed_matches:
+        raise _idempotency_conflict()
+    assert failed_event is not None
+    if ready_event is not None:
+        ready_matches = (
+            ready_event.subject_id == unit.id
+            and ready_event.from_state == WorkUnitState.FAILED
+            and ready_event.to_state == WorkUnitState.READY
+            and ready_event.payload.get("recovery_actor_id") == actor.actor_id
+            and ready_event.payload.get("expected_version") == expected_version
+            and ready_event.correlation_id == failed_event.correlation_id
+        )
+        if not ready_matches:
+            raise _idempotency_conflict()
+        return unit
+    error_code = failed_event.payload.get("result_error_code")
+    if error_code == "attempts_exhausted":
+        return DomainError(error_code, "attempt budget is exhausted", "approve_retry")
+    if error_code == "readiness_not_satisfied":
+        return DomainError(
+            error_code,
+            "work unit is no longer ready after lease expiry",
+            "resolve_readiness",
+        )
+    raise _idempotency_conflict()
 
 
 def _claim_owned_by(claim: Claim, actor: ActorContext, attempt: int, lease_token: str) -> bool:

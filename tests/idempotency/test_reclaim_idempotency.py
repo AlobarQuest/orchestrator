@@ -13,8 +13,13 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import Claim, Event
-from orchestrator.services.claims import LeaseGrant, claim_unit, reclaim_expired_claim
+from orchestrator.persistence.models import Claim, Event, WorkUnit
+from orchestrator.services.claims import (
+    LeaseGrant,
+    claim_unit,
+    reclaim_expired_claim,
+    recover_expired_claim,
+)
 from orchestrator.services.lifecycle import ActorContext
 from tests.services.test_claims import worker
 from tests.services.test_dependencies import register_unit
@@ -89,3 +94,55 @@ def test_a_duplicate_rejected_reclaim_replays_the_same_error(
     assert _count(migrated_session, Event, "reclaim-x:failed") == 1
     assert _count(migrated_session, Event, "reclaim-x:ready") == 0
     assert uuid.UUID(str(unit.id))  # sanity: the unit still exists
+
+
+def test_a_duplicate_expired_claim_recovery_writes_each_transition_once(
+    migrated_session: Session,
+) -> None:
+    unit = _expired_unit(migrated_session, "idem-recover")
+    version = unit.version
+
+    one = recover_expired_claim(migrated_session, unit.id, SYSTEM, KEY, expected_version=version)
+    two = recover_expired_claim(migrated_session, unit.id, SYSTEM, KEY, expected_version=version)
+
+    assert isinstance(one, WorkUnit) and isinstance(two, WorkUnit)
+    assert one.version == two.version
+    assert _count(migrated_session, Event, f"{KEY}:failed") == 1
+    assert _count(migrated_session, Event, KEY) == 1
+    assert _count(migrated_session, Claim, KEY) == 0
+
+
+def test_expired_claim_recovery_reused_key_with_a_different_version_conflicts(
+    migrated_session: Session,
+) -> None:
+    unit = _expired_unit(migrated_session, "idem-recover-version")
+    version = unit.version
+    first = recover_expired_claim(migrated_session, unit.id, SYSTEM, KEY, expected_version=version)
+    assert isinstance(first, WorkUnit)
+
+    replay = recover_expired_claim(
+        migrated_session, unit.id, SYSTEM, KEY, expected_version=version + 1
+    )
+
+    assert isinstance(replay, DomainError)
+    assert replay.code == "idempotency_conflict"
+
+
+def test_expired_claim_recovery_reused_key_with_a_different_actor_conflicts(
+    migrated_session: Session,
+) -> None:
+    unit = _expired_unit(migrated_session, "idem-recover-actor")
+    version = unit.version
+    first = recover_expired_claim(migrated_session, unit.id, SYSTEM, KEY, expected_version=version)
+    assert isinstance(first, WorkUnit)
+
+    replay = recover_expired_claim(
+        migrated_session,
+        unit.id,
+        ActorContext("another-system", ActorRole.SYSTEM),
+        KEY,
+        expected_version=version,
+    )
+
+    assert isinstance(replay, DomainError)
+    assert replay.code == "idempotency_conflict"
