@@ -7,9 +7,11 @@ any, and a duplicate delivery of a REJECTED reclaim must replay the same error r
 """
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import Engine, event, func, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
@@ -112,6 +114,139 @@ def test_a_duplicate_expired_claim_recovery_writes_each_transition_once(
     assert _count(migrated_session, Event, f"{KEY}:failed") == 1
     assert _count(migrated_session, Event, KEY) == 1
     assert _count(migrated_session, Claim, KEY) == 0
+
+
+def test_expired_claim_recovery_reused_key_for_a_different_unit_conflicts_without_mutation(
+    migrated_session: Session,
+) -> None:
+    winner = _expired_unit(migrated_session, "idem-recover-first-unit")
+    loser = _expired_unit(migrated_session, "idem-recover-second-unit")
+    winner_version, loser_version = winner.version, loser.version
+
+    first = recover_expired_claim(
+        migrated_session, winner.id, SYSTEM, KEY, expected_version=winner_version
+    )
+    second = recover_expired_claim(
+        migrated_session, loser.id, SYSTEM, KEY, expected_version=loser_version
+    )
+
+    assert isinstance(first, WorkUnit)
+    assert isinstance(second, DomainError)
+    assert second.code == "idempotency_conflict"
+    migrated_session.expire_all()
+    persisted_loser = migrated_session.get(WorkUnit, loser.id)
+    loser_claim = migrated_session.scalar(select(Claim).where(Claim.work_unit_id == loser.id))
+    assert persisted_loser is not None
+    assert (persisted_loser.state, persisted_loser.version) == (
+        WorkUnitState.CLAIMED,
+        loser_version,
+    )
+    assert loser_claim is not None and loser_claim.released_at is None
+    assert loser_claim.terminal_reason is None
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(Event)
+            .where(
+                Event.subject_id == loser.id,
+                Event.idempotency_key.in_((KEY, f"{KEY}:failed")),
+            )
+        )
+        == 0
+    )
+
+
+def test_concurrent_expired_claim_recovery_reused_key_for_different_units_is_stable(
+    migrated_engine: Engine,
+) -> None:
+    with Session(migrated_engine) as setup:
+        first = _expired_unit(setup, "idem-recover-concurrent-first")
+        second = _expired_unit(setup, "idem-recover-concurrent-second")
+        requests = ((first.id, first.version), (second.id, second.version))
+
+    start = Barrier(2)
+    before_serialization_point = Barrier(2)
+    synchronized_connections: set[int] = set()
+
+    def synchronize_first_serialization_point(
+        connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        connection_id = id(connection)
+        if connection_id in synchronized_connections:
+            return
+        if "pg_advisory_xact_lock" in statement or "FROM events" in statement:
+            synchronized_connections.add(connection_id)
+            before_serialization_point.wait(timeout=5)
+
+    event.listen(
+        migrated_engine,
+        "before_cursor_execute",
+        synchronize_first_serialization_point,
+    )
+
+    def recover(request: tuple[uuid.UUID, int]) -> tuple[str, uuid.UUID | str]:
+        with Session(migrated_engine) as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            session.execute(text("SET LOCAL lock_timeout = '5s'"))
+            start.wait(timeout=5)
+            result = recover_expired_claim(
+                session,
+                request[0],
+                SYSTEM,
+                KEY,
+                expected_version=request[1],
+            )
+            if isinstance(result, WorkUnit):
+                return ("success", result.id)
+            assert isinstance(result, DomainError)
+            return ("error", result.code)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = tuple(executor.submit(recover, request) for request in requests)
+            results = tuple(future.result(timeout=10) for future in futures)
+    finally:
+        event.remove(
+            migrated_engine,
+            "before_cursor_execute",
+            synchronize_first_serialization_point,
+        )
+
+    successes = tuple(value for kind, value in results if kind == "success")
+    errors = tuple(value for kind, value in results if kind == "error")
+    assert len(successes) == 1
+    assert errors == ("idempotency_conflict",)
+    winning_unit_id = successes[0]
+    assert isinstance(winning_unit_id, uuid.UUID)
+    losing_unit_id = next(unit_id for unit_id, _version in requests if unit_id != winning_unit_id)
+    losing_version = next(version for unit_id, version in requests if unit_id == losing_unit_id)
+
+    with Session(migrated_engine) as session:
+        losing_unit = session.get(WorkUnit, losing_unit_id)
+        losing_claim = session.scalar(select(Claim).where(Claim.work_unit_id == losing_unit_id))
+        assert losing_unit is not None
+        assert (losing_unit.state, losing_unit.version) == (
+            WorkUnitState.CLAIMED,
+            losing_version,
+        )
+        assert losing_claim is not None and losing_claim.released_at is None
+        assert losing_claim.terminal_reason is None
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(Event)
+                .where(
+                    Event.subject_id == losing_unit_id,
+                    Event.idempotency_key.in_((KEY, f"{KEY}:failed")),
+                )
+            )
+            == 0
+        )
 
 
 def test_expired_claim_recovery_reused_key_with_a_different_version_conflicts(

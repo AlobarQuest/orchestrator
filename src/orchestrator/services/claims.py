@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
@@ -26,6 +26,10 @@ from orchestrator.services.claim_release import release_claim
 from orchestrator.services.context import PreflightCommand, require_claim_context
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import evaluate_readiness
+
+# PostgreSQL two-key advisory locks share one database-wide namespace. 0x57435243 is the
+# dedicated "WCRC" namespace for work-claim recovery commands.
+EXPIRED_CLAIM_RECOVERY_LOCK_NAMESPACE = 0x57435243
 
 
 @dataclass(frozen=True)
@@ -250,6 +254,7 @@ def _perform_expired_claim_recovery(
     target: WorkUnitState,
     expected_version: int | None = None,
 ) -> WorkUnit | DomainError:
+    _lock_expired_claim_recovery_key(session, idempotency_key)
     unit = _locked_unit(session, unit_id)
     replay = _expired_claim_recovery_replay(session, unit, actor, idempotency_key, expected_version)
     if replay is not None:
@@ -757,6 +762,16 @@ def _expired_claim_recovery_replay(
             "resolve_readiness",
         )
     raise _idempotency_conflict()
+
+
+def _lock_expired_claim_recovery_key(session: Session, idempotency_key: str) -> None:
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(:namespace, hashtext(:idempotency_key))"),
+        {
+            "namespace": EXPIRED_CLAIM_RECOVERY_LOCK_NAMESPACE,
+            "idempotency_key": idempotency_key,
+        },
+    )
 
 
 def _claim_owned_by(claim: Claim, actor: ActorContext, attempt: int, lease_token: str) -> bool:
