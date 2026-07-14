@@ -380,9 +380,15 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
             "expected_version": 3,
             "attempt": lease_body["attempt"],
             "lease_token": lease_body["lease_token"],
+            "reason": "coding_action_failed",
         },
     )
     assert failure.json()["version"] == 4
+    recovery_history = db_client.get(f"/api/v1/work-units/{recovery_id}/history", headers=HUMAN)
+    failed_event = next(
+        event for event in recovery_history.json() if event["idempotency_key"] == "recovery-fail"
+    )
+    assert failed_event["payload"]["reason"] == "coding_action_failed"
     retry = db_client.post(
         f"/api/v1/work-units/{recovery_id}/retry-authorization",
         headers=HUMAN,

@@ -14,8 +14,8 @@ ADVISORY_LOCK = "pg_advisory_xact_lock + unique idempotency_key + replay-equalit
 # loser finds the Event by its globally-unique key and replays it. This asymmetry is REAL and is
 # proven under a concurrent double-submit, not merely a sequential one.
 ROW_LOCK = "unique Event.idempotency_key + WorkUnit row lock (with_for_update), NO advisory lock"
-# The trickiest replay surface in the repo: reclaim writes three events under two derived keys.
-COMPOUND_KEY = "compound :failed/:ready Event keys + WorkUnit row lock + error replay"
+# Reclaim writes correlated transitions under a failed key plus a derived ready-transition key.
+COMPOUND_KEY = "compound failed/ready-transition Event keys + WorkUnit row lock + error replay"
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,12 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "/api/v1/work-units/{unit_id}/reclaim-expired-claim",
         COMPOUND_KEY,
         "tests/idempotency/test_reclaim_idempotency.py::test_a_duplicate_reclaim_writes_one_failed_and_one_ready_event",
+    ),
+    MatrixRow(
+        "recover expired claim",
+        "/api/v1/work-units/{unit_id}/recover-expired-claim",
+        ADVISORY_LOCK,
+        "tests/idempotency/test_reclaim_idempotency.py::test_concurrent_expired_claim_recovery_reused_key_for_different_units_is_stable",
     ),
     MatrixRow(
         "retry authorization",

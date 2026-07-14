@@ -53,6 +53,7 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/work-units/{unit_id}/claim",
         "/api/v1/work-units/{unit_id}/renew",
         "/api/v1/work-units/{unit_id}/reclaim-expired-claim",
+        "/api/v1/work-units/{unit_id}/recover-expired-claim",
         "/api/v1/work-units/{unit_id}/preflight",
         "/api/v1/work-units/{unit_id}/dispatch",
         "/api/v1/work-units/{unit_id}/verify",

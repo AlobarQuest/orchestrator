@@ -24,9 +24,14 @@ class ReclaimCommand(CommandBase):
     standing_context: dict[str, Any] | None = None
 
 
+class RecoverExpiredClaimCommand(CommandBase):
+    pass
+
+
 class LifecycleCommand(CommandBase):
     attempt: int | None = Field(default=None, gt=0)
     lease_token: str | None = Field(default=None, min_length=1)
+    reason: str | None = None
     standing_context: dict[str, Any] | None = None
     context_snapshot_id: UUID | None = None
 
