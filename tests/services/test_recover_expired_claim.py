@@ -54,6 +54,14 @@ def test_recover_expired_claim_moves_active_work_to_ready_without_a_new_claim(
         )
         == 1
     )
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(Claim)
+            .where(Claim.idempotency_key == "recover-expired-1")
+        )
+        == 0
+    )
     migrated_session.expire_all()
     old_claim = migrated_session.get(Claim, claim.id)
     assert old_claim is not None

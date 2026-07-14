@@ -711,7 +711,10 @@ def _expired_claim_recovery_replay(
         return None
     failed_matches = (
         failed_event is not None
+        and failed_event.action == "work_unit.transitioned"
+        and failed_event.subject_type == "work_unit"
         and failed_event.subject_id == unit.id
+        and failed_event.actor_id == actor.actor_id
         and failed_event.from_state in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}
         and failed_event.to_state == WorkUnitState.FAILED
         and failed_event.payload.get("recovery_actor_id") == actor.actor_id
@@ -723,12 +726,17 @@ def _expired_claim_recovery_replay(
     assert failed_event is not None
     if ready_event is not None:
         ready_matches = (
-            ready_event.subject_id == unit.id
+            ready_event.action == "work_unit.transitioned"
+            and ready_event.subject_type == "work_unit"
+            and ready_event.subject_id == unit.id
+            and ready_event.actor_id == actor.actor_id
             and ready_event.from_state == WorkUnitState.FAILED
             and ready_event.to_state == WorkUnitState.READY
             and ready_event.payload.get("recovery_actor_id") == actor.actor_id
             and ready_event.payload.get("expected_version") == expected_version
             and ready_event.correlation_id == failed_event.correlation_id
+            and WorkUnitState(unit.state) is WorkUnitState.READY
+            and unit.version == ready_event.payload.get("version")
         )
         if not ready_matches:
             raise _idempotency_conflict()

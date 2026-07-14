@@ -8,9 +8,11 @@ any, and a duplicate delivery of a REJECTED reclaim must replay the same error r
 
 import uuid
 
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Event, WorkUnit
@@ -143,6 +145,94 @@ def test_expired_claim_recovery_reused_key_with_a_different_actor_conflicts(
         KEY,
         expected_version=version,
     )
+
+    assert isinstance(replay, DomainError)
+    assert replay.code == "idempotency_conflict"
+
+
+def test_expired_claim_recovery_replay_fails_closed_after_later_state_advancement(
+    migrated_session: Session,
+) -> None:
+    unit = _expired_unit(migrated_session, "idem-recover-advanced")
+    version = unit.version
+    recovered = recover_expired_claim(
+        migrated_session, unit.id, SYSTEM, KEY, expected_version=version
+    )
+    assert isinstance(recovered, WorkUnit)
+    advanced = claim_unit(
+        migrated_session,
+        unit.id,
+        worker("post-recovery-worker"),
+        "post-recovery-claim",
+    )
+    assert isinstance(advanced, LeaseGrant)
+
+    replay = recover_expired_claim(migrated_session, unit.id, SYSTEM, KEY, expected_version=version)
+
+    assert isinstance(replay, DomainError)
+    assert replay.code == "idempotency_conflict"
+
+
+@pytest.mark.parametrize(
+    ("event_key", "attribute", "collision_value"),
+    [
+        (f"{KEY}:failed", "action", "claim.renewed"),
+        (f"{KEY}:failed", "subject_type", "claim"),
+        (f"{KEY}:failed", "actor_id", "different-system"),
+        (KEY, "action", "claim.renewed"),
+        (KEY, "subject_type", "claim"),
+        (KEY, "actor_id", "different-system"),
+    ],
+)
+def test_expired_claim_recovery_rejects_event_identity_collisions(
+    migrated_session: Session,
+    event_key: str,
+    attribute: str,
+    collision_value: str,
+) -> None:
+    unit = _expired_unit(migrated_session, f"idem-recover-collision-{attribute}-{event_key}")
+    version = unit.version
+    correlation_id = uuid.uuid4()
+    failed_event = Event(
+        occurred_at=TransactionClock().now(migrated_session),
+        actor_id=SYSTEM.actor_id,
+        action="work_unit.transitioned",
+        subject_type="work_unit",
+        subject_id=unit.id,
+        from_state=WorkUnitState.CLAIMED,
+        to_state=WorkUnitState.FAILED,
+        payload={
+            "recovery_actor_id": SYSTEM.actor_id,
+            "expected_version": version,
+            "version": version + 1,
+        },
+        correlation_id=correlation_id,
+        idempotency_key=f"{KEY}:failed",
+    )
+    ready_event = Event(
+        occurred_at=failed_event.occurred_at,
+        actor_id=SYSTEM.actor_id,
+        action="work_unit.transitioned",
+        subject_type="work_unit",
+        subject_id=unit.id,
+        from_state=WorkUnitState.FAILED,
+        to_state=WorkUnitState.READY,
+        payload={
+            "recovery_actor_id": SYSTEM.actor_id,
+            "expected_version": version,
+            "version": version + 2,
+        },
+        correlation_id=correlation_id,
+        idempotency_key=KEY,
+    )
+    collision_event = failed_event if event_key.endswith(":failed") else ready_event
+    setattr(collision_event, attribute, collision_value)
+    migrated_session.add_all([failed_event, ready_event])
+    unit.state = WorkUnitState.READY
+    unit.version = version + 2
+    migrated_session.commit()
+
+    replay = recover_expired_claim(migrated_session, unit.id, SYSTEM, KEY, expected_version=version)
 
     assert isinstance(replay, DomainError)
     assert replay.code == "idempotency_conflict"
