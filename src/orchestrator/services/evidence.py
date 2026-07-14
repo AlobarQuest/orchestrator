@@ -21,7 +21,8 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.claims import release_claim, validate_active_claim
+from orchestrator.services.claim_release import release_claim
+from orchestrator.services.claims import validate_active_claim
 from orchestrator.services.lifecycle import ActorContext
 
 NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
