@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
 from orchestrator.persistence.models import (
     DecompositionProposal,
     DecompositionProposalUnit,
@@ -15,6 +16,19 @@ from orchestrator.services.package_intake import register_package_intake
 from tests.api.test_lifecycle_api import HUMAN
 from tests.services.test_decomposition import package_ac_ids, proposal_command, worker_actor
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
+
+_ALLOWED_COMMANDS = (
+    "uv add --dev &#39;httpx2&gt;=2.6.0&#39;",
+    "uv sync --locked",
+    "uv run make check",
+)
+_MUTATION_COMMANDS = (_ALLOWED_COMMANDS[0],)
+
+
+def _assert_command_list(page: str, key: str, commands: tuple[str, ...]) -> None:
+    match = re.search(rf"{key}:\s*<ol>(.*?)</ol>", page, re.DOTALL)
+    assert match is not None
+    assert tuple(re.findall(r"<code>(.*?)</code>", match.group(1))) == commands
 
 
 def _seed_intake_and_proposal(
@@ -88,7 +102,11 @@ def test_proposal_page_renders_normalized_authority_envelope(
 ) -> None:
     _, proposal = _seed_intake_and_proposal(migrated_engine)
     authority = {
-        "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+        "capabilities": {
+            "repository_write": "allowed",
+            "repo.edit": "allowed",
+            "command.run": "allowed",
+        },
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
         "change_class": "dependency-update",
         "constraints": {
@@ -100,7 +118,11 @@ def test_proposal_page_renders_normalized_authority_envelope(
             ],
             "mutation_commands": ["uv add --dev 'httpx2>=2.6.0'"],
         },
-        "conformance": {"status": "green", "standards_touched": [], "accepted_standards": []},
+        "conformance": {
+            "status": "green",
+            "standards_touched": ["project-standards"],
+            "accepted_standards": ["security-standards"],
+        },
         "future_authority_marker": "fingerprinted by name",
     }
     with Session(migrated_engine) as session:
@@ -111,6 +133,7 @@ def test_proposal_page_renders_normalized_authority_envelope(
         )
         assert unit is not None
         unit.authority = authority
+        unit.authority_fingerprint = authority_fingerprint(normalize_authority(authority))
         session.commit()
         expected_fingerprint = unit.authority_fingerprint
 
@@ -120,23 +143,23 @@ def test_proposal_page_renders_normalized_authority_envelope(
     for value in (
         "AlobarQuest/change-manager",
         "dependency-update",
+        "repository_write: allowed",
         "repo.edit: allowed",
         "command.run: allowed",
         "max_attempts: 3",
         "max_llm_calls: 4",
         "status: green",
+        "standards_touched: [&#39;project-standards&#39;]",
+        "accepted_standards: [&#39;security-standards&#39;]",
         "target_repository:",
-        "uv add --dev &#39;httpx2&gt;=2.6.0&#39;",
-        "uv sync --locked",
-        "uv run make check",
-        "mutation_commands",
         "future_authority_marker",
         expected_fingerprint,
     ):
         assert value in page.text
-    assert page.text.index("uv add --dev &#39;httpx2&gt;=2.6.0&#39;") < page.text.index(
-        "uv sync --locked"
-    ) < page.text.index("uv run make check")
+    assert "Unknown fields</dt><dd>None" in page.text
+    assert "uv add --dev 'httpx2>=2.6.0'" not in page.text
+    _assert_command_list(page.text, "allowed_commands", _ALLOWED_COMMANDS)
+    _assert_command_list(page.text, "mutation_commands", _MUTATION_COMMANDS)
 
 
 def test_approve_form_requires_human_confirmation_and_records_decision(

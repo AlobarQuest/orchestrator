@@ -7,10 +7,24 @@ from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig
 from orchestrator.identity.registry import RegistryAdapter
+from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.main import create_app
 from orchestrator.persistence.models import Approval, Event, WorkUnit
 from tests.api.test_lifecycle_api import HUMAN, WORKER
+
+_ALLOWED_COMMANDS = (
+    "uv add --dev &#39;httpx2&gt;=2.6.0&#39;",
+    "uv sync --locked",
+    "uv run make check",
+)
+_MUTATION_COMMANDS = (_ALLOWED_COMMANDS[0],)
+
+
+def _assert_command_list(page: str, key: str, commands: tuple[str, ...]) -> None:
+    match = re.search(rf"{key}:\s*<ol>(.*?)</ol>", page, re.DOTALL)
+    assert match is not None
+    assert tuple(re.findall(r"<code>(.*?)</code>", match.group(1))) == commands
 
 
 def test_detail_has_human_actions_but_no_worker_or_creation_controls(
@@ -102,6 +116,11 @@ def _dependency_update_authority() -> dict[str, object]:
             ],
             "mutation_commands": ["uv add --dev 'httpx2>=2.6.0'"],
         },
+        "conformance": {
+            "status": "green",
+            "standards_touched": ["project-standards"],
+            "accepted_standards": ["security-standards"],
+        },
         "future_authority_marker": "fingerprinted by name",
     }
 
@@ -112,7 +131,9 @@ def test_authority_approval_records_the_unit_fingerprint(
     with Session(migrated_engine) as session:
         unit = session.get(WorkUnit, review_unit.id)
         assert unit is not None
-        unit.authority = _dependency_update_authority()
+        authority = _dependency_update_authority()
+        unit.authority = authority
+        unit.authority_fingerprint = authority_fingerprint(normalize_authority(authority))
         session.commit()
         session.refresh(unit)
         expected_version = unit.version
@@ -121,21 +142,23 @@ def test_authority_approval_records_the_unit_fingerprint(
     page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
     for value in (
         "repo.edit: allowed",
+        "repository_write: allowed",
         "command.run: allowed",
         "max_attempts: 3",
         "max_llm_calls: 4",
         "dependency-update",
-        "Conformance</dt><dd>None",
+        "status: green",
+        "standards_touched: [&#39;project-standards&#39;]",
+        "accepted_standards: [&#39;security-standards&#39;]",
         "target_repository:",
         "AlobarQuest/change-manager",
-        "mutation_commands",
         "future_authority_marker",
         expected_fingerprint,
     ):
         assert value in page.text
-    assert page.text.index("uv add --dev &#39;httpx2&gt;=2.6.0&#39;") < page.text.index(
-        "uv sync --locked"
-    ) < page.text.index("uv run make check")
+    assert "uv add --dev 'httpx2>=2.6.0'" not in page.text
+    _assert_command_list(page.text, "allowed_commands", _ALLOWED_COMMANDS)
+    _assert_command_list(page.text, "mutation_commands", _MUTATION_COMMANDS)
     token, key = _form(page.text, review_unit.id, "authority-approval")
     response = db_client.post(
         f"/review/units/{review_unit.id}/authority-approval",
