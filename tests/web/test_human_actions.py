@@ -127,6 +127,7 @@ def test_authority_approval_records_the_unit_fingerprint(
         "dependency-update",
         "Conformance</dt><dd>None",
         "target_repository:",
+        "AlobarQuest/change-manager",
         "mutation_commands",
         "future_authority_marker",
         expected_fingerprint,
