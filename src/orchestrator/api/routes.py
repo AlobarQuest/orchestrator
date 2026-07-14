@@ -64,6 +64,7 @@ from orchestrator.api.schemas import (
     ReconciliationDetectCommand,
     ReconciliationDetectResponse,
     RecoverEvidenceCommand,
+    RecoverExpiredClaimCommand,
     ReleaseArtifactCommandModel,
     ReleaseArtifactResponse,
     RenewCommand,
@@ -100,6 +101,7 @@ from orchestrator.services.claims import (
     authorize_retry,
     claim_unit,
     reclaim_expired_claim,
+    recover_expired_claim,
     renew_claim,
     requeue_unit,
 )
@@ -1159,6 +1161,27 @@ def reclaim_expired(
 
 
 @router.post(
+    "/work-units/{unit_id}/recover-expired-claim",
+    response_model=UnitResponse,
+)
+def recover_expired(
+    unit_id: UUID,
+    body: RecoverExpiredClaimCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        recover_expired_claim(
+            session,
+            unit_id,
+            actor,
+            body.idempotency_key,
+            expected_version=body.expected_version,
+        )
+    )
+
+
+@router.post(
     "/work-units/{unit_id}/commands/{command}",
     response_model=TransitionResponse,
 )
@@ -1182,6 +1205,7 @@ def command(
             idempotency_key=body.idempotency_key,
             attempt=body.attempt,
             lease_token=body.lease_token,
+            reason=body.reason,
             standing_context=body.standing_context,
             context_snapshot_id=body.context_snapshot_id,
         ),

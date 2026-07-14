@@ -25,6 +25,7 @@ from orchestrator.web import router as web_router
 RECOVERY_ENTRY_POINTS = (
     ("src/orchestrator/services/claims.py", "requeue_unit"),
     ("src/orchestrator/services/claims.py", "authorize_retry"),
+    ("src/orchestrator/services/claims.py", "recover_expired_claim"),
 )
 ALLOWED_RECOVERY_TARGETS = {"READY", "CANCELLED"}
 

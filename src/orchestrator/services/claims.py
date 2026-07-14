@@ -224,7 +224,12 @@ def recover_expired_claim(
 ) -> WorkUnit | DomainError:
     try:
         result = _perform_expired_claim_recovery(
-            session, unit_id, actor, idempotency_key, expected_version=expected_version
+            session,
+            unit_id,
+            actor,
+            idempotency_key,
+            target=WorkUnitState.READY,
+            expected_version=expected_version,
         )
         session.commit()
         return result
@@ -242,6 +247,7 @@ def _perform_expired_claim_recovery(
     actor: ActorContext,
     idempotency_key: str,
     *,
+    target: WorkUnitState,
     expected_version: int | None = None,
 ) -> WorkUnit | DomainError:
     unit = _locked_unit(session, unit_id)
@@ -285,7 +291,7 @@ def _perform_expired_claim_recovery(
     _transition(
         session,
         unit,
-        WorkUnitState.READY,
+        target,
         actor=actor,
         idempotency_key=idempotency_key,
         occurred_at=now,
