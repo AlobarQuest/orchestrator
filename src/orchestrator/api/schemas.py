@@ -670,6 +670,8 @@ class StatusLedgerRowResponse(BaseModel):
     claim_id: UUID | None
     claim_attempt: int | None
     claim_lease_expires_at: datetime | None
+    claim_released_at: datetime | None
+    claim_terminal_reason: str | None
     last_heartbeat_at: datetime | None
     last_event_at: datetime | None
     blockers: list[dict[str, Any | None]]

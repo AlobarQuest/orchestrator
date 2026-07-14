@@ -68,6 +68,8 @@ class StatusLedgerRow:
     claim_id: uuid.UUID | None
     claim_attempt: int | None
     claim_lease_expires_at: datetime | None
+    claim_released_at: datetime | None
+    claim_terminal_reason: str | None
     last_heartbeat_at: datetime | None
     last_event_at: datetime | None
     blockers: tuple[dict[str, object | None], ...]
@@ -124,6 +126,8 @@ def _row_for_unit(session: Session, unit: WorkUnit) -> StatusLedgerRow:
         claim_id=claim.id if claim is not None else None,
         claim_attempt=claim.attempt if claim is not None else None,
         claim_lease_expires_at=claim.lease_expires_at if claim is not None else None,
+        claim_released_at=claim.released_at if claim is not None else None,
+        claim_terminal_reason=claim.terminal_reason if claim is not None else None,
         last_heartbeat_at=claim.renewed_at if claim is not None else None,
         last_event_at=_max_datetime(
             latest_event.occurred_at if latest_event is not None else None,

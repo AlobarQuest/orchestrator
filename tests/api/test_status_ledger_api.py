@@ -89,6 +89,8 @@ def test_status_ledger_get_returns_read_only_projection(db_client: TestClient) -
     assert row["claim_id"] == claim.json()["claim_id"]
     assert row["claim_attempt"] == 1
     assert row["claim_lease_expires_at"] == claim.json()["expires_at"]
+    assert row["claim_released_at"] is None
+    assert row["claim_terminal_reason"] is None
     assert row["blockers"] == []
     assert row["pending_human_approvals"] == []
     assert row["latest_evidence"] is None
@@ -133,3 +135,20 @@ def test_status_ledger_has_no_mutation_routes() -> None:
 
     operations = document["paths"]["/api/v1/status-ledger"]
     assert set(operations) == {"get"}
+
+
+def test_status_ledger_openapi_exposes_nullable_claim_release_properties() -> None:
+    document = TestClient(__import__("orchestrator.main").main.app).get("/openapi.json").json()
+
+    properties = document["components"]["schemas"]["StatusLedgerRowResponse"]["properties"]
+    assert properties["claim_released_at"] == {
+        "anyOf": [
+            {"type": "string", "format": "date-time"},
+            {"type": "null"},
+        ],
+        "title": "Claim Released At",
+    }
+    assert properties["claim_terminal_reason"] == {
+        "anyOf": [{"type": "string"}, {"type": "null"}],
+        "title": "Claim Terminal Reason",
+    }
