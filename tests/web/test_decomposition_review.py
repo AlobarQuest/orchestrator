@@ -112,6 +112,7 @@ def test_proposal_page_renders_normalized_authority_envelope(
         assert unit is not None
         unit.authority = authority
         session.commit()
+        expected_fingerprint = unit.authority_fingerprint
 
     page = db_client.get(f"/review/decomposition-proposals/{proposal.id}", headers=HUMAN)
 
@@ -119,13 +120,23 @@ def test_proposal_page_renders_normalized_authority_envelope(
     for value in (
         "AlobarQuest/change-manager",
         "dependency-update",
+        "repo.edit: allowed",
+        "command.run: allowed",
+        "max_attempts: 3",
+        "max_llm_calls: 4",
+        "status: green",
+        "target_repository:",
         "uv add --dev &#39;httpx2&gt;=2.6.0&#39;",
         "uv sync --locked",
         "uv run make check",
         "mutation_commands",
         "future_authority_marker",
+        expected_fingerprint,
     ):
         assert value in page.text
+    assert page.text.index("uv add --dev &#39;httpx2&gt;=2.6.0&#39;") < page.text.index(
+        "uv sync --locked"
+    ) < page.text.index("uv run make check")
 
 
 def test_approve_form_requires_human_confirmation_and_records_decision(

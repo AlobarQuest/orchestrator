@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.authority import normalize_authority
+from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.runner_authority import dependency_update_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
@@ -42,6 +42,12 @@ class DispatchCommand:
     actor: ActorContext
     idempotency_key: str
     expected_version: int | None = None
+
+
+@dataclass(frozen=True)
+class AdmissionDecision:
+    reason: str | None
+    target_repository: str
 
 
 class WorkflowDispatcher(Protocol):
@@ -160,9 +166,9 @@ def _dispatch_work_unit(
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
 
-    repository = _target_repository(unit)
-    blocked_reason = _blocked_reason(unit, settings)
-    if blocked_reason is not None:
+    admission = _blocked_reason(unit, settings)
+    repository = admission.target_repository
+    if admission.reason is not None:
         return _record_dispatch(
             session,
             command,
@@ -170,8 +176,8 @@ def _dispatch_work_unit(
             revision,
             settings,
             repository=repository,
-            status="skipped" if _is_skipped_reason(blocked_reason) else "blocked",
-            reason_code=blocked_reason,
+            status="skipped" if _is_skipped_reason(admission.reason) else "blocked",
+            reason_code=admission.reason,
             payload=_payload(unit, settings, repository),
         )
 
@@ -241,7 +247,9 @@ def _validate_idempotent_record(
     # repository this command's unit resolves to — never against a process-wide setting,
     # which would make a legitimate replay look like a conflict.
     unit = session.get(WorkUnit, command.unit_id)
-    expected_repository = _target_repository(unit) if unit is not None else None
+    expected_repository = (
+        _target_repository(normalize_authority(unit.authority)) if unit is not None else None
+    )
     if (
         record.work_unit_id != command.unit_id
         or record.runner_attempt != command.runner_attempt
@@ -256,28 +264,32 @@ def _validate_idempotent_record(
         )
 
 
-def _blocked_reason(unit: WorkUnit, settings: DispatchSettings) -> str | None:
+def _blocked_reason(unit: WorkUnit, settings: DispatchSettings) -> AdmissionDecision:
+    envelope = normalize_authority(unit.authority)
+    target_repository = _target_repository(envelope)
     if not settings.enabled:
-        return "dispatch_disabled"
+        return AdmissionDecision("dispatch_disabled", target_repository)
     if not settings.github_app_configured:
-        return "github_app_credentials_missing"
+        return AdmissionDecision("github_app_credentials_missing", target_repository)
     if unit.state != "ready":
-        return "work_unit_not_ready"
+        return AdmissionDecision("work_unit_not_ready", target_repository)
     if unit.authority_approval_id is None:
-        return "authority_approval_missing"
+        return AdmissionDecision("authority_approval_missing", target_repository)
     if unit.required_capability not in settings.enabled_capabilities:
-        return "capability_not_enabled"
-    change_class = _change_class(unit)
+        return AdmissionDecision("capability_not_enabled", target_repository)
+    change_class = _change_class(envelope, unit.required_capability)
     if change_class not in settings.allowed_change_classes:
-        return "change_class_not_allowed"
-    if normalize_authority(unit.authority).level_for(unit.required_capability) != "allowed":
-        return "capability_not_authorized"
-    target_repository = _target_repository(unit)
+        return AdmissionDecision("change_class_not_allowed", target_repository)
+    if envelope.level_for(unit.required_capability) != "allowed":
+        return AdmissionDecision("capability_not_authorized", target_repository)
     if not target_repository:
-        return "target_repository_missing"
+        return AdmissionDecision("target_repository_missing", target_repository)
     if target_repository not in settings.allowed_target_repositories:
-        return "target_repository_not_allowed"
-    return _authority_violation_reason(unit) or _conformance_blocked_reason(unit)
+        return AdmissionDecision("target_repository_not_allowed", target_repository)
+    return AdmissionDecision(
+        _authority_violation_reason(envelope) or _conformance_blocked_reason(envelope),
+        target_repository,
+    )
 
 
 def _is_skipped_reason(reason: str) -> bool:
@@ -289,29 +301,26 @@ def _is_skipped_reason(reason: str) -> bool:
     }
 
 
-def _authority_violation_reason(unit: WorkUnit) -> str | None:
-    violation = dependency_update_authority_violation(normalize_authority(unit.authority))
+def _authority_violation_reason(envelope: AuthorityEnvelope) -> str | None:
+    violation = dependency_update_authority_violation(envelope)
     return violation.code if violation is not None else None
 
 
-def _change_class(unit: WorkUnit) -> str:
-    return normalize_authority(unit.authority).change_class or unit.required_capability
+def _change_class(envelope: AuthorityEnvelope, required_capability: str) -> str:
+    return envelope.change_class or required_capability
 
 
-def _target_repository(unit: WorkUnit) -> str:
+def _target_repository(envelope: AuthorityEnvelope) -> str:
     """Routing is a property of the unit, never of the process.
 
     The runner refuses to act unless the workflow it runs in IS the unit's target repo,
     so a process-global target would misroute every fan-out unit rather than fail.
     """
-    constraints = unit.authority.get("constraints", {})
-    if not isinstance(constraints, Mapping):
-        return ""
-    repository = constraints.get("target_repository")
+    repository = envelope.constraints.get("target_repository")
     return repository if isinstance(repository, str) else ""
 
 
-def _conformance_blocked_reason(unit: WorkUnit) -> str | None:
+def _conformance_blocked_reason(envelope: AuthorityEnvelope) -> str | None:
     """Conformance is attested per unit, against that unit's own target repository.
 
     The package revision's enforcement snapshot cannot carry this: it is written once at
@@ -323,7 +332,7 @@ def _conformance_blocked_reason(unit: WorkUnit) -> str | None:
     `exceptions:` frontmatter, security-standards `.security-scan-allow.toml`) — never
     echoed from `standards_touched`, or the subset branch below admits everything.
     """
-    conformance = normalize_authority(unit.authority).conformance
+    conformance = envelope.conformance
     if conformance is None:
         return "conformance_missing"
     touched = _string_set(conformance.get("standards_touched"))

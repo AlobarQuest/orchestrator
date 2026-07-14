@@ -212,6 +212,27 @@ def test_dispatch_skips_legacy_invalid_dependency_update_authority(
     assert github.calls == []
 
 
+def test_dispatch_uses_one_normalized_authority_snapshot(
+    migrated_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unit = ready_unit(migrated_session, key="one-authority-snapshot")
+    github = FakeGitHubDispatcher([])
+    original = dispatch_module.normalize_authority
+    calls: list[object] = []
+
+    def track_normalization(value: object):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(dispatch_module, "normalize_authority", track_normalization)
+
+    record = dispatch_work_unit(migrated_session, dispatch_command(unit.id), settings(), github)
+
+    assert record.status == "dispatched"
+    assert len(calls) == 1
+
+
 def test_dispatch_sends_ws41_workflow_dispatch_once(migrated_session: Session) -> None:
     unit = ready_unit(migrated_session)
     github = FakeGitHubDispatcher([])

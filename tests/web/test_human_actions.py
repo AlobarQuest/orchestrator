@@ -119,7 +119,21 @@ def test_authority_approval_records_the_unit_fingerprint(
         expected_fingerprint = unit.authority_fingerprint
 
     page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
-    assert "future_authority_marker" in page.text
+    for value in (
+        "repo.edit: allowed",
+        "command.run: allowed",
+        "max_attempts: 3",
+        "max_llm_calls: 4",
+        "dependency-update",
+        "Conformance</dt><dd>None",
+        "target_repository:",
+        "future_authority_marker",
+        expected_fingerprint,
+    ):
+        assert value in page.text
+    assert page.text.index("uv add --dev &#39;httpx2&gt;=2.6.0&#39;") < page.text.index(
+        "uv sync --locked"
+    ) < page.text.index("uv run make check")
     token, key = _form(page.text, review_unit.id, "authority-approval")
     response = db_client.post(
         f"/review/units/{review_unit.id}/authority-approval",
@@ -180,6 +194,14 @@ def test_invalid_legacy_authority_hides_and_rejects_authority_approval(
     with Session(migrated_engine) as session:
         assert session.scalar(select(func.count()).select_from(Approval)) == 1
         assert session.scalar(select(func.count()).select_from(Event)) == 0
+
+
+def test_unit_page_renders_empty_unknown_fields(
+    db_client: TestClient, review_unit: WorkUnit
+) -> None:
+    page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+
+    assert "Unknown fields</dt><dd>None" in page.text
 
 
 def test_inactive_human_and_worker_posts_are_denied(

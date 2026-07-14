@@ -420,6 +420,39 @@ def test_authority_approval_rejects_legacy_invalid_dependency_update_envelope(
     assert migrated_session.scalar(select(func.count()).select_from(Event)) == 0
 
 
+def test_action_approval_remains_version_bound_without_authority_effect(
+    migrated_session: Session,
+) -> None:
+    revision = register_test_revision(migrated_session)
+    unit = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="action-approval",
+        title="Action approval",
+        outcome="Action approval remains unchanged.",
+        required_capability="repository_write",
+        authority=AUTHORITY,
+        approved_by="human-1",
+        approved_at=NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+
+    approval = record_approval(
+        migrated_session,
+        unit_id=unit.id,
+        subject_type="action",
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        reason="approve action",
+        idempotency_key="action-approval",
+        expected_version=unit.version,
+    )
+
+    assert approval.subject_revision_or_fingerprint == str(unit.version)
+    assert unit.authority_approval_id is None
+
+
 def test_concurrent_identical_first_registration_converges(
     migrated_engine: Engine,
 ) -> None:
