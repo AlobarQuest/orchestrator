@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import Event
+from orchestrator.persistence.models import Claim, Event
 from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 
@@ -19,6 +19,33 @@ def command_for(unit, *, idempotency_key: str = "claim-1") -> TransitionCommand:
         actor=ActorContext("worker-1", ActorRole.SYSTEM),
         expected_version=unit.version,
         idempotency_key=idempotency_key,
+    )
+
+
+class FixedClock:
+    def __init__(self, value: datetime) -> None:
+        self.value = value
+
+    def now(self, session: Session) -> datetime:
+        del session
+        return self.value
+
+
+def worker_command(
+    unit,
+    grant: LeaseGrant,
+    target: WorkUnitState,
+    *,
+    idempotency_key: str,
+) -> TransitionCommand:
+    return TransitionCommand(
+        unit_id=unit.id,
+        target=target,
+        actor=ActorContext("worker-1", ActorRole.WORKER),
+        expected_version=unit.version,
+        idempotency_key=idempotency_key,
+        attempt=grant.attempt,
+        lease_token=grant.lease_token,
     )
 
 
@@ -38,12 +65,11 @@ def test_transition_appends_attributable_event(migrated_session: Session, ready_
 def test_transition_uses_injected_clock(migrated_session: Session, ready_unit) -> None:
     occurred_at = datetime(2025, 1, 2, tzinfo=UTC)
 
-    class FixedClock:
-        def now(self, session: Session) -> datetime:
-            del session
-            return occurred_at
-
-    result = transition_unit(migrated_session, command_for(ready_unit), clock=FixedClock())
+    result = transition_unit(
+        migrated_session,
+        command_for(ready_unit),
+        clock=FixedClock(occurred_at),
+    )
     persisted_event = migrated_session.get(Event, result.event_id)
 
     assert persisted_event is not None
@@ -211,3 +237,135 @@ def test_worker_transition_rejects_invalid_claim_proof(
         )
 
     assert error.value.code == "active_claim_required"
+
+
+@pytest.mark.parametrize("source", [WorkUnitState.CLAIMED, WorkUnitState.EXECUTING])
+def test_worker_failure_releases_claim_at_transition_time_and_replays_stably(
+    migrated_session: Session,
+    ready_unit,
+    source: WorkUnitState,
+) -> None:
+    grant = claim_unit(
+        migrated_session,
+        ready_unit.id,
+        ActorContext("worker-1", ActorRole.WORKER),
+        f"claim-worker-failure-{source}",
+    )
+    assert isinstance(grant, LeaseGrant)
+    if source is WorkUnitState.EXECUTING:
+        transition_unit(
+            migrated_session,
+            worker_command(
+                ready_unit,
+                grant,
+                WorkUnitState.EXECUTING,
+                idempotency_key="start-before-failure",
+            ),
+        )
+    active_claim = migrated_session.get(Claim, grant.claim_id)
+    assert active_claim is not None
+    occurred_at = active_claim.acquired_at + timedelta(seconds=1)
+    command = worker_command(
+        ready_unit,
+        grant,
+        WorkUnitState.FAILED,
+        idempotency_key=f"worker-failure-{source}",
+    )
+
+    first = transition_unit(migrated_session, command, clock=FixedClock(occurred_at))
+    claim = migrated_session.get(Claim, grant.claim_id)
+    assert claim is not None
+    original_release = (claim.released_at, claim.terminal_reason)
+    replay = transition_unit(
+        migrated_session,
+        command,
+        clock=FixedClock(occurred_at + timedelta(days=1)),
+    )
+
+    migrated_session.expire_all()
+    persisted_claim = migrated_session.get(Claim, grant.claim_id)
+    assert replay == first
+    assert persisted_claim is not None
+    assert original_release == (occurred_at, "work_unit_failed")
+    assert (persisted_claim.released_at, persisted_claim.terminal_reason) == original_release
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        WorkUnitState.AWAITING_APPROVAL,
+        WorkUnitState.CLAIMED,
+        WorkUnitState.EXECUTING,
+    ],
+)
+def test_human_cancellation_releases_claim_at_transition_time_and_replays_stably(
+    migrated_session: Session,
+    ready_unit,
+    source: WorkUnitState,
+) -> None:
+    grant = claim_unit(
+        migrated_session,
+        ready_unit.id,
+        ActorContext("worker-1", ActorRole.WORKER),
+        f"claim-human-cancellation-{source}",
+    )
+    assert isinstance(grant, LeaseGrant)
+    if source is not WorkUnitState.CLAIMED:
+        transition_unit(
+            migrated_session,
+            worker_command(
+                ready_unit,
+                grant,
+                source,
+                idempotency_key=f"prepare-human-cancellation-{source}",
+            ),
+        )
+    occurred_at = datetime(2030, 3, 4, 5, 6, tzinfo=UTC)
+    command = TransitionCommand(
+        unit_id=ready_unit.id,
+        target=WorkUnitState.CANCELLED,
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        expected_version=ready_unit.version,
+        idempotency_key=f"human-cancellation-{source}",
+        reason="operator cancelled work",
+    )
+
+    first = transition_unit(migrated_session, command, clock=FixedClock(occurred_at))
+    claim = migrated_session.get(Claim, grant.claim_id)
+    assert claim is not None
+    original_release = (claim.released_at, claim.terminal_reason)
+    replay = transition_unit(
+        migrated_session,
+        command,
+        clock=FixedClock(datetime(2031, 3, 4, 5, 6, tzinfo=UTC)),
+    )
+
+    migrated_session.expire_all()
+    persisted_claim = migrated_session.get(Claim, grant.claim_id)
+    assert replay == first
+    assert persisted_claim is not None
+    assert original_release == (occurred_at, "work_unit_cancelled")
+    assert (persisted_claim.released_at, persisted_claim.terminal_reason) == original_release
+
+
+def test_human_cancellation_without_claim_succeeds_without_creating_one(
+    migrated_session: Session,
+    ready_unit,
+) -> None:
+    ready_unit.state = WorkUnitState.AWAITING_APPROVAL
+    migrated_session.commit()
+
+    result = transition_unit(
+        migrated_session,
+        TransitionCommand(
+            unit_id=ready_unit.id,
+            target=WorkUnitState.CANCELLED,
+            actor=ActorContext("human-1", ActorRole.HUMAN),
+            expected_version=ready_unit.version,
+            idempotency_key="human-cancellation-without-claim",
+            reason="operator cancelled unclaimed work",
+        ),
+    )
+
+    assert result.state is WorkUnitState.CANCELLED
+    assert migrated_session.query(Claim).filter_by(work_unit_id=ready_unit.id).count() == 0

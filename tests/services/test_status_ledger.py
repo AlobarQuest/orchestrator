@@ -16,6 +16,7 @@ WORKER = ActorContext("worker-1", ActorRole.WORKER)
 SECOND_WORKER = ActorContext("worker-2", ActorRole.WORKER)
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 VERIFIER = ActorContext("verifier-1", ActorRole.VERIFIER)
+HUMAN = ActorContext("human-1", ActorRole.HUMAN)
 
 
 def _claim_and_start(session: Session, unit) -> LeaseGrant:
@@ -132,6 +133,11 @@ def test_status_ledger_projects_runtime_state_without_writes(
     assert runtime.claim_id == grant.claim_id
     assert runtime.claim_attempt == grant.attempt
     assert runtime.claim_lease_expires_at == grant.expires_at
+    released_claim = migrated_session.get(Claim, grant.claim_id)
+    assert released_claim is not None
+    assert runtime.claim_released_at == released_claim.released_at
+    assert runtime.claim_released_at is not None
+    assert runtime.claim_terminal_reason == "work_unit_failed"
     assert runtime.last_event_at is not None
     assert runtime.last_heartbeat_at is None
     assert runtime.latest_evidence is not None
@@ -210,6 +216,8 @@ def test_status_ledger_uses_latest_claim_without_stale_credentials(
     assert row.actor_id == "worker-2"
     assert row.claim_id == second.claim_id
     assert row.claim_attempt == second.attempt
+    assert row.claim_released_at is None
+    assert row.claim_terminal_reason is None
     stale_claim = migrated_session.get(Claim, first.claim_id)
     assert stale_claim is not None
     assert stale_claim.terminal_reason is not None
@@ -250,6 +258,26 @@ def test_status_ledger_excludes_completed_and_cancelled_units_unless_requested(
     completed = register_context_unit(migrated_session, valid_context(), "ledger-completed")
     completed.state = "completed"
     migrated_session.commit()
+    cancelled = register_context_unit(migrated_session, valid_context(), "ledger-cancelled")
+    cancelled_grant = claim_unit(
+        migrated_session,
+        cancelled.id,
+        WORKER,
+        "claim-cancelled",
+        standing_context=valid_context(),
+    )
+    assert isinstance(cancelled_grant, LeaseGrant)
+    transition_unit(
+        migrated_session,
+        TransitionCommand(
+            unit_id=cancelled.id,
+            target=WorkUnitState.CANCELLED,
+            actor=HUMAN,
+            expected_version=cancelled.version,
+            idempotency_key="cancel-ledger-unit",
+            reason="operator cancelled work",
+        ),
+    )
 
     default_rows = status_ledger(migrated_session, StatusLedgerFilters())
     inactive_rows = status_ledger(
@@ -258,4 +286,10 @@ def test_status_ledger_excludes_completed_and_cancelled_units_unless_requested(
     )
 
     assert {row.unit_id for row in default_rows} == {active.id}
-    assert {row.unit_id for row in inactive_rows} == {active.id, completed.id}
+    assert {row.unit_id for row in inactive_rows} == {active.id, completed.id, cancelled.id}
+    cancelled_row = next(row for row in inactive_rows if row.unit_id == cancelled.id)
+    released_claim = migrated_session.get(Claim, cancelled_grant.claim_id)
+    assert released_claim is not None
+    assert cancelled_row.claim_released_at == released_claim.released_at
+    assert cancelled_row.claim_released_at is not None
+    assert cancelled_row.claim_terminal_reason == "work_unit_cancelled"

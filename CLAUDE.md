@@ -276,6 +276,13 @@ style of that module.
   produce a spray of unrelated failures (27 failed / 13 errors, on a tree that passes 1210/1210
   when run alone). Before believing a suite-wide regression, re-run it *alone*.
 
+- **Ordinary terminal lifecycle commands release active claims in the same transaction.** A
+  WORKER transition to `FAILED` uses `work_unit_failed`; a HUMAN transition to `CANCELLED` releases
+  the latest unreleased claim, when present, with `work_unit_cancelled`. Both paths go through the
+  sole `services.claim_release.release_claim` primitive and reuse the transition timestamp. Keep
+  idempotent replay before release and preserve the unit-then-claim row-lock order, or retries can
+  mutate terminal metadata and concurrent lifecycle operations can deadlock.
+
 - **This system has THREE vocabulary mismatches, and nothing checks any of them.** Wherever two
   vocabularies must agree, assume they don't until you have grepped both sides. All three below
   surfaced in a single workstream (WS-P2.15) and none was caught by any test:

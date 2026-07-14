@@ -26,6 +26,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.claim_release import release_claim
 
 POST_DEPLOY_AC_IDS = (
     "post-deploy-artifact",
@@ -152,12 +153,7 @@ def _perform_transition(
         if error.code == "invalid_transition" and source is WorkUnitState.EXECUTING:
             error.recovery = "submit"
         raise
-    if command.actor.role is ActorRole.WORKER:
-        claim = _require_active_claim(session, unit, command, occurred_at)
-        if command.target is WorkUnitState.EXECUTING:
-            claim.execution_context_snapshot_id = _execution_context_snapshot_id(
-                session, unit, revision, claim, command
-            )
+    _apply_claim_transition_effects(session, unit, revision, command, occurred_at)
 
     next_version = unit.version + 1
     unit.state = command.target
@@ -282,6 +278,39 @@ def _require_active_claim(
         )
     assert claim is not None
     return claim
+
+
+def _apply_claim_transition_effects(
+    session: Session,
+    unit: WorkUnit,
+    revision: WorkPackageRevision,
+    command: TransitionCommand,
+    occurred_at: datetime,
+) -> None:
+    if command.actor.role is ActorRole.WORKER:
+        claim = _require_active_claim(session, unit, command, occurred_at)
+        if command.target is WorkUnitState.EXECUTING:
+            claim.execution_context_snapshot_id = _execution_context_snapshot_id(
+                session, unit, revision, claim, command
+            )
+        elif command.target is WorkUnitState.FAILED:
+            release_claim(claim, terminal_reason="work_unit_failed", released_at=occurred_at)
+        return
+
+    if command.actor.role is ActorRole.HUMAN and command.target is WorkUnitState.CANCELLED:
+        claim = _latest_unreleased_claim(session, unit)
+        if claim is not None:
+            release_claim(claim, terminal_reason="work_unit_cancelled", released_at=occurred_at)
+
+
+def _latest_unreleased_claim(session: Session, unit: WorkUnit) -> Claim | None:
+    return session.scalar(
+        select(Claim)
+        .where(Claim.work_unit_id == unit.id, Claim.released_at.is_(None))
+        .order_by(Claim.attempt.desc())
+        .limit(1)
+        .with_for_update()
+    )
 
 
 def _execution_context_snapshot_id(
