@@ -1,7 +1,9 @@
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from sqlalchemy import select
@@ -219,9 +221,9 @@ def test_dispatch_uses_one_normalized_authority_snapshot(
     unit = ready_unit(migrated_session, key="one-authority-snapshot")
     github = FakeGitHubDispatcher([])
     original = dispatch_module.normalize_authority
-    calls: list[object] = []
+    calls: list[Mapping[str, Any]] = []
 
-    def track_normalization(value: object):
+    def track_normalization(value: Mapping[str, Any]) -> AuthorityEnvelope:
         calls.append(value)
         return original(value)
 

@@ -92,6 +92,7 @@ def test_proposal_page_shows_ac_mapping_and_decision_controls(
     assert "Approve" in page.text
     assert "Require revision" in page.text
     assert "Reject" in page.text
+    assert "Unknown fields</dt><dd>None" in page.text
     assert "dispatch" not in page.text.lower()
     assert "merge" not in page.text.lower()
 
@@ -156,7 +157,7 @@ def test_proposal_page_renders_normalized_authority_envelope(
         expected_fingerprint,
     ):
         assert value in page.text
-    assert "Unknown fields</dt><dd>None" in page.text
+    assert "Unknown fields</dt><dd><ul><li>future_authority_marker</li></ul>" in page.text
     assert "uv add --dev 'httpx2>=2.6.0'" not in page.text
     _assert_command_list(page.text, "allowed_commands", _ALLOWED_COMMANDS)
     _assert_command_list(page.text, "mutation_commands", _MUTATION_COMMANDS)
