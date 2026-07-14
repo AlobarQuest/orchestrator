@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Iterator, Mapping
 
 import pytest
 from sqlalchemy import func, select
@@ -194,6 +195,66 @@ def test_proposal_rejects_invalid_dependency_update_authority_before_persistence
 
     assert error.value.code == violation.code
     assert migrated_session.scalar(select(func.count()).select_from(DecompositionProposal)) == 0
+
+
+def test_proposal_persists_the_same_authority_payload_it_validates(
+    migrated_session: Session,
+) -> None:
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    valid_payload = {
+        "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "allowed_commands": ["uv sync --locked"],
+            "mutation_commands": ["uv sync --locked"],
+        },
+    }
+    changed_payload = {**valid_payload, "constraints": {"allowed_commands": ["uv sync --locked"]}}
+
+    class ChangingPayload(Mapping[str, object]):
+        reads = 0
+
+        def __iter__(self) -> Iterator[str]:
+            type(self).reads += 1
+            return iter(valid_payload if type(self).reads == 1 else changed_payload)
+
+        def __len__(self) -> int:
+            return len(valid_payload)
+
+        def __getitem__(self, key: str) -> object:
+            payload = valid_payload if type(self).reads == 1 else changed_payload
+            return payload[key]
+
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(
+            revision.id,
+            ac_ids,
+            proposed_units=(
+                ProposedUnit(
+                    unit_key="unit-1",
+                    title="Update dependency",
+                    outcome="Dependency is updated.",
+                    required_capability="repository_write",
+                    authority=AUTHORITY,
+                    authority_payload=ChangingPayload(),
+                ),
+            ),
+            dependencies=(),
+            ac_mappings=(AcMapping(ac_id=str(ac_ids["AC-001"]), unit_key="unit-1"),),
+        ),
+        worker_actor(),
+    )
+
+    persisted = migrated_session.scalar(
+        select(DecompositionProposalUnit).where(
+            DecompositionProposalUnit.proposal_id == proposal.id
+        )
+    )
+    assert persisted is not None
+    assert persisted.authority["constraints"]["mutation_commands"] == ["uv sync --locked"]
 
 
 def test_proposal_rejects_internal_dependency_cycle(migrated_session: Session) -> None:

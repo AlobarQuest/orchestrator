@@ -101,6 +101,7 @@ def test_proposal_page_renders_normalized_authority_envelope(
             "mutation_commands": ["uv add --dev 'httpx2>=2.6.0'"],
         },
         "conformance": {"status": "green", "standards_touched": [], "accepted_standards": []},
+        "future_authority_marker": "fingerprinted by name",
     }
     with Session(migrated_engine) as session:
         unit = session.scalar(
@@ -122,6 +123,7 @@ def test_proposal_page_renders_normalized_authority_envelope(
         "uv sync --locked",
         "uv run make check",
         "mutation_commands",
+        "future_authority_marker",
     ):
         assert value in page.text
 

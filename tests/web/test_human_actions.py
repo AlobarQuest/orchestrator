@@ -102,6 +102,7 @@ def _dependency_update_authority() -> dict[str, object]:
             ],
             "mutation_commands": ["uv add --dev 'httpx2>=2.6.0'"],
         },
+        "future_authority_marker": "fingerprinted by name",
     }
 
 
@@ -118,6 +119,7 @@ def test_authority_approval_records_the_unit_fingerprint(
         expected_fingerprint = unit.authority_fingerprint
 
     page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+    assert "future_authority_marker" in page.text
     token, key = _form(page.text, review_unit.id, "authority-approval")
     response = db_client.post(
         f"/review/units/{review_unit.id}/authority-approval",

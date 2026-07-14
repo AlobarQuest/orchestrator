@@ -53,6 +53,7 @@
   <dt>Change class</dt><dd>{{ unit.authority.change_class }}</dd>
   <dt>Conformance</dt><dd>{% if unit.authority.conformance %}<ul>{% for name, value in unit.authority.conformance.items() %}<li>{{ name }}: {{ value }}</li>{% endfor %}</ul>{% else %}None{% endif %}</dd>
   <dt>Constraints</dt><dd><ul>{% for name, value in unit.authority.constraints.items() %}<li>{{ name }}: {% if value is sequence and value is not string %}<ol>{% for command in value %}<li><code>{{ command }}</code></li>{% endfor %}</ol>{% else %}{{ value }}{% endif %}</li>{% endfor %}</ul></dd>
+  <dt>Unknown fields</dt><dd>{% if unit.authority.unknown_fields %}<ul>{% for name in unit.authority.unknown_fields %}<li>{{ name }}</li>{% endfor %}</ul>{% else %}None{% endif %}</dd>
   <dt>Fingerprint</dt><dd><code>{{ unit.authority_fingerprint }}</code></dd>
 </dl>
 {% endfor %}
