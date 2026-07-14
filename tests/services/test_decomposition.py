@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
+from orchestrator.kernel.runner_authority import dependency_update_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
@@ -965,6 +966,133 @@ def _proposal_units(
         )
     )
     return {row.unit_key: row for row in rows}
+
+
+@pytest.mark.parametrize(
+    ("constraints", "code"),
+    [
+        ({}, "authority_allowed_commands_invalid"),
+        ({"allowed_commands": ["make check"]}, "authority_mutation_commands_invalid"),
+        (
+            {
+                "allowed_commands": ["uv sync", "make check"],
+                "mutation_commands": ["uv lock"],
+            },
+            "authority_mutation_command_not_allowed",
+        ),
+    ],
+)
+def test_dependency_update_authority_rejects_non_executable_contract(
+    constraints: dict[str, object], code: str
+) -> None:
+    envelope = normalize_authority(
+        {
+            "change_class": "dependency-update",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": constraints,
+        }
+    )
+
+    violation = dependency_update_authority_violation(envelope)
+
+    assert violation is not None
+    assert violation.code == code
+
+
+@pytest.mark.parametrize(
+    ("constraints", "code"),
+    [
+        (
+            {"allowed_commands": [""], "mutation_commands": ["uv lock"]},
+            "authority_allowed_commands_invalid",
+        ),
+        (
+            {"allowed_commands": ["uv lock"], "mutation_commands": ["  "]},
+            "authority_mutation_commands_invalid",
+        ),
+        (
+            {"allowed_commands": [1], "mutation_commands": ["uv lock"]},
+            "authority_allowed_commands_invalid",
+        ),
+        (
+            {"allowed_commands": ["uv lock"], "mutation_commands": [True]},
+            "authority_mutation_commands_invalid",
+        ),
+        (
+            {"allowed_commands": {"command": "uv lock"}, "mutation_commands": ["uv lock"]},
+            "authority_allowed_commands_invalid",
+        ),
+        (
+            {"allowed_commands": ["uv lock"], "mutation_commands": ("uv lock",)},
+            "authority_mutation_commands_invalid",
+        ),
+    ],
+)
+def test_dependency_update_authority_rejects_invalid_command_entries(
+    constraints: dict[str, object],
+    code: str,
+) -> None:
+    envelope = normalize_authority(
+        {
+            "change_class": "dependency-update",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": constraints,
+        }
+    )
+
+    violation = dependency_update_authority_violation(envelope)
+
+    assert violation is not None
+    assert violation.code == code
+
+
+def test_dependency_update_authority_requires_command_run() -> None:
+    envelope = normalize_authority(
+        {
+            "change_class": "dependency-update",
+            "capabilities": {"repo.edit": "allowed"},
+            "constraints": {},
+        }
+    )
+
+    violation = dependency_update_authority_violation(envelope)
+
+    assert violation is not None
+    assert violation.code == "authority_command_run_required"
+
+
+@pytest.mark.parametrize(
+    ("change_class", "repo_edit_level"),
+    [("repository-change", "allowed"), ("dependency-update", "prohibited")],
+)
+def test_dependency_update_authority_ignores_out_of_scope_envelopes(
+    change_class: str,
+    repo_edit_level: str,
+) -> None:
+    envelope = normalize_authority(
+        {
+            "change_class": change_class,
+            "capabilities": {"repo.edit": repo_edit_level},
+            "constraints": {},
+        }
+    )
+
+    assert dependency_update_authority_violation(envelope) is None
+
+
+def test_dependency_update_authority_accepts_ordered_valid_command_lists() -> None:
+    envelope = normalize_authority(
+        {
+            "change_class": "dependency-update",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": {
+                "allowed_commands": ["uv add httpx", "uv sync --locked", "uv run make check"],
+                "mutation_commands": ["uv add httpx"],
+            },
+        }
+    )
+
+    assert dependency_update_authority_violation(envelope) is None
 
 
 def _fanout_units() -> tuple[ProposedUnit, ...]:

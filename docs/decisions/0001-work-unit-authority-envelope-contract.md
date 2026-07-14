@@ -121,6 +121,17 @@ which means "bounds on this unit's execution" and is read by the runner — the 
 both explicitly as optional fields it carries and ignores. Capabilities remain the sole source
 of runner permissions.
 
+**7. Dependency updates with `repo.edit` declare their intended mutators.**
+`constraints.mutation_commands` is required only when `change_class` is `dependency-update`
+and `repo.edit` is allowed. It is an ordered, fingerprinted list whose entries must also appear
+in the complete ordered `allowed_commands` list without changing spelling. The field is a subset
+declaration, not semantic proof that a command mutates a dependency; it binds the approved
+envelope to the commands expected to do so.
+
+This is a coordinated cross-repository contract field: the shared fixture changes together in
+orchestrator and factory-runner. Existing stored envelopes are immutable and are not rewritten;
+the new declaration applies only to newly admitted dependency-update `repo.edit` envelopes.
+
 ## Enforcement — the test that did not exist
 
 `tests/fixtures/runner_authority_envelope.json` is the single source of truth for the envelope
