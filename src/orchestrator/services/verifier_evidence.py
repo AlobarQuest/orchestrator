@@ -30,7 +30,10 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.evidence import append_verifier_evidence
+from orchestrator.services.evidence import (
+    append_verifier_evidence,
+    lock_evidence_idempotency_key,
+)
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.verifier_criteria import load_required_criteria
 
@@ -86,8 +89,10 @@ def record_named_check_evidence(
             raise DomainError(
                 "role_forbidden", "only verifiers may record named-check evidence", None
             )
+        lock_evidence_idempotency_key(session, normalized.idempotency_key)
         replay = _replay(session, normalized, payload)
         if replay is not None:
+            session.commit()
             return replay
         unit = _load_subject(session, normalized)
         _load_criterion(session, unit, normalized)
@@ -208,7 +213,9 @@ def _validate_bindings(
             "named check does not match the canonical dispatch",
             None,
         )
-    binding = session.get(UnitPrBinding, unit.id)
+    binding = session.scalar(
+        select(UnitPrBinding).where(UnitPrBinding.work_unit_id == unit.id).with_for_update()
+    )
     expected_url = f"https://github.com/{repository}/pull/{command.pr_number}"
     if binding is None or (
         binding.pr_number != command.pr_number

@@ -208,7 +208,7 @@ def record_adjudication(
         "work_unit_id": str(work_unit_id),
     }
     try:
-        _lock_idempotency_key(session, idempotency_key)
+        lock_evidence_idempotency_key(session, idempotency_key)
         unit, revision = _validated_subject(
             session,
             work_package_revision_id,
@@ -344,7 +344,7 @@ def _store_evidence(
         "work_unit_id": str(work_unit_id),
     }
     try:
-        _lock_idempotency_key(session, idempotency_key)
+        lock_evidence_idempotency_key(session, idempotency_key)
         unit, revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         replay = _evidence_replay(session, idempotency_key, command)
         if replay is not None:
@@ -358,6 +358,8 @@ def _store_evidence(
                 current_state=unit.state,
                 current_version=unit.version,
             )
+        if not isinstance(evidence_type, str):
+            raise DomainError("evidence_invalid", "evidence type must be a string", None)
         if evidence_type.startswith(VERIFIER_EVIDENCE_PREFIX):
             raise DomainError(
                 "evidence_type_reserved",
@@ -462,7 +464,7 @@ def _store_verifier_evidence(
         "work_unit_id": str(work_unit_id),
     }
     try:
-        _lock_idempotency_key(session, idempotency_key)
+        lock_evidence_idempotency_key(session, idempotency_key)
         unit, _revision = _validated_subject(
             session,
             work_package_revision_id,
@@ -471,9 +473,16 @@ def _store_verifier_evidence(
             allow_generated_post_deploy=True,
         )
         if attempt is not None and (
-            not isinstance(attempt, int) or isinstance(attempt, bool) or attempt <= 0
+            not isinstance(attempt, int)
+            or isinstance(attempt, bool)
+            or attempt <= 0
+            or attempt != unit.attempt_count
         ):
-            raise DomainError("evidence_invalid", "evidence attempt must be positive", None)
+            raise DomainError(
+                "evidence_invalid",
+                "evidence attempt must match the current positive unit attempt",
+                None,
+            )
         # Existing verifier findings and post-deploy observations intentionally retain the
         # historical attempt-1 sentinel. Named-check evidence supplies its locked attempt.
         evidence_attempt = attempt if attempt is not None else 1
@@ -760,7 +769,7 @@ def _adjudication_replay(
     return row
 
 
-def _lock_idempotency_key(session: Session, idempotency_key: str) -> None:
+def lock_evidence_idempotency_key(session: Session, idempotency_key: str) -> None:
     session.execute(
         text("SELECT pg_advisory_xact_lock(:namespace, hashtext(:idempotency_key))"),
         {
@@ -922,7 +931,7 @@ def recover_evidence(
         # those locks -- a check-then-insert without them is TOCTOU-racy, and the losing racer
         # writes the second head.
         _lock_evidence_head(session, work_unit_id, ac_id)
-        _lock_idempotency_key(session, idempotency_key)
+        lock_evidence_idempotency_key(session, idempotency_key)
         unit, _revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         replay = _evidence_replay(session, idempotency_key, command, action="evidence.recovered")
         if replay is not None:

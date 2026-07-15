@@ -125,14 +125,27 @@ def test_verifier_named_check_api_supersedes_and_replays(
     assert first.json()["supersedes_evidence_id"] == subject["worker_evidence_id"]
 
 
-def test_verifier_named_check_api_rejects_extra_and_coerced_assertion_values(
+def test_verifier_named_check_api_rejects_extra_top_level_field(
     db_client: TestClient,
     migrated_engine: Engine,
 ) -> None:
-    subject = _named_check_api_subject(migrated_engine, "named-check-api-schema")
+    subject = _named_check_api_subject(migrated_engine, "named-check-api-extra-field")
     path = f"/api/v1/work-units/{subject['unit_id']}/verifier-evidence/named-check"
-    command = _named_check_api_command(subject, "named-check-api-schema-command")
+    command = _named_check_api_command(subject, "named-check-api-extra-field-command")
     command["unexpected"] = "value"
+
+    response = db_client.post(path, headers=VERIFIER, json=command)
+
+    assert response.status_code == 422
+
+
+def test_verifier_named_check_api_rejects_coerced_assertion_scalar(
+    db_client: TestClient,
+    migrated_engine: Engine,
+) -> None:
+    subject = _named_check_api_subject(migrated_engine, "named-check-api-coerced-scalar")
+    path = f"/api/v1/work-units/{subject['unit_id']}/verifier-evidence/named-check"
+    command = _named_check_api_command(subject, "named-check-api-coerced-scalar-command")
     assertions = command["assertions"]
     assert isinstance(assertions, list)
     assertion = assertions[0]

@@ -1,8 +1,12 @@
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import replace
+from threading import Event as ThreadEvent
 from typing import cast
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import Engine, event, func, select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -14,7 +18,7 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
     UnitPrBinding,
 )
-from orchestrator.services.evidence import append_evidence
+from orchestrator.services.evidence import append_evidence, append_verifier_evidence
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from orchestrator.services.verifier_evaluators import evaluate_criterion
@@ -81,6 +85,55 @@ def test_worker_cannot_submit_reserved_verifier_evidence_type(
 
     assert isinstance(result, DomainError)
     assert result.code == "evidence_type_reserved"
+
+
+def test_worker_non_string_evidence_type_is_rejected_before_claim_validation(
+    migrated_session: Session,
+) -> None:
+    unit, _dispatch = automated_check_unit(migrated_session, "non-string-worker-type")
+
+    result = append_evidence(
+        migrated_session,
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id="AC-006",
+        attempt=unit.attempt_count,
+        actor=WORKER,
+        lease_token="not-an-active-lease",
+        evidence_type=cast(str, 17),
+        stable_ref="https://github.com/example/run/1",
+        payload={"conclusion": "success"},
+        source_revision=HEAD_SHA,
+        idempotency_key="non-string-worker-type-attempt",
+        expected_version=unit.version,
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "evidence_invalid"
+
+
+def test_verifier_evidence_attempt_must_match_locked_unit_attempt(
+    migrated_session: Session,
+) -> None:
+    unit, _dispatch = automated_check_unit(migrated_session, "verifier-attempt-mismatch")
+
+    result = append_verifier_evidence(
+        migrated_session,
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id="AC-006",
+        actor=VERIFIER,
+        evidence_type=VERIFIER_NAMED_CHECK_EVIDENCE_TYPE,
+        stable_ref="https://github.com/example/run/1",
+        payload={"conclusion": "success"},
+        source_revision=HEAD_SHA,
+        idempotency_key="verifier-attempt-mismatch-command",
+        expected_version=unit.version,
+        attempt=unit.attempt_count + 1,
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "evidence_invalid"
 
 
 @pytest.mark.parametrize("actor", [WORKER, SYSTEM])
@@ -468,6 +521,127 @@ def test_named_check_replay_survives_lifecycle_and_version_advancement(
 
     assert isinstance(replay, Evidence)
     assert replay.id == first.id
+
+
+def test_named_check_locks_pr_binding_until_evidence_commit(migrated_engine: Engine) -> None:
+    with Session(migrated_engine) as setup:
+        unit, dispatch = automated_check_unit(setup, "named-check-binding-lock")
+        command = named_check_command(unit, dispatch)
+        unit_id = unit.id
+
+    binding_read = ThreadEvent()
+    update_finished = ThreadEvent()
+
+    def pause_after_binding_read(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if "FROM unit_pr_binding" in statement:
+            binding_read.set()
+            assert update_finished.wait(timeout=5)
+
+    event.listen(migrated_engine, "after_cursor_execute", pause_after_binding_read)
+
+    def record() -> Evidence | DomainError:
+        with Session(migrated_engine, expire_on_commit=False) as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            return record_named_check_evidence(session, command)
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(record)
+            assert binding_read.wait(timeout=5)
+            with Session(migrated_engine) as updater:
+                updater.execute(text("SET LOCAL lock_timeout = '250ms'"))
+                try:
+                    updater.execute(
+                        text(
+                            "UPDATE unit_pr_binding "
+                            "SET head_sha = :head_sha, verification_read_head_sha = :head_sha "
+                            "WHERE work_unit_id = :unit_id"
+                        ),
+                        {"head_sha": "f" * 40, "unit_id": unit_id},
+                    )
+                    updater.commit()
+                    update_result = "changed"
+                except OperationalError:
+                    updater.rollback()
+                    update_result = "locked"
+                finally:
+                    update_finished.set()
+            result = future.result(timeout=10)
+    finally:
+        event.remove(migrated_engine, "after_cursor_execute", pause_after_binding_read)
+
+    assert update_result == "locked"
+    assert isinstance(result, Evidence)
+    assert result.source_revision == HEAD_SHA
+
+
+def test_concurrent_same_key_named_check_delivery_replays_after_split_read_window(
+    migrated_engine: Engine,
+) -> None:
+    with Session(migrated_engine) as setup:
+        unit, dispatch = automated_check_unit(setup, "named-check-concurrent-replay")
+        command = named_check_command(unit, dispatch)
+
+    replay_read_paused = ThreadEvent()
+    release_replay_read = ThreadEvent()
+    paused_connection: list[int] = []
+
+    def pause_first_replay_between_evidence_and_event_reads(
+        connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if "FROM evidence" not in statement or paused_connection:
+            return
+        paused_connection.append(id(connection))
+        replay_read_paused.set()
+        assert release_replay_read.wait(timeout=5)
+
+    event.listen(
+        migrated_engine,
+        "after_cursor_execute",
+        pause_first_replay_between_evidence_and_event_reads,
+    )
+
+    def record() -> Evidence | DomainError:
+        with Session(migrated_engine, expire_on_commit=False) as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            return record_named_check_evidence(session, command)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            paused = executor.submit(record)
+            assert replay_read_paused.wait(timeout=5)
+            contender = executor.submit(record)
+            try:
+                contender_result = contender.result(timeout=1)
+            except FutureTimeoutError:
+                contender_result = None
+            finally:
+                release_replay_read.set()
+            paused_result = paused.result(timeout=10)
+            if contender_result is None:
+                contender_result = contender.result(timeout=10)
+    finally:
+        event.remove(
+            migrated_engine,
+            "after_cursor_execute",
+            pause_first_replay_between_evidence_and_event_reads,
+        )
+
+    assert isinstance(paused_result, Evidence)
+    assert isinstance(contender_result, Evidence)
+    assert paused_result.id == contender_result.id
 
 
 @pytest.mark.parametrize(
