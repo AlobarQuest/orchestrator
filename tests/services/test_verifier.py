@@ -331,19 +331,43 @@ def test_automated_check_without_verifier_named_check_remains_judgment_required(
         idempotency_key="automated-check-legacy-evidence",
     )
 
-    result = verify_work_unit(
-        migrated_session,
-        VerifyCommand(
-            unit_id=unit.id,
-            actor=VERIFIER,
-            expected_version=unit.version,
-            idempotency_key="verify-automated-check-legacy",
-        ),
+    command = VerifyCommand(
+        unit_id=unit.id,
+        actor=VERIFIER,
+        expected_version=unit.version,
+        idempotency_key="verify-automated-check-legacy",
     )
+    result = verify_work_unit(migrated_session, command)
 
     assert result.result == "awaiting_review"
     assert result.state is WorkUnitState.AWAITING_REVIEW
     assert result.evaluations[0].status == "judgment_required"
+    evidence_count = migrated_session.scalar(
+        select(func.count()).select_from(Evidence).where(Evidence.work_unit_id == unit.id)
+    )
+    adjudication_count = migrated_session.scalar(
+        select(func.count()).select_from(Adjudication).where(Adjudication.work_unit_id == unit.id)
+    )
+
+    replay = verify_work_unit(migrated_session, command)
+
+    assert replay.result == result.result
+    assert replay.state is result.state
+    assert replay.evaluations == result.evaluations
+    assert (
+        migrated_session.scalar(
+            select(func.count()).select_from(Evidence).where(Evidence.work_unit_id == unit.id)
+        )
+        == evidence_count
+    )
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(Adjudication)
+            .where(Adjudication.work_unit_id == unit.id)
+        )
+        == adjudication_count
+    )
 
 
 def test_verifier_passes_and_completes_when_all_mapped_criteria_pass(

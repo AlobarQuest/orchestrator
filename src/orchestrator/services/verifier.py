@@ -397,15 +397,16 @@ def _replay_evaluation(
         session, unit.work_package_revision_id, unit.id, criterion.ac_id
     )
     if adjudication is None:
+        status, outcome, reason = evaluate_criterion(criterion, evidence)
         return VerifierEvaluation(
             ac_id=criterion.ac_id,
             evidence_type=criterion.evidence_type,
-            status="judgment_required",
-            outcome=None,
+            status=status,
+            outcome=outcome,
             evidence_id=evidence.id if evidence is not None else None,
             finding_evidence_id=None,
             adjudication_id=None,
-            reason=f"{criterion.evidence_type} requires review",
+            reason=reason,
         )
     status: EvaluationStatus = "passed"
     evidence_id = adjudication.evidence_id
