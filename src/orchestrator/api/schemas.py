@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
 
 class CommandBase(BaseModel):
@@ -197,6 +197,39 @@ class KnowledgePromotionSubmitCommandModel(CommandBase):
 
 class VerifyCommandModel(CommandBase):
     pass
+
+
+class NamedCheckAssertionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    expected: StrictStr | StrictInt | StrictBool
+    observed: StrictStr | StrictInt | StrictBool
+
+
+class VerifierNamedCheckEvidenceCommandModel(CommandBase):
+    model_config = ConfigDict(extra="forbid")
+
+    work_package_revision_id: UUID
+    ac_id: str = Field(min_length=1, max_length=100)
+    dispatch_id: UUID
+    repository: str = Field(min_length=1, max_length=300)
+    pr_number: int = Field(gt=0)
+    pr_url: str = Field(min_length=1, max_length=2000)
+    head_sha: str = Field(min_length=7, max_length=64)
+    check_name: str = Field(min_length=1, max_length=200)
+    conclusion: Literal[
+        "success",
+        "failure",
+        "cancelled",
+        "timed_out",
+        "action_required",
+        "neutral",
+        "skipped",
+    ]
+    run_id: str = Field(min_length=1, max_length=100)
+    run_url: str = Field(min_length=1, max_length=2000)
+    assertions: list[NamedCheckAssertionModel] = Field(min_length=1, max_length=32)
 
 
 class RevisionRegistration(CommandBase):

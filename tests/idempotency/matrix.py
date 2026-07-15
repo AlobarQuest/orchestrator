@@ -76,6 +76,12 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_verifier.py::test_verifier_replay_does_not_duplicate_rows",
     ),
     MatrixRow(
+        "verifier named-check evidence",
+        "/api/v1/work-units/{unit_id}/verifier-evidence/named-check",
+        ADVISORY_LOCK,
+        "tests/services/test_verifier_evidence.py::test_named_check_conflicting_idempotency_key_reuse_is_rejected",
+    ),
+    MatrixRow(
         "adjudication",
         "/api/v1/work-units/{unit_id}/adjudications",
         ADVISORY_LOCK,

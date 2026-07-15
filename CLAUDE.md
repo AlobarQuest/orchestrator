@@ -300,7 +300,16 @@ style of that module.
      `judgment_required` for **every automated AC, however good the evidence**. This is the real
      root of the known "judgment_required ACs must be passed out-of-band via the verifier M2M
      credential / no adjudication form in `/review`" gap. **It is a vocabulary gap, not a UI gap** —
-     fixing the UI would not fix it.
+     fixing the UI would not fix it. `automated_check` is now a deliberately narrower supported
+     vocabulary: it is deterministic only when the current evidence is verifier-owned
+     `verifier.github.named_check`; pre-CI worker evidence continues to require review.
+     Evidence ingestion and `/verify` are separate transactions, so the verifier must revalidate
+     that stored named-check evidence against the current dispatch, attempt, repository, PR, and
+     armed head, and prove the evaluated evidence row is still the current evidence-chain head.
+     It locks `UnitPrBinding` through the terminal verifier transition; the ingestion lock alone
+     cannot protect a later verification request from changed canonical state or superseding
+     verifier evidence.
+     **This does not fix or alias `automated_test`.**
   2. **`ac_id` means two different things.** `ac_mappings[].ac_id` / `retained_acs[].ac_id` on a
      decomposition proposal want the criterion's **database UUID** (`services/decomposition.py`
      builds its lookup on `str(criterion.id)`), while **evidence and adjudication want the human

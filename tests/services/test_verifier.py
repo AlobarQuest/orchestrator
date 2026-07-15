@@ -1,167 +1,373 @@
 import uuid
-from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import Engine, event, func, select, update
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.evidence_types import VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
+from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
-    ApprovedDecomposition,
-    DecompositionProposal,
-    DecompositionProposalAcMapping,
+    DispatchRecord,
     Event,
     Evidence,
-    PackageAcceptanceCriterion,
+    UnitPrBinding,
     WorkUnit,
 )
-from orchestrator.services.claims import LeaseGrant, claim_unit
-from orchestrator.services.evidence import append_evidence
-from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.evidence import current_evidence
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.packages import register_approved_unit, register_revision
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
-from tests.services.test_package_registration import AUTHORITY
-
-NOW = datetime(2026, 7, 8, tzinfo=UTC)
-HUMAN = ActorContext("human-1", ActorRole.HUMAN)
-WORKER = ActorContext("worker-1", ActorRole.WORKER)
-VERIFIER = ActorContext("verifier-1", ActorRole.VERIFIER)
-
-
-def mapped_submitted_unit(
-    session: Session,
-    *,
-    key: str,
-    evidence_type: str = "pytest",
-    ac_id: str = "ac-1",
-) -> WorkUnit:
-    revision = register_revision(
-        session,
-        package_id=f"pkg-{key}",
-        source_repository="owner/repo",
-        revision=1,
-        content_hash=f"sha256:{key}",
-        source_path="intent.md",
-        source_commit="abc123",
-        approved_by=HUMAN.actor_id,
-        approved_at=NOW,
-        approval_event_id=str(uuid.uuid4()),
-        enforcement_snapshot={"acceptance_criteria": [ac_id]},
-        authority=AUTHORITY,
-        registry_version=1,
-        actor_id=HUMAN.actor_id,
-        actor_role=HUMAN.role,
-    )
-    unit = register_approved_unit(
-        session,
-        revision_id=revision.id,
-        unit_key=key,
-        title=key,
-        outcome=f"{key} complete",
-        required_capability="repository_write",
-        authority=AUTHORITY,
-        max_attempts=3,
-        approved_by=HUMAN.actor_id,
-        approved_at=NOW,
-        actor_id=HUMAN.actor_id,
-        actor_role=HUMAN.role,
-    )
-    criterion = PackageAcceptanceCriterion(
-        work_package_revision_id=revision.id,
-        ac_id=ac_id,
-        condition=f"{ac_id} passes",
-        evidence_type=evidence_type,
-        evidence="recorded evidence",
-        approver="verifier",
-    )
-    proposal = DecompositionProposal(
-        work_package_revision_id=revision.id,
-        proposal_number=1,
-        state="approved",
-        rationale="map unit ACs",
-        proposed_by=HUMAN.actor_id,
-        proposed_actor_role=HUMAN.role,
-        decided_by=HUMAN.actor_id,
-        decided_at=NOW,
-        idempotency_key=f"{key}-proposal",
-    )
-    session.add_all([criterion, proposal])
-    session.flush()
-    session.add(
-        ApprovedDecomposition(
-            work_package_revision_id=revision.id,
-            proposal_id=proposal.id,
-            approved_by=HUMAN.actor_id,
-            approved_at=NOW,
-        )
-    )
-    session.add(
-        DecompositionProposalAcMapping(
-            proposal_id=proposal.id,
-            package_acceptance_criterion_id=criterion.id,
-            unit_key=unit.unit_key,
-        )
-    )
-    unit.state = WorkUnitState.SUBMITTED
-    session.commit()
-    return unit
+from orchestrator.services.verifier_evidence import (
+    record_named_check_evidence,
+)
+from tests.fixtures.named_check import (
+    AUTHORITY,
+    AUTOMATED_CHECK_AUTHORITY,
+    HEAD_SHA,
+    HUMAN,
+    NOW,
+    PR_NUMBER,
+    VERIFIER,
+    WORKER,
+    bind_dispatched_pull_request,
+    mapped_submitted_unit,
+    named_check_command,
+    record_worker_evidence,
+)
 
 
-def record_worker_evidence(
-    session: Session,
-    unit: WorkUnit,
-    *,
-    ac_id: str = "ac-1",
-    evidence_type: str = "pytest",
-    payload: dict[str, object],
-    idempotency_key: str = "worker-evidence",
-) -> Evidence:
-    unit.state = WorkUnitState.READY
-    session.commit()
-    grant = claim_unit(session, unit.id, WORKER, f"{idempotency_key}-claim")
-    assert isinstance(grant, LeaseGrant)
-    transition_unit(
-        session,
-        TransitionCommand(
+def test_verifier_named_check_supersedes_worker_evidence_and_completes(
+    migrated_session: Session,
+) -> None:
+    unit = mapped_submitted_unit(
+        migrated_session,
+        key="automated-check-pass",
+        evidence_type="automated_check",
+        ac_id="AC-006",
+        authority=AUTOMATED_CHECK_AUTHORITY,
+    )
+    worker_evidence = record_worker_evidence(
+        migrated_session,
+        unit,
+        ac_id="AC-006",
+        evidence_type="runner.pr.opened",
+        payload={"pr_number": PR_NUMBER, "head_sha": HEAD_SHA},
+        idempotency_key="automated-check-worker-evidence",
+    )
+    dispatch = bind_dispatched_pull_request(migrated_session, unit)
+
+    named_check = record_named_check_evidence(
+        migrated_session,
+        named_check_command(unit, dispatch),
+    )
+    assert isinstance(named_check, Evidence)
+    result = verify_work_unit(
+        migrated_session,
+        VerifyCommand(
             unit_id=unit.id,
-            target=WorkUnitState.EXECUTING,
-            actor=WORKER,
+            actor=VERIFIER,
             expected_version=unit.version,
-            idempotency_key=f"{idempotency_key}-start",
-            attempt=grant.attempt,
-            lease_token=grant.lease_token,
+            idempotency_key="verify-automated-check-pass",
         ),
     )
-    evidence = append_evidence(
-        session,
-        work_package_revision_id=unit.work_package_revision_id,
-        work_unit_id=unit.id,
-        ac_id=ac_id,
-        attempt=grant.attempt,
-        actor=WORKER,
-        lease_token=grant.lease_token,
-        evidence_type=evidence_type,
-        stable_ref=f"artifact://{idempotency_key}",
-        payload=payload,
-        source_revision="abc123",
-        idempotency_key=idempotency_key,
+
+    assert named_check.evidence_type == VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
+    assert named_check.supersedes_evidence_id == worker_evidence.id
+    current = current_evidence(migrated_session, unit.work_package_revision_id, unit.id, "AC-006")
+    assert current is not None
+    assert current.id == named_check.id
+    assert result.result == "completed"
+    assert result.state is WorkUnitState.COMPLETED
+    assert result.evaluations[0].status == "passed"
+    adjudication = migrated_session.get(Adjudication, result.evaluations[0].adjudication_id)
+    assert adjudication is not None
+    assert adjudication.evidence_id == named_check.id
+
+
+def test_verifier_named_check_fails_closed_when_pr_head_changes_after_recording(
+    migrated_session: Session,
+) -> None:
+    unit = mapped_submitted_unit(
+        migrated_session,
+        key="automated-check-stale-recorded-head",
+        evidence_type="automated_check",
+        ac_id="AC-006",
+        authority=AUTOMATED_CHECK_AUTHORITY,
     )
-    assert isinstance(evidence, Evidence)
-    transition_unit(
-        session,
-        TransitionCommand(
+    record_worker_evidence(
+        migrated_session,
+        unit,
+        ac_id="AC-006",
+        evidence_type="runner.pr.opened",
+        payload={"pr_number": PR_NUMBER, "head_sha": HEAD_SHA},
+        idempotency_key="automated-check-stale-recorded-head-worker-evidence",
+    )
+    dispatch = bind_dispatched_pull_request(migrated_session, unit)
+    named_check = record_named_check_evidence(
+        migrated_session,
+        named_check_command(unit, dispatch),
+    )
+    assert isinstance(named_check, Evidence)
+    binding = migrated_session.get(UnitPrBinding, unit.id)
+    assert binding is not None
+    binding.head_sha = "f" * 40
+    migrated_session.commit()
+
+    command = VerifyCommand(
+        unit_id=unit.id,
+        actor=VERIFIER,
+        expected_version=unit.version,
+        idempotency_key="verify-automated-check-stale-recorded-head",
+    )
+    result = verify_work_unit(migrated_session, command)
+
+    assert result.result == "revision_required"
+    assert result.state is WorkUnitState.REVISION_REQUIRED
+    assert result.evaluations[0].status == "failed_closed"
+    assert result.evaluations[0].outcome == "failed"
+    evidence_count = migrated_session.scalar(
+        select(func.count()).select_from(Evidence).where(Evidence.work_unit_id == unit.id)
+    )
+    adjudication_count = migrated_session.scalar(
+        select(func.count()).select_from(Adjudication).where(Adjudication.work_unit_id == unit.id)
+    )
+
+    replay = verify_work_unit(migrated_session, command)
+
+    assert replay.result == result.result
+    assert replay.state is result.state
+    assert replay.evaluations == result.evaluations
+    assert (
+        migrated_session.scalar(
+            select(func.count()).select_from(Evidence).where(Evidence.work_unit_id == unit.id)
+        )
+        == evidence_count
+    )
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(Adjudication)
+            .where(Adjudication.work_unit_id == unit.id)
+        )
+        == adjudication_count
+    )
+
+
+def test_verifier_rejects_superseded_passing_evidence_before_final_transition(
+    migrated_engine: Engine,
+) -> None:
+    with Session(migrated_engine, expire_on_commit=False) as setup:
+        unit = mapped_submitted_unit(
+            setup,
+            key="automated-check-superseded-during-verify",
+            evidence_type="automated_check",
+            ac_id="AC-006",
+            authority=AUTOMATED_CHECK_AUTHORITY,
+        )
+        record_worker_evidence(
+            setup,
+            unit,
+            ac_id="AC-006",
+            evidence_type="runner.pr.opened",
+            payload={"pr_number": PR_NUMBER, "head_sha": HEAD_SHA},
+            idempotency_key="automated-check-superseded-during-verify-worker-evidence",
+        )
+        dispatch = bind_dispatched_pull_request(setup, unit)
+        passing = record_named_check_evidence(setup, named_check_command(unit, dispatch))
+        assert isinstance(passing, Evidence)
+        command = VerifyCommand(
             unit_id=unit.id,
-            target=WorkUnitState.SUBMITTED,
-            actor=WORKER,
+            actor=VERIFIER,
             expected_version=unit.version,
-            idempotency_key=f"{idempotency_key}-submit",
-            attempt=grant.attempt,
-            lease_token=grant.lease_token,
-        ),
+            idempotency_key="verify-automated-check-superseded-during-verify",
+        )
+
+    commit_count = 0
+    superseding_evidence_id: uuid.UUID | None = None
+
+    def supersede_after_passed_adjudication(_session: Session) -> None:
+        nonlocal commit_count, superseding_evidence_id
+        commit_count += 1
+        if commit_count != 2:
+            return
+        with Session(migrated_engine, expire_on_commit=False) as writer:
+            current_unit = writer.get(WorkUnit, command.unit_id)
+            current_dispatch = writer.get(DispatchRecord, dispatch.id)
+            assert current_unit is not None
+            assert current_dispatch is not None
+            superseding = record_named_check_evidence(
+                writer,
+                named_check_command(
+                    current_unit,
+                    current_dispatch,
+                    conclusion="failure",
+                    idempotency_key="automated-check-superseding-failure",
+                ),
+            )
+            assert isinstance(superseding, Evidence)
+            assert superseding.supersedes_evidence_id == passing.id
+            superseding_evidence_id = superseding.id
+
+    with Session(migrated_engine, expire_on_commit=False) as verifier_session:
+        event.listen(verifier_session, "after_commit", supersede_after_passed_adjudication)
+        try:
+            result = verify_work_unit(verifier_session, command)
+        finally:
+            event.remove(
+                verifier_session,
+                "after_commit",
+                supersede_after_passed_adjudication,
+            )
+
+    assert superseding_evidence_id is not None
+    assert result.result == "revision_required"
+    assert result.state is WorkUnitState.REVISION_REQUIRED
+    assert result.evaluations[0].status == "failed_closed"
+    assert result.evaluations[0].outcome == "failed"
+    assert result.evaluations[0].evidence_id == superseding_evidence_id
+
+
+@pytest.mark.parametrize("changed_record", ["pr_binding", "dispatch"])
+def test_verifier_reloads_canonical_rows_after_passed_adjudication_commit(
+    migrated_engine: Engine,
+    changed_record: str,
+) -> None:
+    with Session(migrated_engine, expire_on_commit=False) as setup:
+        unit = mapped_submitted_unit(
+            setup,
+            key="automated-check-head-change-during-verify",
+            evidence_type="automated_check",
+            ac_id="AC-006",
+            authority=AUTOMATED_CHECK_AUTHORITY,
+        )
+        record_worker_evidence(
+            setup,
+            unit,
+            ac_id="AC-006",
+            evidence_type="runner.pr.opened",
+            payload={"pr_number": PR_NUMBER, "head_sha": HEAD_SHA},
+            idempotency_key="automated-check-head-change-during-verify-worker-evidence",
+        )
+        dispatch = bind_dispatched_pull_request(setup, unit)
+        named_check = record_named_check_evidence(setup, named_check_command(unit, dispatch))
+        assert isinstance(named_check, Evidence)
+        command = VerifyCommand(
+            unit_id=unit.id,
+            actor=VERIFIER,
+            expected_version=unit.version,
+            idempotency_key="verify-automated-check-head-change-during-verify",
+        )
+
+    commit_count = 0
+    binding_updated = False
+    held_canonical_rows: list[object] = []
+
+    def retain_loaded_canonical_rows(session: Session) -> None:
+        held_canonical_rows[:] = [
+            row
+            for row in session.identity_map.values()
+            if isinstance(row, (DispatchRecord, UnitPrBinding))
+        ]
+
+    def update_binding_after_passed_adjudication(_session: Session) -> None:
+        nonlocal binding_updated, commit_count
+        commit_count += 1
+        if commit_count != 2:
+            return
+        with Session(migrated_engine) as updater:
+            if changed_record == "pr_binding":
+                updater.execute(
+                    update(UnitPrBinding)
+                    .where(UnitPrBinding.work_unit_id == command.unit_id)
+                    .values(head_sha="f" * 40)
+                )
+            else:
+                updater.execute(
+                    update(DispatchRecord)
+                    .where(DispatchRecord.id == dispatch.id)
+                    .values(status="failed")
+                )
+            updater.commit()
+        binding_updated = True
+
+    with Session(migrated_engine, expire_on_commit=False) as verifier_session:
+        event.listen(verifier_session, "before_commit", retain_loaded_canonical_rows)
+        event.listen(verifier_session, "after_commit", update_binding_after_passed_adjudication)
+        try:
+            result = verify_work_unit(verifier_session, command)
+        finally:
+            event.remove(verifier_session, "before_commit", retain_loaded_canonical_rows)
+            event.remove(
+                verifier_session,
+                "after_commit",
+                update_binding_after_passed_adjudication,
+            )
+
+    assert binding_updated is True
+    assert result.result == "revision_required"
+    assert result.state is WorkUnitState.REVISION_REQUIRED
+    assert result.evaluations[0].status == "failed_closed"
+    assert result.evaluations[0].outcome == "failed"
+
+
+def test_automated_check_without_verifier_named_check_remains_judgment_required(
+    migrated_session: Session,
+) -> None:
+    unit = mapped_submitted_unit(
+        migrated_session,
+        key="automated-check-legacy",
+        evidence_type="automated_check",
+        ac_id="AC-006",
+        authority=AUTOMATED_CHECK_AUTHORITY,
     )
-    return evidence
+    record_worker_evidence(
+        migrated_session,
+        unit,
+        ac_id="AC-006",
+        evidence_type="runner.pr.opened",
+        payload={"pr_number": PR_NUMBER, "head_sha": HEAD_SHA},
+        idempotency_key="automated-check-legacy-evidence",
+    )
+
+    command = VerifyCommand(
+        unit_id=unit.id,
+        actor=VERIFIER,
+        expected_version=unit.version,
+        idempotency_key="verify-automated-check-legacy",
+    )
+    result = verify_work_unit(migrated_session, command)
+
+    assert result.result == "awaiting_review"
+    assert result.state is WorkUnitState.AWAITING_REVIEW
+    assert result.evaluations[0].status == "judgment_required"
+    evidence_count = migrated_session.scalar(
+        select(func.count()).select_from(Evidence).where(Evidence.work_unit_id == unit.id)
+    )
+    adjudication_count = migrated_session.scalar(
+        select(func.count()).select_from(Adjudication).where(Adjudication.work_unit_id == unit.id)
+    )
+
+    replay = verify_work_unit(migrated_session, command)
+
+    assert replay.result == result.result
+    assert replay.state is result.state
+    assert replay.evaluations == result.evaluations
+    assert (
+        migrated_session.scalar(
+            select(func.count()).select_from(Evidence).where(Evidence.work_unit_id == unit.id)
+        )
+        == evidence_count
+    )
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(Adjudication)
+            .where(Adjudication.work_unit_id == unit.id)
+        )
+        == adjudication_count
+    )
 
 
 def test_verifier_passes_and_completes_when_all_mapped_criteria_pass(
