@@ -33,7 +33,7 @@ dev = [
   "pytest-xdist>=3.6",
   "ruff==0.15.20",
   "pyright==1.1.411",
-  "httpx2>=2.5.0",
+  "httpx2>=2.7.0",
 ]
 
 [tool.pytest.ini_options]
