@@ -260,29 +260,44 @@ def _stabilize_named_check_evaluations(
     evaluations: tuple[VerifierEvaluation, ...],
 ) -> tuple[VerifierEvaluation, ...]:
     stabilized = list(evaluations)
-    for _attempt in range(len(stabilized) + 1):
-        changed = False
+    if not any(evaluation.outcome == "failed" for evaluation in stabilized):
         for index, (criterion, evaluation) in enumerate(zip(criteria, stabilized, strict=True)):
             evidence = _evaluation_evidence(session, evaluation)
             if evaluation.outcome != "passed" or not _is_trusted_named_check(criterion, evidence):
                 continue
             assert evidence is not None
-            binding_failure = validate_named_check_bindings(session, unit, criterion, evidence)
-            if binding_failure is None:
-                continue
-            stabilized[index] = _record_evaluation(
+            lock_named_check_subject(session, unit.id)
+            current = current_evidence(
                 session,
-                command,
-                unit,
-                criterion,
-                evidence,
-                *binding_failure,
-                key_scope="canonical-binding",
+                unit.work_package_revision_id,
+                unit.id,
+                criterion.ac_id,
             )
-            changed = True
-            break
-        if not changed:
-            break
+            if current is None or current.id != evidence.id:
+                stabilized[index] = _record_evaluation(
+                    session,
+                    command,
+                    unit,
+                    criterion,
+                    current or evidence,
+                    "failed_closed",
+                    "failed",
+                    "named-check evidence chain head changed before transition",
+                    key_scope="evidence-chain-head",
+                )
+                break
+            binding_failure = validate_named_check_bindings(session, unit, criterion, current)
+            if binding_failure is not None:
+                stabilized[index] = _record_evaluation(
+                    session,
+                    command,
+                    unit,
+                    criterion,
+                    current,
+                    *binding_failure,
+                    key_scope="canonical-binding",
+                )
+                break
 
     for criterion, evaluation in zip(criteria, stabilized, strict=True):
         evidence = _evaluation_evidence(session, evaluation)
@@ -392,16 +407,36 @@ def _replay_evaluation(
             adjudication_id=None,
             reason=f"{criterion.evidence_type} requires review",
         )
+    status: EvaluationStatus = "passed"
+    evidence_id = adjudication.evidence_id
+    if adjudication.outcome != "passed":
+        status, evidence_id = _replay_failure(
+            session,
+            adjudication.failed_evidence_id,
+        )
     return VerifierEvaluation(
         ac_id=criterion.ac_id,
         evidence_type=criterion.evidence_type,
-        status="passed" if adjudication.outcome == "passed" else "failed",
+        status=status,
         outcome=adjudication.outcome,
-        evidence_id=adjudication.evidence_id,
+        evidence_id=evidence_id,
         finding_evidence_id=adjudication.failed_evidence_id,
         adjudication_id=adjudication.id,
         reason=adjudication.rationale,
     )
+
+
+def _replay_failure(
+    session: Session,
+    failed_evidence_id: uuid.UUID | None,
+) -> tuple[EvaluationStatus, uuid.UUID | None]:
+    finding = session.get(Evidence, failed_evidence_id) if failed_evidence_id is not None else None
+    payload = finding.payload if finding is not None else None
+    evidence_id = finding.supersedes_evidence_id if finding is not None else None
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if status == "failed_closed":
+        return ("failed_closed", evidence_id)
+    return ("failed", evidence_id)
 
 
 def _child_key(command: VerifyCommand, *parts: str) -> str:

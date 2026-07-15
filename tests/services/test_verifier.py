@@ -13,6 +13,7 @@ from orchestrator.persistence.models import (
     Event,
     Evidence,
     UnitPrBinding,
+    WorkUnit,
 )
 from orchestrator.services.evidence import current_evidence
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
@@ -114,20 +115,118 @@ def test_verifier_named_check_fails_closed_when_pr_head_changes_after_recording(
     binding.head_sha = "f" * 40
     migrated_session.commit()
 
-    result = verify_work_unit(
-        migrated_session,
-        VerifyCommand(
-            unit_id=unit.id,
-            actor=VERIFIER,
-            expected_version=unit.version,
-            idempotency_key="verify-automated-check-stale-recorded-head",
-        ),
+    command = VerifyCommand(
+        unit_id=unit.id,
+        actor=VERIFIER,
+        expected_version=unit.version,
+        idempotency_key="verify-automated-check-stale-recorded-head",
     )
+    result = verify_work_unit(migrated_session, command)
 
     assert result.result == "revision_required"
     assert result.state is WorkUnitState.REVISION_REQUIRED
     assert result.evaluations[0].status == "failed_closed"
     assert result.evaluations[0].outcome == "failed"
+    evidence_count = migrated_session.scalar(
+        select(func.count()).select_from(Evidence).where(Evidence.work_unit_id == unit.id)
+    )
+    adjudication_count = migrated_session.scalar(
+        select(func.count()).select_from(Adjudication).where(Adjudication.work_unit_id == unit.id)
+    )
+
+    replay = verify_work_unit(migrated_session, command)
+
+    assert replay.result == result.result
+    assert replay.state is result.state
+    assert replay.evaluations == result.evaluations
+    assert (
+        migrated_session.scalar(
+            select(func.count()).select_from(Evidence).where(Evidence.work_unit_id == unit.id)
+        )
+        == evidence_count
+    )
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(Adjudication)
+            .where(Adjudication.work_unit_id == unit.id)
+        )
+        == adjudication_count
+    )
+
+
+def test_verifier_rejects_superseded_passing_evidence_before_final_transition(
+    migrated_engine: Engine,
+) -> None:
+    with Session(migrated_engine, expire_on_commit=False) as setup:
+        unit = mapped_submitted_unit(
+            setup,
+            key="automated-check-superseded-during-verify",
+            evidence_type="automated_check",
+            ac_id="AC-006",
+            authority=AUTOMATED_CHECK_AUTHORITY,
+        )
+        record_worker_evidence(
+            setup,
+            unit,
+            ac_id="AC-006",
+            evidence_type="runner.pr.opened",
+            payload={"pr_number": PR_NUMBER, "head_sha": HEAD_SHA},
+            idempotency_key="automated-check-superseded-during-verify-worker-evidence",
+        )
+        dispatch = bind_dispatched_pull_request(setup, unit)
+        passing = record_named_check_evidence(setup, named_check_command(unit, dispatch))
+        assert isinstance(passing, Evidence)
+        command = VerifyCommand(
+            unit_id=unit.id,
+            actor=VERIFIER,
+            expected_version=unit.version,
+            idempotency_key="verify-automated-check-superseded-during-verify",
+        )
+
+    commit_count = 0
+    superseding_evidence_id: uuid.UUID | None = None
+
+    def supersede_after_passed_adjudication(_session: Session) -> None:
+        nonlocal commit_count, superseding_evidence_id
+        commit_count += 1
+        if commit_count != 2:
+            return
+        with Session(migrated_engine, expire_on_commit=False) as writer:
+            current_unit = writer.get(WorkUnit, command.unit_id)
+            current_dispatch = writer.get(DispatchRecord, dispatch.id)
+            assert current_unit is not None
+            assert current_dispatch is not None
+            superseding = record_named_check_evidence(
+                writer,
+                named_check_command(
+                    current_unit,
+                    current_dispatch,
+                    conclusion="failure",
+                    idempotency_key="automated-check-superseding-failure",
+                ),
+            )
+            assert isinstance(superseding, Evidence)
+            assert superseding.supersedes_evidence_id == passing.id
+            superseding_evidence_id = superseding.id
+
+    with Session(migrated_engine, expire_on_commit=False) as verifier_session:
+        event.listen(verifier_session, "after_commit", supersede_after_passed_adjudication)
+        try:
+            result = verify_work_unit(verifier_session, command)
+        finally:
+            event.remove(
+                verifier_session,
+                "after_commit",
+                supersede_after_passed_adjudication,
+            )
+
+    assert superseding_evidence_id is not None
+    assert result.result == "revision_required"
+    assert result.state is WorkUnitState.REVISION_REQUIRED
+    assert result.evaluations[0].status == "failed_closed"
+    assert result.evaluations[0].outcome == "failed"
+    assert result.evaluations[0].evidence_id == superseding_evidence_id
 
 
 @pytest.mark.parametrize("changed_record", ["pr_binding", "dispatch"])
