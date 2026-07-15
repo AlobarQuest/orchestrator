@@ -77,6 +77,7 @@ from orchestrator.api.schemas import (
     TransitionResponse,
     UnitRegistration,
     UnitResponse,
+    VerifierNamedCheckEvidenceCommandModel,
     VerifyCommandModel,
     VerifyResponse,
 )
@@ -203,6 +204,11 @@ from orchestrator.services.release_artifacts import (
 from orchestrator.services.runner_brief import runner_brief
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
+from orchestrator.services.verifier_evidence import (
+    NamedCheckAssertion,
+    NamedCheckEvidenceCommand,
+    record_named_check_evidence,
+)
 
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[ActorContext, Depends(get_actor)]
@@ -1236,6 +1242,48 @@ def verify(
             expected_version=body.expected_version,
             idempotency_key=body.idempotency_key,
         ),
+    )
+
+
+@router.post(
+    "/work-units/{unit_id}/verifier-evidence/named-check",
+    response_model=EvidenceResponse,
+)
+def record_verifier_named_check_evidence(
+    unit_id: UUID,
+    body: VerifierNamedCheckEvidenceCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    return _raise_error(
+        record_named_check_evidence(
+            session,
+            NamedCheckEvidenceCommand(
+                unit_id=unit_id,
+                work_package_revision_id=body.work_package_revision_id,
+                ac_id=body.ac_id,
+                dispatch_id=body.dispatch_id,
+                repository=body.repository,
+                pr_number=body.pr_number,
+                pr_url=body.pr_url,
+                head_sha=body.head_sha,
+                check_name=body.check_name,
+                conclusion=body.conclusion,
+                run_id=body.run_id,
+                run_url=body.run_url,
+                assertions=tuple(
+                    NamedCheckAssertion(
+                        name=assertion.name,
+                        expected=assertion.expected,
+                        observed=assertion.observed,
+                    )
+                    for assertion in body.assertions
+                ),
+                actor=actor,
+                expected_version=body.expected_version,
+                idempotency_key=body.idempotency_key,
+            ),
+        )
     )
 
 

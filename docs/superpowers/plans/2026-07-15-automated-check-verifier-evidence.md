@@ -151,17 +151,11 @@ Run:
 
 Expected: all selected tests pass with a nonzero collected count.
 
-- [ ] **Step 7: Commit Task 1**
+- [ ] **Step 7: Keep Task 1 uncommitted until the API is wired**
 
-```bash
-git add src/orchestrator/kernel/evidence_types.py \
-  src/orchestrator/services/verifier_evidence.py \
-  src/orchestrator/services/evidence.py \
-  src/orchestrator/services/verifier_evaluators.py \
-  tests/services/test_verifier.py \
-  tests/services/test_verifier_evidence.py
-git commit -m "fix: adjudicate trusted automated check evidence"
-```
+The repository's unreachable-service architecture guard requires the service and its public
+verifier-only caller to land atomically. Do not add a temporary unreachable-function allowlist and
+do not create an intermediate Task 1 commit. Proceed directly to Task 2 with the green working tree.
 
 ---
 
@@ -252,12 +246,19 @@ git diff --check
 
 Require nonzero test collection, zero failures, and zero security `BLOCK` findings.
 
-- [ ] **Step 7: Commit Task 2**
+- [ ] **Step 7: Commit the atomic service, evaluator, and API repair**
 
 ```bash
-git add src/orchestrator/api/schemas.py src/orchestrator/api/routes.py \
-  tests/api/test_verifier_api.py docs/operations/verifier.md CLAUDE.md
-git commit -m "feat: expose verifier named check evidence command"
+git add src/orchestrator/kernel/evidence_types.py \
+  src/orchestrator/services/verifier_evidence.py \
+  src/orchestrator/services/evidence.py \
+  src/orchestrator/services/verifier_evaluators.py \
+  src/orchestrator/api/schemas.py src/orchestrator/api/routes.py \
+  tests/services/test_verifier.py tests/services/test_verifier_evidence.py \
+  tests/api/test_verifier_api.py tests/architecture/test_ws32_scope_guards.py \
+  docs/operations/verifier.md CLAUDE.md \
+  docs/superpowers/plans/2026-07-15-automated-check-verifier-evidence.md
+git commit -m "fix: adjudicate trusted automated check evidence"
 ```
 
 ---

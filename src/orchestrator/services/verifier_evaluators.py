@@ -1,5 +1,18 @@
+import uuid
 from typing import Any, Literal
 
+from orchestrator.kernel.evidence_types import (
+    NAMED_CHECK_MAX_ASSERTION_NAME_LENGTH,
+    NAMED_CHECK_MAX_ASSERTION_VALUE_LENGTH,
+    NAMED_CHECK_MAX_ASSERTIONS,
+    NAMED_CHECK_MAX_CHECK_NAME_LENGTH,
+    NAMED_CHECK_MAX_HEAD_SHA_LENGTH,
+    NAMED_CHECK_MAX_INTEGER_ABS,
+    NAMED_CHECK_MAX_REFERENCE_LENGTH,
+    NAMED_CHECK_MAX_REPOSITORY_LENGTH,
+    NAMED_CHECK_MAX_RUN_ID_LENGTH,
+    VERIFIER_NAMED_CHECK_EVIDENCE_TYPE,
+)
 from orchestrator.persistence.models import Evidence, PackageAcceptanceCriterion
 
 EvaluationStatus = Literal["passed", "failed", "failed_closed", "judgment_required"]
@@ -48,6 +61,14 @@ def evaluate_criterion(
     evidence: Evidence | None,
 ) -> tuple[EvaluationStatus, str | None, str]:
     evidence_type = criterion.evidence_type.strip().lower()
+    if evidence_type == "automated_check":
+        if evidence is None or evidence.evidence_type != VERIFIER_NAMED_CHECK_EVIDENCE_TYPE:
+            return (
+                "judgment_required",
+                None,
+                "automated_check requires verifier named-check evidence",
+            )
+        return _named_check_result(evidence)
     if evidence_type in JUDGMENT_TYPES or evidence_type not in DETERMINISTIC_TYPES:
         return ("judgment_required", None, f"{criterion.evidence_type} requires review")
     if evidence is None:
@@ -60,6 +81,65 @@ def evaluate_criterion(
     if evidence_type == "infra_lane.final":
         return _infra_lane_result(evidence)
     return ("judgment_required", None, f"{criterion.evidence_type} requires review")
+
+
+def _named_check_result(evidence: Evidence) -> tuple[EvaluationStatus, str, str]:
+    payload = evidence.payload
+    if not isinstance(payload, dict):
+        return ("failed_closed", "failed", "named-check payload is malformed")
+    repository = _bounded_text(payload.get("repository"), NAMED_CHECK_MAX_REPOSITORY_LENGTH)
+    pr_number = payload.get("pr_number")
+    pr_url = _bounded_text(payload.get("pr_url"), NAMED_CHECK_MAX_REFERENCE_LENGTH)
+    head_sha = _bounded_text(payload.get("head_sha"), NAMED_CHECK_MAX_HEAD_SHA_LENGTH, minimum=7)
+    check_name = _bounded_text(payload.get("check_name"), NAMED_CHECK_MAX_CHECK_NAME_LENGTH)
+    run_id = _bounded_text(payload.get("run_id"), NAMED_CHECK_MAX_RUN_ID_LENGTH)
+    run_url = _bounded_text(payload.get("run_url"), NAMED_CHECK_MAX_REFERENCE_LENGTH)
+    dispatch_id = _uuid_text(payload.get("dispatch_id"))
+    conclusion = _string_value(payload.get("conclusion"))
+    if (
+        repository is None
+        or not isinstance(pr_number, int)
+        or isinstance(pr_number, bool)
+        or pr_number <= 0
+        or pr_url != f"https://github.com/{repository}/pull/{pr_number}"
+        or head_sha is None
+        or check_name is None
+        or run_id is None
+        or run_url is None
+        or dispatch_id is None
+        or evidence.stable_ref != run_url
+        or evidence.source_revision != head_sha
+    ):
+        return ("failed_closed", "failed", "named-check identity is malformed")
+    assertions = payload.get("assertions")
+    if (
+        not isinstance(assertions, list)
+        or not assertions
+        or len(assertions) > NAMED_CHECK_MAX_ASSERTIONS
+    ):
+        return ("failed_closed", "failed", "named-check assertions are missing")
+    names: set[str] = set()
+    for assertion in assertions:
+        if not isinstance(assertion, dict):
+            return ("failed_closed", "failed", "named-check assertions are malformed")
+        name = _bounded_text(assertion.get("name"), NAMED_CHECK_MAX_ASSERTION_NAME_LENGTH)
+        expected = assertion.get("expected")
+        observed = assertion.get("observed")
+        if (
+            name is None
+            or name in names
+            or not _scalar(expected)
+            or not _scalar(observed)
+            or type(expected) is not type(observed)
+            or expected != observed
+        ):
+            return ("failed_closed", "failed", "named-check assertion mismatch")
+        names.add(name)
+    if conclusion == "success":
+        return ("passed", "passed", "named check and assertions passed")
+    if conclusion in CHECK_FAIL_CONCLUSIONS:
+        return ("failed", "failed", f"named check conclusion is {conclusion}")
+    return ("failed_closed", "failed", "named check conclusion does not pass")
 
 
 def _status_result(payload: dict[str, Any]) -> tuple[EvaluationStatus, str, str]:
@@ -239,3 +319,28 @@ def _string_value(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     return value.strip().lower()
+
+
+def _bounded_text(value: object, limit: int, *, minimum: int = 1) -> str | None:
+    if not isinstance(value, str) or not minimum <= len(value.strip()) <= limit:
+        return None
+    return value
+
+
+def _uuid_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        return None
+
+
+def _scalar(value: object) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip()) and len(value) <= NAMED_CHECK_MAX_ASSERTION_VALUE_LENGTH
+    return isinstance(value, bool) or (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and abs(value) <= NAMED_CHECK_MAX_INTEGER_ABS
+    )

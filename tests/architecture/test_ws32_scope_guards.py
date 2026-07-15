@@ -17,6 +17,9 @@ WS42_DISPATCH_PATHS = {
     Path("src/orchestrator/persistence/models.py"),
     Path("src/orchestrator/services/dispatch.py"),
     Path("src/orchestrator/services/github_app.py"),
+    # The verifier evidence command reads the immutable dispatch identity to bind an externally
+    # observed named check to the exact unit attempt. It cannot initiate workflow execution.
+    Path("src/orchestrator/services/verifier_evidence.py"),
 }
 WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/deployment_observations.py"),
@@ -168,3 +171,14 @@ def test_ws32_string_scanner_covers_spaced_forbidden_phrases() -> None:
     terms = _iter_string_terms(Path("sample.py"), tree)
 
     assert [_match_forbidden_sequence(term.tokens) for term in terms] == ["production mutation"]
+
+
+def test_verifier_evidence_dispatch_access_is_read_only() -> None:
+    source = Path("src/orchestrator/services/verifier_evidence.py").read_text(encoding="utf-8")
+
+    for forbidden_reference in (
+        "dispatch_workflow",
+        "WorkflowDispatcher",
+        "GitHubActionsDispatcher",
+    ):
+        assert forbidden_reference not in source

@@ -19,6 +19,24 @@ The request uses the standard command envelope:
 Only actors with the `verifier` role may run the command. Workers can submit
 evidence, but they cannot verify their own work or record adjudications.
 
+For an `automated_check` criterion, the verifier uses this sequence:
+
+1. Wait for the named CI check to reach a terminal conclusion on the submitted head.
+2. Independently inspect the bounded repository, pull request, head, check, run, and
+   expected-versus-observed assertion facts.
+3. Record those facts with
+   `POST /api/v1/work-units/{unit_id}/verifier-evidence/named-check`.
+4. Invoke `POST /api/v1/work-units/{unit_id}/verify` with a fresh idempotency key.
+
+The named-check evidence request uses the standard command envelope plus the package revision,
+mapped AC, dispatch, canonical pull-request identity, check identity, run identity, conclusion,
+and one to 32 bounded scalar assertions. Only a verifier may call this route. The service resolves
+the evidence attempt from the locked work unit and supersedes the current evidence head.
+
+The orchestrator does not call GitHub from either verifier route. The independent verifier
+observes CI and submits bounded facts. The current armed `verification_read_head_sha` for the
+unit's dispatched attempt is authoritative; stale or mismatched heads fail closed.
+
 ## Input States
 
 The verifier accepts work units in `submitted` or `verifying`.
@@ -65,6 +83,10 @@ The initial evaluator registry handles recorded facts for:
 Missing, malformed, stale, untrusted, or insufficient deterministic evidence
 fails closed. The verifier records a bounded `verifier.finding` evidence row and
 a failed adjudication, then moves the unit to `revision_required`.
+
+`automated_check` is deterministic only when its current evidence is verifier-owned
+`verifier.github.named_check`. Pre-CI worker evidence such as `runner.pr.opened` remains
+judgment-routed because it cannot prove the later named-check result.
 
 ## Judgment Criteria
 
