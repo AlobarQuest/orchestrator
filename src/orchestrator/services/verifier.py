@@ -24,6 +24,10 @@ from orchestrator.services.lifecycle import (
 )
 from orchestrator.services.verifier_criteria import load_required_criteria
 from orchestrator.services.verifier_evaluators import EvaluationStatus, evaluate_criterion
+from orchestrator.services.verifier_named_check import (
+    lock_named_check_subject,
+    validate_named_check_bindings,
+)
 from orchestrator.services.verifier_types import (
     VerificationResult,
     VerifierEvaluation,
@@ -80,6 +84,13 @@ def verify_work_unit(session: Session, command: VerifyCommand) -> VerifierResult
     evaluations = tuple(
         _verify_criterion(session, command, unit, criterion) for criterion in criteria
     )
+    evaluations = _stabilize_named_check_evaluations(
+        session,
+        command,
+        unit,
+        criteria,
+        evaluations,
+    )
     target = _target_state(evaluations)
     unit = _load_unit(session, command.unit_id)
     transition = transition_unit(
@@ -114,6 +125,35 @@ def _verify_criterion(
         criterion.ac_id,
     )
     status, outcome, reason = evaluate_criterion(criterion, evidence)
+    if _is_trusted_named_check(criterion, evidence):
+        assert evidence is not None
+        binding_failure = validate_named_check_bindings(session, unit, criterion, evidence)
+        if binding_failure is not None:
+            status, outcome, reason = binding_failure
+    return _record_evaluation(
+        session,
+        command,
+        unit,
+        criterion,
+        evidence,
+        status,
+        outcome,
+        reason,
+    )
+
+
+def _record_evaluation(
+    session: Session,
+    command: VerifyCommand,
+    unit: WorkUnit,
+    criterion: PackageAcceptanceCriterion,
+    evidence: Evidence | None,
+    status: EvaluationStatus,
+    outcome: str | None,
+    reason: str,
+    *,
+    key_scope: str | None = None,
+) -> VerifierEvaluation:
     if status == "judgment_required":
         return VerifierEvaluation(
             ac_id=criterion.ac_id,
@@ -130,7 +170,15 @@ def _verify_criterion(
     adjudication_evidence_id = evidence.id if evidence is not None and outcome == "passed" else None
     failed_evidence_id = evidence.id if evidence is not None and outcome == "failed" else None
     if outcome == "failed":
-        finding = _record_verifier_finding(session, command, unit, criterion, status, reason)
+        finding = _record_verifier_finding(
+            session,
+            command,
+            unit,
+            criterion,
+            status,
+            reason,
+            key_scope=key_scope,
+        )
         failed_evidence_id = finding.id
 
     adjudication = record_adjudication(
@@ -141,7 +189,12 @@ def _verify_criterion(
         outcome=outcome or "failed",
         actor=command.actor,
         rationale=reason,
-        idempotency_key=_child_key(command, "adjudication", criterion.ac_id),
+        idempotency_key=_child_key(
+            command,
+            "adjudication",
+            criterion.ac_id,
+            *((key_scope,) if key_scope is not None else ()),
+        ),
         evidence_id=adjudication_evidence_id,
         failed_evidence_id=failed_evidence_id,
         allow_generated_post_deploy=True,
@@ -167,6 +220,8 @@ def _record_verifier_finding(
     criterion: PackageAcceptanceCriterion,
     status: EvaluationStatus,
     reason: str,
+    *,
+    key_scope: str | None = None,
 ) -> Evidence:
     finding = append_verifier_evidence(
         session,
@@ -185,11 +240,75 @@ def _record_verifier_finding(
             },
         },
         source_revision="ws-5.1",
-        idempotency_key=_child_key(command, "evidence", criterion.ac_id),
+        idempotency_key=_child_key(
+            command,
+            "evidence",
+            criterion.ac_id,
+            *((key_scope,) if key_scope is not None else ()),
+        ),
     )
     if isinstance(finding, DomainError):
         raise finding
     return finding
+
+
+def _stabilize_named_check_evaluations(
+    session: Session,
+    command: VerifyCommand,
+    unit: WorkUnit,
+    criteria: tuple[PackageAcceptanceCriterion, ...],
+    evaluations: tuple[VerifierEvaluation, ...],
+) -> tuple[VerifierEvaluation, ...]:
+    stabilized = list(evaluations)
+    for _attempt in range(len(stabilized) + 1):
+        changed = False
+        for index, (criterion, evaluation) in enumerate(zip(criteria, stabilized, strict=True)):
+            evidence = _evaluation_evidence(session, evaluation)
+            if evaluation.outcome != "passed" or not _is_trusted_named_check(criterion, evidence):
+                continue
+            assert evidence is not None
+            binding_failure = validate_named_check_bindings(session, unit, criterion, evidence)
+            if binding_failure is None:
+                continue
+            stabilized[index] = _record_evaluation(
+                session,
+                command,
+                unit,
+                criterion,
+                evidence,
+                *binding_failure,
+                key_scope="canonical-binding",
+            )
+            changed = True
+            break
+        if not changed:
+            break
+
+    for criterion, evaluation in zip(criteria, stabilized, strict=True):
+        evidence = _evaluation_evidence(session, evaluation)
+        if _is_trusted_named_check(criterion, evidence):
+            lock_named_check_subject(session, unit.id)
+    return tuple(stabilized)
+
+
+def _evaluation_evidence(
+    session: Session,
+    evaluation: VerifierEvaluation,
+) -> Evidence | None:
+    if evaluation.evidence_id is None:
+        return None
+    return session.get(Evidence, evaluation.evidence_id)
+
+
+def _is_trusted_named_check(
+    criterion: PackageAcceptanceCriterion,
+    evidence: Evidence | None,
+) -> bool:
+    return (
+        criterion.evidence_type.strip().lower() == "automated_check"
+        and evidence is not None
+        and evidence.evidence_type == "verifier.github.named_check"
+    )
 
 
 def _load_unit(session: Session, unit_id: uuid.UUID) -> WorkUnit:

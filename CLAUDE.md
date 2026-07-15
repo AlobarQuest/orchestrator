@@ -303,6 +303,10 @@ style of that module.
      fixing the UI would not fix it. `automated_check` is now a deliberately narrower supported
      vocabulary: it is deterministic only when the current evidence is verifier-owned
      `verifier.github.named_check`; pre-CI worker evidence continues to require review.
+     Evidence ingestion and `/verify` are separate transactions, so the verifier must revalidate
+     that stored named-check evidence against the current dispatch, attempt, repository, PR, and
+     armed head. It locks `UnitPrBinding` through the terminal verifier transition; the ingestion
+     lock alone cannot protect a later verification request from a changed canonical head.
      **This does not fix or alias `automated_test`.**
   2. **`ac_id` means two different things.** `ac_mappings[].ac_id` / `retained_acs[].ac_id` on a
      decomposition proposal want the criterion's **database UUID** (`services/decomposition.py`

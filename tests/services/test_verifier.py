@@ -1,7 +1,7 @@
 import uuid
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import Engine, event, func, select, update
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -9,8 +9,10 @@ from orchestrator.kernel.evidence_types import VERIFIER_NAMED_CHECK_EVIDENCE_TYP
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
+    DispatchRecord,
     Event,
     Evidence,
+    UnitPrBinding,
 )
 from orchestrator.services.evidence import current_evidence
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
@@ -81,6 +83,134 @@ def test_verifier_named_check_supersedes_worker_evidence_and_completes(
     adjudication = migrated_session.get(Adjudication, result.evaluations[0].adjudication_id)
     assert adjudication is not None
     assert adjudication.evidence_id == named_check.id
+
+
+def test_verifier_named_check_fails_closed_when_pr_head_changes_after_recording(
+    migrated_session: Session,
+) -> None:
+    unit = mapped_submitted_unit(
+        migrated_session,
+        key="automated-check-stale-recorded-head",
+        evidence_type="automated_check",
+        ac_id="AC-006",
+        authority=AUTOMATED_CHECK_AUTHORITY,
+    )
+    record_worker_evidence(
+        migrated_session,
+        unit,
+        ac_id="AC-006",
+        evidence_type="runner.pr.opened",
+        payload={"pr_number": PR_NUMBER, "head_sha": HEAD_SHA},
+        idempotency_key="automated-check-stale-recorded-head-worker-evidence",
+    )
+    dispatch = bind_dispatched_pull_request(migrated_session, unit)
+    named_check = record_named_check_evidence(
+        migrated_session,
+        named_check_command(unit, dispatch),
+    )
+    assert isinstance(named_check, Evidence)
+    binding = migrated_session.get(UnitPrBinding, unit.id)
+    assert binding is not None
+    binding.head_sha = "f" * 40
+    migrated_session.commit()
+
+    result = verify_work_unit(
+        migrated_session,
+        VerifyCommand(
+            unit_id=unit.id,
+            actor=VERIFIER,
+            expected_version=unit.version,
+            idempotency_key="verify-automated-check-stale-recorded-head",
+        ),
+    )
+
+    assert result.result == "revision_required"
+    assert result.state is WorkUnitState.REVISION_REQUIRED
+    assert result.evaluations[0].status == "failed_closed"
+    assert result.evaluations[0].outcome == "failed"
+
+
+@pytest.mark.parametrize("changed_record", ["pr_binding", "dispatch"])
+def test_verifier_reloads_canonical_rows_after_passed_adjudication_commit(
+    migrated_engine: Engine,
+    changed_record: str,
+) -> None:
+    with Session(migrated_engine, expire_on_commit=False) as setup:
+        unit = mapped_submitted_unit(
+            setup,
+            key="automated-check-head-change-during-verify",
+            evidence_type="automated_check",
+            ac_id="AC-006",
+            authority=AUTOMATED_CHECK_AUTHORITY,
+        )
+        record_worker_evidence(
+            setup,
+            unit,
+            ac_id="AC-006",
+            evidence_type="runner.pr.opened",
+            payload={"pr_number": PR_NUMBER, "head_sha": HEAD_SHA},
+            idempotency_key="automated-check-head-change-during-verify-worker-evidence",
+        )
+        dispatch = bind_dispatched_pull_request(setup, unit)
+        named_check = record_named_check_evidence(setup, named_check_command(unit, dispatch))
+        assert isinstance(named_check, Evidence)
+        command = VerifyCommand(
+            unit_id=unit.id,
+            actor=VERIFIER,
+            expected_version=unit.version,
+            idempotency_key="verify-automated-check-head-change-during-verify",
+        )
+
+    commit_count = 0
+    binding_updated = False
+    held_canonical_rows: list[object] = []
+
+    def retain_loaded_canonical_rows(session: Session) -> None:
+        held_canonical_rows[:] = [
+            row
+            for row in session.identity_map.values()
+            if isinstance(row, (DispatchRecord, UnitPrBinding))
+        ]
+
+    def update_binding_after_passed_adjudication(_session: Session) -> None:
+        nonlocal binding_updated, commit_count
+        commit_count += 1
+        if commit_count != 2:
+            return
+        with Session(migrated_engine) as updater:
+            if changed_record == "pr_binding":
+                updater.execute(
+                    update(UnitPrBinding)
+                    .where(UnitPrBinding.work_unit_id == command.unit_id)
+                    .values(head_sha="f" * 40)
+                )
+            else:
+                updater.execute(
+                    update(DispatchRecord)
+                    .where(DispatchRecord.id == dispatch.id)
+                    .values(status="failed")
+                )
+            updater.commit()
+        binding_updated = True
+
+    with Session(migrated_engine, expire_on_commit=False) as verifier_session:
+        event.listen(verifier_session, "before_commit", retain_loaded_canonical_rows)
+        event.listen(verifier_session, "after_commit", update_binding_after_passed_adjudication)
+        try:
+            result = verify_work_unit(verifier_session, command)
+        finally:
+            event.remove(verifier_session, "before_commit", retain_loaded_canonical_rows)
+            event.remove(
+                verifier_session,
+                "after_commit",
+                update_binding_after_passed_adjudication,
+            )
+
+    assert binding_updated is True
+    assert result.result == "revision_required"
+    assert result.state is WorkUnitState.REVISION_REQUIRED
+    assert result.evaluations[0].status == "failed_closed"
+    assert result.evaluations[0].outcome == "failed"
 
 
 def test_automated_check_without_verifier_named_check_remains_judgment_required(
