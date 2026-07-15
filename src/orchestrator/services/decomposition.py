@@ -14,6 +14,7 @@ from orchestrator.kernel.authority import (
     normalize_authority,
 )
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
+from orchestrator.kernel.runner_authority import dependency_update_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
@@ -54,6 +55,12 @@ class ProposedUnit:
     authority: AuthorityEnvelope
     authority_payload: Mapping[str, Any] | None = None
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
+
+
+@dataclass(frozen=True)
+class ValidatedProposedUnit:
+    unit: ProposedUnit
+    authority_payload: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -113,7 +120,7 @@ def submit_decomposition_proposal(
         return replay
 
     proposed_units = _validated_units(command.proposed_units)
-    unit_keys = {unit.unit_key for unit in proposed_units}
+    unit_keys = {validated.unit.unit_key for validated in proposed_units}
     package_criteria = tuple(
         session.scalars(
             select(PackageAcceptanceCriterion)
@@ -142,12 +149,16 @@ def submit_decomposition_proposal(
     session.add(proposal)
     session.flush()
 
-    for unit in proposed_units:
+    for validated in proposed_units:
+        unit = validated.unit
         # The runner refuses an envelope that does not name its own work unit, and the
         # author cannot know the UUID. It is derivable here because _proposal_unit_id is
         # deterministic in the now-flushed proposal id, so stamping at proposal time keeps
         # the approved envelope identical to the one the runner will be served.
-        stamped = _stamped_authority_payload(unit, _proposal_unit_id(proposal.id, unit.unit_key))
+        stamped = _stamped_authority_payload(
+            validated.authority_payload,
+            _proposal_unit_id(proposal.id, unit.unit_key),
+        )
         session.add(
             DecompositionProposalUnit(
                 proposal_id=proposal.id,
@@ -458,7 +469,9 @@ def _decision_replay(
     return proposal
 
 
-def _validated_units(proposed_units: Sequence[ProposedUnit]) -> tuple[ProposedUnit, ...]:
+def _validated_units(
+    proposed_units: Sequence[ProposedUnit],
+) -> tuple[ValidatedProposedUnit, ...]:
     if not proposed_units:
         raise DomainError(
             "decomposition_proposal_units_invalid",
@@ -466,7 +479,7 @@ def _validated_units(proposed_units: Sequence[ProposedUnit]) -> tuple[ProposedUn
             None,
         )
     observed_keys: set[str] = set()
-    normalized_units: list[ProposedUnit] = []
+    validated_units: list[ValidatedProposedUnit] = []
     for unit in proposed_units:
         if not unit.unit_key:
             raise DomainError(
@@ -480,14 +493,15 @@ def _validated_units(proposed_units: Sequence[ProposedUnit]) -> tuple[ProposedUn
                 "proposed unit keys must be unique",
                 None,
             )
-        _validate_unit_constraints(unit)
+        payload = _validate_unit_constraints(unit)
         observed_keys.add(unit.unit_key)
-        normalized_units.append(unit)
-    return tuple(normalized_units)
+        validated_units.append(ValidatedProposedUnit(unit=unit, authority_payload=payload))
+    return tuple(validated_units)
 
 
-def _validate_unit_constraints(unit: ProposedUnit) -> None:
+def _validate_unit_constraints(unit: ProposedUnit) -> dict[str, Any]:
     payload = _authority_payload(unit)
+    envelope = normalize_authority(payload)
     constraints = payload.get("constraints", {})
     if not isinstance(constraints, Mapping):
         raise DomainError(
@@ -507,6 +521,10 @@ def _validate_unit_constraints(unit: ProposedUnit) -> None:
     conformance = payload.get("conformance")
     if conformance is not None:
         _validate_unit_conformance(conformance)
+    violation = dependency_update_authority_violation(envelope)
+    if violation is not None:
+        raise DomainError(violation.code, violation.message, violation.remediation)
+    return payload
 
 
 def _validate_unit_conformance(conformance: Any) -> None:
@@ -781,8 +799,7 @@ def _authority_payload(unit: ProposedUnit) -> dict[str, Any]:
     return {key: payload[key] for key in sorted(payload)}
 
 
-def _stamped_authority_payload(unit: ProposedUnit, unit_id: uuid.UUID) -> dict[str, Any]:
-    payload = _authority_payload(unit)
+def _stamped_authority_payload(payload: Mapping[str, Any], unit_id: uuid.UUID) -> dict[str, Any]:
     constraints = dict(payload.get("constraints", {}))
     constraints["work_unit_id"] = str(unit_id)
     stamped = {**payload, "constraints": dict(sorted(constraints.items()))}

@@ -27,6 +27,7 @@ NON_INGRESS_POST_ROUTES = frozenset(
         "/review/decomposition-proposals/{proposal_id}/reject",
         "/review/decomposition-proposals/{proposal_id}/require-revision",
         "/review/units/{unit_id}/approval",
+        "/review/units/{unit_id}/authority-approval",
         "/review/units/{unit_id}/cancel",
         "/review/units/{unit_id}/retry",
         "/review/units/{unit_id}/review",

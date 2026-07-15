@@ -82,6 +82,7 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/event-publications/export",
         "/api/v1/event-publications/{publication_id}/retry",
         "/review/units/{unit_id}/approval",
+        "/review/units/{unit_id}/authority-approval",
         "/review/units/{unit_id}/review",
         "/review/units/{unit_id}/cancel",
         "/review/units/{unit_id}/retry",

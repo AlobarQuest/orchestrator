@@ -2,15 +2,33 @@ import re
 import uuid
 
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import DecompositionProposal, WorkPackageRevision
+from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
+from orchestrator.persistence.models import (
+    DecompositionProposal,
+    DecompositionProposalUnit,
+    WorkPackageRevision,
+)
 from orchestrator.services.decomposition import submit_decomposition_proposal
 from orchestrator.services.package_intake import register_package_intake
 from tests.api.test_lifecycle_api import HUMAN
 from tests.services.test_decomposition import package_ac_ids, proposal_command, worker_actor
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
+
+_ALLOWED_COMMANDS = (
+    "uv add --dev &#39;httpx2&gt;=2.6.0&#39;",
+    "uv sync --locked",
+    "uv run make check",
+)
+_MUTATION_COMMANDS = (_ALLOWED_COMMANDS[0],)
+
+
+def _assert_command_list(page: str, key: str, commands: tuple[str, ...]) -> None:
+    match = re.search(rf"{key}:\s*<ol>(.*?)</ol>", page, re.DOTALL)
+    assert match is not None
+    assert tuple(re.findall(r"<code>(.*?)</code>", match.group(1))) == commands
 
 
 def _seed_intake_and_proposal(
@@ -74,8 +92,75 @@ def test_proposal_page_shows_ac_mapping_and_decision_controls(
     assert "Approve" in page.text
     assert "Require revision" in page.text
     assert "Reject" in page.text
+    assert "Unknown fields</dt><dd>None" in page.text
     assert "dispatch" not in page.text.lower()
     assert "merge" not in page.text.lower()
+
+
+def test_proposal_page_renders_normalized_authority_envelope(
+    db_client: TestClient,
+    migrated_engine: Engine,
+) -> None:
+    _, proposal = _seed_intake_and_proposal(migrated_engine)
+    authority = {
+        "capabilities": {
+            "repository_write": "allowed",
+            "repo.edit": "allowed",
+            "command.run": "allowed",
+        },
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "target_repository": "AlobarQuest/change-manager",
+            "allowed_commands": [
+                "uv add --dev 'httpx2>=2.6.0'",
+                "uv sync --locked",
+                "uv run make check",
+            ],
+            "mutation_commands": ["uv add --dev 'httpx2>=2.6.0'"],
+        },
+        "conformance": {
+            "status": "green",
+            "standards_touched": ["project-standards"],
+            "accepted_standards": ["security-standards"],
+        },
+        "future_authority_marker": "fingerprinted by name",
+    }
+    with Session(migrated_engine) as session:
+        unit = session.scalar(
+            select(DecompositionProposalUnit).where(
+                DecompositionProposalUnit.proposal_id == proposal.id
+            )
+        )
+        assert unit is not None
+        unit.authority = authority
+        unit.authority_fingerprint = authority_fingerprint(normalize_authority(authority))
+        session.commit()
+        expected_fingerprint = unit.authority_fingerprint
+
+    page = db_client.get(f"/review/decomposition-proposals/{proposal.id}", headers=HUMAN)
+
+    assert page.status_code == 200
+    for value in (
+        "AlobarQuest/change-manager",
+        "dependency-update",
+        "repository_write: allowed",
+        "repo.edit: allowed",
+        "command.run: allowed",
+        "max_attempts: 3",
+        "max_llm_calls: 4",
+        "status: green",
+        "standards_touched: [&#39;project-standards&#39;]",
+        "accepted_standards: [&#39;security-standards&#39;]",
+        "target_repository:",
+        "future_authority_marker",
+        expected_fingerprint,
+    ):
+        assert value in page.text
+    assert "Unknown fields</dt><dd><ul><li>future_authority_marker</li></ul>" in page.text
+    assert "uv add --dev 'httpx2>=2.6.0'" not in page.text
+    _assert_command_list(page.text, "allowed_commands", _ALLOWED_COMMANDS)
+    _assert_command_list(page.text, "mutation_commands", _MUTATION_COMMANDS)
 
 
 def test_approve_form_requires_human_confirmation_and_records_decision(

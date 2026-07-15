@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Iterator, Mapping
 
 import pytest
 from sqlalchemy import func, select
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
+from orchestrator.kernel.runner_authority import dependency_update_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
@@ -153,6 +155,106 @@ def test_proposal_requires_total_ac_disposition(migrated_session: Session) -> No
         )
 
     assert error.value.code == "decomposition_proposal_ac_coverage_invalid"
+
+
+def test_proposal_rejects_invalid_dependency_update_authority_before_persistence(
+    migrated_session: Session,
+) -> None:
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    invalid_payload = {
+        "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {"allowed_commands": ["uv sync --locked"]},
+    }
+    violation = dependency_update_authority_violation(normalize_authority(invalid_payload))
+    assert violation is not None
+
+    with pytest.raises(DomainError) as error:
+        submit_decomposition_proposal(
+            migrated_session,
+            proposal_command(
+                revision.id,
+                ac_ids,
+                proposed_units=(
+                    ProposedUnit(
+                        unit_key="unit-1",
+                        title="Update dependency",
+                        outcome="Dependency is updated.",
+                        required_capability="repository_write",
+                        authority=AUTHORITY,
+                        authority_payload=invalid_payload,
+                    ),
+                ),
+                dependencies=(),
+                ac_mappings=(AcMapping(ac_id=str(ac_ids["AC-001"]), unit_key="unit-1"),),
+            ),
+            worker_actor(),
+        )
+
+    assert error.value.code == violation.code
+    assert migrated_session.scalar(select(func.count()).select_from(DecompositionProposal)) == 0
+
+
+def test_proposal_persists_the_same_authority_payload_it_validates(
+    migrated_session: Session,
+) -> None:
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    valid_payload = {
+        "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "allowed_commands": ["uv sync --locked"],
+            "mutation_commands": ["uv sync --locked"],
+        },
+    }
+    changed_payload = {**valid_payload, "constraints": {"allowed_commands": ["uv sync --locked"]}}
+
+    class ChangingPayload(Mapping[str, object]):
+        reads = 0
+
+        def __iter__(self) -> Iterator[str]:
+            type(self).reads += 1
+            return iter(valid_payload if type(self).reads == 1 else changed_payload)
+
+        def __len__(self) -> int:
+            return len(valid_payload)
+
+        def __getitem__(self, key: str) -> object:
+            payload = valid_payload if type(self).reads == 1 else changed_payload
+            return payload[key]
+
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(
+            revision.id,
+            ac_ids,
+            proposed_units=(
+                ProposedUnit(
+                    unit_key="unit-1",
+                    title="Update dependency",
+                    outcome="Dependency is updated.",
+                    required_capability="repository_write",
+                    authority=AUTHORITY,
+                    authority_payload=ChangingPayload(),
+                ),
+            ),
+            dependencies=(),
+            ac_mappings=(AcMapping(ac_id=str(ac_ids["AC-001"]), unit_key="unit-1"),),
+        ),
+        worker_actor(),
+    )
+
+    persisted = migrated_session.scalar(
+        select(DecompositionProposalUnit).where(
+            DecompositionProposalUnit.proposal_id == proposal.id
+        )
+    )
+    assert persisted is not None
+    assert persisted.authority["constraints"]["mutation_commands"] == ["uv sync --locked"]
 
 
 def test_proposal_rejects_internal_dependency_cycle(migrated_session: Session) -> None:
@@ -965,6 +1067,133 @@ def _proposal_units(
         )
     )
     return {row.unit_key: row for row in rows}
+
+
+@pytest.mark.parametrize(
+    ("constraints", "code"),
+    [
+        ({}, "authority_allowed_commands_invalid"),
+        ({"allowed_commands": ["make check"]}, "authority_mutation_commands_invalid"),
+        (
+            {
+                "allowed_commands": ["uv sync", "make check"],
+                "mutation_commands": ["uv lock"],
+            },
+            "authority_mutation_command_not_allowed",
+        ),
+    ],
+)
+def test_dependency_update_authority_rejects_non_executable_contract(
+    constraints: dict[str, object], code: str
+) -> None:
+    envelope = normalize_authority(
+        {
+            "change_class": "dependency-update",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": constraints,
+        }
+    )
+
+    violation = dependency_update_authority_violation(envelope)
+
+    assert violation is not None
+    assert violation.code == code
+
+
+@pytest.mark.parametrize(
+    ("constraints", "code"),
+    [
+        (
+            {"allowed_commands": [""], "mutation_commands": ["uv lock"]},
+            "authority_allowed_commands_invalid",
+        ),
+        (
+            {"allowed_commands": ["uv lock"], "mutation_commands": ["  "]},
+            "authority_mutation_commands_invalid",
+        ),
+        (
+            {"allowed_commands": [1], "mutation_commands": ["uv lock"]},
+            "authority_allowed_commands_invalid",
+        ),
+        (
+            {"allowed_commands": ["uv lock"], "mutation_commands": [True]},
+            "authority_mutation_commands_invalid",
+        ),
+        (
+            {"allowed_commands": {"command": "uv lock"}, "mutation_commands": ["uv lock"]},
+            "authority_allowed_commands_invalid",
+        ),
+        (
+            {"allowed_commands": ["uv lock"], "mutation_commands": ("uv lock",)},
+            "authority_mutation_commands_invalid",
+        ),
+    ],
+)
+def test_dependency_update_authority_rejects_invalid_command_entries(
+    constraints: dict[str, object],
+    code: str,
+) -> None:
+    envelope = normalize_authority(
+        {
+            "change_class": "dependency-update",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": constraints,
+        }
+    )
+
+    violation = dependency_update_authority_violation(envelope)
+
+    assert violation is not None
+    assert violation.code == code
+
+
+def test_dependency_update_authority_requires_command_run() -> None:
+    envelope = normalize_authority(
+        {
+            "change_class": "dependency-update",
+            "capabilities": {"repo.edit": "allowed"},
+            "constraints": {},
+        }
+    )
+
+    violation = dependency_update_authority_violation(envelope)
+
+    assert violation is not None
+    assert violation.code == "authority_command_run_required"
+
+
+@pytest.mark.parametrize(
+    ("change_class", "repo_edit_level"),
+    [("repository-change", "allowed"), ("dependency-update", "prohibited")],
+)
+def test_dependency_update_authority_ignores_out_of_scope_envelopes(
+    change_class: str,
+    repo_edit_level: str,
+) -> None:
+    envelope = normalize_authority(
+        {
+            "change_class": change_class,
+            "capabilities": {"repo.edit": repo_edit_level},
+            "constraints": {},
+        }
+    )
+
+    assert dependency_update_authority_violation(envelope) is None
+
+
+def test_dependency_update_authority_accepts_ordered_valid_command_lists() -> None:
+    envelope = normalize_authority(
+        {
+            "change_class": "dependency-update",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": {
+                "allowed_commands": ["uv add httpx", "uv sync --locked", "uv run make check"],
+                "mutation_commands": ["uv add httpx"],
+            },
+        }
+    )
+
+    assert dependency_update_authority_violation(envelope) is None
 
 
 def _fanout_units() -> tuple[ProposedUnit, ...]:

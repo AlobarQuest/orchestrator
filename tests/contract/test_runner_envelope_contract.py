@@ -59,9 +59,9 @@ RUNNER_SUPPORTED_CAPABILITIES = frozenset(
 RUNNER_SUPPORTED_LEVELS = frozenset({"allowed", "prohibited"})
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "runner_authority_envelope.json"
-CONTRACT_SHA256 = "4ec8e88ab4e7d61003072bb15e505e4259fcef1def94675c6bc1b37a8bb17dc6"
+CONTRACT_SHA256 = "049ab53e2b257fa3d7eb24748a4278ffc7e0e91f8174b05220eefd7d526e5a56"
 
-TARGET_REPOSITORY = "AlobarQuest/brain"
+TARGET_REPOSITORY = "AlobarQuest/change-manager"
 CHANGE_CLASS = "dependency-update"
 CAPABILITY = "repo.edit"
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
@@ -189,15 +189,18 @@ def test_golden_envelope_satisfies_the_runner_vocabulary() -> None:
 
     assert set(envelope["capabilities"]) <= RUNNER_SUPPORTED_CAPABILITIES
     assert set(envelope["capabilities"].values()) <= RUNNER_SUPPORTED_LEVELS
-    # validate_authority reads exactly these three constraint keys.
+    # validate_authority reads exactly these four constraint keys.
     assert set(envelope["constraints"]) == {
         "work_unit_id",
         "target_repository",
         "allowed_commands",
+        "mutation_commands",
     }
-    # command.run is allowed, so allowed_commands must be a non-empty list of strings.
+    # command.run is allowed, so both lists must be non-empty lists of strings.
     assert envelope["constraints"]["allowed_commands"]
     assert all(isinstance(item, str) for item in envelope["constraints"]["allowed_commands"])
+    assert envelope["constraints"]["mutation_commands"]
+    assert all(isinstance(item, str) for item in envelope["constraints"]["mutation_commands"])
 
 
 def test_orchestrator_serves_the_golden_envelope_and_admits_it(migrated_session: Session) -> None:
