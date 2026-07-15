@@ -35,7 +35,13 @@ the evidence attempt from the locked work unit and supersedes the current eviden
 
 The orchestrator does not call GitHub from either verifier route. The independent verifier
 observes CI and submits bounded facts. The current armed `verification_read_head_sha` for the
-unit's dispatched attempt is authoritative; stale or mismatched heads fail closed.
+unit's current claim attempt is authoritative; stale or mismatched heads fail closed.
+
+`DispatchRecord.runner_attempt` and `WorkUnit.attempt_count` are independent counters. The first
+is an ordinal in the dispatch-decision ledger, where skipped decisions consume a value; the second
+counts worker claims. Named-check validation binds the exact dispatched row to the unit, revision,
+and target repository, while evidence and the armed pull-request binding independently bind the
+current claim attempt. Do not require the two counters to be equal.
 
 ## Input States
 

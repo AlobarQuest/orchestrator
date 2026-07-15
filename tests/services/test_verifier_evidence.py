@@ -32,6 +32,7 @@ from tests.fixtures.named_check import (
     AUTOMATED_CHECK_AUTHORITY,
     HEAD_SHA,
     PR_NUMBER,
+    TARGET_REPOSITORY,
     VERIFIER,
     WORKER,
     bind_dispatched_pull_request,
@@ -333,15 +334,43 @@ def test_named_check_rejects_missing_pr_binding(migrated_session: Session) -> No
     assert result.code == "named_check_binding_mismatch"
 
 
-def test_named_check_rejects_stale_dispatched_attempt(migrated_session: Session) -> None:
-    unit, dispatch = automated_check_unit(migrated_session, "stale-dispatched-attempt")
-    dispatch.runner_attempt = unit.attempt_count + 1
+def test_named_check_accepts_dispatch_ordinal_after_skipped_probe(
+    migrated_session: Session,
+) -> None:
+    unit, dispatch = automated_check_unit(migrated_session, "dispatch-after-skipped-probe")
+    assert unit.attempt_count == 1
+    dispatch.runner_attempt = 2
+    migrated_session.commit()
+    migrated_session.add(
+        DispatchRecord(
+            work_unit_id=unit.id,
+            work_package_revision_id=unit.work_package_revision_id,
+            runner_attempt=1,
+            status="skipped",
+            reason_code="dispatch_disabled",
+            idempotency_key="dispatch-after-skipped-probe-disabled",
+            target_repository=TARGET_REPOSITORY,
+            workflow_id=dispatch.workflow_id,
+            workflow_ref=dispatch.workflow_ref,
+            payload={},
+        )
+    )
     migrated_session.commit()
 
-    result = record_named_check_evidence(migrated_session, named_check_command(unit, dispatch))
+    evidence = record_named_check_evidence(migrated_session, named_check_command(unit, dispatch))
+    assert isinstance(evidence, Evidence)
 
-    assert isinstance(result, DomainError)
-    assert result.code == "named_check_binding_mismatch"
+    result = verify_work_unit(
+        migrated_session,
+        VerifyCommand(
+            unit_id=unit.id,
+            actor=VERIFIER,
+            expected_version=unit.version,
+            idempotency_key="verify-dispatch-after-skipped-probe",
+        ),
+    )
+
+    assert result.result == "completed"
 
 
 @pytest.mark.parametrize(
