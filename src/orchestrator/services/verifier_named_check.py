@@ -33,6 +33,7 @@ def validate_named_check_bindings(
         if dispatch_id is not None
         else None
     )
+    # A dispatch ordinal can exceed the claim attempt after skipped dispatch decisions.
     if (
         not isinstance(payload, dict)
         or locked_unit is None
@@ -46,7 +47,6 @@ def validate_named_check_bindings(
         or evidence.attempt != unit.attempt_count
         or dispatch.work_unit_id != unit.id
         or dispatch.work_package_revision_id != unit.work_package_revision_id
-        or dispatch.runner_attempt != unit.attempt_count
         or dispatch.status != "dispatched"
         or dispatch.target_repository != repository
         or payload.get("repository") != repository

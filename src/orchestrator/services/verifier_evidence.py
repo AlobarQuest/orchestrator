@@ -200,10 +200,11 @@ def _validate_bindings(
     repository: str,
 ) -> None:
     dispatch = session.get(DispatchRecord, command.dispatch_id)
+    # Skipped dispatch decisions consume runner ordinals without creating claim attempts.
+    # The exact dispatch row and the PR binding prove those independent parts of the chain.
     if dispatch is None or (
         dispatch.work_unit_id != unit.id
         or dispatch.work_package_revision_id != unit.work_package_revision_id
-        or dispatch.runner_attempt != unit.attempt_count
         or dispatch.status != "dispatched"
         or dispatch.target_repository != repository
         or command.repository != repository
