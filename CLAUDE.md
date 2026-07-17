@@ -114,6 +114,11 @@ style of that module.
   envelope means changing both repos together; a one-sided edit fails the repo
   that was not updated. Before WS-6.4.0 no test crossed this boundary, and the
   two sides had silently diverged into mutually unsatisfiable fixtures.
+- **Dispatch and execution attempts have independent ordinals.**
+  `DispatchRecord.runner_attempt` counts dispatch decisions, including skipped
+  decisions; `WorkUnit.attempt_count` counts worker claims. Bind verifier evidence
+  to the exact dispatch row and current claim artifacts, and never require these
+  counters to be equal; see `docs/operations/verifier.md`.
 - `AuthorityEnvelope.normalized()` defines what a human's authority approval
   actually attests. Fields outside `KNOWN_FIELDS` contribute only their *names*
   to the fingerprint, never their values — so a field carrying real authority
@@ -367,3 +372,29 @@ style of that module.
   production either. Every unit's authority approval is therefore given by pasting a
   `fetch()` into browser devtools. Same shape for package intake (`_require_human`, no POST
   route). **Three gates require a human; one has a form.**
+
+- **Authority approval does NOT move the unit's state — `DRAFT → READY` is a separate SYSTEM
+  step that is easy to forget.** Recording the `subject_type="authority"` approval sets
+  `unit.authority_approval_id` (a *dispatch admission* precondition), but the unit stays in
+  `DRAFT`. Dispatch admission requires `unit.state == "ready"` (`services/dispatch.py`), so a
+  dispatch attempt on a still-`DRAFT` unit is `blocked` with reason `work_unit_not_ready` — even
+  with the authority approval recorded and `readiness` reporting `status: ready` (that endpoint
+  reports *conditions met*, not lifecycle state). `(DRAFT, READY)` is a **SYSTEM** edge
+  (`kernel/transitions.py` `SYSTEM_EDGES`) with **no approval guard** (only `AWAITING_APPROVAL →
+  READY` is guarded), so the orchestrator-system credential drives it via
+  `POST /api/v1/work-units/{id}/commands/ready`. Order: human authority approval → system
+  `commands/ready` → dispatch. (Verified 2026-07-17 dispatching the brain AC-002 unit.)
+
+- **Decomposition approval is human-only and reachable ONLY through the `/review` GUI, never the
+  raw `/api` path.** `approve_decomposition_proposal` calls `_require_decision_actor`, which
+  raises unless `actor.role is ActorRole.HUMAN`. But the raw `POST
+  /api/v1/decomposition-proposals/{id}/approve` sits on the default `orchestrator-api` Traefik
+  router (headers-strip only = **M2M-only**), so a browser session `fetch` to it `401`s **by
+  design of the routing table** — not because forward-auth is broken. The human path is the
+  `/review/decomposition-proposals/{id}` GUI page, whose form POSTs to
+  `POST /review/decomposition-proposals/{id}/approve` (`web.py`, `_human` + CSRF) under the
+  `orchestrator-review` router, which *does* carry the forward-auth chain. This is unlike intake
+  and authority approval, which each have their own dedicated forward-auth `/api` router
+  (`orchestrator-intake-human`, `orchestrator-authority-approval-human`) and so *are* done by
+  browser `fetch`. A browser `401` on any orchestrator `/api` route means the endpoint is
+  M2M-only, not that auth is down. (Verified 2026-07-17.)
