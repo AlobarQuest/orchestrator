@@ -360,18 +360,22 @@ style of that module.
   `curl -s https://sds.alobar.net/openapi.json | python3 -c "import sys,json; print(sorted(json.load(sys.stdin)['paths']))"`.
   A green suite on `main` says nothing about the machine that serves traffic.
 
-- **There are TWO kinds of approval, and the `/review` button records the one readiness
-  does not want.** `POST /review/units/{id}/approval` (`web.py`) hardcodes
+- **There are TWO kinds of approval, and the generic `/review` "approval" button records the
+  one readiness does not want.** `POST /review/units/{id}/approval` (`web.py`) hardcodes
   `subject_type="action"` — which satisfies the `AWAITING_APPROVAL → READY` transition
   guard. But readiness and dispatch both require an **`authority`** approval:
   `subject_type="authority"`, bound to `subject_revision_or_fingerprint ==
   unit.authority_fingerprint`, setting `unit.authority_approval_id`
-  (`persistence/repositories.py::exact_authority_approval`). **There is no authority-approval
-  form anywhere in `/review`**, and `record_approval` calls `_require_human` while **no HUMAN
-  M2M credential exists** — so `orchestrator record-approval` can never run against
-  production either. Every unit's authority approval is therefore given by pasting a
-  `fetch()` into browser devtools. Same shape for package intake (`_require_human`, no POST
-  route). **Three gates require a human; one has a form.**
+  (`persistence/repositories.py::exact_authority_approval`). **CORRECTION (verified 2026-07-22,
+  AC-003 dispatch): there IS now an authority-approval form in `/review`.** The unit page
+  renders "Approve this authority envelope" (`templates/unit.html`, gated on no
+  `authority_violation`) which POSTs to `POST /review/units/{id}/authority-approval`
+  (`web.py::approve_authority`, `_human` + CSRF, `subject_type="authority"`). So a human does
+  the authority approval as a **GUI click**, not a devtools `fetch()`. Use that form, NOT the
+  generic "approve" button. Package **intake** is done by a browser `fetch()` to `POST
+  /api/v1/package-intakes` through the `orchestrator-intake-human` forward-auth router (also
+  verified 2026-07-22). The earlier "no authority-approval form; pasted `fetch()` in devtools"
+  claim here is obsolete.
 
 - **Authority approval does NOT move the unit's state — `DRAFT → READY` is a separate SYSTEM
   step that is easy to forget.** Recording the `subject_type="authority"` approval sets
@@ -398,3 +402,29 @@ style of that module.
   (`orchestrator-intake-human`, `orchestrator-authority-approval-human`) and so *are* done by
   browser `fetch`. A browser `401` on any orchestrator `/api` route means the endpoint is
   M2M-only, not that auth is down. (Verified 2026-07-17.)
+
+- **Driving a dispatch needs the M2M bearer tokens — fetch them, don't hunt.** The two
+  credentials and how to get them are already recorded; do not re-derive them each session.
+  `.bws-secrets.toml` (repo root) names the BWS UUIDs; source `BWS_ACCESS_TOKEN` via the
+  approved Keychain helper `~/Projects/vps-backup/bws-token.sh` (service `Claude`, account
+  `BWS_ACCESS_TOKEN_VPS_BACKUP`), then `bws secret get <uuid>` — never echo any value.
+  **SYSTEM** (`orchestrator-system`, decomposition-submit / `commands/ready` / dispatch):
+  `221a48d5-3f29-4898-b300-b4820140c880`. **VERIFIER** (`orchestrator-verifier`,
+  `verifier-evidence/named-check` + `/verify`): `660d5846-abcb-4751-be86-b483012899eb`. Every
+  M2M call sends both `Authorization: Bearer <token>` and `X-Credential-Key-Id: <key-id>`.
+  Read endpoints (`status-ledger`, `runner-brief`, …) also require the SYSTEM bearer — a
+  bare GET is `401`. (Verified 2026-07-22, AC-003.)
+
+- **`factory decompose` (intent-packages) needs three env pieces the tool does not set itself,
+  and the module has no `__main__`/installed console script.** Invoke it as
+  `python -c "import sys; from intent_packages.factory_cli import main; sys.exit(main(sys.argv[1:]))" decompose …`
+  (a bare `python -m intent_packages.factory_cli` imports but runs nothing → exit 0, no output;
+  `.venv/bin/factory` is not installed). Required env: (1) the orchestrator console script on
+  `PATH` (`PATH=~/Projects/orchestrator/.venv/bin:$PATH`) — the tool shells out to
+  `orchestrator show-package-intake` / `conformance-claim` / `propose-decomposition`;
+  (2) `ORCHESTRATOR_API_URL=https://sds.alobar.net` + `ORCHESTRATOR_API_TOKEN=<SYSTEM>` +
+  `ORCHESTRATOR_API_CREDENTIAL_KEY_ID=orchestrator-system`; (3)
+  `PYTHONPATH=~/Projects/project-standards/src:~/Projects/security-standards/src` or
+  `conformance-claim` fails `scanner_unavailable: portfolio.compliance is not importable`. Run
+  once without `--submit` (dry — clones the target, runs the mutator twice, all four fail-closed
+  validations) and review the proposal before re-running with `--submit`. (Verified 2026-07-22.)
