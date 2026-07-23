@@ -152,30 +152,45 @@ Deliverables:
 so the count is true. **Mechanism: a dedicated, typed boolean column** (recommended over a payload
 flag or a broad `actor_role` column — see rationale below).
 
-### Definition
+### Definition (Devon, 2026-07-23: "overrides only")
 
-Improvisation = **an operator (HUMAN actor) driving a raw lifecycle command through
-`POST /work-units/{unit_id}/commands/{command}`.** That endpoint is the raw lifecycle-edge driver;
-the SYSTEM uses it for sanctioned edges (e.g. `commands/ready`) and workers for `commands/submit`, so
-**the actor's role is exactly what separates improvisation from normal automation.** A human forcing
-a lifecycle edge through it is, by definition, acting outside the declared automated contract.
+Improvisation = **a HUMAN actor driving a lifecycle transition that is NOT one of the contract's
+designed human gates** — i.e. an operator *override*. Verified against `HUMAN_EDGES`
+(`kernel/transitions.py:51`), the human-drivable transitions split into:
 
-### Mechanism
+- **Designed human gates (NOT improvisation):** `(AWAITING_APPROVAL → READY)` (the approval-resume,
+  guarded by `approval_recorded`), `(AWAITING_REVIEW → COMPLETED)` and
+  `(AWAITING_REVIEW → REVISION_REQUIRED)` (the sanctioned human-review verdict). These *are* the
+  declared contract's human decision points; counting them would swamp the signal with healthy
+  human-in-the-loop activity.
+- **Operator overrides (improvisation):** all `* → CANCELLED` edges (from CLAIMED / EXECUTING /
+  AWAITING_APPROVAL / FAILED) and the verifier-bypassing `(SUBMITTED → COMPLETED)` /
+  `(VERIFYING → COMPLETED)` edges (a human completing a unit outside the verifier-owned path).
 
-1. **Migration:** add `events.improvisation BOOLEAN NOT NULL DEFAULT false`. `events` is
+Encoded as: `role is HUMAN AND (source, target) NOT IN DESIGNED_HUMAN_GATES`. New human override
+edges (if any are ever added) count by default — the metric fails toward visibility.
+
+### Mechanism (edge-based; no route or command change needed)
+
+The classification is a pure function of `(actor.role, source, target)`, all of which are in hand
+inside `_transition_event`. So the stamp lives there — no `TransitionCommand` field, no route change.
+Because `EDGE_ROLES` already forbids a HUMAN from driving a non-`HUMAN_EDGE`, and the designed gates
+are excluded explicitly, this counts exactly the operator overrides regardless of entry path.
+
+1. **Migration** (`0016_...`): add `events.improvisation BOOLEAN NOT NULL DEFAULT false`. `events` is
    append-only; an additive defaulted boolean is low-risk. Every existing `Event(...)` construction
    (~30 sites) is unaffected — the DB default handles them.
-2. **Model:** add the mapped column to `Event` (`persistence/models.py`), default `False`.
-3. **Thread the flag to the one relevant emit:** add `improvisation: bool = False` to
-   `TransitionCommand`; `transition_unit` passes it into the `work_unit.transitioned` `Event(...)` at
-   `lifecycle.py:186`. No other event and no other caller of `transition_unit` is touched.
-4. **Set it at the single juncture:** the `command` route (`routes.py:1194`) sets
-   `improvisation=(actor.role is ActorRole.HUMAN)` on the `TransitionCommand`. Worker/system commands
-   → `False`.
+2. **Model:** add the mapped column to `Event` (`persistence/models.py`), `default=False,
+   server_default="false"`.
+3. **`DESIGNED_HUMAN_GATES`** — a small named `frozenset[Edge]` in `kernel/transitions.py`, beside
+   `HUMAN_EDGES`, holding the three designed-gate edges above.
+4. **Stamp in `_transition_event`** (`lifecycle.py:176-200`): compute
+   `improvisation = command.actor.role is ActorRole.HUMAN and (source, command.target) not in
+   DESIGNED_HUMAN_GATES` and pass `improvisation=improvisation` into the `Event(...)`.
 5. **Report:** `improvisation` = `COUNT(events WHERE improvisation IS TRUE)` in window. A true count,
-   not a scrape. `basis` **names its own coverage**: e.g. `"human-driven lifecycle commands: N
-   (coverage: manual commands/{command} only; out-of-band waivers and legacy_manual activation are
-   not yet instrumented)"` — so a reader knows precisely what is and isn't counted.
+   not a scrape. `basis` **names its own coverage**: e.g. `"human operator overrides (cancels +
+   verifier-bypass completes): N; designed human gates excluded"` — so a reader knows precisely what
+   is and isn't counted.
 
 ### Why a column, not the alternatives
 
@@ -239,7 +254,7 @@ discussion), or add the module to the appropriate allowlist.
 - [ ] `GET /api/v1/slo-report` + `orchestrator slo-report` CLI, with service/API/CLI tests.
 - [ ] Cost/tokens `not_instrumented` with guard test + P2 backlog item + scoped actuals-capture
       proposal (shared prerequisite with WS-P2.4).
-- [ ] `events.improvisation` migration + model + `TransitionCommand` field + command-route stamp +
+- [ ] `events.improvisation` migration + model + `DESIGNED_HUMAN_GATES` + `_transition_event` stamp +
       true count in report, coverage self-described in `basis`.
 - [ ] `make check` green (collected count read); `/code-review`; independent adversarial review.
 - [ ] Wave-1 progress note in `~/docs/software-delivery-system/`.
@@ -248,5 +263,6 @@ discussion), or add the module to the appropriate allowlist.
 
 - Confirm no `Event` serialization/contract test breaks on the added column (the outbox
   `_factory_action` mapper keys on `action`, not columns — expected safe; verify).
-- Confirm `transition_unit` has no caller other than the `command` route that should also count as
-  improvisation (expected: none — workers/system pass role WORKER/SYSTEM; verify in plan).
+- Confirm the `AWAITING_APPROVAL → READY` approval-resume and the `AWAITING_REVIEW` review verdicts
+  actually flow through `_transition_event` (so `DESIGNED_HUMAN_GATES` genuinely excludes them);
+  verify in plan with a test that a recorded approval-resume yields `improvisation=false`.
