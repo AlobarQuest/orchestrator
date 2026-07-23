@@ -348,6 +348,21 @@ def status_ledger(
     _run(lambda: request("GET", f"/api/v1/status-ledger{query}"), json_output)
 
 
+@app.command("slo-report")
+def slo_report(
+    since: Annotated[str | None, typer.Option("--since")] = None,
+    until: Annotated[str | None, typer.Option("--until")] = None,
+    json_output: JsonOption = False,
+) -> None:
+    params: dict[str, str] = {}
+    if since is not None:
+        params["since"] = since
+    if until is not None:
+        params["until"] = until
+    query = f"?{urlencode(params)}" if params else ""
+    _run(lambda: request("GET", f"/api/v1/slo-report{query}"), json_output)
+
+
 @event_publications_app.command("list")
 def event_publications_list(
     source_kind: Annotated[str | None, typer.Option("--source-kind")] = None,
