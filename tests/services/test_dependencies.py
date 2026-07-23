@@ -36,7 +36,7 @@ def register_unit(
         unit_key=key,
         title=key,
         outcome=f"{key} complete",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=AUTHORITY,
         max_attempts=3,
         approved_by="human-1",

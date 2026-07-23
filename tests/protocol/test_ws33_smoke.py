@@ -32,7 +32,7 @@ SYSTEM = {"Authorization": "Bearer system-token", "X-Credential-Key-Id": "system
 VERIFIER = {"Authorization": "Bearer verifier-token", "X-Credential-Key-Id": "verifier-key"}
 PACKAGE_FIXTURE = Path("tests/fixtures/intent-packages/ws32-approved-software")
 AUTHORITY = {
-    "capabilities": {"repository_write": "allowed"},
+    "capabilities": {"repo.edit": "allowed"},
     "budgets": {"max_attempts": 3, "max_llm_calls": 4},
 }
 
@@ -196,7 +196,7 @@ def _decomposition_payload(acceptance_criteria: dict[str, str]) -> dict[str, obj
                 "unit_key": "smoke-unit",
                 "title": "Exercise WS-3.3 smoke protocol",
                 "outcome": "The public lifecycle path is smoke tested.",
-                "required_capability": "repository_write",
+                "required_capability": "repo.edit",
                 "authority": AUTHORITY,
                 "max_attempts": 3,
             }
@@ -932,7 +932,7 @@ def _approved_decomposition_unit(
                     "unit_key": f"ws33-smoke-{suffix}-unit",
                     "title": f"WS-3.3 smoke {suffix}",
                     "outcome": "Auxiliary smoke path is exercised.",
-                    "required_capability": "repository_write",
+                    "required_capability": "repo.edit",
                     "authority": AUTHORITY,
                     "max_attempts": max_attempts,
                 }

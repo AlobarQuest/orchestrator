@@ -132,7 +132,7 @@ def test_records_deployment_observation_and_generated_post_deploy_unit(
     assert generated.decomposition_approved_by == SYSTEM.actor_id
     assert generated.decomposition_approved_at is not None
     assert "deploy" not in generated.authority.get("capabilities", {})
-    assert "repository_write" not in generated.authority.get("capabilities", {})
+    assert "repo.edit" not in generated.authority.get("capabilities", {})
 
     assert implementation_unit.state == original_state
     assert implementation_unit.version == original_version

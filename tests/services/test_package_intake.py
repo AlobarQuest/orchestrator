@@ -21,7 +21,7 @@ from orchestrator.services.package_intake import (
 from orchestrator.services.packages import register_approved_unit, register_revision
 
 AUTHORITY = AuthorityEnvelope(
-    capabilities={"repository_write": "allowed"},
+    capabilities={"repo.edit": "allowed"},
     budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
 )
 NOW = datetime(2026, 7, 5, tzinfo=UTC)
@@ -301,7 +301,7 @@ def test_package_cli_revision_blocks_direct_unit_registration_without_approved_d
             unit_key="unit-1",
             title="Implement one",
             outcome="One works",
-            required_capability="repository_write",
+            required_capability="repo.edit",
             authority=AUTHORITY,
             approved_by="human-1",
             approved_at=NOW,
@@ -324,7 +324,7 @@ def test_package_cli_revision_rejects_activation_source_without_approved_decompo
             unit_key="unit-1",
             title="Implement one",
             outcome="One works",
-            required_capability="repository_write",
+            required_capability="repo.edit",
             authority=AUTHORITY,
             approved_by="human-1",
             approved_at=NOW,

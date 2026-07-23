@@ -16,7 +16,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 
-AUTHORITY = {"capabilities": {"repository_write": "allowed"}, "budgets": {}, "unknown_fields": []}
+AUTHORITY = {"capabilities": {"repo.edit": "allowed"}, "budgets": {}, "unknown_fields": []}
 
 
 def _revision(session: Session) -> WorkPackageRevision:

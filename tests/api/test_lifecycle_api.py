@@ -64,7 +64,7 @@ VERIFIER = {
     "X-Credential-Key-Id": "verifier-key",
 }
 AUTHORITY = {
-    "capabilities": {"repository_write": "allowed"},
+    "capabilities": {"repo.edit": "allowed"},
     "budgets": {"max_attempts": 3, "max_llm_calls": 4},
 }
 
@@ -105,7 +105,7 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
         "unit_key": "unit-1",
         "title": "Exercise API lifecycle",
         "outcome": "Lifecycle works",
-        "required_capability": "repository_write",
+        "required_capability": "repo.edit",
         "authority": AUTHORITY,
         "max_attempts": 3,
         "approved_by": "devon",
@@ -450,7 +450,7 @@ def test_work_unit_registration_idempotency_conflicts_on_raw_authority_change(
     revision_id = revision.json()["id"]
 
     raw_authority = {
-        "capabilities": {"repository_write": "allowed"},
+        "capabilities": {"repo.edit": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
         "constraints": {
             "target_repository": "owner/repo-a",
@@ -458,7 +458,7 @@ def test_work_unit_registration_idempotency_conflicts_on_raw_authority_change(
         },
     }
     conflicting_raw_authority = {
-        "capabilities": {"repository_write": "allowed"},
+        "capabilities": {"repo.edit": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
         "constraints": {
             "target_repository": "owner/repo-b",
@@ -471,7 +471,7 @@ def test_work_unit_registration_idempotency_conflicts_on_raw_authority_change(
         "unit_key": "unit-raw-authority",
         "title": "Raw authority unit",
         "outcome": "Registration identity includes raw authority.",
-        "required_capability": "repository_write",
+        "required_capability": "repo.edit",
         "authority": raw_authority,
         "max_attempts": 3,
         "approved_by": "devon",

@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from orchestrator.capability_vocabulary import validate_unit_capabilities
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import (
@@ -502,6 +503,7 @@ def _validated_units(
 def _validate_unit_constraints(unit: ProposedUnit) -> dict[str, Any]:
     payload = _authority_payload(unit)
     envelope = normalize_authority(payload)
+    validate_unit_capabilities(unit.required_capability, envelope.capabilities.keys())
     constraints = payload.get("constraints", {})
     if not isinstance(constraints, Mapping):
         raise DomainError(

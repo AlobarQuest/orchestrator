@@ -38,7 +38,7 @@ def _register_ready_unit(db_client: TestClient, suffix: str = "") -> str:
             "unit_key": f"ledger-api-unit{key_suffix}",
             "title": f"Ledger API unit{key_suffix}",
             "outcome": "Ledger API is inspectable",
-            "required_capability": "repository_write",
+            "required_capability": "repo.edit",
             "authority": AUTHORITY,
             "max_attempts": 3,
             "approved_by": "devon",

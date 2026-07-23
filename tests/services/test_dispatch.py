@@ -51,7 +51,7 @@ def authority(
     if conformance is MISSING:
         conformance = GREEN_CONFORMANCE
     return AuthorityEnvelope(
-        capabilities={"repository_write": "allowed"},
+        capabilities={"repo.edit": "allowed"},
         budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
         constraints=constraints,
         conformance=conformance if isinstance(conformance, dict) else None,
@@ -79,8 +79,8 @@ class FakeGitHubDispatcher:
 def settings(**overrides: object) -> DispatchSettings:
     values = {
         "enabled": True,
-        "allowed_change_classes": frozenset({"repository_write"}),
-        "enabled_capabilities": frozenset({"repository_write"}),
+        "allowed_change_classes": frozenset({"repo.edit"}),
+        "enabled_capabilities": frozenset({"repo.edit"}),
         "allowed_target_repositories": frozenset({PILOT_REPOSITORY}),
         "workflow_id": "factory-runner-pilot.yml",
         "workflow_ref": "main",
@@ -125,7 +125,7 @@ def ready_unit(
         unit_key=key,
         title="Dispatch work",
         outcome="Runner opens a PR",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=authority(target_repository, conformance),
         max_attempts=3,
         approved_by=HUMAN.actor_id,

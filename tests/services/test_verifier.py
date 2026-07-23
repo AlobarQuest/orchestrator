@@ -552,7 +552,7 @@ def test_verifier_rejects_malformed_revision_without_persisted_criteria(
         unit_key="verify-missing-criteria-row",
         title="verify-missing-criteria-row",
         outcome="verified",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=AUTHORITY,
         max_attempts=3,
         approved_by=HUMAN.actor_id,

@@ -24,7 +24,7 @@ from orchestrator.services.packages import (
 )
 
 AUTHORITY = AuthorityEnvelope(
-    capabilities={"repository_write": "allowed"},
+    capabilities={"repo.edit": "allowed"},
     budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
 )
 NOW = datetime(2026, 7, 5, tzinfo=UTC)
@@ -139,7 +139,7 @@ def test_approved_unit_registration_only_creates_draft(migrated_session: Session
         unit_key="unit-1",
         title="Implement one",
         outcome="One works",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=AUTHORITY,
         max_attempts=3,
         approved_by="human-1",
@@ -163,7 +163,7 @@ def test_approved_unit_registration_defaults_to_three_attempts(
         unit_key="unit-default-attempts",
         title="Implement defaults",
         outcome="Defaults work",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=AUTHORITY,
         approved_by="human-1",
         approved_at=NOW,
@@ -185,7 +185,7 @@ def test_approved_unit_registration_preserves_explicit_attempt_budget(
         unit_key="unit-explicit-attempts",
         title="Implement explicit budget",
         outcome="Explicit budget works",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=AUTHORITY,
         max_attempts=2,
         approved_by="human-1",
@@ -202,7 +202,7 @@ def test_approved_unit_registration_idempotency_conflicts_when_raw_authority_dif
 ) -> None:
     revision = register_test_revision(migrated_session)
     raw_authority = {
-        "capabilities": {"repository_write": "allowed"},
+        "capabilities": {"repo.edit": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
         "constraints": {
             "target_repository": "owner/repo-a",
@@ -210,7 +210,7 @@ def test_approved_unit_registration_idempotency_conflicts_when_raw_authority_dif
         },
     }
     conflicting_raw_authority = {
-        "capabilities": {"repository_write": "allowed"},
+        "capabilities": {"repo.edit": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
         "constraints": {
             "target_repository": "owner/repo-b",
@@ -229,7 +229,7 @@ def test_approved_unit_registration_idempotency_conflicts_when_raw_authority_dif
         unit_key="unit-raw-authority",
         title="Respect raw authority",
         outcome="Replay identity includes raw authority.",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=normalize_authority(raw_authority),
         authority_payload=raw_authority,
         approved_by="human-1",
@@ -244,7 +244,7 @@ def test_approved_unit_registration_idempotency_conflicts_when_raw_authority_dif
         unit_key="unit-raw-authority",
         title="Respect raw authority",
         outcome="Replay identity includes raw authority.",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=normalize_authority(raw_authority),
         authority_payload=raw_authority,
         approved_by="human-1",
@@ -263,7 +263,7 @@ def test_approved_unit_registration_idempotency_conflicts_when_raw_authority_dif
             unit_key="unit-raw-authority",
             title="Respect raw authority",
             outcome="Replay identity includes raw authority.",
-            required_capability="repository_write",
+            required_capability="repo.edit",
             authority=normalize_authority(conflicting_raw_authority),
             authority_payload=conflicting_raw_authority,
             approved_by="human-1",
@@ -287,7 +287,7 @@ def test_approved_unit_registration_conflicts_when_unknown_field_values_differ(
     """
     revision = register_test_revision(migrated_session)
     raw_authority = {
-        "capabilities": {"repository_write": "allowed"},
+        "capabilities": {"repo.edit": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
         "future_field": "original",
     }
@@ -303,7 +303,7 @@ def test_approved_unit_registration_conflicts_when_unknown_field_values_differ(
         unit_key="unit-unknown-field",
         title="Respect raw authority",
         outcome="Replay identity includes unknown field values.",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=normalize_authority(raw_authority),
         authority_payload=raw_authority,
         approved_by="human-1",
@@ -320,7 +320,7 @@ def test_approved_unit_registration_conflicts_when_unknown_field_values_differ(
             unit_key="unit-unknown-field",
             title="Respect raw authority",
             outcome="Replay identity includes unknown field values.",
-            required_capability="repository_write",
+            required_capability="repo.edit",
             authority=normalize_authority(conflicting_raw_authority),
             authority_payload=conflicting_raw_authority,
             approved_by="human-1",
@@ -343,7 +343,7 @@ def test_authority_approval_idempotency_binds_expected_version(
         unit_key="approval-version",
         title="Approval version",
         outcome="Approval is exact",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=AUTHORITY,
         approved_by="human-1",
         approved_at=NOW,
@@ -388,7 +388,7 @@ def test_authority_approval_rejects_legacy_invalid_dependency_update_envelope(
         unit_key="invalid-authority",
         title="Invalid authority",
         outcome="Authority remains unapproved.",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=AUTHORITY,
         approved_by="human-1",
         approved_at=NOW,
@@ -430,7 +430,7 @@ def test_action_approval_remains_version_bound_without_authority_effect(
         unit_key="action-approval",
         title="Action approval",
         outcome="Action approval remains unchanged.",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=AUTHORITY,
         approved_by="human-1",
         approved_at=NOW,
