@@ -25,6 +25,7 @@ AUTHORITY = AuthorityEnvelope(
 
 # ---- shared builders (reused by Tasks 4-7) ---------------------------------
 
+
 def _build_unit(session, key, *, enforcement=None):
     now = TransactionClock().now(session)
     revision = register_revision(
@@ -62,8 +63,18 @@ def _build_unit(session, key, *, enforcement=None):
     return revision, unit
 
 
-def _add_event(session, unit_id, *, action, to_state, occurred_at, from_state=None,
-               improvisation=False, actor_id="system", actor_role="system"):
+def _add_event(
+    session,
+    unit_id,
+    *,
+    action,
+    to_state,
+    occurred_at,
+    from_state=None,
+    improvisation=False,
+    actor_id="system",
+    actor_role="system",
+):
     event = Event(
         occurred_at=occurred_at,
         actor_id=actor_id,
@@ -82,8 +93,9 @@ def _add_event(session, unit_id, *, action, to_state, occurred_at, from_state=No
     return event
 
 
-def _add_claim(session, unit_id, *, attempt, acquired_at, terminal_reason=None,
-               lease_expires_at=None):
+def _add_claim(
+    session, unit_id, *, attempt, acquired_at, terminal_reason=None, lease_expires_at=None
+):
     claim = Claim(
         work_unit_id=unit_id,
         attempt=attempt,
@@ -122,8 +134,17 @@ def _seed_evidence(session, unit, *, ac_id, key):
     return evidence_id
 
 
-def _add_adjudication(session, revision_id, unit_id, *, ac_id, outcome, decided_at,
-                      failed_evidence_id=None, event_id=None):
+def _add_adjudication(
+    session,
+    revision_id,
+    unit_id,
+    *,
+    ac_id,
+    outcome,
+    decided_at,
+    failed_evidence_id=None,
+    event_id=None,
+):
     adj = Adjudication(
         work_package_revision_id=revision_id,
         work_unit_id=unit_id,
@@ -144,6 +165,7 @@ def _add_adjudication(session, revision_id, unit_id, *, ac_id, outcome, decided_
 
 
 # ---- skeleton tests --------------------------------------------------------
+
 
 def test_empty_store_reports_no_data_and_not_instrumented(migrated_session):
     report = slo_report(migrated_session)
@@ -181,6 +203,7 @@ def test_explicit_window_is_respected(migrated_session):
 
 # ---- shared builder smoke test (this task's own deliverable) --------------
 
+
 def test_shared_builders_smoke(migrated_session):
     """Prove the shared builders themselves work, since the skeleton tests above
     run on an empty store and never call them. Tasks 4-7 depend on these builders;
@@ -215,6 +238,7 @@ def test_shared_builders_smoke(migrated_session):
 
 
 # ---- claim_expiry_rate / waiver_frequency (this task's deliverable) -------
+
 
 def test_claim_expiry_rate_counts_lease_expired_in_window(migrated_session):
     since = datetime(2026, 7, 1, tzinfo=UTC)
@@ -255,8 +279,13 @@ def test_waiver_frequency_counts_waived_over_adjudications(migrated_session):
     )
     failed_evidence_id = _seed_evidence(migrated_session, unit, ac_id="ac-2", key="waiver-failed-1")
     _add_adjudication(
-        migrated_session, revision.id, unit.id, ac_id="ac-2", outcome="waived",
-        decided_at=inside, failed_evidence_id=failed_evidence_id,
+        migrated_session,
+        revision.id,
+        unit.id,
+        ac_id="ac-2",
+        outcome="waived",
+        decided_at=inside,
+        failed_evidence_id=failed_evidence_id,
     )
     migrated_session.commit()
     report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
@@ -267,6 +296,7 @@ def test_waiver_frequency_counts_waived_over_adjudications(migrated_session):
 
 
 # ---- intake_to_first_work / queue_age (this task's deliverable) -----------
+
 
 def test_intake_to_first_work_median_latency_seconds(migrated_session):
     revision, unit = _build_unit(migrated_session, "intake")
@@ -294,8 +324,12 @@ def test_queue_age_median_of_ready_units(migrated_session):
     unit_row.state = WorkUnitState.READY.value
     ready_at = datetime(2026, 7, 5, tzinfo=UTC)
     _add_event(
-        migrated_session, unit.id, action="work_unit.transitioned",
-        to_state="ready", from_state="draft", occurred_at=ready_at,
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="ready",
+        from_state="draft",
+        occurred_at=ready_at,
     )
     migrated_session.commit()
     now = TransactionClock().now(migrated_session)
@@ -311,18 +345,37 @@ def test_queue_age_median_of_ready_units(migrated_session):
 
 # ---- revert_rate / evidence_completeness (this task's deliverable) --------
 
+
 def test_revert_rate_is_partial_with_release_revert_blind_spot(migrated_session):
     since = datetime(2026, 7, 1, tzinfo=UTC)
     until = datetime(2026, 7, 8, tzinfo=UTC)
     _, unit = _build_unit(migrated_session, "revert")
     inside = datetime(2026, 7, 3, tzinfo=UTC)
     # two submits, one revert (revision_required from submitted)
-    _add_event(migrated_session, unit.id, action="work_unit.transitioned",
-               to_state="submitted", from_state="executing", occurred_at=inside)
-    _add_event(migrated_session, unit.id, action="work_unit.transitioned",
-               to_state="submitted", from_state="executing", occurred_at=inside + timedelta(hours=1))
-    _add_event(migrated_session, unit.id, action="work_unit.transitioned",
-               to_state="revision_required", from_state="submitted", occurred_at=inside + timedelta(hours=2))
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="submitted",
+        from_state="executing",
+        occurred_at=inside,
+    )
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="submitted",
+        from_state="executing",
+        occurred_at=inside + timedelta(hours=1),
+    )
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="revision_required",
+        from_state="submitted",
+        occurred_at=inside + timedelta(hours=2),
+    )
     migrated_session.commit()
     report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
     assert report.revert_rate.status == STATUS_PARTIAL
@@ -343,10 +396,18 @@ def test_evidence_completeness_ratio(migrated_session):
     assert set(required) == {"ac-1", "ac-2"}
     inside = datetime(2026, 7, 3, tzinfo=UTC)
     # a transition in-window makes the unit "active in window"
-    _add_event(migrated_session, unit.id, action="work_unit.transitioned",
-               to_state="executing", from_state="claimed", occurred_at=inside)
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="executing",
+        from_state="claimed",
+        occurred_at=inside,
+    )
     # satisfy ac-1 only (passed); ac-2 unsatisfied
-    _add_adjudication(migrated_session, revision.id, unit.id, ac_id="ac-1", outcome="passed", decided_at=inside)
+    _add_adjudication(
+        migrated_session, revision.id, unit.id, ac_id="ac-1", outcome="passed", decided_at=inside
+    )
     migrated_session.commit()
     report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
     assert report.evidence_completeness.status == STATUS_COMPUTED

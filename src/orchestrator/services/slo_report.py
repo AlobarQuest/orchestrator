@@ -107,7 +107,8 @@ def _intake_to_first_work(session, since, until, now) -> MetricValue:
         latencies.append((first_claim - revision.registered_at).total_seconds())
     if not latencies:
         return MetricValue(
-            STATUS_NO_DATA, None,
+            STATUS_NO_DATA,
+            None,
             f"{len(revisions)} revisions registered in window, none has a first claim yet",
         )
     return MetricValue(
@@ -135,7 +136,8 @@ def _queue_age(session, since, until, now) -> MetricValue:
             ages.append((now - entered).total_seconds())
     if not ages:
         return MetricValue(
-            STATUS_NO_DATA, None,
+            STATUS_NO_DATA,
+            None,
             "ready units exist but none has a recorded ready-entry transition event",
         )
     return MetricValue(
@@ -146,18 +148,26 @@ def _queue_age(session, since, until, now) -> MetricValue:
 
 
 def _claim_expiry_rate(session, since, until, now) -> MetricValue:
-    total = session.scalar(
-        select(func.count(Claim.id)).where(Claim.acquired_at >= since, Claim.acquired_at < until)
-    ) or 0
+    total = (
+        session.scalar(
+            select(func.count(Claim.id)).where(
+                Claim.acquired_at >= since, Claim.acquired_at < until
+            )
+        )
+        or 0
+    )
     if total == 0:
         return MetricValue(STATUS_NO_DATA, None, "no claims were acquired in the window")
-    expired = session.scalar(
-        select(func.count(Claim.id)).where(
-            Claim.acquired_at >= since,
-            Claim.acquired_at < until,
-            Claim.terminal_reason == "lease_expired",
+    expired = (
+        session.scalar(
+            select(func.count(Claim.id)).where(
+                Claim.acquired_at >= since,
+                Claim.acquired_at < until,
+                Claim.terminal_reason == "lease_expired",
+            )
         )
-    ) or 0
+        or 0
+    )
     return MetricValue(
         STATUS_COMPUTED,
         expired / total,
@@ -166,20 +176,26 @@ def _claim_expiry_rate(session, since, until, now) -> MetricValue:
 
 
 def _waiver_frequency(session, since, until, now) -> MetricValue:
-    total = session.scalar(
-        select(func.count(Adjudication.id)).where(
-            Adjudication.decided_at >= since, Adjudication.decided_at < until
+    total = (
+        session.scalar(
+            select(func.count(Adjudication.id)).where(
+                Adjudication.decided_at >= since, Adjudication.decided_at < until
+            )
         )
-    ) or 0
+        or 0
+    )
     if total == 0:
         return MetricValue(STATUS_NO_DATA, None, "no adjudications were decided in the window")
-    waived = session.scalar(
-        select(func.count(Adjudication.id)).where(
-            Adjudication.decided_at >= since,
-            Adjudication.decided_at < until,
-            Adjudication.outcome == "waived",
+    waived = (
+        session.scalar(
+            select(func.count(Adjudication.id)).where(
+                Adjudication.decided_at >= since,
+                Adjudication.decided_at < until,
+                Adjudication.outcome == "waived",
+            )
         )
-    ) or 0
+        or 0
+    )
     return MetricValue(
         STATUS_COMPUTED,
         waived / total,
@@ -192,25 +208,31 @@ _REVERT_SOURCES = ("submitted", "verifying", "awaiting_review")
 
 
 def _revert_rate(session, since, until, now) -> MetricValue:
-    submits = session.scalar(
-        select(func.count(Event.id)).where(
-            Event.action == "work_unit.transitioned",
-            Event.to_state == "submitted",
-            Event.occurred_at >= since,
-            Event.occurred_at < until,
+    submits = (
+        session.scalar(
+            select(func.count(Event.id)).where(
+                Event.action == "work_unit.transitioned",
+                Event.to_state == "submitted",
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+            )
         )
-    ) or 0
+        or 0
+    )
     if submits == 0:
         return MetricValue(STATUS_NO_DATA, None, "no submit transitions occurred in the window")
-    reverts = session.scalar(
-        select(func.count(Event.id)).where(
-            Event.action == "work_unit.transitioned",
-            Event.to_state.in_(_REVERT_STATES),
-            Event.from_state.in_(_REVERT_SOURCES),
-            Event.occurred_at >= since,
-            Event.occurred_at < until,
+    reverts = (
+        session.scalar(
+            select(func.count(Event.id)).where(
+                Event.action == "work_unit.transitioned",
+                Event.to_state.in_(_REVERT_STATES),
+                Event.from_state.in_(_REVERT_SOURCES),
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+            )
         )
-    ) or 0
+        or 0
+    )
     return MetricValue(
         STATUS_PARTIAL,
         reverts / submits,
@@ -253,7 +275,8 @@ def _evidence_completeness(session, since, until, now) -> MetricValue:
         total_satisfied += len(set(required) & satisfied)
     if total_required == 0:
         return MetricValue(
-            STATUS_NO_DATA, None,
+            STATUS_NO_DATA,
+            None,
             f"{len(active_ids)} active units in window, none has required acceptance criteria",
         )
     return MetricValue(
