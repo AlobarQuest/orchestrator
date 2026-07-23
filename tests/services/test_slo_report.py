@@ -412,3 +412,73 @@ def test_evidence_completeness_ratio(migrated_session):
     report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
     assert report.evidence_completeness.status == STATUS_COMPUTED
     assert report.evidence_completeness.value == 0.5  # 1 of 2 required satisfied
+
+
+# ---- improvisation (this task's deliverable) -------------------------------
+
+
+def test_improvisation_counts_flagged_events_in_window(migrated_session):
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    _, unit = _build_unit(migrated_session, "improv")
+    inside = datetime(2026, 7, 3, tzinfo=UTC)
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="cancelled",
+        from_state="executing",
+        occurred_at=inside,
+        improvisation=True,
+    )
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="executing",
+        from_state="claimed",
+        occurred_at=inside,
+        improvisation=False,
+    )
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="cancelled",
+        from_state="executing",
+        occurred_at=datetime(2026, 6, 1, tzinfo=UTC),
+        improvisation=True,
+    )  # out of window
+    migrated_session.commit()
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+    assert report.improvisation.status == STATUS_COMPUTED
+    assert report.improvisation.value == 1.0  # one flagged, in-window
+
+
+def test_improvisation_zero_overrides_but_active_is_computed_zero(migrated_session):
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    _, unit = _build_unit(migrated_session, "improv-zero")
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="executing",
+        from_state="claimed",
+        occurred_at=datetime(2026, 7, 3, tzinfo=UTC),
+        improvisation=False,
+    )
+    migrated_session.commit()
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+    assert report.improvisation.status == STATUS_COMPUTED
+    assert report.improvisation.value == 0.0
+
+
+def test_improvisation_no_activity_is_no_data(migrated_session):
+    report = slo_report(
+        migrated_session,
+        SloReportFilters(
+            since=datetime(2026, 7, 1, tzinfo=UTC), until=datetime(2026, 7, 8, tzinfo=UTC)
+        ),
+    )
+    assert report.improvisation.status == STATUS_NO_DATA

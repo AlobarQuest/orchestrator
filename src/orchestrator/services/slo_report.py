@@ -79,9 +79,6 @@ def slo_report(session: Session, filters: SloReportFilters | None = None) -> Slo
     )
 
 
-_NO_DATA_STUB = "not yet implemented"
-
-
 def _intake_to_first_work(session, since, until, now) -> MetricValue:
     revisions = session.scalars(
         select(WorkPackageRevision).where(
@@ -288,7 +285,35 @@ def _evidence_completeness(session, since, until, now) -> MetricValue:
 
 
 def _improvisation(session, since, until, now) -> MetricValue:
-    return MetricValue(STATUS_NO_DATA, None, _NO_DATA_STUB)
+    total_transitions = (
+        session.scalar(
+            select(func.count(Event.id)).where(
+                Event.action == "work_unit.transitioned",
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+            )
+        )
+        or 0
+    )
+    if total_transitions == 0:
+        return MetricValue(STATUS_NO_DATA, None, "no lifecycle transitions occurred in the window")
+    overrides = (
+        session.scalar(
+            select(func.count(Event.id)).where(
+                Event.action == "work_unit.transitioned",
+                Event.improvisation.is_(True),
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+            )
+        )
+        or 0
+    )
+    return MetricValue(
+        STATUS_COMPUTED,
+        float(overrides),
+        f"human operator overrides (cancels + verifier-bypass completes): {overrides} "
+        f"of {total_transitions} transitions; designed human gates excluded.",
+    )
 
 
 def _median(values: list[float]) -> float:
