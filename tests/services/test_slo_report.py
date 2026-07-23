@@ -337,10 +337,10 @@ def test_evidence_completeness_ratio(migrated_session):
         migrated_session, "complete", enforcement={"acceptance_criteria": ["ac-1", "ac-2"]}
     )
     from orchestrator.services.lifecycle import required_ac_ids
-    assert set(required_ac_ids(migrated_session, revision, migrated_session.get(WorkUnit, unit.id))) == {
-        "ac-1",
-        "ac-2",
-    }
+
+    required = required_ac_ids(migrated_session, revision, migrated_session.get(WorkUnit, unit.id))
+    assert required is not None
+    assert set(required) == {"ac-1", "ac-2"}
     inside = datetime(2026, 7, 3, tzinfo=UTC)
     # a transition in-window makes the unit "active in window"
     _add_event(migrated_session, unit.id, action="work_unit.transitioned",
