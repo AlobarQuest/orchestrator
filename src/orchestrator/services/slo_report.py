@@ -7,12 +7,19 @@ zero-filled. Timing derives from event/claim/adjudication timestamps -- never fr
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from statistics import median
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
-from orchestrator.persistence.models import Adjudication, Claim
+from orchestrator.persistence.models import (
+    Adjudication,
+    Claim,
+    Event,
+    WorkPackageRevision,
+    WorkUnit,
+)
 
 STATUS_COMPUTED = "computed"
 STATUS_NO_DATA = "no_data"
@@ -74,11 +81,66 @@ _NO_DATA_STUB = "not yet implemented"
 
 
 def _intake_to_first_work(session, since, until, now) -> MetricValue:
-    return MetricValue(STATUS_NO_DATA, None, _NO_DATA_STUB)
+    revisions = session.scalars(
+        select(WorkPackageRevision).where(
+            WorkPackageRevision.registered_at >= since,
+            WorkPackageRevision.registered_at < until,
+        )
+    ).all()
+    if not revisions:
+        return MetricValue(
+            STATUS_NO_DATA, None, "no package revisions were registered in the window"
+        )
+    latencies: list[float] = []
+    pending = 0
+    for revision in revisions:
+        first_claim = session.scalar(
+            select(func.min(Claim.acquired_at))
+            .join(WorkUnit, WorkUnit.id == Claim.work_unit_id)
+            .where(WorkUnit.work_package_revision_id == revision.id)
+        )
+        if first_claim is None:
+            pending += 1
+            continue
+        latencies.append((first_claim - revision.registered_at).total_seconds())
+    if not latencies:
+        return MetricValue(
+            STATUS_NO_DATA, None,
+            f"{len(revisions)} revisions registered in window, none has a first claim yet",
+        )
+    return MetricValue(
+        STATUS_COMPUTED,
+        _median(latencies),
+        f"median seconds intake->first-claim over {len(latencies)} revisions "
+        f"({pending} registered-but-unclaimed excluded)",
+    )
 
 
 def _queue_age(session, since, until, now) -> MetricValue:
-    return MetricValue(STATUS_NO_DATA, None, _NO_DATA_STUB)
+    ready_units = session.scalars(select(WorkUnit).where(WorkUnit.state == "ready")).all()
+    if not ready_units:
+        return MetricValue(STATUS_NO_DATA, None, "no work units are currently in the ready state")
+    ages: list[float] = []
+    for unit in ready_units:
+        entered = session.scalar(
+            select(func.max(Event.occurred_at)).where(
+                Event.subject_type == "work_unit",
+                Event.subject_id == unit.id,
+                Event.to_state == "ready",
+            )
+        )
+        if entered is not None:
+            ages.append((now - entered).total_seconds())
+    if not ages:
+        return MetricValue(
+            STATUS_NO_DATA, None,
+            "ready units exist but none has a recorded ready-entry transition event",
+        )
+    return MetricValue(
+        STATUS_COMPUTED,
+        _median(ages),
+        f"median seconds in ready over {len(ages)} units currently queued",
+    )
 
 
 def _claim_expiry_rate(session, since, until, now) -> MetricValue:
@@ -133,6 +195,10 @@ def _evidence_completeness(session, since, until, now) -> MetricValue:
 
 def _improvisation(session, since, until, now) -> MetricValue:
     return MetricValue(STATUS_NO_DATA, None, _NO_DATA_STUB)
+
+
+def _median(values: list[float]) -> float:
+    return float(median(values))
 
 
 def _cost(session, since, until, now) -> MetricValue:
