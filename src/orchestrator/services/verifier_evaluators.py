@@ -35,9 +35,38 @@ DETERMINISTIC_TYPES = frozenset(
         "production.auth_behavior",
         "production.dispatch_posture",
         "infra_lane.final",
+        # A package evidence type. Deterministic, but special-cased above the EVALUATORS lookup
+        # (it is deterministic only when the evidence is verifier-owned named-check evidence), so
+        # it carries no EVALUATORS entry and is declared in SPECIAL_CASE_TYPES.
+        "automated_check",
     }
 )
-JUDGMENT_TYPES = frozenset({"human.review", "code_review", "judgment", "manual"})
+# The package (intent-packages) evidence vocabulary that maps to human review. Naming these
+# explicitly is what makes a typo distinguishable from a real judgment type: today they land on
+# `judgment_required` by falling off the end of DETERMINISTIC_TYPES, which is indistinguishable
+# from a misspelling. `automated_check` is NOT here -- it is deterministic (above).
+JUDGMENT_TYPES = frozenset(
+    {
+        "human.review",
+        "code_review",
+        "judgment",
+        "manual",
+        "automated_test",
+        "human_review",
+        "external_attestation",
+        "observation",
+    }
+)
+# DETERMINISTIC_TYPES members that resolve WITHOUT an EVALUATORS entry -- each handled by a
+# dedicated branch in evaluate_criterion. Assertion D (in tests/services/
+# test_criterion_evidence_vocabulary.py) pins DETERMINISTIC_TYPES == EVALUATORS keys | these, so
+# a new deterministic type with no evaluator and no declared special case reds the suite -- which
+# is what makes promoting a type to deterministic later safe to attempt.
+SPECIAL_CASE_TYPES = frozenset({"infra_lane.final", "automated_check"})
+# The criterion `evidence_type` vocabulary a package may legally declare, validated at intake. A
+# criterion type outside this set is a NAMED error at the gate instead of a silent
+# `judgment_required` at verify time.
+SUPPORTED_CRITERION_EVIDENCE_TYPES = DETERMINISTIC_TYPES | JUDGMENT_TYPES
 PASS_VALUES = frozenset({"pass", "passed", "success", "successful", "ok", "green"})
 FAIL_VALUES = frozenset(
     {

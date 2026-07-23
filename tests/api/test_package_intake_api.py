@@ -53,7 +53,7 @@ def intake_payload(**overrides: object) -> dict[str, object]:
             {
                 "ac_id": "AC-002",
                 "condition": "The review notes are captured.",
-                "evidence_type": "review_note",
+                "evidence_type": "human_review",
                 "evidence": "review: reviewer confirmed coverage",
                 "approver": "policy",
             },

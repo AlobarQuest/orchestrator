@@ -14,6 +14,7 @@ from orchestrator.persistence.models import Event, PackageAcceptanceCriterion, W
 from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import register_revision
+from orchestrator.services.verifier_evaluators import SUPPORTED_CRITERION_EVIDENCE_TYPES
 
 _INTAKE_ACTION = "package_revision.intake_registered"
 _INTAKE_SOURCE = "package_cli"
@@ -202,6 +203,16 @@ def _validated_acceptance_criteria(
                 None,
             )
         observed_ids.add(criterion.ac_id)
+        # The verifier keys its evaluation on `criterion.evidence_type` (normalized the same way).
+        # An unknown type here would fall through to `judgment_required` at verify time,
+        # indistinguishable from a typo -- so reject it at the gate with a named error instead.
+        if criterion.evidence_type.strip().lower() not in SUPPORTED_CRITERION_EVIDENCE_TYPES:
+            raise DomainError(
+                "unknown_evidence_type",
+                f"acceptance criterion {criterion.ac_id} declares an unknown "
+                f"evidence_type {criterion.evidence_type!r}",
+                "declare one of the supported criterion evidence types",
+            )
     return acceptance_criteria
 
 
