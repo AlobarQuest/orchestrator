@@ -59,7 +59,7 @@ def intake_payload(**overrides: object) -> dict[str, object]:
             {
                 "ac_id": "AC-002",
                 "condition": "The review notes are captured.",
-                "evidence_type": "review_note",
+                "evidence_type": "human_review",
                 "evidence": "review: reviewer confirmed coverage",
                 "approver": "policy",
             },
@@ -287,7 +287,7 @@ def test_decomposition_proposal_list_and_get_expose_review_projection(
                 "id": body["retained_acs"][0]["package_acceptance_criterion"]["id"],
                 "ac_id": "AC-002",
                 "condition": "The review notes are captured.",
-                "evidence_type": "review_note",
+                "evidence_type": "human_review",
                 "evidence": "review: reviewer confirmed coverage",
                 "approver": "policy",
             },

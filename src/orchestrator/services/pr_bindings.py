@@ -68,6 +68,17 @@ def upsert_pr_binding(
     """
     unit = _require_unit(session, work_unit_id)
     _authorize_write(session, unit, actor, attempt, lease_token)
+    if attempt is None:
+        # The submit guard requires a binding written for the CURRENT attempt. A worker always
+        # presents its attempt (enforced above); a SYSTEM repair MUST also supply the real attempt
+        # of the PR that genuinely exists -- omitting it would store a NULL binding_attempt that
+        # can never satisfy the guard, leaving the unit un-submittable by the one actor able to
+        # repair it. Fail loud here rather than write an un-submittable binding.
+        raise DomainError(
+            "pr_binding_attempt_required",
+            "a PR binding must record the claim attempt it was written for",
+            "resubmit the PR binding with the attempt of the current claim",
+        )
     binding = _locked_binding(session, work_unit_id)
     now = TransactionClock().now(session)
     if binding is None:
@@ -75,6 +86,7 @@ def upsert_pr_binding(
             work_unit_id=work_unit_id,
             pr_number=pr_number,
             head_sha=head_sha,
+            binding_attempt=attempt,
             verification_read_head_sha=None,
             verification_read_attempt=None,
             updated_at=now,
@@ -83,6 +95,7 @@ def upsert_pr_binding(
     else:
         binding.pr_number = pr_number
         binding.head_sha = head_sha
+        binding.binding_attempt = attempt
         binding.updated_at = now
     # This is a request entry point, so it owns its transaction and must COMMIT. Flushing alone
     # makes the response look right -- the ORM returns the object it is holding -- while the row

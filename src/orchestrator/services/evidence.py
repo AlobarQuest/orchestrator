@@ -24,19 +24,17 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.claim_release import release_claim
 from orchestrator.services.claims import validate_active_claim
-from orchestrator.services.lifecycle import ActorContext
 
+# POST_DEPLOY_AC_IDS is the SINGLE source of truth in `lifecycle` (the producer that generates
+# these ACs). This module is the consumer that gates public adjudication against them, so it
+# imports rather than keeping a second copy -- a divergence between generator and gate would let a
+# newly-generated post-deploy AC be publicly adjudicated (the invariant this guards).
+from orchestrator.services.lifecycle import POST_DEPLOY_AC_IDS, ActorContext
+
+# not-a-vocabulary: internal policy subset of adjudication outcomes (which outcomes are not
+# waivers), not a value shared across a repo or subsystem boundary.
 NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57503338
-POST_DEPLOY_AC_IDS = frozenset(
-    {
-        "post-deploy-artifact",
-        "post-deploy-health",
-        "post-deploy-routes",
-        "post-deploy-auth",
-        "post-deploy-dispatch",
-    }
-)
 
 
 def list_evidence(session: Session, work_unit_id: uuid.UUID) -> tuple[Evidence, ...]:

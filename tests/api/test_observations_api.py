@@ -142,7 +142,7 @@ def test_observation_route_records_a_reconciliation_condition_after_commit(
     with Session(migrated_engine) as session:
         unit = register_unit(session, "pr-route")
         upsert_pr_binding(
-            session, actor=system, work_unit_id=unit.id, pr_number=42, head_sha="a" * 40
+            session, actor=system, work_unit_id=unit.id, pr_number=42, head_sha="a" * 40, attempt=1
         )
         session.commit()
         unit_id, state_before, version_before = unit.id, unit.state, unit.version

@@ -10,7 +10,9 @@ from tests.kernel.canonical_expectations import EXPECTED_EDGE_ROLES, EXPECTED_LE
 def test_each_legal_edge_allows_exactly_its_declared_roles(
     edge: tuple[WorkUnitState, WorkUnitState], roles: frozenset[ActorRole]
 ) -> None:
-    guards = TransitionGuards(approval_recorded=True, completion_satisfied=True)
+    guards = TransitionGuards(
+        approval_recorded=True, completion_satisfied=True, submission_binding_recorded=True
+    )
 
     for role in ActorRole:
         if role in roles:
@@ -88,6 +90,21 @@ def test_completion_requires_all_completion_guards(source: WorkUnitState, role: 
     assert exc.value.code == "completion_incomplete"
     assert exc.value.message == "completion guards failed"
     assert exc.value.recovery == "verify"
+
+
+def test_submission_requires_a_recorded_pr_binding() -> None:
+    # The kernel negative control for WS-P2.16 U3: with the binding guard unsatisfied, a WORKER
+    # (the only role that may drive EXECUTING -> SUBMITTED) is refused. Deleting the kernel clause
+    # reds this and `test_each_legal_edge_allows_exactly_its_declared_roles`.
+    with pytest.raises(DomainError) as exc:
+        authorize_transition(
+            WorkUnitState.EXECUTING,
+            WorkUnitState.SUBMITTED,
+            ActorRole.WORKER,
+            TransitionGuards(approval_recorded=True, completion_satisfied=True),
+        )
+
+    assert exc.value.code == "pr_binding_required"
 
 
 def test_domain_error_exposes_stable_fields() -> None:

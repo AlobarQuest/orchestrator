@@ -208,6 +208,7 @@ def test_a_push_after_submit_cannot_move_the_armed_head(migrated_session: Sessio
         work_unit_id=unit.id,
         pr_number=42,
         head_sha=HEAD_2,
+        attempt=grant.attempt,
     )
 
     binding = get_pr_binding(migrated_session, unit.id)

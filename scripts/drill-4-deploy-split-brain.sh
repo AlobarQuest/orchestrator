@@ -72,6 +72,12 @@ evidence=$(api POST "/api/v1/work-units/$unit/evidence" worker \
 evidence_id=$(echo "$evidence" | jq -r '.id // empty')
 [ -n "$evidence_id" ] || die "evidence failed: $evidence"
 
+# A PR-capable unit must record a binding for THIS attempt before it may submit (WS-P2.16 U3).
+api POST "/api/v1/work-units/$unit/pr-binding" worker \
+    "$(jq -nc --argjson a "$attempt" --arg t "$token" \
+        '{idempotency_key:"drill4-binding", expected_version:0, pr_number:400,
+          head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", attempt:$a, lease_token:$t}')" >/dev/null
+
 api POST "/api/v1/work-units/$unit/commands/submit" worker \
     "$(jq -nc --argjson v "$(unit_version "$unit")" --argjson a "$attempt" --arg t "$token" \
         '{idempotency_key:"drill4-submit", expected_version:$v, attempt:$a, lease_token:$t}')" >/dev/null

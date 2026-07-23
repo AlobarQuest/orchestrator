@@ -136,6 +136,12 @@ api POST "/api/v1/work-units/$unit/commands/start" worker \
     "$(jq -nc --argjson v "$(unit_version "$unit")" --argjson a "$attempt2" --arg t "$token2" \
         '{idempotency_key:"drill2-start-2", expected_version:$v, attempt:$a, lease_token:$t}')" >/dev/null
 
+# A PR-capable unit must record a binding for THIS attempt before it may submit (WS-P2.16 U3).
+api POST "/api/v1/work-units/$unit/pr-binding" worker \
+    "$(jq -nc --argjson a "$attempt2" --arg t "$token2" \
+        '{idempotency_key:"drill2-binding", expected_version:0, pr_number:200,
+          head_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", attempt:$a, lease_token:$t}')" >/dev/null
+
 # The new attempt submits WITHOUT recording evidence again: the recovered evidence still stands.
 api POST "/api/v1/work-units/$unit/commands/submit" worker \
     "$(jq -nc --argjson v "$(unit_version "$unit")" --argjson a "$attempt2" --arg t "$token2" \

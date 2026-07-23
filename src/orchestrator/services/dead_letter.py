@@ -41,6 +41,8 @@ DEAD_LETTER_UNIT_STATES = ("failed", "blocked", "cancelled")
 DEAD_LETTER_DISPATCH_STATUSES = ("failed", "blocked")
 # `blocked` is here because requeue TARGETS it. An action whose subject is invisible in the
 # surface it is offered from is not an operator affordance.
+# not-a-vocabulary: internal policy subset of WorkUnitState (which states requeue targets), not a
+# value shared across a repo or subsystem boundary.
 REQUEUE_STATES = ("failed", "blocked")
 # The gates a human must answer. Nothing here can be answered by time passing.
 APPROVAL_STATES = ("awaiting_approval", "awaiting_review")

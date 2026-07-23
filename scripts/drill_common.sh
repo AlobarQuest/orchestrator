@@ -240,7 +240,7 @@ seed_unit() {
     response=$(api POST "/api/v1/revisions/$revision/work-units" human "$(jq -nc --arg k "$label-unit" '{
         idempotency_key:$k, expected_version:0, unit_key:$k, title:"drill unit", outcome:"drill",
         required_capability:"repo.edit",
-        authority:{capabilities:{"repo.edit":"allowed"},budgets:{max_attempts:3,max_llm_calls:4}},
+        authority:{capabilities:{"repo.edit":"allowed","github.pr.create":"allowed"},budgets:{max_attempts:3,max_llm_calls:4}},
         max_attempts:3, approved_by:"devon", approved_at:"2026-07-05T00:00:00+00:00"}')")
     unit=$(echo "$response" | jq -r '.id // empty')
     [ -n "$unit" ] || die "could not register a work unit ($label): $response"
