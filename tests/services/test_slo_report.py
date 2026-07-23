@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from orchestrator.clock import TransactionClock
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
@@ -266,33 +266,13 @@ def test_waiver_frequency_counts_waived_over_adjudications(migrated_session):
 # ---- intake_to_first_work / queue_age (this task's deliverable) -----------
 
 def test_intake_to_first_work_median_latency_seconds(migrated_session):
-    since = datetime(2026, 7, 1, tzinfo=UTC)
-    until = datetime(2026, 7, 8, tzinfo=UTC)
-    # Revision registered_at is server-set at register time; to control it, override after build.
-    # work_package_revisions is append-only (a BEFORE UPDATE OR DELETE trigger rejects any
-    # mutation unconditionally), so a plain ORM attribute write is not enough -- the trigger
-    # must be suspended for this single fixture write and restored immediately after, the same
-    # way this suite already sidesteps the work_unit lifecycle guard for queue-age fixtures.
     revision, unit = _build_unit(migrated_session, "intake")
-    reg_at = datetime(2026, 7, 2, 0, 0, 0, tzinfo=UTC)
-    migrated_session.execute(
-        text(
-            "ALTER TABLE work_package_revisions "
-            "DISABLE TRIGGER reject_work_package_revisions_mutation"
-        )
-    )
-    migrated_session.execute(
-        text("UPDATE work_package_revisions SET registered_at = :reg_at WHERE id = :id"),
-        {"reg_at": reg_at, "id": revision.id},
-    )
-    migrated_session.execute(
-        text(
-            "ALTER TABLE work_package_revisions "
-            "ENABLE TRIGGER reject_work_package_revisions_mutation"
-        )
-    )
-    migrated_session.expire_all()
-    # first claim 120s after registration
+    # registered_at is server-set at register/flush time. Read the real value and bracket the
+    # window around it, rather than fighting the append-only trigger to overwrite it.
+    reg_at = revision.registered_at
+    since = reg_at - timedelta(seconds=1)
+    until = reg_at + timedelta(days=1)
+    # first claim 120s after registration, a later one at 300s
     _add_claim(migrated_session, unit.id, attempt=1, acquired_at=reg_at + timedelta(seconds=120))
     _add_claim(migrated_session, unit.id, attempt=2, acquired_at=reg_at + timedelta(seconds=300))
     migrated_session.commit()
