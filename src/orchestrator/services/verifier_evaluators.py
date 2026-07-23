@@ -308,6 +308,9 @@ def _dispatch_posture_result(payload: dict[str, Any]) -> tuple[EvaluationStatus,
     return ("passed", "passed", "dispatch automation is disabled")
 
 
+# not-a-vocabulary: the consumer-side resolver map, keyed by DETERMINISTIC_TYPES members (which
+# ARE a registered vocabulary). Assertion D pins its keys to DETERMINISTIC_TYPES; it is not a
+# second, independent vocabulary.
 EVALUATORS = {
     "test": _status_result,
     "tests": _status_result,

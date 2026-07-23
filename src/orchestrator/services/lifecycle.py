@@ -30,6 +30,10 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.claim_release import release_claim
 
+# The single source of truth for the generated post-deploy AC ids: this module PRODUCES them
+# (required_ac_ids for a generated post-deploy unit); `services.evidence` imports this same tuple
+# to gate public adjudication. Do not keep a second copy -- a divergence would let a newly
+# generated post-deploy AC be publicly adjudicated.
 POST_DEPLOY_AC_IDS = (
     "post-deploy-artifact",
     "post-deploy-auth",
