@@ -14,7 +14,11 @@ from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.context import context_fingerprint
 from orchestrator.kernel.leases import hash_lease_token
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
+from orchestrator.kernel.transitions import (
+    DESIGNED_HUMAN_GATES,
+    TransitionGuards,
+    authorize_transition,
+)
 from orchestrator.persistence.models import (
     Adjudication,
     Approval,
@@ -180,6 +184,10 @@ def _transition_event(
     registry_version: int,
     occurred_at: datetime,
 ) -> Event:
+    improvisation = (
+        command.actor.role is ActorRole.HUMAN
+        and (source, command.target) not in DESIGNED_HUMAN_GATES
+    )
     return Event(
         occurred_at=occurred_at,
         actor_id=command.actor.actor_id,
@@ -197,6 +205,7 @@ def _transition_event(
         },
         correlation_id=uuid.uuid4(),
         idempotency_key=command.idempotency_key,
+        improvisation=improvisation,
     )
 
 

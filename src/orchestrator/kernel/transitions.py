@@ -59,6 +59,16 @@ HUMAN_EDGES = {
     (WorkUnitState.SUBMITTED, WorkUnitState.COMPLETED),
     (WorkUnitState.VERIFYING, WorkUnitState.COMPLETED),
 }
+# The contract's designated human decision points -- NOT operator improvisation. The approval-resume
+# and the human-review verdicts are declared parts of the lifecycle; the SLO improvisation counter
+# excludes them so it measures overrides, not healthy human-in-the-loop steps (WS-P2.2).
+DESIGNED_HUMAN_GATES: frozenset[Edge] = frozenset(
+    {
+        (WorkUnitState.AWAITING_APPROVAL, WorkUnitState.READY),
+        (WorkUnitState.AWAITING_REVIEW, WorkUnitState.COMPLETED),
+        (WorkUnitState.AWAITING_REVIEW, WorkUnitState.REVISION_REQUIRED),
+    }
+)
 EDGE_ROLES: dict[Edge, frozenset[ActorRole]] = {
     edge: frozenset(
         role
