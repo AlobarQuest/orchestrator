@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -472,6 +473,9 @@ class Event(UUIDPrimaryKey, Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
     correlation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
     idempotency_key: Mapped[str] = mapped_column(String, unique=True)
+    improvisation: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
 
 
 class DispatchRecord(UUIDPrimaryKey, Base):
