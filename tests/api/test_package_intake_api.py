@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
 AUTHORITY = {
-    "capabilities": {"repository_write": "allowed"},
+    "capabilities": {"repo.edit": "allowed"},
     "budgets": {"max_attempts": 3, "max_llm_calls": 4},
 }
 NOW = datetime(2026, 7, 5, tzinfo=UTC)
@@ -69,7 +69,7 @@ def unit_payload(**overrides: object) -> dict[str, object]:
         "unit_key": "unit-1",
         "title": "Implement one",
         "outcome": "One works",
-        "required_capability": "repository_write",
+        "required_capability": "repo.edit",
         "authority": AUTHORITY,
         "max_attempts": 3,
         "approved_by": "human-1",
@@ -128,7 +128,7 @@ def test_package_intake_get_returns_persisted_intake_projection(db_client: TestC
     assert body["approval_ledger_commit"] == "a" * 40
     assert body["verification_mode"] == "caller_attested_cli_verified"
     assert body["authority"] == {
-        "capabilities": {"repository_write": "allowed"},
+        "capabilities": {"repo.edit": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
         "change_class": None,
         "conformance": None,

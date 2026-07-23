@@ -26,6 +26,10 @@ WS42_DISPATCH_PATHS = {
 }
 WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/deployment_observations.py"),
+    # WS-P2.16: the capability vocabulary names `post_deploy_verification` -- the capability the
+    # orchestrator mints for its own post-hoc verification units. That string literal (and the
+    # module docstring describing it) is data, not a merge/dispatch/mutation path.
+    Path("src/orchestrator/capability_vocabulary.py"),
     # WS-P2.1 AC-003: deploy_split_brain is DEFINED over post-deploy verification units -- it
     # reads post_deploy_work_unit_id and the elapsed time since that unit went SUBMITTED. It
     # reads that state; it never dispatches, deploys, or merges.

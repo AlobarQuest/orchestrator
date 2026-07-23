@@ -30,8 +30,8 @@ def envelope(
 
 
 def test_authority_fingerprint_is_canonical() -> None:
-    first = envelope({"repository_write": "allowed", "email_send": "prohibited"})
-    second = envelope({"email_send": "prohibited", "repository_write": "allowed"})
+    first = envelope({"repo.edit": "allowed", "email_send": "prohibited"})
+    second = envelope({"email_send": "prohibited", "repo.edit": "allowed"})
 
     assert authority_fingerprint(first) == authority_fingerprint(second)
 

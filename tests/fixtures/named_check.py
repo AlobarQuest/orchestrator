@@ -26,7 +26,7 @@ HUMAN = ActorContext("human-1", ActorRole.HUMAN)
 WORKER = ActorContext("worker-1", ActorRole.WORKER)
 VERIFIER = ActorContext("verifier-1", ActorRole.VERIFIER)
 AUTHORITY = AuthorityEnvelope(
-    capabilities={"repository_write": "allowed"},
+    capabilities={"repo.edit": "allowed"},
     budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
 )
 TARGET_REPOSITORY = "AlobarQuest/change-manager"
@@ -35,7 +35,7 @@ PR_NUMBER = 26
 PR_URL = f"https://github.com/{TARGET_REPOSITORY}/pull/{PR_NUMBER}"
 RUN_URL = f"https://github.com/{TARGET_REPOSITORY}/actions/runs/123456789"
 AUTOMATED_CHECK_AUTHORITY = AuthorityEnvelope(
-    capabilities={"repository_write": "allowed"},
+    capabilities={"repo.edit": "allowed"},
     budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
     constraints={"target_repository": TARGET_REPOSITORY},
 )
@@ -72,7 +72,7 @@ def mapped_submitted_unit(
         unit_key=key,
         title=key,
         outcome=f"{key} complete",
-        required_capability="repository_write",
+        required_capability="repo.edit",
         authority=authority,
         max_attempts=3,
         approved_by=HUMAN.actor_id,

@@ -11,7 +11,7 @@ from orchestrator.persistence.models import WorkUnit
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
 WORKER = {"Authorization": "Bearer fixture-token", "X-Credential-Key-Id": "worker-key"}
 AUTHORITY = {
-    "capabilities": {"repository_write": "allowed"},
+    "capabilities": {"repo.edit": "allowed"},
     "budgets": {"max_attempts": 3, "max_llm_calls": 4},
 }
 NOW = datetime(2026, 7, 5, tzinfo=UTC)
@@ -102,7 +102,7 @@ def proposal_payload(
                 "unit_key": "unit-1",
                 "title": "Implement service",
                 "outcome": "Service persists proposals.",
-                "required_capability": "repository_write",
+                "required_capability": "repo.edit",
                 "authority": AUTHORITY,
                 "max_attempts": 3,
             },
@@ -110,7 +110,7 @@ def proposal_payload(
                 "unit_key": "unit-2",
                 "title": "Implement tests",
                 "outcome": "Service is covered by focused tests.",
-                "required_capability": "repository_write",
+                "required_capability": "repo.edit",
                 "authority": AUTHORITY,
                 "max_attempts": 3,
             },
@@ -248,7 +248,7 @@ def test_decomposition_proposal_list_and_get_expose_review_projection(
     assert [unit["unit_key"] for unit in body["proposed_units"]] == ["unit-1", "unit-2"]
     # The proposal displays the envelope the runner will be served, work_unit_id included.
     assert body["proposed_units"][0]["authority"] == {
-        "capabilities": {"repository_write": "allowed"},
+        "capabilities": {"repo.edit": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
         "change_class": None,
         "conformance": None,
@@ -321,7 +321,7 @@ def test_decomposition_proposal_idempotency_conflicts_on_raw_authority_change(
     )
     ac_ids = acceptance_criteria_by_key(db_client, revision_id)
     raw_authority = {
-        "capabilities": {"repository_write": "allowed"},
+        "capabilities": {"repo.edit": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
         "constraints": {
             "target_repository": "owner/repo-a",
@@ -329,7 +329,7 @@ def test_decomposition_proposal_idempotency_conflicts_on_raw_authority_change(
         },
     }
     conflicting_raw_authority = {
-        "capabilities": {"repository_write": "allowed"},
+        "capabilities": {"repo.edit": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
         "constraints": {
             "target_repository": "owner/repo-b",
@@ -345,7 +345,7 @@ def test_decomposition_proposal_idempotency_conflicts_on_raw_authority_change(
                 "unit_key": "unit-1",
                 "title": "Implement service",
                 "outcome": "Service persists proposals.",
-                "required_capability": "repository_write",
+                "required_capability": "repo.edit",
                 "authority": raw_authority,
                 "max_attempts": 3,
             },
@@ -353,7 +353,7 @@ def test_decomposition_proposal_idempotency_conflicts_on_raw_authority_change(
                 "unit_key": "unit-2",
                 "title": "Implement tests",
                 "outcome": "Service is covered by focused tests.",
-                "required_capability": "repository_write",
+                "required_capability": "repo.edit",
                 "authority": AUTHORITY,
                 "max_attempts": 3,
             },

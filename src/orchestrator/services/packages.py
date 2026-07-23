@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from orchestrator.capability_vocabulary import validate_unit_capabilities
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import (
@@ -279,6 +280,7 @@ def register_approved_unit(
     expected_version: int | None = None,
 ) -> WorkUnit:
     _require_human(actor_id, actor_role)
+    validate_unit_capabilities(required_capability, authority.capabilities.keys())
     if expected_version not in {None, 0}:
         raise DomainError(
             "version_conflict",

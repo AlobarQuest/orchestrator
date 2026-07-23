@@ -17,7 +17,7 @@ HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.in
 SYSTEM = {"Authorization": "Bearer system-token", "X-Credential-Key-Id": "system-key"}
 WORKER = {"Authorization": "Bearer fixture-token", "X-Credential-Key-Id": "worker-key"}
 AUTHORITY = {
-    "capabilities": {"repository_write": "allowed"},
+    "capabilities": {"repo.edit": "allowed"},
     "budgets": {"max_attempts": 3, "max_llm_calls": 4},
 }
 PACKAGE_FIXTURE = Path("tests/fixtures/intent-packages/ws32-approved-software")
@@ -46,7 +46,7 @@ def decomposition_payload(
                 "unit_key": "unit-1",
                 "title": "Implement service",
                 "outcome": "Service persists proposals.",
-                "required_capability": "repository_write",
+                "required_capability": "repo.edit",
                 "authority": AUTHORITY,
                 "max_attempts": 3,
             },
@@ -54,7 +54,7 @@ def decomposition_payload(
                 "unit_key": "unit-2",
                 "title": "Implement tests",
                 "outcome": "Service is covered by focused tests.",
-                "required_capability": "repository_write",
+                "required_capability": "repo.edit",
                 "authority": AUTHORITY,
                 "max_attempts": 3,
             },
@@ -134,7 +134,7 @@ def test_real_http_api_and_cli_have_success_and_error_parity(
             "unit_key": "cli-http-unit",
             "title": "Exercise real CLI HTTP",
             "outcome": "CLI and API agree",
-            "required_capability": "repository_write",
+            "required_capability": "repo.edit",
             "authority": AUTHORITY,
             "max_attempts": 3,
             "approved_by": "devon",
@@ -370,7 +370,7 @@ def test_real_http_claim_context_cli_matches_api(
             "unit_key": "cli-http-context-unit",
             "title": "Exercise CLI context",
             "outcome": "CLI context works",
-            "required_capability": "repository_write",
+            "required_capability": "repo.edit",
             "authority": AUTHORITY,
             "max_attempts": 3,
             "approved_by": "devon",

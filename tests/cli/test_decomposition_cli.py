@@ -24,9 +24,9 @@ def test_propose_decomposition_reads_json_file_and_posts_to_revision(
                         "unit_key": "unit-1",
                         "title": "Implement service",
                         "outcome": "Service persists proposals.",
-                        "required_capability": "repository_write",
+                        "required_capability": "repo.edit",
                         "authority": {
-                            "capabilities": {"repository_write": "allowed"},
+                            "capabilities": {"repo.edit": "allowed"},
                             "budgets": {"max_attempts": 3, "max_llm_calls": 4},
                         },
                         "max_attempts": 3,
@@ -66,9 +66,9 @@ def test_propose_decomposition_reads_json_file_and_posts_to_revision(
                     "unit_key": "unit-1",
                     "title": "Implement service",
                     "outcome": "Service persists proposals.",
-                    "required_capability": "repository_write",
+                    "required_capability": "repo.edit",
                     "authority": {
-                        "capabilities": {"repository_write": "allowed"},
+                        "capabilities": {"repo.edit": "allowed"},
                         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
                     },
                     "max_attempts": 3,

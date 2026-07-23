@@ -57,7 +57,7 @@ def register_context_unit(db_client: TestClient) -> str:
             "unit_key": "context-api-unit",
             "title": "Context API",
             "outcome": "Context API works",
-            "required_capability": "repository_write",
+            "required_capability": "repo.edit",
             "authority": AUTHORITY,
             "max_attempts": 3,
             "approved_by": "devon",

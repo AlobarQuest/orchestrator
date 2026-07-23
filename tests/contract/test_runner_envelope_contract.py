@@ -21,6 +21,7 @@ from typing import Any, cast
 
 from sqlalchemy.orm import Session
 
+from orchestrator.capability_vocabulary import RUNNER_CAPABILITIES
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.services.decomposition import (
@@ -43,19 +44,13 @@ from orchestrator.services.runner_brief import runner_brief
 from tests.services.test_decomposition import package_ac_ids
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
 
-# Mirrors factory_runner.authority.SUPPORTED_CAPABILITIES / SUPPORTED_LEVELS.
-# The runner raises AuthorityError on anything outside these sets, so an orchestrator
-# envelope that strays outside them can never be executed.
-RUNNER_SUPPORTED_CAPABILITIES = frozenset(
-    {
-        "repo.read",
-        "repo.edit",
-        "command.run",
-        "github.pr.create",
-        "orchestrator.claim",
-        "orchestrator.evidence.write",
-    }
-)
+# The orchestrator's shipped capability vocabulary is the single orchestrator-side source of
+# truth for the runner six. It must be DERIVED from this byte-pinned envelope, not a second
+# hand-maintained copy -- `test_capability_vocabulary_is_derived_from_the_golden_envelope`
+# asserts exactly that, so a divergence (here or in the module) is loud. factory-runner mirrors
+# the same six in its own `capability_vocabulary` and raises AuthorityError on anything outside
+# them, so an orchestrator envelope that strays can never be executed.
+RUNNER_SUPPORTED_CAPABILITIES = RUNNER_CAPABILITIES
 RUNNER_SUPPORTED_LEVELS = frozenset({"allowed", "prohibited"})
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "runner_authority_envelope.json"
@@ -182,6 +177,18 @@ def test_golden_envelope_is_unchanged() -> None:
     """A one-sided edit here means factory-runner's copy has silently drifted."""
     canonical = json.dumps(golden_envelope(), sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256
+
+
+def test_capability_vocabulary_is_derived_from_the_golden_envelope() -> None:
+    """The shipped runner vocabulary IS the envelope's capability set -- not a second copy.
+
+    A hash pin proves the fixture file is unchanged; it says nothing about whether production
+    code consumes it. This asserts the derivation instead: the module orchestrator ingress reads
+    equals the capability keys of the byte-pinned cross-repo envelope. Hardcoding the module's
+    runner set and adding a term reds this (the WS-P2.16 negative control), where flipping a
+    fixture byte would only red the hash test -- which proves nothing about use.
+    """
+    assert RUNNER_CAPABILITIES == frozenset(golden_envelope()["capabilities"])
 
 
 def test_golden_envelope_satisfies_the_runner_vocabulary() -> None:

@@ -134,7 +134,7 @@ def test_append_only_tables_reject_update_and_delete(
                 {
                     "id": unit_id,
                     "revision_id": revision_id,
-                    "authority": '{"capabilities":{"repository_write":"allowed"},'
+                    "authority": '{"capabilities":{"repo.edit":"allowed"},'
                     '"budgets":{},"unknown_fields":[]}',
                 },
             )

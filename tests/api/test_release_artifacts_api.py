@@ -47,7 +47,7 @@ def completed_unit(db_client: TestClient, migrated_engine: Engine, *, key: str =
             "unit_key": key,
             "title": "Release API",
             "outcome": "Release artifact is recorded",
-            "required_capability": "repository_write",
+            "required_capability": "repo.edit",
             "authority": AUTHORITY,
             "max_attempts": 3,
             "approved_by": "devon",

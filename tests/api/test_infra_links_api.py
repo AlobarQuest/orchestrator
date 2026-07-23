@@ -37,7 +37,7 @@ def ready_claimed_unit(db_client: TestClient, *, key: str = "infra-link-api"):
             "unit_key": key,
             "title": "Infra link API",
             "outcome": "Infra linkage is recorded",
-            "required_capability": "repository_write",
+            "required_capability": "repo.edit",
             "authority": AUTHORITY,
             "max_attempts": 3,
             "approved_by": "devon",

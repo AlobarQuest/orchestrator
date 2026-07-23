@@ -586,7 +586,7 @@ def test_work_unit_authority_upgrade_prefers_proposal_unit_authority_when_availa
         },
     }
     fallback_authority = {
-        "capabilities": {"repository_write": "allowed"},
+        "capabilities": {"repo.edit": "allowed"},
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
         "constraints": {"target_repository": "AlobarQuest/fallback"},
     }
@@ -614,7 +614,7 @@ def test_work_unit_authority_upgrade_prefers_proposal_unit_authority_when_availa
             unit_key="manual-unit",
             title="Manual unit",
             outcome="Fallback authority should come from the revision.",
-            required_capability="repository_write",
+            required_capability="repo.edit",
             authority=AUTHORITY,
             approved_by="human-1",
             approved_at=NOW,
@@ -656,7 +656,7 @@ def test_work_unit_authority_upgrade_prefers_proposal_unit_authority_when_availa
                         unit_key="unit-1",
                         title="Implement service",
                         outcome="Service persists proposals.",
-                        required_capability="repository_write",
+                        required_capability="repo.edit",
                         authority=normalize_authority(raw_unit_authority),
                         authority_payload=raw_unit_authority,
                         max_attempts=2,
@@ -665,7 +665,7 @@ def test_work_unit_authority_upgrade_prefers_proposal_unit_authority_when_availa
                         unit_key="unit-2",
                         title="Implement tests",
                         outcome="Service is covered by focused tests.",
-                        required_capability="repository_write",
+                        required_capability="repo.edit",
                         authority=normalize_authority(fallback_authority),
                         authority_payload=fallback_authority,
                     ),

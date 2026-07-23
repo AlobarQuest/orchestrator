@@ -59,7 +59,7 @@ def register_context_unit(session: Session, context: dict[str, object], unit_key
         unit_key=unit_key,
         title=unit_key,
         outcome=f"{unit_key} complete",
-        required_capability="python",
+        required_capability="repo.edit",
         authority=AUTHORITY,
         max_attempts=3,
         approved_by="human-1",
