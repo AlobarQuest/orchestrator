@@ -6,9 +6,10 @@ from sqlalchemy import select
 from orchestrator.clock import TransactionClock
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Claim, Event, WorkUnit
+from orchestrator.persistence.models import Adjudication, Claim, Event, Evidence, WorkUnit
 from orchestrator.services.packages import register_approved_unit, register_revision
 from orchestrator.services.slo_report import (
+    STATUS_COMPUTED,
     STATUS_NO_DATA,
     STATUS_NOT_INSTRUMENTED,
     SloReportFilters,
@@ -98,6 +99,49 @@ def _add_claim(session, unit_id, *, attempt, acquired_at, terminal_reason=None,
     return claim
 
 
+def _seed_evidence(session, unit, *, ac_id, key):
+    evidence_id = uuid.uuid4()
+    session.add(
+        Evidence(
+            id=evidence_id,
+            work_package_revision_id=unit.work_package_revision_id,
+            work_unit_id=unit.id,
+            ac_id=ac_id,
+            attempt=1,
+            evidence_type="test",
+            stable_ref="artifact://x",
+            payload=None,
+            source_revision="abc123",
+            recorded_by="worker",
+            event_id=uuid.uuid4(),
+            idempotency_key=key,
+        )
+    )
+    session.flush()
+    return evidence_id
+
+
+def _add_adjudication(session, revision_id, unit_id, *, ac_id, outcome, decided_at,
+                      failed_evidence_id=None, event_id=None):
+    adj = Adjudication(
+        work_package_revision_id=revision_id,
+        work_unit_id=unit_id,
+        ac_id=ac_id,
+        outcome=outcome,
+        decided_by="verifier-1",
+        decided_at=decided_at,
+        rationale="r",
+        event_id=event_id or uuid.uuid4(),
+        # waived requires failed_evidence_id + non-empty rationale/risk/follow_up (CHECK)
+        failed_evidence_id=failed_evidence_id,
+        risk="low" if outcome == "waived" else None,
+        follow_up="none" if outcome == "waived" else None,
+    )
+    session.add(adj)
+    session.flush()
+    return adj
+
+
 # ---- skeleton tests --------------------------------------------------------
 
 def test_empty_store_reports_no_data_and_not_instrumented(migrated_session):
@@ -167,3 +211,53 @@ def test_shared_builders_smoke(migrated_session):
     persisted_unit = migrated_session.scalar(select(WorkUnit).where(WorkUnit.id == unit.id))
     assert persisted_unit is not None
     assert persisted_unit.unit_key == "smoke"
+
+
+# ---- claim_expiry_rate / waiver_frequency (this task's deliverable) -------
+
+def test_claim_expiry_rate_counts_lease_expired_in_window(migrated_session):
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    _, unit = _build_unit(migrated_session, "expiry")
+    inside = datetime(2026, 7, 3, tzinfo=UTC)
+    outside = datetime(2026, 6, 1, tzinfo=UTC)
+    _add_claim(
+        migrated_session, unit.id, attempt=1, acquired_at=inside, terminal_reason="lease_expired"
+    )
+    _add_claim(migrated_session, unit.id, attempt=2, acquired_at=inside, terminal_reason=None)
+    _add_claim(migrated_session, unit.id, attempt=3, acquired_at=inside, terminal_reason="released")
+    _add_claim(
+        migrated_session, unit.id, attempt=4, acquired_at=outside, terminal_reason="lease_expired"
+    )
+    migrated_session.commit()
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+    # in-window claims: attempts 1,2,3 = 3 total; lease_expired = 1 -> 1/3
+    assert report.claim_expiry_rate.status == STATUS_COMPUTED
+    assert report.claim_expiry_rate.value == 1 / 3
+
+
+def test_claim_expiry_rate_no_claims_is_no_data(migrated_session):
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+    assert report.claim_expiry_rate.status == STATUS_NO_DATA
+
+
+def test_waiver_frequency_counts_waived_over_adjudications(migrated_session):
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    revision, unit = _build_unit(migrated_session, "waiver")
+    inside = datetime(2026, 7, 4, tzinfo=UTC)
+    _add_adjudication(
+        migrated_session, revision.id, unit.id, ac_id="ac-1", outcome="passed", decided_at=inside
+    )
+    failed_evidence_id = _seed_evidence(migrated_session, unit, ac_id="ac-2", key="waiver-failed-1")
+    _add_adjudication(
+        migrated_session, revision.id, unit.id, ac_id="ac-2", outcome="waived",
+        decided_at=inside, failed_evidence_id=failed_evidence_id,
+    )
+    migrated_session.commit()
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+    # 2 adjudications in window, 1 waived -> 0.5
+    assert report.waiver_frequency.status == STATUS_COMPUTED
+    assert report.waiver_frequency.value == 0.5

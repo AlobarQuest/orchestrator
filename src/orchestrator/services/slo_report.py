@@ -8,9 +8,11 @@ zero-filled. Timing derives from event/claim/adjudication timestamps -- never fr
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
+from orchestrator.persistence.models import Adjudication, Claim
 
 STATUS_COMPUTED = "computed"
 STATUS_NO_DATA = "no_data"
@@ -80,11 +82,45 @@ def _queue_age(session, since, until, now) -> MetricValue:
 
 
 def _claim_expiry_rate(session, since, until, now) -> MetricValue:
-    return MetricValue(STATUS_NO_DATA, None, _NO_DATA_STUB)
+    total = session.scalar(
+        select(func.count(Claim.id)).where(Claim.acquired_at >= since, Claim.acquired_at < until)
+    ) or 0
+    if total == 0:
+        return MetricValue(STATUS_NO_DATA, None, "no claims were acquired in the window")
+    expired = session.scalar(
+        select(func.count(Claim.id)).where(
+            Claim.acquired_at >= since,
+            Claim.acquired_at < until,
+            Claim.terminal_reason == "lease_expired",
+        )
+    ) or 0
+    return MetricValue(
+        STATUS_COMPUTED,
+        expired / total,
+        f"claims acquired in window: {total}; lease_expired: {expired}",
+    )
 
 
 def _waiver_frequency(session, since, until, now) -> MetricValue:
-    return MetricValue(STATUS_NO_DATA, None, _NO_DATA_STUB)
+    total = session.scalar(
+        select(func.count(Adjudication.id)).where(
+            Adjudication.decided_at >= since, Adjudication.decided_at < until
+        )
+    ) or 0
+    if total == 0:
+        return MetricValue(STATUS_NO_DATA, None, "no adjudications were decided in the window")
+    waived = session.scalar(
+        select(func.count(Adjudication.id)).where(
+            Adjudication.decided_at >= since,
+            Adjudication.decided_at < until,
+            Adjudication.outcome == "waived",
+        )
+    ) or 0
+    return MetricValue(
+        STATUS_COMPUTED,
+        waived / total,
+        f"adjudications in window: {total}; waived: {waived}",
+    )
 
 
 def _revert_rate(session, since, until, now) -> MetricValue:
