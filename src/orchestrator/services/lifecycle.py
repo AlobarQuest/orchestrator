@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import Clock, TransactionClock
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.context import context_fingerprint
 from orchestrator.kernel.leases import hash_lease_token
 from orchestrator.kernel.states import ActorRole, WorkUnitState
@@ -23,6 +24,7 @@ from orchestrator.persistence.models import (
     DeploymentObservation,
     Event,
     PackageAcceptanceCriterion,
+    UnitPrBinding,
     WorkPackageRevision,
     WorkUnit,
 )
@@ -386,7 +388,27 @@ def _transition_guards(
             adjudications,
             occurred_at,
         ),
+        _submission_binding_recorded(session, unit),
     )
+
+
+def _submission_binding_recorded(session: Session, unit: WorkUnit) -> bool:
+    """Whether EXECUTING -> SUBMITTED may proceed: a unit that may open a pull request must have
+    recorded a binding for THIS attempt before submitting.
+
+    Capability-keyed: a unit whose envelope does not allow ``github.pr.create`` never opens a PR,
+    so it has nothing to bind and submits freely -- that is the load-bearing contract non-runner
+    submitters (drills, SYSTEM, human) rely on. Attempt-scoped: a binding carried over from a
+    previous attempt does NOT satisfy the guard. Attempt 1 opens PR #100 and submits; the unit
+    goes REVISION_REQUIRED -> READY -> re-dispatch; attempt 2's binding POST fails and the runner
+    submits anyway -- the old row is still present, but its ``binding_attempt`` is 1, so the guard
+    refuses, and the divergence alarm cannot arm on attempt 1's stale head.
+    """
+    envelope = normalize_authority(unit.authority)
+    if envelope.level_for("github.pr.create") != "allowed":
+        return True
+    binding = session.get(UnitPrBinding, unit.id)
+    return binding is not None and binding.binding_attempt == unit.attempt_count
 
 
 def _completion_satisfied(

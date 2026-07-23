@@ -27,23 +27,42 @@ HEAD_A = "a" * 40
 HEAD_B = "b" * 40
 
 
+def test_a_binding_without_an_attempt_is_refused(migrated_session: Session) -> None:
+    """The submit guard requires a binding written for the CURRENT attempt; a write that omits the
+    attempt would store a NULL binding_attempt that can never satisfy it. Refuse with a NAMED error
+    (not an IntegrityError), including for SYSTEM -- whose repair path must supply the real attempt
+    rather than strand the unit with an un-submittable binding."""
+    unit = register_unit(migrated_session, "pr-binding-no-attempt")
+
+    with pytest.raises(DomainError) as error:
+        upsert_pr_binding(
+            migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=7, head_sha=HEAD_A
+        )
+
+    assert error.value.code == "pr_binding_attempt_required"
+
+
 def test_upsert_creates_then_updates_head_sha(migrated_session: Session) -> None:
     """A worker rebase or force-push BEFORE verification is normal and must not alarm."""
     unit = register_unit(migrated_session, "pr-binding")
 
     created = upsert_pr_binding(
-        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=42, head_sha=HEAD_A
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=42, head_sha=HEAD_A,
+        attempt=1,
     )
 
     assert isinstance(created, UnitPrBinding)
     assert (created.pr_number, created.head_sha) == (42, HEAD_A)
+    assert created.binding_attempt == 1
     assert created.verification_read_head_sha is None
 
     rebased = upsert_pr_binding(
-        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=42, head_sha=HEAD_B
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=42, head_sha=HEAD_B,
+        attempt=1,
     )
 
     assert rebased.head_sha == HEAD_B
+    assert rebased.binding_attempt == 1
     assert rebased.verification_read_head_sha is None
     binding = get_pr_binding(migrated_session, unit.id)
     assert binding is not None and binding.head_sha == HEAD_B
@@ -53,7 +72,8 @@ def test_verification_read_head_is_write_once(migrated_session: Session) -> None
     """The alarm-arming field. Once verification has read a head, nothing may overwrite it."""
     unit = register_unit(migrated_session, "pr-binding-armed")
     upsert_pr_binding(
-        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=7, head_sha=HEAD_A
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=7, head_sha=HEAD_A,
+        attempt=1,
     )
 
     armed = record_verification_read_head(
@@ -88,14 +108,16 @@ def test_a_later_worker_push_cannot_disarm_the_verification_read_head(
     """
     unit = register_unit(migrated_session, "pr-binding-push-after-verify")
     upsert_pr_binding(
-        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=7, head_sha=HEAD_A
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=7, head_sha=HEAD_A,
+        attempt=1,
     )
     record_verification_read_head(
         migrated_session, actor=SYSTEM, work_unit_id=unit.id, head_sha=HEAD_A, attempt=1
     )
 
     upsert_pr_binding(
-        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=7, head_sha=HEAD_B
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=7, head_sha=HEAD_B,
+        attempt=1,
     )
 
     binding = get_pr_binding(migrated_session, unit.id)
@@ -109,7 +131,8 @@ def test_re_recording_the_same_verification_head_is_an_idempotent_no_op(
 ) -> None:
     unit = register_unit(migrated_session, "pr-binding-replay")
     upsert_pr_binding(
-        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=7, head_sha=HEAD_A
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=7, head_sha=HEAD_A,
+        attempt=1,
     )
 
     first = record_verification_read_head(

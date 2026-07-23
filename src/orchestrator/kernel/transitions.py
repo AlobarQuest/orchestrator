@@ -10,6 +10,11 @@ Edge = tuple[WorkUnitState, WorkUnitState]
 class TransitionGuards:
     approval_recorded: bool = False
     completion_satisfied: bool = False
+    # Guards EXECUTING -> SUBMITTED only. Defaults False, so the bare `TransitionGuards()` call
+    # sites (claim release / evidence failure, both targeting FAILED) stay fail-closed-safe. The
+    # NEXT caller that targets SUBMITTED with a bare `TransitionGuards()` is a silent deadlock --
+    # compute this in the service, never construct it bare on the submit path.
+    submission_binding_recorded: bool = False
 
 
 SYSTEM_EDGES = {
@@ -88,3 +93,13 @@ def authorize_transition(
         raise DomainError("approval_required", "record approval before resuming", "approve")
     if target is WorkUnitState.COMPLETED and not guards.completion_satisfied:
         raise DomainError("completion_incomplete", "completion guards failed", "verify")
+    if (
+        source is WorkUnitState.EXECUTING
+        and target is WorkUnitState.SUBMITTED
+        and not guards.submission_binding_recorded
+    ):
+        raise DomainError(
+            "pr_binding_required",
+            "record the pull request binding for this attempt before submitting",
+            "post the pull request binding for the current attempt",
+        )

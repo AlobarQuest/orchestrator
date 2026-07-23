@@ -31,7 +31,9 @@ def test_every_declared_edge_is_legal(source: WorkUnitState, target: WorkUnitSta
         source,
         target,
         next(iter(EXPECTED_EDGE_ROLES[(source, target)])),
-        TransitionGuards(approval_recorded=True, completion_satisfied=True),
+        TransitionGuards(
+            approval_recorded=True, completion_satisfied=True, submission_binding_recorded=True
+        ),
     )
 
 

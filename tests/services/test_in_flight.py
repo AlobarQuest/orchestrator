@@ -17,7 +17,7 @@ def test_in_flight_units_carry_their_pr_binding(migrated_session: Session) -> No
     unit = register_unit(migrated_session, "inflight-executing")
     unit.state = WorkUnitState.EXECUTING
     upsert_pr_binding(
-        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=41, head_sha=HEAD
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=41, head_sha=HEAD, attempt=1
     )
     migrated_session.commit()
 

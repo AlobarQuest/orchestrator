@@ -151,10 +151,10 @@ def test_a_duplicate_pr_binding_report_replays(migrated_session: Session) -> Non
     head = "c" * 40
 
     first = upsert_pr_binding(
-        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=9, head_sha=head
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=9, head_sha=head, attempt=1
     )
     replay = upsert_pr_binding(
-        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=9, head_sha=head
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=9, head_sha=head, attempt=1
     )
     migrated_session.commit()
 

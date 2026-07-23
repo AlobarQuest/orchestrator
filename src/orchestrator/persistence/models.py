@@ -1177,6 +1177,10 @@ class UnitPrBinding(Base):
     work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"), primary_key=True)
     pr_number: Mapped[int] = mapped_column(Integer)
     head_sha: Mapped[str] = mapped_column(String)
+    # The claim attempt this binding was written for. Nullable: a SYSTEM repair may write without
+    # one, which fails the submit guard closed. Distinct from `verification_read_attempt`, which
+    # keys the write-once armed head; this keys "is there a CURRENT-attempt binding to submit on".
+    binding_attempt: Mapped[int | None] = mapped_column(Integer)
     verification_read_head_sha: Mapped[str | None] = mapped_column(String)
     verification_read_attempt: Mapped[int | None] = mapped_column(Integer)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

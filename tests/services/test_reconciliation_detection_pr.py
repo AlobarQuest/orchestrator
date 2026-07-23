@@ -77,7 +77,7 @@ def conditions(session: Session) -> list[ReconciliationCondition]:
 def bound_unit(session: Session, key: str, *, pr_number: int = 42) -> WorkUnit:
     unit = register_unit(session, key)
     upsert_pr_binding(
-        session, actor=SYSTEM, work_unit_id=unit.id, pr_number=pr_number, head_sha=HEAD
+        session, actor=SYSTEM, work_unit_id=unit.id, pr_number=pr_number, head_sha=HEAD, attempt=1
     )
     session.commit()
     return unit
@@ -202,7 +202,7 @@ def test_a_head_change_AFTER_verification_read_it_records_a_divergence(
     this is AC-001's 'on the exact pull-request head'."""
     unit = register_unit(migrated_session, "pr-forcepush")
     upsert_pr_binding(
-        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=42, head_sha=HEAD
+        migrated_session, actor=SYSTEM, work_unit_id=unit.id, pr_number=42, head_sha=HEAD, attempt=1
     )
     record_verification_read_head(
         migrated_session, actor=SYSTEM, work_unit_id=unit.id, head_sha=HEAD, attempt=1
