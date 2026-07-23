@@ -12,6 +12,7 @@ from orchestrator.services.slo_report import (
     STATUS_COMPUTED,
     STATUS_NO_DATA,
     STATUS_NOT_INSTRUMENTED,
+    STATUS_PARTIAL,
     SloReportFilters,
     slo_report,
 )
@@ -306,3 +307,47 @@ def test_queue_age_median_of_ready_units(migrated_session):
     expected = (now - ready_at).total_seconds()
     assert report.queue_age.value is not None
     assert abs(report.queue_age.value - expected) < 5  # within a few seconds
+
+
+# ---- revert_rate / evidence_completeness (this task's deliverable) --------
+
+def test_revert_rate_is_partial_with_release_revert_blind_spot(migrated_session):
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    _, unit = _build_unit(migrated_session, "revert")
+    inside = datetime(2026, 7, 3, tzinfo=UTC)
+    # two submits, one revert (revision_required from submitted)
+    _add_event(migrated_session, unit.id, action="work_unit.transitioned",
+               to_state="submitted", from_state="executing", occurred_at=inside)
+    _add_event(migrated_session, unit.id, action="work_unit.transitioned",
+               to_state="submitted", from_state="executing", occurred_at=inside + timedelta(hours=1))
+    _add_event(migrated_session, unit.id, action="work_unit.transitioned",
+               to_state="revision_required", from_state="submitted", occurred_at=inside + timedelta(hours=2))
+    migrated_session.commit()
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+    assert report.revert_rate.status == STATUS_PARTIAL
+    assert report.revert_rate.value == 0.5  # 1 revert / 2 submits
+    assert "release-revert" in report.revert_rate.basis
+
+
+def test_evidence_completeness_ratio(migrated_session):
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    revision, unit = _build_unit(
+        migrated_session, "complete", enforcement={"acceptance_criteria": ["ac-1", "ac-2"]}
+    )
+    from orchestrator.services.lifecycle import required_ac_ids
+    assert set(required_ac_ids(migrated_session, revision, migrated_session.get(WorkUnit, unit.id))) == {
+        "ac-1",
+        "ac-2",
+    }
+    inside = datetime(2026, 7, 3, tzinfo=UTC)
+    # a transition in-window makes the unit "active in window"
+    _add_event(migrated_session, unit.id, action="work_unit.transitioned",
+               to_state="executing", from_state="claimed", occurred_at=inside)
+    # satisfy ac-1 only (passed); ac-2 unsatisfied
+    _add_adjudication(migrated_session, revision.id, unit.id, ac_id="ac-1", outcome="passed", decided_at=inside)
+    migrated_session.commit()
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+    assert report.evidence_completeness.status == STATUS_COMPUTED
+    assert report.evidence_completeness.value == 0.5  # 1 of 2 required satisfied

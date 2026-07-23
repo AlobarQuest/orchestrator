@@ -20,6 +20,8 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.consistency import SATISFIED_ACS
+from orchestrator.services.lifecycle import required_ac_ids
 
 STATUS_COMPUTED = "computed"
 STATUS_NO_DATA = "no_data"
@@ -185,12 +187,81 @@ def _waiver_frequency(session, since, until, now) -> MetricValue:
     )
 
 
+_REVERT_STATES = ("revision_required", "failed")
+_REVERT_SOURCES = ("submitted", "verifying", "awaiting_review")
+
+
 def _revert_rate(session, since, until, now) -> MetricValue:
-    return MetricValue(STATUS_NO_DATA, None, _NO_DATA_STUB)
+    submits = session.scalar(
+        select(func.count(Event.id)).where(
+            Event.action == "work_unit.transitioned",
+            Event.to_state == "submitted",
+            Event.occurred_at >= since,
+            Event.occurred_at < until,
+        )
+    ) or 0
+    if submits == 0:
+        return MetricValue(STATUS_NO_DATA, None, "no submit transitions occurred in the window")
+    reverts = session.scalar(
+        select(func.count(Event.id)).where(
+            Event.action == "work_unit.transitioned",
+            Event.to_state.in_(_REVERT_STATES),
+            Event.from_state.in_(_REVERT_SOURCES),
+            Event.occurred_at >= since,
+            Event.occurred_at < until,
+        )
+    ) or 0
+    return MetricValue(
+        STATUS_PARTIAL,
+        reverts / submits,
+        f"code reverts (to revision_required/failed after submit): {reverts}; submits: {submits}. "
+        "PARTIAL: release-revert is not recorded as an explicit fact (divergence detection only).",
+    )
 
 
 def _evidence_completeness(session, since, until, now) -> MetricValue:
-    return MetricValue(STATUS_NO_DATA, None, _NO_DATA_STUB)
+    active_ids = session.scalars(
+        select(Event.subject_id)
+        .where(
+            Event.action == "work_unit.transitioned",
+            Event.subject_type == "work_unit",
+            Event.occurred_at >= since,
+            Event.occurred_at < until,
+        )
+        .distinct()
+    ).all()
+    if not active_ids:
+        return MetricValue(STATUS_NO_DATA, None, "no work units had transitions in the window")
+    total_required = 0
+    total_satisfied = 0
+    considered = 0
+    skipped = 0
+    for unit_id in active_ids:
+        unit = session.get(WorkUnit, unit_id)
+        if unit is None:
+            continue
+        revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
+        if revision is None:
+            continue
+        required = required_ac_ids(session, revision, unit)
+        if required is None or not required:
+            skipped += 1
+            continue
+        considered += 1
+        satisfied = set(session.scalars(SATISFIED_ACS, {"unit_id": unit.id, "now": now}))
+        total_required += len(required)
+        total_satisfied += len(set(required) & satisfied)
+    if total_required == 0:
+        return MetricValue(
+            STATUS_NO_DATA, None,
+            f"{len(active_ids)} active units in window, none has required acceptance criteria",
+        )
+    return MetricValue(
+        STATUS_COMPUTED,
+        total_satisfied / total_required,
+        f"satisfied {total_satisfied}/{total_required} required criteria over {considered} units "
+        f"({skipped} without required criteria excluded)",
+    )
 
 
 def _improvisation(session, since, until, now) -> MetricValue:
