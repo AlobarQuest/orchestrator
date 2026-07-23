@@ -233,6 +233,7 @@ def test_claim_expiry_rate_counts_lease_expired_in_window(migrated_session):
     report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
     # in-window claims: attempts 1,2,3 = 3 total; lease_expired = 1 -> 1/3
     assert report.claim_expiry_rate.status == STATUS_COMPUTED
+    assert report.claim_expiry_rate.value is not None
     assert report.claim_expiry_rate.value == 1 / 3
 
 
@@ -260,6 +261,7 @@ def test_waiver_frequency_counts_waived_over_adjudications(migrated_session):
     report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
     # 2 adjudications in window, 1 waived -> 0.5
     assert report.waiver_frequency.status == STATUS_COMPUTED
+    assert report.waiver_frequency.value is not None
     assert report.waiver_frequency.value == 0.5
 
 
@@ -278,6 +280,7 @@ def test_intake_to_first_work_median_latency_seconds(migrated_session):
     migrated_session.commit()
     report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
     assert report.intake_to_first_work.status == STATUS_COMPUTED
+    assert report.intake_to_first_work.value is not None
     assert report.intake_to_first_work.value == 120.0  # MIN(acquired_at) - registered_at
 
 
@@ -301,4 +304,5 @@ def test_queue_age_median_of_ready_units(migrated_session):
     )
     assert report.queue_age.status == STATUS_COMPUTED
     expected = (now - ready_at).total_seconds()
+    assert report.queue_age.value is not None
     assert abs(report.queue_age.value - expected) < 5  # within a few seconds
