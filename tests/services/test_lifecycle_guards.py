@@ -19,6 +19,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.claims import LeaseGrant, claim_unit
+from orchestrator.services.evidence import record_adjudication
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 from orchestrator.services.packages import (
     record_approval,
@@ -716,3 +717,35 @@ def test_worker_start_rejects_authority_approval_for_different_context_fingerpri
 
     assert approval.subject_revision_or_fingerprint != unit.authority_fingerprint
     assert error.value.code == "context_authority_expanding"
+
+
+def test_human_passed_satisfies_completion_gate(migrated_session: Session) -> None:
+    unit = submitted_unit(migrated_session)
+    migrated_session.add(
+        PackageAcceptanceCriterion(
+            work_package_revision_id=unit.work_package_revision_id,
+            ac_id="ac-1",
+            condition="condition",
+            evidence_type="human.review",
+            evidence="evidence",
+            approver="human-1",
+        )
+    )
+    migrated_session.commit()
+
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        rationale="reviewed and met",
+        idempotency_key="human-pass-gate",
+    )
+    assert isinstance(result, Adjudication)
+
+    migrated_session.refresh(unit)
+    transition_unit(migrated_session, completion_command(unit), clock=FixedClock())
+    migrated_session.refresh(unit)
+    assert unit.state == WorkUnitState.COMPLETED
