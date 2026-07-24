@@ -10,6 +10,7 @@ the check recomputes INDEPENDENTLY, in SQL.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -21,6 +22,7 @@ from orchestrator.persistence.models import EVIDENCE_HEAD_BOOKKEEPING_AC_ID, Evi
 from orchestrator.services.consistency import check_consistency
 from orchestrator.services.evidence import current_evidence
 from tests.services.test_dependencies import register_unit
+from tests.services.test_lifecycle_guards import add_adjudication, submitted_unit
 
 
 def _seed_evidence(
@@ -158,6 +160,41 @@ def test_completion_integrity_flags_a_completed_unit_with_no_adjudication(
     findings = [f for f in report.findings if f.check == "completion_integrity"]
     assert findings
     assert findings[0].work_unit_id == unit.id
+
+
+def test_expired_waiver_is_reported_as_thin(migrated_session: Session) -> None:
+    unit = submitted_unit(migrated_session)
+    past = datetime(2026, 7, 5, tzinfo=UTC) - timedelta(days=1)
+    add_adjudication(migrated_session, unit, ac_id="ac-1", outcome="waived", expires_at=past)
+    migrated_session.commit()
+
+    report = check_consistency(migrated_session)
+    waiver_findings = [f for f in report.findings if f.check == "waiver_hardening"]
+    assert any(f.work_unit_id == unit.id and f.subject == "ac-1" for f in waiver_findings)
+
+
+def test_superseded_expired_waiver_is_not_reported(migrated_session: Session) -> None:
+    unit = submitted_unit(migrated_session)
+    past = datetime(2026, 7, 5, tzinfo=UTC) - timedelta(days=1)
+    waived = add_adjudication(
+        migrated_session, unit, ac_id="ac-1", outcome="waived", expires_at=past
+    )
+    # A later passed adjudication supersedes the expired waiver -> the waiver is no longer a
+    # terminal, so the audit must not flag it despite its past expiry.
+    add_adjudication(migrated_session, unit, ac_id="ac-1", outcome="passed", supersedes=waived)
+    migrated_session.commit()
+
+    report = check_consistency(migrated_session)
+    assert not [f for f in report.findings if f.check == "waiver_hardening"]
+
+
+def test_healthy_waiver_is_not_reported(migrated_session: Session) -> None:
+    unit = submitted_unit(migrated_session)
+    add_adjudication(migrated_session, unit, ac_id="ac-1", outcome="waived")
+    migrated_session.commit()
+
+    report = check_consistency(migrated_session)
+    assert not [f for f in report.findings if f.check == "waiver_hardening"]
 
 
 def test_the_check_never_repairs(migrated_session: Session) -> None:

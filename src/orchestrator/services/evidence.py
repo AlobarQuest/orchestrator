@@ -10,7 +10,7 @@ from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.evidence_types import VERIFIER_EVIDENCE_PREFIX
 from orchestrator.kernel.leases import hash_lease_token
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
     Adjudication,
@@ -19,6 +19,7 @@ from orchestrator.persistence.models import (
     DeploymentObservation,
     Event,
     Evidence,
+    PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
 )
@@ -30,10 +31,15 @@ from orchestrator.services.claims import validate_active_claim
 # imports rather than keeping a second copy -- a divergence between generator and gate would let a
 # newly-generated post-deploy AC be publicly adjudicated (the invariant this guards).
 from orchestrator.services.lifecycle import POST_DEPLOY_AC_IDS, ActorContext
+from orchestrator.services.verifier_evaluators import JUDGMENT_TYPES
 
 # not-a-vocabulary: internal policy subset of adjudication outcomes (which outcomes are not
 # waivers), not a value shared across a repo or subsystem boundary.
 NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
+# not-a-vocabulary: internal policy subset of adjudication outcomes a HUMAN may record on an
+# intrinsically-judgment AC (see _authorize_outcome), not a value shared across a repo or
+# subsystem boundary.
+HUMAN_ADJUDICABLE_OUTCOMES = frozenset({"passed", "not_applicable"})
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57503338
 
 
@@ -228,7 +234,8 @@ def record_adjudication(
                 current_version=unit.version,
             )
         now = TransactionClock().now(session)
-        _authorize_outcome(actor, outcome)
+        evidence_type = _criterion_evidence_type(session, work_package_revision_id, ac_id)
+        _authorize_outcome(actor, outcome, evidence_type)
         _validate_adjudication_fields(
             session,
             work_package_revision_id,
@@ -656,11 +663,27 @@ def _has_required_context(revision: WorkPackageRevision) -> bool:
     return isinstance(required, dict) and bool(required)
 
 
-def _authorize_outcome(actor: ActorContext, outcome: str) -> None:
+def _criterion_evidence_type(session: Session, revision_id: uuid.UUID, ac_id: str) -> str | None:
+    return session.scalar(
+        select(PackageAcceptanceCriterion.evidence_type).where(
+            PackageAcceptanceCriterion.work_package_revision_id == revision_id,
+            PackageAcceptanceCriterion.ac_id == ac_id,
+        )
+    )
+
+
+def _authorize_outcome(actor: ActorContext, outcome: str, evidence_type: str | None) -> None:
     if outcome == "waived":
         allowed = actor.role is ActorRole.HUMAN
+    elif actor.role is ActorRole.VERIFIER:
+        allowed = outcome in NON_WAIVER_OUTCOMES
+    elif actor.role is ActorRole.HUMAN and outcome in HUMAN_ADJUDICABLE_OUTCOMES:
+        # A-static: a human resolves only intrinsically-judgment ACs. A deterministic type is
+        # verifier-owned; keying on the static type (not the current evaluation) closes the
+        # automated_check-before-CI-evidence window.
+        allowed = evidence_type is not None and evidence_type.strip().lower() in JUDGMENT_TYPES
     else:
-        allowed = outcome in NON_WAIVER_OUTCOMES and actor.role is ActorRole.VERIFIER
+        allowed = False
     if not allowed:
         raise DomainError("role_forbidden", "actor may not record this outcome", None)
 
@@ -687,6 +710,9 @@ def _validate_adjudication_fields(
     if not _text(rationale):
         code = "waiver_invalid" if outcome == "waived" else "adjudication_invalid"
         raise DomainError(code, "adjudication rationale is required", None)
+    if risk is not None and risk not in WAIVER_RISK_CLASSES:
+        code = "waiver_invalid" if outcome == "waived" else "adjudication_invalid"
+        raise DomainError(code, "risk must be one of the controlled risk classes", None)
     for reference in (evidence_id, failed_evidence_id):
         if reference is not None:
             _validate_evidence_reference(session, reference, revision_id, unit_id, ac_id)
@@ -698,7 +724,8 @@ def _validate_adjudication_fields(
     ):
         raise DomainError(
             "waiver_invalid",
-            "waiver requires failed evidence, risk, follow-up, and a future expiry when set",
+            "waiver requires failed evidence, a risk class, follow-up, and a future expiry "
+            "when set",
             None,
         )
 

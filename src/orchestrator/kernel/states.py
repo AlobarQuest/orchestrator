@@ -24,6 +24,19 @@ class ActorRole(StrEnum):
     HUMAN = "human"
 
 
+# not-a-vocabulary: DB CHECK-pinned, not a cross-boundary vocabulary. This tuple is the SINGLE
+# source of truth for the controlled risk-class vocabulary an adjudication's `risk` may declare.
+# `persistence/models.py` builds the `ck_adjudications_risk_class` CHECK's SQL from this same
+# tuple, and migration 0017 inlines that identical literal into the schema. The service layer
+# (`services/evidence.py::_validate_adjudication_fields`) validates against this tuple too, so an
+# out-of-vocab value is rejected with a clean `DomainError` before it can ever reach the CHECK.
+# The cross-boundary-vocabulary detector's same-module CheckConstraint scan can't see this because
+# the CheckConstraint lives in persistence/models.py while this definition lives here --
+# structurally the same as the ~20 schema-pinned enums it excludes automatically, just split
+# across modules.
+WAIVER_RISK_CLASSES: tuple[str, ...] = ("low", "medium", "high", "critical")
+
+
 def _edges(
     source: WorkUnitState, *targets: WorkUnitState
 ) -> set[tuple[WorkUnitState, WorkUnitState]]:

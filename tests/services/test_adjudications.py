@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Adjudication
+from orchestrator.persistence.models import Adjudication, PackageAcceptanceCriterion
 from orchestrator.services.evidence import current_adjudication, record_adjudication
 from orchestrator.services.lifecycle import ActorContext
 from tests.services.test_dependencies import register_unit
@@ -16,6 +16,84 @@ from tests.services.test_dependencies import register_unit
 
 def record(session: Session, command: dict[str, Any]) -> Adjudication | DomainError:
     return record_adjudication(session, **cast(Any, command))
+
+
+def add_criterion(session: Session, unit, ac_id: str, evidence_type: str) -> None:
+    session.add(
+        PackageAcceptanceCriterion(
+            work_package_revision_id=unit.work_package_revision_id,
+            ac_id=ac_id,
+            condition="condition",
+            evidence_type=evidence_type,
+            evidence="evidence",
+            approver="human-1",
+        )
+    )
+    session.flush()
+
+
+def test_human_may_pass_a_judgment_type_ac(migrated_session: Session, ready_unit) -> None:
+    add_criterion(migrated_session, ready_unit, "ac-1", "human.review")
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        rationale="reviewed and met",
+        idempotency_key="human-pass-1",
+    )
+    assert isinstance(result, Adjudication)
+    assert result.outcome == "passed"
+    assert result.decided_by == "human-1"
+
+
+def test_human_may_not_pass_a_deterministic_ac(migrated_session: Session, ready_unit) -> None:
+    add_criterion(migrated_session, ready_unit, "ac-1", "test")
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        rationale="looks green to me",
+        idempotency_key="human-pass-det",
+    )
+    assert isinstance(result, DomainError)
+    assert result.code == "role_forbidden"
+
+
+def test_human_may_not_record_failed(migrated_session: Session, ready_unit) -> None:
+    add_criterion(migrated_session, ready_unit, "ac-1", "human.review")
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="failed",
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        rationale="not met",
+        idempotency_key="human-failed-1",
+    )
+    assert isinstance(result, DomainError)
+    assert result.code == "role_forbidden"
+
+
+def test_human_may_not_pass_a_criterion_less_ac(migrated_session: Session, ready_unit) -> None:
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        rationale="looks fine",
+        idempotency_key="human-pass-no-criterion",
+    )
+    assert isinstance(result, DomainError)
+    assert result.code == "role_forbidden"
 
 
 @pytest.mark.parametrize("outcome", ["passed", "failed", "not_applicable"])
@@ -36,6 +114,25 @@ def test_verifier_records_each_non_waiver_outcome(
     assert isinstance(result, Adjudication)
     assert result.outcome == outcome
     assert result.decided_by == "verifier-1"
+
+
+def test_non_waiver_risk_outside_vocabulary_is_a_clean_error(
+    migrated_session: Session, ready_unit
+) -> None:
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("verifier-1", ActorRole.VERIFIER),
+        rationale="verified",
+        idempotency_key="non-waiver-bad-risk",
+        risk="catastrophic",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "adjudication_invalid"
 
 
 def test_worker_cannot_record_adjudication(migrated_session: Session, ready_unit) -> None:

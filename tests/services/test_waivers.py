@@ -51,7 +51,7 @@ def waiver_command(unit, evidence: Evidence) -> dict[str, Any]:
         "actor": ActorContext("human-1", ActorRole.HUMAN),
         "failed_evidence_id": evidence.id,
         "rationale": "accepted for this release",
-        "risk": "minor compatibility risk",
+        "risk": "medium",
         "follow_up": "repair in next release",
         "expires_at": NOW + timedelta(days=1),
         "idempotency_key": "waiver-1",
@@ -123,6 +123,18 @@ def test_expired_waiver_is_rejected_at_creation(migrated_session: Session, ready
     evidence = failed_evidence(migrated_session, ready_unit)
     command = waiver_command(ready_unit, evidence)
     command["expires_at"] = datetime(2020, 1, 1, tzinfo=UTC)
+
+    result = record(migrated_session, command)
+
+    assert isinstance(result, DomainError)
+    assert result.code == "waiver_invalid"
+
+
+def test_waiver_risk_class_must_be_in_vocabulary(migrated_session: Session, ready_unit) -> None:
+    evidence = failed_evidence(migrated_session, ready_unit)
+    command = waiver_command(ready_unit, evidence)
+    command["risk"] = "catastrophic"
+    command["idempotency_key"] = "waiver-bad-risk"
 
     result = record(migrated_session, command)
 
