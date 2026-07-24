@@ -439,3 +439,20 @@ style of that module.
   never touched — run `ruff format --check .` and diff against `main` before blaming your diff; (2)
   have implementers run `ruff format` (or `make fix`), not just `ruff check`, before committing, or
   the debt accretes. (Verified 2026-07-24, WS-P2.2.)
+
+- **Only `DomainError` and `APIAuthenticationError` have registered exception handlers (`main.py`) —
+  every other exception raised from a route surfaces as a bare, unhandled HTTP 500.** There is no
+  handler for `IntegrityError`, `ValueError`, `TypeError`, or a generic `Exception`, so anything a
+  route (or a service it calls) raises that is not one of those two types is a 500, not a clean 4xx.
+  Two consequences, both of which bit WS-P2.3: (1) **route-level input parsing must raise
+  `DomainError`, never let the stdlib raise** — `uuid.UUID(bad)`/`datetime.fromisoformat(bad)` raise
+  `ValueError`, and a timezone-*naive* `datetime.fromisoformat("2027-06-01")` compared against an
+  aware `now` raises `TypeError` deep in the service (both → 500); wrap parses and reject naive
+  datetimes (`tzinfo is None`) up front. (2) **A partial service guard that leaves a DB CHECK to fire
+  is a 500, not a validation error** — `record_adjudication`'s `except IntegrityError` routes to
+  race-detection and then re-`raise`s, so a CHECK violation the service did not pre-validate (e.g. an
+  out-of-vocab `risk` on a *non-waiver* adjudication) escapes as an unhandled `IntegrityError`.
+  Whenever you add a DB CHECK, the service must reject every value the CHECK would, with a
+  `DomainError`, for *every* code path that can reach the column — not just the one the feature
+  targets. (Verified 2026-07-24, WS-P2.3 — two independent 500 paths, both caught only by the
+  whole-branch review, not by five prior per-task reviews.)
