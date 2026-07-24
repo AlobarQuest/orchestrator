@@ -173,6 +173,21 @@ def test_expired_waiver_is_reported_as_thin(migrated_session: Session) -> None:
     assert any(f.work_unit_id == unit.id and f.subject == "ac-1" for f in waiver_findings)
 
 
+def test_superseded_expired_waiver_is_not_reported(migrated_session: Session) -> None:
+    unit = submitted_unit(migrated_session)
+    past = datetime(2026, 7, 5, tzinfo=UTC) - timedelta(days=1)
+    waived = add_adjudication(
+        migrated_session, unit, ac_id="ac-1", outcome="waived", expires_at=past
+    )
+    # A later passed adjudication supersedes the expired waiver -> the waiver is no longer a
+    # terminal, so the audit must not flag it despite its past expiry.
+    add_adjudication(migrated_session, unit, ac_id="ac-1", outcome="passed", supersedes=waived)
+    migrated_session.commit()
+
+    report = check_consistency(migrated_session)
+    assert not [f for f in report.findings if f.check == "waiver_hardening"]
+
+
 def test_healthy_waiver_is_not_reported(migrated_session: Session) -> None:
     unit = submitted_unit(migrated_session)
     add_adjudication(migrated_session, unit, ac_id="ac-1", outcome="waived")
