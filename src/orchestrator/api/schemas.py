@@ -697,6 +697,30 @@ class StatusLedgerFailureResponse(BaseModel):
     reason: str | None
 
 
+class MetricValueResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    status: str
+    value: float | None
+    basis: str
+
+
+class SloReportResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    since: datetime
+    until: datetime
+    intake_to_first_work: MetricValueResponse
+    queue_age: MetricValueResponse
+    claim_expiry_rate: MetricValueResponse
+    waiver_frequency: MetricValueResponse
+    revert_rate: MetricValueResponse
+    evidence_completeness: MetricValueResponse
+    cost_per_unit: MetricValueResponse
+    token_consumption: MetricValueResponse
+    improvisation: MetricValueResponse
+
+
 class StatusLedgerRowResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

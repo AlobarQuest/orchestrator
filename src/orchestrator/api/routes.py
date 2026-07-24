@@ -73,6 +73,7 @@ from orchestrator.api.schemas import (
     RevisionRegistration,
     RevisionResponse,
     RunnerBriefResponse,
+    SloReportResponse,
     StatusLedgerRowResponse,
     TransitionResponse,
     UnitRegistration,
@@ -202,6 +203,7 @@ from orchestrator.services.release_artifacts import (
     record_release_artifact,
 )
 from orchestrator.services.runner_brief import runner_brief
+from orchestrator.services.slo_report import SloReportFilters, slo_report
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from orchestrator.services.verifier_evidence import (
@@ -1008,6 +1010,16 @@ def status_ledger_route(
             include_inactive=include_inactive,
         ),
     )
+
+
+@router.get("/slo-report", response_model=SloReportResponse)
+def slo_report_route(
+    _actor: ActorDep,
+    session: SessionDep,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> object:
+    return slo_report(session, SloReportFilters(since=since, until=until))
 
 
 @router.get("/event-publications", response_model=list[EventPublicationResponse])

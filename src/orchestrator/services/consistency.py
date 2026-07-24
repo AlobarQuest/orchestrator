@@ -69,7 +69,7 @@ _EVIDENCE_HEAD_COUNTS = text(
 # Independent recomputation of what the completion guard concludes -- deliberately NOT a call to
 # that guard, which would be auditing the guard with the guard. The terminal adjudication for a
 # (unit, ac) is the one nothing supersedes; it must be unique and satisfying.
-_SATISFIED_ACS = text(
+SATISFIED_ACS = text(
     """
     WITH terminals AS (
         SELECT a.ac_id, a.outcome, a.scope, a.expires_at
@@ -162,7 +162,7 @@ def _completion_findings(session: Session, now: datetime) -> tuple[ConsistencyFi
         required = required_ac_ids(session, revision, unit)
         if required is None:
             continue
-        satisfied = set(session.scalars(_SATISFIED_ACS, {"unit_id": unit.id, "now": now}))
+        satisfied = set(session.scalars(SATISFIED_ACS, {"unit_id": unit.id, "now": now}))
         findings.extend(
             ConsistencyFinding(
                 check="completion_integrity",
