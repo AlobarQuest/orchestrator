@@ -234,7 +234,9 @@ def _revert_rate(session, since, until, now) -> MetricValue:
         STATUS_PARTIAL,
         reverts / submits,
         f"code reverts (to revision_required/failed after submit): {reverts}; submits: {submits}. "
-        "PARTIAL: release-revert is not recorded as an explicit fact (divergence detection only).",
+        "Numerator and denominator are counted independently over the window, so the ratio can "
+        "exceed 1.0. PARTIAL: release-revert is not recorded as an explicit fact "
+        "(divergence detection only).",
     )
 
 
