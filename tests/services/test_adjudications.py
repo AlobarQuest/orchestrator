@@ -81,6 +81,21 @@ def test_human_may_not_record_failed(migrated_session: Session, ready_unit) -> N
     assert result.code == "role_forbidden"
 
 
+def test_human_may_not_pass_a_criterion_less_ac(migrated_session: Session, ready_unit) -> None:
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        rationale="looks fine",
+        idempotency_key="human-pass-no-criterion",
+    )
+    assert isinstance(result, DomainError)
+    assert result.code == "role_forbidden"
+
+
 @pytest.mark.parametrize("outcome", ["passed", "failed", "not_applicable"])
 def test_verifier_records_each_non_waiver_outcome(
     migrated_session: Session, ready_unit, outcome: str
