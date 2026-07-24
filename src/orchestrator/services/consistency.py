@@ -21,6 +21,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
+from orchestrator.kernel.states import WAIVER_RISK_CLASSES
 from orchestrator.persistence.models import (
     EVIDENCE_HEAD_BOOKKEEPING_AC_ID,
     WorkPackageRevision,
@@ -93,6 +94,31 @@ SATISFIED_ACS = text(
 )
 
 
+# Reporting-only, legacy-defense audit of current (unsuperseded) waivers -- the completion gate
+# already refuses an expired waiver at the moment of completion, but nothing else makes an
+# outlived accepted-risk visible after the fact, and a risk outside the controlled vocabulary
+# should be structurally impossible post-CHECK but is defended here for legacy rows anyway.
+_THIN_WAIVERS = text(
+    """
+    WITH terminals AS (
+        SELECT a.work_unit_id, a.ac_id, a.risk, a.expires_at
+        FROM adjudications a
+        WHERE a.outcome = 'waived'
+          AND NOT EXISTS (
+              SELECT 1 FROM adjudications s
+              WHERE s.supersedes_adjudication_id = a.id
+          )
+    )
+    SELECT work_unit_id, ac_id, risk, expires_at
+    FROM terminals
+    WHERE (expires_at IS NOT NULL AND expires_at <= :now)
+       OR risk IS NULL
+       OR NOT (risk = ANY(:risk_classes))
+    ORDER BY work_unit_id, ac_id
+    """
+)
+
+
 @dataclass(frozen=True)
 class ConsistencyFinding:
     check: str
@@ -120,6 +146,7 @@ def check_consistency(session: Session) -> ConsistencyReport:
         findings=(
             *_evidence_head_findings(session),
             *_completion_findings(session, now),
+            *_waiver_findings(session, now),
         ),
     )
 
@@ -173,5 +200,33 @@ def _completion_findings(session: Session, now: datetime) -> tuple[ConsistencyFi
                 expected="satisfied",
             )
             for ac_id in sorted(set(required) - satisfied)
+        )
+    return tuple(findings)
+
+
+def _waiver_findings(session: Session, now: datetime) -> tuple[ConsistencyFinding, ...]:
+    """Surface current waivers that are structurally thin -- expired, or (legacy defense) a risk
+    outside the controlled vocabulary. Reporting only; the completion gate already refuses an
+    expired waiver, but nothing else makes an outlived accepted-risk visible."""
+    rows = session.execute(
+        _THIN_WAIVERS, {"now": now, "risk_classes": list(WAIVER_RISK_CLASSES)}
+    ).all()
+    findings: list[ConsistencyFinding] = []
+    for work_unit_id, ac_id, risk, expires_at in rows:
+        if expires_at is not None and expires_at <= now:
+            detail = "waiver expired; its accepted risk has outlived the approved window"
+            observed = f"expired at {expires_at.isoformat()}"
+        else:
+            detail = "waiver risk is outside the controlled vocabulary"
+            observed = f"risk={risk!r}"
+        findings.append(
+            ConsistencyFinding(
+                check="waiver_hardening",
+                work_unit_id=work_unit_id,
+                subject=ac_id,
+                detail=detail,
+                observed=observed,
+                expected="a current waiver with an in-vocabulary risk class",
+            )
         )
     return tuple(findings)
