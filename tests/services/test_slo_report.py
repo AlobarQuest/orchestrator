@@ -11,7 +11,6 @@ from orchestrator.services.packages import register_approved_unit, register_revi
 from orchestrator.services.slo_report import (
     STATUS_COMPUTED,
     STATUS_NO_DATA,
-    STATUS_NOT_INSTRUMENTED,
     STATUS_PARTIAL,
     SloReportFilters,
     slo_report,
@@ -164,6 +163,42 @@ def _add_adjudication(
     return adj
 
 
+def _add_cost_event(
+    session,
+    unit_id,
+    *,
+    occurred_at,
+    cost_known=True,
+    llm_calls=10,
+    input_tokens=1000,
+    output_tokens=200,
+    cost_usd=1.5,
+):
+    event = Event(
+        occurred_at=occurred_at,
+        actor_id="worker",
+        action="attempt.cost_recorded",
+        subject_type="work_unit",
+        subject_id=unit_id,
+        from_state=None,
+        to_state=None,
+        payload={
+            "attempt": 1,
+            "cost_known": cost_known,
+            "llm_calls": llm_calls if cost_known else None,
+            "num_turns": 3 if cost_known else None,
+            "input_tokens": input_tokens if cost_known else None,
+            "output_tokens": output_tokens if cost_known else None,
+            "cost_usd": cost_usd if cost_known else None,
+        },
+        correlation_id=uuid.uuid4(),
+        idempotency_key=f"cost-{uuid.uuid4()}",
+    )
+    session.add(event)
+    session.flush()
+    return event
+
+
 # ---- skeleton tests --------------------------------------------------------
 
 
@@ -182,15 +217,6 @@ def test_empty_store_reports_no_data_and_not_instrumented(migrated_session):
     ):
         assert metric.status == STATUS_NO_DATA
         assert metric.value is None
-
-
-def test_cost_and_tokens_are_not_instrumented(migrated_session):
-    """Guard test: cost/tokens have no source data and must never be silently zero-filled."""
-    report = slo_report(migrated_session)
-    assert report.cost_per_unit.status == STATUS_NOT_INSTRUMENTED
-    assert report.cost_per_unit.value is None
-    assert report.token_consumption.status == STATUS_NOT_INSTRUMENTED
-    assert report.token_consumption.value is None
 
 
 def test_explicit_window_is_respected(migrated_session):
@@ -482,3 +508,48 @@ def test_improvisation_no_activity_is_no_data(migrated_session):
         ),
     )
     assert report.improvisation.status == STATUS_NO_DATA
+
+
+# ---- cost_per_unit / token_consumption (WS-P2.4 deliverable) --------------
+
+
+def test_cost_and_tokens_no_data_when_no_cost_events(migrated_session):
+    report = slo_report(migrated_session)
+    assert report.cost_per_unit.status == STATUS_NO_DATA
+    assert report.token_consumption.status == STATUS_NO_DATA
+
+
+def test_cost_and_tokens_computed_from_events(migrated_session):
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    _, unit = _build_unit(migrated_session, "cost")
+    _add_cost_event(
+        migrated_session,
+        unit.id,
+        occurred_at=datetime(2026, 7, 3, tzinfo=UTC),
+        cost_usd=2.0,
+        input_tokens=1000,
+        output_tokens=200,
+    )
+    migrated_session.commit()
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+    assert report.cost_per_unit.status == STATUS_COMPUTED
+    assert report.cost_per_unit.value == 2.0
+    assert report.token_consumption.status == STATUS_COMPUTED
+    assert report.token_consumption.value == 1200.0
+
+
+def test_cost_partial_when_some_unknown(migrated_session):
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    _, unit = _build_unit(migrated_session, "cost")
+    _add_cost_event(migrated_session, unit.id, occurred_at=datetime(2026, 7, 3, tzinfo=UTC))
+    _add_cost_event(
+        migrated_session,
+        unit.id,
+        occurred_at=datetime(2026, 7, 4, tzinfo=UTC),
+        cost_known=False,
+    )
+    migrated_session.commit()
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+    assert report.cost_per_unit.status == STATUS_PARTIAL
