@@ -18,6 +18,8 @@ from orchestrator.api.schemas import (
     ClaimCommand,
     ConsistencyReportResponse,
     ContextSnapshotResponse,
+    CostActualsCommand,
+    CostActualsResponse,
     DeadLetterEntryResponse,
     DecompositionDecisionCommand,
     DecompositionProposalAcMappingResponse,
@@ -109,6 +111,7 @@ from orchestrator.services.claims import (
 )
 from orchestrator.services.consistency import check_consistency
 from orchestrator.services.context import PreflightCommand, record_preflight
+from orchestrator.services.cost_actuals import record_cost_actuals
 from orchestrator.services.dead_letter import dead_letter
 from orchestrator.services.decomposition import (
     AcMapping,
@@ -1381,6 +1384,41 @@ def dependency_resolution(
     )
     session.commit()
     return result
+
+
+@router.post("/work-units/{unit_id}/cost-actuals", response_model=CostActualsResponse)
+def cost_actuals(
+    unit_id: UUID,
+    body: CostActualsCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """The runner reports the actual LLM cost of one attempt (WS-P2.4 Increment 1).
+
+    Claim-gated exactly like evidence/pr-binding: a worker must prove it holds this unit's live
+    claim. Emitted before the terminal fail/submit transition so the lease is still valid.
+    """
+    _require_zero_expected_version(body.expected_version, "cost actuals")
+    event = record_cost_actuals(
+        session,
+        actor=actor,
+        work_unit_id=unit_id,
+        attempt=body.attempt,
+        lease_token=body.lease_token,
+        cost_known=body.cost_known,
+        llm_calls=body.llm_calls,
+        num_turns=body.num_turns,
+        input_tokens=body.input_tokens,
+        output_tokens=body.output_tokens,
+        cost_usd=body.cost_usd,
+        idempotency_key=body.idempotency_key,
+    )
+    return CostActualsResponse(
+        work_unit_id=unit_id,
+        attempt=body.attempt,
+        event_id=event.id,
+        cost_known=body.cost_known,
+    )
 
 
 @router.post("/work-units/{unit_id}/evidence", response_model=EvidenceResponse)

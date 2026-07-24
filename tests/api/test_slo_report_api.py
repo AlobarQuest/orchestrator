@@ -9,6 +9,6 @@ def test_slo_report_route_returns_status_typed_metrics(db_client: TestClient) ->
     assert response.status_code == 200
     body = response.json()
     assert "since" in body and "until" in body
-    assert body["cost_per_unit"]["status"] == "not_instrumented"
+    assert body["cost_per_unit"]["status"] == "no_data"
     assert body["cost_per_unit"]["value"] is None
     assert body["improvisation"]["status"] in {"no_data", "computed"}

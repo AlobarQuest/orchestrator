@@ -70,6 +70,8 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # observation, because an expectation written by observed reality can never diverge
         # from it.
         "/api/v1/work-units/{unit_id}/pr-binding",
+        # WS-P2.4: the worker's report of realized cost/token actuals for a claimed attempt.
+        "/api/v1/work-units/{unit_id}/cost-actuals",
         "/api/v1/knowledge-promotion-proposals",
         "/api/v1/knowledge-promotion-proposals/{proposal_id}/submit-to-brain",
         "/api/v1/work-units/{unit_id}/commands/{command}",

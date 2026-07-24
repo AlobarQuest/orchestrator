@@ -16,6 +16,13 @@ ADVISORY_LOCK = "pg_advisory_xact_lock + unique idempotency_key + replay-equalit
 ROW_LOCK = "unique Event.idempotency_key + WorkUnit row lock (with_for_update), NO advisory lock"
 # Reclaim writes correlated transitions under a failed key plus a derived ready-transition key.
 COMPOUND_KEY = "compound failed/ready-transition Event keys + WorkUnit row lock + error replay"
+# No advisory lock and no WorkUnit/Claim row lock guards the insert itself: a pre-check SELECT by
+# the unique Event.idempotency_key, then insert, then IntegrityError -> rollback -> re-query the
+# winner. A concurrent double-submit can pass the pre-check on both callers before either commits.
+NO_LOCK_PRECHECK_THEN_INTEGRITY_REPLAY = (
+    "unique Event.idempotency_key + pre-check select + insert + "
+    "IntegrityError rollback/re-query replay, NO advisory/row lock"
+)
 
 
 @dataclass(frozen=True)
@@ -201,5 +208,13 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "/api/v1/work-units/{unit_id}/pr-binding",
         ROW_LOCK,
         "tests/idempotency/test_wsp21_ingress_idempotency.py::test_a_duplicate_pr_binding_report_replays",
+    ),
+    # --- WS-P2.4 ingress --------------------------------------------------------------------
+    MatrixRow(
+        "cost actuals",
+        "/api/v1/work-units/{unit_id}/cost-actuals",
+        NO_LOCK_PRECHECK_THEN_INTEGRITY_REPLAY,
+        "tests/idempotency/test_cost_actuals_idempotency.py::"
+        "test_a_concurrent_duplicate_cost_actuals_submission_writes_one_event",
     ),
 )

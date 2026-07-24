@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from statistics import median
 
-from sqlalchemy import func, select
+from sqlalchemy import Float, cast, func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
@@ -322,19 +322,95 @@ def _median(values: list[float]) -> float:
     return float(median(values))
 
 
+_COST_ACTION = "attempt.cost_recorded"
+
+
+def _cost_events_in_window(session, since, until) -> tuple[int, int]:
+    known = (
+        session.scalar(
+            select(func.count(Event.id)).where(
+                Event.action == _COST_ACTION,
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+                Event.payload["cost_known"].astext == "true",
+            )
+        )
+        or 0
+    )
+    unknown = (
+        session.scalar(
+            select(func.count(Event.id)).where(
+                Event.action == _COST_ACTION,
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+                Event.payload["cost_known"].astext == "false",
+            )
+        )
+        or 0
+    )
+    return known, unknown
+
+
 def _cost(session, since, until, now) -> MetricValue:
+    known, unknown = _cost_events_in_window(session, since, until)
+    if known == 0:
+        if unknown == 0:
+            return MetricValue(STATUS_NO_DATA, None, "no cost actuals were recorded in the window")
+        return MetricValue(
+            STATUS_NO_DATA,
+            None,
+            f"no known cost actuals in window ({unknown} attempts had unknown cost)",
+        )
+    total = (
+        session.scalar(
+            select(func.sum(cast(Event.payload["cost_usd"].astext, Float))).where(
+                Event.action == _COST_ACTION,
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+                Event.payload["cost_known"].astext == "true",
+            )
+        )
+        or 0.0
+    )
+    status = STATUS_PARTIAL if unknown else STATUS_COMPUTED
     return MetricValue(
-        STATUS_NOT_INSTRUMENTED,
-        None,
-        "no per-unit cost actual is recorded anywhere in the store; only the declared "
-        "max_llm_calls ceiling exists. Requires the actuals-capture increment "
-        "(WS-P2.4 prerequisite).",
+        status,
+        float(total),
+        f"summed cost_usd over {known} cost-known attempts in window"
+        + (f"; {unknown} attempts had unknown cost (excluded)" if unknown else ""),
     )
 
 
 def _tokens(session, since, until, now) -> MetricValue:
+    known, unknown = _cost_events_in_window(session, since, until)
+    if known == 0:
+        if unknown == 0:
+            return MetricValue(STATUS_NO_DATA, None, "no token actuals were recorded in the window")
+        return MetricValue(
+            STATUS_NO_DATA,
+            None,
+            f"no known token actuals in window ({unknown} attempts had unknown cost)",
+        )
+    total = (
+        session.scalar(
+            select(
+                func.sum(
+                    cast(Event.payload["input_tokens"].astext, Float)
+                    + cast(Event.payload["output_tokens"].astext, Float)
+                )
+            ).where(
+                Event.action == _COST_ACTION,
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+                Event.payload["cost_known"].astext == "true",
+            )
+        )
+        or 0.0
+    )
+    status = STATUS_PARTIAL if unknown else STATUS_COMPUTED
     return MetricValue(
-        STATUS_NOT_INSTRUMENTED,
-        None,
-        "no token-consumption actual is recorded anywhere in the store; see cost_per_unit.",
+        status,
+        float(total),
+        f"summed input+output tokens over {known} cost-known attempts in window"
+        + (f"; {unknown} attempts had unknown cost (excluded)" if unknown else ""),
     )

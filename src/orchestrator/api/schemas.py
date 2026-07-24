@@ -2,7 +2,15 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    model_validator,
+)
 
 
 class CommandBase(BaseModel):
@@ -982,6 +990,52 @@ class PrBindingResponse(BaseModel):
     head_sha: str
     verification_read_head_sha: str | None
     verification_read_attempt: int | None
+
+
+class CostActualsCommand(CommandBase):
+    """A runner reporting the actual LLM cost of one work-unit attempt.
+
+    Carries `expected_version` (required 0, like pr-binding): cost-actuals appends an
+    attempt.cost_recorded event and never targets the unit's version, so the route asserts
+    expected_version == 0 as the same uniformity marker every worker write uses rather than
+    exempting this path from the repo-wide "every mutation carries expected_version" invariant.
+    `attempt` + `lease_token` prove the caller holds this unit's live claim, exactly as evidence
+    and pr-binding demand. When `cost_known` is False (a failed attempt left no usable
+    transcript) every numeric is null -- the cost is honestly absent, never a fabricated zero.
+    """
+
+    attempt: int = Field(gt=0)
+    lease_token: str = Field(min_length=1)
+    cost_known: bool
+    llm_calls: int | None = Field(default=None, ge=0)
+    num_turns: int | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    cost_usd: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _numerics_match_cost_known(self) -> "CostActualsCommand":
+        numerics = (
+            self.llm_calls,
+            self.num_turns,
+            self.input_tokens,
+            self.output_tokens,
+            self.cost_usd,
+        )
+        if self.cost_known and any(value is None for value in numerics):
+            raise ValueError("cost_known is true but a numeric field is null")
+        if not self.cost_known and any(value is not None for value in numerics):
+            raise ValueError("cost_known is false but a numeric field is non-null")
+        return self
+
+
+class CostActualsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    work_unit_id: UUID
+    attempt: int
+    event_id: UUID
+    cost_known: bool
 
 
 class ConsistencyFindingResponse(BaseModel):
