@@ -125,7 +125,7 @@ def test_evidence_pack_labels_supersession_and_named_waiver_facts(
                 decided_by="devon",
                 rationale="accepted",
                 failed_evidence_id=old.id,
-                risk="bounded",
+                risk="medium",
                 follow_up="monitor",
                 scope="ac-1",
                 event_id=uuid.uuid4(),
@@ -146,6 +146,6 @@ def test_evidence_pack_labels_supersession_and_named_waiver_facts(
     assert "failed (superseded)" in page.text
     assert "waived (current)" in page.text
     assert failed_id in page.text
-    assert "Risk: bounded" in page.text
+    assert "Risk: medium" in page.text
     assert "Follow-up: monitor" in page.text
     assert "Scope: ac-1" in page.text

@@ -19,6 +19,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from orchestrator.kernel.states import WAIVER_RISK_CLASSES
+
 
 class Base(DeclarativeBase):
     pass
@@ -434,6 +436,12 @@ class Adjudication(UUIDPrimaryKey, Base):
             "(failed_evidence_id IS NOT NULL AND length(trim(rationale)) > 0 "
             "AND length(trim(risk)) > 0 AND length(trim(follow_up)) > 0)",
             name="ck_adjudications_waiver_fields",
+        ),
+        CheckConstraint(
+            "risk IS NULL OR risk IN ("
+            + ", ".join(f"'{value}'" for value in WAIVER_RISK_CLASSES)
+            + ")",
+            name="ck_adjudications_risk_class",
         ),
     )
 

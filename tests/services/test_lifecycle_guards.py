@@ -94,7 +94,7 @@ def add_adjudication(
         decided_by="human-1",
         rationale="verified",
         failed_evidence_id=failed_evidence_id,
-        risk="accepted" if outcome == "waived" else None,
+        risk="high" if outcome == "waived" else None,
         follow_up="monitor" if outcome == "waived" else None,
         scope=scope,
         expires_at=expires_at,

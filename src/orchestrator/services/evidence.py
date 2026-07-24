@@ -10,7 +10,7 @@ from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.evidence_types import VERIFIER_EVIDENCE_PREFIX
 from orchestrator.kernel.leases import hash_lease_token
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
     Adjudication,
@@ -693,12 +693,14 @@ def _validate_adjudication_fields(
     if outcome == "waived" and (
         failed_evidence_id is None
         or not _text(risk)
+        or (risk is not None and risk not in WAIVER_RISK_CLASSES)
         or not _text(follow_up)
         or (expires_at is not None and expires_at <= now)
     ):
         raise DomainError(
             "waiver_invalid",
-            "waiver requires failed evidence, risk, follow-up, and a future expiry when set",
+            "waiver requires failed evidence, a risk class, follow-up, and a future expiry "
+            "when set",
             None,
         )
 

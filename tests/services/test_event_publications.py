@@ -294,7 +294,7 @@ def test_maps_adjudication_and_context_rows_to_valid_factory_events(
         decided_by="devon",
         rationale="accepted",
         failed_evidence_id=failed_evidence.id,
-        risk="bounded",
+        risk="medium",
         follow_up="monitor",
         event_id=uuid.uuid4(),
     )
