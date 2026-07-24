@@ -208,6 +208,10 @@ def _waiver_findings(session: Session, now: datetime) -> tuple[ConsistencyFindin
     """Surface current waivers that are structurally thin -- expired, or (legacy defense) a risk
     outside the controlled vocabulary. Reporting only; the completion gate already refuses an
     expired waiver, but nothing else makes an outlived accepted-risk visible."""
+    # Scope is intentionally NOT audited here: a scoped, unexpired, valid-risk waiver is not a
+    # finding. This audit's remit is "expired / out-of-vocab risk," and the human adjudication
+    # form never writes `scope` at all (it is deliberately unexposed), so no scoped waiver can
+    # originate from that path today.
     rows = session.execute(
         _THIN_WAIVERS, {"now": now, "risk_classes": list(WAIVER_RISK_CLASSES)}
     ).all()

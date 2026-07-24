@@ -47,7 +47,12 @@ from orchestrator.services.decomposition import (
     require_decomposition_revision,
 )
 from orchestrator.services.evidence import record_adjudication
-from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.lifecycle import (
+    POST_DEPLOY_AC_IDS,
+    ActorContext,
+    TransitionCommand,
+    transition_unit,
+)
 from orchestrator.services.packages import evaluate_readiness, record_approval
 from orchestrator.services.reconciliation import (
     ResolutionCommand,
@@ -193,6 +198,7 @@ def _adjudicatable_criteria(
             "is_judgment": criterion.evidence_type.strip().lower() in JUDGMENT_TYPES,
         }
         for criterion in criteria
+        if criterion.ac_id not in POST_DEPLOY_AC_IDS
     )
 
 
@@ -641,11 +647,18 @@ def _parse_optional_datetime(value: str | None) -> datetime | None:
     if stripped is None:
         return None
     try:
-        return datetime.fromisoformat(stripped)
+        result = datetime.fromisoformat(stripped)
     except ValueError as error:
         raise DomainError(
             "adjudication_invalid", "expires_at must be an ISO 8601 timestamp", None
         ) from error
+    if result.tzinfo is None:
+        raise DomainError(
+            "adjudication_invalid",
+            "expires_at must include a timezone offset (e.g. 2027-06-01T00:00:00Z)",
+            None,
+        )
+    return result
 
 
 @router.post("/units/{unit_id}/adjudication")

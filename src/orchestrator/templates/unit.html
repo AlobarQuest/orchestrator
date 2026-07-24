@@ -60,7 +60,7 @@
     <select id="risk-{{ ac.ac_id }}" name="risk"><option value="">—</option>{% for cls in waiver_risk_classes %}<option value="{{ cls }}">{{ cls }}</option>{% endfor %}</select>
     <label for="followup-{{ ac.ac_id }}">Follow-up</label>
     <textarea id="followup-{{ ac.ac_id }}" name="follow_up"></textarea>
-    <label for="expires-{{ ac.ac_id }}">Expires at (optional, ISO 8601)</label>
+    <label for="expires-{{ ac.ac_id }}">Expires at (optional, ISO 8601 with timezone, e.g. 2027-06-01T00:00:00Z)</label>
     <input id="expires-{{ ac.ac_id }}" name="expires_at">
   </details>
   <label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm this adjudication.</label>

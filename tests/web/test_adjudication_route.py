@@ -87,3 +87,77 @@ def test_human_pass_of_deterministic_ac_is_rejected(
     with Session(migrated_engine) as verify:
         verify.expire_all()
         assert current_adjudication(verify, unit.work_package_revision_id, unit.id, "ac-1") is None
+
+
+def test_naive_expires_at_is_rejected_cleanly(
+    db_client: TestClient, migrated_engine: Engine, review_unit_with_judgment_ac: WorkUnit
+) -> None:
+    # Regression: a timezone-naive expires_at (what an HTML date/datetime-local input emits,
+    # e.g. "2027-06-01") used to flow uncaught into the service layer, where a naive/aware
+    # datetime comparison raises TypeError -- an unhandled 500. _parse_optional_datetime must
+    # reject it as a clean DomainError (mapped to 409) before it ever reaches the service.
+    unit = review_unit_with_judgment_ac
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+    token, key = _form(page.text, unit.id, "adjudication")
+
+    response = db_client.post(
+        f"/review/units/{unit.id}/adjudication",
+        headers=HUMAN,
+        data={
+            "csrf_token": token,
+            "idempotency_key": key,
+            "expected_version": str(unit.version),
+            "ac_id": "ac-1",
+            "outcome": "passed",
+            "rationale": "reviewed and met",
+            "risk": "",
+            "follow_up": "",
+            "failed_evidence_id": "",
+            "expires_at": "2027-06-01",
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert 400 <= response.status_code < 500
+
+    with Session(migrated_engine) as verify:
+        verify.expire_all()
+        assert current_adjudication(verify, unit.work_package_revision_id, unit.id, "ac-1") is None
+
+
+def test_aware_expires_at_is_accepted(
+    db_client: TestClient, migrated_engine: Engine, review_unit_with_judgment_ac: WorkUnit
+) -> None:
+    # Companion to the naive-rejection test above: the fix must reject only naive datetimes,
+    # not expiries in general.
+    unit = review_unit_with_judgment_ac
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+    token, key = _form(page.text, unit.id, "adjudication")
+
+    response = db_client.post(
+        f"/review/units/{unit.id}/adjudication",
+        headers=HUMAN,
+        data={
+            "csrf_token": token,
+            "idempotency_key": key,
+            "expected_version": str(unit.version),
+            "ac_id": "ac-1",
+            "outcome": "passed",
+            "rationale": "reviewed and met",
+            "risk": "",
+            "follow_up": "",
+            "failed_evidence_id": "",
+            "expires_at": "2027-06-01T00:00:00+00:00",
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+
+    with Session(migrated_engine) as verify:
+        verify.expire_all()
+        row = current_adjudication(verify, unit.work_package_revision_id, unit.id, "ac-1")
+        assert row is not None
+        assert row.outcome == "passed"
