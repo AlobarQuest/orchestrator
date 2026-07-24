@@ -428,3 +428,14 @@ style of that module.
   `conformance-claim` fails `scanner_unavailable: portfolio.compliance is not importable`. Run
   once without `--submit` (dry — clones the target, runs the mutator twice, all four fail-closed
   validations) and review the proposal before re-running with `--submit`. (Verified 2026-07-22.)
+
+- **`make check` runs `ruff format --check .` over the WHOLE repo — but per-task `ruff check` and
+  the diff-scoped Stop hook only see CHANGED files + lint rules, so whole-repo *format*-debt is
+  invisible until a full `make check`.** A file can be committed to `main` ruff-check-clean but not
+  ruff-format-clean and nothing catches it until someone runs the full gate — `test_pr_bindings.py`
+  landed format-dirty via WS-P2.16 (`2b18c98`) and only surfaced during WS-P2.2's final `make check`
+  (it fails *without* your change too — a differential, not your regression). Two consequences: (1)
+  before declaring `make check` green, expect it may red on **pre-existing** format-debt in files you
+  never touched — run `ruff format --check .` and diff against `main` before blaming your diff; (2)
+  have implementers run `ruff format` (or `make fix`), not just `ruff check`, before committing, or
+  the debt accretes. (Verified 2026-07-24, WS-P2.2.)
