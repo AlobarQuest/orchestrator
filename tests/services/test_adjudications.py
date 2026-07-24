@@ -38,6 +38,25 @@ def test_verifier_records_each_non_waiver_outcome(
     assert result.decided_by == "verifier-1"
 
 
+def test_non_waiver_risk_outside_vocabulary_is_a_clean_error(
+    migrated_session: Session, ready_unit
+) -> None:
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("verifier-1", ActorRole.VERIFIER),
+        rationale="verified",
+        idempotency_key="non-waiver-bad-risk",
+        risk="catastrophic",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "adjudication_invalid"
+
+
 def test_worker_cannot_record_adjudication(migrated_session: Session, ready_unit) -> None:
     result = record_adjudication(
         migrated_session,

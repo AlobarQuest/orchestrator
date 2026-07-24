@@ -687,13 +687,15 @@ def _validate_adjudication_fields(
     if not _text(rationale):
         code = "waiver_invalid" if outcome == "waived" else "adjudication_invalid"
         raise DomainError(code, "adjudication rationale is required", None)
+    if risk is not None and risk not in WAIVER_RISK_CLASSES:
+        code = "waiver_invalid" if outcome == "waived" else "adjudication_invalid"
+        raise DomainError(code, "risk must be one of the controlled risk classes", None)
     for reference in (evidence_id, failed_evidence_id):
         if reference is not None:
             _validate_evidence_reference(session, reference, revision_id, unit_id, ac_id)
     if outcome == "waived" and (
         failed_evidence_id is None
         or not _text(risk)
-        or (risk is not None and risk not in WAIVER_RISK_CLASSES)
         or not _text(follow_up)
         or (expires_at is not None and expires_at <= now)
     ):
