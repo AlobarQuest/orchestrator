@@ -44,6 +44,14 @@ def test_every_api_success_response_has_an_explicit_schema() -> None:
             assert success["content"]["application/json"]["schema"]
 
 
+#: WS-P2.4: cost-actuals appends an attempt.cost_recorded event and never targets the work
+#: unit's version -- there is no optimistic-concurrency target to protect, so
+#: CostActualsCommand intentionally does not extend CommandBase (see its docstring). This is
+#: the one deliberate exception to "every mutation carries expected_version"; every other
+#: command in the schema still does.
+NO_EXPECTED_VERSION_PATHS = {"/api/v1/work-units/{unit_id}/cost-actuals"}
+
+
 def test_every_api_mutation_requires_idempotency_key_and_expected_version() -> None:
     document = TestClient(app).get("/openapi.json").json()
 
@@ -53,6 +61,9 @@ def test_every_api_mutation_requires_idempotency_key_and_expected_version() -> N
         schema = operations["post"]["requestBody"]["content"]["application/json"]["schema"]
         name = schema["$ref"].rsplit("/", 1)[-1]
         required = set(document["components"]["schemas"][name]["required"])
+        if path in NO_EXPECTED_VERSION_PATHS:
+            assert "idempotency_key" in required, path
+            continue
         assert {"idempotency_key", "expected_version"} <= required, path
 
 
