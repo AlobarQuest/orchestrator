@@ -120,11 +120,21 @@ New endpoint: `POST /api/v1/work-units/{unit_id}/cost-actuals`, runner-role M2M
 
 When `cost_known` is `false`, all numeric fields are `null`.
 
-**Auth is NOT lease-gated.** Unlike `pr_binding`, cost-actuals must succeed on the failure
-path *after* the claim/lease may already be released. It is authenticated as runner-role
-M2M and bound to `(unit_id, attempt)` via the idempotency key; it does not require a live
-lease token. (Confirm during planning whether an `expected_version` optimistic check is
-still wanted; it is not required for correctness here.)
+**Auth is claim-gated** (refined during planning, from the real code). Cost-actuals reuses
+the exact `_authorize_write` guard `pr_binding` uses: a WORKER holding the unit's live claim
+(`validate_active_claim`), or SYSTEM. This binds each write to the claim holder — the same
+integrity property `pr_binding` deliberately enforces, and it matters more here because
+Increment 2 *trusts these numbers to halt units*. The failure-path concern that first
+suggested a non-lease-gated design is instead solved by **emitting before the terminal
+`fail`/`submit` transition, while the lease is still live** (the runner renews its lease
+throughout the run). No `expected_version`: this is an append with no optimistic-concurrency
+target, so the command carries only `idempotency_key`. Idempotency is enforced by the unique
+`events.idempotency_key` — the service pre-checks and also catches `IntegrityError` so a
+re-emit is a clean no-op, never an unhandled 500.
+
+**No migration.** `Event.action` is a free-form string (no enum/check), so a new
+`attempt.cost_recorded` value is pure code. A supporting aggregation index on `events` is
+deferred (the existing `improvisation` metric runs unindexed at this scale — YAGNI).
 
 **Contract pinning:** a fixture `tests/fixtures/runner_cost_actuals.json` (the exact POST
 body shape) with a `CONTRACT_SHA256` constant in a contract test, mirrored byte-identically
