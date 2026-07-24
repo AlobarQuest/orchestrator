@@ -353,8 +353,14 @@ def _cost_events_in_window(session, since, until) -> tuple[int, int]:
 
 def _cost(session, since, until, now) -> MetricValue:
     known, unknown = _cost_events_in_window(session, since, until)
-    if known == 0 and unknown == 0:
-        return MetricValue(STATUS_NO_DATA, None, "no cost actuals were recorded in the window")
+    if known == 0:
+        if unknown == 0:
+            return MetricValue(STATUS_NO_DATA, None, "no cost actuals were recorded in the window")
+        return MetricValue(
+            STATUS_NO_DATA,
+            None,
+            f"no known cost actuals in window ({unknown} attempts had unknown cost)",
+        )
     total = (
         session.scalar(
             select(func.sum(cast(Event.payload["cost_usd"].astext, Float))).where(
@@ -377,8 +383,14 @@ def _cost(session, since, until, now) -> MetricValue:
 
 def _tokens(session, since, until, now) -> MetricValue:
     known, unknown = _cost_events_in_window(session, since, until)
-    if known == 0 and unknown == 0:
-        return MetricValue(STATUS_NO_DATA, None, "no token actuals were recorded in the window")
+    if known == 0:
+        if unknown == 0:
+            return MetricValue(STATUS_NO_DATA, None, "no token actuals were recorded in the window")
+        return MetricValue(
+            STATUS_NO_DATA,
+            None,
+            f"no known token actuals in window ({unknown} attempts had unknown cost)",
+        )
     total = (
         session.scalar(
             select(

@@ -553,3 +553,22 @@ def test_cost_partial_when_some_unknown(migrated_session):
     migrated_session.commit()
     report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
     assert report.cost_per_unit.status == STATUS_PARTIAL
+    assert report.cost_per_unit.value == 1.5  # _add_cost_event default cost_usd, known event only
+
+
+def test_cost_and_tokens_all_unknown_is_no_data(migrated_session):
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    _, unit = _build_unit(migrated_session, "cost-all-unknown")
+    _add_cost_event(
+        migrated_session,
+        unit.id,
+        occurred_at=datetime(2026, 7, 3, tzinfo=UTC),
+        cost_known=False,
+    )
+    migrated_session.commit()
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+    assert report.cost_per_unit.status == STATUS_NO_DATA
+    assert report.cost_per_unit.value is None
+    assert report.token_consumption.status == STATUS_NO_DATA
+    assert report.token_consumption.value is None
