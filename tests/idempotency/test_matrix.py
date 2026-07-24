@@ -31,6 +31,9 @@ NON_INGRESS_POST_ROUTES = frozenset(
         "/review/units/{unit_id}/cancel",
         "/review/units/{unit_id}/retry",
         "/review/units/{unit_id}/review",
+        # Delegates to record_adjudication, whose idempotency is already covered via the
+        # /api/v1/work-units/{unit_id}/adjudications row below.
+        "/review/units/{unit_id}/adjudication",
         # Read-model / export plumbing over already-persisted events.
         "/api/v1/event-publications/queue",
         "/api/v1/event-publications/export",

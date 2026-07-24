@@ -7,6 +7,7 @@ import secrets
 import time
 import uuid
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -20,7 +21,7 @@ from orchestrator.api.dependencies import AuthConfig, get_actor, get_session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.runner_authority import dependency_update_authority_violation
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
     Approval,
@@ -45,6 +46,7 @@ from orchestrator.services.decomposition import (
     reject_decomposition_proposal,
     require_decomposition_revision,
 )
+from orchestrator.services.evidence import record_adjudication
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 from orchestrator.services.packages import evaluate_readiness, record_approval
 from orchestrator.services.reconciliation import (
@@ -52,6 +54,8 @@ from orchestrator.services.reconciliation import (
     open_conditions,
     record_resolution,
 )
+from orchestrator.services.verifier_criteria import load_required_criteria
+from orchestrator.services.verifier_evaluators import JUDGMENT_TYPES
 
 router = APIRouter(prefix="/review", include_in_schema=False)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -173,6 +177,23 @@ def queue(request: Request, actor: ActorDep, session: SessionDep) -> HTMLRespons
             }
         )
     return _render(request, "queue.html", {"groups": dict(grouped)})
+
+
+def _adjudicatable_criteria(
+    session: Session, unit: WorkUnit, revision: WorkPackageRevision
+) -> tuple[dict[str, Any], ...]:
+    try:
+        criteria = load_required_criteria(session, unit, revision)
+    except DomainError:
+        return ()
+    return tuple(
+        {
+            "ac_id": criterion.ac_id,
+            "evidence_type": criterion.evidence_type,
+            "is_judgment": criterion.evidence_type.strip().lower() in JUDGMENT_TYPES,
+        }
+        for criterion in criteria
+    )
 
 
 def _projection(session: Session, unit_id: uuid.UUID) -> dict[str, Any]:
@@ -466,6 +487,17 @@ def detail(
         str(row.id): _issue_token(request, actor, row.id, "resolve", condition_keys[str(row.id)])
         for row in conditions
     }
+    criteria = _adjudicatable_criteria(session, context["unit"], context["revision"])
+    adjudication_keys = {row["ac_id"]: str(uuid.uuid4()) for row in criteria}
+    context["adjudicatable_criteria"] = criteria
+    context["adjudication_idempotency_keys"] = adjudication_keys
+    context["adjudication_csrf_tokens"] = {
+        row["ac_id"]: _issue_token(
+            request, actor, unit_id, "adjudication", adjudication_keys[row["ac_id"]]
+        )
+        for row in criteria
+    }
+    context["waiver_risk_classes"] = WAIVER_RISK_CLASSES
     return _render(request, "unit.html", context)
 
 
@@ -576,6 +608,86 @@ def approve_authority(
         expected_version=expected_version,
     )
     session.commit()
+    return _redirect(unit_id)
+
+
+def _blank_to_none(value: str | None) -> str | None:
+    """A browser submits an unset optional field as the empty string, not absence.
+
+    `record_adjudication`'s risk-class check (`risk is not None and risk not in
+    WAIVER_RISK_CLASSES`) treats "" as a bogus risk class rather than "no risk given" -- so every
+    optional adjudication field must be normalized to None before it reaches the service.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _parse_optional_uuid(value: str | None) -> uuid.UUID | None:
+    stripped = _blank_to_none(value)
+    if stripped is None:
+        return None
+    try:
+        return uuid.UUID(stripped)
+    except ValueError as error:
+        raise DomainError(
+            "adjudication_invalid", "failed_evidence_id must be a valid UUID", None
+        ) from error
+
+
+def _parse_optional_datetime(value: str | None) -> datetime | None:
+    stripped = _blank_to_none(value)
+    if stripped is None:
+        return None
+    try:
+        return datetime.fromisoformat(stripped)
+    except ValueError as error:
+        raise DomainError(
+            "adjudication_invalid", "expires_at must be an ISO 8601 timestamp", None
+        ) from error
+
+
+@router.post("/units/{unit_id}/adjudication")
+def adjudicate(
+    request: Request,
+    unit_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    expected_version: Annotated[int, Form()],
+    ac_id: Annotated[str, Form(min_length=1)],
+    outcome: Annotated[str, Form()],
+    rationale: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+    failed_evidence_id: Annotated[str | None, Form()] = None,
+    risk: Annotated[str | None, Form()] = None,
+    follow_up: Annotated[str | None, Form()] = None,
+    expires_at: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    _human(actor)
+    _require_form(request, actor, unit_id, "adjudication", csrf_token, idempotency_key, confirm)
+    unit = session.get(WorkUnit, unit_id)
+    if unit is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    result = record_adjudication(
+        session,
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit_id,
+        ac_id=ac_id,
+        outcome=outcome,
+        actor=actor,
+        rationale=rationale,
+        idempotency_key=idempotency_key,
+        expected_version=expected_version,
+        failed_evidence_id=_parse_optional_uuid(failed_evidence_id),
+        risk=_blank_to_none(risk),
+        follow_up=_blank_to_none(follow_up),
+        expires_at=_parse_optional_datetime(expires_at),
+    )
+    if isinstance(result, DomainError):
+        raise result
     return _redirect(unit_id)
 
 
