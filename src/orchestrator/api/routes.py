@@ -1398,6 +1398,7 @@ def cost_actuals(
     Claim-gated exactly like evidence/pr-binding: a worker must prove it holds this unit's live
     claim. Emitted before the terminal fail/submit transition so the lease is still valid.
     """
+    _require_zero_expected_version(body.expected_version, "cost actuals")
     event = record_cost_actuals(
         session,
         actor=actor,

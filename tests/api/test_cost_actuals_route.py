@@ -41,6 +41,7 @@ def test_post_cost_actuals_bad_body_is_422_not_500(db_client: TestClient) -> Non
         headers=WORKER,
         json={
             "idempotency_key": "cost-actuals-api-bad-body-1",
+            "expected_version": 0,
             "attempt": lease["attempt"],
             "lease_token": lease["lease_token"],
             "cost_known": True,

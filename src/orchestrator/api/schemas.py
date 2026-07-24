@@ -992,17 +992,18 @@ class PrBindingResponse(BaseModel):
     verification_read_attempt: int | None
 
 
-class CostActualsCommand(BaseModel):
+class CostActualsCommand(CommandBase):
     """A runner reporting the actual LLM cost of one work-unit attempt.
 
-    No expected_version: this is an append (an attempt.cost_recorded event), not an update to
-    the work unit, so there is no optimistic-concurrency target. `attempt` + `lease_token` prove
-    the caller holds this unit's live claim, exactly as evidence and pr-binding demand. When
-    `cost_known` is False (a failed attempt left no usable transcript) every numeric is null --
-    the cost is honestly absent, never a fabricated zero.
+    Carries `expected_version` (required 0, like pr-binding): cost-actuals appends an
+    attempt.cost_recorded event and never targets the unit's version, so the route asserts
+    expected_version == 0 as the same uniformity marker every worker write uses rather than
+    exempting this path from the repo-wide "every mutation carries expected_version" invariant.
+    `attempt` + `lease_token` prove the caller holds this unit's live claim, exactly as evidence
+    and pr-binding demand. When `cost_known` is False (a failed attempt left no usable
+    transcript) every numeric is null -- the cost is honestly absent, never a fabricated zero.
     """
 
-    idempotency_key: str = Field(min_length=1, max_length=200)
     attempt: int = Field(gt=0)
     lease_token: str = Field(min_length=1)
     cost_known: bool

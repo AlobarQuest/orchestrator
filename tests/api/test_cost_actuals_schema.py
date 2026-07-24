@@ -21,6 +21,7 @@ def test_cost_known_true_requires_all_numerics():
 def test_cost_known_false_requires_all_numerics_null():
     unknown = {
         "idempotency_key": "k",
+        "expected_version": 0,
         "attempt": 2,
         "lease_token": "t",
         "cost_known": False,
