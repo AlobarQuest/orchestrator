@@ -456,3 +456,30 @@ style of that module.
   `DomainError`, for *every* code path that can reach the column — not just the one the feature
   targets. (Verified 2026-07-24, WS-P2.3 — two independent 500 paths, both caught only by the
   whole-branch review, not by five prior per-task reviews.)
+
+- **`claim_unit` is NOT the only place a unit is granted an attempt — `reclaim_expired_claim`
+  bypasses it.** `reclaim_expired_claim` → `_perform_reclaim` → `_acquire_reclaimed_claim`
+  (`services/claims.py`) transitions an expired unit and grants a fresh CLAIMED attempt **without
+  ever calling `claim_unit`**. So any per-attempt gate placed only in `claim_unit` (e.g. a budget
+  cap) is silently bypassed when a lease expires. The choke point for "may this unit get another
+  attempt?" is the shared `_readiness_eligibility_error` (`claims.py`), used by BOTH reclaim and
+  requeue — it is where `attempts_exhausted` lives and where WS-P2.4 Inc 2 added the `is_over_budget`
+  gate. Any future "can this unit run again" rule belongs there, not (only) in `claim_unit`.
+  (Verified 2026-07-25, WS-P2.4 Inc 2 — the final whole-branch review caught an over-budget unit
+  running past its cap via the reclaim path; per-task reviews and the plan's own claim-only decision
+  missed it.)
+
+- **The evidence-pack `/api` is authentication-only (any authenticated actor reads any unit's full
+  pack); the markdown relayed onto a possibly-public PR comment is deliberately REDACTED, the JSON
+  is not.** `GET /api/v1/work-units/{id}/evidence-pack` (JSON) and `/evidence-pack/markdown` take
+  `_actor: ActorDep` with no role gate — the runner's worker credential reads them, consistent with
+  `runner-brief`/`status-ledger`/`history` (all auth-only). Because factory-runner posts the
+  **markdown** as a comment on the target repo, **which may be public**, the markdown renderer
+  (`services/evidence_pack.py::render_evidence_pack_markdown`) omits approver identities and waiver
+  rationale (`decided_by`, `rationale`, `approved_by`, `reason`, event `actor_id`) while keeping the
+  facts. The **JSON stays full-fidelity** (auth-gated, for WS-P2.6/audit). The redaction is
+  hand-edited per section — a new markdown section that interpolates those fields must redact them by
+  hand until a structural allowlist exists (backlogged). A `text/markdown` route also needs an entry
+  in `NON_JSON_SUCCESS_PATHS` (`tests/api/test_lifecycle_api.py`) to satisfy the
+  every-success-response-has-a-json-schema invariant. (Verified 2026-07-25, WS-P2.5 Inc 1 — the
+  public-exposure decision was the final review's one Important finding.)
