@@ -268,6 +268,27 @@ def evidence_pack_response(projection: dict[str, Any]) -> EvidencePackResponse:
     )
 
 
+def _md_cell(value: object) -> str:
+    """Make a value safe to place inside a markdown table cell.
+
+    A literal `|` shifts every downstream column and a bare newline breaks out of the table
+    row entirely -- both are realistic in free-text values (exception messages, JSON payloads)
+    that this module puts straight into `| ... |` rows. Escape backslashes first so the pipe
+    escape introduced below is never itself re-escaped, then escape `|`, then collapse CR/LF to
+    a single space. `None` renders as an empty cell.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    return (
+        text.replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("\r\n", " ")
+        .replace("\r", " ")
+        .replace("\n", " ")
+    )
+
+
 def render_evidence_pack_markdown(pack: EvidencePackResponse) -> str:
     """Render an `EvidencePackResponse` as the same 8 sections the `/review` GUI shows.
 
@@ -348,8 +369,8 @@ def _render_evidence_section(pack: EvidencePackResponse) -> list[str]:
             status = "current" if row.current else "superseded"
             reference = row.stable_ref if row.stable_ref is not None else row.payload
             lines.append(
-                f"| {row.ac_id} | {status} | {row.evidence_type} | {reference} | "
-                f"{row.supersedes or 'Root'} |"
+                f"| {_md_cell(row.ac_id)} | {_md_cell(status)} | {_md_cell(row.evidence_type)} | "
+                f"{_md_cell(reference)} | {_md_cell(row.supersedes) or 'Root'} |"
             )
     else:
         lines.append("| -- | -- | -- | No evidence recorded. | -- |")
@@ -397,8 +418,9 @@ def _render_event_publications_section(pack: EvidencePackResponse) -> list[str]:
     if pack.event_publications:
         for row in pack.event_publications:
             lines.append(
-                f"| {row.source_ref} | {row.status} | {row.event_id} | "
-                f"{row.export_ref or 'Not exported'} | {row.last_error or 'None'} |"
+                f"| {_md_cell(row.source_ref)} | {_md_cell(row.status)} | "
+                f"{_md_cell(row.event_id)} | {_md_cell(row.export_ref) or 'Not exported'} | "
+                f"{_md_cell(row.last_error) or 'None'} |"
             )
     else:
         lines.append("| -- | -- | -- | No event publications recorded. | -- |")
