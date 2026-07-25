@@ -29,6 +29,7 @@
 - Modify: `src/orchestrator/api/schemas.py` (append new response models at end of file)
 - Modify: `src/orchestrator/api/routes.py` (imports; new GET route after the per-unit markdown route at ~line 557)
 - Modify: `tests/architecture/test_ws32_scope_guards.py` (add the new module to `WS53_POST_DEPLOY_PATHS`)
+- Modify: `tests/architecture/test_scope_guards.py` (add the new GET route to the explicit GET-route inventory)
 - Test: `tests/api/test_release_evidence_pack_api.py`
 
 **Interfaces:**
@@ -365,14 +366,22 @@ def release_evidence_pack_route(
     return release_evidence_pack_response(session, revision_id)
 ```
 
-- [ ] **Step 6: Allowlist the new module in the scope guard**
+- [ ] **Step 6: Update BOTH scope-guard files**
 
-In `tests/architecture/test_ws32_scope_guards.py`, add to the `WS53_POST_DEPLOY_PATHS` set:
+6a. In `tests/architecture/test_ws32_scope_guards.py`, add to the `WS53_POST_DEPLOY_PATHS` set:
 
 ```python
     Path("src/orchestrator/services/release_evidence_pack.py"),
     # WS-P2.5 Inc 2: the per-release evidence pack COMPOSES deployment observations into a
     # read-only projection. It reads canonical rows; it never dispatches, deploys, or merges.
+```
+
+6b. In `tests/architecture/test_scope_guards.py`, the `test_production_get_route_inventory_is_explicit`
+test asserts the set of `/api/v1` GET paths **exactly**. Add the new route to that set literal
+(alphabetical placement puts it just before `/api/v1/release-artifacts/...`):
+
+```python
+        "/api/v1/revisions/{revision_id}/evidence-pack",
 ```
 
 - [ ] **Step 7: Run the API test to verify it passes**
@@ -382,15 +391,15 @@ Expected: PASS (`collected 6 items`, 6 passed). Confirm the collected count is 6
 
 - [ ] **Step 8: Run the invariant tests the route touches**
 
-Run: `.venv/bin/python -m pytest tests/architecture/test_ws32_scope_guards.py tests/api/test_lifecycle_api.py -q`
-Expected: PASS. (Scope guard stays green because the new module is allowlisted; `test_every_api_success_response_has_an_explicit_schema` stays green because the JSON route declares `response_model` and is not markdown — no `NON_JSON_SUCCESS_PATHS` change.)
+Run: `.venv/bin/python -m pytest tests/architecture/test_ws32_scope_guards.py tests/architecture/test_scope_guards.py tests/api/test_lifecycle_api.py -q`
+Expected: PASS. (`test_ws32_*` stays green because the new module is allowlisted in `WS53_POST_DEPLOY_PATHS`; `test_production_get_route_inventory_is_explicit` stays green because the new GET path was added to its set literal; `test_every_api_success_response_has_an_explicit_schema` stays green because the JSON route declares `response_model` and is not markdown — no `NON_JSON_SUCCESS_PATHS` change.)
 
 - [ ] **Step 9: Format and commit**
 
 ```bash
-.venv/bin/ruff format src/orchestrator/services/release_evidence_pack.py src/orchestrator/api/schemas.py src/orchestrator/api/routes.py tests/api/test_release_evidence_pack_api.py tests/architecture/test_ws32_scope_guards.py
+.venv/bin/ruff format src/orchestrator/services/release_evidence_pack.py src/orchestrator/api/schemas.py src/orchestrator/api/routes.py tests/api/test_release_evidence_pack_api.py tests/architecture/test_ws32_scope_guards.py tests/architecture/test_scope_guards.py
 .venv/bin/ruff check src/orchestrator/services/release_evidence_pack.py src/orchestrator/api/routes.py
-git add src/orchestrator/services/release_evidence_pack.py src/orchestrator/api/schemas.py src/orchestrator/api/routes.py tests/api/test_release_evidence_pack_api.py tests/architecture/test_ws32_scope_guards.py
+git add src/orchestrator/services/release_evidence_pack.py src/orchestrator/api/schemas.py src/orchestrator/api/routes.py tests/api/test_release_evidence_pack_api.py tests/architecture/test_ws32_scope_guards.py tests/architecture/test_scope_guards.py
 git commit -m "feat(wsp25-inc2): per-release evidence pack JSON route + assembler"
 ```
 
@@ -603,7 +612,8 @@ Expected: PASS. **Read the `collected N items` line** in the pytest output — e
 - Dedicated `ReleaseEvidencePackRevisionResponse` with `work_package_id` + `approved_by` → Task 1 Step 3 (plus `id` for the GUI back-link). ✓
 - Full-fidelity JSON (no redaction) → `test_release_evidence_pack_json_is_full_fidelity_not_redacted`. ✓
 - Auth-only JSON; forward-auth GUI → `..._is_readable_by_worker_credential` / `..._requires_authentication` / `..._page_requires_human`. ✓
-- Scope-guard allowlist for the new module → Task 1 Step 6. ✓
+- Scope-guard word-allowlist for the new module (`WS53_POST_DEPLOY_PATHS`) → Task 1 Step 6a. ✓
+- Explicit GET-route inventory (`test_production_get_route_inventory_is_explicit`) → Task 1 Step 6b. ✓
 - JSON-schema invariant / no `NON_JSON_SUCCESS_PATHS` change → Task 1 Step 8. ✓
 - Deterministic ordering → assembler `order_by` clauses. ✓
 - No migration → nothing in the plan creates one. ✓
