@@ -12,6 +12,20 @@ from typing import Any
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
+from orchestrator.api.schemas import (
+    EvidencePackAdjudicationResponse,
+    EvidencePackApprovalResponse,
+    EvidencePackAuthorityResponse,
+    EvidencePackAuthorityViolationResponse,
+    EvidencePackClaimResponse,
+    EvidencePackDependencyResponse,
+    EvidencePackEventPublicationResponse,
+    EvidencePackEventResponse,
+    EvidencePackEvidenceResponse,
+    EvidencePackProvenanceResponse,
+    EvidencePackResponse,
+    EvidencePackWorkUnitResponse,
+)
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.runner_authority import dependency_update_authority_violation
@@ -136,4 +150,118 @@ def _event_publication_projection(
             "source_ref": f"orchestrator:{row.source_kind}:{row.source_id}",
         }
         for row in rows
+    )
+
+
+def evidence_pack_response(projection: dict[str, Any]) -> EvidencePackResponse:
+    """Serialize `evidence_pack_projection`'s ORM/set-bearing dict into a JSON-safe response.
+
+    The projection is deliberately GUI-shaped (ORM rows, `set[UUID]` membership tests) since it
+    was originally private to the `/review` template. This is the one place that maps it to plain,
+    JSON-serializable types -- callers must never return the projection dict directly from a JSON
+    route.
+    """
+    unit: WorkUnit = projection["unit"]
+    revision: WorkPackageRevision = projection["revision"]
+    current_evidence_ids: set[uuid.UUID] = projection["current_evidence_ids"]
+    current_adjudication_ids: set[uuid.UUID] = projection["current_adjudication_ids"]
+    violation = projection["authority_violation"]
+
+    return EvidencePackResponse(
+        work_unit=EvidencePackWorkUnitResponse(
+            id=unit.id,
+            title=unit.title,
+            state=unit.state,
+            authority_fingerprint=unit.authority_fingerprint,
+        ),
+        provenance=EvidencePackProvenanceResponse(
+            revision=revision.revision,
+            content_hash=revision.content_hash,
+            source_path=revision.source_path,
+            source_commit=revision.source_commit,
+            registered_by=revision.registered_by,
+        ),
+        authority=EvidencePackAuthorityResponse(
+            authority_fingerprint=unit.authority_fingerprint,
+            envelope=projection["authority"],
+            authority_violation=(
+                EvidencePackAuthorityViolationResponse(**violation)
+                if violation is not None
+                else None
+            ),
+        ),
+        dependencies=[
+            EvidencePackDependencyResponse(
+                kind=row.kind,
+                required_state_or_condition=row.required_state_or_condition,
+                status=row.status,
+            )
+            for row in projection["dependencies"]
+        ],
+        claims=[
+            EvidencePackClaimResponse(
+                attempt=row.attempt,
+                claimed_by=row.claimed_by,
+                lease_expires_at=row.lease_expires_at,
+                terminal_reason=row.terminal_reason,
+            )
+            for row in projection["claims"]
+        ],
+        evidence=[
+            EvidencePackEvidenceResponse(
+                id=row.id,
+                ac_id=row.ac_id,
+                current=row.id in current_evidence_ids,
+                evidence_type=row.evidence_type,
+                ref=row.stable_ref or row.payload,
+                supersedes=row.supersedes_evidence_id,
+            )
+            for row in projection["evidence"]
+        ],
+        adjudications=[
+            EvidencePackAdjudicationResponse(
+                id=row.id,
+                ac_id=row.ac_id,
+                outcome=row.outcome,
+                current=row.id in current_adjudication_ids,
+                decided_by=row.decided_by,
+                rationale=row.rationale,
+                risk=row.risk,
+                follow_up=row.follow_up,
+                scope=row.scope,
+                expires_at=row.expires_at,
+                failed_evidence_id=row.failed_evidence_id,
+            )
+            for row in projection["adjudications"]
+        ],
+        approvals=[
+            EvidencePackApprovalResponse(
+                subject_type=row.subject_type,
+                decision=row.decision,
+                approved_by=row.approved_by,
+                reason=row.reason,
+            )
+            for row in projection["approvals"]
+        ],
+        event_publications=[
+            EvidencePackEventPublicationResponse(
+                source_ref=item["source_ref"],
+                status=item["row"].status,
+                event_id=item["row"].event_id,
+                export_ref=item["row"].export_ref,
+                last_error=item["row"].last_error,
+            )
+            for item in projection["event_publications"]
+        ],
+        events=[
+            EvidencePackEventResponse(
+                occurred_at=row.occurred_at,
+                action=row.action,
+                actor_id=row.actor_id,
+                from_state=row.from_state,
+                to_state=row.to_state,
+                reason=row.payload.get("reason") if row.payload else None,
+            )
+            for row in projection["events"]
+        ],
     )

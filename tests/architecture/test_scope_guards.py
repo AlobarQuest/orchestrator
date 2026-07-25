@@ -143,6 +143,7 @@ def test_production_get_route_inventory_is_explicit() -> None:
         "/api/v1/status-ledger",
         "/api/v1/work-units/{unit_id}/context-snapshots",
         "/api/v1/work-units/{unit_id}/evidence",
+        "/api/v1/work-units/{unit_id}/evidence-pack",
         "/api/v1/work-units/{unit_id}/history",
         "/api/v1/work-units/{unit_id}/infra-lane-links",
         "/api/v1/work-units/{unit_id}/readiness",

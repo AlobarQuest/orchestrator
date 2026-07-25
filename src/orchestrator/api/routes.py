@@ -42,6 +42,7 @@ from orchestrator.api.schemas import (
     EventPublicationRetryCommand,
     EventResponse,
     EvidenceCommand,
+    EvidencePackResponse,
     EvidenceResponse,
     InFlightUnitsResponse,
     InfraLaneLinkCommandModel,
@@ -149,6 +150,7 @@ from orchestrator.services.evidence import (
     recover_evidence,
     supersede_evidence,
 )
+from orchestrator.services.evidence_pack import evidence_pack_projection, evidence_pack_response
 from orchestrator.services.github_app import github_app_credentials, token_provider_for
 from orchestrator.services.in_flight import in_flight_snapshot
 from orchestrator.services.infra_links import (
@@ -514,6 +516,20 @@ def runner_brief_route(
     session: SessionDep,
 ) -> object:
     return runner_brief(session, unit_id)
+
+
+@router.get("/work-units/{unit_id}/evidence-pack", response_model=EvidencePackResponse)
+def evidence_pack_route(
+    unit_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """WS-P2.5 Increment 1: the structured JSON twin of the `/review` evidence-pack page.
+
+    Authentication-only, deliberately no role gate -- the runner's WORKER credential must be able
+    to read its own unit's evidentiary record.
+    """
+    return evidence_pack_response(evidence_pack_projection(session, unit_id))
 
 
 @router.post("/work-units/{unit_id}/dispatch", response_model=DispatchResponse)
