@@ -22,6 +22,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.budget import is_over_budget
 from orchestrator.services.claim_release import release_claim
 from orchestrator.services.context import PreflightCommand, require_claim_context
 from orchestrator.services.lifecycle import ActorContext
@@ -70,6 +71,23 @@ def claim_unit(
             raise DomainError("claim_conflict", "work unit is not available to claim", "retry")
         if unit.attempt_count >= unit.max_attempts:
             raise DomainError("attempts_exhausted", "attempt budget is exhausted", "approve_retry")
+        if is_over_budget(session, unit):
+            # Halt at the cap and record the breach, then refuse. Driving the failure through
+            # the private _transition keeps it inside this function's transaction (the public
+            # transition_unit commits and would break it). We commit the halt and RETURN the
+            # error -- raising would hit the except-rollback below and undo the halt.
+            now = TransactionClock().now(session)
+            _transition(
+                session,
+                unit,
+                WorkUnitState.FAILED,
+                actor=ActorContext(actor.actor_id, ActorRole.SYSTEM),
+                idempotency_key=f"{idempotency_key}:budget-halt",
+                occurred_at=now,
+                payload={"reason": "budget_exceeded"},
+            )
+            session.commit()
+            return DomainError("budget_exceeded", "llm-call budget is exhausted", "approve_retry")
 
         now = TransactionClock().now(session)
         context_snapshot = _claim_context_snapshot(
