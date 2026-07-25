@@ -59,6 +59,10 @@ def release_evidence_pack_response(
     )
     return ReleaseEvidencePackResponse(
         revision=ReleaseEvidencePackRevisionResponse.model_validate(revision),
+        # Intentionally O(N): each unit is composed through the full per-unit projection rather
+        # than re-implementing a batched query, per the spec's "compose, don't reimplement" rule.
+        # Fine at today's revision sizes; revisit with a batched projection if a high-volume
+        # consumer (e.g. WS-P2.6) ever drives large revisions through this path.
         units=[
             evidence_pack_response(evidence_pack_projection(session, unit.id)) for unit in units
         ],

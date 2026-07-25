@@ -53,7 +53,9 @@ def test_release_evidence_pack_page_requires_human(
 
     response = db_client.get(f"/review/revisions/{revision_id}/evidence-pack", headers=WORKER)
 
-    assert response.status_code != 200
+    # _human(actor) raises DomainError("human_actor_required") -> 403; assert the exact status so
+    # a future regression to 500/redirect (still != 200) can't pass silently.
+    assert response.status_code == 403
 
 
 def test_release_evidence_pack_page_has_no_post_route(

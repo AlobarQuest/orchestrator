@@ -571,7 +571,10 @@ def release_evidence_pack_route(
     """WS-P2.5 Increment 2: the per-release evidence pack -- every unit's pack in a package
     revision, plus that revision's release artifact bindings and deployment observations.
 
-    Authentication-only, no role gate, matching the per-unit evidence-pack route.
+    Authentication-only, no role gate, matching the per-unit evidence-pack route. This JSON is
+    FULL-FIDELITY (approver identity + rationale are present) and must never be relayed onto a
+    possibly-public surface: the redaction boundary lives in the per-unit markdown relay, which
+    this increment deliberately does not build.
     """
     return release_evidence_pack_response(session, revision_id)
 
