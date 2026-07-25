@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import WorkUnit
+from orchestrator.persistence.models import Adjudication, Approval, Evidence, WorkUnit
 from tests.api.test_lifecycle_api import HUMAN, WORKER
 from tests.api.test_status_ledger_api import _register_ready_unit
 
@@ -210,3 +210,87 @@ def test_evidence_pack_markdown_route_unknown_unit_is_clean_4xx_not_500(
     assert response.status_code != 500
     assert response.status_code in (400, 404, 409)
     assert response.json()["error"]["code"] == "work_unit_not_found"
+
+
+def test_evidence_pack_markdown_route_redacts_approver_identity_and_rationale(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """This markdown is relayed by the runner into a PR comment on the target repo, which may be
+    public -- approver identity and free-text reasoning must never reach it. The JSON pack is
+    auth-gated and internal (P2.6/audit) and must keep full fidelity: this proves the split."""
+    unit_id = _register_ready_unit(db_client, "evidence-pack-redaction")
+
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, uuid.UUID(unit_id))
+        assert unit is not None
+        evidence = Evidence(
+            work_package_revision_id=unit.work_package_revision_id,
+            work_unit_id=unit.id,
+            ac_id="ac-1",
+            attempt=1,
+            evidence_type="test",
+            stable_ref="artifact://redaction",
+            source_revision="abc123",
+            recorded_by="worker",
+            event_id=uuid.uuid4(),
+            idempotency_key="evidence-pack-redaction-evidence",
+        )
+        session.add(evidence)
+        session.flush()
+        session.add(
+            Adjudication(
+                work_package_revision_id=unit.work_package_revision_id,
+                work_unit_id=unit.id,
+                ac_id="ac-1",
+                outcome="waived",
+                decided_by="alice-approver",
+                rationale="secret reasoning xyz",
+                failed_evidence_id=evidence.id,
+                risk="medium",
+                follow_up="monitor in prod",
+                scope="ac-1",
+                event_id=uuid.uuid4(),
+            )
+        )
+        session.add(
+            Approval(
+                subject_type="action",
+                subject_id=unit.id,
+                subject_revision_or_fingerprint=unit.authority_fingerprint,
+                decision="approved",
+                approved_by="bob-approver",
+                reason="confidential business justification",
+                event_id=uuid.uuid4(),
+                idempotency_key="evidence-pack-redaction-approval",
+            )
+        )
+        session.commit()
+
+    json_response = db_client.get(f"/api/v1/work-units/{unit_id}/evidence-pack", headers=WORKER)
+    markdown_response = db_client.get(
+        f"/api/v1/work-units/{unit_id}/evidence-pack/markdown", headers=WORKER
+    )
+    assert json_response.status_code == 200
+    assert markdown_response.status_code == 200
+
+    json_body = json_response.json()
+    waiver = next(a for a in json_body["adjudications"] if a["outcome"] == "waived")
+    assert waiver["decided_by"] == "alice-approver"
+    assert waiver["rationale"] == "secret reasoning xyz"
+    approval = next(a for a in json_body["approvals"] if a["subject_type"] == "action")
+    assert approval["approved_by"] == "bob-approver"
+    assert approval["reason"] == "confidential business justification"
+
+    markdown = markdown_response.text
+    for leaked in (
+        "alice-approver",
+        "secret reasoning xyz",
+        "bob-approver",
+        "confidential business justification",
+    ):
+        assert leaked not in markdown
+    # Outcome/risk are kept -- only identity and rationale are redacted.
+    assert "waived" in markdown
+    assert "medium" in markdown
+    assert "action" in markdown
+    assert "approved" in markdown

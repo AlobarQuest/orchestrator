@@ -301,6 +301,9 @@ def render_evidence_pack_markdown(pack: EvidencePackResponse) -> str:
         "",
         f"Unit `{pack.work_unit.id}` -- state `{pack.work_unit.state}`",
         "",
+        "> Approver identities and adjudication rationale are omitted here; the full "
+        "record is in the orchestrator.",
+        "",
         *_render_provenance_section(pack),
         *_render_authority_section(pack),
         *_render_dependencies_and_claims_section(pack),
@@ -379,11 +382,14 @@ def _render_evidence_section(pack: EvidencePackResponse) -> list[str]:
 
 
 def _render_adjudications_section(pack: EvidencePackResponse) -> list[str]:
+    """Omits `decided_by` (approver identity) and `rationale` (free-text reasoning) -- this
+    markdown is relayed into a PR comment on the target repo, which may be public. The full
+    fields remain on the JSON route."""
     lines = ["## Adjudications and waiver facts"]
     if pack.adjudications:
         for row in pack.adjudications:
             status = "current" if row.current else "superseded"
-            entry = f"- {row.ac_id}: {row.outcome} ({status}) by {row.decided_by}. {row.rationale}"
+            entry = f"- {row.ac_id}: {row.outcome} ({status})"
             if row.outcome == "waived":
                 expires = row.expires_at.isoformat() if row.expires_at else "never"
                 entry += (
@@ -399,10 +405,12 @@ def _render_adjudications_section(pack: EvidencePackResponse) -> list[str]:
 
 
 def _render_approvals_section(pack: EvidencePackResponse) -> list[str]:
+    """Omits `approved_by` (approver identity) and `reason` (free-text) -- same PR-comment
+    exposure as the adjudications section above."""
     lines = ["## Approvals"]
     if pack.approvals:
         for row in pack.approvals:
-            lines.append(f"- {row.subject_type} {row.decision} by {row.approved_by}: {row.reason}")
+            lines.append(f"- {row.subject_type} {row.decision}")
     else:
         lines.append("- No approvals recorded.")
     lines.append("")
@@ -429,12 +437,14 @@ def _render_event_publications_section(pack: EvidencePackResponse) -> list[str]:
 
 
 def _render_event_history_section(pack: EvidencePackResponse) -> list[str]:
+    """Omits `actor_id` (identity) -- the payload `reason` (an operational code, e.g.
+    `budget_exceeded`) is kept."""
     lines = ["## Event history"]
     if pack.events:
         for index, row in enumerate(pack.events, start=1):
             reason = f" -- Reason: {row.reason}" if row.reason else ""
             lines.append(
-                f"{index}. {row.occurred_at.isoformat()} -- {row.action} -- {row.actor_id} -- "
+                f"{index}. {row.occurred_at.isoformat()} -- {row.action} -- "
                 f"{row.from_state or 'none'} to {row.to_state or 'none'}{reason}"
             )
     else:

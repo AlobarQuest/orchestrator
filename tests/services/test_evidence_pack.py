@@ -3,7 +3,7 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import Adjudication, EventPublication, Evidence
+from orchestrator.persistence.models import Adjudication, Approval, EventPublication, Evidence
 from orchestrator.services.evidence_pack import (
     evidence_pack_projection,
     evidence_pack_response,
@@ -86,6 +86,11 @@ def test_render_markdown_includes_every_section_and_key_facts(migrated_session: 
     assert unit.authority_fingerprint in markdown
     assert "ac-1" in markdown
     assert "passed" in markdown
+    # The adjudication's rationale is redacted from the markdown (the approver identity here,
+    # "human", is not distinctive enough to assert against -- it collides with the unrelated,
+    # intentionally-kept provenance `registered_by` value; see
+    # test_render_markdown_redacts_approver_identity_and_rationale for the full identity split).
+    assert "looks correct" not in markdown
     for header in (
         "## Canonical provenance",
         "## Authority",
@@ -97,6 +102,77 @@ def test_render_markdown_includes_every_section_and_key_facts(migrated_session: 
         "## Event history",
     ):
         assert header in markdown
+
+
+def test_render_markdown_redacts_approver_identity_and_rationale(
+    migrated_session: Session,
+) -> None:
+    """The markdown is relayed as a PR comment on the (possibly public) target repo -- approver
+    identities and free-text reasoning must never appear in it. The JSON pack is auth-gated and
+    internal, and must keep full fidelity: this is the split the fix exists to prove."""
+    revision, unit = _build_unit(migrated_session, "evidence-pack-redaction")
+    evidence = Evidence(
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id="ac-1",
+        attempt=1,
+        evidence_type="test",
+        stable_ref="artifact://result",
+        source_revision="abc123",
+        recorded_by="worker",
+        event_id=uuid.uuid4(),
+        idempotency_key="evidence-pack-redaction-evidence",
+    )
+    migrated_session.add(evidence)
+    migrated_session.flush()
+    migrated_session.add(
+        Adjudication(
+            work_package_revision_id=unit.work_package_revision_id,
+            work_unit_id=unit.id,
+            ac_id="ac-1",
+            outcome="waived",
+            decided_by="devon",
+            rationale="secret reasoning xyz",
+            failed_evidence_id=evidence.id,
+            risk="medium",
+            follow_up="monitor in prod",
+            scope="ac-1",
+            event_id=uuid.uuid4(),
+        )
+    )
+    migrated_session.add(
+        Approval(
+            subject_type="authority",
+            subject_id=unit.id,
+            subject_revision_or_fingerprint=unit.authority_fingerprint,
+            decision="approved",
+            approved_by="alice-approver",
+            reason="confidential business justification",
+            event_id=uuid.uuid4(),
+            idempotency_key="evidence-pack-redaction-approval",
+        )
+    )
+    migrated_session.commit()
+
+    pack = evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
+    markdown = render_evidence_pack_markdown(pack)
+
+    # Redacted in markdown -- the surface that may be posted to a public repo.
+    for leaked in ("devon", "secret reasoning xyz", "alice-approver", "confidential business"):
+        assert leaked not in markdown
+    # Kept in markdown -- these are not identity/rationale.
+    assert "waived" in markdown
+    assert "medium" in markdown
+    assert "authority" in markdown
+    assert "approved" in markdown
+
+    # Full fidelity retained on the JSON path.
+    waiver = next(a for a in pack.adjudications if a.outcome == "waived")
+    assert waiver.decided_by == "devon"
+    assert waiver.rationale == "secret reasoning xyz"
+    approval = next(a for a in pack.approvals if a.subject_type == "authority")
+    assert approval.approved_by == "alice-approver"
+    assert approval.reason == "confidential business justification"
 
 
 def _table_data_rows(markdown: str, section_header: str, row_marker: str) -> list[str]:
