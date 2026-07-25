@@ -483,3 +483,41 @@ style of that module.
   in `NON_JSON_SUCCESS_PATHS` (`tests/api/test_lifecycle_api.py`) to satisfy the
   every-success-response-has-a-json-schema invariant. (Verified 2026-07-25, WS-P2.5 Inc 1 — the
   public-exposure decision was the final review's one Important finding.)
+
+- **Adding an `/api` route or a new `src/orchestrator/` module trips a FAMILY of architecture
+  guards — there are THREE, not one, and two are exact set-equality inventories that fail CI on a
+  missing entry.** The `test_ws32_scope_guards.py` word guard (bare tokens `deploy`/`dispatch`, with
+  the `WS42_DISPATCH_PATHS`/`WS53_POST_DEPLOY_PATHS` allowlists) is the one this file documents
+  elsewhere — but it is not alone. (1) **`test_ws33_scope_guards.py` forbids the bare word `merges`
+  (and merge-path phrases) anywhere under `src/orchestrator/` with NO allowlist** — a module docstring
+  saying "never dispatches, deploys, or merges" reddens it; reword (e.g. "writes to git"). Note the
+  tokenizer matches whole tokens: `merges`→forbidden, but `deployment`/`deployments` do NOT match
+  `deploy` and `dispatches` does NOT match `dispatch` (only the exact bare token does). (2)
+  **`test_scope_guards.py::test_production_post_route_inventory_is_explicit` AND
+  `::test_production_get_route_inventory_is_explicit` assert the set of `/api/v1` POST/GET paths
+  EXACTLY** — every new route must be added to the matching set literal or CI fails (the per-task
+  `make check` may miss it locally if the working tree isn't the committed state; this is the class
+  that broke PR#69 CI in WS-P2.4). `api/routes.py` + `api/schemas.py` are already in
+  `WS42_DISPATCH_PATHS`, so route/schema *words* are exempt — but the route-inventory sets are NOT
+  word guards and apply to every route regardless. `web.py` is in no allowlist: keep its route bodies
+  free of the bare words (delegate to a service). Jinja `.html` templates are not scanned at all.
+  (Verified 2026-07-25, WS-P2.5 Inc 2 — the plan initially handled only ws32 + the JSON-schema
+  invariant; the ws33 "merges" guard and the explicit GET-route inventory were both caught mid-build,
+  the latter being a would-be CI-breaker.)
+
+- **The prod orchestrator image is built MANUALLY from the Mac (not by CI/Coolify) and Coolify only
+  pulls the prebuilt GHCR tag; the `registry` build-context is a git-tree export of security-standards
+  at a PINNED revision, gated on a byte-identical digest.** The Dockerfile's `registry` build stage
+  copies `/agents /src /schema` from a `--build-context registry=<dir>` that is assembled with
+  `git archive <SS_SHA> registry/agents|src/agent_registry|src/factory_events|schema` into a shaped
+  temp dir (never a raw checkout — untracked files would poison the digest). Recipe:
+  `docs/software-delivery-system/2026-07-09-ws64a-deploy-and-onboarding-state.md`. Unless an actor/
+  registry change is intended, PIN `SECURITY_STANDARDS_REVISION=65655ddf…` and assert the computed
+  `artifact_digest()` equals prod's `REGISTRY_ARTIFACT_SHA256=7aea8471…` BEFORE the long build — that
+  is the byte-identical bundle gate (13 actors). Then `docker buildx build --platform linux/amd64
+  --build-context registry=$ART --build-arg SECURITY_STANDARDS_REVISION=$SHA --build-arg
+  REGISTRY_ARTIFACT_SHA256=$DIGEST -t ghcr.io/alobarquest/orchestrator:<sha>-<ws>-amd64 --push .`
+  produces a single amd64 v2 manifest; verify the running container's RepoDigest == the pushed digest
+  after Coolify swaps. A plain `docker build .` with no `registry` context fails at
+  `COPY --from=registry` — that is expected, not a Dockerfile bug. (Verified 2026-07-25, WS-P2.5 Inc 2
+  deploy.)
