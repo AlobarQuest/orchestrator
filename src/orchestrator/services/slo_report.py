@@ -25,7 +25,6 @@ from orchestrator.services.lifecycle import required_ac_ids
 
 STATUS_COMPUTED = "computed"
 STATUS_NO_DATA = "no_data"
-STATUS_NOT_INSTRUMENTED = "not_instrumented"
 STATUS_PARTIAL = "partial"
 
 DEFAULT_WINDOW = timedelta(days=7)
@@ -57,6 +56,7 @@ class SloReport:
     cost_per_unit: MetricValue
     token_consumption: MetricValue
     improvisation: MetricValue
+    budget_breach: MetricValue
 
 
 def slo_report(session: Session, filters: SloReportFilters | None = None) -> SloReport:
@@ -76,6 +76,7 @@ def slo_report(session: Session, filters: SloReportFilters | None = None) -> Slo
         cost_per_unit=_cost(session, since, until, now),
         token_consumption=_tokens(session, since, until, now),
         improvisation=_improvisation(session, since, until, now),
+        budget_breach=_budget_breach(session, since, until, now),
     )
 
 
@@ -315,6 +316,30 @@ def _improvisation(session, since, until, now) -> MetricValue:
         float(overrides),
         f"human operator overrides (cancels + verifier-bypass completes): {overrides} "
         f"of {total_transitions} transitions; designed human gates excluded.",
+    )
+
+
+def _budget_breach(session, since, until, now) -> MetricValue:
+    breaches = (
+        session.scalar(
+            select(func.count(Event.id)).where(
+                Event.action == "work_unit.transitioned",
+                Event.to_state == "failed",
+                Event.payload["reason"].astext == "budget_exceeded",
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+            )
+        )
+        or 0
+    )
+    if breaches == 0:
+        return MetricValue(
+            STATUS_NO_DATA, None, "no llm-call budget breaches occurred in the window"
+        )
+    return MetricValue(
+        STATUS_COMPUTED,
+        float(breaches),
+        f"{breaches} unit(s) halted at their llm-call cap in the window",
     )
 
 
