@@ -1207,3 +1207,23 @@ class EvidencePackResponse(BaseModel):
     approvals: list[EvidencePackApprovalResponse]
     event_publications: list[EvidencePackEventPublicationResponse]
     events: list[EvidencePackEventResponse]
+
+
+class ReleaseEvidencePackRevisionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_package_id: UUID
+    revision: int
+    content_hash: str
+    source_path: str
+    source_commit: str
+    approved_by: str
+    registered_by: str
+
+
+class ReleaseEvidencePackResponse(BaseModel):
+    revision: ReleaseEvidencePackRevisionResponse
+    units: list[EvidencePackResponse]
+    release_artifacts: list[ReleaseArtifactResponse]
+    deployments: list[DeploymentObservationResponse]

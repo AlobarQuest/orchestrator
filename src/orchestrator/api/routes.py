@@ -71,6 +71,7 @@ from orchestrator.api.schemas import (
     RecoverExpiredClaimCommand,
     ReleaseArtifactCommandModel,
     ReleaseArtifactResponse,
+    ReleaseEvidencePackResponse,
     RenewCommand,
     RequeueCommand,
     RetryCommand,
@@ -212,6 +213,7 @@ from orchestrator.services.release_artifacts import (
     list_release_artifacts,
     record_release_artifact,
 )
+from orchestrator.services.release_evidence_pack import release_evidence_pack_response
 from orchestrator.services.runner_brief import runner_brief
 from orchestrator.services.slo_report import SloReportFilters, slo_report
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
@@ -555,6 +557,23 @@ def evidence_pack_markdown_route(
     """
     pack = evidence_pack_response(evidence_pack_projection(session, unit_id))
     return PlainTextResponse(render_evidence_pack_markdown(pack), media_type="text/markdown")
+
+
+@router.get(
+    "/revisions/{revision_id}/evidence-pack",
+    response_model=ReleaseEvidencePackResponse,
+)
+def release_evidence_pack_route(
+    revision_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """WS-P2.5 Increment 2: the per-release evidence pack -- every unit's pack in a package
+    revision, plus that revision's release artifact bindings and deployment observations.
+
+    Authentication-only, no role gate, matching the per-unit evidence-pack route.
+    """
+    return release_evidence_pack_response(session, revision_id)
 
 
 @router.post("/work-units/{unit_id}/dispatch", response_model=DispatchResponse)
