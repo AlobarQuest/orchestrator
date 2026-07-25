@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -42,6 +43,7 @@ from orchestrator.api.schemas import (
     EventPublicationRetryCommand,
     EventResponse,
     EvidenceCommand,
+    EvidencePackResponse,
     EvidenceResponse,
     InFlightUnitsResponse,
     InfraLaneLinkCommandModel,
@@ -148,6 +150,11 @@ from orchestrator.services.evidence import (
     record_adjudication,
     recover_evidence,
     supersede_evidence,
+)
+from orchestrator.services.evidence_pack import (
+    evidence_pack_projection,
+    evidence_pack_response,
+    render_evidence_pack_markdown,
 )
 from orchestrator.services.github_app import github_app_credentials, token_provider_for
 from orchestrator.services.in_flight import in_flight_snapshot
@@ -514,6 +521,40 @@ def runner_brief_route(
     session: SessionDep,
 ) -> object:
     return runner_brief(session, unit_id)
+
+
+@router.get("/work-units/{unit_id}/evidence-pack", response_model=EvidencePackResponse)
+def evidence_pack_route(
+    unit_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """WS-P2.5 Increment 1: the structured JSON twin of the `/review` evidence-pack page.
+
+    Authentication-only, deliberately no role gate -- the runner's WORKER credential must be able
+    to read its own unit's evidentiary record.
+    """
+    return evidence_pack_response(evidence_pack_projection(session, unit_id))
+
+
+@router.get(
+    "/work-units/{unit_id}/evidence-pack/markdown",
+    response_class=PlainTextResponse,
+    include_in_schema=True,
+)
+def evidence_pack_markdown_route(
+    unit_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> PlainTextResponse:
+    """WS-P2.5 Increment 1: a server-rendered markdown view of the same structured pack.
+
+    Auth-only, no role gate -- identical access as the JSON twin. Rendered purely from
+    `EvidencePackResponse`, never from the ORM projection or a template engine, so JSON and
+    markdown are always two views of the one structured source.
+    """
+    pack = evidence_pack_response(evidence_pack_projection(session, unit_id))
+    return PlainTextResponse(render_evidence_pack_markdown(pack), media_type="text/markdown")
 
 
 @router.post("/work-units/{unit_id}/dispatch", response_model=DispatchResponse)

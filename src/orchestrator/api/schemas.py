@@ -1090,3 +1090,120 @@ class InFlightUnitsResponse(BaseModel):
 
     units: list[InFlightUnitModel]
     release_bindings: list[ReleaseBindingModel]
+
+
+class EvidencePackWorkUnitResponse(BaseModel):
+    """WS-P2.5: the subset of a work unit the evidence pack keys everything else against."""
+
+    id: UUID
+    title: str
+    state: str
+    authority_fingerprint: str
+
+
+class EvidencePackProvenanceResponse(BaseModel):
+    """The canonical package-revision facts a reviewer checks first: what was actually built."""
+
+    revision: int
+    content_hash: str
+    source_path: str
+    source_commit: str
+    registered_by: str
+
+
+class EvidencePackAuthorityViolationResponse(BaseModel):
+    code: str
+    message: str
+    remediation: str | None = None
+
+
+class EvidencePackAuthorityResponse(BaseModel):
+    authority_fingerprint: str
+    envelope: dict[str, Any]
+    authority_violation: EvidencePackAuthorityViolationResponse | None = None
+
+
+class EvidencePackDependencyResponse(BaseModel):
+    kind: str
+    required_state_or_condition: str
+    status: str
+
+
+class EvidencePackClaimResponse(BaseModel):
+    attempt: int
+    claimed_by: str
+    lease_expires_at: datetime
+    terminal_reason: str | None = None
+
+
+class EvidencePackEvidenceResponse(BaseModel):
+    """One AC-keyed evidence record. `supersedes` chains to a prior entry's `id`."""
+
+    id: UUID
+    ac_id: str
+    current: bool
+    evidence_type: str
+    stable_ref: str | None = None
+    payload: dict[str, Any] | None = None
+    supersedes: UUID | None = None
+
+
+class EvidencePackAdjudicationResponse(BaseModel):
+    """One AC-keyed adjudication. Waiver fields are populated only when `outcome == "waived"`."""
+
+    id: UUID
+    ac_id: str
+    outcome: str
+    current: bool
+    decided_by: str
+    rationale: str
+    risk: str | None = None
+    follow_up: str | None = None
+    scope: str | None = None
+    expires_at: datetime | None = None
+    failed_evidence_id: UUID | None = None
+
+
+class EvidencePackApprovalResponse(BaseModel):
+    subject_type: str
+    decision: str
+    approved_by: str
+    reason: str
+
+
+class EvidencePackEventPublicationResponse(BaseModel):
+    source_ref: str
+    status: str
+    event_id: str
+    export_ref: str | None = None
+    last_error: str | None = None
+
+
+class EvidencePackEventResponse(BaseModel):
+    occurred_at: datetime
+    action: str
+    actor_id: str
+    from_state: str | None = None
+    to_state: str | None = None
+    reason: str | None = None
+
+
+class EvidencePackResponse(BaseModel):
+    """A single work unit's full evidentiary record, structured for programmatic consumption.
+
+    Mirrors the field set of the `/review` evidence-pack HTML page (`templates/evidence_pack.html`)
+    exactly, but as JSON any authenticated caller can read -- including the runner's WORKER
+    credential, which has no role gate on this route. Field names are chosen so a per-release pack
+    (WS-P2.5 Increment 2) can nest a `list[EvidencePackResponse]` without renaming anything here.
+    """
+
+    work_unit: EvidencePackWorkUnitResponse
+    provenance: EvidencePackProvenanceResponse
+    authority: EvidencePackAuthorityResponse
+    dependencies: list[EvidencePackDependencyResponse]
+    claims: list[EvidencePackClaimResponse]
+    evidence: list[EvidencePackEvidenceResponse]
+    adjudications: list[EvidencePackAdjudicationResponse]
+    approvals: list[EvidencePackApprovalResponse]
+    event_publications: list[EvidencePackEventPublicationResponse]
+    events: list[EvidencePackEventResponse]

@@ -29,11 +29,17 @@ def test_creation_routes_declare_201_and_response_schemas() -> None:
     assert unit["responses"]["201"]["content"]["application/json"]["schema"]["$ref"]
 
 
+#: Routes that deliberately serve a non-JSON success body (e.g. text/markdown). Their
+#: success response has no application/json schema by design -- the JSON twin carries the
+#: structured, schema'd representation. Each entry is a deliberate exclusion.
+NON_JSON_SUCCESS_PATHS = {"/api/v1/work-units/{unit_id}/evidence-pack/markdown"}
+
+
 def test_every_api_success_response_has_an_explicit_schema() -> None:
     document = TestClient(app).get("/openapi.json").json()
 
     for path, operations in document["paths"].items():
-        if not path.startswith("/api/v1"):
+        if not path.startswith("/api/v1") or path in NON_JSON_SUCCESS_PATHS:
             continue
         for operation in operations.values():
             success = next(
