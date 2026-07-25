@@ -415,6 +415,13 @@ def _decomposition_proposal_projection(session: Session, proposal_id: uuid.UUID)
     retained_by_criterion = {
         retained.package_acceptance_criterion_id: retained for retained in retained_acs
     }
+    # Sum the proposed units' authority-envelope call ceilings, so a human approving the
+    # split sees the projected total budget alongside the split itself, not just per unit.
+    ceilings = [
+        normalize_authority(unit.authority).budgets.max_llm_calls for unit in proposal_units
+    ]
+    projected_llm_calls = sum(c for c in ceilings if c is not None)
+    units_without_ceiling = sum(1 for c in ceilings if c is None)
     created_work_unit_ids = (
         proposal.created_work_unit_ids if isinstance(proposal.created_work_unit_ids, dict) else {}
     )
@@ -446,6 +453,8 @@ def _decomposition_proposal_projection(session: Session, proposal_id: uuid.UUID)
         "package": revision.work_package,
         "units": units,
         "dependencies": dependencies,
+        "projected_llm_calls": projected_llm_calls,
+        "units_without_ceiling": units_without_ceiling,
         "ac_coverage": ac_coverage,
         "retained_acs": tuple(
             {

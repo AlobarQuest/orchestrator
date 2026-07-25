@@ -73,6 +73,7 @@ def _add_event(
     improvisation=False,
     actor_id="system",
     actor_role="system",
+    reason=None,
 ):
     event = Event(
         occurred_at=occurred_at,
@@ -82,7 +83,7 @@ def _add_event(
         subject_id=unit_id,
         from_state=from_state,
         to_state=to_state,
-        payload={"actor_role": actor_role},
+        payload={"actor_role": actor_role, "reason": reason},
         correlation_id=uuid.uuid4(),
         idempotency_key=f"evt-{uuid.uuid4()}",
         improvisation=improvisation,
@@ -572,3 +573,39 @@ def test_cost_and_tokens_all_unknown_is_no_data(migrated_session):
     assert report.cost_per_unit.value is None
     assert report.token_consumption.status == STATUS_NO_DATA
     assert report.token_consumption.value is None
+
+
+# ---- budget_breach (WS-P2.4 Increment 2 deliverable) -----------------------
+
+
+def test_budget_breach_counts_in_window(migrated_session):
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    _, unit = _build_unit(migrated_session, "breach")
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="failed",
+        from_state="ready",
+        occurred_at=datetime(2026, 7, 3, tzinfo=UTC),
+        reason="budget_exceeded",
+    )
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="failed",
+        from_state="executing",
+        occurred_at=datetime(2026, 7, 4, tzinfo=UTC),
+        reason="work_unit_failed",
+    )  # not a breach
+    migrated_session.commit()
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+    assert report.budget_breach.status == STATUS_COMPUTED
+    assert report.budget_breach.value == 1.0
+
+
+def test_budget_breach_no_data_when_none(migrated_session):
+    report = slo_report(migrated_session)
+    assert report.budget_breach.status == STATUS_NO_DATA

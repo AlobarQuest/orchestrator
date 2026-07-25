@@ -727,6 +727,7 @@ class SloReportResponse(BaseModel):
     cost_per_unit: MetricValueResponse
     token_consumption: MetricValueResponse
     improvisation: MetricValueResponse
+    budget_breach: MetricValueResponse
 
 
 class StatusLedgerRowResponse(BaseModel):

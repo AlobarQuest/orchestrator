@@ -45,7 +45,7 @@ def _edges(
 
 LEGAL_EDGES = frozenset(
     _edges(WorkUnitState.DRAFT, WorkUnitState.READY)
-    | _edges(WorkUnitState.READY, WorkUnitState.CLAIMED)
+    | _edges(WorkUnitState.READY, WorkUnitState.CLAIMED, WorkUnitState.FAILED)
     | _edges(
         WorkUnitState.CLAIMED,
         WorkUnitState.EXECUTING,

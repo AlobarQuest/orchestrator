@@ -12,3 +12,4 @@ def test_slo_report_route_returns_status_typed_metrics(db_client: TestClient) ->
     assert body["cost_per_unit"]["status"] == "no_data"
     assert body["cost_per_unit"]["value"] is None
     assert body["improvisation"]["status"] in {"no_data", "computed"}
+    assert "status" in body["budget_breach"]
