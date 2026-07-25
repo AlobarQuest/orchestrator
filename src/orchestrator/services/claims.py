@@ -580,6 +580,8 @@ def _readiness_eligibility_error(session: Session, unit: WorkUnit) -> DomainErro
     view and unrunnable at the same time."""
     if unit.attempt_count >= unit.max_attempts:
         return DomainError("attempts_exhausted", "attempt budget is exhausted", "approve_retry")
+    if is_over_budget(session, unit):
+        return DomainError("budget_exceeded", "llm-call budget is exhausted", "approve_retry")
     if evaluate_readiness(session, unit.id).status is not ReadinessStatus.READY:
         return DomainError(
             "readiness_not_satisfied",

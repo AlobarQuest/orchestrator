@@ -14,6 +14,7 @@ from orchestrator.services.claims import (
     renew_claim,
 )
 from orchestrator.services.lifecycle import ActorContext
+from tests.services.test_budget import READY_UNIT_MAX_LLM_CALLS, _cost_event
 from tests.services.test_claims import worker
 from tests.services.test_context_preflight import register_context_unit, valid_context
 
@@ -200,6 +201,67 @@ def test_third_expired_attempt_exhausts_budget(migrated_session: Session, ready_
     )
     assert isinstance(conflict, DomainError)
     assert conflict.code == "idempotency_conflict"
+
+
+def test_over_budget_expired_claim_refuses_reclaim_and_stays_failed(
+    migrated_session: Session, ready_unit
+) -> None:
+    """The reclaim path must be budget-gated exactly like claim_unit: an over-budget unit
+    whose lease expires must NOT be handed a fresh attempt. It should already have been
+    transitioned to FAILED by the expired-lease handling and stay there -- not bounce back
+    to READY/CLAIMED."""
+    ceiling = READY_UNIT_MAX_LLM_CALLS
+    assert ceiling is not None
+    authorize_readiness(migrated_session, ready_unit)
+    first = claim_unit(migrated_session, ready_unit.id, worker(), "claim-1")
+    assert isinstance(first, LeaseGrant)
+    _cost_event(migrated_session, ready_unit.id, llm_calls=ceiling)
+    expire(migrated_session, first.claim_id)
+
+    result = reclaim_expired_claim(
+        migrated_session,
+        ready_unit.id,
+        SYSTEM,
+        worker("worker-2"),
+        "claim-2",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "budget_exceeded"
+
+    migrated_session.expire_all()
+    unit = migrated_session.get(WorkUnit, ready_unit.id)
+    assert unit is not None
+    assert unit.state == WorkUnitState.FAILED
+    # No new attempt/claim was granted for the over-budget unit.
+    assert unit.attempt_count == first.attempt
+
+
+def test_under_budget_expired_claim_still_reclaims(migrated_session: Session, ready_unit) -> None:
+    """Regression guard alongside the over-budget refusal above: a unit that has not yet
+    reached its declared ceiling must still reclaim normally."""
+    ceiling = READY_UNIT_MAX_LLM_CALLS
+    assert ceiling is not None
+    authorize_readiness(migrated_session, ready_unit)
+    first = claim_unit(migrated_session, ready_unit.id, worker(), "claim-1")
+    assert isinstance(first, LeaseGrant)
+    _cost_event(migrated_session, ready_unit.id, llm_calls=ceiling - 1)
+    expire(migrated_session, first.claim_id)
+
+    result = reclaim_expired_claim(
+        migrated_session,
+        ready_unit.id,
+        SYSTEM,
+        worker("worker-2"),
+        "claim-2",
+    )
+
+    assert isinstance(result, LeaseGrant)
+    migrated_session.expire_all()
+    unit = migrated_session.get(WorkUnit, ready_unit.id)
+    assert unit is not None
+    assert unit.state == WorkUnitState.CLAIMED
+    assert unit.attempt_count == first.attempt + 1
 
 
 def test_retry_after_exhaustion_requires_human_and_new_budget(
