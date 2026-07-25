@@ -213,7 +213,8 @@ def evidence_pack_response(projection: dict[str, Any]) -> EvidencePackResponse:
                 ac_id=row.ac_id,
                 current=row.id in current_evidence_ids,
                 evidence_type=row.evidence_type,
-                ref=row.stable_ref or row.payload,
+                stable_ref=row.stable_ref,
+                payload=row.payload,
                 supersedes=row.supersedes_evidence_id,
             )
             for row in projection["evidence"]

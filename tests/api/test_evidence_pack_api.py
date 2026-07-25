@@ -100,7 +100,7 @@ def test_evidence_pack_route_returns_the_structured_pack(
     evidence_entry = next(row for row in body["evidence"] if row["ac_id"] == "ac-1")
     assert evidence_entry["current"] is True
     assert evidence_entry["evidence_type"] == "test"
-    assert evidence_entry["ref"] == "artifact://evidence-pack"
+    assert evidence_entry["stable_ref"] == "artifact://evidence-pack"
     assert evidence_entry["supersedes"] is None
 
     waiver = next(row for row in body["adjudications"] if row["outcome"] == "waived")

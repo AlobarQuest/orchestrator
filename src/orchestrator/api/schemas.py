@@ -1143,7 +1143,8 @@ class EvidencePackEvidenceResponse(BaseModel):
     ac_id: str
     current: bool
     evidence_type: str
-    ref: str | dict[str, Any] | None = None
+    stable_ref: str | None = None
+    payload: dict[str, Any] | None = None
     supersedes: UUID | None = None
 
 
