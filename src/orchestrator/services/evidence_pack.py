@@ -266,3 +266,155 @@ def evidence_pack_response(projection: dict[str, Any]) -> EvidencePackResponse:
             for row in projection["events"]
         ],
     )
+
+
+def render_evidence_pack_markdown(pack: EvidencePackResponse) -> str:
+    """Render an `EvidencePackResponse` as the same 8 sections the `/review` GUI shows.
+
+    Pure `EvidencePackResponse -> str`: the structured pack is the one source that feeds both
+    the JSON route and this markdown view -- this function never touches the ORM projection or a
+    template engine.
+    """
+    lines: list[str] = [
+        f"# Evidence Pack: {pack.work_unit.title}",
+        "",
+        f"Unit `{pack.work_unit.id}` -- state `{pack.work_unit.state}`",
+        "",
+        *_render_provenance_section(pack),
+        *_render_authority_section(pack),
+        *_render_dependencies_and_claims_section(pack),
+        *_render_evidence_section(pack),
+        *_render_adjudications_section(pack),
+        *_render_approvals_section(pack),
+        *_render_event_publications_section(pack),
+        *_render_event_history_section(pack),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _render_provenance_section(pack: EvidencePackResponse) -> list[str]:
+    provenance = pack.provenance
+    return [
+        "## Canonical provenance",
+        f"- Package revision: {provenance.revision}",
+        f"- Content hash: {provenance.content_hash}",
+        f"- Source path: {provenance.source_path}",
+        f"- Source commit: {provenance.source_commit}",
+        f"- Registered by: {provenance.registered_by}",
+        "",
+    ]
+
+
+def _render_authority_section(pack: EvidencePackResponse) -> list[str]:
+    authority = pack.authority
+    lines = [
+        "## Authority",
+        f"- Fingerprint: `{authority.authority_fingerprint}`",
+        f"- Envelope: `{authority.envelope}`",
+    ]
+    if authority.authority_violation is not None:
+        violation = authority.authority_violation
+        remediation = f" Remediation: {violation.remediation}." if violation.remediation else ""
+        lines.append(f"- Violation: {violation.code} -- {violation.message}.{remediation}")
+    lines.append("")
+    return lines
+
+
+def _render_dependencies_and_claims_section(pack: EvidencePackResponse) -> list[str]:
+    lines = ["## Dependencies and claims"]
+    if pack.dependencies or pack.claims:
+        for dependency in pack.dependencies:
+            lines.append(f"- {dependency.kind}: {dependency.status}")
+        for claim in pack.claims:
+            lines.append(
+                f"- Attempt {claim.attempt} claimed by {claim.claimed_by}, "
+                f"expires {claim.lease_expires_at.isoformat()}, "
+                f"reason {claim.terminal_reason or 'active'}"
+            )
+    else:
+        lines.append("- None recorded")
+    lines.append("")
+    return lines
+
+
+def _render_evidence_section(pack: EvidencePackResponse) -> list[str]:
+    lines = [
+        "## AC-keyed evidence, including supersession",
+        "| AC | Status | Type | Reference or payload | Supersedes |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    if pack.evidence:
+        for row in pack.evidence:
+            status = "current" if row.current else "superseded"
+            reference = row.stable_ref if row.stable_ref is not None else row.payload
+            lines.append(
+                f"| {row.ac_id} | {status} | {row.evidence_type} | {reference} | "
+                f"{row.supersedes or 'Root'} |"
+            )
+    else:
+        lines.append("| -- | -- | -- | No evidence recorded. | -- |")
+    lines.append("")
+    return lines
+
+
+def _render_adjudications_section(pack: EvidencePackResponse) -> list[str]:
+    lines = ["## Adjudications and waiver facts"]
+    if pack.adjudications:
+        for row in pack.adjudications:
+            status = "current" if row.current else "superseded"
+            entry = f"- {row.ac_id}: {row.outcome} ({status}) by {row.decided_by}. {row.rationale}"
+            if row.outcome == "waived":
+                expires = row.expires_at.isoformat() if row.expires_at else "never"
+                entry += (
+                    f" Failed evidence: {row.failed_evidence_id}. Risk: {row.risk}. "
+                    f"Follow-up: {row.follow_up}. Scope: {row.scope or 'full'}. "
+                    f"Expires: {expires}."
+                )
+            lines.append(entry)
+    else:
+        lines.append("- No adjudications recorded.")
+    lines.append("")
+    return lines
+
+
+def _render_approvals_section(pack: EvidencePackResponse) -> list[str]:
+    lines = ["## Approvals"]
+    if pack.approvals:
+        for row in pack.approvals:
+            lines.append(f"- {row.subject_type} {row.decision} by {row.approved_by}: {row.reason}")
+    else:
+        lines.append("- No approvals recorded.")
+    lines.append("")
+    return lines
+
+
+def _render_event_publications_section(pack: EvidencePackResponse) -> list[str]:
+    lines = [
+        "## Event publications",
+        "| Source | Status | Event ID | Export | Last error |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    if pack.event_publications:
+        for row in pack.event_publications:
+            lines.append(
+                f"| {row.source_ref} | {row.status} | {row.event_id} | "
+                f"{row.export_ref or 'Not exported'} | {row.last_error or 'None'} |"
+            )
+    else:
+        lines.append("| -- | -- | -- | No event publications recorded. | -- |")
+    lines.append("")
+    return lines
+
+
+def _render_event_history_section(pack: EvidencePackResponse) -> list[str]:
+    lines = ["## Event history"]
+    if pack.events:
+        for index, row in enumerate(pack.events, start=1):
+            reason = f" -- Reason: {row.reason}" if row.reason else ""
+            lines.append(
+                f"{index}. {row.occurred_at.isoformat()} -- {row.action} -- {row.actor_id} -- "
+                f"{row.from_state or 'none'} to {row.to_state or 'none'}{reason}"
+            )
+    else:
+        lines.append("1. No events recorded.")
+    return lines

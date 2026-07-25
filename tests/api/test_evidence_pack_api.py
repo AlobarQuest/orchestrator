@@ -138,3 +138,75 @@ def test_evidence_pack_route_unknown_unit_is_clean_4xx_not_500(db_client: TestCl
     assert response.status_code != 500
     assert response.status_code in (400, 404, 409)
     assert response.json()["error"]["code"] == "work_unit_not_found"
+
+
+def test_evidence_pack_markdown_route_returns_rendered_markdown(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    unit_id, _lease = _built_and_evidenced_unit(db_client, migrated_engine, "evidence-pack-md")
+
+    json_response = db_client.get(f"/api/v1/work-units/{unit_id}/evidence-pack", headers=WORKER)
+    markdown_response = db_client.get(
+        f"/api/v1/work-units/{unit_id}/evidence-pack/markdown", headers=WORKER
+    )
+
+    assert markdown_response.status_code == 200
+    assert markdown_response.headers["content-type"].startswith("text/markdown")
+
+    body = markdown_response.text
+    json_body = json_response.json()
+    assert json_body["work_unit"]["authority_fingerprint"] in body
+    assert "ac-1" in body
+    assert "waived" in body
+    for header in (
+        "## Canonical provenance",
+        "## Authority",
+        "## Dependencies and claims",
+        "## AC-keyed evidence",
+        "## Adjudications and waiver facts",
+        "## Approvals",
+        "## Event publications",
+        "## Event history",
+    ):
+        assert header in body
+
+
+def test_evidence_pack_json_and_markdown_derive_from_the_same_projection(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """Both routes must reflect the SAME underlying data -- one structured source, two views."""
+    unit_id, _lease = _built_and_evidenced_unit(
+        db_client, migrated_engine, "evidence-pack-md-parity"
+    )
+
+    json_response = db_client.get(f"/api/v1/work-units/{unit_id}/evidence-pack", headers=WORKER)
+    markdown_response = db_client.get(
+        f"/api/v1/work-units/{unit_id}/evidence-pack/markdown", headers=WORKER
+    )
+
+    evidence_entry = next(row for row in json_response.json()["evidence"] if row["ac_id"] == "ac-1")
+    assert evidence_entry["stable_ref"] in markdown_response.text
+
+
+def test_evidence_pack_markdown_route_is_readable_by_the_worker_credential(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    unit_id, _lease = _built_and_evidenced_unit(
+        db_client, migrated_engine, "evidence-pack-md-worker"
+    )
+
+    response = db_client.get(f"/api/v1/work-units/{unit_id}/evidence-pack/markdown", headers=WORKER)
+
+    assert response.status_code == 200
+
+
+def test_evidence_pack_markdown_route_unknown_unit_is_clean_4xx_not_500(
+    db_client: TestClient,
+) -> None:
+    response = db_client.get(
+        f"/api/v1/work-units/{uuid.uuid4()}/evidence-pack/markdown", headers=WORKER
+    )
+
+    assert response.status_code != 500
+    assert response.status_code in (400, 404, 409)
+    assert response.json()["error"]["code"] == "work_unit_not_found"
