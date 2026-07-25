@@ -44,6 +44,8 @@
     {% endfor %}
   </tbody>
 </table>
+<p class="projected-cost">Projected LLM-call budget: <strong>{{ projected_llm_calls }}</strong>
+  across {{ units|length }} unit(s){% if units_without_ceiling %} — {{ units_without_ceiling }} with no declared ceiling (excluded){% endif %}.</p>
 
 {% for unit in units %}
 <h3>Authority envelope: {{ unit.unit_key }}</h3>

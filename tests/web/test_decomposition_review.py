@@ -13,6 +13,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.decomposition import submit_decomposition_proposal
 from orchestrator.services.package_intake import register_package_intake
+from orchestrator.web import _decomposition_proposal_projection
 from tests.api.test_lifecycle_api import HUMAN
 from tests.services.test_decomposition import package_ac_ids, proposal_command, worker_actor
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
@@ -288,3 +289,66 @@ def test_reject_and_require_revision_forms_record_decisions(
         assert current is not None
         assert current.state == "revision_required"
         assert current.decision_reason == "Map the retained criterion explicitly."
+
+
+def _set_unit_max_llm_calls(
+    migrated_engine: Engine, proposal_id: uuid.UUID, unit_key: str, max_llm_calls: int | None
+) -> None:
+    with Session(migrated_engine) as session:
+        unit = session.scalar(
+            select(DecompositionProposalUnit).where(
+                DecompositionProposalUnit.proposal_id == proposal_id,
+                DecompositionProposalUnit.unit_key == unit_key,
+            )
+        )
+        assert unit is not None
+        authority = dict(unit.authority)
+        budgets = dict(authority.get("budgets", {}))
+        budgets["max_llm_calls"] = max_llm_calls
+        authority["budgets"] = budgets
+        unit.authority = authority
+        session.commit()
+
+
+def test_projection_sums_projected_llm_call_budget_across_proposed_units(
+    migrated_engine: Engine,
+) -> None:
+    _, proposal = _seed_intake_and_proposal(migrated_engine)
+    _set_unit_max_llm_calls(migrated_engine, proposal.id, "unit-1", 4)
+    _set_unit_max_llm_calls(migrated_engine, proposal.id, "unit-2", 6)
+
+    with Session(migrated_engine) as session:
+        context = _decomposition_proposal_projection(session, proposal.id)
+
+    assert context["projected_llm_calls"] == 10
+    assert context["units_without_ceiling"] == 0
+
+
+def test_projection_excludes_units_with_no_declared_ceiling_from_the_sum(
+    migrated_engine: Engine,
+) -> None:
+    _, proposal = _seed_intake_and_proposal(migrated_engine)
+    _set_unit_max_llm_calls(migrated_engine, proposal.id, "unit-1", 4)
+    _set_unit_max_llm_calls(migrated_engine, proposal.id, "unit-2", None)
+
+    with Session(migrated_engine) as session:
+        context = _decomposition_proposal_projection(session, proposal.id)
+
+    assert context["projected_llm_calls"] == 4
+    assert context["units_without_ceiling"] == 1
+
+
+def test_proposal_page_renders_projected_llm_call_budget(
+    db_client: TestClient,
+    migrated_engine: Engine,
+) -> None:
+    _, proposal = _seed_intake_and_proposal(migrated_engine)
+    _set_unit_max_llm_calls(migrated_engine, proposal.id, "unit-1", 4)
+    _set_unit_max_llm_calls(migrated_engine, proposal.id, "unit-2", None)
+
+    page = db_client.get(f"/review/decomposition-proposals/{proposal.id}", headers=HUMAN)
+
+    assert page.status_code == 200
+    assert "Projected LLM-call budget" in page.text
+    assert "<strong>4</strong>" in page.text
+    assert "1 with no declared ceiling" in page.text
