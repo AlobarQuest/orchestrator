@@ -20,6 +20,7 @@ class TransitionGuards:
 SYSTEM_EDGES = {
     (WorkUnitState.DRAFT, WorkUnitState.READY),
     (WorkUnitState.READY, WorkUnitState.CLAIMED),
+    (WorkUnitState.READY, WorkUnitState.FAILED),
     (WorkUnitState.CLAIMED, WorkUnitState.FAILED),
     (WorkUnitState.EXECUTING, WorkUnitState.FAILED),
     (WorkUnitState.BLOCKED, WorkUnitState.READY),

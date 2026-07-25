@@ -44,8 +44,8 @@ def test_graph_partition_covers_all_169_ordered_state_pairs() -> None:
     all_ordered_pairs = set(itertools.product(WorkUnitState, repeat=2))
 
     assert len(all_ordered_pairs) == 169
-    assert len(EXPECTED_LEGAL_EDGES) == 29
-    assert len(INVALID_EDGES) == 140
+    assert len(EXPECTED_LEGAL_EDGES) == 30
+    assert len(INVALID_EDGES) == 139
     assert EXPECTED_LEGAL_EDGES | INVALID_EDGES == all_ordered_pairs
 
 
