@@ -138,6 +138,7 @@ def test_production_get_route_inventory_is_explicit() -> None:
         "/api/v1/observations",
         "/api/v1/package-intakes/{revision_id}",
         "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        "/api/v1/revisions/{revision_id}/evidence-pack",
         "/api/v1/release-artifacts/{binding_id}/deployment-observations",
         "/api/v1/slo-report",
         "/api/v1/status-ledger",

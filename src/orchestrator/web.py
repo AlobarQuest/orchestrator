@@ -54,6 +54,7 @@ from orchestrator.services.reconciliation import (
     open_conditions,
     record_resolution,
 )
+from orchestrator.services.release_evidence_pack import release_evidence_pack_response
 from orchestrator.services.verifier_criteria import load_required_criteria
 from orchestrator.services.verifier_evaluators import JUDGMENT_TYPES
 
@@ -430,6 +431,18 @@ def evidence_pack(
 ) -> HTMLResponse:
     _human(actor)
     return _render(request, "evidence_pack.html", evidence_pack_projection(session, unit_id))
+
+
+@router.get("/revisions/{revision_id}/evidence-pack", response_class=HTMLResponse)
+def release_evidence_pack(
+    request: Request, revision_id: uuid.UUID, actor: ActorDep, session: SessionDep
+) -> HTMLResponse:
+    _human(actor)
+    return _render(
+        request,
+        "release_evidence_pack.html",
+        {"pack": release_evidence_pack_response(session, revision_id)},
+    )
 
 
 def _redirect(unit_id: uuid.UUID) -> RedirectResponse:

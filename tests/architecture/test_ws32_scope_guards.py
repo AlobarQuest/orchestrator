@@ -43,6 +43,9 @@ WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/lifecycle.py"),
     Path("src/orchestrator/services/verifier_criteria.py"),
     Path("src/orchestrator/services/verifier_evaluators.py"),
+    Path("src/orchestrator/services/release_evidence_pack.py"),
+    # WS-P2.5 Inc 2: the per-release evidence pack COMPOSES deployment observations into a
+    # read-only projection. It reads canonical rows; it never dispatches, deploys, or merges.
 }
 CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
 TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
