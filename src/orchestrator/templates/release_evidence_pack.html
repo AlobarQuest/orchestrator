@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Release Evidence Pack: revision {{ pack.revision.revision }}{% endblock %}
+{% block content %}
+<p><a href="/review/intakes/{{ pack.revision.id }}">← Package intake</a></p>
+<h1>Release Evidence Pack</h1>
+<p class="status">Revision {{ pack.revision.revision }} · {{ pack.revision.content_hash }}</p>
+
+<h2>Release provenance</h2>
+<dl>
+  <dt>Work package</dt><dd>{{ pack.revision.work_package_id }}</dd>
+  <dt>Revision</dt><dd>{{ pack.revision.revision }}</dd>
+  <dt>Content hash</dt><dd>{{ pack.revision.content_hash }}</dd>
+  <dt>Source path</dt><dd>{{ pack.revision.source_path }}</dd>
+  <dt>Source commit</dt><dd>{{ pack.revision.source_commit }}</dd>
+  <dt>Approved by</dt><dd>{{ pack.revision.approved_by }}</dd>
+  <dt>Registered by</dt><dd>{{ pack.revision.registered_by }}</dd>
+</dl>
+
+<h2>Work units</h2>
+<table><caption>Every unit in this release</caption>
+<thead><tr><th scope="col">Title</th><th scope="col">State</th><th scope="col">Authority fingerprint</th><th scope="col">Evidence pack</th></tr></thead>
+<tbody>{% for unit in pack.units %}<tr><td>{{ unit.work_unit.title }}</td><td>{{ unit.work_unit.state }}</td><td><code>{{ unit.work_unit.authority_fingerprint }}</code></td><td><a href="/review/units/{{ unit.work_unit.id }}/evidence-pack">View</a></td></tr>{% else %}<tr><td colspan="4">No units recorded.</td></tr>{% endfor %}</tbody></table>
+
+<h2>Release artifacts</h2>
+<table><caption>Immutable build artifacts bound to this release</caption>
+<thead><tr><th scope="col">Digest</th><th scope="col">Registry / repository / name</th><th scope="col">PR</th><th scope="col">Source commit</th><th scope="col">Merge commit</th><th scope="col">Workflow</th><th scope="col">Builder</th></tr></thead>
+<tbody>{% for row in pack.release_artifacts %}<tr><td>{{ row.artifact_digest }}</td><td>{{ row.artifact_registry }}/{{ row.artifact_repository }}/{{ row.artifact_name }}</td><td>{{ row.implementation_pr_number or "—" }}</td><td>{{ row.source_commit }}</td><td>{{ row.merge_commit }}</td><td>{{ row.workflow_run_url or "—" }}</td><td>{{ row.builder_id or "—" }}</td></tr>{% else %}<tr><td colspan="7">No release artifacts recorded.</td></tr>{% endfor %}</tbody></table>
+
+<h2>Deployments</h2>
+<table><caption>Deployment and health observations for this release</caption>
+<thead><tr><th scope="col">Environment</th><th scope="col">Observed digest</th><th scope="col">Base URL</th><th scope="col">Deployer</th><th scope="col">Observed at</th><th scope="col">Status</th><th scope="col">Dispatch enabled</th></tr></thead>
+<tbody>{% for row in pack.deployments %}<tr><td>{{ row.environment }}</td><td>{{ row.observed_artifact_digest }}</td><td>{{ row.base_url }}</td><td>{{ row.deployer }}</td><td>{{ row.observed_at }}</td><td>{{ row.status_summary.status }}</td><td>{{ row.dispatch_summary.dispatch_enabled }}</td></tr>{% else %}<tr><td colspan="7">No deployments recorded.</td></tr>{% endfor %}</tbody></table>
+{% endblock %}
