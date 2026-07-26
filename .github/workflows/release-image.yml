@@ -1,0 +1,114 @@
+name: Release image
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: orchestrator commit or branch to build
+        required: true
+        default: main
+      label:
+        description: optional tag suffix (e.g. wsp26)
+        required: false
+        default: ""
+
+concurrency:
+  group: release-image
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout orchestrator
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Read pin
+        id: pin
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          pin = tomllib.load(open("security-standards.pin.toml", "rb"))
+          print(f"revision={pin['revision']}")
+          print(f"digest={pin['artifact_sha256']}")
+          PY
+
+      - name: Checkout security-standards @ pin
+        uses: actions/checkout@v4
+        with:
+          repository: AlobarQuest/security-standards
+          ref: ${{ steps.pin.outputs.revision }}
+          ssh-key: ${{ secrets.SECURITY_STANDARDS_DEPLOY_KEY }}
+          path: security-standards
+          fetch-depth: 0
+
+      - name: Shape registry build-context
+        run: |
+          python3 scripts/shape_registry_context.py \
+            --source security-standards \
+            --revision "${{ steps.pin.outputs.revision }}" \
+            --output "$RUNNER_TEMP/registry"
+
+      - name: Compute tag
+        id: tag
+        env:
+          LABEL: ${{ inputs.label }}
+        run: |
+          if [ -n "$LABEL" ] && ! printf '%s' "$LABEL" | grep -Eq '^[a-z0-9-]+$'; then
+            echo "::error::label must match ^[a-z0-9-]+$"
+            exit 1
+          fi
+          SHA=$(git rev-parse --short HEAD)
+          SUFFIX=""
+          [ -n "$LABEL" ] && SUFFIX="-$LABEL"
+          echo "tag=ghcr.io/alobarquest/orchestrator:${SHA}${SUFFIX}-amd64" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # Digest capture: `docker buildx build --push --metadata-file` writes the pushed
+      # manifest digest (`containerimage.digest`) into a JSON file as part of the push
+      # itself, which is reliable across BuildKit/Docker versions. Plain `docker build
+      # --push` followed by `docker inspect --format '{{index .RepoDigests 0}}'` has been
+      # observed to return an empty `RepoDigests` list immediately after push on some
+      # Docker versions (the local image reference isn't always re-tagged with the
+      # registry digest), so we do not rely on it as the primary source. `docker inspect`
+      # is kept only as a defensive fallback in case the metadata file is ever absent.
+      - name: Build and push (amd64; in-build digest gate fails closed)
+        id: build
+        run: |
+          docker buildx build --platform linux/amd64 \
+            --build-context registry="$RUNNER_TEMP/registry" \
+            --build-arg SECURITY_STANDARDS_REVISION="${{ steps.pin.outputs.revision }}" \
+            --build-arg REGISTRY_ARTIFACT_SHA256="${{ steps.pin.outputs.digest }}" \
+            -t "${{ steps.tag.outputs.tag }}" \
+            --metadata-file "$RUNNER_TEMP/meta.json" \
+            --push .
+
+          DIGEST=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('containerimage.digest',''))" "$RUNNER_TEMP/meta.json")
+          if [ -z "$DIGEST" ]; then
+            DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${{ steps.tag.outputs.tag }}" 2>/dev/null || true)
+          fi
+          if [ -z "$DIGEST" ]; then
+            echo "::error::could not capture pushed image digest"
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image pushed"
+            echo "- Tag: \`${{ steps.tag.outputs.tag }}\`"
+            echo "- Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo ""
+            echo "This workflow only builds and pushes the image. Pointing the runtime at this tag is a separate, manual step; verify the running container's image digest matches the digest above after doing so."
+          } >> "$GITHUB_STEP_SUMMARY"
