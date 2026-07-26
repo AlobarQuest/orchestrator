@@ -131,19 +131,40 @@ Permissions: `contents: read`, `packages: write`. Concurrency guard so two dispa
 
 ## Verification / acceptance
 
-- **Differential digest check (the core proof):** build the *same commit* both ways — the existing
-  manual Mac recipe and the new workflow — and confirm the workflow's pushed image is equivalent:
-  the in-build digest gate passes with the pinned `artifact_sha256`, and the registry bundle baked
-  in matches. (Image-layer SHAs can differ by build environment; the *bundle* digest is the
-  invariant that must match — that is what the gate enforces.)
+**Two digests attest two different links in the chain — both are used, at different steps. They are
+not competing candidates for one check.**
+
+- **Bundle digest (`REGISTRY_ARTIFACT_SHA256`)** — a content hash over the `security-standards`
+  revision + the 13 actor identities. Attests: *the security-critical actor registry baked into the
+  image is byte-identical to the reviewed, pinned one* (no extra/tampered actor, no
+  authority-profile drift). This is the **build-time, security-critical** proof, and the Dockerfile
+  already recomputes it during the build and **fails closed** on mismatch.
+- **Image SHA (GHCR manifest / running `RepoDigest`)** — a hash of the whole image. Attests: *prod
+  is running bit-for-bit the artifact the workflow pushed* (no substitution between push and
+  deploy). This is the **deploy-time identity** proof.
+
+Docker image SHAs are **not** reproducible across build environments (Mac vs GHA differ from
+identical source), so there is **no Mac-vs-GHA image comparison** — it would fail spuriously and is
+unnecessary. The bundle digest deliberately decouples "is the security-critical content correct"
+from "are the image bytes reproducible", so an automated build is trustworthy *without* reproducible
+images and *without* a human eyeballing the actor list.
+
+**Build-time acceptance (this workstream, automatic + tested):**
+- **In-build bundle-digest gate passes** against the pinned `artifact_sha256` on a real workflow run
+  — the automatic correctness proof that the right registry is baked in.
+- **Wrong-pin fails closed:** a deliberately wrong `artifact_sha256` breaks the build — proves the
+  gate is load-bearing in CI, not just locally.
 - **Shaping-script parity:** `build_registry_bundle.py --artifact-dir $(shape_registry_context …)`
-  reproduces the pinned `artifact_sha256` — assert in a test, reusing the `test_container.py` shape
+  reproduces the pinned `artifact_sha256` — asserted in a test, reusing `test_container.py` shape
   expectations where possible.
-- **Wrong-pin fails closed:** a deliberately wrong `artifact_sha256` breaks the build (proves the
-  gate is load-bearing in CI, not just locally).
-- **First real run:** dispatch the workflow, confirm the pushed tag/digest, and (Devon-gated) deploy
-  that image to `sds.alobar.net`, verifying the running RepoDigest — ideally the WS-P2.6 deploy is
-  the first exercise of the automated path.
+- **App-code provenance:** the image is built from a specific orchestrator git commit (`inputs.ref`)
+  with `uv sync --frozen` — app/deps integrity is rooted in git + the lockfile, not in image-byte
+  comparison.
+
+**Deploy-time acceptance (Devon's manual gate, unchanged):**
+- After the Coolify swap, the running container's **`RepoDigest` == the digest the workflow pushed**
+  — the existing invariant, using the image SHA. Ideally the WS-P2.6 deploy is the first exercise of
+  the automated path.
 
 ## Definition of done
 
