@@ -142,6 +142,7 @@ def test_production_get_route_inventory_is_explicit() -> None:
         "/api/v1/release-artifacts/{binding_id}/deployment-observations",
         "/api/v1/slo-report",
         "/api/v1/status-ledger",
+        "/api/v1/traceability",
         "/api/v1/work-units/{unit_id}/context-snapshots",
         "/api/v1/work-units/{unit_id}/evidence",
         "/api/v1/work-units/{unit_id}/evidence-pack",

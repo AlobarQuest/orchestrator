@@ -1,3 +1,5 @@
+import re
+import uuid
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime
@@ -80,6 +82,7 @@ from orchestrator.api.schemas import (
     RunnerBriefResponse,
     SloReportResponse,
     StatusLedgerRowResponse,
+    TraceabilityResponse,
     TransitionResponse,
     UnitRegistration,
     UnitResponse,
@@ -217,6 +220,7 @@ from orchestrator.services.release_evidence_pack import release_evidence_pack_re
 from orchestrator.services.runner_brief import runner_brief
 from orchestrator.services.slo_report import SloReportFilters, slo_report
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
+from orchestrator.services.traceability import TraceabilityAnchor, traceability_response
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from orchestrator.services.verifier_evidence import (
     NamedCheckAssertion,
@@ -1519,6 +1523,125 @@ def history(
     session: SessionDep,
 ) -> object:
     return unit_history(session, unit_id)
+
+
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+@router.get("/traceability", response_model=TraceabilityResponse)
+def traceability_route(
+    _actor: ActorDep,
+    session: SessionDep,
+    work_unit_id: str | None = None,
+    revision_id: str | None = None,
+    artifact_digest: str | None = None,
+    commit: str | None = None,
+    pr_number: int | None = None,
+    source_repository: str | None = None,
+    environment: str | None = None,
+) -> object:
+    """WS-P2.6: the intent -> unit -> PR -> commit -> artifact -> deployment -> observation chain.
+
+    Authentication-only, no role gate, matching the other read surfaces this composes
+    (evidence-pack, release-artifacts, deployment-observations). Read-only: it writes nothing.
+    """
+    anchor = _parse_traceability_anchor(
+        work_unit_id=work_unit_id,
+        revision_id=revision_id,
+        artifact_digest=artifact_digest,
+        commit=commit,
+        pr_number=pr_number,
+        source_repository=source_repository,
+        environment=environment,
+    )
+    return traceability_response(session, anchor)
+
+
+def _parse_traceability_anchor(
+    *,
+    work_unit_id: str | None,
+    revision_id: str | None,
+    artifact_digest: str | None,
+    commit: str | None,
+    pr_number: int | None,
+    source_repository: str | None,
+    environment: str | None,
+) -> TraceabilityAnchor:
+    active = [
+        (kind, value)
+        for kind, value in (
+            ("work_unit", work_unit_id),
+            ("revision", revision_id),
+            ("artifact_digest", artifact_digest),
+            ("commit", commit),
+            ("pr", pr_number),
+            ("environment", environment),
+        )
+        if value is not None
+    ]
+    if not active:
+        raise DomainError("traceability_anchor_required", "provide exactly one anchor", None)
+    if len(active) > 1:
+        raise DomainError("traceability_anchor_ambiguous", "provide exactly one anchor", None)
+    if source_repository is not None and pr_number is None:
+        raise DomainError(
+            "traceability_anchor_invalid", "source_repository requires pr_number", None
+        )
+    kind, value = active[0]
+    return _ANCHOR_BUILDERS[kind](value, source_repository)
+
+
+def _build_work_unit_anchor(value: object, _source_repository: str | None) -> TraceabilityAnchor:
+    assert isinstance(value, str)
+    return TraceabilityAnchor(kind="work_unit", work_unit_id=_parse_uuid(value, "work_unit_id"))
+
+
+def _build_revision_anchor(value: object, _source_repository: str | None) -> TraceabilityAnchor:
+    assert isinstance(value, str)
+    return TraceabilityAnchor(kind="revision", revision_id=_parse_uuid(value, "revision_id"))
+
+
+def _build_commit_anchor(value: object, _source_repository: str | None) -> TraceabilityAnchor:
+    assert isinstance(value, str)
+    if _COMMIT_RE.fullmatch(value) is None:
+        raise DomainError("invalid_commit", "commit must be a 40-char hex sha", None)
+    return TraceabilityAnchor(kind="commit", commit=value)
+
+
+def _build_pr_anchor(value: object, source_repository: str | None) -> TraceabilityAnchor:
+    assert isinstance(value, int)
+    if value <= 0:
+        raise DomainError("invalid_pr_number", "pr_number must be positive", None)
+    return TraceabilityAnchor(kind="pr", pr_number=value, source_repository=source_repository)
+
+
+def _build_artifact_digest_anchor(
+    value: object, _source_repository: str | None
+) -> TraceabilityAnchor:
+    assert isinstance(value, str)
+    return TraceabilityAnchor(kind="artifact_digest", artifact_digest=value)
+
+
+def _build_environment_anchor(value: object, _source_repository: str | None) -> TraceabilityAnchor:
+    assert isinstance(value, str)
+    return TraceabilityAnchor(kind="environment", environment=value)
+
+
+_ANCHOR_BUILDERS = {
+    "work_unit": _build_work_unit_anchor,
+    "revision": _build_revision_anchor,
+    "artifact_digest": _build_artifact_digest_anchor,
+    "commit": _build_commit_anchor,
+    "pr": _build_pr_anchor,
+    "environment": _build_environment_anchor,
+}
+
+
+def _parse_uuid(value: str, field: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(value)
+    except (ValueError, TypeError):
+        raise DomainError(f"invalid_{field}", f"{field} must be a UUID", None) from None
 
 
 def _revision_or_raise(session: Session, revision_id: UUID) -> WorkPackageRevision:

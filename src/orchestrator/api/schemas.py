@@ -1227,3 +1227,99 @@ class ReleaseEvidencePackResponse(BaseModel):
     units: list[EvidencePackResponse]
     release_artifacts: list[ReleaseArtifactResponse]
     deployments: list[DeploymentObservationResponse]
+
+
+class TraceabilityAnchorResponse(BaseModel):
+    """WS-P2.6: identifies which entity the caller anchored the traceability query on."""
+
+    matched_on: str
+    value: str
+
+
+class TraceabilityIntentHop(BaseModel):
+    revision: int
+    content_hash: str
+    source_path: str
+    source_commit: str
+    registered_by: str
+
+
+class TraceabilityUnitHop(BaseModel):
+    id: UUID
+    unit_key: str
+    title: str
+    state: str
+    authority_fingerprint: str
+    authority_approved_by: str | None = None
+    authority_decision: str | None = None
+
+
+class TraceabilityPrHop(BaseModel):
+    pr_number: int
+    head_sha: str
+
+
+class TraceabilityCommitHop(BaseModel):
+    source_repository: str
+    source_commit: str
+    merge_commit: str
+    implementation_pr_number: int | None = None
+
+
+class TraceabilityArtifactHop(BaseModel):
+    artifact_digest: str
+    artifact_registry: str
+    artifact_repository: str
+    artifact_name: str
+    artifact_tag: str | None = None
+    workflow_run_url: str | None = None
+    builder_id: str | None = None
+    provenance_digest: str | None = None
+    sbom_digest: str | None = None
+
+
+class TraceabilityDeploymentHop(BaseModel):
+    environment: str
+    observed_artifact_digest: str
+    digest_matches: bool
+    deployment_ref: str
+    deployment_url: str
+    deployer: str
+    observed_at: datetime
+    status_summary: dict[str, Any]
+    probe_summary: dict[str, Any]
+
+
+class TraceabilityConditionHop(BaseModel):
+    observation_kind: str
+    condition_type: str
+    detail: str
+    resolution_generation: int
+    detected_at: datetime
+    open: bool
+    resolution_decision: str | None = None
+
+
+class TraceabilityObservationHop(BaseModel):
+    source_system: str
+    observation_type: str
+    status: str
+    severity: str
+    summary: str
+    observed_at: datetime
+
+
+class TraceabilityChainResponse(BaseModel):
+    intent: TraceabilityIntentHop
+    unit: TraceabilityUnitHop
+    pr: TraceabilityPrHop | None = None
+    commit: list[TraceabilityCommitHop]
+    artifact: list[TraceabilityArtifactHop]
+    deployment: list[TraceabilityDeploymentHop]
+    conditions: list[TraceabilityConditionHop]
+    observations: list[TraceabilityObservationHop]
+
+
+class TraceabilityResponse(BaseModel):
+    anchor: TraceabilityAnchorResponse
+    chains: list[TraceabilityChainResponse]
