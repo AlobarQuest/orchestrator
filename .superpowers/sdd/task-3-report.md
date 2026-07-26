@@ -1,168 +1,205 @@
-# Task 3 Report: `slo_report` service skeleton + shared test builders (WS-P2.2)
+# Task 3: Chain assembler + response — report
 
-## Status
+Status: DONE
 
-DONE_WITH_CONCERNS (see "Architecture-suite finding" below — the skeleton itself is
-complete and green per the brief's acceptance criteria).
+Branch: `ws-p2.6-traceability-query`
 
-Branch: `ws-p2.2-slo-observability` (no new branch created, per instructions).
+## What was implemented
 
-## Files Changed
+Extended `src/orchestrator/services/traceability.py` (created in Task 2) with the two
+producer functions Task 4's route will consume:
 
-- `src/orchestrator/services/slo_report.py` (new)
-- `tests/services/test_slo_report.py` (new)
+- `build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainResponse` —
+  composes `evidence_pack_projection` (intent/unit/authority-approval spine),
+  `list_release_artifacts` (commit + artifact hops), `list_deployment_observations`
+  (deployment hops, one fan-out per release-artifact binding), `get_pr_binding` (PR hop),
+  plus a hand-written observation tail: `ReconciliationCondition` rows ordered by
+  `(detected_at, id)` with `open` computed as a set-difference against
+  `ReconciliationResolution.condition_id` (mirrors the evidence-supersession pattern
+  used elsewhere in this codebase), and generic `Observation` rows filtered on
+  `subject_type == "work_unit"` / `subject_reference == str(unit_id)`, ordered by
+  `(observed_at, received_at, id)`.
+- `_unwrap(result)` — raises when a `list_*` fetcher returns a `DomainError`; inside
+  `build_chain` the unit is already known to exist (via `evidence_pack_projection`), so a
+  `DomainError` here would indicate a real bug, not a normal-flow condition.
+- `traceability_response(session: Session, anchor: TraceabilityAnchor) -> TraceabilityResponse`
+  — calls `resolve_anchors` then `build_chain` per resolved unit id.
 
-## Implementation
+Implementation matches the brief's Step 3 code verbatim (imports + function bodies), with
+one addition: I ran `ruff format` afterward, which reflowed one multi-line dict-comprehension
+call (`resolution_decision=(...)`) — semantics unchanged.
 
-Followed `task-3-brief.md` verbatim for the module and the three skeleton tests:
+## Files changed
 
-- `SloReportFilters`, `MetricValue`, `SloReport` — frozen dataclasses as specified.
-- Status constants `STATUS_COMPUTED`, `STATUS_NO_DATA`, `STATUS_NOT_INSTRUMENTED`,
-  `STATUS_PARTIAL`; `DEFAULT_WINDOW = timedelta(days=7)`.
-- `slo_report(session, filters=None)` computes `since`/`until` from
-  `TransactionClock().now(session)` when not given explicitly, then delegates to seven
-  `(session, since, until, now) -> MetricValue` private helpers, all currently
-  `STATUS_NO_DATA` stubs, **except** `_cost` and `_tokens`, which return
-  `STATUS_NOT_INSTRUMENTED` from the start (per the brief — these have no source data
-  anywhere in the store and must never be silently zero-filled).
-- Shared test builders `_build_unit`, `_add_event`, `_add_claim` reused verbatim from
-  the brief, for Tasks 4-7 to import/copy.
+- `src/orchestrator/services/traceability.py` — added imports (`api.schemas` Traceability*
+  response types; `persistence.models` `Observation`, `ReconciliationCondition`,
+  `ReconciliationResolution`; `services.deployment_observations.list_deployment_observations`;
+  `services.evidence_pack.evidence_pack_projection`; `services.pr_bindings.get_pr_binding`;
+  `services.release_artifacts.list_release_artifacts`) plus `build_chain`, `_unwrap`,
+  `traceability_response`.
+- `tests/services/test_traceability.py` — added `_record_condition_for` /
+  `_record_observation_for` helpers and 6 new tests (the brief's 4 starter tests plus the
+  2 the brief's NOTE mandated).
 
-**REQUIRED ADDITION (authorized by the controller, per task instructions):** added
-`test_shared_builders_smoke`, beyond the brief's three skeleton tests. It calls
-`_build_unit(migrated_session, "smoke")`, commits, asserts the revision and unit
-persisted with real ids, then calls `_add_event` and `_add_claim` against that unit,
-commits again, and re-queries each row back via `select(...)` to prove it actually
-persisted (not just an in-session object echo — see the repo's own "flush is not
-commit" invariant). This is the only test that exercises the shared builders in this
-task; Tasks 4-7 would otherwise have been the first callers to discover a builder
-defect.
+Not touched: `.superpowers/sdd/task-2-report.md` had a pre-existing uncommitted diff in the
+working tree at task start (from a prior session/task, not this one) — left as-is and excluded
+from this task's commit. This report file itself replaces a stale WS-P2.2 report that was
+previously left at this path (unrelated workstream, `slo_report` service skeleton).
 
-I did not add `registered_at` control to `_build_unit` (YAGNI per instructions — Task 5
-handles that by overriding after build).
+## Deviations from the brief (and why)
 
-## TDD Evidence
+1. **Fixture name.** Brief's Step-1 sample tests use `session: Session`; the real fixture in
+   this file (and every other file in `tests/services/`) is `migrated_session`. Used
+   `migrated_session` throughout, per the task instructions' explicit correction.
+2. **`completed_unit` does not itself record a `ReleaseArtifactBinding`.** The brief's Step-1
+   comment (`unit = completed_unit(session)  # this helper records a ReleaseArtifactBinding
+   with DIGEST`) is inaccurate — `tests/services/test_release_artifacts.py::completed_unit`
+   only registers a revision + approved, completed `WorkUnit`; the binding is a separate
+   `record_release_artifact(session, command(unit))` call made by each test that needs one
+   (mirroring every other test file that uses these helpers). `test_build_chain_includes_intent_unit_and_artifact`
+   makes that call explicitly before asserting on `chain.artifact`.
+3. **`test_deployment_digest_matches_flag`'s mismatch case cannot be produced through the
+   public writer.** `record_deployment_observation` enforces
+   `command.observed_artifact_digest == binding.artifact_digest` at write time
+   (`deployment_observation_digest_mismatch`, `services/deployment_observations.py`), so no
+   `DeploymentObservationCommand` can ever persist a mismatched digest — I confirmed this
+   empirically first (see RED/GREEN evidence below: my first attempt at the mismatch case via
+   a second differently-digested binding+observation was correctly rejected by that guard).
+   The test therefore: (a) records one observation through the real writer and asserts
+   `digest_matches is True`; (b) mutates that persisted row's `observed_artifact_digest`
+   directly on the ORM object post-write (bypassing the write-time guard on purpose, with a
+   comment explaining why) and asserts `digest_matches is False` on a re-fetched chain. This
+   exercises `build_chain`'s read-time computation (`obs.observed_artifact_digest ==
+   binding.artifact_digest`) independently of the writer's invariant, which is the actual unit
+   under test here — the two are different code paths and both need coverage.
 
-### RED
+## TDD evidence
 
-```
-SECURITY_STANDARDS_DIR="$PWD/tests/fixtures/security-standards" .venv/bin/pytest tests/services/test_slo_report.py -v
-```
-```
-ImportError while importing test module '.../tests/services/test_slo_report.py'.
-tests/services/test_slo_report.py:11: in <module>
-    from orchestrator.services.slo_report import (
-E   ModuleNotFoundError: No module named 'orchestrator.services.slo_report'
-=========================== short test summary info ============================
-ERROR tests/services/test_slo_report.py
-=============================== 1 error in 0.11s ===============================
-```
-
-### GREEN
-
-```
-SECURITY_STANDARDS_DIR="$PWD/tests/fixtures/security-standards" .venv/bin/pytest tests/services/test_slo_report.py -v
-```
-```
-collected 4 items
-
-tests/services/test_slo_report.py::test_empty_store_reports_no_data_and_not_instrumented PASSED [ 25%]
-tests/services/test_slo_report.py::test_cost_and_tokens_are_not_instrumented PASSED [ 50%]
-tests/services/test_slo_report.py::test_explicit_window_is_respected PASSED [ 75%]
-tests/services/test_slo_report.py::test_shared_builders_smoke PASSED     [100%]
-
-============================== 4 passed in 1.22s ===============================
-```
-
-### Scope guard (bare `dispatch`/`deploy` words under `src/orchestrator/`)
-
-```
-SECURITY_STANDARDS_DIR="$PWD/tests/fixtures/security-standards" .venv/bin/pytest tests/architecture/test_ws32_scope_guards.py -v
-```
-```
-collected 4 items
-... 4 passed in 0.18s
-```
-`slo_report.py` uses "hand-off to the runner" / "release-revert" phrasing where the
-design doc used the forbidden words; grepped the file afterward for `dispatch`/`deploy`
-to confirm zero occurrences.
-
-### Lint / type-check on the changed files
+RED — confirmed the implementation is genuinely load-bearing by stashing
+`src/orchestrator/services/traceability.py` and re-running the new tests:
 
 ```
-.venv/bin/ruff check src/orchestrator/services/slo_report.py tests/services/test_slo_report.py
-.venv/bin/pyright src/orchestrator/services/slo_report.py tests/services/test_slo_report.py
-```
-- Ruff first pass found 2 issues: an unsorted import block in the test file (fixed via
-  `ruff check --fix`, which reordered `STATUS_NO_DATA`/`STATUS_NOT_INSTRUMENTED`) and one
-  `E501` line-too-long in `_cost`'s basis string (wrapped across an extra line, same
-  content). Both are formatting-only; no logic changed from the brief's verbatim code.
-- Final: `All checks passed!` (ruff), `0 errors, 0 warnings, 0 informations` (pyright).
-
-### Broader regression check
-
-```
-SECURITY_STANDARDS_DIR="$PWD/tests/fixtures/security-standards" .venv/bin/pytest tests/services/ tests/architecture/ -q
-```
-```
-1 failed, 743 passed, 1 skipped in 184.09s (0:03:04)
-```
-The one failure is `test_every_public_kernel_and_service_function_is_reachable` flagging
-`orchestrator.services.slo_report.slo_report` as unreachable — see below. Re-ran
-`tests/services/test_slo_report.py tests/architecture/test_ws32_scope_guards.py` after
-the ruff --fix edits: `8 passed`.
-
-## Architecture-suite finding (concern for the reviewer)
-
-Adding `slo_report()` as a new public service function with no production caller trips
-`tests/architecture/test_unreachable_guards.py::test_every_public_kernel_and_service_function_is_reachable`
-(the WS-P2.15 reachability guard documented in this repo's CLAUDE.md invariants). It is
-real: nothing outside this task's tests calls `slo_report`, `SloReportFilters`, or
-`SloReport` yet.
-
-I deliberately did **not** work around it:
-- **Did not add an `ALLOWLIST` entry.** Every existing entry documents a symbol that is
-  unreachable *by design, permanently* (e.g. the `github_app.reset_token_providers`
-  test-isolation seam). `slo_report` is not that — it is a report generator that is
-  *supposed* to get a caller (CLI/API) once the metric-filling tasks are done. Writing
-  an allowlist justification here would be exactly the "in fact it is called" shape of
-  wrong-predicate reasoning the guard's own docstring warns against, just inverted ("in
-  fact it will be called soon" is equally not "unreachable ON PURPOSE").
-- **Did not add a CLI/API caller.** `task-3-brief.md` scopes this task to the module
-  skeleton and shared builders only; `task-4-brief.md` (confirmed real WS-P2.2 content —
-  it imports `_build_unit`/`_add_claim` from this task and fills in
-  `_claim_expiry_rate`/`_waiver_frequency`) also only touches `slo_report.py` and its
-  test file, with no caller either. That means this is a known, staged multi-task build
-  where the CLI/API wiring is deferred to a task beyond what I have visibility into
-  (no `task-6`/`task-7`/`task-8` brief exists yet in `.superpowers/sdd/`). Adding a
-  caller now would be scope creep beyond this task's brief and untested by anything in
-  this task.
-
-**Recommendation:** confirm the plan has a later task that wires `slo_report` to a
-CLI command or API route before the workstream is considered done — until then, expect
-`test_every_public_kernel_and_service_function_is_reachable` to keep failing on this
-branch through Tasks 4-7. This is not something to silently allowlist away.
-
-## Other observations
-
-- `.superpowers/sdd/task-3-report.md` (this file) previously held an unrelated, stale
-  report from a different workstream ("Context Preflight Service for WS-3.3" /
-  `codex/ws33-design`). Overwritten per this task's explicit instruction to write the
-  report to this exact path — flagging in case the old content was still needed
-  elsewhere.
-- `.superpowers/sdd/task-5-brief.md` in this same directory is likewise unrelated to
-  WS-P2.2 (it describes a Production Drills workstream); did not touch it.
-- `git status` shows `.superpowers/sdd/task-2-report.md` modified in the working tree.
-  I did not make this change — it was already present when I started (untouched by me,
-  not staged/committed by me). Likely a concurrent session in the same working
-  directory; flagging so the controller isn't surprised by it in a later diff.
-
-## Commit
-
-```
-git add src/orchestrator/services/slo_report.py tests/services/test_slo_report.py
-git commit -m "feat(slo): slo_report skeleton with status-typed metrics + cost guard (WS-P2.2)"
+$ git stash push -- src/orchestrator/services/traceability.py
+$ .venv/bin/pytest tests/services/test_traceability.py -k "build_chain or traceability_response" -v
+...
+ImportError while importing test module '.../tests/services/test_traceability.py'.
+E   ImportError: cannot import name 'build_chain' from 'orchestrator.services.traceability'
+$ git stash pop
 ```
 
-Only these two files were staged and committed — `task-2-report.md`'s pre-existing
-working-tree modification was deliberately left out of the commit.
+Matches the brief's Step-2 expectation exactly.
+
+GREEN — full file, after restoring the implementation:
+
+```
+$ .venv/bin/pytest tests/services/test_traceability.py -v
+tests/services/test_traceability.py::test_resolve_by_work_unit_id PASSED
+tests/services/test_traceability.py::test_resolve_named_unit_missing_raises PASSED
+tests/services/test_traceability.py::test_resolve_by_artifact_digest_filter_empty_is_ok PASSED
+tests/services/test_traceability.py::test_resolve_named_revision_missing_raises PASSED
+tests/services/test_traceability.py::test_resolve_by_revision_id PASSED
+tests/services/test_traceability.py::test_resolve_by_artifact_digest PASSED
+tests/services/test_traceability.py::test_resolve_by_commit PASSED
+tests/services/test_traceability.py::test_resolve_by_pr PASSED
+tests/services/test_traceability.py::test_resolve_by_environment_picks_latest_observation_per_unit PASSED
+tests/services/test_traceability.py::test_build_chain_includes_intent_unit_and_artifact PASSED
+tests/services/test_traceability.py::test_build_chain_observation_tail_includes_conditions_and_observations PASSED
+tests/services/test_traceability.py::test_build_chain_empty_tail_when_none PASSED
+tests/services/test_traceability.py::test_traceability_response_orders_chains_by_resolution PASSED
+tests/services/test_traceability.py::test_build_chain_pr_and_deployment_hops PASSED
+tests/services/test_traceability.py::test_deployment_digest_matches_flag PASSED
+============================== 15 passed in 3.92s ==============================
+```
+
+(9 pre-existing Task-2 resolver tests + 6 new Task-3 tests, all green.)
+
+An intermediate RED, en route to the final `test_deployment_digest_matches_flag`: my first
+draft tried to produce the mismatch by recording a second release-artifact binding (different
+digest) with an observation against it using that same digest — i.e. attempting to record an
+observation whose digest didn't match the FIRST binding but did match a second. This correctly
+failed at the writer:
+
+```
+E       AssertionError: assert not True
+E        +  where True = isinstance(DomainError('observed artifact digest does not match the
+                                     immutable release binding'), DomainError)
+```
+
+That failure is what led to the write-guard-vs-read-time-computation split documented above
+(deviation #3), not a bug in `build_chain`.
+
+## Lint / type-check / scope guards
+
+```
+$ .venv/bin/ruff check src/orchestrator/services/traceability.py tests/services/test_traceability.py
+All checks passed!
+
+$ .venv/bin/ruff format src/orchestrator/services/traceability.py   # 1 file reformatted
+$ .venv/bin/ruff format --check src/orchestrator/services/traceability.py tests/services/test_traceability.py
+2 files already formatted
+
+$ .venv/bin/pyright src/orchestrator/services/traceability.py tests/services/test_traceability.py
+0 errors, 0 warnings, 0 informations
+
+$ .venv/bin/pytest tests/architecture/test_ws32_scope_guards.py tests/architecture/test_ws33_scope_guards.py tests/architecture/test_scope_guards.py -q
+16 passed in 1.83s
+```
+
+Re-ran the focused traceability suite after the `ruff format` reflow to confirm it was still
+green (it was — same 15 passed).
+
+## Full-suite result
+
+Ran once, in the foreground-equivalent single invocation (backgrounded by the harness due to
+runtime, not run concurrently with anything else):
+
+```
+$ SECURITY_STANDARDS_DIR="$PWD/tests/fixtures/security-standards" .venv/bin/pytest -q
+...
+FAILED tests/architecture/test_unreachable_guards.py::test_every_public_kernel_and_service_function_is_reachable
+1 failed, 1523 passed, 1 skipped in 198.45s (0:03:18)
+```
+
+The single failure is exactly the expected, pre-existing one:
+
+```
+AssertionError: these public functions cannot be reached from any production entry point:
+    orchestrator.services.traceability.resolve_anchors (orchestrator/services/traceability.py:69)
+    orchestrator.services.traceability.build_chain (orchestrator/services/traceability.py:149)
+    orchestrator.services.traceability.traceability_response (orchestrator/services/traceability.py:288)
+```
+
+This is the documented Task-4 dependency: `resolve_anchors`/`build_chain`/`traceability_response`
+have no production caller until Task 4 adds the `GET /api/v1/traceability` route. Per the task
+instructions, I did **not** add these to `ALLOWLIST` and did not attempt to work around it — it
+will close when Task 4 wires the route. No other new failures anywhere in the suite; `build_chain`
+and `traceability_response` are new entries in this failure (added by this task); `resolve_anchors`
+was already flagged unreachable since Task 2, for the same reason.
+
+## Self-review
+
+- **Composition, not reimplementation**: `build_chain` calls `evidence_pack_projection`,
+  `list_release_artifacts`, `list_deployment_observations`, `get_pr_binding` for everything
+  except the reconciliation-condition/observation tail, which has no existing per-unit
+  fetcher to reuse (the brief's own Step-3 code queries `ReconciliationCondition`/
+  `ReconciliationResolution` directly, which is what I implemented verbatim).
+- **Import direction**: `services/traceability.py` now imports from `api/schemas.py`, mirroring
+  `services/release_evidence_pack.py`'s existing pattern (verified: no cycle, `api/schemas.py`
+  imports nothing from `services/`).
+- **Scope-guard hygiene**: grepped the new code and docstrings for the bare tokens
+  `deploy`/`dispatch`/`merges` — none present (`deployment_ref`, `deployment_url`,
+  `merge_commit`, `implementation_pr_number` etc. are all suffixed/compound forms, which the
+  guard test file (verified by running it) explicitly allows).
+- **No route/CLI changes**: `routes.py` untouched, per the brief (Task 4's job).
+- **Idempotency of test data**: every `completed_unit(...)`/binding/observation call in the new
+  tests uses a distinct `key=` to avoid unique-constraint collisions with the pre-existing
+  Task-2 tests in the same file and across each other.
+
+## Concerns
+
+None blocking. One observation for whoever reviews Task 4: `build_chain` raises
+`DomainError("work_unit_not_found", ...)` via `evidence_pack_projection` when the unit doesn't
+exist, and `_unwrap` re-raises any `DomainError` from the release-artifact/deployment-observation
+fetchers as a real exception (not a return value) — Task 4's route handler needs to catch
+`DomainError` and translate it to the appropriate HTTP response, consistent with how other
+routes in this codebase handle service-layer `DomainError`s.

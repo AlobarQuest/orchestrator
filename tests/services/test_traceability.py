@@ -7,12 +7,24 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
+from orchestrator.persistence.models import Observation, ReconciliationCondition, WorkUnit
 from orchestrator.services.deployment_observations import record_deployment_observation
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.observations import ObservationCommand, record_observation
 from orchestrator.services.packages import register_approved_unit
 from orchestrator.services.pr_bindings import upsert_pr_binding
+from orchestrator.services.reconciliation import (
+    ConditionCommand,
+    ConditionOutcome,
+    record_reconciliation_condition,
+)
 from orchestrator.services.release_artifacts import record_release_artifact
-from orchestrator.services.traceability import TraceabilityAnchor, resolve_anchors
+from orchestrator.services.traceability import (
+    TraceabilityAnchor,
+    build_chain,
+    resolve_anchors,
+    traceability_response,
+)
 from tests.services.test_deployment_observations import observation_command, release_binding
 from tests.services.test_package_registration import AUTHORITY
 from tests.services.test_release_artifacts import (
@@ -30,6 +42,51 @@ EARLIER = datetime(2026, 7, 8, 12, 0, tzinfo=UTC)
 LATER = datetime(2026, 7, 8, 20, 0, tzinfo=UTC)
 OTHER_MERGE_COMMIT = "5cd4132" + "c" * 33
 HEAD_SHA = "1" * 40
+
+
+def _record_condition_for(session: Session, unit: WorkUnit) -> ReconciliationCondition:
+    outcome = record_reconciliation_condition(
+        session,
+        ConditionCommand(
+            actor=SYSTEM,
+            work_unit_id=unit.id,
+            observation_kind="github_check",
+            condition_type="check_result_flip",
+            key_facts={"check_name": "Quality"},
+            stored_state={"conclusion": "success"},
+            observed_state={"conclusion": "failure"},
+            detail="Quality flipped from success to failure after verification read it",
+        ),
+    )
+    assert isinstance(outcome, ConditionOutcome)
+    return outcome.condition
+
+
+def _record_observation_for(session: Session, unit: WorkUnit) -> Observation:
+    result = record_observation(
+        session,
+        ObservationCommand(
+            actor=SYSTEM,
+            source_system="github",
+            source_reference=f"github:AlobarQuest/orchestrator:check:{unit.id}",
+            source_url=None,
+            trust_classification="delivery_system",
+            subject_type="work_unit",
+            subject_reference=str(unit.id),
+            environment=None,
+            observation_type="github_check",
+            status="passed",
+            severity="info",
+            observed_at=LATER,
+            summary="Quality workflow passed",
+            facts={"workflow": "Quality"},
+            payload_digest=None,
+            idempotency_key=f"trace-obs-{unit.id}",
+            expected_version=0,
+        ),
+    )
+    assert not isinstance(result, DomainError)
+    return result
 
 
 def test_resolve_by_work_unit_id(migrated_session: Session):
@@ -166,3 +223,98 @@ def test_resolve_by_environment_picks_latest_observation_per_unit(migrated_sessi
     # Two observations for the same unit + environment collapse to a single entry, selected by
     # the newest observed_at.
     assert resolve_anchors(migrated_session, anchor) == (unit.id,)
+
+
+def test_build_chain_includes_intent_unit_and_artifact(migrated_session: Session):
+    unit = completed_unit(migrated_session, key="chain-unit")
+    binding = record_release_artifact(migrated_session, command(unit, key="chain-unit-binding"))
+    assert not isinstance(binding, DomainError)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.unit.id == unit.id
+    assert chain.intent.revision == 1
+    assert any(a.artifact_digest == DIGEST for a in chain.artifact)
+
+
+def test_build_chain_observation_tail_includes_conditions_and_observations(
+    migrated_session: Session,
+):
+    unit = completed_unit(migrated_session, key="chain-tail-unit")
+    _record_condition_for(migrated_session, unit)  # helper: record a ReconciliationCondition
+    _record_observation_for(migrated_session, unit)  # helper: record an Observation
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert len(chain.conditions) == 1
+    assert chain.conditions[0].open is True
+    assert len(chain.observations) == 1
+
+
+def test_build_chain_empty_tail_when_none(migrated_session: Session):
+    unit = completed_unit(migrated_session, key="chain-empty-tail-unit")
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.conditions == []
+    assert chain.observations == []
+
+
+def test_traceability_response_orders_chains_by_resolution(migrated_session: Session):
+    unit = completed_unit(migrated_session, key="chain-response-unit")
+
+    response = traceability_response(
+        migrated_session, TraceabilityAnchor(kind="work_unit", work_unit_id=unit.id)
+    )
+
+    assert response.anchor.matched_on == "work_unit"
+    assert [c.unit.id for c in response.chains] == [unit.id]
+
+
+def test_build_chain_pr_and_deployment_hops(migrated_session: Session):
+    unit, binding = release_binding(migrated_session, key="chain-hops-unit")
+    upsert_pr_binding(
+        migrated_session,
+        actor=SYSTEM,
+        work_unit_id=unit.id,
+        pr_number=456,
+        head_sha=HEAD_SHA,
+        attempt=1,
+    )
+    observation = record_deployment_observation(
+        migrated_session, observation_command(binding, key="chain-hops-observation")
+    )
+    assert not isinstance(observation, DomainError)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.pr is not None
+    assert chain.pr.pr_number == 456
+    assert chain.pr.head_sha == HEAD_SHA
+    assert len(chain.commit) == 1
+    assert chain.commit[0].merge_commit == MERGE_COMMIT
+    assert len(chain.artifact) == 1
+    assert len(chain.deployment) == 1
+    assert chain.deployment[0].environment == "production"
+
+
+def test_deployment_digest_matches_flag(migrated_session: Session):
+    unit, binding = release_binding(migrated_session, key="chain-digest-unit")
+    observation = record_deployment_observation(
+        migrated_session, observation_command(binding, key="chain-digest-observation")
+    )
+    assert not isinstance(observation, DomainError)
+
+    matched_chain = build_chain(migrated_session, unit.id)
+    assert matched_chain.deployment[0].digest_matches is True
+
+    # `record_deployment_observation` enforces observed_artifact_digest == binding.artifact_digest
+    # at write time (`deployment_observation_digest_mismatch`), so there is no writer path that
+    # produces a stored mismatch. Mutate the persisted row directly to exercise build_chain's
+    # read-time digest_matches computation against that (write-guard-bypassing) row shape.
+    observation.observed_artifact_digest = OTHER_DIGEST
+    migrated_session.commit()
+    migrated_session.expire_all()
+
+    mismatched_chain = build_chain(migrated_session, unit.id)
+    assert mismatched_chain.deployment[0].digest_matches is False
