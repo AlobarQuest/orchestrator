@@ -26,8 +26,9 @@ def test_tracker_binding_row_persists_and_rejects_bad_tracker_system(
     assert reread.tracker_system == "todoist"
     assert reread.external_item_id == "task-123"
 
+    other = register_unit(migrated_session, "tracker-binding-2")
     bad = UnitTrackerBinding(
-        work_unit_id=unit.id,
+        work_unit_id=other.id,
         tracker_system="jira",
         external_item_id="x",
         projected_state="ready",
