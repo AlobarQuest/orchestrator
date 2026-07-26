@@ -28,7 +28,6 @@ from orchestrator.api.schemas import (
 from orchestrator.errors import DomainError
 from orchestrator.persistence.models import (
     DeploymentObservation,
-    Observation,
     ReconciliationCondition,
     ReconciliationResolution,
     ReleaseArtifactBinding,
@@ -38,6 +37,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.deployment_observations import list_deployment_observations
 from orchestrator.services.evidence_pack import evidence_pack_projection
+from orchestrator.services.observations import ObservationFilters, list_observations
 from orchestrator.services.pr_bindings import get_pr_binding
 from orchestrator.services.release_artifacts import list_release_artifacts
 
@@ -150,8 +150,13 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
     projection = evidence_pack_projection(session, unit_id)  # raises work_unit_not_found if absent
     unit = projection["unit"]
     revision = projection["revision"]
+    # The canonical authority approval is the one bound to the unit via
+    # `unit.authority_approval_id` (see `persistence/repositories.py::exact_authority_approval`),
+    # not merely the first `subject_type == "authority"` row: a unit can carry more than one
+    # authority-type Approval (e.g. a standing-context expansion approval alongside the per-unit
+    # envelope approval), and `projection["approvals"]` is ordered by `created_at` ascending.
     authority_approval = next(
-        (a for a in projection["approvals"] if a.subject_type == "authority"), None
+        (a for a in projection["approvals"] if a.id == unit.authority_approval_id), None
     )
 
     artifacts = _unwrap(list_release_artifacts(session, unit_id))
@@ -194,15 +199,9 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
         else {}
     )
 
-    observations = tuple(
-        session.scalars(
-            select(Observation)
-            .where(
-                Observation.subject_type == "work_unit",
-                Observation.subject_reference == str(unit_id),
-            )
-            .order_by(Observation.observed_at, Observation.received_at, Observation.id)
-        )
+    observations = list_observations(
+        session,
+        ObservationFilters(subject_type="work_unit", subject_reference=str(unit_id)),
     )
 
     return TraceabilityChainResponse(
@@ -277,7 +276,7 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
     )
 
 
-def _unwrap(result):
+def _unwrap[T](result: tuple[T, ...] | DomainError) -> tuple[T, ...]:
     # list_* fetchers return `tuple | DomainError`; inside build_chain the unit is known to exist
     # (evidence_pack_projection already validated it), so a DomainError here is a real bug.
     if isinstance(result, DomainError):

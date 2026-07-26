@@ -11,7 +11,7 @@ from orchestrator.persistence.models import Observation, ReconciliationCondition
 from orchestrator.services.deployment_observations import record_deployment_observation
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.observations import ObservationCommand, record_observation
-from orchestrator.services.packages import register_approved_unit
+from orchestrator.services.packages import record_approval, register_approved_unit
 from orchestrator.services.pr_bindings import upsert_pr_binding
 from orchestrator.services.reconciliation import (
     ConditionCommand,
@@ -235,6 +235,56 @@ def test_build_chain_includes_intent_unit_and_artifact(migrated_session: Session
     assert chain.unit.id == unit.id
     assert chain.intent.revision == 1
     assert any(a.artifact_digest == DIGEST for a in chain.artifact)
+
+
+def test_build_chain_selects_canonical_authority_approval_not_first(
+    migrated_session: Session,
+):
+    unit = completed_unit(migrated_session, key="chain-canonical-authority-unit")
+
+    # A decoy authority-type Approval, recorded FIRST (so it sorts earlier by created_at) and
+    # therefore NOT the one that ends up bound to the unit. `standing_context` set (non-empty)
+    # is what a real standing-context expansion approval looks like, and is also what makes
+    # `record_approval` skip writing `unit.authority_approval_id` for this call.
+    decoy = record_approval(
+        migrated_session,
+        unit_id=unit.id,
+        subject_type="authority",
+        actor_id="human-decoy",
+        actor_role=ActorRole.HUMAN,
+        reason="decoy standing-context approval; must not be selected as canonical",
+        idempotency_key=f"decoy-authority-{unit.id}",
+        expected_version=unit.version,
+        standing_context={"decoy": "context"},
+    )
+    migrated_session.commit()
+
+    # The canonical per-unit authority envelope approval, recorded SECOND (later created_at).
+    # Without `standing_context`, `record_approval` binds this one via `unit.authority_approval_id`.
+    canonical = record_approval(
+        migrated_session,
+        unit_id=unit.id,
+        subject_type="authority",
+        actor_id=HUMAN.actor_id,
+        actor_role=HUMAN.role,
+        reason="canonical per-unit authority envelope approval",
+        idempotency_key=f"canonical-authority-{unit.id}",
+        expected_version=unit.version,
+    )
+    migrated_session.commit()
+    migrated_session.expire_all()
+
+    unit = migrated_session.get(WorkUnit, unit.id)
+    assert unit is not None
+    assert unit.authority_approval_id == canonical.id
+    assert unit.authority_approval_id != decoy.id
+    assert decoy.created_at <= canonical.created_at
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.unit.authority_approved_by == HUMAN.actor_id
+    assert chain.unit.authority_approved_by != "human-decoy"
+    assert chain.unit.authority_decision == "approved"
 
 
 def test_build_chain_observation_tail_includes_conditions_and_observations(
