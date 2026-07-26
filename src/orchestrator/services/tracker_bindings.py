@@ -71,7 +71,7 @@ def upsert_tracker_binding(
     _validate(tracker_system, external_item_id)
     _require_unit(session, work_unit_id)
     now = TransactionClock().now(session)
-    binding = get_tracker_binding(session, work_unit_id)  # taken FOR UPDATE, see below
+    binding = _locked_tracker_binding(session, work_unit_id)
     if binding is None:
         binding = UnitTrackerBinding(
             work_unit_id=work_unit_id,
@@ -96,12 +96,16 @@ def upsert_tracker_binding(
 
 
 def get_tracker_binding(session: Session, work_unit_id: uuid.UUID) -> UnitTrackerBinding | None:
-    """The unit's current binding, taken FOR UPDATE.
+    """The unit's current tracker binding, if any."""
+    return session.get(UnitTrackerBinding, work_unit_id)
 
-    Mirrors `pr_bindings._locked_binding`: there is exactly one row per unit by construction
-    (PK on `work_unit_id`), so a concurrent duplicate write is serialized by this lock rather
-    than by an idempotency key -- the second writer blocks, then observes the first writer's row
-    and updates it instead of racing it on INSERT.
+
+def _locked_tracker_binding(session: Session, work_unit_id: uuid.UUID) -> UnitTrackerBinding | None:
+    """The unit's current binding, taken FOR UPDATE. Mirrors pr_bindings._locked_binding.
+
+    One row per unit by construction (PK on work_unit_id), so a concurrent duplicate write is
+    serialized by this lock: the second writer blocks, then observes the first writer's row and
+    updates it instead of racing on INSERT.
     """
     return session.scalar(
         select(UnitTrackerBinding)
