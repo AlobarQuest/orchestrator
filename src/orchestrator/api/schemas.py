@@ -993,6 +993,30 @@ class PrBindingResponse(BaseModel):
     verification_read_attempt: int | None
 
 
+class TrackerBindingCommand(CommandBase):
+    """A tracker-projection adapter recording the external item a unit is mirrored onto.
+
+    Projection only, like pr-binding: it never derives from tracker content and never changes
+    the unit's lifecycle state, so it carries no claim proof -- only the SYSTEM actor may write.
+    """
+
+    tracker_system: str
+    external_item_id: str = Field(min_length=1)
+    external_url: str | None = None
+    projected_state: str = Field(min_length=1)
+
+
+class TrackerBindingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    work_unit_id: UUID
+    tracker_system: str
+    external_item_id: str
+    external_url: str | None
+    projected_state: str
+    updated_at: datetime
+
+
 class CostActualsCommand(CommandBase):
     """A runner reporting the actual LLM cost of one work-unit attempt.
 

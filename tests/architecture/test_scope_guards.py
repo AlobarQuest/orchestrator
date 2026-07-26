@@ -72,6 +72,9 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/work-units/{unit_id}/pr-binding",
         # WS-P2.4: the worker's report of realized cost/token actuals for a claimed attempt.
         "/api/v1/work-units/{unit_id}/cost-actuals",
+        # WS-P2.7: the tracker-projection adapter's report of the external item a unit is
+        # mirrored onto. SYSTEM-written, same reasoning as pr-binding above.
+        "/api/v1/work-units/{unit_id}/tracker-binding",
         "/api/v1/knowledge-promotion-proposals",
         "/api/v1/knowledge-promotion-proposals/{proposal_id}/submit-to-brain",
         "/api/v1/work-units/{unit_id}/commands/{command}",
@@ -143,6 +146,7 @@ def test_production_get_route_inventory_is_explicit() -> None:
         "/api/v1/slo-report",
         "/api/v1/status-ledger",
         "/api/v1/traceability",
+        "/api/v1/tracker-bindings",
         "/api/v1/work-units/{unit_id}/context-snapshots",
         "/api/v1/work-units/{unit_id}/evidence",
         "/api/v1/work-units/{unit_id}/evidence-pack",

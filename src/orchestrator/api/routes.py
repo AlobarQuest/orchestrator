@@ -83,6 +83,8 @@ from orchestrator.api.schemas import (
     SloReportResponse,
     StatusLedgerRowResponse,
     TraceabilityResponse,
+    TrackerBindingCommand,
+    TrackerBindingResponse,
     TransitionResponse,
     UnitRegistration,
     UnitResponse,
@@ -221,6 +223,7 @@ from orchestrator.services.runner_brief import runner_brief
 from orchestrator.services.slo_report import SloReportFilters, slo_report
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
 from orchestrator.services.traceability import TraceabilityAnchor, traceability_response
+from orchestrator.services.tracker_bindings import list_tracker_bindings, upsert_tracker_binding
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from orchestrator.services.verifier_evidence import (
     NamedCheckAssertion,
@@ -884,6 +887,32 @@ def pr_binding(
     )
 
 
+@router.post("/work-units/{unit_id}/tracker-binding", response_model=TrackerBindingResponse)
+def tracker_binding(
+    unit_id: UUID,
+    body: TrackerBindingCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """Record the tracker item a work unit is projected onto. Projection only, SYSTEM-written.
+
+    Deliberately written by our own side of the ledger: the tracker is never canonical, so a
+    binding never derives from tracker content and never changes the unit's state.
+    """
+    _require_zero_expected_version(body.expected_version, "tracker binding")
+    return _raise_error(
+        upsert_tracker_binding(
+            session,
+            actor=actor,
+            work_unit_id=unit_id,
+            tracker_system=body.tracker_system,
+            external_item_id=body.external_item_id,
+            external_url=body.external_url,
+            projected_state=body.projected_state,
+        )
+    )
+
+
 @router.post("/reconciliation/detect", response_model=ReconciliationDetectResponse)
 def reconciliation_detect(
     body: ReconciliationDetectCommand,
@@ -1080,6 +1109,15 @@ def status_ledger_route(
             include_inactive=include_inactive,
         ),
     )
+
+
+@router.get("/tracker-bindings", response_model=list[TrackerBindingResponse])
+def tracker_bindings_route(
+    _actor: ActorDep,
+    session: SessionDep,
+    tracker_system: str | None = None,
+) -> object:
+    return list_tracker_bindings(session, tracker_system=tracker_system)
 
 
 @router.get("/slo-report", response_model=SloReportResponse)
