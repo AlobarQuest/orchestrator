@@ -505,19 +505,41 @@ style of that module.
   invariant; the ws33 "merges" guard and the explicit GET-route inventory were both caught mid-build,
   the latter being a would-be CI-breaker.)
 
-- **The prod orchestrator image is built MANUALLY from the Mac (not by CI/Coolify) and Coolify only
-  pulls the prebuilt GHCR tag; the `registry` build-context is a git-tree export of security-standards
-  at a PINNED revision, gated on a byte-identical digest.** The Dockerfile's `registry` build stage
-  copies `/agents /src /schema` from a `--build-context registry=<dir>` that is assembled with
-  `git archive <SS_SHA> registry/agents|src/agent_registry|src/factory_events|schema` into a shaped
-  temp dir (never a raw checkout — untracked files would poison the digest). Recipe:
-  `docs/software-delivery-system/2026-07-09-ws64a-deploy-and-onboarding-state.md`. Unless an actor/
-  registry change is intended, PIN `SECURITY_STANDARDS_REVISION=65655ddf…` and assert the computed
-  `artifact_digest()` equals prod's `REGISTRY_ARTIFACT_SHA256=7aea8471…` BEFORE the long build — that
-  is the byte-identical bundle gate (13 actors). Then `docker buildx build --platform linux/amd64
+- **The prod orchestrator image build is PAVED-ROAD-automated (image-build-automation
+  workstream); Coolify only ever pulls a prebuilt GHCR tag and does not build.** The paved
+  road: `security-standards.pin.toml` (repo root) is the **single source of truth** for the
+  pinned `revision`/`artifact_sha256` — prose here is context, not authority; read the file.
+  `scripts/shape_registry_context.py` turns a security-standards checkout at that revision
+  into the shaped `{agents/, src/, schema/, SOURCE_REVISION}` build-context via `git archive`
+  (never a raw checkout — untracked files would poison the digest); it writes `SOURCE_REVISION`
+  **with a trailing newline** — that byte is part of the digest contract, and it's a real
+  footgun the old manual recipe left implicit (the fixture convention and
+  `build_registry_bundle.py` both hash the file verbatim, newline included). The `Release
+  image` GitHub Actions workflow (`.github/workflows/release-image.yml`,
+  `workflow_dispatch`, native `linux/amd64`) reads the pin, shapes the context, and runs
+  `docker buildx build --push` to `ghcr.io/alobarquest/orchestrator:<short-sha>[-<label>]-amd64`.
+  **The workflow only builds and pushes — it never deploys.** Pointing Coolify at the new tag
+  stays a separate, manual gate, same as before.
+  Two digests, two different jobs, not competing checks: the **bundle digest**
+  (`REGISTRY_ARTIFACT_SHA256`, currently `7aea8471…` per the pin file) is the **build-time,
+  security-critical** gate — the Dockerfile's `registry` build stage recomputes it from the
+  shaped context and **fails closed** on any mismatch (wrong/tampered actor registry), whether
+  the build runs in CI or by hand. The **image SHA / running container's `RepoDigest`** is the
+  separate **deploy-time identity** check Devon still does by hand after the Coolify swap —
+  proving prod is running bit-for-bit what the workflow pushed. Bumping either digest requires
+  bumping `security-standards.pin.toml`'s `revision` and `artifact_sha256` together (see that
+  file's own header comment for the recompute recipe).
+  **Fallback / differential baseline — keep this runnable, don't delete it:** the manual
+  `docker buildx` recipe still works and is the thing to fall back to if the workflow is down,
+  or to diff against if a CI-built image looks wrong. Recipe:
+  `docs/software-delivery-system/2026-07-09-ws64a-deploy-and-onboarding-state.md`. Unless an
+  actor/registry change is intended, PIN `SECURITY_STANDARDS_REVISION` to the pin file's
+  `revision` (`65655ddf…`) and assert the computed `artifact_digest()` equals the pin file's
+  `artifact_sha256` (`7aea8471…`) BEFORE the long build — that is the same byte-identical bundle
+  gate (13 actors), done by hand. Then `docker buildx build --platform linux/amd64
   --build-context registry=$ART --build-arg SECURITY_STANDARDS_REVISION=$SHA --build-arg
   REGISTRY_ARTIFACT_SHA256=$DIGEST -t ghcr.io/alobarquest/orchestrator:<sha>-<ws>-amd64 --push .`
-  produces a single amd64 v2 manifest; verify the running container's RepoDigest == the pushed digest
-  after Coolify swaps. A plain `docker build .` with no `registry` context fails at
-  `COPY --from=registry` — that is expected, not a Dockerfile bug. (Verified 2026-07-25, WS-P2.5 Inc 2
-  deploy.)
+  produces a single amd64 v2 manifest; verify the running container's RepoDigest == the pushed
+  digest after Coolify swaps. A plain `docker build .` with no `registry` context fails at
+  `COPY --from=registry` — that is expected, not a Dockerfile bug. (Verified 2026-07-25, WS-P2.5
+  Inc 2 deploy. Automation added 2026-07-26, image-build-automation workstream.)
