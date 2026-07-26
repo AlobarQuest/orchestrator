@@ -29,8 +29,6 @@ def shape_registry_context(source: Path, revision: str, output: Path) -> None:
             check=True,
             capture_output=True,
         ).stdout
-        target = output / dest
-        target.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
             _extract_remapped(tar, pathspec, dest, output)
     # Trailing newline is part of the artifact's digest contract: it matches the fixture
@@ -49,7 +47,8 @@ def _extract_remapped(tar: tarfile.TarFile, pathspec: str, dest: str, output: Pa
         out_path = output / dest / rel
         out_path.parent.mkdir(parents=True, exist_ok=True)
         extracted = tar.extractfile(member)
-        assert extracted is not None
+        if extracted is None:
+            continue
         out_path.write_bytes(extracted.read())
 
 

@@ -59,6 +59,10 @@ jobs:
         env:
           LABEL: ${{ inputs.label }}
         run: |
+          if [ -n "$LABEL" ] && ! printf '%s' "$LABEL" | grep -Eq '^[a-z0-9-]+$'; then
+            echo "::error::label must match ^[a-z0-9-]+$"
+            exit 1
+          fi
           SHA=$(git rev-parse --short HEAD)
           SUFFIX=""
           [ -n "$LABEL" ] && SUFFIX="-$LABEL"
