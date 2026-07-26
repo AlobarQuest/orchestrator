@@ -56,10 +56,12 @@ jobs:
 
       - name: Compute tag
         id: tag
+        env:
+          LABEL: ${{ inputs.label }}
         run: |
           SHA=$(git rev-parse --short HEAD)
           SUFFIX=""
-          [ -n "${{ inputs.label }}" ] && SUFFIX="-${{ inputs.label }}"
+          [ -n "$LABEL" ] && SUFFIX="-$LABEL"
           echo "tag=ghcr.io/alobarquest/orchestrator:${SHA}${SUFFIX}-amd64" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
@@ -90,6 +92,10 @@ jobs:
           DIGEST=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('containerimage.digest',''))" "$RUNNER_TEMP/meta.json")
           if [ -z "$DIGEST" ]; then
             DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${{ steps.tag.outputs.tag }}" 2>/dev/null || true)
+          fi
+          if [ -z "$DIGEST" ]; then
+            echo "::error::could not capture pushed image digest"
+            exit 1
           fi
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 

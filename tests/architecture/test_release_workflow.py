@@ -36,6 +36,11 @@ def test_workflow_is_dispatch_only_build_and_push_no_deploy():
     # in case that resolver behavior ever changes.
     triggers = wf.get("on", wf.get(True))
     assert set(triggers) == {"workflow_dispatch"}
+    # The control-plane guards (test_no_automatic_merge.py, test_ws33_scope_guards.py) exempt
+    # this workflow by name, on the assumption that `contents: read` makes it structurally
+    # incapable of pushing to the repo / merging / pushing main. Pin that invariant here so a
+    # future widen to `contents: write` fails this test, not just the exempted guards.
+    assert wf["permissions"] == {"contents": "read", "packages": "write"}
     text = RELEASE_WORKFLOW.read_text()
     # Build+push only: pushes to ghcr, but never calls Coolify / deploy.
     assert "ghcr.io/alobarquest/orchestrator:" in text
