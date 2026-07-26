@@ -149,6 +149,29 @@ def test_resolve_by_artifact_digest(migrated_session: Session):
     assert resolve_anchors(migrated_session, anchor) == (unit.id,)
 
 
+def test_resolve_by_artifact_digest_orders_fan_out_by_work_unit_id(migrated_session: Session):
+    # Two distinct units share the same artifact_digest (e.g. a digest reused across separately
+    # bound units). `_distinct_units` dedups per unit, but the pre-dedup stream must be ordered
+    # deterministically -- not by DB-physical row order -- or repeated calls could disagree.
+    unit_a = completed_unit(migrated_session, key="fan-out-digest-a")
+    unit_b = completed_unit(migrated_session, key="fan-out-digest-b")
+    binding_a = record_release_artifact(
+        migrated_session, command(unit_a, key="fan-out-digest-a-binding")
+    )
+    binding_b = record_release_artifact(
+        migrated_session, command(unit_b, key="fan-out-digest-b-binding")
+    )
+    assert not isinstance(binding_a, DomainError)
+    assert not isinstance(binding_b, DomainError)
+
+    anchor = TraceabilityAnchor(kind="artifact_digest", artifact_digest=DIGEST)
+    expected = tuple(sorted((unit_a.id, unit_b.id)))
+
+    assert resolve_anchors(migrated_session, anchor) == expected
+    # Deterministic across repeated calls, not an accident of a single execution's row order.
+    assert resolve_anchors(migrated_session, anchor) == expected
+
+
 def test_resolve_by_commit(migrated_session: Session):
     unit = completed_unit(migrated_session, key="commit-anchor")
     binding = record_release_artifact(migrated_session, command(unit, key="commit-anchor-binding"))

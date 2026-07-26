@@ -9,7 +9,7 @@ deployment-observation fetchers; it never writes, never transitions, and never t
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import or_, select
+from sqlalchemy import Select, or_, select
 from sqlalchemy.orm import Session
 
 from orchestrator.api.schemas import (
@@ -84,19 +84,21 @@ def resolve_anchors(session: Session, anchor: TraceabilityAnchor) -> tuple[uuid.
     if anchor.kind == "artifact_digest":
         return _distinct_units(
             session,
-            select(ReleaseArtifactBinding.work_unit_id).where(
-                ReleaseArtifactBinding.artifact_digest == anchor.artifact_digest
-            ),
+            select(ReleaseArtifactBinding.work_unit_id)
+            .where(ReleaseArtifactBinding.artifact_digest == anchor.artifact_digest)
+            .order_by(ReleaseArtifactBinding.work_unit_id),
         )
     if anchor.kind == "commit":
         return _distinct_units(
             session,
-            select(ReleaseArtifactBinding.work_unit_id).where(
+            select(ReleaseArtifactBinding.work_unit_id)
+            .where(
                 or_(
                     ReleaseArtifactBinding.source_commit == anchor.commit,
                     ReleaseArtifactBinding.merge_commit == anchor.commit,
                 )
-            ),
+            )
+            .order_by(ReleaseArtifactBinding.work_unit_id),
         )
     if anchor.kind == "pr":
         return _resolve_pr(session, anchor)
@@ -105,9 +107,10 @@ def resolve_anchors(session: Session, anchor: TraceabilityAnchor) -> tuple[uuid.
     raise DomainError("traceability_anchor_invalid", f"unknown anchor kind {anchor.kind}", None)
 
 
-def _distinct_units(session: Session, stmt) -> tuple[uuid.UUID, ...]:
-    # Preserve first-seen order for a stable response; de-duplicate a digest/commit shared by
-    # multiple bindings of the same unit.
+def _distinct_units(session: Session, stmt: Select[tuple[uuid.UUID]]) -> tuple[uuid.UUID, ...]:
+    # De-duplicate a digest/commit/PR shared by multiple bindings of the same unit, preserving
+    # first-seen order. The caller is responsible for making that pre-dedup stream deterministic
+    # (an `order_by` on the select), or "first-seen" just means DB-physical order.
     seen: dict[uuid.UUID, None] = {}
     for unit_id in session.scalars(stmt):
         seen.setdefault(unit_id, None)
@@ -118,14 +121,18 @@ def _resolve_pr(session: Session, anchor: TraceabilityAnchor) -> tuple[uuid.UUID
     if anchor.source_repository is not None:
         return _distinct_units(
             session,
-            select(ReleaseArtifactBinding.work_unit_id).where(
+            select(ReleaseArtifactBinding.work_unit_id)
+            .where(
                 ReleaseArtifactBinding.source_repository == anchor.source_repository,
                 ReleaseArtifactBinding.implementation_pr_number == anchor.pr_number,
-            ),
+            )
+            .order_by(ReleaseArtifactBinding.work_unit_id),
         )
     return _distinct_units(
         session,
-        select(UnitPrBinding.work_unit_id).where(UnitPrBinding.pr_number == anchor.pr_number),
+        select(UnitPrBinding.work_unit_id)
+        .where(UnitPrBinding.pr_number == anchor.pr_number)
+        .order_by(UnitPrBinding.work_unit_id),
     )
 
 
@@ -169,6 +176,11 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
                 TraceabilityDeploymentHop(
                     environment=obs.environment,
                     observed_artifact_digest=obs.observed_artifact_digest,
+                    # The deployment-observation writer enforces this equality at write time
+                    # (`deployment_observation_digest_mismatch`), so through any public writer
+                    # this is always True; it confirms the build-to-deployment invariant for
+                    # audit completeness and would only read False for a divergent row that
+                    # reached this table by some non-writer path (e.g. reconciliation).
                     digest_matches=obs.observed_artifact_digest == binding.artifact_digest,
                     deployment_ref=obs.deployment_ref,
                     deployment_url=obs.deployment_url,
