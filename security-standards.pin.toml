@@ -1,0 +1,8 @@
+# Single source of truth for the production registry-bundle pin. The release workflow reads
+# `revision` to check out security-standards and passes both to the Docker build; the Dockerfile's
+# in-build gate (build_registry_bundle.py --artifact-sha256) fails closed if the assembled bundle's
+# digest != artifact_sha256. Bump BOTH together when a registry actor changes (recompute the digest
+# locally: scripts/shape_registry_context.py against a security-standards checkout, then
+# build_registry_bundle.py's artifact_digest).
+revision        = "65655ddf58b8f4401262f3192270515ef88b14f7"
+artifact_sha256 = "7aea8471201557be1b7da3e5e361e0595e44efb24bc9ec958c2745abccea2cf6"
