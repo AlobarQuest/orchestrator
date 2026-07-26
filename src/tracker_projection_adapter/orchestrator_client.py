@@ -15,7 +15,9 @@ import httpx
 STATUS_LEDGER_ENDPOINT = "/api/v1/status-ledger"
 TRACKER_BINDINGS_ENDPOINT = "/api/v1/tracker-bindings"
 # The ONLY write the adapter may make. Concrete: /api/v1/work-units/<uuid>/tracker-binding.
-ALLOWED_WRITE_PATTERN = re.compile(r"^/api/v1/work-units/[0-9a-fA-F-]{36}/tracker-binding$")
+# `\Z` (not `$`) so a trailing newline cannot slip through: this pattern is the sole in-process
+# gate on the adapter's full-SYSTEM bearer, so it matches the whole string exactly.
+ALLOWED_WRITE_PATTERN = re.compile(r"^/api/v1/work-units/[0-9a-fA-F-]{36}/tracker-binding\Z")
 
 
 class ProjectionError(RuntimeError):

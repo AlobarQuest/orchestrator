@@ -106,5 +106,8 @@ deliberately out of scope here.
 ## Cost / trade-off accepted
 
 One additional small operator-invoked process to run, and a projection that is only as fresh as
-the last manual pass until a scheduler is added. Both were judged well worth a legible human
-surface that provably cannot corrupt canonical state.
+the last manual pass until a scheduler is added. Projection is also non-atomic across the two
+systems: if a Todoist create succeeds but the follow-up binding write fails, the next pass sees no
+binding and creates a duplicate task — a tracker-tidiness cost only, never a canonical-state one,
+and self-limiting since the binding, once written, dedups all later passes. All of this was judged
+well worth a legible human surface that provably cannot corrupt canonical state.
