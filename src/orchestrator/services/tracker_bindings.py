@@ -95,11 +95,6 @@ def upsert_tracker_binding(
     return binding
 
 
-def get_tracker_binding(session: Session, work_unit_id: uuid.UUID) -> UnitTrackerBinding | None:
-    """The unit's current tracker binding, if any."""
-    return session.get(UnitTrackerBinding, work_unit_id)
-
-
 def _locked_tracker_binding(session: Session, work_unit_id: uuid.UUID) -> UnitTrackerBinding | None:
     """The unit's current binding, taken FOR UPDATE. Mirrors pr_bindings._locked_binding.
 

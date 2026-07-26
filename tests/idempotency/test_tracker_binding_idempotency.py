@@ -1,6 +1,6 @@
 """AC-007: the tracker-binding report (WS-P2.7) is a ROW_LOCK upsert, exactly like pr-binding.
 
-`upsert_tracker_binding` takes its row FOR UPDATE (`get_tracker_binding`) before deciding
+`upsert_tracker_binding` takes its row FOR UPDATE (`_locked_tracker_binding`) before deciding
 insert-vs-update, so a duplicate report is absorbed by the row lock rather than by an
 idempotency key: there is exactly one row per unit by construction (PK on `work_unit_id`), and
 re-reporting the same projection is a no-op.
@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import UnitTrackerBinding
 from orchestrator.services.lifecycle import ActorContext
-from orchestrator.services.tracker_bindings import get_tracker_binding, upsert_tracker_binding
+from orchestrator.services.tracker_bindings import upsert_tracker_binding
 from tests.services.test_dependencies import register_unit
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
@@ -51,4 +51,4 @@ def test_a_duplicate_tracker_binding_report_replays(migrated_session: Session) -
         .where(UnitTrackerBinding.work_unit_id == unit.id)
     )
     assert bindings == 1
-    assert get_tracker_binding(migrated_session, unit.id) is not None
+    assert migrated_session.get(UnitTrackerBinding, unit.id) is not None
