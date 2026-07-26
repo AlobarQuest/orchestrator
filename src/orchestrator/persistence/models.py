@@ -1060,6 +1060,7 @@ class ApprovedDecomposition(UUIDPrimaryKey, Base):
     supersession_reason: Mapped[str | None] = mapped_column(Text)
 
 
+TRACKER_SYSTEMS = ("todoist",)
 RECONCILIATION_OBSERVATION_KINDS = ("github_pr", "github_check", "deployment")
 RECONCILIATION_CONDITION_TYPES = (
     "external_merge_alarm",
@@ -1195,4 +1196,35 @@ class UnitPrBinding(Base):
     binding_attempt: Mapped[int | None] = mapped_column(Integer)
     verification_read_head_sha: Mapped[str | None] = mapped_column(String)
     verification_read_attempt: Mapped[int | None] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UnitTrackerBinding(Base):
+    """A work unit's projection onto an external tracker item.
+
+    Projection only and one-directional: the orchestrator is always canonical and this row
+    records merely THAT a unit is mirrored to some external tracker item. It carries no
+    lifecycle authority, and writing it never changes work-unit state. Mutable, one row per
+    unit (PK on work_unit_id), mirroring UnitPrBinding.
+    """
+
+    __tablename__ = "unit_tracker_bindings"
+    __table_args__ = (
+        # Built via join, not `{TRACKER_SYSTEMS!r}`: a single-element tuple's repr carries a
+        # trailing comma (`('todoist',)`), which is invalid inside a SQL IN (...) list.
+        CheckConstraint(
+            "tracker_system IN ({})".format(", ".join(f"'{s}'" for s in TRACKER_SYSTEMS)),
+            name="ck_unit_tracker_bindings_tracker_system",
+        ),
+        CheckConstraint(
+            "external_item_id <> ''",
+            name="ck_unit_tracker_bindings_external_item_id",
+        ),
+    )
+
+    work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"), primary_key=True)
+    tracker_system: Mapped[str] = mapped_column(String)
+    external_item_id: Mapped[str] = mapped_column(String)
+    external_url: Mapped[str | None] = mapped_column(String)
+    projected_state: Mapped[str] = mapped_column(String)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
