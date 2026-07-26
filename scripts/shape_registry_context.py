@@ -33,7 +33,10 @@ def shape_registry_context(source: Path, revision: str, output: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
             _extract_remapped(tar, pathspec, dest, output)
-    (output / "SOURCE_REVISION").write_text(revision)
+    # Trailing newline is part of the artifact's digest contract: it matches the fixture
+    # convention and the production build_registry_bundle.py digest, which hashes these bytes
+    # verbatim.
+    (output / "SOURCE_REVISION").write_text(f"{revision}\n")
 
 
 def _extract_remapped(tar: tarfile.TarFile, pathspec: str, dest: str, output: Path) -> None:

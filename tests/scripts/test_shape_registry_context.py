@@ -39,7 +39,7 @@ def _fixture_digest_at_revision(revision: str, tmp_path: Path) -> str:
     commit sha, so the two are never digest-identical without this rewrite."""
     copy = tmp_path / "fixture-at-revision"
     shutil.copytree(FIXTURE, copy, ignore=_IGNORE_PYCACHE)
-    (copy / "SOURCE_REVISION").write_text(revision)
+    (copy / "SOURCE_REVISION").write_text(f"{revision}\n")
     return artifact_digest(copy)
 
 
@@ -51,6 +51,10 @@ def test_shaping_reproduces_the_fixture_bundle(tmp_path: Path) -> None:
     shape_registry_context(raw, sha, out)
 
     assert (out / "SOURCE_REVISION").read_text().strip() == sha
+    # Direct convention lock: SOURCE_REVISION must carry exactly one trailing newline, matching
+    # the fixture convention and the production digest -- this is what the earlier
+    # write_text(revision) (no newline) bug would have failed.
+    assert (out / "SOURCE_REVISION").read_bytes() == f"{sha}\n".encode()
     assert sorted(p.name for p in (out / "agents").iterdir()) == sorted(
         p.name for p in (FIXTURE / "agents").iterdir()
     )
