@@ -31,7 +31,7 @@ reconciliation-runner = "reconciliation_runner.cli:app"
 dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.6",
-  "ruff==0.15.20",
+  "ruff==0.16.0",
   "pyright==1.1.411",
   "httpx2>=2.7.0",
 ]
