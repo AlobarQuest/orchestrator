@@ -23,6 +23,7 @@ def test_tracker_binding_row_persists_and_rejects_bad_tracker_system(
     migrated_session.commit()
     migrated_session.expire_all()
     reread = migrated_session.get(UnitTrackerBinding, unit.id)
+    assert reread is not None
     assert reread.tracker_system == "todoist"
     assert reread.external_item_id == "task-123"
 
