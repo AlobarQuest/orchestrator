@@ -139,8 +139,12 @@ def _verified_approval() -> VerifiedApproval:
 
 def test_no_workflow_dispatch_or_factory_runner_dispatch_code_exists() -> None:
     forbidden = ("workflow_dispatch", "factory-runner", "factory_runner")
+    # factory-runner-pilot.yml legitimately dispatches the factory runner; release-image.yml
+    # is a separate, unrelated workflow_dispatch trigger (manual image build+push, no factory
+    # runner involvement) — both are deliberate human-triggered exceptions to this guard.
+    manual_dispatch_workflows = {"factory-runner-pilot.yml", "release-image.yml"}
     workflow_paths = [
-        path for path in _workflow_sources() if path.name != "factory-runner-pilot.yml"
+        path for path in _workflow_sources() if path.name not in manual_dispatch_workflows
     ]
     python_paths = [
         path

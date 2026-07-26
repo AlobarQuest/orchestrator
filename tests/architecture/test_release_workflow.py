@@ -12,7 +12,10 @@ This module is extended in Task 3 with assertions over the release workflow itse
 import tomllib
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
+RELEASE_WORKFLOW = ROOT / ".github/workflows/release-image.yml"
 
 
 def test_pin_file_is_well_formed():
@@ -21,3 +24,26 @@ def test_pin_file_is_well_formed():
     assert len(pin["artifact_sha256"]) == 64
     assert all(c in "0123456789abcdef" for c in pin["artifact_sha256"])
     assert len(pin["revision"]) >= 7 and all(c in "0123456789abcdef" for c in pin["revision"])
+
+
+def _workflow():
+    return yaml.safe_load(RELEASE_WORKFLOW.read_text())
+
+
+def test_workflow_is_dispatch_only_build_and_push_no_deploy():
+    wf = _workflow()
+    # `on:` parses as the YAML 1.1 boolean key `True` under PyYAML's safe_load; handle both
+    # in case that resolver behavior ever changes.
+    triggers = wf.get("on", wf.get(True))
+    assert set(triggers) == {"workflow_dispatch"}
+    text = RELEASE_WORKFLOW.read_text()
+    # Build+push only: pushes to ghcr, but never calls Coolify / deploy.
+    assert "ghcr.io/alobarquest/orchestrator:" in text
+    assert "--platform linux/amd64" in text
+    assert "SECURITY_STANDARDS_DEPLOY_KEY" in text
+    assert "security-standards.pin.toml" in text
+    assert "shape_registry_context.py" in text
+    for forbidden in ("coolify", "sds.alobar.net", "curl -x post"):
+        assert forbidden not in text.lower()
+    # No moving tag.
+    assert ":latest" not in text and ":main-" not in text
