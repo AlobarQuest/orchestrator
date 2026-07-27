@@ -29,6 +29,7 @@ class TrackerProjector(Protocol):
     def create_item(self, unit: UnitView) -> ItemRef: ...
     def update_item(self, item_ref: ItemRef, unit: UnitView) -> ItemRef: ...
     def complete_item(self, item_ref: ItemRef) -> None: ...
+    def item_completed(self, item_ref: ItemRef) -> bool: ...
 
 
 class TodoistProjector:
@@ -84,6 +85,37 @@ class TodoistProjector:
 
     def complete_item(self, item_ref: ItemRef) -> None:
         self._post(f"/tasks/{item_ref.external_item_id}/close", None)
+
+    def item_completed(self, item_ref: ItemRef) -> bool:
+        """Whether the tracker item is completed (checked off). A completed Todoist task leaves
+        the active set, so a 404 means completed. Otherwise read the completion flag."""
+        status, data = self._get(f"/tasks/{item_ref.external_item_id}")
+        if status == 404:
+            return True
+        if isinstance(data, dict):
+            for flag in ("is_completed", "checked", "completed"):
+                if flag in data:
+                    return bool(data[flag])
+            if data.get("completed_at") is not None:
+                return True
+        return False
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> TodoistProjector:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def _get(self, path: str) -> tuple[int, Any]:
+        response = self._client.get(path)
+        if response.status_code == 404:
+            return 404, {}
+        if response.status_code >= 400:
+            raise RuntimeError(f"todoist rejected GET {path}: {response.status_code}")
+        return response.status_code, (response.json() if response.content else {})
 
     def _post(self, path: str, payload: dict[str, Any] | None) -> Any:
         response = (

@@ -70,6 +70,9 @@ class _NullProjector:
     def complete_item(self, item_ref: ItemRef) -> None:
         raise AssertionError("dry run must not complete tracker items")
 
+    def item_completed(self, item_ref: ItemRef) -> bool:
+        raise AssertionError("dry run must not read tracker item state")
+
 
 def _apply(
     client: OrchestratorReader,
