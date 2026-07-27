@@ -85,6 +85,7 @@ from orchestrator.api.schemas import (
     TraceabilityResponse,
     TrackerBindingCommand,
     TrackerBindingResponse,
+    TrackerReconciliationDetectCommand,
     TransitionResponse,
     UnitRegistration,
     UnitResponse,
@@ -209,8 +210,10 @@ from orchestrator.services.packages import (
 )
 from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
 from orchestrator.services.reconciliation_detection import (
+    ObservedTrackerItem,
     detect_observation_conditions,
     detect_reconciliation_conditions,
+    detect_tracker_conditions,
     record_digest_divergence,
 )
 from orchestrator.services.release_artifacts import (
@@ -932,6 +935,31 @@ def reconciliation_detect(
         session,
         actor,
         stall_seconds=settings.reconcile_split_brain_stall_seconds,
+    ).as_dict()
+
+
+@router.post("/reconciliation/tracker-detect", response_model=ReconciliationDetectResponse)
+def tracker_reconciliation_detect(
+    body: TrackerReconciliationDetectCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """Inbound tracker reconciliation. SYSTEM-only, report-only: records append-only divergence
+    conditions, creates no unit and sets no lifecycle state. The tracker is never canonical."""
+    _require_zero_expected_version(body.expected_version, "tracker reconciliation detection")
+    if actor.role is not ActorRole.SYSTEM:
+        raise DomainError(
+            "role_forbidden",
+            "only the orchestrator system actor may run tracker reconciliation detection",
+            None,
+        )
+    return detect_tracker_conditions(
+        session,
+        actor,
+        observed_states=[
+            ObservedTrackerItem(i.tracker_system, i.external_item_id, i.observed_completed)
+            for i in body.observed_states
+        ],
     ).as_dict()
 
 

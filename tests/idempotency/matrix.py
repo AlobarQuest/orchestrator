@@ -225,4 +225,11 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/idempotency/test_tracker_binding_idempotency.py::"
         "test_a_duplicate_tracker_binding_report_replays",
     ),
+    MatrixRow(
+        "tracker reconciliation detect-pass",
+        "/api/v1/reconciliation/tracker-detect",
+        ADVISORY_LOCK,
+        "tests/idempotency/test_tracker_detect_idempotency.py::"
+        "test_a_duplicate_tracker_detect_records_no_second_condition",
+    ),
 )

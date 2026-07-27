@@ -89,6 +89,13 @@ VOCABULARY_REGISTRY: dict[str, str] = {
     # producer); evidence imports it to gate public adjudication (verifier <-> lifecycle). The
     # detector sees this by resolving evidence's membership use across the import.
     "services/lifecycle.py:POST_DEPLOY_AC_IDS": "verifier-generated post-deploy AC ids",
+    # The outbound-projection "card-closed" states the inbound reconciliation detector mirrors.
+    # Source of truth is the tracker adapter's TERMINAL_STATES; coupled by
+    # tests/architecture/test_tracker_closed_states_sync.py (WS-P2.7 Inc-2).
+    "services/reconciliation_detection.py:TRACKER_CLOSED_STATES": (
+        "tracker adapter TERMINAL_STATES (outbound card-closed states); "
+        "sync-guarded by test_tracker_closed_states_sync.py"
+    ),
 }
 
 
