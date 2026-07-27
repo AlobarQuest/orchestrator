@@ -1061,13 +1061,14 @@ class ApprovedDecomposition(UUIDPrimaryKey, Base):
 
 
 TRACKER_SYSTEMS = ("todoist",)
-RECONCILIATION_OBSERVATION_KINDS = ("github_pr", "github_check", "deployment")
+RECONCILIATION_OBSERVATION_KINDS = ("github_pr", "github_check", "deployment", "tracker")
 RECONCILIATION_CONDITION_TYPES = (
     "external_merge_alarm",
     "pr_state_divergence",
     "check_result_flip",
     "deploy_split_brain",
     "digest_divergence",
+    "tracker_state_divergence",
 )
 RECONCILIATION_DECISIONS = ("accepted", "corrected", "dismissed")
 
