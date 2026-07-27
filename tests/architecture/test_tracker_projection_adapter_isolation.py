@@ -65,7 +65,11 @@ def test_write_surface_allows_only_the_two_report_only_endpoints() -> None:
     assert not _is_allowed_write(
         "/api/v1/work-units/00000000-0000-0000-0000-000000000000/commands/ready"
     )
+    assert not _is_allowed_write("/api/v1/work-units/00000000-0000-0000-0000-000000000000/evidence")
     assert not _is_allowed_write("/api/v1/observations")
+    assert not _is_allowed_write(
+        "/api/v1/work-units/00000000-0000-0000-0000-000000000000/adjudications"
+    )
 
 
 def test_a_forbidden_write_never_reaches_the_transport() -> None:

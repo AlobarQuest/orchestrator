@@ -957,7 +957,7 @@ class TrackerReconciliationDetectItem(BaseModel):
     carries no interpretation.
     """
 
-    tracker_system: str
+    tracker_system: str = Field(min_length=1)
     external_item_id: str = Field(min_length=1)
     observed_completed: bool
 
