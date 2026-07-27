@@ -1130,20 +1130,11 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 
 Expected: `200`. A `401` means the hash or key id is wrong; a `403` means the role did not land. Also re-run Step 4's in-container check and confirm `roles subset of credentials: True` and `/health/ready` is `200`.
 
-- [ ] **Step 7: Regenerate the BWS manifest and commit**
+- [ ] **Step 7: Record the secret id for Task 5**
 
-```bash
-cd ~/Projects/infraops-mcp-server
-PYTHONPATH="$HOME/Projects/security-standards/src" python3 -m security_scan.cli generate-manifest .
-git diff .bws-secrets.toml   # expect exactly one added entry
-git add .bws-secrets.toml
-git commit -m "chore(wsp30): register the orchestrator drift-reporter token in the BWS manifest
+There is nothing to commit in this task — it changed production configuration, not the repo. Write `SECRET_ID` and `TOKEN_HASH` into the drill evidence file's setup section (Task 6 creates that file; append to it now or keep them in the shell session and record them there).
 
-Secret <SECRET_ID> (ORCHESTRATOR_DRIFT_REPORTER_TOKEN). The bearer is fetched
-at runtime by UUID; only sha256(bearer) is stored in Coolify."
-```
-
-If `generate-manifest` also wants to add the pre-existing unregistered `APPBRAIN_ACCESS_KEY` entry (`68733abe-682a-4597-b88f-b4750189a56a`), **leave it out of this commit** — it is unrelated manifest drift that predates this work and is backlogged in Task 7.
+**The BWS manifest is regenerated in Task 5, not here.** `security_scan.genmanifest` derives the manifest from **runtime code references**, and the new UUID does not appear in any runtime file until Task 5 edits `drift-audit.sh`. Regenerating now would produce a manifest that still omits it.
 
 ---
 
@@ -1196,17 +1187,45 @@ Expected in the log, all four present and in this order: the remediate rc line, 
 
 This run is also drill step 2 of Task 6 — record its output there.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Regenerate the BWS manifest**
+
+Now that the UUID is referenced by runtime code, the generator will pick it up.
+
+**Source the BWS token first.** Without it the generator warns `BWS unreachable — emitting UUID-only manifest` and rewrites every entry's `# name:` comment to `not found in BWS` — silently degrading the existing manifest.
 
 ```bash
 cd ~/Projects/infraops-mcp-server
-git add scripts/drift-audit.sh
+source ~/Projects/vps-backup/bws-token.sh
+PYTHONPATH="$HOME/Projects/security-standards/src" \
+  python3 -m security_scan.genmanifest . --write
+git diff .bws-secrets.toml
+```
+
+Expected: **two** added entries, not one — the new reporter token, plus `68733abe-682a-4597-b88f-b4750189a56a` (`APPBRAIN_ACCESS_KEY`), which `drift-audit.sh:62` has consumed all along without being registered. That is pre-existing manifest drift the regeneration fixes incidentally; keep it, and say so in the commit message. Every `# name:` comment must still name a real secret — if any reads `not found in BWS`, the token was not sourced: discard the change with `git checkout -- .bws-secrets.toml` and re-run.
+
+Confirm the scanner is happy:
+
+```bash
+PYTHONPATH="$HOME/Projects/security-standards/src" python3 -m security_scan.cli . --category security
+```
+
+Expected: no BLOCK findings for `bws.secret-manifest-present` or `bws.manifest-matches-usage`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd ~/Projects/infraops-mcp-server
+git add scripts/drift-audit.sh .bws-secrets.toml
 git commit -m "feat(wsp30): post the daily drift digest to the orchestrator
 
 One added best-effort block after the change-manager sync. Touches neither RC
 nor RC_REMEDIATE, so the script's exit code, the Healthchecks ping, the Resend
 digest and the change-manager sync are unchanged. A failed post logs a WARN and
-the loop continues."
+the loop continues.
+
+Regenerating .bws-secrets.toml also registers APPBRAIN_ACCESS_KEY
+(68733abe-...), consumed by drift-audit.sh:62 since before this change and
+never manifested — pre-existing drift fixed in passing."
 ```
 
 **Rollback for this task**, if anything downstream misbehaves: revert this commit, or set
@@ -1380,11 +1399,7 @@ Append to the `## Backlog` section:
 - [ ] (P3) Per-application drift observations and observation supersession. WS-P3.0 posts an append-shaped per-instance digest because day-over-day changes to the same finding would need supersession, which does not exist (`observation_conflict` rejects the same source reference with different facts). Once WS-P2.8 exists and supersession is specified, revisit emitting one observation per drifting application (`subject_reference` = the app), which is the shape that can become proposed work. — added 2026-07-27
 ```
 
-Also add, to `~/Projects/infraops-mcp-server`'s own `PROJECT.md` backlog:
-
-```
-- [ ] (P3) `.bws-secrets.toml` is missing the `APPBRAIN_ACCESS_KEY` secret (`68733abe-682a-4597-b88f-b4750189a56a`) that `scripts/drift-audit.sh:62` consumes — manifest drift predating WS-P3.0. Regenerate the manifest and verify no other consumed UUID is unregistered. — added 2026-07-27
-```
+No infraops-mcp-server backlog item is needed for the manifest: Task 5 Step 4's regeneration registers the pre-existing `APPBRAIN_ACCESS_KEY` gap in passing, and the scanner check in that step confirms no other consumed UUID is unregistered.
 
 - [ ] **Step 3: Add the invariant to the orchestrator's CLAUDE.md**
 
@@ -1441,8 +1456,6 @@ Invariants captured: an M2M credential's agent_id resolves against the
 IMAGE-BAKED registry bundle (so a git check is not evidence, and a miss is a
 boot failure rather than a 401), and the traceability observation hop is
 unit-scoped."
-
-cd ~/Projects/infraops-mcp-server && git add PROJECT.md && git commit -m "chore: backlog the .bws-secrets.toml APPBRAIN_ACCESS_KEY manifest gap"
 ```
 
 ---
