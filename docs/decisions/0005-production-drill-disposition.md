@@ -1,7 +1,7 @@
 # ADR-0005 — Production-drill disposition (remediation item 0.3)
 
 **Date:** 2026-07-27
-**Status:** Proposed — awaiting Devon's decision. No drill may run against production before this is Accepted.
+**Status:** Accepted 2026-07-27 by Devon — **disposition A** (the recommendation: run the five drills against production with drill-scoped resources). Execution waits for PR #82 to merge (Devon is holding the merge until WS-P2.7 Inc-2 completes) and then happens in a dedicated, explicitly authorized session per the prerequisites below.
 **Numbering note:** 0004 is reserved for WS-P2.7 Inc-2's inbound-reconciliation decision, authored on its own branch.
 
 ## Context
