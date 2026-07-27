@@ -56,6 +56,36 @@ def test_missing_token_exits_nonzero(monkeypatch) -> None:
     assert result.exit_code == 1
 
 
+def test_project_missing_orchestrator_token_exits_nonzero(monkeypatch) -> None:
+    monkeypatch.delenv("TRACKER_PROJECTION_TOKEN", raising=False)
+    result = runner.invoke(app, ["project", "--todoist-project-id", "p"])
+    assert result.exit_code == 1
+    assert "TRACKER_PROJECTION_TOKEN" in result.output
+
+
+def test_project_non_dry_run_missing_todoist_token_exits_nonzero(monkeypatch) -> None:
+    monkeypatch.setenv("TRACKER_PROJECTION_TOKEN", "fixture-token")
+    monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+    result = runner.invoke(app, ["project", "--todoist-project-id", "p"])
+    assert result.exit_code == 1
+    assert "TODOIST_API_TOKEN" in result.output
+
+
+def test_reconcile_missing_orchestrator_token_exits_nonzero(monkeypatch) -> None:
+    monkeypatch.delenv("TRACKER_PROJECTION_TOKEN", raising=False)
+    result = runner.invoke(app, ["reconcile", "--dry-run", "--todoist-project-id", "p"])
+    assert result.exit_code == 1
+    assert "TRACKER_PROJECTION_TOKEN" in result.output
+
+
+def test_reconcile_dry_run_still_requires_todoist_token(monkeypatch) -> None:
+    monkeypatch.setenv("TRACKER_PROJECTION_TOKEN", "fixture-token")
+    monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+    result = runner.invoke(app, ["reconcile", "--dry-run", "--todoist-project-id", "p"])
+    assert result.exit_code == 1
+    assert "TODOIST_API_TOKEN" in result.output
+
+
 class FakeClient:
     def __init__(self, bindings: list[dict] | None = None, **kwargs: object) -> None:
         self.reported: list[dict] = []
