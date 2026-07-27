@@ -92,9 +92,14 @@ style of that module.
   `X-authentik-*` headers from `/api` routes, so human-actor API routes are
   unreachable from a browser session unless a dedicated router applies the
   `/review` middleware chain (strip → Authentik forward-auth → proxy marker) to
-  those paths — see the `orchestrator-promotion-human` router (WS-6.3). Quirk:
-  the first same-origin POST behind forward-auth can return the app's 401
-  (fetch follows the auth 302 and degrades to GET); the immediate retry works.
+  those paths — see the `orchestrator-promotion-human` router (WS-6.3).
+  **There is no "first POST behind forward-auth 401s" quirk. It was speculation,
+  it has never once been observed, and it should not be planned around.** This
+  bullet used to assert it; sessions then inherited it as fact, wrote retry
+  branches for it, and narrated it as expected. The 2026-07-27 drill intake POST
+  returned 201 on the first attempt with the retry branch never firing — as has
+  every other such POST. Real 401s on `/api` mean the route is M2M-only (see the
+  routing bullets below), not that a retry is needed.
 - Production observation ingestion requires an `ActorRole.SYSTEM` actor. The
   standing M2M credential is worker-role, so closeout-style observations use a
   temporary credential: merge into `ORCHESTRATOR_M2M_CREDENTIALS` + map it in
@@ -599,3 +604,40 @@ style of that module.
   `0019_wsp27_tracker_recon`, 24 chars — not `0019_wsp27_tracker_reconciliation`, 33). `down_revision`
   points at the prior head's real (already-valid) id, so only a NEW revision id can trip this.
   (Verified 2026-07-27, WS-P2.7 Inc 2 migration 0019.)
+
+- **Four things the LOCAL recovery drills structurally cannot exercise, all found by running them
+  against production on 2026-07-27 (ADR-0005 disposition A, 5/5 PASS).** The local harness seeds
+  and asserts in ways production does not permit, so a green local suite is silent on all of these.
+  (1) **`seed_unit`'s seeding ROUTES are UNREACHABLE in production — but the functions behind them
+  are not dead, so be precise about which is which.** `POST /api/v1/revisions` and
+  `/revisions/{id}/work-units` both call `_require_human` (`services/packages.py`) but sit on the
+  M2M-only `orchestrator-api` Traefik router — so a browser gets 401 (identity stripped) and a
+  SYSTEM bearer is rejected as non-human. **No actor can reach those two routes.** Their only
+  callers are the `orchestrator register-revision` / `register-unit` CLI commands and
+  `scripts/drill_common.sh`; the defaults `intake_source="manual_ws31"` /
+  `activation_source="legacy_manual"` mark them as the WS-3.1 manual bootstrap path, superseded by
+  intake → decomposition in WS-3.2. The *service functions* `register_revision` and
+  `register_approved_unit` remain load-bearing — reached constantly via
+  `services/package_intake.py` (POST `/package-intakes`) and `services/decomposition.py`
+  (decomposition approval). So production units must be born through intake → decomposition →
+  `/review` approval, and the two shipped CLI commands above cannot work against production at all.
+  Corollary: an intake needs a genuinely
+  approved intent package — `package.yaml` + `lineage.yaml`, `status == current_state == approved`,
+  exactly one lineage approval whose hash equals `canonical_package_hash(package)`, plus a real git
+  HEAD commit. It cannot be synthesized. The lighter `intake_purpose="protocol_fixture"` lane does
+  NOT help: `packages.py` raises `protocol_fixture_not_executable` — fixtures can be intaken but can
+  never create work units.
+  (2) **Release-artifact binding validates `package_revision_hash` against the approved revision**
+  (`release_artifact_package_hash_mismatch`). The local drill passes a synthetic `sha256:drill4` and
+  succeeds only because its seeded revision matches by construction.
+  (3) **`docker kill` does NOT auto-restart a container whose restart policy is `unless-stopped`** —
+  the daemon records an explicit kill as a manual stop, so the policy deliberately does not fire.
+  A crash drill must pair the kill with an explicit `docker start`; assuming the policy recovers it
+  leaves production down (it did, ~2 minutes).
+  (4) **A FAILED or COMPLETED unit is absent from `GET /api/v1/in-flight-units`**, which is the only
+  read surface carrying `version` — as are DRAFT units. For any unit that is not in flight, POST with
+  `expected_version: 0` and read `current_version` off the `version_conflict` error, then retry.
+  That is the documented client contract, not a workaround. (Note the probe body must be otherwise
+  VALID, or FastAPI 422s on schema validation before the service ever raises `version_conflict`.)
+  Evidence: `~/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md`;
+  per-drill production variants in `docs/operations/production-drill-adaptations.md`.
