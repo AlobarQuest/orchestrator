@@ -87,6 +87,21 @@ def test_system_can_upsert_and_anyone_authed_can_list(db_client: TestClient) -> 
     assert any(row["work_unit_id"] == unit_id for row in listing.json())
 
 
+def test_worker_can_read_tracker_bindings(db_client: TestClient) -> None:
+    unit_id = _make_work_unit(db_client, "worker-read")
+
+    resp = db_client.post(
+        f"/api/v1/work-units/{unit_id}/tracker-binding",
+        headers=SYSTEM,
+        json=_binding_body(idempotency_key="tracker-binding-worker-read"),
+    )
+    assert resp.status_code == 200, resp.text
+
+    listing = db_client.get("/api/v1/tracker-bindings", headers=WORKER)
+    assert listing.status_code == 200
+    assert any(row["work_unit_id"] == unit_id for row in listing.json())
+
+
 def test_unauthenticated_post_is_401(db_client: TestClient) -> None:
     unit_id = _make_work_unit(db_client, "unauth")
 

@@ -75,6 +75,9 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # WS-P2.7: the tracker-projection adapter's report of the external item a unit is
         # mirrored onto. SYSTEM-written, same reasoning as pr-binding above.
         "/api/v1/work-units/{unit_id}/tracker-binding",
+        # WS-P2.7 Inc-2: inbound tracker reconciliation. SYSTEM-only, report-only -- records
+        # append-only divergence conditions, never a transition.
+        "/api/v1/reconciliation/tracker-detect",
         "/api/v1/knowledge-promotion-proposals",
         "/api/v1/knowledge-promotion-proposals/{proposal_id}/submit-to-brain",
         "/api/v1/work-units/{unit_id}/commands/{command}",

@@ -950,6 +950,26 @@ class ReconciliationDetectResponse(BaseModel):
     suppressed_duplicates: int
 
 
+class TrackerReconciliationDetectItem(BaseModel):
+    """One bound tracker item's observed completion state, reported by the adapter.
+
+    Normalized state only -- never card text. The orchestrator owns the divergence rule; this
+    carries no interpretation.
+    """
+
+    tracker_system: str
+    external_item_id: str = Field(min_length=1)
+    observed_completed: bool
+
+
+class TrackerReconciliationDetectCommand(CommandBase):
+    """Inbound tracker reconciliation: a batch of observed item states. Conditions dedup on the
+    divergence hash regardless of the idempotency key, so a duplicate delivery surfaces as
+    suppressed_duplicates rather than a second row."""
+
+    observed_states: list[TrackerReconciliationDetectItem]
+
+
 class DeadLetterEntryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
