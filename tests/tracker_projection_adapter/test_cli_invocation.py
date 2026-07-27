@@ -19,9 +19,12 @@ def test_project_is_a_named_command() -> None:
     assert top.exit_code == 0
     assert "project" in top.output
 
-    sub = runner.invoke(app, ["project", "--help"])
-    assert sub.exit_code == 0
-    assert "--todoist-project-id" in sub.output
+    # `project` parses as a named subcommand: `project --help` exits 0. The collapsed-lone-command
+    # regression would instead reject "project" as an unexpected argument (exit code 2). We assert
+    # exit codes, not help-body text, because Typer/rich wraps help output to the terminal width —
+    # a width-dependent substring match passes on a wide local terminal and fails in narrow CI.
+    assert runner.invoke(app, ["project", "--help"]).exit_code == 0
+    assert runner.invoke(app, ["project", "--nonsense-flag"]).exit_code == 2
 
 
 def test_project_dry_run_reads_and_makes_no_writes(monkeypatch) -> None:
