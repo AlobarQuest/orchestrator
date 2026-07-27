@@ -543,3 +543,32 @@ style of that module.
   digest after Coolify swaps. A plain `docker build .` with no `registry` context fails at
   `COPY --from=registry` — that is expected, not a Dockerfile bug. (Verified 2026-07-25, WS-P2.5
   Inc 2 deploy. Automation added 2026-07-26, image-build-automation workstream.)
+
+- **A single-element closed-vocabulary tuple breaks a SQL `IN (...)` CHECK built with `!r`.**
+  The established pattern for a closed vocabulary is `CheckConstraint(f"col IN {VOCAB!r}")` — and
+  it is correct ONLY because every existing vocab (`RECONCILIATION_OBSERVATION_KINDS`,
+  `RECONCILIATION_CONDITION_TYPES`, `WAIVER_RISK_CLASSES`, …) has ≥2 members. A **one-element**
+  tuple's `repr` carries a trailing comma — `('todoist',)` — so `f"col IN {('todoist',)!r}"`
+  renders `col IN ('todoist',)`, which is a **syntax error** in Postgres, not merely ugly. Build
+  the list explicitly for a single-element (or any) vocabulary:
+  `"col IN ({})".format(", ".join(f"'{v}'" for v in VOCAB))`, and apply the SAME construction in
+  BOTH the model `__table_args__` and the Alembic migration (migrations inline a frozen copy of
+  the tuple; they do not import the model constant). (Verified 2026-07-26, WS-P2.7 `TRACKER_SYSTEMS
+  = ("todoist",)` — caught by the per-task review before merge.)
+
+- **`make check` runs whole-repo architecture scans that per-task `ruff check` and the diff-scoped
+  Stop hook never execute — beyond the ws32/ws33 word guards and the route-inventory family, two
+  more will red a green-looking per-task change.** (1) **`test_unreachable_guards.py`** import-
+  resolves every public `kernel`/`services` function and fails if one has no production entry
+  point: a new service function must be reached by a real caller (a route, another service) or be
+  made private / deleted — and "a test calls it" is explicitly NOT a valid reason (the guard's own
+  message says so). A fix that removes a function's *only* caller silently orphans it, so **after
+  any refactor that drops a caller, re-run this guard.** (2) **`test_wsp21_invariant_scan.py`** is
+  the repo-wide outbound-egress scan: any file that imports an HTTP client (`httpx`, …) must be in
+  `OUTBOUND_ALLOWLIST` with a reason, because the orchestrator is push-only. A new out-of-process
+  runner/adapter package that legitimately speaks HTTP (e.g. `src/tracker_projection_adapter/`,
+  like `src/reconciliation_runner/` before it) must (a) register its egress files in that
+  allowlist and (b) ship its own isolation test asserting it imports nothing from `orchestrator.*`
+  and confines its third-party deps. Both of these are whole-repo scans: only a full `make check`
+  runs them, so a per-task loop can look green and still break CI. (Verified 2026-07-26, WS-P2.7 —
+  both reddened the final gate after every per-task review passed.)
