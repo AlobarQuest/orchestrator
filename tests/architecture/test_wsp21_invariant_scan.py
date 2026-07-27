@@ -96,9 +96,9 @@ OUTBOUND_ALLOWLIST = {
     # The WS-P2.7 tracker projection adapter is a SEPARATE program (ADR-0003), the same
     # report-only-runner shape as ADR-0002. It reads canonical state and projects it onto Todoist;
     # projecting is its entire job. It shares no import path with src/orchestrator/, and its write
-    # surface is the single-endpoint allowlist enforced in code by ALLOWED_WRITE_PATTERN in
-    # orchestrator_client.py and in tests by test_tracker_projection_adapter_isolation.py. Its
-    # egress is not the orchestrator's.
+    # surface is the two-endpoint, both-report-only allowlist enforced in code by
+    # _is_allowed_write in orchestrator_client.py and in tests by
+    # test_tracker_projection_adapter_isolation.py. Its egress is not the orchestrator's.
     Path("src/tracker_projection_adapter/orchestrator_client.py"),
     Path("src/tracker_projection_adapter/tracker.py"),
 }

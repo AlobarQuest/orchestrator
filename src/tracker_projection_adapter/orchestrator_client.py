@@ -1,8 +1,11 @@
 """The adapter's HTTP client for the orchestrator. The write surface is enforced HERE, in code.
 
-The adapter may READ canonical state and WRITE exactly one thing: a unit's tracker-item
-binding. Every other path -- commands, evidence, adjudications, observations, release
-artifacts -- is structurally unreachable. The tracker is projection, never canonical.
+The adapter may READ canonical state and WRITE exactly two things: a unit's tracker-item
+binding, and an append-only inbound reconciliation report. Every other path -- commands,
+evidence, adjudications, observations, release artifacts -- is structurally unreachable.
+Both permitted writes are provably non-canonical (exit #9): the tracker is projection, never
+canonical, and the reconciliation report only records observed divergence -- it never mutates
+lifecycle state itself.
 """
 
 from __future__ import annotations
@@ -14,10 +17,19 @@ import httpx
 
 STATUS_LEDGER_ENDPOINT = "/api/v1/status-ledger"
 TRACKER_BINDINGS_ENDPOINT = "/api/v1/tracker-bindings"
-# The ONLY write the adapter may make. Concrete: /api/v1/work-units/<uuid>/tracker-binding.
-# `\Z` (not `$`) so a trailing newline cannot slip through: this pattern is the sole in-process
-# gate on the adapter's full-SYSTEM bearer, so it matches the whole string exactly.
-ALLOWED_WRITE_PATTERN = re.compile(r"^/api/v1/work-units/[0-9a-fA-F-]{36}/tracker-binding\Z")
+# The tracker-binding write: /api/v1/work-units/<uuid>/tracker-binding. `\Z` (not `$`) so a
+# trailing newline cannot slip through.
+TRACKER_BINDING_PATTERN = re.compile(r"^/api/v1/work-units/[0-9a-fA-F-]{36}/tracker-binding\Z")
+# WS-P2.7 Inc-2: the inbound report. Report-only -- it records append-only divergence conditions
+# and can never change canonical state (exit #9). Fixed path, so an exact-string gate.
+TRACKER_DETECT_ENDPOINT = "/api/v1/reconciliation/tracker-detect"
+
+
+def _is_allowed_write(path: str) -> bool:
+    """The adapter's TWO permitted writes, both provably non-canonical (a projection binding and
+    an append-only reconciliation report). Every lifecycle/command/adjudication/observation path
+    stays structurally unreachable."""
+    return path == TRACKER_DETECT_ENDPOINT or bool(TRACKER_BINDING_PATTERN.match(path))
 
 
 class ProjectionError(RuntimeError):
@@ -78,8 +90,20 @@ class OrchestratorClient:
             },
         )
 
+    def report_tracker_reconciliation(
+        self, *, observed_states: list[dict[str, Any]], idempotency_key: str
+    ) -> dict[str, Any]:
+        return self.post(
+            TRACKER_DETECT_ENDPOINT,
+            {
+                "observed_states": observed_states,
+                "idempotency_key": idempotency_key,
+                "expected_version": 0,
+            },
+        )
+
     def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if not ALLOWED_WRITE_PATTERN.match(path):
+        if not _is_allowed_write(path):
             raise ForbiddenEndpointError(f"the adapter may not write to {path}")
         return self._request("POST", path, json=payload).json()
 

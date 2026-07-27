@@ -3,7 +3,14 @@
 import ast
 from pathlib import Path
 
-from tracker_projection_adapter.orchestrator_client import ALLOWED_WRITE_PATTERN
+import httpx
+import pytest
+
+from tracker_projection_adapter.orchestrator_client import (
+    ForbiddenEndpointError,
+    OrchestratorClient,
+    _is_allowed_write,
+)
 
 ADAPTER = Path("src/tracker_projection_adapter")
 ORCHESTRATOR = Path("src/orchestrator")
@@ -50,13 +57,30 @@ def test_adapter_third_party_deps_are_confined() -> None:
     assert offenders == set()
 
 
-def test_write_pattern_matches_only_tracker_binding() -> None:
-    uid = "123e4567-e89b-12d3-a456-426614174000"
-    assert ALLOWED_WRITE_PATTERN.match(f"/api/v1/work-units/{uid}/tracker-binding")
-    for forbidden in (
-        f"/api/v1/work-units/{uid}/commands/ready",
-        f"/api/v1/work-units/{uid}/evidence",
-        "/api/v1/observations",
-        f"/api/v1/work-units/{uid}/adjudications",
-    ):
-        assert not ALLOWED_WRITE_PATTERN.match(forbidden)
+def test_write_surface_allows_only_the_two_report_only_endpoints() -> None:
+    assert _is_allowed_write(
+        "/api/v1/work-units/00000000-0000-0000-0000-000000000000/tracker-binding"
+    )
+    assert _is_allowed_write("/api/v1/reconciliation/tracker-detect")
+    assert not _is_allowed_write(
+        "/api/v1/work-units/00000000-0000-0000-0000-000000000000/commands/ready"
+    )
+    assert not _is_allowed_write("/api/v1/observations")
+
+
+def test_a_forbidden_write_never_reaches_the_transport() -> None:
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        return httpx.Response(200, json={})
+
+    client = OrchestratorClient(
+        base_url="https://x",
+        credential_key_id="orchestrator-system",
+        token="t",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ForbiddenEndpointError):
+        client.post("/api/v1/work-units/00000000-0000-0000-0000-000000000000/commands/ready", {})
+    assert seen == []
