@@ -1,4 +1,5 @@
 from tracker_projection_adapter.projection import (
+    Action,
     BindingView,
     UnitView,
     plan_actions,
@@ -25,8 +26,9 @@ def test_new_active_unit_is_created():
 
 
 def test_new_terminal_unit_without_binding_is_skipped():
-    actions = plan_actions([_unit("u1", "completed")], [])
-    assert actions[0].kind == "skip"
+    unit = _unit("u1", "completed")
+    actions = plan_actions([unit], [])
+    assert actions[0] == Action("skip", unit, None)
 
 
 def test_changed_active_unit_is_updated():
@@ -35,8 +37,10 @@ def test_changed_active_unit_is_updated():
 
 
 def test_unchanged_unit_is_skipped():
-    actions = plan_actions([_unit("u1", "ready")], [_binding("u1", "ready")])
-    assert actions[0].kind == "skip"
+    unit = _unit("u1", "ready")
+    binding = _binding("u1", "ready")
+    actions = plan_actions([unit], [binding])
+    assert actions[0] == Action("skip", unit, binding)
 
 
 def test_terminal_unit_with_stale_binding_is_completed():

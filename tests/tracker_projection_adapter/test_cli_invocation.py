@@ -54,3 +54,44 @@ def test_missing_token_exits_nonzero(monkeypatch) -> None:
     monkeypatch.delenv("TRACKER_PROJECTION_TOKEN", raising=False)
     result = runner.invoke(app, ["project", "--dry-run", "--todoist-project-id", "proj-1"])
     assert result.exit_code == 1
+
+
+class FakeClient:
+    def __init__(self, **kwargs: object) -> None:
+        self.reported: list[dict] = []
+
+    def tracker_bindings(self) -> list[dict]:
+        return []
+
+    def report_tracker_reconciliation(self, *, observed_states, idempotency_key) -> dict:
+        self.reported = observed_states
+        return {}
+
+
+class FakeProjectorCM:
+    def __init__(self, completed: dict) -> None:
+        self._completed = completed
+
+    def __enter__(self) -> "FakeProjectorCM":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def item_completed(self, item_ref) -> bool:
+        return self._completed[item_ref.external_item_id]
+
+
+def test_reconcile_is_a_named_command() -> None:
+    assert runner.invoke(app, ["reconcile", "--help"]).exit_code == 0
+    assert runner.invoke(app, ["reconcile", "--nonsense-flag"]).exit_code == 2
+
+
+def test_reconcile_dry_run_runs(monkeypatch) -> None:
+    monkeypatch.setenv("TRACKER_PROJECTION_TOKEN", "t")
+    monkeypatch.setenv("TODOIST_API_TOKEN", "tt")
+    monkeypatch.setattr(cli, "OrchestratorClient", lambda **kw: FakeClient(bindings=[]))
+    monkeypatch.setattr(cli, "TodoistProjector", lambda **kw: FakeProjectorCM(completed={}))
+    result = runner.invoke(app, ["reconcile", "--dry-run", "--todoist-project-id", "p"])
+    assert result.exit_code == 0
+    assert '"reported": 0' in result.output
