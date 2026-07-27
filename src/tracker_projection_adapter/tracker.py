@@ -13,7 +13,10 @@ import httpx
 
 from tracker_projection_adapter.projection import UnitView
 
-TODOIST_API_BASE = "https://api.todoist.com/rest/v2"
+# Todoist's unified v1 API. The older REST v2 API (`/rest/v2`) was retired and now returns
+# 410 Gone; v1 keeps the same task create/close request shapes (create returns the task `id`
+# with no `url` field; `/close` returns 204).
+TODOIST_API_BASE = "https://api.todoist.com/api/v1"
 
 
 @dataclass(frozen=True)
