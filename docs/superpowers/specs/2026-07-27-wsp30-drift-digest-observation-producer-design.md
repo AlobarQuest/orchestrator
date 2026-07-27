@@ -26,7 +26,7 @@ sources, and no change to the drift loop's existing outputs.
 |---|---|
 | Production serves the route | `GET https://sds.alobar.net/openapi.json` → 57 paths, including `POST`/`GET /api/v1/observations`. No orchestrator deploy is required. |
 | The tail has no producer | `GET /api/v1/observations` (SYSTEM bearer) returns **2** rows, both dated 2026-07-09, `recorded_by` = `ws61-closeout-system` and `claude-code-interactive` — hand-posted closeout artifacts. The backlog item's word "empty" is imprecise; the substance (zero external producers) holds. |
-| `drift-reconciler` is in the baked bundle | `git show 65655ddf:registry/agents/drift-reconciler.yaml` exists; `registry/agents/` holds 13 files at the pinned revision. `runtime: node-executor`, so it passes `_m2m_credentials` validation (`main.py:141`). **No image rebuild is needed to attribute observations to it.** |
+| `drift-reconciler` is in the bundle **the running image actually carries** | Asked production, not git: `docker exec <orchestrator> python3 -c "…/app/registry-bundle.json"` on image `8da4af3-wsp27inc2-amd64` reports `source_revision 65655ddf58b8f4401262f3192270515ef88b14f7` — identical to `security-standards.pin.toml` — 13 actors, `drift-reconciler` present, `runtime: node-executor` (so it also passes the human-runtime rejection in `_m2m_credentials`, `main.py:141`). **No image rebuild is needed to attribute observations to it.** See §6 for why this had to be a production check rather than a git check. |
 | Authorization is role-only | `ActorContext` is `(actor_id, role)`; `_authorize_actor` (`services/observations.py`) gates on `role is ActorRole.SYSTEM`. A dedicated credential therefore buys attribution and independent revocability, **not** least privilege. |
 | The producer's existing POST is TypeScript, not curl | `drift-audit.sh:95-98` shells out to `dist/cli/change-mgr-cli.js`; the HTTP call is `fetch` in `src/change-manager/api-client.ts:49-67`. |
 | Per-instance facts already exist upstream | `instances.<key>.summary` in the report is already exactly `{total_proposals, by_risk, by_kind}` (`src/standards/report.ts:6-15`). |
@@ -189,6 +189,23 @@ The verification drill tests both, separately, so a passing "dedup" claim cannot
 wrong mechanism.
 
 ## 6. Credential rollout (orchestrator, production)
+
+**Pre-flight, before any env write: confirm the actor resolves in the bundle the running image
+carries.**
+
+```
+docker exec <orchestrator-container> python3 -c \
+  "import json; b=json.load(open('/app/registry-bundle.json')); \
+   print(b['source_revision'], 'drift-reconciler' in [a['agent_id'] for a in b['actors']])"
+```
+
+This is not ceremony. `_m2m_credentials` calls `registry.resolve(agent_id)` at startup and the
+registry is a bundle **baked into the image at build time**, not read live — so a credential naming
+an actor the running image does not carry is not a 401 on first use, it is a container that **will
+not boot**, discovered on restart. That is the same fail-closed shape as the WS-6.3 roles-write
+outage. Verifying against `security-standards.pin.toml` in git is *not* sufficient, because the
+running image may predate the pin; ask production. (Done 2026-07-27 — §2 row 3 — and it passed;
+re-run it if the image changes before rollout.)
 
 Generate a random bearer locally; store the value in BWS; put only `sha256(<bearer>)` into Coolify.
 The token value never enters a tracked file, prompt, log, or this document.
