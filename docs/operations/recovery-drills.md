@@ -1,14 +1,17 @@
 # Recovery drills
 
-Four scripted drills that put the orchestrator through the failures it is built to survive, and
+Five scripted drills that put the orchestrator through the failures it is built to survive, and
 check that it actually survives them. They exist because recovery controls that have never been
 exercised are a claim, not a capability.
 
-Run them quarterly, and after any change to claims, leases, evidence, or reconciliation.
+Run them quarterly, and after any change to claims, leases, evidence, or reconciliation. Run the
+exit-criteria attestation on the same cadence, and after any production image swap — it fails if
+any route-citing scorecard claim names a route production does not serve (remediation 0.5):
 
 ```bash
-scripts/run-drills.sh                          # all four, ~90 seconds
+scripts/run-drills.sh                          # all five, ~90 seconds
 scripts/drill-2-evidence-recovery.sh --keep    # one drill, leaving the scratch behind to inspect
+python3 scripts/attest_exit_criteria.py        # scorecard route claims vs live production OpenAPI
 ```
 
 (Not a `make` target: the Makefile is vendored from code-standards and a target added to it would
@@ -24,6 +27,7 @@ Exit 0 is PASS. Each drill prints every assertion it makes.
 | `drill-2-evidence-recovery.sh` | A worker's lease lapses after it did the work but before it could submit | Can an operator attach that work without redoing it — and without wedging the unit? |
 | `drill-3-external-pr-conflict.sh` | Someone merges the PR, or moves its head, behind our back | Do the alarms fire — and do they stay silent during normal iteration? |
 | `drill-4-deploy-split-brain.sh` | A deploy lands; its post-deploy verification never finishes | Does the detect-pass find a divergence that nobody will report? |
+| `drill-5-stalled-approval.sh` | A unit reaches a human approval gate and the human never answers | Is the stalled gate surfaced in the dead-letter view instead of sitting silent forever? |
 
 ## Safety
 
