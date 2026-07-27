@@ -4,6 +4,7 @@ import pytest
 from tracker_projection_adapter.orchestrator_client import (
     ForbiddenEndpointError,
     OrchestratorClient,
+    _is_allowed_write,
 )
 
 
@@ -60,3 +61,46 @@ def test_write_to_a_transition_path_is_forbidden():
         client.post("/api/v1/work-units/123e4567-e89b-12d3-a456-426614174000/commands/ready", {})
     with pytest.raises(ForbiddenEndpointError):
         client.post("/api/v1/observations", {})
+
+
+def test_report_tracker_reconciliation_posts_to_the_allowed_endpoint():
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, request.url.path))
+        return httpx.Response(
+            200,
+            json={
+                "conditions_recorded": 0,
+                "skipped_correlations": 0,
+                "suppressed_duplicates": 0,
+            },
+        )
+
+    client = OrchestratorClient(
+        base_url="https://x",
+        credential_key_id="orchestrator-system",
+        token="t",
+        transport=httpx.MockTransport(handler),
+    )
+    client.report_tracker_reconciliation(
+        observed_states=[
+            {"tracker_system": "todoist", "external_item_id": "tid-1", "observed_completed": True}
+        ],
+        idempotency_key="k",
+    )
+    assert seen == [("POST", "/api/v1/reconciliation/tracker-detect")]
+
+
+def test_write_surface_allows_only_the_two_report_only_endpoints():
+    assert _is_allowed_write(
+        "/api/v1/work-units/00000000-0000-0000-0000-000000000000/tracker-binding"
+    )
+    assert _is_allowed_write("/api/v1/reconciliation/tracker-detect")
+    for forbidden in (
+        "/api/v1/work-units/00000000-0000-0000-0000-000000000000/commands/ready",
+        "/api/v1/work-units/00000000-0000-0000-0000-000000000000/evidence",
+        "/api/v1/observations",
+        "/api/v1/work-units/00000000-0000-0000-0000-000000000000/adjudications",
+    ):
+        assert not _is_allowed_write(forbidden)

@@ -53,6 +53,9 @@ class OrchestratorReader(Protocol):
         projected_state: str,
         idempotency_key: str,
     ) -> dict[str, Any]: ...
+    def report_tracker_reconciliation(
+        self, *, observed_states: list[dict[str, Any]], idempotency_key: str
+    ) -> dict[str, Any]: ...
 
 
 class _NullProjector:
@@ -69,6 +72,9 @@ class _NullProjector:
 
     def complete_item(self, item_ref: ItemRef) -> None:
         raise AssertionError("dry run must not complete tracker items")
+
+    def item_completed(self, item_ref: ItemRef) -> bool:
+        raise AssertionError("dry run must not read tracker item state")
 
 
 def _apply(
@@ -117,6 +123,37 @@ def project(
     return counts
 
 
+def reconcile(
+    client: OrchestratorReader,
+    projector: TrackerProjector,
+    *,
+    dry_run: bool,
+) -> dict[str, int]:
+    """Report each Todoist-bound item's observed completion. The orchestrator owns the divergence
+    rule; this only observes and reports (dumb adapter). Reading Todoist is non-mutating, so a dry
+    run still reads -- it only withholds the orchestrator report."""
+    observed_states = []
+    for row in client.tracker_bindings():
+        binding = binding_view(row)
+        if binding.tracker_system != "todoist":
+            continue
+        completed = projector.item_completed(
+            ItemRef(binding.external_item_id, binding.external_url)
+        )
+        observed_states.append(
+            {
+                "tracker_system": binding.tracker_system,
+                "external_item_id": binding.external_item_id,
+                "observed_completed": completed,
+            }
+        )
+    if not dry_run and observed_states:
+        client.report_tracker_reconciliation(
+            observed_states=observed_states, idempotency_key="tracker-detect-pass"
+        )
+    return {"reported": len(observed_states)}
+
+
 @app.command("project")
 def project_command(
     todoist_project_id: Annotated[str, typer.Option(help="Target Todoist project id.")],
@@ -145,4 +182,30 @@ def project_command(
             review_base_url=review_base_url,
         )
         counts = project(client, projector, dry_run=False)
+    typer.echo(json.dumps(counts, indent=2, sort_keys=True))
+
+
+@app.command("reconcile")
+def reconcile_command(
+    todoist_project_id: Annotated[str, typer.Option(help="Target Todoist project id.")],
+    orchestrator_url: Annotated[str, typer.Option()] = "https://sds.alobar.net",
+    review_base_url: Annotated[str, typer.Option()] = "https://sds.alobar.net",
+    credential_key_id: Annotated[str, typer.Option()] = "orchestrator-system",
+    dry_run: Annotated[bool, typer.Option(help="Read + print the plan; send no report.")] = False,
+) -> None:
+    token = os.environ.get("TRACKER_PROJECTION_TOKEN")
+    if not token:
+        typer.echo("TRACKER_PROJECTION_TOKEN is required", err=True)
+        raise typer.Exit(code=1)
+    todoist_token = os.environ.get("TODOIST_API_TOKEN")
+    if not todoist_token:
+        typer.echo("TODOIST_API_TOKEN is required", err=True)
+        raise typer.Exit(code=1)
+    client = OrchestratorClient(
+        base_url=orchestrator_url, credential_key_id=credential_key_id, token=token
+    )
+    with TodoistProjector(
+        token=todoist_token, project_id=todoist_project_id, review_base_url=review_base_url
+    ) as projector:
+        counts = reconcile(client, projector, dry_run=dry_run)
     typer.echo(json.dumps(counts, indent=2, sort_keys=True))

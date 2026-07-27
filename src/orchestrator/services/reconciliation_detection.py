@@ -25,6 +25,7 @@ from orchestrator.persistence.models import (
     DeploymentObservation,
     Observation,
     ReleaseArtifactBinding,
+    UnitTrackerBinding,
     WorkUnit,
 )
 from orchestrator.services.lifecycle import ActorContext
@@ -42,6 +43,20 @@ DEPLOY_SPLIT_BRAIN = "deploy_split_brain"
 DIGEST_DIVERGENCE = "digest_divergence"
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
+
+TRACKER_OBSERVATION_KIND = "tracker"
+TRACKER_STATE_DIVERGENCE = "tracker_state_divergence"
+# The mirror of the outbound projection's card-closed set (adapter TERMINAL_STATES). A card the
+# projection itself closes (unit completed/cancelled) is agreement; a completed card in any other
+# state is a human edit. Coupled to the adapter set by test_tracker_closed_states_sync.py.
+TRACKER_CLOSED_STATES = frozenset({"completed", "cancelled"})
+
+
+@dataclass(frozen=True)
+class ObservedTrackerItem:
+    tracker_system: str
+    external_item_id: str
+    observed_completed: bool
 
 
 @dataclass(frozen=True)
@@ -570,3 +585,91 @@ def _correlated_binding(
     except ValueError:
         return None
     return session.get(ReleaseArtifactBinding, binding_id)
+
+
+def _tracker_binding(
+    session: Session, tracker_system: str, external_item_id: str
+) -> UnitTrackerBinding | None:
+    return session.scalar(
+        select(UnitTrackerBinding).where(
+            UnitTrackerBinding.tracker_system == tracker_system,
+            UnitTrackerBinding.external_item_id == external_item_id,
+        )
+    )
+
+
+def _record_tracker(
+    session: Session,
+    actor: ActorContext,
+    unit: WorkUnit,
+    binding: UnitTrackerBinding,
+) -> DetectionCounters:
+    outcome = record_reconciliation_condition(
+        session,
+        ConditionCommand(
+            actor=actor,
+            work_unit_id=unit.id,
+            observation_kind=TRACKER_OBSERVATION_KIND,
+            condition_type=TRACKER_STATE_DIVERGENCE,
+            key_facts={
+                "tracker_system": binding.tracker_system,
+                "external_item_id": binding.external_item_id,
+            },
+            stored_state={
+                "canonical_state": unit.state,
+                "projected_state": binding.projected_state,
+            },
+            observed_state={"completed": True},
+            detail=(
+                "tracker item was completed outside the orchestrator while the unit was not in a "
+                "closed state (completed/cancelled)"
+            ),
+            observation_id=None,
+        ),
+    )
+    if isinstance(outcome, DomainError):
+        return SKIPPED
+    if not isinstance(outcome, ConditionOutcome):  # pragma: no cover - defensive
+        return SKIPPED
+    if outcome.suppressed:
+        return DetectionCounters(suppressed_duplicates=1)
+    return DetectionCounters(conditions_recorded=1)
+
+
+def _detect_tracker_item(
+    session: Session, actor: ActorContext, item: ObservedTrackerItem
+) -> DetectionCounters:
+    if not item.observed_completed:
+        return DetectionCounters()  # open card: agreement, nothing to record
+    binding = _tracker_binding(session, item.tracker_system, item.external_item_id)
+    if binding is None:
+        return SKIPPED
+    unit = session.get(WorkUnit, binding.work_unit_id)
+    if unit is None:
+        return SKIPPED
+    if unit.state in TRACKER_CLOSED_STATES:
+        return DetectionCounters()  # projection closed this card: agreement
+    return _record_tracker(session, actor, unit, binding)
+
+
+def detect_tracker_conditions(
+    session: Session,
+    actor: ActorContext,
+    *,
+    observed_states: list[ObservedTrackerItem],
+) -> DetectionCounters:
+    """Inbound tracker reconciliation. Report-only: creates no unit and sets no lifecycle state.
+
+    Fail-open and counted: an unknown item is skipped and counted, never raised. Mirrors
+    detect_reconciliation_conditions. The tracker is never canonical -- a completed card that
+    disagrees with canonical state is surfaced as an append-only condition for an operator, never
+    applied.
+    """
+    counters = DetectionCounters()
+    for item in observed_states:
+        try:
+            counters += _detect_tracker_item(session, actor, item)
+        except Exception:
+            session.rollback()
+            counters += SKIPPED
+    return counters

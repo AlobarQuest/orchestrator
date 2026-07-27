@@ -572,3 +572,30 @@ style of that module.
   and confines its third-party deps. Both of these are whole-repo scans: only a full `make check`
   runs them, so a per-task loop can look green and still break CI. (Verified 2026-07-26, WS-P2.7 —
   both reddened the final gate after every per-task review passed.)
+
+- **The architecture-guard family has a FIFTH member the bullets above omit:
+  `test_cross_boundary_vocabulary.py` (WS-P2.16).** It AST-scans `src/orchestrator/` for every
+  module-level string collection (≥2 str members: a set/list/tuple/dict-keys/`frozenset(...)`)
+  that is used in an `x in S` membership test or `S.get(x)` — resolved ACROSS module boundaries by
+  import, not by bare name. Each such vocabulary must be EITHER registered in `VOCABULARY_REGISTRY`
+  (keyed `"<module-relpath>:<symbol>"`, value naming the cross-boundary source of truth) OR carry a
+  `# not-a-vocabulary: <reason>` marker on its definition. A genuine cross-boundary vocabulary
+  (one whose members must agree with another repo/subsystem) is REGISTERED, not marked exempt —
+  registering it is the correct handling, and an exemption that would read "a legitimate second
+  copy pinned elsewhere" means the predicate is wrong, not that the entry is justified. Structural
+  exclusions the predicate already handles (do NOT try to register these): DB-`CheckConstraint`-
+  pinned enums; derived/union collections (`frozenset(X["k"])`, `A | B` — not literals); and
+  vocabularies validated by SET ALGEBRA (`set(x) - KNOWN`, `.issubset`, `<=`, column `.in_()`)
+  rather than `in`/`.get`. It is a whole-repo scan (only `make check` runs it), so a per-task loop
+  looks green and still breaks the final gate. (Verified 2026-07-27, WS-P2.7 Inc 2 — the tracker
+  detector's `TRACKER_CLOSED_STATES = frozenset({...})`, a real cross-boundary mirror of the
+  adapter's `TERMINAL_STATES`, reddened it; the fix was to REGISTER it, sync-guarded to the adapter
+  set.)
+
+- **Alembic revision ids must be ≤32 characters — `alembic_version.version_num` is `varchar(32)`.**
+  A longer `revision = "…"` string does not fail at authoring time; it fails at RUNTIME when the row
+  is stamped, with `psycopg2.errors.StringDataRightTruncation` / `value too long for type character
+  varying(32)`, aborting `alembic upgrade`. Keep the descriptive-but-short form (e.g.
+  `0019_wsp27_tracker_recon`, 24 chars — not `0019_wsp27_tracker_reconciliation`, 33). `down_revision`
+  points at the prior head's real (already-valid) id, so only a NEW revision id can trip this.
+  (Verified 2026-07-27, WS-P2.7 Inc 2 migration 0019.)
