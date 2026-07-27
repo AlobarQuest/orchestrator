@@ -22,6 +22,18 @@ from tracker_projection_adapter.tracker import ItemRef, TodoistProjector, Tracke
 app = typer.Typer(no_args_is_help=True)
 
 
+@app.callback()
+def _cli() -> None:
+    """Outbound tracker projection adapter (WS-P2.7).
+
+    Defining a callback keeps the single ``project`` command named at the CLI — Typer
+    otherwise collapses a lone command into the top level, which would make the
+    ``tracker-projection-adapter project ...`` invocation used by
+    ``scripts/run-tracker-projection.sh`` fail. It also mirrors the reconciliation-runner
+    convention and leaves room for a second command (inbound, Increment 2).
+    """
+
+
 class OrchestratorReader(Protocol):
     """The read/write surface `project()` needs from an orchestrator client.
 
