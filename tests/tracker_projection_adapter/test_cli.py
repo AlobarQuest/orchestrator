@@ -102,6 +102,7 @@ def test_reconcile_reports_observed_completion_for_each_todoist_binding():
     )
     projector = FakeProjector(completed={"tid-1": True})
     counts = reconcile(client, projector, dry_run=False)
+    assert projector.calls == [("item_completed", "tid-1")]
     assert client.reported == [
         {"tracker_system": "todoist", "external_item_id": "tid-1", "observed_completed": True}
     ]
@@ -122,4 +123,5 @@ def test_reconcile_dry_run_makes_no_report():
     )
     projector = FakeProjector(completed={"tid-1": False})
     reconcile(client, projector, dry_run=True)
+    assert projector.calls == [("item_completed", "tid-1")]
     assert client.reported == []

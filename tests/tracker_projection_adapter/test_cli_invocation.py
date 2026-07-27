@@ -57,11 +57,12 @@ def test_missing_token_exits_nonzero(monkeypatch) -> None:
 
 
 class FakeClient:
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, bindings: list[dict] | None = None, **kwargs: object) -> None:
         self.reported: list[dict] = []
+        self._bindings = bindings or []
 
     def tracker_bindings(self) -> list[dict]:
-        return []
+        return self._bindings
 
     def report_tracker_reconciliation(self, *, observed_states, idempotency_key) -> dict:
         self.reported = observed_states
@@ -71,6 +72,7 @@ class FakeClient:
 class FakeProjectorCM:
     def __init__(self, completed: dict) -> None:
         self._completed = completed
+        self.calls: list[tuple] = []
 
     def __enter__(self) -> "FakeProjectorCM":
         return self
@@ -79,6 +81,7 @@ class FakeProjectorCM:
         return None
 
     def item_completed(self, item_ref) -> bool:
+        self.calls.append(("item_completed", item_ref.external_item_id))
         return self._completed[item_ref.external_item_id]
 
 
@@ -88,10 +91,27 @@ def test_reconcile_is_a_named_command() -> None:
 
 
 def test_reconcile_dry_run_runs(monkeypatch) -> None:
+    binding = {
+        "work_unit_id": "u1",
+        "tracker_system": "todoist",
+        "external_item_id": "tid-1",
+        "external_url": None,
+        "projected_state": "ready",
+    }
+    projectors: list[FakeProjectorCM] = []
+
+    def _make_projector(**kw: object) -> FakeProjectorCM:
+        projector = FakeProjectorCM(completed={"tid-1": False})
+        projectors.append(projector)
+        return projector
+
     monkeypatch.setenv("TRACKER_PROJECTION_TOKEN", "t")
     monkeypatch.setenv("TODOIST_API_TOKEN", "tt")
-    monkeypatch.setattr(cli, "OrchestratorClient", lambda **kw: FakeClient(bindings=[]))
-    monkeypatch.setattr(cli, "TodoistProjector", lambda **kw: FakeProjectorCM(completed={}))
+    client = FakeClient(bindings=[binding])
+    monkeypatch.setattr(cli, "OrchestratorClient", lambda **kw: client)
+    monkeypatch.setattr(cli, "TodoistProjector", _make_projector)
     result = runner.invoke(app, ["reconcile", "--dry-run", "--todoist-project-id", "p"])
     assert result.exit_code == 0
-    assert '"reported": 0' in result.output
+    assert '"reported": 1' in result.output
+    assert client.reported == []
+    assert projectors[0].calls == [("item_completed", "tid-1")]
