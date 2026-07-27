@@ -47,6 +47,22 @@ Three rules decide the sequence, and they are the reason this is not simply "P0 
 
 ---
 
+### Phase 0 status reconciliation — 2026-07-27
+
+This status supersedes the July 12 live-state claims above without deleting their historical
+evidence. (The 2026-07-13 stabilization checkpoint drafted this reconciliation as its Task 6; it
+was never executed. Applied 2026-07-27, updated for current facts.)
+
+| Item | Current state | Evidence |
+|---|---|---|
+| 0.1 | **satisfied** | Production has tracked `main` through the Wave-1/2 deploys; serving image era `1472f0b-wsp27-amd64` as of 2026-07-27 (WS-P2.7 Inc-1 closeout). The `d6d73b3` stale-image condition no longer holds. |
+| 0.2 | **satisfied** | All six named routes plus the tracker surface verified against live `https://sds.alobar.net/openapi.json` on 2026-07-27. |
+| 0.3 | **open** | No retained five-drill production run and HUMAN closeout exist. Disposition now proposed as ADR-0005 (`docs/decisions/0005-production-drill-disposition.md`); execution is a dedicated session after Devon accepts it. |
+| 0.4 | **closed 2026-07-27** | The program exit-criteria scorecard was reconciled the same day: #5 → NOT MET IN PRODUCTION, #7 → DEPLOYED NOT PRODUCTION-PROVEN, #3/#4/#12/#13 updated to their shipped status. See the Phase-2 master plan, Part 3. |
+| 0.5 | **in progress** | `scripts/attest_exit_criteria.py` + `docs/operations/exit-criteria-claims.toml` (this branch) machine-check every route-citing MET claim against live production OpenAPI. |
+
+---
+
 ## PHASE 1 — Stop the bleeding. Two small fixes, both in factory-runner.
 
 *Half a session. Both are ~10 lines. Every phase after this runs the factory, so these come first.*

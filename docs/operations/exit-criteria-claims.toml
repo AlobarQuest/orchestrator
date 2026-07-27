@@ -1,0 +1,41 @@
+# Route-citing claims from the Program Phase 2 exit-criteria scorecard
+# (~/docs/software-delivery-system/2026-07-09-program-phase2-post-mvp-plan.md, Part 3).
+#
+# This manifest is the machine-checkable side of remediation item 0.5: every scorecard cell
+# whose status rests on "this route is live in production" is listed here, and
+# scripts/attest_exit_criteria.py fails when production stops serving any of them.
+# When a scorecard cell gains or loses a route citation, update this file in the same change.
+
+[[claim]]
+criterion = 6
+status = "met"
+description = "Traceability query live in production"
+routes = ["/api/v1/traceability"]
+
+[[claim]]
+criterion = 7
+status = "deployed_not_production_proven"
+description = "Operator status and recovery controls served (behavior proof tracked by ADR-0005)"
+routes = [
+    "/api/v1/dead-letter",
+    "/api/v1/consistency-check",
+    "/api/v1/reconciliation/detect",
+    "/api/v1/work-units/{unit_id}/requeue",
+    "/api/v1/work-units/{unit_id}/attempts/{attempt}/recover-evidence",
+    "/api/v1/work-units/{unit_id}/pr-binding",
+]
+
+[[claim]]
+criterion = 9
+status = "inc1_met"
+description = "Tracker projection surface (outbound) live in production"
+routes = [
+    "/api/v1/work-units/{unit_id}/tracker-binding",
+    "/api/v1/tracker-bindings",
+]
+
+[[claim]]
+criterion = 13
+status = "met"
+description = "PR-binding chain surface live in production"
+routes = ["/api/v1/work-units/{unit_id}/pr-binding"]
