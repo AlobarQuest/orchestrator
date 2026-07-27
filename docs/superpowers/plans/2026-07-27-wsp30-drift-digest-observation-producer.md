@@ -67,6 +67,8 @@
 
 The three-file split in `src/orchestrator/` is deliberate and mirrors `src/change-manager/`: the normalizer is the only part with interesting logic and it is pure, so it is exhaustively testable without mocking anything.
 
+**`dist/` is tracked in this repo and is committed once, in Task 5.** Tasks 1–3 stage only their `src/` and `tests/` files and leave the compiled output untracked; Task 5 rebuilds and commits the whole `dist/` tree, because that is the commit where `drift-audit.sh` starts invoking `dist/cli/orchestrator-cli.js`. Do not add `dist/` to a Task 1–3 commit.
+
 ---
 
 ## Task 1: The observation normalizer
@@ -1187,7 +1189,27 @@ Expected in the log, all four present and in this order: the remediate rc line, 
 
 This run is also drill step 2 of Task 6 — record its output there.
 
-- [ ] **Step 4: Regenerate the BWS manifest**
+- [ ] **Step 4: Rebuild and stage the compiled output**
+
+`dist/` is **tracked in this repo** (364 files, not gitignored) and `drift-audit.sh` invokes
+`node "$REPO/dist/cli/<name>.js"` with no build step of its own. Tasks 1–3 deliberately left the
+compiled output untracked; this is the commit that makes the daily run depend on it, so the build
+output lands here. Without this step the branch merges green and the next 03:00 launchd run dies
+with `Cannot find module .../dist/cli/orchestrator-cli.js`.
+
+```bash
+cd ~/Projects/infraops-mcp-server
+npm run build
+git status --short dist/
+```
+
+Expected: `dist/orchestrator/observation.js`, `dist/orchestrator/api-client.js`,
+`dist/cli/orchestrator-cli.js` and their `.d.ts` / `.map` siblings, all untracked. Stage the whole
+`dist/` directory in Step 6 — if `git status` shows modifications to *other* subsystems' compiled
+files, that is a pre-existing stale-build difference: include them, since a half-rebuilt `dist/` is
+worse than a fully rebuilt one, and say so in the commit message.
+
+- [ ] **Step 5: Regenerate the BWS manifest**
 
 Now that the UUID is referenced by runtime code, the generator will pick it up.
 
@@ -1211,11 +1233,11 @@ PYTHONPATH="$HOME/Projects/security-standards/src" python3 -m security_scan.cli 
 
 Expected: no BLOCK findings for `bws.secret-manifest-present` or `bws.manifest-matches-usage`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 cd ~/Projects/infraops-mcp-server
-git add scripts/drift-audit.sh .bws-secrets.toml
+git add scripts/drift-audit.sh .bws-secrets.toml dist/
 git commit -m "feat(wsp30): post the daily drift digest to the orchestrator
 
 One added best-effort block after the change-manager sync. Touches neither RC
