@@ -233,10 +233,7 @@ def _intake_replay(
     if (
         event.action != _INTAKE_ACTION
         or event.subject_type != "work_package_revision"
-        or (
-            observed != expected
-            and not _legacy_executable_identity_matches(observed, expected, command)
-        )
+        or (observed != expected and not _legacy_identity_matches(observed, expected, command))
     ):
         raise _idempotency_conflict()
     revision = session.get(WorkPackageRevision, event.subject_id)
@@ -245,32 +242,37 @@ def _intake_replay(
     return revision
 
 
-def _legacy_executable_identity_matches(
+def _legacy_identity_matches(
     observed: object,
     expected: dict[str, Any],
     command: PackageIntakeCommand,
 ) -> bool:
-    if command.intake_purpose != "executable" or not isinstance(observed, dict):
+    """True when `observed` is `expected` minus exactly the keys a known legacy shape lacks.
+
+    Two independent legacy dimensions, each handled only when the OBSERVED (stored) event
+    actually lacks the key -- never unconditionally, or an event that legitimately carries the
+    key would mismatch because `legacy` would then lack a key `observed` still has:
+
+    - `follow_up` (WS-P2.8) applies to EVERY intake_purpose. Both the executable and
+      protocol_fixture lanes could have been registered before follow_up existed, so an event
+      from either lane may be missing only that key.
+    - `intake_purpose` (pre-existing) only ever applied to the executable lane: protocol_fixture
+      intake did not exist before intake_purpose did, so a protocol_fixture event has always
+      carried it and never needs this exemption. The `verification_limitations` normalization
+      that goes with it is scoped the same way, for the same reason.
+    """
+    if not isinstance(observed, dict):
         return False
     legacy = dict(expected)
-    # Pop each newer key only when the OBSERVED (stored) event actually lacks it -- not
-    # unconditionally. Production carries at least two legacy shapes: events written before
-    # intake_purpose existed (missing both keys) and events written after intake_purpose
-    # shipped but before follow_up did (carrying intake_purpose, missing only follow_up). An
-    # unconditional pop makes the second shape mismatch on intake_purpose alone, because
-    # legacy would then lack a key the observed payload still has.
-    if "intake_purpose" not in observed:
-        legacy.pop("intake_purpose", None)
-    # WS-P2.8: events written before the follow_up field existed carry no such key. Popping it
-    # keeps their replay a replay instead of a conflict; the field is only omittable when the
-    # command itself declares none, so a real declaration can never be silently ignored.
     if command.follow_up is None and "follow_up" not in observed:
         legacy.pop("follow_up", None)
-    expected_limitations = legacy.get("verification_limitations")
-    if isinstance(expected_limitations, dict):
-        expected_limitations = dict(expected_limitations)
-        expected_limitations.pop("protocol_fixture_only", None)
-        legacy["verification_limitations"] = expected_limitations
+    if command.intake_purpose == "executable" and "intake_purpose" not in observed:
+        legacy.pop("intake_purpose", None)
+        expected_limitations = legacy.get("verification_limitations")
+        if isinstance(expected_limitations, dict):
+            expected_limitations = dict(expected_limitations)
+            expected_limitations.pop("protocol_fixture_only", None)
+            legacy["verification_limitations"] = expected_limitations
     return observed == legacy
 
 

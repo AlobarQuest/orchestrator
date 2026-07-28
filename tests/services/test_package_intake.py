@@ -177,6 +177,122 @@ def test_a_pre_wsp28_intake_event_still_replays(migrated_session: Session) -> No
     assert replayed.id == revision.id
 
 
+def test_a_real_declaration_does_not_replay_against_a_legacy_event_missing_it(
+    migrated_session: Session,
+) -> None:
+    """Pins the predicate at `_legacy_identity_matches`: the follow_up pop only fires when
+    `command.follow_up is None`. A command carrying a REAL declaration must never silently
+    replay against a stored event that lacks the key -- flipping `and` to `or`, or deleting this
+    clause, would make every declaration replay-invisible with the rest of the suite still green.
+    """
+    command = intake_command(follow_up=FOLLOW_UP)
+    actor = human_actor()
+    revision = register_revision(
+        migrated_session,
+        package_id=command.package_id,
+        source_repository=command.source_repository,
+        revision=command.revision,
+        content_hash=command.content_hash,
+        source_path=command.source_path,
+        source_commit=command.source_commit,
+        approved_by=command.approved_by,
+        approved_at=command.approved_at,
+        approval_event_id=command.approval_event_id,
+        enforcement_snapshot={
+            **command.enforcement_snapshot,
+            "acceptance_criteria": ["AC-001"],
+        },
+        authority=command.authority,
+        registry_version=command.registry_version,
+        profile=command.profile,
+        status_at_intake=command.status_at_intake,
+        intake_source="package_cli",
+        approval_ledger_commit=command.approval_ledger_commit,
+        verification_mode=command.verification_mode,
+        verification_limitations=command.verification_limitations,
+        follow_up=command.follow_up,
+        actor_id=actor.actor_id,
+        actor_role=actor.role,
+        expected_version=command.expected_version,
+    )
+    legacy_identity = package_intake._command_identity(command, actor)
+    legacy_identity.pop("follow_up")
+    migrated_session.add(
+        Event(
+            actor_id=actor.actor_id,
+            action="package_revision.intake_registered",
+            subject_type="work_package_revision",
+            subject_id=revision.id,
+            payload={"command": legacy_identity},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=command.idempotency_key,
+        )
+    )
+    migrated_session.flush()
+
+    with pytest.raises(DomainError) as error:
+        register_package_intake(migrated_session, command, actor)
+
+    assert error.value.code == "idempotency_conflict"
+
+
+def test_a_command_without_a_declaration_does_not_replay_against_an_event_that_has_one(
+    migrated_session: Session,
+) -> None:
+    """Mirror of the above: a stored event carrying a follow_up declaration must not be treated
+    as a replay of a command that now declares none -- losing a value silently would be exactly
+    as wrong as gaining one silently.
+    """
+    command = intake_command()
+    actor = human_actor()
+    revision = register_revision(
+        migrated_session,
+        package_id=command.package_id,
+        source_repository=command.source_repository,
+        revision=command.revision,
+        content_hash=command.content_hash,
+        source_path=command.source_path,
+        source_commit=command.source_commit,
+        approved_by=command.approved_by,
+        approved_at=command.approved_at,
+        approval_event_id=command.approval_event_id,
+        enforcement_snapshot={
+            **command.enforcement_snapshot,
+            "acceptance_criteria": ["AC-001"],
+        },
+        authority=command.authority,
+        registry_version=command.registry_version,
+        profile=command.profile,
+        status_at_intake=command.status_at_intake,
+        intake_source="package_cli",
+        approval_ledger_commit=command.approval_ledger_commit,
+        verification_mode=command.verification_mode,
+        verification_limitations=command.verification_limitations,
+        actor_id=actor.actor_id,
+        actor_role=actor.role,
+        expected_version=command.expected_version,
+    )
+    stored_identity = package_intake._command_identity(command, actor)
+    stored_identity["follow_up"] = FOLLOW_UP
+    migrated_session.add(
+        Event(
+            actor_id=actor.actor_id,
+            action="package_revision.intake_registered",
+            subject_type="work_package_revision",
+            subject_id=revision.id,
+            payload={"command": stored_identity},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=command.idempotency_key,
+        )
+    )
+    migrated_session.flush()
+
+    with pytest.raises(DomainError) as error:
+        register_package_intake(migrated_session, command, actor)
+
+    assert error.value.code == "idempotency_conflict"
+
+
 def test_package_intake_rejects_draft_status(migrated_session: Session) -> None:
     with pytest.raises(DomainError) as error:
         register_package_intake(

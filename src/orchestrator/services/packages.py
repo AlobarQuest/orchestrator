@@ -225,6 +225,27 @@ def register_revision(
         "approval_ledger_commit": approval_ledger_commit,
         "verification_mode": verification_mode,
         "verification_limitations": _normalize_json(verification_limitations),
+        # WS-P2.8: follow_up joins the `revision.registered` event identity below (via `command`)
+        # with no legacy exemption -- unlike package_intake.py's `_legacy_identity_matches`. That
+        # is deliberate, not an oversight, for two independent reasons:
+        # 1. `_registration_replay` only compares identities when `idempotency_key` is not None.
+        #    The intake path (`package_intake.register_package_intake` -> this function) never
+        #    passes one -- its idempotency is enforced one layer up, by `_intake_replay`'s
+        #    command-identity comparison, which DOES carry the exemption. The only caller that
+        #    ever passes `idempotency_key` here is `POST /api/v1/revisions` (`create_revision`),
+        #    which is `_require_human`-gated on the M2M-only `orchestrator-api` router --
+        #    unreachable by any principal in production (a browser session gets 401 stripped by
+        #    the proxy; no M2M credential satisfies `_require_human`).
+        # 2. Even if that route were reachable, it is inert for an approved package for an
+        #    independent reason: intent-packages' `canonical.py::intent_core()` pops only
+        #    "status" before hashing, so `follow_up` IS inside `canonical_package_hash`. Changing
+        #    a package's declared follow_up changes its content_hash, which makes it a different
+        #    revision before this comparison is ever reached.
+        # This DOES still matter locally: the `orchestrator register-revision` CLI command and
+        # drill replays that pass a real idempotency_key against a pre-existing event will
+        # conflict on `follow_up` the same way this task exists to prevent on the intake path. If
+        # that path is ever wired to reachable production traffic, it needs the same exemption
+        # treatment `_legacy_identity_matches` gives the intake path.
         "follow_up": _normalize_json(follow_up),
         "registered_by": actor_id,
     }

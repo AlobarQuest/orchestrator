@@ -1,4 +1,5 @@
 import shutil
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from orchestrator.package_sources import (
     load_package_intake_payload,
     load_protocol_fixture_intake_payload,
 )
+from orchestrator.persistence.models import Event
 from orchestrator.services.decomposition import (
     DecompositionProposalCommand,
     ProposedUnit,
@@ -22,7 +24,7 @@ from orchestrator.services.decomposition import (
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.package_intake import PackageIntakeCommand, register_package_intake
-from orchestrator.services.packages import register_approved_unit
+from orchestrator.services.packages import register_approved_unit, register_revision
 from tests.services.test_package_intake import AUTHORITY, acceptance_criterion, human_actor
 
 
@@ -156,6 +158,76 @@ def test_protocol_fixture_registration_stores_fixture_source(
 
     assert revision.intake_source == "protocol_fixture"
     assert revision.status_at_intake == "closed"
+
+
+def test_a_protocol_fixture_pre_wsp28_intake_event_still_replays(
+    migrated_session: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The follow_up exemption is not executable-lane-only (Important 1, task-2 review): a
+    protocol_fixture intake event written before follow_up existed must also replay, not raise
+    idempotency_conflict. `_legacy_identity_matches` popped `intake_purpose` unconditionally
+    inside its (now-removed) executable-only guard, which meant the follow_up pop -- gated only
+    by `command.follow_up is None` -- never even ran for a protocol_fixture command.
+    """
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+    )
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
+    payload = load_protocol_fixture_intake_payload(
+        closed_fixture(tmp_path),
+        source_repository="AlobarQuest/intent-packages",
+    )
+    command = command_from_payload(payload)
+    actor = human_actor()
+    revision = register_revision(
+        migrated_session,
+        package_id=command.package_id,
+        source_repository=command.source_repository,
+        revision=command.revision,
+        content_hash=command.content_hash,
+        source_path=command.source_path,
+        source_commit=command.source_commit,
+        approved_by=command.approved_by,
+        approved_at=command.approved_at,
+        approval_event_id=command.approval_event_id,
+        enforcement_snapshot={
+            **command.enforcement_snapshot,
+            "acceptance_criteria": ["AC-001"],
+        },
+        authority=command.authority,
+        registry_version=command.registry_version,
+        profile=command.profile,
+        status_at_intake=command.status_at_intake,
+        intake_source="protocol_fixture",
+        approval_ledger_commit=command.approval_ledger_commit,
+        verification_mode=command.verification_mode,
+        verification_limitations=command.verification_limitations,
+        actor_id=actor.actor_id,
+        actor_role=actor.role,
+        expected_version=command.expected_version,
+    )
+    legacy_identity = package_intake._command_identity(command, actor)
+    legacy_identity.pop("follow_up")
+    migrated_session.add(
+        Event(
+            actor_id=actor.actor_id,
+            action="package_revision.intake_registered",
+            subject_type="work_package_revision",
+            subject_id=revision.id,
+            payload={"command": legacy_identity},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=command.idempotency_key,
+        )
+    )
+    migrated_session.flush()
+
+    replayed = register_package_intake(migrated_session, command, actor)
+
+    assert replayed.id == revision.id
 
 
 def test_protocol_fixture_revision_cannot_submit_decomposition(
