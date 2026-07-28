@@ -1314,7 +1314,8 @@ Expected: count increased by 2; both rows show `recorded_by drift-reconciler` �
 
 ```bash
 cd ~/Projects/infraops-mcp-server
-REPORT_DATE=$(ls ~/infra-drift/reports/*.json | tail -1 | xargs basename | sed 's/\.json$//')
+# Same trap as drill 4: exclude `.remediation.json` and other sidecars, take the plain daily report.
+REPORT_DATE=$(ls ~/infra-drift/reports/ | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}\.json$' | tail -1 | sed 's/\.json$//')
 GENERATED_AT=$(python3 -c "import json;print(json.load(open('$HOME/infra-drift/reports/$REPORT_DATE.json'))['generated_at'])")
 source ~/Projects/vps-backup/bws-token.sh
 ORCHESTRATOR_API_BASE=https://sds.alobar.net \
@@ -1332,8 +1333,12 @@ If the count grew instead, the idempotency key is not deterministic — stop and
 ```bash
 cd ~/Projects/infraops-mcp-server
 python3 - <<'PY'
-import json, os, pathlib
-src = sorted(pathlib.Path(os.path.expanduser('~/infra-drift/reports')).glob('*.json'))[-1]
+import json, os, pathlib, re
+# Match ONLY the plain daily audit report. A bare glob('*.json') sorts
+# `2026-07-28.remediation.json` after `2026-07-28.json`, and the remediation file has a
+# different schema with no `instances` key — picking it makes the CLI die on malformed input.
+reports = pathlib.Path(os.path.expanduser('~/infra-drift/reports'))
+src = sorted(p for p in reports.glob('*.json') if re.fullmatch(r'\d{4}-\d{2}-\d{2}\.json', p.name))[-1]
 report = json.loads(src.read_text())
 report['generated_at'] = '2026-07-27T23:59:59Z'
 out = pathlib.Path('/tmp/wsp30-drill/2026-07-27.json')
