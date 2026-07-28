@@ -7,7 +7,6 @@ import os
 from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol
 
-import httpx
 import typer
 
 from tracker_projection_adapter.orchestrator_client import OrchestratorClient
@@ -19,7 +18,12 @@ from tracker_projection_adapter.projection import (
     plan_actions,
     unit_view,
 )
-from tracker_projection_adapter.tracker import ItemRef, TodoistProjector, TrackerProjector
+from tracker_projection_adapter.tracker import (
+    PROJECTOR_ERRORS,
+    ItemRef,
+    TodoistProjector,
+    TrackerProjector,
+)
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -150,7 +154,7 @@ def reconcile(
             completed = projector.item_completed(
                 ItemRef(binding.external_item_id, binding.external_url)
             )
-        except (RuntimeError, KeyError, TypeError, ValueError, httpx.HTTPError):
+        except (*PROJECTOR_ERRORS, KeyError, TypeError, ValueError):
             skipped += 1
             continue
         observed_states.append(

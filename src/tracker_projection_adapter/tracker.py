@@ -25,6 +25,13 @@ class ItemRef:
     external_url: str | None
 
 
+# The failure surface a caller looping over items must tolerate per-item: `_get` raises
+# RuntimeError on a non-404 status, and httpx raises transport errors (ConnectTimeout,
+# ReadTimeout, ConnectError) before any status exists. Exported so a caller can catch them
+# without importing httpx and thereby claiming an egress capability it does not have.
+PROJECTOR_ERRORS = (RuntimeError, httpx.HTTPError)
+
+
 class TrackerProjector(Protocol):
     def create_item(self, unit: UnitView) -> ItemRef: ...
     def update_item(self, item_ref: ItemRef, unit: UnitView) -> ItemRef: ...
