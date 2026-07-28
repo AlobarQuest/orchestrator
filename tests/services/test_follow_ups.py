@@ -519,10 +519,11 @@ def test_one_malformed_declaration_does_not_abort_the_pass(
 def _poison_unit_key(session, revision: WorkPackageRevision) -> WorkUnit:
     """Occupies the exact `unit_key` `_mint` would use for this revision (`follow_up_unit_id`'s
     docstring names the `(work_package_revision_id, unit_key)` unique constraint as the backstop
-    for this), under a DIFFERENT capability so `evaluate_due`'s already-minted check -- which only
-    looks for `required_capability == FOLLOW_UP_CAPABILITY` -- does not short-circuit before
-    `_mint` is ever attempted. Settled (CANCELLED) so it does not itself block due-ness, and with
-    no settling event of its own, so it contributes nothing to the due-at computation."""
+    for this), under a DIFFERENT capability so `evaluate_due`'s already-minted check -- which now
+    requires BOTH `required_capability == FOLLOW_UP_CAPABILITY` and the derived `uuid5` id -- does
+    not short-circuit before `_mint` is ever attempted. Settled (CANCELLED) so it does not itself
+    block due-ness, and with no settling event of its own, so it contributes nothing to the
+    due-at computation."""
     unit = WorkUnit(
         work_package_revision_id=revision.id,
         unit_key=f"follow-up:{revision.id}",

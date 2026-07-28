@@ -23,7 +23,8 @@
 >    That made the capability authorable at unit ingress, and because the generated-follow-up
 >    predicates keyed on capability alone, an ordinary unit declaring it had its real acceptance
 >    criteria silently replaced by one human judgment call. Found by the final whole-branch review.
-> 2. **The capability-only predicate bodies in Tasks 4-5 are superseded.** The marker is now the
+> 2. **The capability-only predicate bodies in Tasks 3-5 are superseded** (including `evaluate_due`'s
+>    already-minted check, which is in Task 3, not 4)**.** The marker is now the
 >    derived identity `unit.id == follow_up_unit_id(unit.work_package_revision_id)` — a `uuid5` only
 >    the minting pass can produce. `follow_up_unit_id` lives in `services/lifecycle.py`.
 >
