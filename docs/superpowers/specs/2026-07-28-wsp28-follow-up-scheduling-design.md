@@ -25,7 +25,7 @@ see §14.3. The planning docs have been corrected; this spec uses the accurate f
 |---|---|---|
 | D1 | Where does the due time come from? | **The orchestrator computes it.** The package declares *whether* (`follow_up.required`); a bounded config constant decides *when*. No intent-packages schema change. |
 | D2 | What is a follow-up unit, and how does it discharge? | Born **`AWAITING_REVIEW`** with one generated judgment-typed AC. A human adjudicates it and presses Complete in `/review`. |
-| D3 | What bounds the minting pass? | The WS-5.3 `_post_deploy_work_unit` template: deterministic `uuid5`, self-minted envelope with no mutation authority, capability in `ORCHESTRATOR_ONLY_CAPABILITIES`. |
+| D3 | What bounds the minting pass? | The WS-5.3 `_post_deploy_work_unit` template: deterministic `uuid5` (which is also the unit's identity marker), self-minted envelope with no mutation authority, capability kept OUT of the ingress vocabulary so no authored unit can wear the marker (§6.1, §11). |
 | D4 | What invokes it? | A **SYSTEM `/api` route**, called by a launcher — not an out-of-process runner, not a clause of the detect pass. |
 | D5 | Terminal discipline for an undischarged unit? | **Surface only, no new lifecycle edge.** `dead_letter._stalled_approvals` already covers `awaiting_review`. |
 | D6 | Anchor for the due computation? | All units of the revision terminal, **and at least one `COMPLETED`** — a fully-cancelled revision must not mint. |
@@ -160,8 +160,11 @@ The minted follow-up unit **is a unit of its own revision**. Without care:
 - once a human completes it, clause 3 is true again and the revision looks due a second time.
 
 So clause 5 short-circuits the whole evaluation, and it is **derived from the units themselves** —
-any unit carrying `follow_up_review` means already-minted, whatever state it is in. That is one
-mechanism, not two.
+a unit whose id is this revision's `follow_up_unit_id` (and which carries `follow_up_review`) means
+already-minted, whatever state it is in. That is one mechanism, not two. It matches on the derived
+id and not on the capability alone for the same reason §11 gives: capability is authorable, and a
+capability-only match let an ordinary unit park a revision on `already_minted` forever, starving
+its genuine declaration.
 
 An earlier draft of this section also filtered those units out of clauses 2-4. That filter was
 **unreachable**: whenever such a unit is present, clause 5 fires first and the filtered clauses never
@@ -226,10 +229,14 @@ Notes, each load-bearing:
 
 ### 6.1 New capability
 
-Add `follow_up_review` to `ORCHESTRATOR_ONLY_CAPABILITIES` (`capability_vocabulary.py:49`) —
-**not** to `CAPABILITY_VOCABULARY["runner"]`, which is byte-pinned across this repo and
-`factory-runner` via `tests/fixtures/runner_authority_envelope.json` and `CONTRACT_SHA256`. Adding to
-the orchestrator-only set touches no cross-repo contract, which is exactly why that set exists.
+`follow_up_review` goes in NEITHER vocabulary. Not `CAPABILITY_VOCABULARY["runner"]`, which is
+byte-pinned across this repo and `factory-runner` via `tests/fixtures/runner_authority_envelope.json`
+and `CONTRACT_SHA256` — and not `ORCHESTRATOR_ONLY_CAPABILITIES` either. That set is what unit
+INGRESS accepts, and `_mint` constructs its unit directly, never calling
+`validate_unit_capabilities`; listing the capability would add nothing the feature needs while
+letting an author put the marker on an ordinary unit. (An earlier revision of this spec said to add
+it, and the build did — which is how the forgeable-marker defect got in. The unit's identity is its
+derived `follow_up_unit_id`; see §11.)
 
 ### 6.2 Events
 
@@ -417,8 +424,9 @@ What bounds what the pass may mint, and how each bound is proved:
 
 | Bound | Mechanism | Proof |
 |---|---|---|
-| Only declared follow-ups | The query's sole source is `follow_up->>'required' = 'true'` on an approved revision | Plant revisions with `required: false` and with NULL; assert zero mints |
+| Only declared follow-ups | No SQL predicate: the pass selects every revision and `evaluate_due` mints only when the normalized declaration says `required is True`. Every registered revision is an approved one (`register_revision` is reachable only through intake and decomposition approval), so no status filter is applied either | Plant revisions with `required: false` and with NULL; assert zero mints |
 | Never twice | `uuid5(revision_id)` + existing `UniqueConstraint(work_package_revision_id, unit_key)` | Run the pass twice; assert one unit, `skipped: already_minted` |
+| The marker cannot be forged | `lifecycle.is_generated_follow_up_unit` requires the DERIVED unit id, not `required_capability` (which a unit author supplies); the capability is absent from `ORCHESTRATOR_ONLY_CAPABILITIES`, so ingress refuses it | Plant an ordinary unit carrying the capability; assert it still owes its package ACs, is not offered the generated criterion, cannot be adjudicated against `follow-up-review`, and does not park its revision on `already_minted` |
 | No mutation authority | Frozen envelope constant | Assert `minted.capabilities.keys() ∩ RUNNER_CAPABILITIES == ∅`, no `constraints.target_repository`, no `allowed_commands` |
 | Cannot be worked by a runner | `follow_up_review ∉ RUNNER_CAPABILITIES` | Cross-repo fixture untouched; admission would independently refuse on `target_repository_missing` and `capability_not_enabled` |
 | Never mints for cancelled-only work | Clause 2 of §5 | Plant an all-cancelled revision; assert `skipped: no_completed_unit` |

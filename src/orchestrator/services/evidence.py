@@ -34,10 +34,10 @@ from orchestrator.services.claims import validate_active_claim
 # ACCEPTED, not refused.
 from orchestrator.services.lifecycle import (
     FOLLOW_UP_AC_ID,
-    FOLLOW_UP_CAPABILITY,
     FOLLOW_UP_EVIDENCE_TYPE,
     POST_DEPLOY_AC_IDS,
     ActorContext,
+    is_generated_follow_up_unit,
 )
 from orchestrator.services.verifier_evaluators import JUDGMENT_TYPES
 
@@ -623,11 +623,17 @@ def _is_generated_follow_up_subject(session: Session, unit_id: uuid.UUID, ac_id:
     No `allow_*` parameter, deliberately: unlike the verifier-owned generated ids above, this one
     is meant to be adjudicated from the public `/review` form. Gating it would make the unit
     undischargeable by the only actor designed to discharge it.
+
+    Precisely because it is the one generated AC a HUMAN may discharge, the unit test is
+    `is_generated_follow_up_unit` -- the DERIVED-ID check, not the capability alone.
+    `required_capability` is authorable at unit ingress, so a capability-only marker would let any
+    author hand their own unit this human-adjudicable carve-out; the `uuid5` id can only come from
+    the minting pass.
     """
     if ac_id != FOLLOW_UP_AC_ID:
         return False
     unit = session.get(WorkUnit, unit_id)
-    return unit is not None and unit.required_capability == FOLLOW_UP_CAPABILITY
+    return unit is not None and is_generated_follow_up_unit(unit)
 
 
 def _validate_evidence_fields(
@@ -703,8 +709,8 @@ def _criterion_evidence_type(
     `"follow-up-review"` would let ANY of its units past `_validated_subject`, for any capability.
     Keying this fallback on `ac_id` alone would then hand every one of those units the generated
     criterion's `observation` evidence type -- and with it, a HUMAN's authority to record `passed`
-    where none was intended. Re-checking capability here closes that: this function does not get to
-    assume `_validated_subject`'s admission reason.
+    where none was intended. Re-running the unit identity check here closes that: this function
+    does not get to assume `_validated_subject`'s admission reason.
     """
     evidence_type = session.scalar(
         select(PackageAcceptanceCriterion.evidence_type).where(

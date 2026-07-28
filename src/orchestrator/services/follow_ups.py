@@ -23,7 +23,11 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
-from orchestrator.services.lifecycle import FOLLOW_UP_CAPABILITY, ActorContext
+from orchestrator.services.lifecycle import (
+    FOLLOW_UP_CAPABILITY,
+    ActorContext,
+    follow_up_unit_id,
+)
 
 # The intent-packages `follow_up` block, mirrored field for field. Every key is mandatory-present;
 # `revisit_when` and `owner` may be null. Registered in the cross-boundary vocabulary registry.
@@ -66,13 +70,14 @@ def validate_follow_up(value: object) -> dict[str, Any] | None:
     }
 
 
-# The capability a follow-up review unit requires -- imported from `services.lifecycle` (the
-# single source of truth also consulted by `lifecycle`'s own authorization predicates and by
+# `FOLLOW_UP_CAPABILITY` and `follow_up_unit_id` are imported from `services.lifecycle` (the single
+# source of truth also consulted by `lifecycle`'s own identity predicate and by
 # `services.verifier_criteria` / `services.evidence`) rather than defined here a second time.
-# Re-exported under this name because external code (tests included) already imports it as
-# `orchestrator.services.follow_ups.FOLLOW_UP_CAPABILITY`. Registered in
-# ORCHESTRATOR_ONLY_CAPABILITIES, never in the runner vocabulary: no runner works one of these, and
-# the byte-pinned cross-repo envelope fixture stays untouched.
+# Re-exported under these names because external code (tests included) already imports them from
+# `orchestrator.services.follow_ups`. The capability is in NEITHER the runner vocabulary nor
+# ORCHESTRATOR_ONLY_CAPABILITIES: `_mint` constructs its unit directly and never passes through
+# `validate_unit_capabilities`, so ingress has no reason to accept the marker from an author, and
+# the byte-pinned cross-repo envelope fixture stays untouched either way.
 
 # Why a revision was passed over. Individual constants rather than a collection: a module-level
 # tuple of strings used in a membership test becomes a discovered subject of the cross-boundary
@@ -97,8 +102,13 @@ class UnitFacts:
     `settled_at` is when the unit ENTERED its settled state, read from the event ledger -- never
     from `work_units.updated_at`, which a trigger rewrites on every write and which therefore
     cannot be back-dated or trusted as a state-entry time.
+
+    `unit_id` is carried because the already-minted rule is an IDENTITY question: `follow_up_review`
+    is a string an author could once put on any unit, so a capability-only match let an ordinary
+    unit park a revision on `already_minted` forever and starve its genuine declaration.
     """
 
+    unit_id: uuid.UUID
     required_capability: str
     state: str
     settled_at: datetime | None
@@ -135,7 +145,15 @@ def evaluate_due(facts: RevisionFacts, *, now: datetime, due_after_days: int) ->
     # separate flag: a flag plus a filter is two mechanisms for one rule, and the filter is
     # unreachable whenever the flag is computed from these same units -- untestable protection,
     # which this repo treats as a defect rather than as depth.
-    if any(unit.required_capability == FOLLOW_UP_CAPABILITY for unit in facts.units):
+    #
+    # Matched on the DERIVED id, mirroring `lifecycle.is_generated_follow_up_unit`. The capability
+    # alone is not enough: it names the row this pass would create, and a unit that merely CLAIMS
+    # the capability is not that row.
+    minted_id = follow_up_unit_id(facts.revision_id)
+    if any(
+        unit.unit_id == minted_id and unit.required_capability == FOLLOW_UP_CAPABILITY
+        for unit in facts.units
+    ):
         return DueDecision(facts.revision_id, None, SKIP_ALREADY_MINTED)
     declaration = facts.follow_up
     if not isinstance(declaration, dict) or declaration.get("required") is not True:
@@ -161,6 +179,7 @@ def evaluate_due(facts: RevisionFacts, *, now: datetime, due_after_days: int) ->
 _SETTLED_STATES = (WorkUnitState.COMPLETED, WorkUnitState.CANCELLED)
 _MINT_ACTION = "follow_up_unit.created"
 _DEFAULT_REVISIT = "No revisit condition was declared; confirm whether this outcome still holds."
+_TITLE = "Follow-up review"
 
 
 @dataclass(frozen=True)
@@ -192,14 +211,20 @@ def _authorize_actor(actor: ActorContext) -> None:
         )
 
 
-def follow_up_unit_id(revision_id: uuid.UUID) -> uuid.UUID:
-    """Content-addressed, so a second pass cannot create a second row.
+def _title(revision: WorkPackageRevision) -> str:
+    """`Follow-up review: <the revision's own title>`.
 
-    This is the structural half of the idempotency story; the already-minted skip is the
-    reporting half. The unique constraint on (work_package_revision_id, unit_key) is the backstop
-    if both are somehow bypassed.
+    Several of these can be outstanding at once and they all land in the same review queue, so a
+    constant title renders identical rows a reviewer cannot tell apart. `enforcement_snapshot` is
+    supplied by the intake caller, so its `title` key is not guaranteed present or non-blank; an
+    absent or whitespace-only one falls back to the bare constant rather than rendering a dangling
+    separator.
     """
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"sds:follow-up:{revision_id}")
+    snapshot = revision.enforcement_snapshot
+    title = snapshot.get("title") if isinstance(snapshot, dict) else None
+    if isinstance(title, str) and title.strip():
+        return f"{_TITLE}: {title.strip()}"
+    return _TITLE
 
 
 def _describe(declaration: dict[str, Any]) -> str:
@@ -232,7 +257,7 @@ def _revision_facts(session: Session, revision: WorkPackageRevision) -> Revision
                     Event.to_state == state,
                 )
             )
-        units.append(UnitFacts(capability, state, settled_at))
+        units.append(UnitFacts(unit_id, capability, state, settled_at))
     # No already-minted flag: evaluate_due derives that from the units themselves, so there is
     # exactly one mechanism and this function cannot contradict it.
     return RevisionFacts(revision.id, revision.follow_up, tuple(units))
@@ -255,7 +280,7 @@ def _mint(
         id=follow_up_unit_id(revision.id),
         work_package_revision_id=revision.id,
         unit_key=f"follow-up:{revision.id}",
-        title="Follow-up review",
+        title=_title(revision),
         outcome=_describe(declaration),
         state=WorkUnitState.AWAITING_REVIEW,
         # The system self-attests: ck_work_units_approved_beyond_draft requires both approval

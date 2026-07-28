@@ -11,6 +11,7 @@ from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
 from orchestrator.services.evidence import record_adjudication
 from orchestrator.services.follow_ups import (
+    _DEFAULT_REVISIT,
     FOLLOW_UP_CAPABILITY,
     SKIP_ALREADY_MINTED,
     SKIP_NO_COMPLETED_UNIT,
@@ -24,7 +25,7 @@ from orchestrator.services.follow_ups import (
     mint_due_follow_ups,
     validate_follow_up,
 )
-from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.lifecycle import ActorContext, follow_up_unit_id, required_ac_ids
 from orchestrator.services.packages import register_approved_unit, register_revision
 from orchestrator.services.verifier_criteria import (
     _FOLLOW_UP_DEFAULT_REVISIT,
@@ -92,28 +93,47 @@ SETTLED = NOW - timedelta(days=40)
 REQUIRED = {"required": True, "revisit_when": "Later.", "signals": [], "owner": None}
 
 
-def facts(*units: UnitFacts, follow_up=REQUIRED) -> RevisionFacts:
+def facts(*units: UnitFacts, follow_up=REQUIRED, revision_id=None) -> RevisionFacts:
     return RevisionFacts(
-        revision_id=uuid.uuid4(),
+        revision_id=revision_id or uuid.uuid4(),
         follow_up=follow_up,
         units=units,
     )
 
 
+def _ordinary(state: str, settled_at) -> UnitFacts:
+    return UnitFacts(
+        unit_id=uuid.uuid4(),
+        required_capability="repo.edit",
+        state=state,
+        settled_at=settled_at,
+    )
+
+
 def completed(settled_at=SETTLED) -> UnitFacts:
-    return UnitFacts(required_capability="repo.edit", state="completed", settled_at=settled_at)
+    return _ordinary("completed", settled_at)
 
 
 def cancelled(settled_at=SETTLED) -> UnitFacts:
-    return UnitFacts(required_capability="repo.edit", state="cancelled", settled_at=settled_at)
+    return _ordinary("cancelled", settled_at)
 
 
 def in_flight() -> UnitFacts:
-    return UnitFacts(required_capability="repo.edit", state="executing", settled_at=None)
+    return _ordinary("executing", None)
 
 
 def failed() -> UnitFacts:
-    return UnitFacts(required_capability="repo.edit", state="failed", settled_at=None)
+    return _ordinary("failed", None)
+
+
+def minted(revision_id: uuid.UUID, *, state: str, settled_at=None) -> UnitFacts:
+    """The unit the pass itself would create for `revision_id` -- capability AND derived id."""
+    return UnitFacts(
+        unit_id=follow_up_unit_id(revision_id),
+        required_capability=FOLLOW_UP_CAPABILITY,
+        state=state,
+        settled_at=settled_at,
+    )
 
 
 def test_a_settled_revision_past_the_window_is_due() -> None:
@@ -202,11 +222,12 @@ def test_zero_days_makes_a_settled_revision_immediately_due() -> None:
 
 
 def test_an_existing_review_unit_stops_the_revision_from_minting_again() -> None:
-    own = UnitFacts(
-        required_capability=FOLLOW_UP_CAPABILITY, state="awaiting_review", settled_at=None
-    )
+    revision_id = uuid.uuid4()
+    own = minted(revision_id, state="awaiting_review")
 
-    decision = evaluate_due(facts(completed(), own), now=NOW, due_after_days=30)
+    decision = evaluate_due(
+        facts(completed(), own, revision_id=revision_id), now=NOW, due_after_days=30
+    )
 
     assert decision.skip_reason == SKIP_ALREADY_MINTED
 
@@ -215,11 +236,31 @@ def test_a_completed_review_unit_still_stops_a_second_mint() -> None:
     """One review per revision, forever. Completing the review must not make the revision
     eligible again -- which is exactly what a predicate that merely filtered the unit out of
     the settled-set would do."""
-    own = UnitFacts(required_capability=FOLLOW_UP_CAPABILITY, state="completed", settled_at=SETTLED)
+    revision_id = uuid.uuid4()
+    own = minted(revision_id, state="completed", settled_at=SETTLED)
 
-    decision = evaluate_due(facts(completed(), own), now=NOW, due_after_days=30)
+    decision = evaluate_due(
+        facts(completed(), own, revision_id=revision_id), now=NOW, due_after_days=30
+    )
 
     assert decision.skip_reason == SKIP_ALREADY_MINTED
+
+
+def test_a_unit_that_merely_claims_the_capability_does_not_block_a_genuine_mint() -> None:
+    """`follow_up_review` was, briefly, a capability an author could put on any unit -- and the
+    already-minted check matched on it alone. A revision carrying such a unit reported
+    `already_minted` forever and its genuine declaration could never mint. The derived id is what
+    identifies the row this pass would create; claiming the capability is not being that row."""
+    imposter = UnitFacts(
+        unit_id=uuid.uuid4(),
+        required_capability=FOLLOW_UP_CAPABILITY,
+        state="completed",
+        settled_at=SETTLED,
+    )
+
+    decision = evaluate_due(facts(completed(), imposter), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason is None
 
 
 # ------------------------------------------------------------------------------------------------
@@ -234,7 +275,9 @@ DECLARATION = {
 }
 
 
-def _settled_revision(session, key: str, declaration) -> WorkPackageRevision:
+def _settled_revision(
+    session, key: str, declaration, *, snapshot_title: str | None = None
+) -> WorkPackageRevision:
     # `work_package_revisions` is append-only (a trigger rejects UPDATE), so the declaration must
     # be supplied at construction -- via `register_revision`'s `follow_up` parameter -- rather than
     # assigned onto an already-registered revision. Each fixture also needs its OWN revision: the
@@ -242,6 +285,9 @@ def _settled_revision(session, key: str, declaration) -> WorkPackageRevision:
     # revision=1 / content_hash="sha256:one" for every caller, so two calls in the same test would
     # resolve to the identical revision row and conflict the moment their `follow_up` values
     # differ. Registering directly, keyed on `key`, keeps the three fixtures independent.
+    snapshot: dict[str, object] = {"acceptance_criteria": ["ac-1"]}
+    if snapshot_title is not None:
+        snapshot["title"] = snapshot_title
     revision = register_revision(
         session,
         package_id=f"pkg-{key}",
@@ -253,7 +299,7 @@ def _settled_revision(session, key: str, declaration) -> WorkPackageRevision:
         approved_by="human-1",
         approved_at=REVISION_NOW,
         approval_event_id=str(uuid.uuid4()),
-        enforcement_snapshot={"acceptance_criteria": ["ac-1"]},
+        enforcement_snapshot=snapshot,
         authority=AUTHORITY,
         registry_version=1,
         follow_up=declaration,
@@ -300,9 +346,14 @@ def _settled_revision(session, key: str, declaration) -> WorkPackageRevision:
     return revision
 
 
+PACKAGE_TITLE = "Retire the legacy intake path"
+
+
 @pytest.fixture
 def due_revision(migrated_session):
-    return _settled_revision(migrated_session, "wsp28-due", DECLARATION)
+    return _settled_revision(
+        migrated_session, "wsp28-due", DECLARATION, snapshot_title=PACKAGE_TITLE
+    )
 
 
 @pytest.fixture
@@ -331,6 +382,36 @@ def test_a_due_revision_mints_exactly_one_unit(migrated_session, due_revision) -
     assert unit.authority_approval_id is None
     assert unit.decomposition_approved_by == "system"
     assert unit.max_attempts == 1
+    assert unit.id == follow_up_unit_id(due_revision.id)
+
+
+def test_the_title_names_the_revision_it_revisits(migrated_session, due_revision) -> None:
+    """Spec 6. Several review units can be outstanding at once and they share one review queue,
+    so a constant title renders rows a reviewer cannot tell apart."""
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+
+    assert unit.title == f"Follow-up review: {PACKAGE_TITLE}"
+
+
+def test_a_snapshot_without_a_title_falls_back_to_the_bare_constant(
+    migrated_session, degenerate_due_revision
+) -> None:
+    """`enforcement_snapshot` is caller-supplied, so `title` is not guaranteed. The fallback must
+    be the bare constant, never a dangling separator."""
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+
+    assert unit.title == "Follow-up review"
+
+
+def test_a_blank_snapshot_title_falls_back_too(migrated_session) -> None:
+    _settled_revision(migrated_session, "wsp28-blank-title", DECLARATION, snapshot_title="   ")
+
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+
+    assert unit.title == "Follow-up review"
 
 
 def test_the_minted_envelope_carries_no_runner_capability(migrated_session, due_revision) -> None:
@@ -412,12 +493,16 @@ def test_a_degenerate_declaration_still_produces_a_legible_unit(
     migrated_session, degenerate_due_revision
 ) -> None:
     """required:true with everything else null is a VALID declaration. It must not yield an
-    empty outcome the reviewer cannot act on."""
+    empty outcome the reviewer cannot act on.
+
+    Asserted as EQUALITY against the exact default prose, not merely as non-empty: a non-empty
+    check passes for the literal string "None", which is what `str(None)` produces and is exactly
+    the value a reviewer cannot act on. The equality also pins the absent Signals/Owner sections
+    without a separate substring check."""
     result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
     unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
 
-    assert unit.outcome.strip() != ""
-    assert "Signals" not in unit.outcome
+    assert unit.outcome == f"Revisit: {_DEFAULT_REVISIT}"
 
 
 def test_one_malformed_declaration_does_not_abort_the_pass(
@@ -527,8 +612,13 @@ def test_a_review_unit_requires_exactly_one_generated_criterion(
 
     assert [criterion.ac_id for criterion in criteria] == ["follow-up-review"]
     assert criteria[0].evidence_type == "observation"
-    assert criteria[0].condition.strip() != ""
-    assert criteria[0].evidence.strip() != ""
+    assert criteria[0].condition == (
+        "The follow-up questions declared by the package were answered."
+    )
+    # EQUALITY, not merely non-empty: this is the only place the package author's declared prose
+    # reaches the criterion a human reads. A non-empty check stays green if the generator ignored
+    # `revisit_when` entirely and always emitted the default.
+    assert criteria[0].evidence == DECLARATION["revisit_when"]
     assert criteria[0].approver == "devon"
 
 
@@ -568,6 +658,131 @@ def test_a_human_may_adjudicate_the_generated_follow_up_criterion(
 
     assert not isinstance(adjudication, DomainError)
     assert adjudication.outcome == "passed"
+
+
+# ------------------------------------------------------------------------------------------------
+# The marker is the DERIVED UNIT ID, not the capability. `required_capability` is a field a unit
+# author supplies; if claiming `follow_up_review` were enough, an ordinary unit would inherit the
+# single generated criterion IN PLACE OF its package's real acceptance criteria, and one human
+# "passed" against a criterion the package never wrote would complete it. `consistency` computes
+# the required set with the same `required_ac_ids`, so it agrees with such a bypass by
+# construction and reports nothing.
+# ------------------------------------------------------------------------------------------------
+
+
+def _imposter_unit(session, revision: WorkPackageRevision) -> WorkUnit:
+    """An ordinary unit that CLAIMS the follow-up capability, planted directly through the ORM.
+
+    Deliberately not through `register_approved_unit`: unit ingress no longer accepts the
+    capability at all (pinned below), so the model layer is the only way to build the row this
+    predicate must refuse. That is the honest test -- the identity check must hold even if a row
+    with the capability exists by some route ingress does not control.
+    """
+    unit = WorkUnit(
+        work_package_revision_id=revision.id,
+        unit_key="wsp28-imposter",
+        title="an ordinary unit wearing the follow-up marker",
+        outcome="unrelated work",
+        state=WorkUnitState.DRAFT,
+        required_capability=FOLLOW_UP_CAPABILITY,
+        authority=AUTHORITY.normalized(),
+        authority_fingerprint=authority_fingerprint(AUTHORITY),
+        max_attempts=1,
+    )
+    session.add(unit)
+    session.flush()
+    assert unit.id != follow_up_unit_id(revision.id)
+    return unit
+
+
+def _two_ac_revision(session, key: str) -> WorkPackageRevision:
+    return register_revision(
+        session,
+        package_id=f"pkg-{key}",
+        source_repository="owner/repo",
+        revision=1,
+        content_hash=f"sha256:{key}",
+        source_path="intent.md",
+        source_commit="abc123",
+        approved_by="human-1",
+        approved_at=REVISION_NOW,
+        approval_event_id=str(uuid.uuid4()),
+        enforcement_snapshot={"acceptance_criteria": ["AC-001", "AC-002"]},
+        authority=AUTHORITY,
+        registry_version=1,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+
+
+def test_a_capability_claiming_unit_still_owes_its_package_acceptance_criteria(
+    migrated_session,
+) -> None:
+    revision = _two_ac_revision(migrated_session, "wsp28-imposter-acs")
+    unit = _imposter_unit(migrated_session, revision)
+
+    assert required_ac_ids(migrated_session, revision, unit) == ("AC-001", "AC-002")
+
+
+def test_a_capability_claiming_unit_is_not_offered_the_generated_criterion(
+    migrated_session,
+) -> None:
+    """`load_required_criteria` is the other half: substituting the one generated criterion for the
+    package's set is what the human would then be shown in `/review`."""
+    revision = _two_ac_revision(migrated_session, "wsp28-imposter-criteria")
+    unit = _imposter_unit(migrated_session, revision)
+
+    with pytest.raises(DomainError) as caught:
+        load_required_criteria(migrated_session, unit, revision)
+
+    # It falls through to the package's own AC set, which has no persisted criterion rows here.
+    assert caught.value.code == "verification_subject_invalid"
+
+
+def test_a_human_may_not_adjudicate_the_generated_ac_against_a_capability_claiming_unit(
+    migrated_session,
+) -> None:
+    revision = _two_ac_revision(migrated_session, "wsp28-imposter-adjudication")
+    unit = _imposter_unit(migrated_session, revision)
+
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=revision.id,
+        work_unit_id=unit.id,
+        ac_id="follow-up-review",
+        outcome="passed",
+        actor=HUMAN,
+        rationale="claiming the marker is not being the unit",
+        idempotency_key="wsp28-imposter-adjudication-1",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "evidence_subject_invalid"
+
+
+def test_unit_ingress_no_longer_accepts_the_follow_up_capability(migrated_session) -> None:
+    """The second lock. `_mint` constructs its unit directly and never calls
+    `validate_unit_capabilities`, so the feature never needed the capability in the ingress
+    vocabulary -- and listing it is what let an author put the marker on a unit at all."""
+    revision = _two_ac_revision(migrated_session, "wsp28-imposter-ingress")
+
+    with pytest.raises(DomainError) as caught:
+        register_approved_unit(
+            migrated_session,
+            revision_id=revision.id,
+            unit_key="wsp28-ingress-imposter",
+            title="an ordinary unit wearing the follow-up marker",
+            outcome="unrelated work",
+            required_capability=FOLLOW_UP_CAPABILITY,
+            authority=AUTHORITY,
+            max_attempts=3,
+            approved_by="human-1",
+            approved_at=REVISION_NOW,
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+        )
+
+    assert caught.value.code == "unknown_capability"
 
 
 def test_a_colliding_package_ac_id_does_not_inherit_the_follow_up_carve_out(

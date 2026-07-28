@@ -12,8 +12,8 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.lifecycle import (
     FOLLOW_UP_AC_ID,
-    FOLLOW_UP_CAPABILITY,
     FOLLOW_UP_EVIDENCE_TYPE,
+    is_generated_follow_up_unit,
 )
 
 
@@ -177,8 +177,12 @@ def _generated_follow_up_criteria(
     Every field falls back, because `revisit_when` and `owner` are nullable in the schema and
     `{"required": true, "revisit_when": null, "signals": [], "owner": null}` is a valid
     declaration -- one that would otherwise produce a criterion a reviewer cannot act on.
+
+    `is_generated_follow_up_unit` keys on the derived unit id, not on `required_capability` alone:
+    the capability is authorable at ingress, and substituting this one criterion for a package's
+    real acceptance criteria is exactly what an author must not be able to ask for.
     """
-    if unit.required_capability != FOLLOW_UP_CAPABILITY:
+    if not is_generated_follow_up_unit(unit):
         return None
     declaration = revision.follow_up if isinstance(revision.follow_up, dict) else {}
     revisit = _clean_str(declaration.get("revisit_when")) or _FOLLOW_UP_DEFAULT_REVISIT

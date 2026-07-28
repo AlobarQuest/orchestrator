@@ -53,19 +53,31 @@ client anywhere in `src/`.
 Following the ADR-0003 four-item template — what bounds this capability, mechanically, not by
 policy:
 
-1. **The query's only source of "should this mint" is `follow_up->>'required' = 'true'`** on an
-   approved revision. There is no other input the pass consults to decide whether a package wanted
-   a follow-up. A revision with `follow_up = NULL` or `required: false` never mints, structurally.
+1. **The declaration is the pass's only source of "should this mint."** `mint_due_follow_ups`
+   selects every `WorkPackageRevision` with no `WHERE` clause and decides in Python:
+   `validate_follow_up` normalizes the row's `follow_up` block and `evaluate_due` mints only when
+   `required is True`. There is no SQL predicate and no approval-status filter — every registered
+   revision is an approved one, since `register_revision` is reached only through intake and
+   decomposition approval. A revision with `follow_up = NULL` or `required: false` never mints,
+   but the mechanism is a filter in `evaluate_due`, not a query the database enforces. Proved by
+   planting both shapes and asserting zero mints, which is where this bound actually lives.
 2. **The minted unit id is content-addressed** — `uuid5(NAMESPACE_URL,
    f"sds:follow-up:{revision_id}")` — backed by the existing `(work_package_revision_id, unit_key)`
    unique constraint. A revision cannot mint a second review unit even if the reporting-level
-   already-minted check is somehow bypassed; the id collision is the structural backstop.
+   already-minted check is somehow bypassed; the id collision is the structural backstop. **That
+   id is also the unit's IDENTITY marker**: `lifecycle.is_generated_follow_up_unit` requires it,
+   and every predicate that grants a unit the generated criterion in place of its package's real
+   acceptance criteria goes through that one function. `required_capability` is authorable at unit
+   ingress, so a capability-only marker would have let any unit claim the substitution; the `uuid5`
+   is producible only by this pass.
 3. **The minted envelope carries no mutation authority.** Its capability set is exactly
    `{follow_up_review: allowed}`, disjoint from `RUNNER_CAPABILITIES`, and carries no
-   `constraints.target_repository` and no `allowed_commands`. `follow_up_review` lives in
-   `ORCHESTRATOR_ONLY_CAPABILITIES`, never in the runner vocabulary, so a minted unit cannot be
-   claimed or worked by a runner — admission would independently refuse it on
-   `target_repository_missing` and `capability_not_enabled` even if it tried.
+   `constraints.target_repository` and no `allowed_commands`. `follow_up_review` is in neither the
+   runner vocabulary nor `ORCHESTRATOR_ONLY_CAPABILITIES` — `_mint` constructs its unit directly
+   and never passes through `validate_unit_capabilities`, so unit ingress refuses the capability
+   outright and no authored unit can wear the marker. A minted unit therefore cannot be claimed or
+   worked by a runner; admission would independently refuse it on `target_repository_missing` and
+   `capability_not_enabled` even if it tried.
 4. **Per-item fail-open with counted skips.** Each revision is evaluated inside its own SQL
    savepoint; a malformed declaration or a race on the unique constraint rolls back only that
    revision's attempt and is reported as a skip, never discarding units already minted earlier in

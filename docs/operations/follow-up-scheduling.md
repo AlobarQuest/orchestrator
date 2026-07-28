@@ -39,10 +39,12 @@ named `DomainError`, never a 500. A payload that omits `follow_up` entirely is a
 
 A revision's follow-up review becomes due when, in order:
 
-1. **Already minted** — any work unit of the revision already carries the `follow_up_review`
-   capability. There is no separate flag for this; it is derived from the units themselves, so
-   there is exactly one mechanism deciding it, not two that could disagree. If due, evaluation
-   stops here (`already_minted`).
+1. **Already minted** — the revision already has the work unit this pass would create: a unit
+   whose id is `uuid5(NAMESPACE_URL, f"sds:follow-up:{revision_id}")` and which carries the
+   `follow_up_review` capability. There is no separate flag for this; it is derived from the units
+   themselves, so there is exactly one mechanism deciding it, not two that could disagree. The id
+   is what identifies it — a unit that merely carries the capability is not that unit and does not
+   block minting. If due, evaluation stops here (`already_minted`).
 2. **Declaration requires a follow-up** — `follow_up` is non-null and `required is True`.
    Otherwise `not_required` (not surfaced as a skip — see "Reading the output" below).
 3. **No `FAILED` unit** — if any work unit of the revision is in `FAILED`, minting blocks with

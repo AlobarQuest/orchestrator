@@ -43,13 +43,19 @@ CAPABILITY_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
 
 RUNNER_CAPABILITIES: Final[frozenset[str]] = frozenset(CAPABILITY_VOCABULARY["runner"])
 
-# The orchestrator additionally mints these for its own units, which never traverse a runner:
-# `post_deploy_verification` for WS-5.1 post-hoc release verification, and `follow_up_review`
-# for the WS-P2.8 package-declared follow-up review. Both are in the orchestrator's accepted set
-# but NOT the runner's -- the orchestrator vocabulary is a superset.
-ORCHESTRATOR_ONLY_CAPABILITIES: Final[frozenset[str]] = frozenset(
-    {"post_deploy_verification", "follow_up_review"}
-)
+# The orchestrator additionally mints `post_deploy_verification` for its own WS-5.1 post-hoc
+# release verification units, which never traverse a runner. It is in the orchestrator's accepted
+# set but NOT the runner's -- the orchestrator vocabulary is a superset.
+#
+# WS-P2.8's `follow_up_review` is deliberately NOT here. Membership of this set is what unit
+# INGRESS accepts, and the follow-up minting pass constructs its unit directly, bypassing
+# `validate_unit_capabilities` exactly as post-deploy minting does. Listing it would therefore add
+# nothing the feature needs while letting an ordinary authored unit carry the marker -- which, when
+# the marker was capability-only, voided that unit's real acceptance criteria. Identity (the
+# derived `follow_up_unit_id`) is now the marker; keeping the capability out of ingress is the
+# second lock, and restores this set to meaning "capabilities a unit may be AUTHORED with that the
+# runner does not execute".
+ORCHESTRATOR_ONLY_CAPABILITIES: Final[frozenset[str]] = frozenset({"post_deploy_verification"})
 
 # What orchestrator unit ingress accepts for ``required_capability`` and ``authority.capabilities``
 # keys: the runner set plus the orchestrator-only additions.
