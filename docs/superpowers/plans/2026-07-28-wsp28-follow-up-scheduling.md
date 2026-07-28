@@ -98,11 +98,19 @@ A per-task loop can look green and still break CI on every one of these.
 
    **This guard is RED at three points in this plan, by construction.** Each task creates a public function whose production caller lands in a later task, because the caller is the risky half and deserves its own review gate:
 
-   | created in | function | caller lands in | guard green again at |
-   |---|---|---|---|
-   | Task 1 | `validate_follow_up` | Task 2 (`register_package_intake`) | Task 2 Step 10a |
-   | Task 3 | `evaluate_due` | Task 4 (`mint_due_follow_ups`) | Task 4 Step 6 |
-   | Task 4 | `mint_due_follow_ups` | Task 6 (the route) | Task 6 Step 9 |
+   **Reachability is TRANSITIVE — the guard is a root-BFS from production entry points, not a
+   per-function "does anything call this".** So a function called only by an unreached function is
+   itself unreached, and the whole `follow_ups` chain stays flagged until the route at Task 6 gives
+   it a root. (Corrected 2026-07-28 during Task 4; an earlier version of this table wrongly said
+   `evaluate_due` would clear at Task 4.)
+
+   | created in | function(s) | reached when |
+   |---|---|---|
+   | Task 1 | `validate_follow_up` | **Task 2** — `register_package_intake` is itself route-reachable |
+   | Task 3 | `evaluate_due` | **Task 6** — only `mint_due_follow_ups` calls it, and that is rootless until the route |
+   | Task 4 | `mint_due_follow_ups`, `follow_up_unit_id` | **Task 6** — the route is their root |
+
+   So after Task 4, expect the guard to name **three** functions, not one. That is correct.
 
    In every one of those windows: **do not add an allowlist entry** — the guard's own failure message says a justification reading "in fact it is called" means the predicate is wrong, not the code. **Do not pull the later task's wiring forward** either. Run the focused suites your task names; when you do run the whole architecture suite, expect exactly one failure, naming exactly your task's function, and nothing else.
 8. `tests/architecture/test_wsp21_invariant_scan.py` — nothing to do here: this workstream adds no HTTP client to `src/`.
@@ -1810,7 +1818,7 @@ def test_the_review_form_offers_a_human_outcome_for_the_review_unit(
 
 Run: `.venv/bin/pytest tests/services/test_follow_ups.py tests/services/test_deployment_observations.py tests/web/ -v`
 Then: `.venv/bin/pytest tests/architecture/ -v`
-Expected: **exactly one failure** — `test_unreachable_guards` naming `mint_due_follow_ups`, whose production caller is Task 6's route (see the Global Constraints table). Every function THIS task adds must have a caller; if the guard names anything of yours, wire it here.
+Expected: **one failure** — `test_unreachable_guards` naming `mint_due_follow_ups`, `evaluate_due` and `follow_up_unit_id`, all three rootless until Task 6's route (reachability is transitive; see the Global Constraints table). Every function THIS task adds beyond that chain must have a caller; if the guard names anything else of yours, wire it here.
 
 - [ ] **Step 11: Format and commit**
 
