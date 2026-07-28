@@ -1,0 +1,44 @@
+name: Attest exit criteria
+
+# Remediation item 0.5's guard, made standing. It reads
+# docs/operations/exit-criteria-claims.toml and fails when the program exit-criteria scorecard
+# claims a criterion is met on a route production does not actually serve -- the failure mode
+# that let criterion #7 read MET while citing five routes production returned 404 for.
+#
+# Deliberately NOT part of the pull-request gate: a red here means production regressed or the
+# scorecard overclaims, neither of which is a property of the branch under review. Making PR
+# green depend on live production state would block unrelated work on an unrelated outage.
+#
+# Read-only. One unauthenticated GET of a public OpenAPI document; no secrets, no writes.
+
+on:
+  schedule:
+    # Mondays 08:00 UTC -- the week's first working morning, so a regression is found before
+    # anything is built on the scorecard it invalidates.
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      openapi_url:
+        description: "OpenAPI document to attest against"
+        required: false
+        default: "https://sds.alobar.net/openapi.json"
+
+permissions:
+  contents: read
+
+jobs:
+  attest:
+    name: Attest exit criteria
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Attest scorecard route claims against production
+        run: >-
+          python3 scripts/attest_exit_criteria.py
+          --openapi-url "${{ inputs.openapi_url || 'https://sds.alobar.net/openapi.json' }}"

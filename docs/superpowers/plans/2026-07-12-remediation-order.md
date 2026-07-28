@@ -59,7 +59,7 @@ was never executed. Applied 2026-07-27, updated for current facts.)
 | 0.2 | **satisfied** | All six named routes plus the tracker surface verified against live `https://sds.alobar.net/openapi.json` on 2026-07-27. |
 | 0.3 | **closed 2026-07-27** | Executed under ADR-0005 disposition A in a dedicated session: all five drills run against live `sds.alobar.net`, **5/5 PASS, none waived**, against proven artifact identity (digest `sha256:2fc54631…`, migration head `0019_wsp27_tracker_recon`). Drill-scoped units in package `drill-2026-07-27-production-recovery`, all driven terminal through public surfaces; thresholds applied and reverted within the session; attestation and consistency check green afterward. Retained evidence + HUMAN closeout (Devon): `~/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md`. Scorecard #5 and #7 moved to MET on this evidence. |
 | 0.4 | **closed 2026-07-27** | The program exit-criteria scorecard was reconciled the same day: #5 → NOT MET IN PRODUCTION, #7 → DEPLOYED NOT PRODUCTION-PROVEN, #3/#4/#12/#13 updated to their shipped status. See the Phase-2 master plan, Part 3. |
-| 0.5 | **in progress** | `scripts/attest_exit_criteria.py` + `docs/operations/exit-criteria-claims.toml` (this branch) machine-check every route-citing MET claim against live production OpenAPI. |
+| 0.5 | **shipped PR #82; wired to a scheduled workflow 2026-07-28** | `scripts/attest_exit_criteria.py` + `docs/operations/exit-criteria-claims.toml` machine-check every route-citing MET claim against live production OpenAPI. Until 2026-07-28 the guard ran only when a human remembered — see the Phases 1–6 block below, item 0.5-follow-up. |
 
 ---
 
@@ -195,3 +195,50 @@ tissue for its design.**
   ladder (`dependency-update`; docs-only is the declared next). The problem is not that the hosted
   runner is limited — it is that **the lane doing all the real work has never been governed by the
   contract it claims to follow.**
+
+---
+
+## Phases 1–6 status reconciliation — 2026-07-28
+
+The Phase-0 block above was reconciled on 2026-07-27. Phases 1–6 never were, in the sixteen days
+since this list was written — so **Phase 4 has been fully done and unmarked**, and several items
+have been reasoned about as open when they are not. This block supersedes the live-state claims in
+the tables above without deleting their historical evidence. Every disposition below was verified
+against `origin/main` (`f9dd621`) or live production on 2026-07-28, not inferred from a closeout.
+
+Program context: `~/docs/software-delivery-system/2026-07-28-wave12-gap-closure-workplan.md`, which
+is the authority for what gates Wave 3 and what runs parallel to it.
+
+| # | Status | Evidence / disposition |
+|---|---|---|
+| **0.5-follow-up** | **DONE 2026-07-28** | The guard shipped in PR #82 but was **wired to nothing** — not in `quality.yml`, not in the Makefile. Criterion #13 delegates the scorecard's own standing verification to it, so #13's check was itself an unwired guard. Now run by `.github/workflows/attest-exit-criteria.yml` (weekly `schedule` + `workflow_dispatch`). Deliberately **not** in the PR gate: PR green must never depend on production state. |
+| **1.1** | **OPEN** | Lease-token leak. Still live in factory-runner: `.sds-local-heavy/` is absent from `_AGENT_ARTIFACTS`, and `_exclude_agent_artifacts()` is called only from `prepare_run` while `git add -A` in `_finalize_workspace` sweeps **both** lanes. The interim fix landed as per-repo `.gitignore` entries — the shape this item explicitly forbids — and has already been forgotten twice (`security-standards`, `brain`, both live fan-out targets). Being fixed in the runner in the 2026-07-28 gap-closure session (workplan GAP-2). |
+| **1.2** | **OPEN** | `local-heavy-renew` has never succeeded. `RenewCommand` inherits `expected_version: int = Field(ge=0)` from `CommandBase` (`api/schemas.py`) — required, no default — and the client posts `null`. A test in factory-runner now **pins** the bug. Being fixed in the same session (workplan GAP-2). |
+| **2.1** | **OPEN** | factory-runner still writes one evidence row per unit, not per mapped AC. Ships only with 2.2/2.3 — see the landmine above. Tracked as `PROJECT.md:38` (P1). |
+| **2.2** | **PARTIAL** | The verifier now keys on the **evidence row** for exactly one criterion type: `automated_check` is deterministic only when the current evidence is verifier-owned `verifier.github.named_check` (`services/verifier_evaluators.py`, the `evidence_type == "automated_check"` branch). The general path is still criterion-keyed, and `automated_test` sits in `JUDGMENT_TYPES`. **The mask is load-bearing and must stay** until 2.1 and 2.3 land with it. ⚠ **Authoring rule while this is open: packages must declare `evidence_type: "test"`, never `automated_test`** — recorded in `docs/operations/production-drill-adaptations.md`. |
+| **2.3** | **OPEN** | No command-aware evaluator; `exit_code` is still a hardcoded `0` on the runner side. Any exit-code predicate remains constant-true. Tracked as `PROJECT.md:38` (P1). |
+| **2.4** | **DONE** | WS-P2.16 U4: the five legal package `evidence_type` values are declared and validated at intake (`SUPPORTED_CRITERION_EVIDENCE_TYPES`), with Assertion D pinning `DETERMINISTIC_TYPES` to the union of the `EVALUATORS` keys and `SPECIAL_CASE_TYPES`. This was the behavior-preserving half; it did not and must not make `automated_test` deterministic. |
+| **3.1** | **DECIDED 2026-07-28 (Devon)** | Option (c), with (b) for the one remaining gap: human gates are **permanently browser-only**; no standing HUMAN credential will ever exist. Recorded as **ADR-0006** (`docs/decisions/0006-human-gates-browser-only.md`). |
+| **3.2** | **DONE 2026-07-28** | Implemented in the same PR as this block: authority approval already had a `/review` form (`POST /review/units/{id}/authority-approval`, WS-6.3 era — the table above predates it); **package intake now has one too** (`GET /review/intakes/new` → `POST /review/intakes`), retiring the devtools `fetch()` improvisation. The two CLI commands that can never satisfy `_require_human` against production (`intake-package`, `record-approval`) are annotated local-development-only rather than deleted — local and protocol use remains. |
+| **4.1** | **DONE** | `src/orchestrator/capability_vocabulary.py` is a shipped package module, not a test fixture. |
+| **4.2** | **DONE** | Derivation, not a hash: `tests/contract/test_runner_envelope_contract.py::test_capability_vocabulary_is_derived_from_the_golden_envelope`. |
+| **4.3** | **DONE** | Ingress enforcement of both unit fields via `validate_unit_capabilities`, called from `services/packages.py` **and** `services/decomposition.py`. |
+| **4.4** | **DONE** | factory-runner POSTs its PR binding before submit (merged before the orchestrator half, as the mandatory order required). |
+| **4.5** | **DONE** | `UnitPrBinding.binding_attempt` (migration `0015_wsp216_binding_attempt`) + the attempt-scoped submit guard in `services/lifecycle.py`; a SYSTEM repair that omits the attempt is refused loudly (`pr_binding_attempt_required`) rather than writing an un-submittable NULL. |
+| **4.6** | **DONE** | drill-2 and drill-4 now write bindings (`scripts/drill-2-evidence-recovery.sh`, `scripts/drill-4-deploy-split-brain.sh`), alongside drill-3. |
+| **PHASE 4 overall** | **FULLY DONE** | All six items plus the local-heavy-lane addendum. PRs #62 + #66, image `4cfa0c8-wsp216-amd64`, closeout `~/docs/software-delivery-system/2026-07-23-wsp216-closeout-evidence.md`. **This phase was complete on 2026-07-23 and has read as open ever since.** |
+| **5.1** | **OPEN** | `ac_id` still means the database UUID on a decomposition proposal and the human string `"AC-001"` on evidence and adjudication. Workaround documented in `docs/operations/production-drill-adaptations.md`; parallel with Wave 3, not a gate. Tracked as `PROJECT.md:36`. |
+| **5.2** | **OPEN** | The package→unit authority projection is still unchecked. Natural companion to WS-P2.10's authority work. |
+| **5.3** | **SHIPPED, with a known hole** | `tests/architecture/test_cross_boundary_vocabulary.py` exists and fires (it reddened on WS-P2.7 Inc-2's tracker vocabulary). The hole: it walks `src/orchestrator/` only, so WS-P3.0's TypeScript copy of six observation vocabularies in `infraops-mcp-server` is invisible to it by construction. Tracked as `PROJECT.md:55` (P2). |
+| **6.1** | **OPEN** | `profile_fields` is still passed through `package_sources.py` and read nowhere; the runner still derives its own branch name. |
+| **6.2** | **OPEN** | No verifier CLI command — `src/orchestrator/cli.py` has neither a `verify` nor a `verifier-evidence` command. **Fold into WS-P2.9** rather than building it twice. |
+| **6.3** | **OPEN** | No `intent_packages init`. **Fold into WS-P2.9** — it is the same front door. |
+| **6.4** | **OPEN** | The envelope is still lane-blind; one `allowed_commands` list serves both lanes and is written to the weakest. |
+| **6.5** | **OPEN** | factory-runner still has only `factory-runner.yml`; no `factory-runner-pilot.yml`, so it cannot be a dispatch target. Only matters if changes are ever sent *to* the runner. |
+| **ONGOING** | **DONE** | WS-P2.2's improvisation counter shipped: `events.improvisation` (migration `0016_wsp22_event_improvisation`), surfaced through the SLO report. The factory can now count the times its own contract was abandoned. |
+
+**What this reconciliation changes about the plan:** Phase 4 is closed, Phase 3 is decided and
+implemented, and the ONGOING meta-fix is done. What actually still gates Wave 3 is **Phase 1** (two
+~10-line runner fixes that fire on every run) and the **Phase 2 masked pair**, which remains a
+workstream and not a patch. Phases 5 and 6 are explicitly parallel — see the workplan's
+"Explicitly parallel with Wave 3" section for the two warnings that come with that.

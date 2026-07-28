@@ -7,6 +7,33 @@
 # When a scorecard cell gains or loses a route citation, update this file in the same change.
 
 [[claim]]
+criterion = 5
+status = "met"
+description = "Recovery drills exercised against production (2026-07-27, 5/5 PASS, none waived)"
+# The routes the 2026-07-27 production drill run actually called -- one primary recovery control
+# per drill, plus the read surfaces the run substituted for the local harness's direct SQL.
+# Evidence: ~/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md;
+# per-drill production variants: docs/operations/production-drill-adaptations.md.
+routes = [
+    # drill 1 -- orchestrator SIGKILLed after a lease was held
+    "/api/v1/work-units/{unit_id}/reclaim-expired-claim",
+    # drill 2 -- lease lapses after the work, before submit
+    "/api/v1/work-units/{unit_id}/attempts/{attempt}/recover-evidence",
+    # drill 4 -- a landed release whose post-release verification stalls
+    "/api/v1/reconciliation/detect",
+    # drill 5 -- a human approval gate nobody answers
+    "/api/v1/dead-letter",
+    # drill 3 read surface + post-run verification that nothing was left in flight
+    "/api/v1/in-flight-units",
+    # post-run verification: canonical state undiverged
+    "/api/v1/consistency-check",
+    # reader substitutions for scratch SQL
+    "/api/v1/status-ledger",
+    "/api/v1/traceability",
+    "/api/v1/work-units/{unit_id}/evidence-pack",
+]
+
+[[claim]]
 criterion = 6
 status = "met"
 description = "Traceability query live in production"
@@ -14,8 +41,8 @@ routes = ["/api/v1/traceability"]
 
 [[claim]]
 criterion = 7
-status = "deployed_not_production_proven"
-description = "Operator status and recovery controls served (behavior proof tracked by ADR-0005)"
+status = "met"
+description = "Operator status and recovery controls served AND exercised in production (2026-07-27 drill run, ADR-0005 disposition A)"
 routes = [
     "/api/v1/dead-letter",
     "/api/v1/consistency-check",
@@ -27,11 +54,12 @@ routes = [
 
 [[claim]]
 criterion = 9
-status = "inc1_met"
-description = "Tracker projection surface (outbound) live in production"
+status = "met"
+description = "Tracker projection surfaces live in production -- outbound (Inc 1) and inbound reconciliation (Inc 2)"
 routes = [
     "/api/v1/work-units/{unit_id}/tracker-binding",
     "/api/v1/tracker-bindings",
+    "/api/v1/reconciliation/tracker-detect",
 ]
 
 [[claim]]

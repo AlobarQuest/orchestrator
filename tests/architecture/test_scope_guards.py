@@ -90,6 +90,9 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/event-publications/queue",
         "/api/v1/event-publications/export",
         "/api/v1/event-publications/{publication_id}/retry",
+        # ADR-0006: package intake is a human gate, so its only production-reachable surface is
+        # a /review form. The /api route it delegates to is human-only and machine-only-routed.
+        "/review/intakes",
         "/review/units/{unit_id}/approval",
         "/review/units/{unit_id}/authority-approval",
         "/review/units/{unit_id}/review",
