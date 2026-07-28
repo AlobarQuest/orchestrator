@@ -178,6 +178,7 @@ def register_revision(
     approval_ledger_commit: str | None = None,
     verification_mode: str | None = None,
     verification_limitations: Mapping[str, Any] | list[Any] | None = None,
+    follow_up: Mapping[str, Any] | None = None,
     actor_id: str,
     actor_role: ActorRole,
     idempotency_key: str | None = None,
@@ -224,6 +225,7 @@ def register_revision(
         "approval_ledger_commit": approval_ledger_commit,
         "verification_mode": verification_mode,
         "verification_limitations": _normalize_json(verification_limitations),
+        "follow_up": _normalize_json(follow_up),
         "registered_by": actor_id,
     }
     command = {

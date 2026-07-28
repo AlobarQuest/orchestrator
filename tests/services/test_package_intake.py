@@ -11,7 +11,7 @@ import orchestrator.services.package_intake as package_intake
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Event, PackageAcceptanceCriterion
+from orchestrator.persistence.models import Event, PackageAcceptanceCriterion, WorkPackageRevision
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.package_intake import (
     AcceptanceCriterionProjection,
@@ -76,6 +76,105 @@ def intake_command(**overrides: object) -> PackageIntakeCommand:
 
 def human_actor() -> ActorContext:
     return ActorContext("human-1", ActorRole.HUMAN)
+
+
+FOLLOW_UP = {
+    "required": True,
+    "revisit_when": "After the next quarterly review.",
+    "signals": ["A guard nobody triaged."],
+    "owner": "devon",
+}
+
+
+def test_intake_persists_the_follow_up_declaration(migrated_session: Session) -> None:
+    command = intake_command(follow_up=FOLLOW_UP)
+
+    revision = register_package_intake(migrated_session, command, human_actor())
+    migrated_session.expire_all()
+    reread = migrated_session.get(WorkPackageRevision, revision.id)
+
+    assert reread is not None
+    assert reread.follow_up == FOLLOW_UP
+
+
+def test_intake_without_a_declaration_stores_null(migrated_session: Session) -> None:
+    revision = register_package_intake(migrated_session, intake_command(), human_actor())
+    migrated_session.expire_all()
+    reread = migrated_session.get(WorkPackageRevision, revision.id)
+
+    assert reread is not None
+    assert reread.follow_up is None
+
+
+def test_a_malformed_declaration_is_rejected_at_the_gate(migrated_session: Session) -> None:
+    command = intake_command(follow_up={"required": "yes"})
+
+    with pytest.raises(DomainError) as caught:
+        register_package_intake(migrated_session, command, human_actor())
+
+    assert caught.value.code == "follow_up_invalid"
+
+
+def test_a_pre_wsp28_intake_event_still_replays(migrated_session: Session) -> None:
+    """An intake event written before the follow_up field existed must not become a conflict.
+
+    `_command_identity` is compared field-for-field on replay. Without an exemption, every
+    event already in production -- written after intake_purpose shipped but before follow_up
+    did, so it carries intake_purpose but not this key -- would raise idempotency_conflict on
+    its next replay. Same shape as the intake_purpose exemption.
+
+    `events` is append-only (a `BEFORE UPDATE OR DELETE` trigger rejects both), so unlike the
+    brief's draft this cannot mutate an already-persisted event in place; the legacy-shaped
+    payload is written directly instead, mirroring
+    test_package_intake_replays_ws32_event_identity_without_new_task6_fields below.
+    """
+    command = intake_command()
+    actor = human_actor()
+    revision = register_revision(
+        migrated_session,
+        package_id=command.package_id,
+        source_repository=command.source_repository,
+        revision=command.revision,
+        content_hash=command.content_hash,
+        source_path=command.source_path,
+        source_commit=command.source_commit,
+        approved_by=command.approved_by,
+        approved_at=command.approved_at,
+        approval_event_id=command.approval_event_id,
+        enforcement_snapshot={
+            **command.enforcement_snapshot,
+            "acceptance_criteria": ["AC-001"],
+        },
+        authority=command.authority,
+        registry_version=command.registry_version,
+        profile=command.profile,
+        status_at_intake=command.status_at_intake,
+        intake_source="package_cli",
+        approval_ledger_commit=command.approval_ledger_commit,
+        verification_mode=command.verification_mode,
+        verification_limitations=command.verification_limitations,
+        actor_id=actor.actor_id,
+        actor_role=actor.role,
+        expected_version=command.expected_version,
+    )
+    legacy_identity = package_intake._command_identity(command, actor)
+    legacy_identity.pop("follow_up")
+    migrated_session.add(
+        Event(
+            actor_id=actor.actor_id,
+            action="package_revision.intake_registered",
+            subject_type="work_package_revision",
+            subject_id=revision.id,
+            payload={"command": legacy_identity},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=command.idempotency_key,
+        )
+    )
+    migrated_session.flush()
+
+    replayed = register_package_intake(migrated_session, command, actor)
+
+    assert replayed.id == revision.id
 
 
 def test_package_intake_rejects_draft_status(migrated_session: Session) -> None:
@@ -190,6 +289,7 @@ def test_package_intake_replays_ws32_event_identity_without_new_task6_fields(
     )
     legacy_identity = package_intake._command_identity(command, actor)
     legacy_identity.pop("intake_purpose")
+    legacy_identity.pop("follow_up")
     limitations = legacy_identity["verification_limitations"]
     assert isinstance(limitations, dict)
     limitations.pop("protocol_fixture_only", None)

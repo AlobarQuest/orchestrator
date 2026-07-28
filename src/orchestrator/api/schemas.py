@@ -793,6 +793,7 @@ class PackageIntakeRegistration(CommandBase):
     registry_version: int = Field(ge=0)
     acceptance_criteria: list[PackageAcceptanceCriterionCommand] = Field(min_length=1)
     intake_purpose: Literal["executable", "protocol_fixture"] = "executable"
+    follow_up: dict[str, Any] | None = None
 
 
 class PackageAcceptanceCriterionResponse(BaseModel):
@@ -826,6 +827,7 @@ class PackageIntakeResponse(BaseModel):
     enforcement_snapshot: dict[str, Any]
     authority_fingerprint: str
     authority: dict[str, Any] | None
+    follow_up: dict[str, Any] | None
     registry_version: int
     registered_by: str
     registered_at: datetime

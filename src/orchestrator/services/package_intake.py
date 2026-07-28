@@ -12,6 +12,7 @@ from orchestrator.kernel.authority import AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event, PackageAcceptanceCriterion, WorkPackageRevision
 from orchestrator.persistence.repositories import PackageRepository
+from orchestrator.services.follow_ups import validate_follow_up
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import register_revision
 from orchestrator.services.verifier_evaluators import SUPPORTED_CRITERION_EVIDENCE_TYPES
@@ -56,6 +57,7 @@ class PackageIntakeCommand:
     idempotency_key: str
     expected_version: int
     intake_purpose: str = "executable"
+    follow_up: dict[str, Any] | None = None
 
 
 def register_package_intake(
@@ -87,6 +89,7 @@ def register_package_intake(
             "package intake requires caller_attested_cli_verified verification",
             None,
         )
+    follow_up = validate_follow_up(command.follow_up)
     acceptance_criteria = _validated_acceptance_criteria(command.acceptance_criteria)
     PackageRepository(session).lock_package_intake(command.package_id)
     replay = _intake_replay(session, command, actor)
@@ -120,6 +123,7 @@ def register_package_intake(
             approval_ledger_commit=command.approval_ledger_commit,
             verification_mode=command.verification_mode,
             verification_limitations=command.verification_limitations,
+            follow_up=follow_up,
             actor_id=actor.actor_id,
             actor_role=actor.role,
             expected_version=command.expected_version,
@@ -249,7 +253,19 @@ def _legacy_executable_identity_matches(
     if command.intake_purpose != "executable" or not isinstance(observed, dict):
         return False
     legacy = dict(expected)
-    legacy.pop("intake_purpose", None)
+    # Pop each newer key only when the OBSERVED (stored) event actually lacks it -- not
+    # unconditionally. Production carries at least two legacy shapes: events written before
+    # intake_purpose existed (missing both keys) and events written after intake_purpose
+    # shipped but before follow_up did (carrying intake_purpose, missing only follow_up). An
+    # unconditional pop makes the second shape mismatch on intake_purpose alone, because
+    # legacy would then lack a key the observed payload still has.
+    if "intake_purpose" not in observed:
+        legacy.pop("intake_purpose", None)
+    # WS-P2.8: events written before the follow_up field existed carry no such key. Popping it
+    # keeps their replay a replay instead of a conflict; the field is only omittable when the
+    # command itself declares none, so a real declaration can never be silently ignored.
+    if command.follow_up is None and "follow_up" not in observed:
+        legacy.pop("follow_up", None)
     expected_limitations = legacy.get("verification_limitations")
     if isinstance(expected_limitations, dict):
         expected_limitations = dict(expected_limitations)
@@ -282,6 +298,7 @@ def _command_identity(
         "status_at_intake": command.status_at_intake,
         "verification_mode": command.verification_mode,
         "verification_limitations": _normalize_json(command.verification_limitations),
+        "follow_up": _normalize_json(command.follow_up),
         "enforcement_snapshot": _normalize_json(command.enforcement_snapshot),
         "authority": command.authority.normalized(),
         "registry_version": command.registry_version,

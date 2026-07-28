@@ -142,6 +142,34 @@ def test_package_intake_get_returns_persisted_intake_projection(db_client: TestC
     assert all(uuid.UUID(criterion["id"]) for criterion in body["acceptance_criteria"])
 
 
+def test_package_intake_round_trips_the_follow_up_declaration(db_client: TestClient) -> None:
+    declaration = {
+        "required": True,
+        "revisit_when": "After the next quarterly review.",
+        "signals": ["A guard nobody triaged."],
+        "owner": "devon",
+    }
+    created = db_client.post(
+        "/api/v1/package-intakes",
+        headers=HUMAN,
+        json=intake_payload(follow_up=declaration),
+    )
+
+    fetched = db_client.get(f"/api/v1/package-intakes/{created.json()['id']}", headers=HUMAN)
+
+    assert created.status_code == 201
+    assert fetched.json()["follow_up"] == declaration
+
+
+def test_a_payload_without_a_follow_up_declaration_is_still_accepted(
+    db_client: TestClient,
+) -> None:
+    created = db_client.post("/api/v1/package-intakes", headers=HUMAN, json=intake_payload())
+
+    assert created.status_code == 201
+    assert created.json()["follow_up"] is None
+
+
 def test_package_intake_get_rejects_non_intaken_revision(db_client: TestClient) -> None:
     created = db_client.post("/api/v1/revisions", headers=HUMAN, json=revision_payload())
     revision_id = created.json()["id"]

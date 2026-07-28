@@ -339,6 +339,7 @@ def package_intake_command(body: PackageIntakeRegistration) -> PackageIntakeComm
         idempotency_key=body.idempotency_key,
         expected_version=body.expected_version,
         intake_purpose=body.intake_purpose,
+        follow_up=body.follow_up,
     )
 
 
@@ -1791,6 +1792,7 @@ def _package_intake_payload(
         "enforcement_snapshot": revision.enforcement_snapshot,
         "authority_fingerprint": revision.authority_fingerprint,
         "authority": command.get("authority"),
+        "follow_up": revision.follow_up,
         "registry_version": revision.registry_version,
         "registered_by": revision.registered_by,
         "registered_at": revision.registered_at,

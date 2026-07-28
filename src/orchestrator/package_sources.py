@@ -547,6 +547,7 @@ def _load_intake_payload(
             "applicable_standards": package["applicable_standards"],
         },
         "authority": package["authority"],
+        "follow_up": package.get("follow_up"),
         "registry_version": 1,
         "acceptance_criteria": acceptance_criteria,
     }
