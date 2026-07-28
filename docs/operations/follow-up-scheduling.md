@@ -95,11 +95,21 @@ unit is canonical mutation, and event attribution (`ActorContext.actor_id`) is p
 credentials already exist in production with role `system`; no new credential, env write, or
 restart is needed to run this pass.
 
-**`drift-audit.sh` runs one pass daily** as a small additive step alongside its existing 03:00 run,
-non-fatal and fail-open (a counted WARN on failure, never touching the drift loop's exit code or
-its other steps). This is the one part of WS-P2.8 that *is* wired to a schedule on day one — see
-ADR-0007's "Scheduled trigger" section for why that is not a contradiction of the "no loop inside
-the orchestrator" posture.
+**`drift-audit.sh` is intended to gain a daily mint step** — WS-P2.8 Task 10, in
+`AlobarQuest/infraops-mcp-server`, tracked and merged separately from this branch. **Verify it has
+landed before relying on the daily cadence:**
+
+```bash
+grep -n "mint\|follow_up\|follow-up" ~/Projects/infraops-mcp-server/scripts/drift-audit.sh
+```
+
+A hit means the step landed; no hit means it hasn't, and **as of this writing it hasn't** —
+`drift-audit.sh` currently holds only the `orchestrator-drift-reporter` credential and contains no
+reference to minting. Until Task 10 merges, `scripts/run-follow-up-mint.sh`, run manually or from
+cron, is the **only** trigger for a pass. See ADR-0007's "Scheduled trigger" section for the
+decision this wiring implements and why the trigger shipping separately does not contradict the
+"no loop inside the orchestrator" posture — the orchestrator itself has no loop either way; the
+schedule, once it lands, lives entirely in the other repository.
 
 ## Reading the counted output
 

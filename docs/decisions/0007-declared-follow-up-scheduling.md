@@ -90,19 +90,27 @@ any one caller.
 ## Scheduled trigger
 
 Unlike ADR-0002 and ADR-0003, both of which deliberately deferred any scheduled trigger to "a
-separate, later decision," this capability **is wired to a schedule on day one**: a small
-additive step in `drift-audit.sh`, which already runs daily at 03:00 and already holds an
-orchestrator credential (`orchestrator-system`, distinct from that script's
-`orchestrator-drift-reporter` observation-posting credential — the two identities must not be
+separate, later decision," **this ADR chooses to wire a scheduled trigger rather than defer one.**
+The plan is a small additive step in `drift-audit.sh` (`AlobarQuest/infraops-mcp-server`), which
+already runs daily at 03:00: add one more pass of the mint route to that run, non-fatal and
+fail-open (a counted WARN on failure, touching neither the drift loop's exit code nor its other
+steps — Healthchecks ping, Resend digest, change-manager sync, security-drift step), using the
+`orchestrator-system` credential distinct from that script's own
+`orchestrator-drift-reporter` observation-posting credential (the two identities must not be
 conflated, since one is observe-and-propose-only and the other is the one authorized to mint).
-The step is non-fatal and fail-open: a counted WARN on failure, touching neither the drift loop's
-exit code nor its other steps (Healthchecks ping, Resend digest, change-manager sync,
-security-drift step).
 
-This does not put a scheduler inside the orchestrator. The orchestrator still has no loop; what
-changed is that an already-scheduled *external* operator job now invokes a route that already
-existed for on-demand use. The ADR-0002/0003 posture — the orchestrator process stays push-only
-and loop-free — is honoured, not bypassed: the schedule lives entirely outside `src/`.
+**That wiring step is its own deliverable — WS-P2.8 Task 10 — shipping as a separately-mergeable
+pull request in a different repository than this one.** This ADR records the decision to wire a
+trigger and the shape it takes; it does not itself land the change. Until Task 10 merges,
+`drift-audit.sh` holds only `orchestrator-drift-reporter` and contains no reference to minting at
+all, and `scripts/run-follow-up-mint.sh` (run manually or from cron) is the only trigger. See
+`docs/operations/follow-up-scheduling.md` for how to verify whether the daily step has landed.
+
+Once it lands, this still does not put a scheduler inside the orchestrator. The orchestrator has
+no loop either way; what changes is that an already-scheduled *external* operator job invokes a
+route that already exists for on-demand use. The ADR-0002/0003 posture — the orchestrator process
+stays push-only and loop-free — is honoured, not bypassed: the schedule lives entirely outside
+`src/`, in a different repository, on its own merge cycle.
 
 ## Consequences
 
