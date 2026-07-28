@@ -35,4 +35,5 @@ export TRACKER_PROJECTION_TOKEN TODOIST_API_TOKEN
 
 exec "$REPO_ROOT/.venv/bin/tracker-projection-adapter" reconcile \
   --todoist-project-id "${TODOIST_PROJECT_ID:?set TODOIST_PROJECT_ID to the target Todoist project id}" \
+  --pass-id "$(date -u +%Y%m%dT%H%M%SZ)" \
   "$@"

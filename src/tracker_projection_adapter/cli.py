@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol
 
 import typer
@@ -128,18 +129,29 @@ def reconcile(
     projector: TrackerProjector,
     *,
     dry_run: bool,
+    pass_id: str,
 ) -> dict[str, int]:
     """Report each Todoist-bound item's observed completion. The orchestrator owns the divergence
     rule; this only observes and reports (dumb adapter). Reading Todoist is non-mutating, so a dry
-    run still reads -- it only withholds the orchestrator report."""
+    run still reads -- it only withholds the orchestrator report.
+
+    Per-item fail-open with a counted skip. The report is ONE post at the end, so letting a single
+    unreadable item propagate would discard every item already read, not just the failing one --
+    a pass that dies on item three reports nothing about items one and two.
+    """
     observed_states = []
+    skipped = 0
     for row in client.tracker_bindings():
-        binding = binding_view(row)
-        if binding.tracker_system != "todoist":
+        try:
+            binding = binding_view(row)
+            if binding.tracker_system != "todoist":
+                continue
+            completed = projector.item_completed(
+                ItemRef(binding.external_item_id, binding.external_url)
+            )
+        except (RuntimeError, KeyError, TypeError, ValueError):
+            skipped += 1
             continue
-        completed = projector.item_completed(
-            ItemRef(binding.external_item_id, binding.external_url)
-        )
         observed_states.append(
             {
                 "tracker_system": binding.tracker_system,
@@ -148,10 +160,12 @@ def reconcile(
             }
         )
     if not dry_run and observed_states:
+        # Per pass, not a constant. Every pass previously shared the key "tracker-detect-pass";
+        # compare the reconciliation runner's f"reconcile-detect:{pass_id}".
         client.report_tracker_reconciliation(
-            observed_states=observed_states, idempotency_key="tracker-detect-pass"
+            observed_states=observed_states, idempotency_key=f"tracker-detect:{pass_id}"
         )
-    return {"reported": len(observed_states)}
+    return {"reported": len(observed_states), "skipped": skipped}
 
 
 @app.command("project")
@@ -192,6 +206,7 @@ def reconcile_command(
     review_base_url: Annotated[str, typer.Option()] = "https://sds.alobar.net",
     credential_key_id: Annotated[str, typer.Option()] = "orchestrator-system",
     dry_run: Annotated[bool, typer.Option(help="Read + print the plan; send no report.")] = False,
+    pass_id: Annotated[str, typer.Option(help="Unique id for this pass.")] = "",
 ) -> None:
     token = os.environ.get("TRACKER_PROJECTION_TOKEN")
     if not token:
@@ -201,11 +216,12 @@ def reconcile_command(
     if not todoist_token:
         typer.echo("TODOIST_API_TOKEN is required", err=True)
         raise typer.Exit(code=1)
+    resolved_pass_id = pass_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     client = OrchestratorClient(
         base_url=orchestrator_url, credential_key_id=credential_key_id, token=token
     )
     with TodoistProjector(
         token=todoist_token, project_id=todoist_project_id, review_base_url=review_base_url
     ) as projector:
-        counts = reconcile(client, projector, dry_run=dry_run)
+        counts = reconcile(client, projector, dry_run=dry_run, pass_id=resolved_pass_id)
     typer.echo(json.dumps(counts, indent=2, sort_keys=True))

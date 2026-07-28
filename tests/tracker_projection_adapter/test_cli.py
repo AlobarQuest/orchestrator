@@ -8,6 +8,7 @@ class FakeClient:
         self._bindings = bindings or []
         self.upserts = []
         self.reported = []
+        self.reported_key = None
 
     def status_ledger(self):
         return self._units
@@ -21,6 +22,7 @@ class FakeClient:
 
     def report_tracker_reconciliation(self, *, observed_states, idempotency_key):
         self.reported = observed_states
+        self.reported_key = idempotency_key
         return {}
 
 
@@ -101,12 +103,12 @@ def test_reconcile_reports_observed_completion_for_each_todoist_binding():
         ]
     )
     projector = FakeProjector(completed={"tid-1": True})
-    counts = reconcile(client, projector, dry_run=False)
+    counts = reconcile(client, projector, dry_run=False, pass_id="p1")
     assert projector.calls == [("item_completed", "tid-1")]
     assert client.reported == [
         {"tracker_system": "todoist", "external_item_id": "tid-1", "observed_completed": True}
     ]
-    assert counts == {"reported": 1}
+    assert counts == {"reported": 1, "skipped": 0}
 
 
 def test_reconcile_dry_run_makes_no_report():
@@ -122,6 +124,50 @@ def test_reconcile_dry_run_makes_no_report():
         ]
     )
     projector = FakeProjector(completed={"tid-1": False})
-    reconcile(client, projector, dry_run=True)
+    reconcile(client, projector, dry_run=True, pass_id="p1")
     assert projector.calls == [("item_completed", "tid-1")]
     assert client.reported == []
+
+
+class ExplodingProjector(FakeProjector):
+    """Raises on one specific item, the way TodoistProjector does on a non-404 >= 400."""
+
+    def __init__(self, completed, explode_on):
+        super().__init__(completed)
+        self._explode_on = explode_on
+
+    def item_completed(self, item_ref):
+        if item_ref.external_item_id == self._explode_on:
+            raise RuntimeError("todoist rejected GET /tasks/tid-2: 500")
+        return super().item_completed(item_ref)
+
+
+def _binding(item_id):
+    return {
+        "work_unit_id": f"u-{item_id}",
+        "tracker_system": "todoist",
+        "external_item_id": item_id,
+        "external_url": None,
+        "projected_state": "ready",
+    }
+
+
+def test_one_unreadable_item_does_not_discard_the_rest():
+    """The report is a single POST at the end, so an abort mid-loop reports NOTHING about the
+    items already read -- not merely the failing item."""
+    client = FakeClient(bindings=[_binding("tid-1"), _binding("tid-2"), _binding("tid-3")])
+    projector = ExplodingProjector({"tid-1": True, "tid-3": False}, explode_on="tid-2")
+
+    counts = reconcile(client, projector, dry_run=False, pass_id="p1")
+
+    assert counts == {"reported": 2, "skipped": 1}
+    assert [row["external_item_id"] for row in client.reported] == ["tid-1", "tid-3"]
+
+
+def test_each_pass_reports_under_its_own_idempotency_key():
+    client = FakeClient(bindings=[_binding("tid-1")])
+    projector = FakeProjector(completed={"tid-1": True})
+
+    reconcile(client, projector, dry_run=False, pass_id="p1")
+
+    assert client.reported_key == "tracker-detect:p1"
