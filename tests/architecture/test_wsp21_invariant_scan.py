@@ -101,6 +101,12 @@ OUTBOUND_ALLOWLIST = {
     # test_tracker_projection_adapter_isolation.py. Its egress is not the orchestrator's.
     Path("src/tracker_projection_adapter/orchestrator_client.py"),
     Path("src/tracker_projection_adapter/tracker.py"),
+    # cli.py imports httpx only to catch httpx.HTTPError -- the base class for the transport
+    # failures (ConnectTimeout, ReadTimeout, ConnectError, ...) that TodoistProjector._get's
+    # underlying httpx.Client can raise before any status code exists, distinct from the
+    # RuntimeError _get raises itself on a >= 400 response. cli.py makes no HTTP calls of its
+    # own; all egress stays in tracker.py, already allowlisted above.
+    Path("src/tracker_projection_adapter/cli.py"),
 }
 
 

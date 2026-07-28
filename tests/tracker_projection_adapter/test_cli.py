@@ -1,3 +1,5 @@
+import httpx
+
 from tracker_projection_adapter.cli import project, reconcile
 from tracker_projection_adapter.tracker import ItemRef
 
@@ -171,3 +173,31 @@ def test_each_pass_reports_under_its_own_idempotency_key():
     reconcile(client, projector, dry_run=False, pass_id="p1")
 
     assert client.reported_key == "tracker-detect:p1"
+
+
+class TimeoutProjector(FakeProjector):
+    """Raises a transport-level httpx error on one item -- no status code was ever received,
+    unlike ExplodingProjector's RuntimeError which models TodoistProjector._get's >= 400 case."""
+
+    def __init__(self, completed, explode_on):
+        super().__init__(completed)
+        self._explode_on = explode_on
+
+    def item_completed(self, item_ref):
+        if item_ref.external_item_id == self._explode_on:
+            raise httpx.ConnectTimeout("connect timed out")
+        return super().item_completed(item_ref)
+
+
+def test_a_connection_timeout_on_one_item_does_not_discard_the_rest():
+    """httpx.ConnectTimeout (and ReadTimeout/ConnectError, etc.) raise from self._client.get(...)
+    before any status code exists, so they are not RuntimeError -- a distinct failure mode from
+    the >= 400 case ExplodingProjector models, and at least as likely for an external API called
+    in a loop."""
+    client = FakeClient(bindings=[_binding("tid-1"), _binding("tid-2"), _binding("tid-3")])
+    projector = TimeoutProjector({"tid-1": True, "tid-3": False}, explode_on="tid-2")
+
+    counts = reconcile(client, projector, dry_run=False, pass_id="p1")
+
+    assert counts == {"reported": 2, "skipped": 1}
+    assert [row["external_item_id"] for row in client.reported] == ["tid-1", "tid-3"]

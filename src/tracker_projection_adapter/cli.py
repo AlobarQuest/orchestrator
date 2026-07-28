@@ -7,6 +7,7 @@ import os
 from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol
 
+import httpx
 import typer
 
 from tracker_projection_adapter.orchestrator_client import OrchestratorClient
@@ -149,7 +150,7 @@ def reconcile(
             completed = projector.item_completed(
                 ItemRef(binding.external_item_id, binding.external_url)
             )
-        except (RuntimeError, KeyError, TypeError, ValueError):
+        except (RuntimeError, KeyError, TypeError, ValueError, httpx.HTTPError):
             skipped += 1
             continue
         observed_states.append(
