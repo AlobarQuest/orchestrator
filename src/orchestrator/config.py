@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     # a normal in-progress verification from a split brain. Production must sit above a normal
     # verification's worst case; the AC-010 drill sets it low via the env var so it needs no sleep.
     reconcile_split_brain_stall_seconds: int = 900
+    # How long after a package revision's work settles before its declared follow-up review
+    # becomes due. A plain int with NO "off" value and BOUNDED at both ends, following
+    # dead_letter_stalled_approval_seconds: a large value silences the mechanism as effectively
+    # as None ever did, so the cap is what makes "cannot be switched off" true of the values an
+    # operator can actually set. The floor is not the risk -- 0 means "due as soon as the work
+    # settles", which is maximally on and is what the production demonstration uses so it needs
+    # no waiting.
+    follow_up_due_after_days: int = Field(default=30, ge=0, le=365)
 
 
 @lru_cache

@@ -43,10 +43,13 @@ CAPABILITY_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
 
 RUNNER_CAPABILITIES: Final[frozenset[str]] = frozenset(CAPABILITY_VOCABULARY["runner"])
 
-# The orchestrator additionally mints this for its own WS-5.1 post-hoc verification units
-# (constructed directly in ``services.deployment_observations``, bypassing unit ingress). It is in
-# the orchestrator's accepted set but NOT the runner's -- the orchestrator vocabulary is a superset.
-ORCHESTRATOR_ONLY_CAPABILITIES: Final[frozenset[str]] = frozenset({"post_deploy_verification"})
+# The orchestrator additionally mints these for its own units, which never traverse a runner:
+# `post_deploy_verification` for WS-5.1 post-hoc release verification, and `follow_up_review`
+# for the WS-P2.8 package-declared follow-up review. Both are in the orchestrator's accepted set
+# but NOT the runner's -- the orchestrator vocabulary is a superset.
+ORCHESTRATOR_ONLY_CAPABILITIES: Final[frozenset[str]] = frozenset(
+    {"post_deploy_verification", "follow_up_review"}
+)
 
 # What orchestrator unit ingress accepts for ``required_capability`` and ``authority.capabilities``
 # keys: the runner set plus the orchestrator-only additions.

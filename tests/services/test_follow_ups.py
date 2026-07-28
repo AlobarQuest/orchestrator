@@ -1,7 +1,22 @@
+import uuid
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from orchestrator.errors import DomainError
-from orchestrator.services.follow_ups import validate_follow_up
+from orchestrator.services.follow_ups import (
+    FOLLOW_UP_CAPABILITY,
+    SKIP_ALREADY_MINTED,
+    SKIP_NO_COMPLETED_UNIT,
+    SKIP_NOT_REQUIRED,
+    SKIP_NOT_YET_DUE,
+    SKIP_UNITS_IN_FLIGHT,
+    SKIP_UNSETTLED_FAILED_UNIT,
+    RevisionFacts,
+    UnitFacts,
+    evaluate_due,
+    validate_follow_up,
+)
 
 VALID = {
     "required": True,
@@ -51,3 +66,124 @@ def test_a_malformed_declaration_is_a_named_domain_error(value: object) -> None:
         validate_follow_up(value)
 
     assert caught.value.code == "follow_up_invalid"
+
+
+NOW = datetime(2026, 9, 1, tzinfo=UTC)
+SETTLED = NOW - timedelta(days=40)
+REQUIRED = {"required": True, "revisit_when": "Later.", "signals": [], "owner": None}
+
+
+def facts(*units: UnitFacts, follow_up=REQUIRED, has_follow_up_unit=False) -> RevisionFacts:
+    return RevisionFacts(
+        revision_id=uuid.uuid4(),
+        follow_up=follow_up,
+        units=units,
+        has_follow_up_unit=has_follow_up_unit,
+    )
+
+
+def completed(settled_at=SETTLED) -> UnitFacts:
+    return UnitFacts(required_capability="repo.edit", state="completed", settled_at=settled_at)
+
+
+def cancelled(settled_at=SETTLED) -> UnitFacts:
+    return UnitFacts(required_capability="repo.edit", state="cancelled", settled_at=settled_at)
+
+
+def in_flight() -> UnitFacts:
+    return UnitFacts(required_capability="repo.edit", state="executing", settled_at=None)
+
+
+def failed() -> UnitFacts:
+    return UnitFacts(required_capability="repo.edit", state="failed", settled_at=None)
+
+
+def test_a_settled_revision_past_the_window_is_due() -> None:
+    decision = evaluate_due(facts(completed()), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason is None
+    assert decision.due_at == SETTLED + timedelta(days=30)
+
+
+def test_the_anchor_is_the_latest_settling_not_the_earliest() -> None:
+    late = NOW - timedelta(days=31)
+    decision = evaluate_due(facts(completed(), completed(late)), now=NOW, due_after_days=30)
+
+    assert decision.due_at == late + timedelta(days=30)
+
+
+def test_a_declaration_that_does_not_require_follow_up_is_skipped() -> None:
+    declaration = {"required": False, "revisit_when": None, "signals": [], "owner": None}
+
+    decision = evaluate_due(facts(completed(), follow_up=declaration), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_NOT_REQUIRED
+
+
+def test_a_revision_with_no_declaration_is_skipped() -> None:
+    decision = evaluate_due(facts(completed(), follow_up=None), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_NOT_REQUIRED
+
+
+def test_a_revision_with_work_still_moving_is_skipped() -> None:
+    decision = evaluate_due(facts(completed(), in_flight()), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_UNITS_IN_FLIGHT
+
+
+def test_a_lingering_failed_unit_blocks_with_its_own_reason() -> None:
+    """FAILED is not terminal -- it can go back to READY or on to CANCELLED -- so a revision
+    behind one has an undecided outcome. It must NOT read as units_in_flight: 'still working'
+    and 'stopped, and nobody decided' are different operator actions."""
+    decision = evaluate_due(facts(completed(), failed()), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_UNSETTLED_FAILED_UNIT
+
+
+def test_a_wholly_cancelled_revision_never_mints() -> None:
+    """Nothing shipped, so there is no outcome to revisit."""
+    decision = evaluate_due(facts(cancelled(), cancelled()), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_NO_COMPLETED_UNIT
+
+
+def test_a_revision_with_no_units_at_all_never_mints() -> None:
+    decision = evaluate_due(facts(), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_NO_COMPLETED_UNIT
+
+
+def test_a_revision_inside_the_window_is_not_yet_due() -> None:
+    recent = NOW - timedelta(days=5)
+    decision = evaluate_due(facts(completed(recent)), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_NOT_YET_DUE
+    assert decision.due_at == recent + timedelta(days=30)
+
+
+def test_zero_days_makes_a_settled_revision_immediately_due() -> None:
+    decision = evaluate_due(facts(completed(NOW)), now=NOW, due_after_days=0)
+
+    assert decision.skip_reason is None
+
+
+def test_an_existing_follow_up_unit_short_circuits_everything() -> None:
+    decision = evaluate_due(facts(completed(), has_follow_up_unit=True), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_ALREADY_MINTED
+
+
+def test_the_revisions_own_follow_up_unit_is_excluded_from_the_predicate() -> None:
+    """The minted unit is a unit of its own revision. Once a human completes it, 'everything
+    settled' would be true again and the revision would look due a second time. Excluding it
+    keeps the counted-skip output honest; the uuid5 id is the structural backstop."""
+    own = UnitFacts(
+        required_capability=FOLLOW_UP_CAPABILITY, state="awaiting_review", settled_at=None
+    )
+
+    decision = evaluate_due(
+        facts(completed(), own, has_follow_up_unit=True), now=NOW, due_after_days=30
+    )
+
+    assert decision.skip_reason == SKIP_ALREADY_MINTED

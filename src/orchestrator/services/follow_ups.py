@@ -9,6 +9,9 @@ error rather than an ignored extra, because a silently-dropped key is how a decl
 reader drift apart.
 """
 
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from orchestrator.errors import DomainError
@@ -52,3 +55,93 @@ def validate_follow_up(value: object) -> dict[str, Any] | None:
         "signals": list(signals),
         "owner": value["owner"],
     }
+
+
+# The capability a follow-up review unit requires. Registered in ORCHESTRATOR_ONLY_CAPABILITIES,
+# never in the runner vocabulary: no runner works one of these, and the byte-pinned cross-repo
+# envelope fixture stays untouched.
+FOLLOW_UP_CAPABILITY = "follow_up_review"
+
+# Why a revision was passed over. Individual constants rather than a collection: a module-level
+# tuple of strings used in a membership test becomes a discovered subject of the cross-boundary
+# vocabulary detector, and these are internal policy, not a contract with another repo.
+SKIP_NOT_REQUIRED = "not_required"
+SKIP_NO_COMPLETED_UNIT = "no_completed_unit"
+SKIP_UNITS_IN_FLIGHT = "units_in_flight"
+SKIP_UNSETTLED_FAILED_UNIT = "unsettled_failed_unit"
+SKIP_NOT_YET_DUE = "not_yet_due"
+SKIP_ALREADY_MINTED = "already_minted"
+SKIP_DECLARATION_MALFORMED = "declaration_malformed"
+
+_COMPLETED = "completed"
+_CANCELLED = "cancelled"
+_FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class UnitFacts:
+    """One work unit, reduced to what due-ness depends on.
+
+    `settled_at` is when the unit ENTERED its settled state, read from the event ledger -- never
+    from `work_units.updated_at`, which a trigger rewrites on every write and which therefore
+    cannot be back-dated or trusted as a state-entry time.
+    """
+
+    required_capability: str
+    state: str
+    settled_at: datetime | None
+
+
+@dataclass(frozen=True)
+class RevisionFacts:
+    revision_id: uuid.UUID
+    follow_up: dict[str, object] | None
+    units: tuple[UnitFacts, ...]
+    has_follow_up_unit: bool
+
+
+@dataclass(frozen=True)
+class DueDecision:
+    revision_id: uuid.UUID
+    due_at: datetime | None
+    skip_reason: str | None
+
+
+def evaluate_due(facts: RevisionFacts, *, now: datetime, due_after_days: int) -> DueDecision:
+    """Decide whether a revision's declared follow-up review is due. Pure: no I/O, no clock.
+
+    A revision qualifies when its declaration asks for one, its work actually shipped (at least
+    one unit completed) and has stopped moving, the window has elapsed since the last unit
+    settled, and no review unit exists yet.
+
+    FAILED deliberately blocks. It is not a terminal state -- a failed unit can return to READY
+    or be retired -- so the package's outcome is not yet knowable and there is nothing to
+    schedule a revisit of. It gets its OWN skip reason rather than being folded into
+    `units_in_flight`, because "still working" and "stopped, and nobody decided" call for
+    different operator actions.
+    """
+    if facts.has_follow_up_unit:
+        return DueDecision(facts.revision_id, None, SKIP_ALREADY_MINTED)
+    declaration = facts.follow_up
+    if not isinstance(declaration, dict) or declaration.get("required") is not True:
+        return DueDecision(facts.revision_id, None, SKIP_NOT_REQUIRED)
+
+    # The review unit is itself a unit of this revision; counting it would make the revision look
+    # eligible again the moment a human completes it.
+    subjects = tuple(
+        unit for unit in facts.units if unit.required_capability != FOLLOW_UP_CAPABILITY
+    )
+    if any(unit.state == _FAILED for unit in subjects):
+        return DueDecision(facts.revision_id, None, SKIP_UNSETTLED_FAILED_UNIT)
+    if any(unit.state not in (_COMPLETED, _CANCELLED) for unit in subjects):
+        return DueDecision(facts.revision_id, None, SKIP_UNITS_IN_FLIGHT)
+    if not any(unit.state == _COMPLETED for unit in subjects):
+        return DueDecision(facts.revision_id, None, SKIP_NO_COMPLETED_UNIT)
+
+    settled = [unit.settled_at for unit in subjects if unit.settled_at is not None]
+    if not settled:
+        return DueDecision(facts.revision_id, None, SKIP_UNITS_IN_FLIGHT)
+    due_at = max(settled) + timedelta(days=due_after_days)
+    if now < due_at:
+        return DueDecision(facts.revision_id, due_at, SKIP_NOT_YET_DUE)
+    return DueDecision(facts.revision_id, due_at, None)
