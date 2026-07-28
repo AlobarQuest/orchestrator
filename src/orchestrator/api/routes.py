@@ -305,42 +305,50 @@ def create_revision(
     return {"id": revision.id, "revision": revision.revision}
 
 
+def package_intake_command(body: PackageIntakeRegistration) -> PackageIntakeCommand:
+    """Project a validated intake registration onto the service command.
+
+    Shared with the `/review` browser form (`web.py`), which is the only human-reachable way to
+    register an intake in production -- ADR-0006. Both entry points must build the SAME command
+    from the SAME validated model, or the browser path becomes a second, laxer set of rules; this
+    function is what makes "the form is a new way in, not a new set of rules" checkable rather
+    than merely asserted.
+    """
+    return PackageIntakeCommand(
+        package_id=body.package_id,
+        source_repository=body.source_repository,
+        revision=body.revision,
+        content_hash=body.content_hash,
+        source_path=body.source_path,
+        source_commit=body.source_commit,
+        approved_by=body.approved_by,
+        approved_at=body.approved_at,
+        approval_event_id=body.approval_event_id,
+        approval_ledger_commit=body.approval_ledger_commit,
+        profile=body.profile,
+        status_at_intake=body.status_at_intake,
+        verification_mode=body.verification_mode,
+        verification_limitations=body.verification_limitations,
+        enforcement_snapshot=body.enforcement_snapshot,
+        authority=normalize_authority(body.authority),
+        registry_version=body.registry_version,
+        acceptance_criteria=tuple(
+            AcceptanceCriterionProjection(**criterion.model_dump())
+            for criterion in body.acceptance_criteria
+        ),
+        idempotency_key=body.idempotency_key,
+        expected_version=body.expected_version,
+        intake_purpose=body.intake_purpose,
+    )
+
+
 @router.post("/package-intakes", response_model=PackageIntakeResponse, status_code=201)
 def create_package_intake(
     body: PackageIntakeRegistration,
     actor: ActorDep,
     session: SessionDep,
 ) -> dict[str, object]:
-    revision = register_package_intake(
-        session,
-        PackageIntakeCommand(
-            package_id=body.package_id,
-            source_repository=body.source_repository,
-            revision=body.revision,
-            content_hash=body.content_hash,
-            source_path=body.source_path,
-            source_commit=body.source_commit,
-            approved_by=body.approved_by,
-            approved_at=body.approved_at,
-            approval_event_id=body.approval_event_id,
-            approval_ledger_commit=body.approval_ledger_commit,
-            profile=body.profile,
-            status_at_intake=body.status_at_intake,
-            verification_mode=body.verification_mode,
-            verification_limitations=body.verification_limitations,
-            enforcement_snapshot=body.enforcement_snapshot,
-            authority=normalize_authority(body.authority),
-            registry_version=body.registry_version,
-            acceptance_criteria=tuple(
-                AcceptanceCriterionProjection(**criterion.model_dump())
-                for criterion in body.acceptance_criteria
-            ),
-            idempotency_key=body.idempotency_key,
-            expected_version=body.expected_version,
-            intake_purpose=body.intake_purpose,
-        ),
-        actor,
-    )
+    revision = register_package_intake(session, package_intake_command(body), actor)
     session.commit()
     return _package_intake_payload(session, revision)
 

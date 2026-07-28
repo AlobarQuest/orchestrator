@@ -35,8 +35,14 @@ so it is the form the negative control plants.
 
 import ast
 from pathlib import Path
+from typing import Any
 
 import pytest
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.mutable import MutableDict
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from orchestrator.persistence.models import WorkUnit
 
 SRC = Path("src")
 
@@ -149,6 +155,54 @@ def test_the_work_unit_authority_envelope_is_never_mutated() -> None:
         "along with it -- an approved authority fingerprint would otherwise cover an envelope "
         "the human never approved."
     )
+
+
+def test_the_authority_column_is_not_mutation_tracked() -> None:
+    """The AST guard above is only load-bearing while the column is a PLAIN ``JSONB``.
+
+    The `flag_modified` clause works by treating the call's PRESENCE as the tell that someone
+    means an in-place edit to stick -- which holds only because the ORM cannot notice the edit
+    on its own. Wrap the column in ``MutableDict.as_mutable(JSONB)`` and that inverts: SQLAlchemy
+    tracks the dict itself, an in-place alias mutation persists with NO `flag_modified` call
+    anywhere, and the guard above goes quietly blind. Worse, the mutation need not even name
+    `.authority` -- an alias taken earlier (`env = unit.authority; env["budgets"][...] = 9`)
+    defeats every one of the four AST forms.
+
+    So this is the last hole in the write-once guarantee, and with `is_expansion()` deleted
+    (WS-P2.15) that guarantee is the *entire* defence against envelope expansion.
+
+    Checked on a TRANSIENT instance on purpose: `as_mutable` coerces at attribute-set time, so no
+    database, session or flush is involved, and the assertion cannot be weakened by fixture setup.
+    """
+    unit = WorkUnit(authority={"capabilities": {}, "budgets": {"max_attempts": 1}})
+
+    assert type(unit.authority) is dict, (
+        f"WorkUnit.authority now coerces to {type(unit.authority).__name__}, so the column is "
+        "mutation-tracked. tests/architecture/test_authority_write_once.py's AST guard assumes "
+        "it is NOT: with tracking on, an in-place mutation through an alias persists without "
+        "flag_modified and without ever naming `.authority`, so the guard sees nothing and an "
+        "approved authority fingerprint can cover an envelope the human never approved. Either "
+        "revert the column to plain JSONB, or ship a fail-closed envelope-expansion check to "
+        "replace the write-once guarantee this removes."
+    )
+
+
+def test_the_pin_would_catch_a_mutation_tracked_column() -> None:
+    """The control. Without this, the assertion above passes for any model that happens to hold
+    a plain dict, and would keep passing if the check itself stopped discriminating."""
+
+    class Base(DeclarativeBase):
+        pass
+
+    class TrackedUnit(Base):
+        __tablename__ = "planted_tracked_unit"
+
+        id: Mapped[int] = mapped_column(primary_key=True)
+        authority: Mapped[dict[str, Any]] = mapped_column(MutableDict.as_mutable(JSONB))
+
+    planted = TrackedUnit(id=1, authority={"budgets": {"max_attempts": 1}})
+    assert type(planted.authority) is not dict
+    assert isinstance(planted.authority, MutableDict)
 
 
 def test_the_named_construction_sites_still_exist() -> None:

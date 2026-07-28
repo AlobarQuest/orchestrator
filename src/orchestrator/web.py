@@ -14,10 +14,13 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig, get_actor, get_session
+from orchestrator.api.routes import package_intake_command
+from orchestrator.api.schemas import PackageIntakeRegistration
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.runner_authority import dependency_update_authority_violation
@@ -48,6 +51,7 @@ from orchestrator.services.lifecycle import (
     TransitionCommand,
     transition_unit,
 )
+from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import evaluate_readiness, record_approval
 from orchestrator.services.reconciliation import (
     ResolutionCommand,
@@ -64,6 +68,11 @@ SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[ActorContext, Depends(get_actor)]
 CSRF_COOKIE = "orchestrator_review_session"
 CSRF_TTL_SECONDS = 900
+# Every other form binds its CSRF token to the UUID of the thing being acted on. A new intake has
+# no subject yet -- the revision it creates does not exist until the POST succeeds -- so the token
+# binds to this sentinel instead. It still binds actor, session, action and idempotency key, which
+# is what stops a token minted for one form being replayed at another.
+_NEW_INTAKE_SUBJECT = uuid.UUID(int=0)
 
 
 def _human(actor: ActorContext) -> None:
@@ -399,6 +408,106 @@ def detail(
     }
     context["waiver_risk_classes"] = WAIVER_RISK_CLASSES
     return _render(request, "unit.html", context)
+
+
+@router.get("/intakes/new", response_class=HTMLResponse)
+def new_intake(request: Request, actor: ActorDep) -> HTMLResponse:
+    """The human surface for package intake (ADR-0006).
+
+    Registered BEFORE `/intakes/{revision_id}` on purpose: FastAPI matches routes in declaration
+    order, and `new` is a valid-looking path segment that the parameterised route would otherwise
+    claim first (failing on UUID parsing instead of rendering this page).
+    """
+    _human(actor)
+    idempotency_key = str(uuid.uuid4())
+    return _render(
+        request,
+        "intake_new.html",
+        {
+            "idempotency_key": idempotency_key,
+            "csrf_token": _issue_token(
+                request, actor, _NEW_INTAKE_SUBJECT, "package_intake", idempotency_key
+            ),
+        },
+    )
+
+
+@router.post("/intakes")
+def create_intake(
+    request: Request,
+    actor: ActorDep,
+    session: SessionDep,
+    payload: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    """Register a package intake from the `emit-intake-payload` JSON pasted into the form.
+
+    This is the only human-reachable intake path in production: the `/api/v1/package-intakes`
+    route requires a HUMAN actor but sits on an M2M-only router, and no HUMAN credential exists
+    (ADR-0006). It relaxes NOTHING -- the pasted JSON goes through the same
+    `PackageIntakeRegistration` validation and the same `register_package_intake` service as the
+    API route, so the `caller_attested_cli_verified` requirement, the `expected_version: 0`
+    requirement and the approved-package requirement all still hold.
+    """
+    _human(actor)
+    _require_form(
+        request,
+        actor,
+        _NEW_INTAKE_SUBJECT,
+        "package_intake",
+        csrf_token,
+        idempotency_key,
+        confirm,
+    )
+    registration = _parse_intake_payload(payload, idempotency_key)
+    revision = register_package_intake(session, package_intake_command(registration), actor)
+    session.commit()
+    return RedirectResponse(f"/review/intakes/{revision.id}", status_code=303)
+
+
+def _parse_intake_payload(payload: str, idempotency_key: str) -> PackageIntakeRegistration:
+    """Parse and validate the pasted JSON, as a DomainError on every failure path.
+
+    Only `DomainError` and `APIAuthenticationError` have registered exception handlers, so a bare
+    `json.JSONDecodeError` or a Pydantic `ValidationError` raised from here would surface as an
+    unhandled HTTP 500 rather than a message the human can act on. The idempotency key is taken
+    from the CSRF-bound form field, not from the payload: it is what the form already committed
+    to, and letting the pasted text override it would let one token be replayed under a new key.
+
+    Every OTHER field is passed through untouched. In particular `expected_version` is not
+    defaulted here: `emit-intake-payload` always emits it, and supplying it on the browser path
+    would make this form accept a payload the API route rejects -- which is exactly the
+    "a new set of rules" that ADR-0006 says the form must not become.
+    """
+    try:
+        document = json.loads(payload)
+    except json.JSONDecodeError as error:
+        raise DomainError(
+            "intake_payload_not_json",
+            f"the intake payload is not valid JSON: {error}",
+            "paste the exact output of `orchestrator emit-intake-payload`",
+        ) from error
+    if not isinstance(document, dict):
+        raise DomainError(
+            "intake_payload_not_an_object",
+            "the intake payload must be a JSON object",
+            "paste the exact output of `orchestrator emit-intake-payload`",
+        )
+    document["idempotency_key"] = idempotency_key
+    try:
+        return PackageIntakeRegistration.model_validate(document)
+    except ValidationError as error:
+        raise DomainError(
+            "intake_payload_invalid",
+            f"the intake payload failed validation: {error.error_count()} problem(s); "
+            + "; ".join(
+                f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
+                for item in error.errors()[:5]
+            ),
+            "regenerate the payload with `orchestrator emit-intake-payload`",
+        ) from error
 
 
 @router.get("/intakes/{revision_id}", response_class=HTMLResponse)

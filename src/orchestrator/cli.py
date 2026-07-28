@@ -229,13 +229,31 @@ def register_unit(revision_id: str, data: DataOption, json_output: JsonOption = 
     _post_data(f"/api/v1/revisions/{revision_id}/work-units", data, json_output)
 
 
-@app.command("intake-package")
+@app.command(
+    "intake-package",
+    help=(
+        "LOCAL DEVELOPMENT ONLY -- cannot register an intake against production. The route it "
+        "calls requires a human actor and is machine-only at the production proxy, and no "
+        "standing human credential exists (ADR-0006). Against production, use "
+        "`emit-intake-payload` and paste the result into /review/intakes/new."
+    ),
+)
 def intake_package(
     path: Path,
     source_repository: Annotated[str, typer.Option("--source-repository")],
     idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
     json_output: JsonOption = False,
 ) -> None:
+    """Register a package intake. **Local development and protocol fixtures only.**
+
+    Kept rather than deleted because it works against a local orchestrator, where a HUMAN actor is
+    available. It can never work against production: `register_package_intake` requires
+    `ActorRole.HUMAN`, and `POST /api/v1/package-intakes` sits on the machine-only router, so a
+    browser session's identity is stripped before arrival and a SYSTEM bearer is refused as
+    non-human. Human gates are browser-only, permanently -- see ADR-0006. The production path is
+    `emit-intake-payload` -> the `/review/intakes/new` form.
+    """
+
     def operation() -> Any:
         payload = _build_intake_payload(Path(path), source_repository, idempotency_key)
         return request("POST", "/api/v1/package-intakes", payload)
@@ -644,7 +662,14 @@ for _command_name, _endpoint in (
     _register_decomposition_decision_command(_command_name, _endpoint)
 
 
-@app.command("record-approval")
+@app.command(
+    "record-approval",
+    help=(
+        "LOCAL DEVELOPMENT ONLY -- cannot record an approval against production. Approvals are a "
+        "human gate and human gates are browser-only (ADR-0006). Against production, use the "
+        "'Approve this authority envelope' form on the unit's /review page."
+    ),
+)
 def record_approval(
     unit_id: str,
     idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
@@ -654,6 +679,14 @@ def record_approval(
     context: ContextOption = None,
     json_output: JsonOption = False,
 ) -> None:
+    """Record an approval on a work unit. **Local development and protocol fixtures only.**
+
+    Same constraint as `intake-package`: the approval service requires `ActorRole.HUMAN` and the
+    route is machine-only at the production proxy, so no principal can reach it there. Kept for
+    local use. The production path is the unit's `/review` page -- and note the distinction the
+    forms encode: the generic "approve" button records `subject_type="action"`, while readiness
+    and admission want `subject_type="authority"` bound to the unit's authority fingerprint.
+    """
     payload = {
         "idempotency_key": idempotency_key,
         "expected_version": expected_version,

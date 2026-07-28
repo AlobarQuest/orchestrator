@@ -8,7 +8,14 @@ def test_workflows_never_merge_deploy_or_push_main() -> None:
     # pushes a release image (its SECURITY_STANDARDS_DEPLOY_KEY secret name matches
     # "deploy" as a substring, and the actual runtime cutover stays a separate manual
     # step covered by tests/architecture/test_release_workflow.py's own no-deploy checks).
-    manual_dispatch_workflows = {"factory-runner-pilot.yml", "release-image.yml"}
+    # attest-exit-criteria.yml is a third, weaker exception: it is read-only (one unauthenticated
+    # GET of production's public OpenAPI document) and carries workflow_dispatch so the guard can
+    # be re-run on demand after a production image swap. It merges nothing and writes nothing.
+    manual_dispatch_workflows = {
+        "attest-exit-criteria.yml",
+        "factory-runner-pilot.yml",
+        "release-image.yml",
+    }
     workflow_paths = [
         path
         for path in Path(".github/workflows").glob("*")

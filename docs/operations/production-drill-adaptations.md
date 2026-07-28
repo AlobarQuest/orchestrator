@@ -166,8 +166,12 @@ One drill-designated package revision, decomposed once (Devon's decision, 2026-0
 - `intake_purpose` / `status_at_intake`: mark plainly as a recovery drill
 - acceptance criteria: `AC-001` … `AC-005`, one per drill unit, `evidence_type: "test"`
 
-  **Not `automated_test`** — it matches nothing in `DETERMINISTIC_TYPES` or `JUDGMENT_TYPES` and
-  falls through to `judgment_required` for every AC (CLAUDE.md). `test` is deterministic.
+  **Not `automated_test`** — it resolves to `judgment_required` for every AC, so an automated AC
+  declared that way can never be discharged by automated evidence. (Mechanism corrected 2026-07-28:
+  WS-P2.16 U4 moved `automated_test` INTO `JUDGMENT_TYPES`, so it is now a *named* judgment type
+  rather than an unrecognised one falling off the end of `DETERMINISTIC_TYPES`. The outcome is
+  identical; the diagnosis is not, and the older phrasing survives in CLAUDE.md.) `test` is
+  deterministic. This authoring rule stands until remediation 2.1/2.2/2.3 ship together.
 - unit keys: `drill-1-crash`, `drill-2-evidence-recovery`, `drill-3-pr-conflict`,
   `drill-4-split-brain`, `drill-5-stalled-approval`
 - per unit: `required_capability: "repo.edit"`, authority capabilities `repo.edit` +

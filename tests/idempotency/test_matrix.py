@@ -34,6 +34,13 @@ NON_INGRESS_POST_ROUTES = frozenset(
         # Delegates to record_adjudication, whose idempotency is already covered via the
         # /api/v1/work-units/{unit_id}/adjudications row below.
         "/review/units/{unit_id}/adjudication",
+        # Delegates to register_package_intake, whose idempotency is already covered via the
+        # /api/v1/package-intakes row. This form is the human surface for that same ingress
+        # (ADR-0006), and it strengthens rather than weakens the story: the key is minted per
+        # page render and bound into the CSRF token, so a double-submitted page replays one key
+        # instead of registering twice -- asserted in tests/web/test_intake_form.py by
+        # test_the_forms_idempotency_key_wins_over_the_pasted_payload.
+        "/review/intakes",
         # Read-model / export plumbing over already-persisted events.
         "/api/v1/event-publications/queue",
         "/api/v1/event-publications/export",

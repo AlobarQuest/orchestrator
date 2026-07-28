@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Register a package intake{% endblock %}
+{% block content %}
+<p><a href="/review">← Review queue</a></p>
+<h1>Register a package intake</h1>
+<p class="meta">
+  Package intake is a human gate, and human gates are browser-only by design (ADR-0006). This form
+  is the production path: the equivalent API route requires a human actor but is machine-only at
+  the proxy, and no standing human credential exists.
+</p>
+
+<h2>Paste the intake payload</h2>
+<p class="meta">
+  Generate it with <code>orchestrator emit-intake-payload</code> against the approved package, then
+  paste the output verbatim. It is validated exactly as the API route validates it — the package
+  must be approved, its content hash must match its lineage approval, and the payload must be
+  CLI-verified. Nothing here relaxes those checks.
+</p>
+
+<form method="post" action="/review/intakes">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+  <label for="payload">Intake payload (JSON)</label>
+  <textarea id="payload" name="payload" rows="20" required
+            spellcheck="false" autocapitalize="off" autocorrect="off"
+            placeholder='{"package_id": "...", "source_repository": "...", ...}'></textarea>
+  <label class="confirm">
+    <input type="checkbox" name="confirm" value="yes" required>
+    I confirm this package is approved and I am registering it for intake.
+  </label>
+  <button type="submit">Register intake</button>
+</form>
+
+<p class="meta">
+  <small>
+    The idempotency key for this form is <code>{{ idempotency_key }}</code>. It is taken from the
+    form, not from the pasted payload, so re-submitting the same page is a replay rather than a
+    second intake. Reload the page to start a genuinely new registration.
+  </small>
+</p>
+{% endblock %}

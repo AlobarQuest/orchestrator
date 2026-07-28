@@ -142,7 +142,14 @@ def test_no_workflow_dispatch_or_factory_runner_dispatch_code_exists() -> None:
     # factory-runner-pilot.yml legitimately dispatches the factory runner; release-image.yml
     # is a separate, unrelated workflow_dispatch trigger (manual image build+push, no factory
     # runner involvement) — both are deliberate human-triggered exceptions to this guard.
-    manual_dispatch_workflows = {"factory-runner-pilot.yml", "release-image.yml"}
+    # attest-exit-criteria.yml is a third and weakest exception: read-only (one unauthenticated
+    # GET of production's public OpenAPI document), carrying workflow_dispatch only so the
+    # scorecard guard can be re-run on demand after a production image swap.
+    manual_dispatch_workflows = {
+        "attest-exit-criteria.yml",
+        "factory-runner-pilot.yml",
+        "release-image.yml",
+    }
     workflow_paths = [
         path for path in _workflow_sources() if path.name not in manual_dispatch_workflows
     ]

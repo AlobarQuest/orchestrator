@@ -3,6 +3,7 @@
 {% block content %}
 <h1>Review queue</h1>
 <p class="meta">Work units grouped by lifecycle state, with current readiness facts.</p>
+<p><a href="/review/intakes/new">Register a package intake →</a></p>
 {% for state, items in groups.items() %}
 <section class="group" aria-labelledby="state-{{ state }}">
   <h2 id="state-{{ state }}">{{ state|replace("_", " ")|capitalize }} <small>({{ items|length }})</small></h2>
