@@ -840,3 +840,18 @@ def test_wsp21_evidence_unsuperseded_head_index_exists(migrated_engine) -> None:
         "ac_id",
     ]
     assert "supersedes_evidence_id IS NULL" in head_index["dialect_options"]["postgresql_where"]
+
+
+def test_migration_0020_adds_a_nullable_follow_up_column() -> None:
+    engine = create_engine(TEST_DATABASE_URL)
+    with engine.begin() as connection:
+        connection.execute(text("DROP SCHEMA public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
+    config = alembic_config()
+    command.upgrade(config, "head")
+
+    columns = {item["name"]: item for item in inspect(engine).get_columns("work_package_revisions")}
+    engine.dispose()
+
+    assert columns["follow_up"]["nullable"] is True
+    assert columns["follow_up"]["default"] is None

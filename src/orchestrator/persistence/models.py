@@ -172,6 +172,10 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
     approval_ledger_commit: Mapped[str | None] = mapped_column(String)
     verification_mode: Mapped[str | None] = mapped_column(String)
     verification_limitations: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSONB)
+    # The package's declared follow-up block (WS-P2.8). NULL means the revision predates the
+    # column -- distinguishable from a declaration that says `required: false`, which matters
+    # because the first can never be recovered and the second is a real answer.
+    follow_up: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     work_package: Mapped[WorkPackage] = relationship()
 
 
