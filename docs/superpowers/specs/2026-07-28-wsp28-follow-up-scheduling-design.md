@@ -159,9 +159,16 @@ The minted follow-up unit **is a unit of its own revision**. Without care:
 - while it sits in `AWAITING_REVIEW`, clause 3 is false and the revision is not due (harmless);
 - once a human completes it, clause 3 is true again and the revision looks due a second time.
 
-So clauses 2, 3 and 4 **exclude units whose `required_capability == "follow_up_review"`**, and clause
-5 short-circuits the whole evaluation. The `uuid5` id is the structural backstop; these clauses stop
-the pass from even attempting a re-mint, which keeps the counted-skip output honest.
+So clause 5 short-circuits the whole evaluation, and it is **derived from the units themselves** —
+any unit carrying `follow_up_review` means already-minted, whatever state it is in. That is one
+mechanism, not two.
+
+An earlier draft of this section also filtered those units out of clauses 2-4. That filter was
+**unreachable**: whenever such a unit is present, clause 5 fires first and the filtered clauses never
+run. It was mandated here, it shipped with a test that passed whether or not the filter existed, and
+the review caught it (2026-07-28). Untestable protection is a defect in this system, not depth —
+the same judgement WS-P2.15 applied when it deleted `is_expansion()`. The `uuid5` id remains the
+structural backstop against an actual double-mint.
 
 ### 5.3 Configuration
 

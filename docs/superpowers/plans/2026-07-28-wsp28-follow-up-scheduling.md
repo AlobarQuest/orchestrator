@@ -1026,7 +1026,6 @@ class RevisionFacts:
     revision_id: uuid.UUID
     follow_up: dict[str, object] | None
     units: tuple[UnitFacts, ...]
-    has_follow_up_unit: bool
 
 
 @dataclass(frozen=True)
@@ -1049,17 +1048,17 @@ def evaluate_due(facts: RevisionFacts, *, now: datetime, due_after_days: int) ->
     `units_in_flight`, because "still working" and "stopped, and nobody decided" call for
     different operator actions.
     """
-    if facts.has_follow_up_unit:
+    # One review unit per revision, forever. DERIVED from the units rather than taken as a
+    # separate flag: a flag plus a filter is two mechanisms for one rule, and the filter is
+    # unreachable whenever the flag is computed from these same units -- untestable protection,
+    # which this repo treats as a defect rather than as depth.
+    if any(unit.required_capability == FOLLOW_UP_CAPABILITY for unit in facts.units):
         return DueDecision(facts.revision_id, None, SKIP_ALREADY_MINTED)
     declaration = facts.follow_up
     if not isinstance(declaration, dict) or declaration.get("required") is not True:
         return DueDecision(facts.revision_id, None, SKIP_NOT_REQUIRED)
 
-    # The review unit is itself a unit of this revision; counting it would make the revision look
-    # eligible again the moment a human completes it.
-    subjects = tuple(
-        unit for unit in facts.units if unit.required_capability != FOLLOW_UP_CAPABILITY
-    )
+    subjects = facts.units
     if any(unit.state == _FAILED for unit in subjects):
         return DueDecision(facts.revision_id, None, SKIP_UNSETTLED_FAILED_UNIT)
     if any(unit.state not in (_COMPLETED, _CANCELLED) for unit in subjects):
@@ -1381,10 +1380,7 @@ def _revision_facts(session: Session, revision: WorkPackageRevision) -> Revision
         )
     ).all()
     units = []
-    has_review_unit = False
     for unit_id, capability, state in rows:
-        if capability == FOLLOW_UP_CAPABILITY:
-            has_review_unit = True
         settled_at = None
         if state in _SETTLED_STATES:
             settled_at = session.scalar(
@@ -1395,7 +1391,9 @@ def _revision_facts(session: Session, revision: WorkPackageRevision) -> Revision
                 )
             )
         units.append(UnitFacts(capability, state, settled_at))
-    return RevisionFacts(revision.id, revision.follow_up, tuple(units), has_review_unit)
+    # No already-minted flag: evaluate_due derives that from the units themselves, so there is
+    # exactly one mechanism and this function cannot contradict it.
+    return RevisionFacts(revision.id, revision.follow_up, tuple(units))
 
 
 def _mint(
