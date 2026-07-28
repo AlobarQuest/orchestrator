@@ -972,6 +972,43 @@ class TrackerReconciliationDetectCommand(CommandBase):
     observed_states: list[TrackerReconciliationDetectItem]
 
 
+class FollowUpMintCommand(CommandBase):
+    """One minting pass. It has no single subject, so `expected_version` carries no meaning here
+    and only 0 is accepted -- the same contract the observation ingress uses. Per-unit
+    idempotency is structural: the unit id is content-addressed from the revision id, so a
+    re-run under a fresh key still mints nothing new."""
+
+
+class MintedFollowUpResponse(BaseModel):
+    work_unit_id: UUID
+    work_package_revision_id: UUID
+    due_at: datetime
+
+
+class SkippedRevisionResponse(BaseModel):
+    work_package_revision_id: UUID
+    # A second copy of the service's skip-reason strings, because `Literal` needs literals and
+    # cannot be built from constants. Kept honest by a sync test rather than by hope --
+    # see test_the_response_vocabulary_matches_the_services_skip_reasons.
+    reason: Literal[
+        "not_required",
+        "no_completed_unit",
+        "units_in_flight",
+        "unsettled_failed_unit",
+        "not_yet_due",
+        "already_minted",
+        "declaration_malformed",
+    ]
+
+
+class FollowUpMintResponse(BaseModel):
+    """Counters and reasons, not just a status. A skip is counted so a miss is observable."""
+
+    minted: list[MintedFollowUpResponse]
+    skipped: list[SkippedRevisionResponse]
+    considered: int
+
+
 class DeadLetterEntryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
