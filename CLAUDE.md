@@ -302,12 +302,20 @@ style of that module.
   vocabularies must agree, assume they don't until you have grepped both sides. All three below
   surfaced in a single workstream (WS-P2.15) and none was caught by any test:
 
-  1. **`evidence_type: automated_test` matches NOTHING in the verifier.** `DETERMINISTIC_TYPES`
-     is `{test, tests, pytest, runner.verification, gate.summary, security.scan, github.checks,
-     health.probe, …}` and `JUDGMENT_TYPES` is `{human.review, code_review, judgment, manual}`
-     (`services/verifier_evaluators.py`). `automated_test` — which is what intent packages
-     actually declare — is in **neither**, so `evaluate_criterion` falls through to
-     `judgment_required` for **every automated AC, however good the evidence**. This is the real
+  1. **`evidence_type: automated_test` resolves to `judgment_required` in the verifier.**
+     `DETERMINISTIC_TYPES` is `{test, tests, pytest, runner.verification, gate.summary,
+     security.scan, github.checks, health.probe, automated_check, …}` and `JUDGMENT_TYPES` is
+     `{human.review, code_review, judgment, manual, automated_test, human_review,
+     external_attestation, observation}` (`services/verifier_evaluators.py`). **MECHANISM
+     CORRECTED 2026-07-28:** this bullet used to say `automated_test` was in *neither* set and
+     fell off the end of `DETERMINISTIC_TYPES`. That was true when written; **WS-P2.16 U4 moved it
+     INTO `JUDGMENT_TYPES`**, so it is now a *named* judgment type — the same outcome by a
+     deliberate route rather than by omission, which is exactly the difference between "a typo"
+     and "a decision". **The consequence is unchanged and still binding:** `evaluate_criterion`
+     returns `judgment_required` for **every automated AC, however good the evidence**, so package
+     authors must declare `evidence_type: "test"` and never `automated_test` until remediation
+     2.1/2.2/2.3 ship together (`docs/operations/production-drill-adaptations.md` carries the
+     authoring rule). This is the real
      root of the known "judgment_required ACs must be passed out-of-band via the verifier M2M
      credential / no adjudication form in `/review`" gap. **It is a vocabulary gap, not a UI gap** —
      fixing the UI would not fix it. `automated_check` is now a deliberately narrower supported
@@ -489,26 +497,42 @@ style of that module.
   every-success-response-has-a-json-schema invariant. (Verified 2026-07-25, WS-P2.5 Inc 1 — the
   public-exposure decision was the final review's one Important finding.)
 
-- **Adding an `/api` route or a new `src/orchestrator/` module trips a FAMILY of architecture
-  guards — there are THREE, not one, and two are exact set-equality inventories that fail CI on a
-  missing entry.** The `test_ws32_scope_guards.py` word guard (bare tokens `deploy`/`dispatch`, with
-  the `WS42_DISPATCH_PATHS`/`WS53_POST_DEPLOY_PATHS` allowlists) is the one this file documents
+- **Adding a route — `/api` OR `/review` — or a new `src/orchestrator/` module trips a FAMILY of
+  architecture guards. There are FIVE, and three are exact set-equality inventories that fail CI on
+  a missing entry.** The `test_ws32_scope_guards.py` word guard (bare tokens `deploy`/`dispatch`,
+  with the `WS42_DISPATCH_PATHS`/`WS53_POST_DEPLOY_PATHS` allowlists) is the one this file documents
   elsewhere — but it is not alone. (1) **`test_ws33_scope_guards.py` forbids the bare word `merges`
   (and merge-path phrases) anywhere under `src/orchestrator/` with NO allowlist** — a module docstring
   saying "never dispatches, deploys, or merges" reddens it; reword (e.g. "writes to git"). Note the
   tokenizer matches whole tokens: `merges`→forbidden, but `deployment`/`deployments` do NOT match
   `deploy` and `dispatches` does NOT match `dispatch` (only the exact bare token does). (2)
   **`test_scope_guards.py::test_production_post_route_inventory_is_explicit` AND
-  `::test_production_get_route_inventory_is_explicit` assert the set of `/api/v1` POST/GET paths
-  EXACTLY** — every new route must be added to the matching set literal or CI fails (the per-task
-  `make check` may miss it locally if the working tree isn't the committed state; this is the class
-  that broke PR#69 CI in WS-P2.4). `api/routes.py` + `api/schemas.py` are already in
-  `WS42_DISPATCH_PATHS`, so route/schema *words* are exempt — but the route-inventory sets are NOT
-  word guards and apply to every route regardless. `web.py` is in no allowlist: keep its route bodies
-  free of the bare words (delegate to a service). Jinja `.html` templates are not scanned at all.
-  (Verified 2026-07-25, WS-P2.5 Inc 2 — the plan initially handled only ws32 + the JSON-schema
-  invariant; the ws33 "merges" guard and the explicit GET-route inventory were both caught mid-build,
-  the latter being a would-be CI-breaker.)
+  `::test_production_get_route_inventory_is_explicit` assert those path sets EXACTLY** — every new
+  route must be added to the matching set literal or CI fails (the per-task `make check` may miss it
+  locally if the working tree isn't the committed state; this is the class that broke PR#69 CI in
+  WS-P2.4). ⚠ **The POST inventory is NOT `/api/v1`-only — it includes `/review` POST paths**, and
+  an earlier version of this bullet said otherwise. A WS-P2.9-era session handoff inherited that
+  error and told the build `/review` routes were exempt from the inventory family; they are not, and
+  it reddened the final gate. The GET inventory is `/api/v1`-only (the `/review` GETs render HTML
+  and are `include_in_schema=False`). (3) **`test_ws33_scope_guards.py::
+  test_no_workflow_dispatch_or_factory_runner_dispatch_code_exists` forbids the bare strings
+  `workflow_dispatch` / `factory-runner` / `factory_runner` in ANY workflow file**, with its own
+  allowlist that is SEPARATE from `test_no_automatic_merge.py`'s. Both scan `.github/workflows/`
+  and both must be edited to add a `workflow_dispatch` workflow — updating one leaves the other
+  red, and neither mentions the other. (4) **`tests/idempotency/test_matrix.py` requires every
+  ingress POST route — `/api/v1` AND `/review` — to have a `COVERAGE_MATRIX` row or a reasoned
+  entry in `NON_INGRESS_POST_ROUTES`**; a `/review` form that delegates to a service already
+  covered by an `/api` row belongs in the exclusion set with that delegation named. It is gated
+  both ways: a stale exclusion for a route that no longer exists also fails, and every matrix row
+  must name a test that actually exists.
+  `api/routes.py` + `api/schemas.py` are already in `WS42_DISPATCH_PATHS`, so route/schema *words*
+  are exempt — but the route-inventory sets are NOT word guards and apply to every route regardless.
+  `web.py` is in no allowlist: keep its route bodies free of the bare words (delegate to a service).
+  Jinja `.html` templates are not scanned at all.
+  (Verified 2026-07-25, WS-P2.5 Inc 2 — the ws33 "merges" guard and the GET-route inventory caught
+  mid-build. Extended 2026-07-28, gap-closure session 1: adding ONE `/review` POST route and ONE
+  scheduled workflow reddened three of these five at the final `make check`, all invisible to the
+  per-task loop and the diff-scoped Stop hook.)
 
 - **The prod orchestrator image build is PAVED-ROAD-automated (image-build-automation
   workstream); Coolify only ever pulls a prebuilt GHCR tag and does not build.** The paved
