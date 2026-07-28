@@ -94,7 +94,17 @@ A per-task loop can look green and still break CI on every one of these.
 4. `tests/idempotency/test_matrix.py` — every ingress POST route needs a `MatrixRow` in `tests/idempotency/matrix.py`, and every row must name a test that exists.
 5. `tests/architecture/test_authority_write_once.py::test_the_named_construction_sites_still_exist` — `CONSTRUCTION_SITES` is exact set equality over files that construct `WorkUnit(...)`.
 6. `tests/architecture/test_cross_boundary_vocabulary.py` — every module-level string collection with **≥2** str members used in an `x in S` or `S.get(x)` test must be registered or marked `# not-a-vocabulary: <reason>`.
-7. `tests/architecture/test_unreachable_guards.py` — every public `kernel`/`services` function needs a production caller. "A test calls it" is explicitly not a caller. **One deliberate exception spans Tasks 1-2:** Task 1 creates `validate_follow_up` and Task 2 wires it into `register_package_intake`, so this guard is RED between them. Do not allowlist it — the guard's own message says a justification reading "in fact it is called" means the predicate is wrong. Task 2 Step 11 is where it must go green, and Task 2 is not complete until it does.
+7. `tests/architecture/test_unreachable_guards.py` — every public `kernel`/`services` function needs a production caller. "A test calls it" is explicitly not a caller.
+
+   **This guard is RED at three points in this plan, by construction.** Each task creates a public function whose production caller lands in a later task, because the caller is the risky half and deserves its own review gate:
+
+   | created in | function | caller lands in | guard green again at |
+   |---|---|---|---|
+   | Task 1 | `validate_follow_up` | Task 2 (`register_package_intake`) | Task 2 Step 10a |
+   | Task 3 | `evaluate_due` | Task 4 (`mint_due_follow_ups`) | Task 4 Step 6 |
+   | Task 4 | `mint_due_follow_ups` | Task 6 (the route) | Task 6 Step 9 |
+
+   In every one of those windows: **do not add an allowlist entry** — the guard's own failure message says a justification reading "in fact it is called" means the predicate is wrong, not the code. **Do not pull the later task's wiring forward** either. Run the focused suites your task names; when you do run the whole architecture suite, expect exactly one failure, naming exactly your task's function, and nothing else.
 8. `tests/architecture/test_wsp21_invariant_scan.py` — nothing to do here: this workstream adds no HTTP client to `src/`.
 
 > **THE TRAP FOR THIS WORKSTREAM.** `services/verifier_criteria.py`, `services/lifecycle.py` and `services/evidence.py` are already in `WS53_POST_DEPLOY_PATHS`, so the words `post-deploy`/`deploy` are permitted there. **`src/orchestrator/services/follow_ups.py` is new and is in NO allowlist.** It therefore may not contain the string `post_deploy`, `post-deploy`, `deploy`, `dispatch`, `coolify`, or `merges` — **anywhere, including comments and docstrings, and including a comment contrasting follow-up ACs with post-deploy ones.** Do not request an allowlist entry; reword. Say "the release-observation units" or "the other generated criteria kind" instead. `src/orchestrator/web.py` is likewise in no allowlist.
@@ -1802,7 +1812,7 @@ def test_the_review_form_offers_a_human_outcome_for_the_review_unit(
 
 Run: `.venv/bin/pytest tests/services/test_follow_ups.py tests/services/test_deployment_observations.py tests/web/ -v`
 Then: `.venv/bin/pytest tests/architecture/ -v`
-Expected: PASS. `test_unreachable_guards` in particular — every function added here has a production caller.
+Expected: **exactly one failure** — `test_unreachable_guards` naming `mint_due_follow_ups`, whose production caller is Task 6's route (see the Global Constraints table). Every function THIS task adds must have a caller; if the guard names anything of yours, wire it here.
 
 - [ ] **Step 11: Format and commit**
 
