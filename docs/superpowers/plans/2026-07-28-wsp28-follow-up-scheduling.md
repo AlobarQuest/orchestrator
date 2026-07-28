@@ -94,7 +94,7 @@ A per-task loop can look green and still break CI on every one of these.
 4. `tests/idempotency/test_matrix.py` — every ingress POST route needs a `MatrixRow` in `tests/idempotency/matrix.py`, and every row must name a test that exists.
 5. `tests/architecture/test_authority_write_once.py::test_the_named_construction_sites_still_exist` — `CONSTRUCTION_SITES` is exact set equality over files that construct `WorkUnit(...)`.
 6. `tests/architecture/test_cross_boundary_vocabulary.py` — every module-level string collection with **≥2** str members used in an `x in S` or `S.get(x)` test must be registered or marked `# not-a-vocabulary: <reason>`.
-7. `tests/architecture/test_unreachable_guards.py` — every public `kernel`/`services` function needs a production caller in the same task. "A test calls it" is explicitly not a caller.
+7. `tests/architecture/test_unreachable_guards.py` — every public `kernel`/`services` function needs a production caller. "A test calls it" is explicitly not a caller. **One deliberate exception spans Tasks 1-2:** Task 1 creates `validate_follow_up` and Task 2 wires it into `register_package_intake`, so this guard is RED between them. Do not allowlist it — the guard's own message says a justification reading "in fact it is called" means the predicate is wrong. Task 2 Step 11 is where it must go green, and Task 2 is not complete until it does.
 8. `tests/architecture/test_wsp21_invariant_scan.py` — nothing to do here: this workstream adds no HTTP client to `src/`.
 
 > **THE TRAP FOR THIS WORKSTREAM.** `services/verifier_criteria.py`, `services/lifecycle.py` and `services/evidence.py` are already in `WS53_POST_DEPLOY_PATHS`, so the words `post-deploy`/`deploy` are permitted there. **`src/orchestrator/services/follow_ups.py` is new and is in NO allowlist.** It therefore may not contain the string `post_deploy`, `post-deploy`, `deploy`, `dispatch`, `coolify`, or `merges` — **anywhere, including comments and docstrings, and including a comment contrasting follow-up ACs with post-deploy ones.** Do not request an allowlist entry; reword. Say "the release-observation units" or "the other generated criteria kind" instead. `src/orchestrator/web.py` is likewise in no allowlist.
@@ -436,7 +436,9 @@ This is a genuine cross-boundary mirror, so it is REGISTERED, not marked `# not-
 - [ ] **Step 10: Run the architecture guards**
 
 Run: `.venv/bin/pytest tests/architecture/ -v`
-Expected: PASS, including `test_cross_boundary_vocabulary.py` and both scope guards. If a scope guard fails on `follow_ups.py`, you wrote a forbidden token — reword, do not allowlist.
+Expected: **exactly one failure** — `test_unreachable_guards.py::test_every_public_kernel_and_service_function_is_reachable`, naming `validate_follow_up`. That is correct and expected at this point: the function's production caller lands in Task 2, and the two tasks are one increment. **Do not allowlist it and do not wire the caller early** — Task 2's replay exemption is the dangerous part of that wiring and needs its own review gate.
+
+Everything else must pass, in particular `test_cross_boundary_vocabulary.py` and both scope guards. If a scope guard fails on `follow_ups.py`, you wrote a forbidden token — reword, do not allowlist.
 
 - [ ] **Step 11: Format and commit**
 
@@ -700,6 +702,15 @@ def test_a_payload_without_a_follow_up_declaration_is_still_accepted(
     assert created.status_code == 201
     assert created.json()["follow_up"] is None
 ```
+
+- [ ] **Step 10a: Confirm the reachability guard is now green**
+
+Task 1 left `test_unreachable_guards` red on purpose; wiring `validate_follow_up` into
+`register_package_intake` is what closes it.
+
+Run: `.venv/bin/pytest tests/architecture/ -v`
+Expected: PASS, zero failures. If `validate_follow_up` is still flagged, your Step 3 wiring did not
+actually reach it from a production entry point — fix the wiring, never the guard.
 
 - [ ] **Step 11: Run the API and web suites**
 
