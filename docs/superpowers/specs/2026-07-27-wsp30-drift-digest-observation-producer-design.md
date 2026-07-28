@@ -92,10 +92,15 @@ It touches neither `RC` nor `RC_REMEDIATE`, so the script's exit code, the Healt
 Resend email digest, the change-manager sync and the security-drift step are all unchanged.
 
 **Failure is non-fatal but never silent.** The CLI attempts both instances independently — one
-instance failing never suppresses the other's row — and always prints `posted=N deduped=N failed=N`
-to the drift log, in addition to the shell's `WARN` line. A reporting obligation that can be
-skipped without a trace is the WS-P2.15 defect class; a counted, greppable log line on every run is
-the countermeasure proportionate to a two-row-per-day producer.
+instance failing never suppresses the other's row — and always prints
+`posted=N failed=N [skipped=N (names)] of N` to the drift log, in addition to the shell's `WARN`
+line. `deduped` is not part of that line: the orchestrator returns 201 with the existing row on a
+dedup, so the client cannot distinguish a dedup from a first-time post and has no way to count it.
+The `skipped=` clause is present only when an audited instance has no entry in `INSTANCE_SUBJECTS`
+(e.g. the report grows a `staging` section before the mapping does); it is omitted entirely
+otherwise, so the common line is unchanged. A reporting obligation that can be skipped without a
+trace is the WS-P2.15 defect class; a counted, greppable log line on every run is the countermeasure
+proportionate to a two-row-per-day producer.
 
 **The push-only invariant is preserved for free.** The producer lives entirely outside the
 orchestrator repository, so no `OUTBOUND_ALLOWLIST` entry is required and no orchestrator source
@@ -299,9 +304,11 @@ retired by removing its entries from `ORCHESTRATOR_M2M_ROLES` first, then
 
 ## 12. Follow-ups discovered, not fixed here
 
-- `drift-audit.sh:62` consumes BWS secret `68733abe-682a-4597-b88f-b4750189a56a`
-  (`APPBRAIN_ACCESS_KEY`) which is **absent from `.bws-secrets.toml`** — a manifest drift predating
-  this workstream. Backlog it against infraops-mcp-server rather than fixing it in a drift-digest
-  change.
 - Per-application drift observations (§3.2) and observation supersession are the natural
   follow-on once WS-P2.8 exists.
+
+**Fixed in passing, not backlogged:** `drift-audit.sh:62` consumed BWS secret
+`68733abe-682a-4597-b88f-b4750189a56a` (`APPBRAIN_ACCESS_KEY`) which was absent from
+`.bws-secrets.toml` — a manifest drift predating this workstream. This section originally said to
+backlog it against infraops-mcp-server rather than fix it here; instead it was closed by
+regenerating the manifest (`genmanifest --write`) in Task 5, and the entry is now present.

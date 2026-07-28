@@ -641,3 +641,22 @@ style of that module.
   VALID, or FastAPI 422s on schema validation before the service ever raises `version_conflict`.)
   Evidence: `~/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md`;
   per-drill production variants in `docs/operations/production-drill-adaptations.md`.
+
+- **An M2M credential's `agent_id` is resolved against a registry bundle BAKED INTO THE IMAGE, and
+  an unresolvable one is a boot failure, not a 401.** `_m2m_credentials` (`main.py:140`) calls
+  `registry.resolve(agent_id)` at startup against `/app/registry-bundle.json`, built at image-build
+  time from the security-standards tree at `security-standards.pin.toml`'s `revision`. So checking
+  that an actor exists in git — even at exactly the pinned revision — does **not** establish that
+  the running image carries it: the image may predate the pin. Ask production before writing the
+  env var:
+  `docker exec <container> python3 -c "import json;b=json.load(open('/app/registry-bundle.json'));print(b['source_revision'],[a['agent_id'] for a in b['actors']])"`.
+  Getting this wrong fails **closed** on the next restart, which is the same outage shape as the
+  WS-6.3 roles-before-credentials write. Verified 2026-07-27 (WS-P3.0) on image
+  `8da4af3-wsp27inc2-amd64`: bundle revision `65655ddf…`, 13 actors, `drift-reconciler` present.
+- **The traceability query's observation hop is unit-scoped, so most observation producers are
+  invisible to it.** `services/traceability.py` filters observations on
+  `subject_type="work_unit"` AND the unit id. An observation about a service, endpoint, monitor or
+  environment — which is what every external monitor naturally produces — lands in
+  `GET /api/v1/observations` and in nothing else. Do not treat "wired an observation producer" as
+  "exercised the traceability chain's observation node"; WS-P3.0 wired the first producer and that
+  node remains unexercised.
