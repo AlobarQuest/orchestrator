@@ -1901,6 +1901,9 @@ class MintedFollowUpResponse(BaseModel):
 
 class SkippedRevisionResponse(BaseModel):
     work_package_revision_id: UUID
+    # A second copy of the service's skip-reason strings, because `Literal` needs literals and
+    # cannot be built from constants. Kept honest by a sync test rather than by hope --
+    # see the assertion in Step 5a.
     reason: Literal[
         "not_required",
         "no_completed_unit",
@@ -1961,6 +1964,34 @@ def mint_follow_ups(
 ```
 
 - [ ] **Step 5: Run the API tests**
+
+Run: `.venv/bin/pytest tests/api/test_follow_ups_api.py -v`
+Expected: PASS.
+
+- [ ] **Step 5a: Pin the two copies of the skip-reason vocabulary together**
+
+`SkippedRevisionResponse.reason` restates the seven service constants because `Literal` cannot be
+built from names. Two copies with nothing coupling them is exactly the drift this repo has been
+bitten by, so couple them. Add to `tests/api/test_follow_ups_api.py`:
+
+```python
+from typing import get_args
+
+from orchestrator.api.schemas import SkippedRevisionResponse
+from orchestrator.services import follow_ups
+
+
+def test_the_response_vocabulary_matches_the_services_skip_reasons() -> None:
+    """The Literal is a second copy by necessity. This is what keeps it a copy and not a fork."""
+    declared = set(get_args(SkippedRevisionResponse.model_fields["reason"].annotation))
+    service = {
+        value
+        for name, value in vars(follow_ups).items()
+        if name.startswith("SKIP_") and isinstance(value, str)
+    }
+
+    assert declared == service
+```
 
 Run: `.venv/bin/pytest tests/api/test_follow_ups_api.py -v`
 Expected: PASS.
