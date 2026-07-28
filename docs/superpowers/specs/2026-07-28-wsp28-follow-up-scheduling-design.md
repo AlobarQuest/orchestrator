@@ -106,13 +106,37 @@ A revision is follow-up-due when **all** of:
 
 1. `revision.follow_up` is non-NULL and `follow_up["required"] is True`;
 2. the revision has **at least one** work unit in `COMPLETED`;
-3. **every** work unit of the revision is terminal (`COMPLETED` or `CANCELLED`);
-4. `now >= anchor + follow_up_due_after_days`, where `anchor = max(entered-terminal)` across those
+3. **every** work unit of the revision is settled — `COMPLETED` or `CANCELLED`, and specifically
+   **not `FAILED`** (see §5.1);
+4. `now >= anchor + follow_up_due_after_days`, where `anchor = max(entered-settled)` across those
    units;
 5. the revision has no existing follow-up unit.
 
 Clause 2 is D6: a revision whose every unit was cancelled shipped nothing, and there is no outcome
 to revisit.
+
+### 5.1 `FAILED` blocks, and that consequence is owned here
+
+`FAILED` is **not terminal**. `(FAILED, READY)` and `(FAILED, CANCELLED)` are both legal edges, so a
+`FAILED` unit is an *unsettled resting state* — its disposition (retry or retire) has not been taken.
+A revision with one lingering `FAILED` unit therefore does not mint, and that is the correct call: the
+package's outcome is not yet knowable, so there is nothing to schedule a revisit of.
+
+But the consequence must be stated, because it is silent and unbounded: **nothing in this system
+surfaces a `FAILED` unit as needing disposition.** `dead_letter` reports `FAILED` units, but reporting
+is not resolution, and a revision parked behind one will never mint — not late, never. The pass makes
+this legible rather than fixing it:
+
+- a **distinct** skipped reason, `unsettled_failed_unit`, never folded into `units_in_flight`. A
+  reason code that says "still working" when the truth is "abandoned and nobody decided" is the kind
+  of mislabel that costs a later session an afternoon;
+- the skip carries the offending unit ids, so the operator's next action is obvious;
+- a test plants a revision with one `FAILED` unit alongside completed ones and asserts
+  `skipped: unsettled_failed_unit`, not a mint and not `units_in_flight`.
+
+Resolving a stuck `FAILED` unit is the operator's existing job (`FAILED → READY` to retry, or
+`FAILED → CANCELLED` to retire — the path GAP-3 exercised in production on 2026-07-28). WS-P2.8 does
+not automate that disposition and must not appear to.
 
 **Entered-terminal is read from the event ledger**, not from `work_units.updated_at`:
 
@@ -128,7 +152,7 @@ This is the `slo_report._queue_age` pattern. A DB trigger (`set_work_unit_update
 row by writing it is silently testing nothing. Tests exercise this by shrinking
 `follow_up_due_after_days`, never by ageing rows.
 
-### 5.1 The self-exclusion, which is not optional
+### 5.2 The self-exclusion, which is not optional
 
 The minted follow-up unit **is a unit of its own revision**. Without care:
 
@@ -139,7 +163,7 @@ So clauses 2, 3 and 4 **exclude units whose `required_capability == "follow_up_r
 5 short-circuits the whole evaluation. The `uuid5` id is the structural backstop; these clauses stop
 the pass from even attempting a re-mint, which keeps the counted-skip output honest.
 
-### 5.2 Configuration
+### 5.3 Configuration
 
 ```python
 # config.py
@@ -224,6 +248,11 @@ evidence      the revisit_when prose, or the default sentence below when null
 approver      the declared follow_up.owner, or revision.approved_by when null
 ```
 
+`revision.approved_by` is verified to exist and to be a safe fallback: `WorkPackageRevision.approved_by`
+is a NOT NULL `String` (`persistence/models.py:159`) additionally covered by the CHECK
+`ck_work_package_revisions_required_text`, which requires `approved_by <> ''`. So the fallback can
+never itself be empty.
+
 **Every nullable field needs a fallback.** `revisit_when` and `owner` are both `str | null` in the
 schema, and `signals` may be empty — so `{"required": true, "revisit_when": null, "signals": [],
 "owner": null}` is a *valid* declaration that would otherwise produce an empty `outcome` and an empty
@@ -300,9 +329,11 @@ Response:
 ```
 
 `skipped` reasons are a closed set: `not_yet_due`, `not_required`, `no_completed_unit`,
-`units_in_flight`, `already_minted`, `declaration_malformed`. Built with an explicit join, **not**
-`f"col IN {TUPLE!r}"` if it is ever CHECK-pinned — a single-element tuple's repr carries a trailing
-comma and is a Postgres syntax error.
+`units_in_flight`, `unsettled_failed_unit`, `already_minted`, `declaration_malformed`.
+`units_in_flight` means units are still moving; `unsettled_failed_unit` means one stopped and nobody
+decided (§5.1). They are deliberately distinct and must not be merged. If this set is ever CHECK-pinned,
+build the SQL with an explicit join, **not** `f"col IN {TUPLE!r}"` — a single-element tuple's repr
+carries a trailing comma and is a Postgres syntax error.
 
 ### 8.1 CLI and launcher
 
@@ -311,7 +342,8 @@ comma and is a Postgres syntax error.
   lone Typer command collapses to top level, so the real invocation is what must be asserted.
 - `scripts/run-follow-up-mint.sh` — the `run-tracker-reconciliation.sh` shape: `set -euo pipefail`,
   BWS values fetched at runtime by stable UUID via `~/Projects/vps-backup/bws-token.sh`, `exec` the
-  console script, one pass, exit.
+  console script, one pass, exit. The credential is **`orchestrator-system`**, and the reason it may
+  not be `orchestrator-drift-reporter` is §9.1 — that is a correctness constraint, not a preference.
 
 ## 9. Wiring — the part that stops this being the fourth unwired pass
 
@@ -331,9 +363,27 @@ defect class as GAP-1 (a guard merged and wired to nothing), which this program 
 closing.
 
 So: **a small additive step in `infraops-mcp-server`'s `drift-audit.sh`**, mirroring the WS-P3.0
-pattern exactly — non-fatal, fail-open, a counted WARN on failure, touching neither the drift loop's
-exit code nor its Healthchecks ping, Resend digest, change-manager sync, or security-drift step. It
-calls the mint route with the same credential-fetch pattern WS-P3.0 established.
+pattern's *shape* — non-fatal, fail-open, a counted WARN on failure, touching neither the drift loop's
+exit code nor its Healthchecks ping, Resend digest, change-manager sync, or security-drift step.
+
+### 9.1 It must NOT reuse the drift-reporter identity
+
+The mint call uses **`orchestrator-system`** (BWS `221a48d5-3f29-4898-b300-b4820140c880`, credential
+key id `orchestrator-system`), fetched at runtime. `drift-audit.sh` keeps
+`orchestrator-drift-reporter` for its own observation POST. The two calls in the same script use two
+different credentials, deliberately.
+
+Reusing `drift-reporter` would be wrong on the axis that matters most here. That actor's registry
+profile is *observes and proposes, never mutates* — and minting a work unit is **canonical mutation**.
+Because `ActorContext(identity.actor_id, role)` means every event is attributed to that `agent_id`
+**forever**, borrowing it would permanently stamp canonical lifecycle creation onto an identity whose
+whole purpose is that it does not do that. WS-P3.0 spent a BWS secret and two Coolify env writes
+specifically to avoid borrowing an unrelated identity; spending its identity here would undo that.
+
+Both credentials already exist in production and both already carry role `system` — verified
+2026-07-28 against the running container:
+`{"orchestrator-drift-reporter": "system", "orchestrator-system": "system", "orchestrator-verifier": "verifier"}`.
+**No new credential, no env write, no restart is required for the wiring.**
 
 This does **not** make the orchestrator schedule anything. The orchestrator still has no loop; an
 external, already-scheduled operator job invokes a route. That is the ADR-0002/0003 posture honoured,
@@ -365,6 +415,7 @@ What bounds what the pass may mint, and how each bound is proved:
 | No mutation authority | Frozen envelope constant | Assert `minted.capabilities.keys() ∩ RUNNER_CAPABILITIES == ∅`, no `constraints.target_repository`, no `allowed_commands` |
 | Cannot be worked by a runner | `follow_up_review ∉ RUNNER_CAPABILITIES` | Cross-repo fixture untouched; admission would independently refuse on `target_repository_missing` and `capability_not_enabled` |
 | Never mints for cancelled-only work | Clause 2 of §5 | Plant an all-cancelled revision; assert `skipped: no_completed_unit` |
+| Never mints behind an undecided failure | Clause 3 of §5 | Plant a `FAILED` unit beside completed ones; assert `skipped: unsettled_failed_unit`, **not** `units_in_flight` and not a mint |
 | One bad row cannot stop the pass | Per-item `try`/`except` + counted skip | Plant a malformed declaration between two good revisions; assert both good ones mint |
 | The envelope is write-once | Existing `test_authority_write_once` | Update `CONSTRUCTION_SITES` deliberately (§12) |
 
@@ -394,8 +445,9 @@ still break CI.
 
 TDD per task, focused tests in the **foreground**.
 
-- **Pure due predicate** — table-driven over the five clauses, including the all-cancelled case (D6)
-  and the self-exclusion (§5.1). Time is a parameter; nothing sleeps and nothing ages a row.
+- **Pure due predicate** — table-driven over the five clauses, including the all-cancelled case (D6),
+  the lingering-`FAILED` case with its own reason code (§5.1), and the self-exclusion (§5.2). Time is
+  a parameter; nothing sleeps and nothing ages a row.
 - **Mint service** — idempotency across two passes; the frozen envelope; the fingerprint round-trip
   (`normalize_authority(stored) == minted` fingerprint); per-item isolation with a poisoned row
   between two good ones.
@@ -506,11 +558,18 @@ The deploy carries **three payloads** and is not a routine swap.
    validates `package_revision_hash` and rejects a synthetic one; the local drill passes only because
    its seeded revision matches by construction.
 4. **GAP-5 step 3 — record the deployment observation** with `environment: "production"` (the
-   2026-07-27 drill used `"drill"`, which is why it did not close this). Needs an `ActorRole.SYSTEM`
-   actor; the standing M2M credential is worker-role, so this needs the temporary-credential
-   sequence: **`ORCHESTRATOR_M2M_CREDENTIALS` first, then `ORCHESTRATOR_M2M_ROLES`, verifying each
-   from inside the container before the next restart.** A half-applied roles write fails startup
-   closed and takes production down. Never save a restart. Revert after.
+   2026-07-27 drill used `"drill"`, which is why it did not close this). It needs an
+   `ActorRole.SYSTEM` actor, and **`orchestrator-system` is one** — a standing SYSTEM credential
+   (BWS `221a48d5-3f29-4898-b300-b4820140c880`). Use it directly.
+
+   **There is no temporary-credential sequence, no env write, and no restart for this step.** An
+   earlier draft of this spec carried one, inherited from a stale CLAUDE.md bullet asserting "the
+   standing M2M credential is worker-role". That bullet conflated `orchestrator-system` with
+   `factory-runner-github` — the one credential with no `ORCHESTRATOR_M2M_ROLES` entry. Verified
+   2026-07-28 against the running container:
+   `{"orchestrator-drift-reporter": "system", "orchestrator-system": "system", "orchestrator-verifier": "verifier"}`.
+   The bullet is corrected in this branch. Deleting this sequence removes session 2's only
+   outage-shaped step.
 5. **GAP-5 step 4 — run the traceability query end-to-end** on that release, retain the output, and
    deliberately retire the post-deploy unit — one left `submitted` raises `deploy_split_brain` on
    every future detect pass.
@@ -525,9 +584,18 @@ The deploy carries **three payloads** and is not a routine swap.
    - **intake it through the `/review` intake form** — this is the *first* real use of that form and
      smoke-tests GAP-6 in the same pass, retiring the devtools `fetch()` for good;
    - decomposition → authority approval → walk its unit to `COMPLETED`;
-   - set `follow_up_due_after_days=0` via env, restart, run the mint pass;
-   - confirm one unit minted in `AWAITING_REVIEW`, adjudicate its AC and Complete it in `/review`;
-   - restore the config default.
+   - **restart 1 of 2** — set `ORCHESTRATOR_FOLLOW_UP_DUE_AFTER_DAYS=0` and restart, so the unit is
+     due the moment it settles rather than in 30 days;
+   - run the mint pass (`orchestrator-system` credential);
+   - confirm exactly one unit minted in `AWAITING_REVIEW`; adjudicate its AC and Complete it in
+     `/review`;
+   - re-run the pass and confirm it mints nothing (`skipped: already_minted`) — the idempotency
+     property demonstrated against production, not only in tests;
+   - **restart 2 of 2** — remove the env override and restart, restoring the 30-day default.
+
+   These are the **only two production restarts in session 2**, and neither is outage-shaped: the
+   variable is a bounded `int` with a default, so a failed write leaves the default in force rather
+   than failing startup closed. Confirm the value from inside the container after each restart.
 8. **Run the exit-criteria attestation** (GAP-1's workflow) against the new production state.
 9. **The Wave-2 closeout note.** It declares **three of four** exit clauses — traceability ✅, tracker
    two-way ✅, follow-up scheduling ✅ — and marks **Evidence Pack as closing via GAP-4**, not via
