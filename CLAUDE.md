@@ -696,3 +696,45 @@ style of that module.
   `GET /api/v1/observations` and in nothing else. Do not treat "wired an observation producer" as
   "exercised the traceability chain's observation node"; WS-P3.0 wired the first producer and that
   node remains unexercised.
+
+- **Migrating before the image swap puts the STILL-RUNNING old image into `/health/ready` 503
+  `migration_drift`, and that is only survivable because neither health check consults
+  `/health/ready`.** The readiness probe compares the code's expected head against the database's,
+  so between `alembic upgrade head` and the Coolify swap the old container reports unavailable
+  while `/health/live` stays 200 and traffic keeps flowing. Coolify's own health check is
+  **disabled** (`health_check_enabled: false`) and the Dockerfile `HEALTHCHECK` probes
+  `/health/live`. **If either is ever pointed at `/health/ready`, migrate-first becomes an
+  outage** — the container would be killed as unhealthy mid-window. Keep the window short and do
+  not "improve" the health checks without re-deciding the migration order. Verified 2026-07-28
+  (WS-P2.8 deploy, ~4-minute window, no traffic impact).
+
+- **A package that describes its own release recording cannot evidence that recording at
+  adjudication time.** `record_release_artifact` raises `work_unit_not_completed` unless the
+  implementation unit is already `COMPLETED` (`services/release_artifacts.py`), and follow-up
+  minting additionally requires every unit of the revision to be settled — so the binding, the
+  deployment observation, the traceability answer and the mint all necessarily happen *after* the
+  unit whose ACs assert them has completed. There is no ordering that avoids this. Either put the
+  recording ACs in a **separate, later package**, or accept the delegation deliberately: adjudicate
+  on the ordering, say so in each rationale, and discharge the confirmation in the follow-up review
+  unit the revision mints. **Do not reach for `waived` to express the caveat** — `waiver_invalid`
+  requires *failed* evidence plus a risk class, follow-up and future expiry, so a waiver is not a
+  general "accepted with reservations"; for judgment evidence the only honest outcomes are `passed`
+  and `not_applicable`, with the caveat in the rationale. (Verified 2026-07-28, WS-P2.8 deploy.)
+
+- **`deployment_observation` summaries are EXACT-key-set bounded, and the secret detector matches
+  key NAMES, not just values.** `_require_keys` uses `set(payload).issubset(allowed)`, so any extra
+  key is `deployment_observation_invalid: "… contains unbounded fields"`. The allowed sets are:
+  `auth_summary` = `{missing_m2m_status, configured_m2m_status}` (and `missing_m2m_status` **must**
+  be `401`); `route_summary` = `{routes}`, each route exactly `{path, present}`;
+  `dispatch_summary` = `{dispatch_enabled}`; `status_summary` = `{status, summary}`. Separately, a
+  key merely *called* `missing_credential_status` is rejected as
+  `deployment_observation_secret_rejected` — the detector reads the JSON path, so avoid `credential`
+  / `token` / `key` in key names even when the value is an integer. Every one of these is a clean
+  `DomainError`, never a 500. Same for adjudication `expires_at`, which must carry a timezone
+  offset. (Verified 2026-07-28, WS-P2.8 deploy.)
+
+- **`/review/intakes/new` takes its idempotency key from the FORM, not from the pasted payload.**
+  Re-submitting the rendered page is therefore a *replay* of the same intake, and a genuinely new
+  registration requires reloading the page to mint a fresh key. The payload's own
+  `idempotency_key` is ignored for this purpose. Do not debug an unexpected "duplicate" intake
+  before checking whether the page was reloaded. (Verified 2026-07-28, the form's first real use.)
