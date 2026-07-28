@@ -46,7 +46,7 @@ from orchestrator.persistence.models import WorkUnit
 
 SRC = Path("src")
 
-# The ONLY two places a WorkUnit is constructed. Verified by `grep "WorkUnit("` over src/.
+# The ONLY three places a WorkUnit is constructed. Verified by `grep "WorkUnit("` over src/.
 # Everything else that mentions `authority=` is assigning it on a DIFFERENT object -- a
 # WorkPackageRevision, a ProposedUnit, a DecompositionProposalUnit, a DTO. An earlier draft of
 # this guard listed eight "assignment sites" because it grepped for `authority=` without ever

@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
@@ -281,6 +282,54 @@ def _mint(
     return unit
 
 
+def _process_revision(
+    session: Session,
+    revision: WorkPackageRevision,
+    actor: ActorContext,
+    now: datetime,
+    due_after_days: int,
+) -> MintedFollowUp | SkippedRevision | None:
+    """One revision, isolated in its own SAVEPOINT.
+
+    `evaluate_due` owns the not-required rule (a null declaration and a `required: false` one are
+    both `SKIP_NOT_REQUIRED`) -- there is no second check of `declaration["required"]` here. Two
+    checks of one rule is the same defect Task 3 removed from `evaluate_due` itself (a flag plus a
+    filter), just one function over: the second check would make `evaluate_due`'s own
+    `SKIP_NOT_REQUIRED` branch unreachable from this, its only production caller.
+
+    The two exceptions caught here are the two failure modes this module's own code anticipates,
+    named deliberately and no wider:
+      - `DomainError` -- `validate_follow_up` rejecting a malformed declaration.
+      - `IntegrityError` -- the `work_units (work_package_revision_id, unit_key)` unique
+        constraint, the backstop `follow_up_unit_id`'s docstring names for the case where the
+        deterministic id and the already-minted check are somehow both bypassed.
+    A SAVEPOINT is required to recover from the second case: once PostgreSQL aborts a transaction
+    on a constraint violation, no further statement succeeds until something rolls back to a
+    savepoint taken before the failing statement. Anything else -- a genuine programming error --
+    is deliberately left uncaught: swallowing it as "this revision was unusable" would hide a bug
+    behind a skip reason instead of failing the pass loudly.
+    """
+    try:
+        with session.begin_nested():
+            declaration = validate_follow_up(revision.follow_up)
+            decision = evaluate_due(
+                _revision_facts(session, revision), now=now, due_after_days=due_after_days
+            )
+            if decision.skip_reason == SKIP_NOT_REQUIRED:
+                # Flooding the response with every revision that never asked for a follow-up
+                # would swamp the genuinely actionable skips.
+                return None
+            if decision.skip_reason is not None:
+                return SkippedRevision(revision.id, decision.skip_reason)
+            assert declaration is not None and decision.due_at is not None
+            unit = _mint(session, revision, declaration, actor, now)
+            return MintedFollowUp(unit.id, revision.id, decision.due_at)
+    except DomainError:
+        return SkippedRevision(revision.id, SKIP_DECLARATION_MALFORMED)
+    except IntegrityError:
+        return SkippedRevision(revision.id, SKIP_ALREADY_MINTED)
+
+
 def mint_due_follow_ups(
     session: Session,
     *,
@@ -290,32 +339,26 @@ def mint_due_follow_ups(
     """One pass over approved revisions, minting whatever is due. Externally invoked; nothing
     loops and nothing schedules itself.
 
-    Per-item fail-open with a counted skip: one unusable revision is passed over and reported,
-    never allowed to abort the pass and discard the revisions already handled.
+    Per-item fail-open with a counted skip: each revision runs inside its own SAVEPOINT
+    (`_process_revision`), so a `DomainError` or `IntegrityError` on one revision rolls back only
+    that revision's own attempt -- never the units already minted earlier in the pass, and never
+    the ones still to come. This function still issues exactly one `session.commit()`, at the very
+    end, for the whole pass; the savepoints are what make surviving a mid-pass failure safe.
     """
     _authorize_actor(actor)
     now = TransactionClock().now(session)
     revisions = session.scalars(
-        select(WorkPackageRevision).order_by(WorkPackageRevision.registered_at)
+        select(WorkPackageRevision).order_by(
+            WorkPackageRevision.registered_at, WorkPackageRevision.id
+        )
     ).all()
     minted: list[MintedFollowUp] = []
     skipped: list[SkippedRevision] = []
     for revision in revisions:
-        try:
-            declaration = validate_follow_up(revision.follow_up)
-        except DomainError:
-            skipped.append(SkippedRevision(revision.id, SKIP_DECLARATION_MALFORMED))
-            continue
-        if declaration is None or declaration["required"] is not True:
-            continue
-        decision = evaluate_due(
-            _revision_facts(session, revision), now=now, due_after_days=due_after_days
-        )
-        if decision.skip_reason is not None:
-            skipped.append(SkippedRevision(revision.id, decision.skip_reason))
-            continue
-        assert decision.due_at is not None
-        unit = _mint(session, revision, declaration, actor, now)
-        minted.append(MintedFollowUp(unit.id, revision.id, decision.due_at))
+        outcome = _process_revision(session, revision, actor, now, due_after_days)
+        if isinstance(outcome, MintedFollowUp):
+            minted.append(outcome)
+        elif isinstance(outcome, SkippedRevision):
+            skipped.append(outcome)
     session.commit()
     return MintResult(tuple(minted), tuple(skipped), len(revisions))

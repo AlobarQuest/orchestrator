@@ -29,6 +29,8 @@ from tests.services.test_package_registration import AUTHORITY
 from tests.services.test_package_registration import NOW as REVISION_NOW
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
+WORKER = ActorContext("worker-1", ActorRole.WORKER)
+HUMAN = ActorContext("human-1", ActorRole.HUMAN)
 
 VALID = {
     "required": True,
@@ -342,11 +344,38 @@ def test_the_stored_envelope_is_a_fixed_point_of_normalisation(
     migrated_session, due_revision
 ) -> None:
     """Storing a raw dict makes normalized() a non-fixed-point on re-read, and the re-derived
-    fingerprint then disagrees with the one that was minted."""
+    fingerprint then disagrees with the one that was minted.
+
+    The fingerprint check alone does NOT pin `_mint` calling `.normalized()`: for THIS particular
+    envelope (no constraints, no change_class, no conformance, no unknown fields) the raw authored
+    dict and its normalized form happen to fingerprint identically, so swapping
+    `authority=authority.normalized()` for the raw dict at the call site leaves this assertion
+    green. Pinned by verifying it the same way a regression would be caught: made that exact
+    substitution in `_mint`, watched `test_the_stored_envelope_matches_the_normalized_shape` (only)
+    go red, reverted. The shape assertion below is what actually protects the `.normalized()`
+    call; this one documents the fixed-point property, which remains true and worth keeping."""
     result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
     unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
 
     assert authority_fingerprint(normalize_authority(unit.authority)) == unit.authority_fingerprint
+
+
+def test_the_stored_envelope_matches_the_normalized_shape(migrated_session, due_revision) -> None:
+    """Asserts the stored dict directly, not just its fingerprint. The normalized form always
+    carries every `KNOWN_FIELDS` key (`constraints`, `change_class`, `conformance`,
+    `unknown_fields`, plus `capabilities`/`budgets`); the raw authored dict `_mint` builds before
+    calling `.normalized()` carries only the two it wrote. Storing the raw dict would fail this on
+    the missing keys even though (per the test above) it would NOT fail the fingerprint check."""
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+
+    expected = normalize_authority(
+        {
+            "capabilities": {FOLLOW_UP_CAPABILITY: "allowed"},
+            "budgets": {"max_attempts": 1},
+        }
+    ).normalized()
+    assert unit.authority == expected
 
 
 def test_running_the_pass_twice_mints_nothing_new(migrated_session, due_revision) -> None:
@@ -395,6 +424,74 @@ def test_one_malformed_declaration_does_not_abort_the_pass(
 
     assert len(result.minted) == 1
     assert "declaration_malformed" in {row.reason for row in result.skipped}
+
+
+def _poison_unit_key(session, revision: WorkPackageRevision) -> WorkUnit:
+    """Occupies the exact `unit_key` `_mint` would use for this revision (`follow_up_unit_id`'s
+    docstring names the `(work_package_revision_id, unit_key)` unique constraint as the backstop
+    for this), under a DIFFERENT capability so `evaluate_due`'s already-minted check -- which only
+    looks for `required_capability == FOLLOW_UP_CAPABILITY` -- does not short-circuit before
+    `_mint` is ever attempted. Settled (CANCELLED) so it does not itself block due-ness, and with
+    no settling event of its own, so it contributes nothing to the due-at computation."""
+    unit = WorkUnit(
+        work_package_revision_id=revision.id,
+        unit_key=f"follow-up:{revision.id}",
+        title="pre-existing collision",
+        outcome="planted to occupy the unit_key _mint would use",
+        state=WorkUnitState.CANCELLED,
+        decomposition_approved_by="human-1",
+        decomposition_approved_at=REVISION_NOW,
+        required_capability="repo.edit",
+        authority=AUTHORITY.normalized(),
+        authority_fingerprint=authority_fingerprint(AUTHORITY),
+        max_attempts=1,
+    )
+    session.add(unit)
+    session.flush()
+    return unit
+
+
+def test_a_failure_inside_mint_does_not_abort_units_already_due(
+    migrated_session, due_revision, degenerate_due_revision
+) -> None:
+    """Per-item fail-open must cover more than declaration validation: a revision whose OWN
+    `_mint` call raises must not roll back units due on OTHER revisions in the same pass, and
+    those units must actually be PERSISTED (not merely reported), not just held in an uncommitted,
+    about-to-be-discarded transaction.
+
+    The planted revision is genuinely due -- same declaration and same settled-unit shape as
+    `due_revision` -- so it reaches `_mint`, and `_mint`'s own INSERT collides with the
+    pre-occupied `unit_key`, raising `IntegrityError` from inside the SAVEPOINT rather than from a
+    malformed declaration."""
+    poisoned = _settled_revision(migrated_session, "wsp28-poisoned", DECLARATION)
+    _poison_unit_key(migrated_session, poisoned)
+
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+
+    minted_revision_ids = {row.work_package_revision_id for row in result.minted}
+    assert minted_revision_ids == {due_revision.id, degenerate_due_revision.id}
+    assert SKIP_ALREADY_MINTED in {row.reason for row in result.skipped}
+
+    migrated_session.expire_all()
+    for revision_id in (due_revision.id, degenerate_due_revision.id):
+        unit = migrated_session.scalar(
+            select(WorkUnit).where(
+                WorkUnit.work_package_revision_id == revision_id,
+                WorkUnit.required_capability == FOLLOW_UP_CAPABILITY,
+            )
+        )
+        assert unit is not None, f"revision {revision_id} was not persisted"
+
+
+@pytest.mark.parametrize("actor", [WORKER, HUMAN], ids=["worker", "human"])
+def test_only_the_system_actor_may_mint(migrated_session, actor: ActorContext) -> None:
+    """`_authorize_actor` is the only authorization on a service that mints canonical lifecycle
+    state, and every other test in this module drives it exclusively through the module-level
+    `SYSTEM` context -- deleting `_authorize_actor` entirely leaves every one of them green."""
+    with pytest.raises(DomainError) as caught:
+        mint_due_follow_ups(migrated_session, actor=actor, due_after_days=0)
+
+    assert caught.value.code == "role_forbidden"
 
 
 def test_minting_writes_one_event_per_unit(migrated_session, due_revision) -> None:
