@@ -10,6 +10,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.lifecycle import FOLLOW_UP_AC_ID, FOLLOW_UP_EVIDENCE_TYPE
 
 
 def load_required_criteria(
@@ -20,6 +21,10 @@ def load_required_criteria(
     generated = _generated_post_deploy_criteria(session, unit, revision)
     if generated is not None:
         return generated
+
+    follow_up = _generated_follow_up_criteria(unit, revision)
+    if follow_up is not None:
+        return follow_up
 
     has_approved_decomposition = (
         session.execute(
@@ -147,4 +152,40 @@ def _generated_post_deploy_criteria(
             approver="verifier",
         )
         for ac_id, condition, evidence_type, evidence in specs
+    )
+
+
+_FOLLOW_UP_DEFAULT_REVISIT = (
+    "No revisit condition was declared; confirm whether this outcome still holds."
+)
+
+
+def _generated_follow_up_criteria(
+    unit: WorkUnit,
+    revision: WorkPackageRevision,
+) -> tuple[PackageAcceptanceCriterion, ...] | None:
+    """The one criterion a package-declared follow-up review is discharged against.
+
+    `observation` is already in JUDGMENT_TYPES and already accepted by the intake vocabulary
+    gate, so this adds no evidence type and no vocabulary migration. It evaluates to
+    `judgment_required`, which is what routes the unit to a human rather than to an evaluator.
+
+    Every field falls back, because `revisit_when` and `owner` are nullable in the schema and
+    `{"required": true, "revisit_when": null, "signals": [], "owner": null}` is a valid
+    declaration -- one that would otherwise produce a criterion a reviewer cannot act on.
+    """
+    if unit.required_capability != "follow_up_review":
+        return None
+    declaration = revision.follow_up if isinstance(revision.follow_up, dict) else {}
+    revisit = declaration.get("revisit_when") or _FOLLOW_UP_DEFAULT_REVISIT
+    owner = declaration.get("owner") or revision.approved_by
+    return (
+        PackageAcceptanceCriterion(
+            work_package_revision_id=revision.id,
+            ac_id=FOLLOW_UP_AC_ID,
+            condition="The follow-up questions declared by the package were answered.",
+            evidence_type=FOLLOW_UP_EVIDENCE_TYPE,
+            evidence=str(revisit),
+            approver=str(owner),
+        ),
     )

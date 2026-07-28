@@ -46,6 +46,24 @@ POST_DEPLOY_AC_IDS = (
     "post-deploy-routes",
 )
 
+# The single source of truth for the generated follow-up review AC id. Same producer/consumer
+# split as the tuple above: this module PRODUCES it (required_ac_ids for a review unit) and
+# `services.evidence` imports it to decide subject validity. One copy only.
+#
+# It is deliberately NOT gated the way the ids above are. Those are verifier-owned and public
+# adjudication must refuse them; this one is human-owned by design and public adjudication must
+# ACCEPT it. Two rules pointing opposite ways, asserted in both directions in the tests.
+FOLLOW_UP_AC_ID = "follow-up-review"
+
+# The generated follow-up criterion's evidence type. `services.verifier_criteria` stamps this onto
+# the transient criterion it constructs; `services.evidence` needs the identical value as the
+# fallback for `_criterion_evidence_type` (the generated criterion is never persisted as a
+# `PackageAcceptanceCriterion` row, so the normal DB lookup finds nothing). Naming it once here,
+# rather than repeating the literal in both call sites, is the same discipline as the two tuples
+# above -- `observation` is not new vocabulary (it is already in JUDGMENT_TYPES), only its
+# ownership by this one AC id is.
+FOLLOW_UP_EVIDENCE_TYPE = "observation"
+
 
 @dataclass(frozen=True)
 class ActorContext:
@@ -449,6 +467,8 @@ def required_ac_ids(
 ) -> tuple[str, ...] | None:
     if _is_generated_post_deploy_unit(session, revision, unit):
         return POST_DEPLOY_AC_IDS
+    if _is_generated_follow_up_unit(unit):
+        return (FOLLOW_UP_AC_ID,)
 
     has_approved_decomposition = (
         session.execute(
@@ -499,6 +519,11 @@ def _is_generated_post_deploy_unit(
         )
     )
     return observation is not None
+
+
+def _is_generated_follow_up_unit(unit: WorkUnit) -> bool:
+    """A pure attribute check -- the capability IS the marker, so no join is needed."""
+    return unit.required_capability == "follow_up_review"
 
 
 def _packagerequired_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[str, ...] | None:

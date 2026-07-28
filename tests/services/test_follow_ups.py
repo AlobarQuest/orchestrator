@@ -9,6 +9,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
+from orchestrator.services.evidence import record_adjudication
 from orchestrator.services.follow_ups import (
     FOLLOW_UP_CAPABILITY,
     SKIP_ALREADY_MINTED,
@@ -25,6 +26,7 @@ from orchestrator.services.follow_ups import (
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import register_approved_unit, register_revision
+from orchestrator.services.verifier_criteria import load_required_criteria
 from tests.services.test_package_registration import AUTHORITY
 from tests.services.test_package_registration import NOW as REVISION_NOW
 
@@ -502,3 +504,106 @@ def test_minting_writes_one_event_per_unit(migrated_session, due_revision) -> No
     ).all()
     assert len(events) == 1
     assert events[0].subject_id == result.minted[0].work_unit_id
+
+
+# ------------------------------------------------------------------------------------------------
+# The generated review criterion and its human-owned adjudication carve-out.
+# ------------------------------------------------------------------------------------------------
+
+
+def test_a_review_unit_requires_exactly_one_generated_criterion(
+    migrated_session, due_revision
+) -> None:
+    """Without a generated branch this falls through to the revision's FULL package AC set and
+    the human is asked to re-adjudicate the entire original package."""
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+    revision = migrated_session.get(WorkPackageRevision, unit.work_package_revision_id)
+
+    criteria = load_required_criteria(migrated_session, unit, revision)
+
+    assert [criterion.ac_id for criterion in criteria] == ["follow-up-review"]
+    assert criteria[0].evidence_type == "observation"
+    assert criteria[0].condition.strip() != ""
+    assert criteria[0].evidence.strip() != ""
+    assert criteria[0].approver == "devon"
+
+
+def test_a_degenerate_declaration_still_yields_a_non_empty_criterion(
+    migrated_session, degenerate_due_revision
+) -> None:
+    """approver falls back to revision.approved_by, which is NOT NULL and CHECK-non-empty."""
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+    revision = migrated_session.get(WorkPackageRevision, unit.work_package_revision_id)
+
+    criteria = load_required_criteria(migrated_session, unit, revision)
+
+    assert criteria[0].approver == revision.approved_by
+    assert criteria[0].evidence.strip() != ""
+
+
+def test_a_human_may_adjudicate_the_generated_follow_up_criterion(
+    migrated_session, due_revision
+) -> None:
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+
+    adjudication = record_adjudication(
+        migrated_session,
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id="follow-up-review",
+        outcome="passed",
+        actor=HUMAN,
+        rationale="Reviewed; the outcome still holds.",
+        idempotency_key="follow-up-adjudication-1",
+    )
+
+    assert not isinstance(adjudication, DomainError)
+    assert adjudication.outcome == "passed"
+
+
+def test_the_release_observation_criteria_still_refuse_public_adjudication(
+    migrated_session,
+) -> None:
+    """The counterpart carve-out points the OTHER way and must stay that way. Without this,
+    a future reader assumes the two generated-AC rules match and loosens the wrong one."""
+    from orchestrator.services.deployment_observations import record_deployment_observation
+    from tests.services.test_deployment_observations import observation_command, release_binding
+
+    _unit, binding = release_binding(migrated_session, key="wsp28-asymmetry")
+    observation = record_deployment_observation(
+        migrated_session, observation_command(binding, key="wsp28-asymmetry-observation")
+    )
+
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=observation.work_package_revision_id,
+        work_unit_id=observation.post_deploy_work_unit_id,
+        ac_id="post-deploy-artifact",
+        outcome="passed",
+        actor=HUMAN,
+        rationale="attempting the wrong lane",
+        idempotency_key="wsp28-asymmetry-adjudication",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "post_deploy_verifier_required"
+
+
+def test_the_review_form_offers_a_human_outcome_for_the_review_unit(
+    migrated_session, due_revision
+) -> None:
+    """web._adjudicatable_criteria filters POST_DEPLOY_AC_IDS. The follow-up id is not in that
+    tuple, so it renders -- but that is a property worth pinning, not assuming."""
+    from orchestrator.web import _adjudicatable_criteria
+
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+    revision = migrated_session.get(WorkPackageRevision, unit.work_package_revision_id)
+
+    rows = _adjudicatable_criteria(migrated_session, unit, revision)
+
+    assert [row["ac_id"] for row in rows] == ["follow-up-review"]
+    assert rows[0]["is_judgment"] is True
