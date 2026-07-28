@@ -14,6 +14,22 @@
 
 ---
 
+> **⚠️ DATED BUILD ARTIFACT — DO NOT FOLLOW VERBATIM (annotated 2026-07-28, post-merge-review).**
+> This plan is the record of what was *planned*, not what shipped. Two of its instructions were
+> found defective during execution and are corrected in the code, the ADR, the design spec and the
+> runbook — but NOT rewritten here, so the build history stays honest:
+>
+> 1. **Task 3 Step 4 tells you to add `follow_up_review` to `ORCHESTRATOR_ONLY_CAPABILITIES`. Do not.**
+>    That made the capability authorable at unit ingress, and because the generated-follow-up
+>    predicates keyed on capability alone, an ordinary unit declaring it had its real acceptance
+>    criteria silently replaced by one human judgment call. Found by the final whole-branch review.
+> 2. **The capability-only predicate bodies in Tasks 4-5 are superseded.** The marker is now the
+>    derived identity `unit.id == follow_up_unit_id(unit.work_package_revision_id)` — a `uuid5` only
+>    the minting pass can produce. `follow_up_unit_id` lives in `services/lifecycle.py`.
+>
+> Authoritative sources: `docs/decisions/0007-declared-follow-up-scheduling.md`,
+> `docs/operations/follow-up-scheduling.md`, and the code itself.
+
 ## Global Constraints
 
 Every task's requirements implicitly include this section. Values are copied verbatim from the spec and from the codebase; do not paraphrase them.
