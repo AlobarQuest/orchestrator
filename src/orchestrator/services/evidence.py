@@ -30,7 +30,15 @@ from orchestrator.services.claims import validate_active_claim
 # these ACs). This module is the consumer that gates public adjudication against them, so it
 # imports rather than keeping a second copy -- a divergence between generator and gate would let a
 # newly-generated post-deploy AC be publicly adjudicated (the invariant this guards).
-from orchestrator.services.lifecycle import POST_DEPLOY_AC_IDS, ActorContext
+# FOLLOW_UP_AC_ID is the same producer/consumer split, pointing the opposite way: it must be
+# ACCEPTED, not refused.
+from orchestrator.services.lifecycle import (
+    FOLLOW_UP_AC_ID,
+    FOLLOW_UP_EVIDENCE_TYPE,
+    POST_DEPLOY_AC_IDS,
+    ActorContext,
+    is_generated_follow_up_unit,
+)
 from orchestrator.services.verifier_evaluators import JUDGMENT_TYPES
 
 # not-a-vocabulary: internal policy subset of adjudication outcomes (which outcomes are not
@@ -234,7 +242,9 @@ def record_adjudication(
                 current_version=unit.version,
             )
         now = TransactionClock().now(session)
-        evidence_type = _criterion_evidence_type(session, work_package_revision_id, ac_id)
+        evidence_type = _criterion_evidence_type(
+            session, work_package_revision_id, work_unit_id, ac_id
+        )
         _authorize_outcome(actor, outcome, evidence_type)
         _validate_adjudication_fields(
             session,
@@ -565,6 +575,7 @@ def _validated_subject(
         revision.enforcement_snapshot.get("acceptance_criteria") if revision is not None else None
     )
     generated_post_deploy = _is_generated_post_deploy_subject(session, revision_id, unit_id, ac_id)
+    generated_follow_up = _is_generated_follow_up_subject(session, unit_id, ac_id)
     if generated_post_deploy and not allow_generated_post_deploy:
         raise DomainError(
             "post_deploy_verifier_required",
@@ -577,6 +588,7 @@ def _validated_subject(
         or unit.work_package_revision_id != revision_id
         or (
             not generated_post_deploy
+            and not generated_follow_up
             and (not isinstance(acceptance_criteria, list) or ac_id not in acceptance_criteria)
         )
     ):
@@ -603,6 +615,25 @@ def _is_generated_post_deploy_subject(
         )
     )
     return observation is not None
+
+
+def _is_generated_follow_up_subject(session: Session, unit_id: uuid.UUID, ac_id: str) -> bool:
+    """The generated follow-up criterion, which a HUMAN owns.
+
+    No `allow_*` parameter, deliberately: unlike the verifier-owned generated ids above, this one
+    is meant to be adjudicated from the public `/review` form. Gating it would make the unit
+    undischargeable by the only actor designed to discharge it.
+
+    Precisely because it is the one generated AC a HUMAN may discharge, the unit test is
+    `is_generated_follow_up_unit` -- the DERIVED-ID check, not the capability alone.
+    `required_capability` is authorable at unit ingress, so a capability-only marker would let any
+    author hand their own unit this human-adjudicable carve-out; the `uuid5` id can only come from
+    the minting pass.
+    """
+    if ac_id != FOLLOW_UP_AC_ID:
+        return False
+    unit = session.get(WorkUnit, unit_id)
+    return unit is not None and is_generated_follow_up_unit(unit)
 
 
 def _validate_evidence_fields(
@@ -663,13 +694,35 @@ def _has_required_context(revision: WorkPackageRevision) -> bool:
     return isinstance(required, dict) and bool(required)
 
 
-def _criterion_evidence_type(session: Session, revision_id: uuid.UUID, ac_id: str) -> str | None:
-    return session.scalar(
+def _criterion_evidence_type(
+    session: Session, revision_id: uuid.UUID, unit_id: uuid.UUID, ac_id: str
+) -> str | None:
+    """The generated follow-up criterion is never persisted as a `PackageAcceptanceCriterion` row
+    (it is constructed transiently by `services.verifier_criteria`), so the DB lookup below always
+    misses for it.
+
+    The fallback below re-runs `_is_generated_follow_up_subject` rather than trusting `ac_id ==
+    FOLLOW_UP_AC_ID` alone. `_validated_subject` admits a subject through TWO independent paths --
+    the generated-follow-up check, or `ac_id` merely appearing in the revision's
+    `enforcement_snapshot["acceptance_criteria"]` list. That second path is capability-blind: a
+    revision whose package-declared AC list happens to contain the literal string
+    `"follow-up-review"` would let ANY of its units past `_validated_subject`, for any capability.
+    Keying this fallback on `ac_id` alone would then hand every one of those units the generated
+    criterion's `observation` evidence type -- and with it, a HUMAN's authority to record `passed`
+    where none was intended. Re-running the unit identity check here closes that: this function
+    does not get to assume `_validated_subject`'s admission reason.
+    """
+    evidence_type = session.scalar(
         select(PackageAcceptanceCriterion.evidence_type).where(
             PackageAcceptanceCriterion.work_package_revision_id == revision_id,
             PackageAcceptanceCriterion.ac_id == ac_id,
         )
     )
+    if evidence_type is not None:
+        return evidence_type
+    if _is_generated_follow_up_subject(session, unit_id, ac_id):
+        return FOLLOW_UP_EVIDENCE_TYPE
+    return None
 
 
 def _authorize_outcome(actor: ActorContext, outcome: str, evidence_type: str | None) -> None:

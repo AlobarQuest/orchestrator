@@ -410,6 +410,70 @@ def test_revert_rate_is_partial_with_release_revert_blind_spot(migrated_session)
     assert "release-revert" in report.revert_rate.basis
 
 
+def test_retiring_a_unit_that_never_submitted_is_not_a_revert(migrated_session):
+    """A system-minted review unit (WS-P2.8) is BORN in `awaiting_review` and never submits, so
+    retiring one used to add a numerator event with no denominator event that could answer for it:
+    one submit plus two retired review units reported a revert rate of 2.0."""
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    inside = datetime(2026, 7, 3, tzinfo=UTC)
+    _, submitter = _build_unit(migrated_session, "revert-submitter")
+    _add_event(
+        migrated_session,
+        submitter.id,
+        action="work_unit.transitioned",
+        to_state="submitted",
+        from_state="executing",
+        occurred_at=inside,
+    )
+    for index in range(2):
+        _, review = _build_unit(migrated_session, f"revert-review-{index}")
+        _add_event(
+            migrated_session,
+            review.id,
+            action="work_unit.transitioned",
+            to_state="revision_required",
+            from_state="awaiting_review",
+            occurred_at=inside + timedelta(hours=1),
+        )
+    migrated_session.commit()
+
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+
+    assert report.revert_rate.value == 0.0
+
+
+def test_a_revert_out_of_awaiting_review_still_counts_when_the_unit_submitted(migrated_session):
+    """The exclusion must be "never submitted", not "left awaiting_review" -- the ordinary route
+    to `awaiting_review` is `submitted -> verifying -> awaiting_review`, and a revert from there is
+    the metric's own subject."""
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    inside = datetime(2026, 7, 3, tzinfo=UTC)
+    _, unit = _build_unit(migrated_session, "revert-after-review")
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="submitted",
+        from_state="executing",
+        occurred_at=inside,
+    )
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="revision_required",
+        from_state="awaiting_review",
+        occurred_at=inside + timedelta(hours=2),
+    )
+    migrated_session.commit()
+
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+
+    assert report.revert_rate.value == 1.0
+
+
 def test_evidence_completeness_ratio(migrated_session):
     since = datetime(2026, 7, 1, tzinfo=UTC)
     until = datetime(2026, 7, 8, tzinfo=UTC)

@@ -46,6 +46,52 @@ POST_DEPLOY_AC_IDS = (
     "post-deploy-routes",
 )
 
+# The capability a generated follow-up review unit carries -- the same string
+# `services.follow_ups` mints units with and `is_generated_follow_up_unit` /
+# `_is_generated_follow_up_subject` check alongside the derived unit id. Defined here rather than in
+# `follow_ups` (which is where it originally lived) because `follow_ups` already imports one-way
+# FROM this module (`ActorContext`); putting the constant in the module the others already depend
+# on avoids a cycle without inventing a new shared module. `follow_ups.FOLLOW_UP_CAPABILITY`
+# re-exports this value so its existing external imports are unaffected.
+#
+# It is NOT on its own a marker: it is authorable, so `is_generated_follow_up_unit` requires the
+# derived id too. It is deliberately absent from ORCHESTRATOR_ONLY_CAPABILITIES, so unit ingress
+# refuses it outright -- `_mint` constructs its unit directly and never consults that vocabulary.
+FOLLOW_UP_CAPABILITY = "follow_up_review"
+
+# The single source of truth for the generated follow-up review AC id. Same producer/consumer
+# split as the tuple above: this module PRODUCES it (required_ac_ids for a review unit) and
+# `services.evidence` imports it to decide subject validity. One copy only.
+#
+# It is deliberately NOT gated the way the ids above are. Those are verifier-owned and public
+# adjudication must refuse them; this one is human-owned by design and public adjudication must
+# ACCEPT it. Two rules pointing opposite ways, asserted in both directions in the tests.
+FOLLOW_UP_AC_ID = "follow-up-review"
+
+# The generated follow-up criterion's evidence type. `services.verifier_criteria` stamps this onto
+# the transient criterion it constructs; `services.evidence` needs the identical value as the
+# fallback for `_criterion_evidence_type` (the generated criterion is never persisted as a
+# `PackageAcceptanceCriterion` row, so the normal DB lookup finds nothing). Naming it once here,
+# rather than repeating the literal in both call sites, is the same discipline as the two tuples
+# above -- `observation` is not new vocabulary (it is already in JUDGMENT_TYPES), only its
+# ownership by this one AC id is.
+FOLLOW_UP_EVIDENCE_TYPE = "observation"
+
+
+def follow_up_unit_id(revision_id: uuid.UUID) -> uuid.UUID:
+    """The id under which `services.follow_ups` mints a revision's follow-up review unit.
+
+    Content-addressed, so a second minting pass cannot create a second row. This is the structural
+    half of the idempotency story; the already-minted skip is the reporting half, and the unique
+    constraint on `(work_package_revision_id, unit_key)` is the backstop if both are bypassed.
+
+    Defined HERE rather than in `follow_ups` -- the same move already made for
+    `FOLLOW_UP_CAPABILITY`, for the same reason. `follow_ups` imports one-way FROM this module, so
+    putting the derivation in the module the identity predicates already live in gives them one
+    definition to share without a cycle.
+    """
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"sds:follow-up:{revision_id}")
+
 
 @dataclass(frozen=True)
 class ActorContext:
@@ -449,6 +495,8 @@ def required_ac_ids(
 ) -> tuple[str, ...] | None:
     if _is_generated_post_deploy_unit(session, revision, unit):
         return POST_DEPLOY_AC_IDS
+    if is_generated_follow_up_unit(unit):
+        return (FOLLOW_UP_AC_ID,)
 
     has_approved_decomposition = (
         session.execute(
@@ -499,6 +547,24 @@ def _is_generated_post_deploy_unit(
         )
     )
     return observation is not None
+
+
+def is_generated_follow_up_unit(unit: WorkUnit) -> bool:
+    """Is this unit one the follow-up minting pass created?
+
+    Identity, not capability. `required_capability` is a field a unit AUTHOR supplies, and both
+    ingress paths accept any capability the orchestrator recognises -- so a capability-only marker
+    is forgeable, and forging it substitutes this module's single generated criterion for the
+    package's real acceptance criteria. `follow_up_unit_id` is a `uuid5` over the revision id: only
+    the minting pass produces it, and no ingress path lets an author choose it for a unit on that
+    revision, because the row it names is the minted one.
+
+    The capability is kept as a second clause because it is what the rest of the system reads (the
+    envelope, the criterion generator, the queue). The id is what makes the marker unforgeable.
+    """
+    return unit.required_capability == FOLLOW_UP_CAPABILITY and unit.id == follow_up_unit_id(
+        unit.work_package_revision_id
+    )
 
 
 def _packagerequired_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[str, ...] | None:

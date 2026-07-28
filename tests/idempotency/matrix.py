@@ -23,6 +23,14 @@ NO_LOCK_PRECHECK_THEN_INTEGRITY_REPLAY = (
     "unique Event.idempotency_key + pre-check select + insert + "
     "IntegrityError rollback/re-query replay, NO advisory/row lock"
 )
+# The minting pass has no per-subject idempotency key: the work unit's id is CONTENT-ADDRESSED
+# (uuid5 over the revision id), so a duplicate delivery cannot create a second row. The pass
+# reports `already_minted` rather than raising, and the unique (work_package_revision_id,
+# unit_key) constraint is the backstop if both the id and the pre-check were bypassed.
+CONTENT_ADDRESSED_SUBJECT = (
+    "uuid5 subject id + unique (work_package_revision_id, unit_key) + already_minted skip, "
+    "NO advisory lock"
+)
 
 
 @dataclass(frozen=True)
@@ -231,5 +239,12 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         ADVISORY_LOCK,
         "tests/idempotency/test_tracker_detect_idempotency.py::"
         "test_a_duplicate_tracker_detect_records_no_second_condition",
+    ),
+    # --- WS-P2.8 ingress --------------------------------------------------------------------
+    MatrixRow(
+        "follow-up minting",
+        "/api/v1/follow-ups/mint",
+        CONTENT_ADDRESSED_SUBJECT,
+        "tests/idempotency/test_follow_up_idempotency.py::test_a_duplicate_minting_pass_creates_one_unit",
     ),
 )

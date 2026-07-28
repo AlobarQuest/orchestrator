@@ -758,6 +758,22 @@ def reconcile_detect(
     )
 
 
+@app.command("mint-follow-ups")
+def mint_follow_ups(
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    json_output: JsonOption = False,
+) -> None:
+    """Mint work units for package-declared follow-up reviews that have come due."""
+    _run(
+        lambda: request(
+            "POST",
+            "/api/v1/follow-ups/mint",
+            {"idempotency_key": idempotency_key, "expected_version": 0},
+        ),
+        json_output,
+    )
+
+
 @app.command("recover-evidence")
 def recover_evidence(
     unit_id: Annotated[str, typer.Argument()],

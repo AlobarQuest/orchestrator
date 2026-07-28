@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from statistics import median
 
 from sqlalchemy import Float, cast, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from orchestrator.clock import TransactionClock
 from orchestrator.persistence.models import (
@@ -203,14 +203,27 @@ def _waiver_frequency(session, since, until, now) -> MetricValue:
 
 _REVERT_STATES = ("revision_required", "failed")
 _REVERT_SOURCES = ("submitted", "verifying", "awaiting_review")
+_SUBMITTED = "submitted"
+_TRANSITIONED = "work_unit.transitioned"
 
 
 def _revert_rate(session, since, until, now) -> MetricValue:
+    """Reverts of submitted work over submits.
+
+    The numerator counts only units that HAVE submitted at some point. `awaiting_review` is a
+    revert SOURCE because the normal route to it is `submitted -> verifying -> awaiting_review`,
+    but it is not reached only that way: a system-minted review unit is BORN in `awaiting_review`
+    and never submits at all, so retiring one used to add a numerator event that no denominator
+    event could ever answer for -- one submit and two retired review units reported a revert rate
+    of 2.0. Requiring a submit of the unit itself keeps the ratio about the thing it is named
+    after, and stays correct for any future unit born past `submitted` rather than naming the one
+    kind that exists today.
+    """
     submits = (
         session.scalar(
             select(func.count(Event.id)).where(
-                Event.action == "work_unit.transitioned",
-                Event.to_state == "submitted",
+                Event.action == _TRANSITIONED,
+                Event.to_state == _SUBMITTED,
                 Event.occurred_at >= since,
                 Event.occurred_at < until,
             )
@@ -219,14 +232,28 @@ def _revert_rate(session, since, until, now) -> MetricValue:
     )
     if submits == 0:
         return MetricValue(STATUS_NO_DATA, None, "no submit transitions occurred in the window")
+    submit = aliased(Event)
+    # Any submit ever, not only one inside the window: a unit submitted on Friday and sent back on
+    # Monday is a genuine revert, and windowing this clause would drop it.
+    ever_submitted = (
+        select(submit.id)
+        .where(
+            submit.action == _TRANSITIONED,
+            submit.subject_type == "work_unit",
+            submit.subject_id == Event.subject_id,
+            submit.to_state == _SUBMITTED,
+        )
+        .exists()
+    )
     reverts = (
         session.scalar(
             select(func.count(Event.id)).where(
-                Event.action == "work_unit.transitioned",
+                Event.action == _TRANSITIONED,
                 Event.to_state.in_(_REVERT_STATES),
                 Event.from_state.in_(_REVERT_SOURCES),
                 Event.occurred_at >= since,
                 Event.occurred_at < until,
+                ever_submitted,
             )
         )
         or 0
@@ -235,9 +262,10 @@ def _revert_rate(session, since, until, now) -> MetricValue:
         STATUS_PARTIAL,
         reverts / submits,
         f"code reverts (to revision_required/failed after submit): {reverts}; submits: {submits}. "
-        "Numerator and denominator are counted independently over the window, so the ratio can "
-        "exceed 1.0. PARTIAL: release-revert is not recorded as an explicit fact "
-        "(divergence detection only).",
+        "Numerator counts only units that have submitted; units born past submitted (system-minted "
+        "review units) are excluded. Numerator and denominator are counted independently over the "
+        "window, so the ratio can exceed 1.0. PARTIAL: release-revert is not recorded as an "
+        "explicit fact (divergence detection only).",
     )
 
 

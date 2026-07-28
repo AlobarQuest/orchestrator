@@ -10,6 +10,11 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.lifecycle import (
+    FOLLOW_UP_AC_ID,
+    FOLLOW_UP_EVIDENCE_TYPE,
+    is_generated_follow_up_unit,
+)
 
 
 def load_required_criteria(
@@ -20,6 +25,10 @@ def load_required_criteria(
     generated = _generated_post_deploy_criteria(session, unit, revision)
     if generated is not None:
         return generated
+
+    follow_up = _generated_follow_up_criteria(unit, revision)
+    if follow_up is not None:
+        return follow_up
 
     has_approved_decomposition = (
         session.execute(
@@ -148,3 +157,54 @@ def _generated_post_deploy_criteria(
         )
         for ac_id, condition, evidence_type, evidence in specs
     )
+
+
+_FOLLOW_UP_DEFAULT_REVISIT = (
+    "No revisit condition was declared; confirm whether this outcome still holds."
+)
+
+
+def _generated_follow_up_criteria(
+    unit: WorkUnit,
+    revision: WorkPackageRevision,
+) -> tuple[PackageAcceptanceCriterion, ...] | None:
+    """The one criterion a package-declared follow-up review is discharged against.
+
+    `observation` is already in JUDGMENT_TYPES and already accepted by the intake vocabulary
+    gate, so this adds no evidence type and no vocabulary migration. It evaluates to
+    `judgment_required`, which is what routes the unit to a human rather than to an evaluator.
+
+    Every field falls back, because `revisit_when` and `owner` are nullable in the schema and
+    `{"required": true, "revisit_when": null, "signals": [], "owner": null}` is a valid
+    declaration -- one that would otherwise produce a criterion a reviewer cannot act on.
+
+    `is_generated_follow_up_unit` keys on the derived unit id, not on `required_capability` alone:
+    the capability is authorable at ingress, and substituting this one criterion for a package's
+    real acceptance criteria is exactly what an author must not be able to ask for.
+    """
+    if not is_generated_follow_up_unit(unit):
+        return None
+    declaration = revision.follow_up if isinstance(revision.follow_up, dict) else {}
+    revisit = _clean_str(declaration.get("revisit_when")) or _FOLLOW_UP_DEFAULT_REVISIT
+    owner = _clean_str(declaration.get("owner")) or revision.approved_by
+    return (
+        PackageAcceptanceCriterion(
+            work_package_revision_id=revision.id,
+            ac_id=FOLLOW_UP_AC_ID,
+            condition="The follow-up questions declared by the package were answered.",
+            evidence_type=FOLLOW_UP_EVIDENCE_TYPE,
+            evidence=revisit,
+            approver=owner,
+        ),
+    )
+
+
+def _clean_str(value: object) -> str | None:
+    """`validate_follow_up` already pins `revisit_when`/`owner` to `str | None`, so no cast is
+    needed here -- only a whitespace check. A bare truthiness fallback (`value or default`) treats
+    `"   "` as present, which would carry a blank-looking value into a criterion a reviewer must
+    act on."""
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None

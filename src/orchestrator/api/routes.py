@@ -47,6 +47,8 @@ from orchestrator.api.schemas import (
     EvidenceCommand,
     EvidencePackResponse,
     EvidenceResponse,
+    FollowUpMintCommand,
+    FollowUpMintResponse,
     InFlightUnitsResponse,
     InfraLaneLinkCommandModel,
     InfraLaneLinkResponse,
@@ -163,6 +165,7 @@ from orchestrator.services.evidence_pack import (
     evidence_pack_response,
     render_evidence_pack_markdown,
 )
+from orchestrator.services.follow_ups import mint_due_follow_ups
 from orchestrator.services.github_app import github_app_credentials, token_provider_for
 from orchestrator.services.in_flight import in_flight_snapshot
 from orchestrator.services.infra_links import (
@@ -339,6 +342,7 @@ def package_intake_command(body: PackageIntakeRegistration) -> PackageIntakeComm
         idempotency_key=body.idempotency_key,
         expected_version=body.expected_version,
         intake_purpose=body.intake_purpose,
+        follow_up=body.follow_up,
     )
 
 
@@ -969,6 +973,41 @@ def tracker_reconciliation_detect(
             for i in body.observed_states
         ],
     ).as_dict()
+
+
+@router.post("/follow-ups/mint", response_model=FollowUpMintResponse)
+def mint_follow_ups(
+    body: FollowUpMintCommand,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """Mint the work units whose package-declared follow-up reviews have come due.
+
+    SYSTEM-only, externally invoked, and a pure database read plus an append-only write: no
+    outbound call, no loop, nothing scheduled. The role gate lives in the service.
+    """
+    _require_zero_expected_version(body.expected_version, "follow-up minting")
+    result = mint_due_follow_ups(
+        session,
+        actor=actor,
+        due_after_days=settings.follow_up_due_after_days,
+    )
+    return {
+        "minted": [
+            {
+                "work_unit_id": row.work_unit_id,
+                "work_package_revision_id": row.work_package_revision_id,
+                "due_at": row.due_at,
+            }
+            for row in result.minted
+        ],
+        "skipped": [
+            {"work_package_revision_id": row.work_package_revision_id, "reason": row.reason}
+            for row in result.skipped
+        ],
+        "considered": result.considered,
+    }
 
 
 @router.get("/observations", response_model=list[ObservationResponse])
@@ -1791,6 +1830,7 @@ def _package_intake_payload(
         "enforcement_snapshot": revision.enforcement_snapshot,
         "authority_fingerprint": revision.authority_fingerprint,
         "authority": command.get("authority"),
+        "follow_up": revision.follow_up,
         "registry_version": revision.registry_version,
         "registered_by": revision.registered_by,
         "registered_at": revision.registered_at,

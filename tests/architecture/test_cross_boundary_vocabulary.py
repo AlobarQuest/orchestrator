@@ -96,6 +96,9 @@ VOCABULARY_REGISTRY: dict[str, str] = {
         "tracker adapter TERMINAL_STATES (outbound card-closed states); "
         "sync-guarded by test_tracker_closed_states_sync.py"
     ),
+    "services/follow_ups.py:FOLLOW_UP_FIELDS": (
+        "intent-packages schema.py TOP_SCHEMA['follow_up'] MapSpec field names"
+    ),
 }
 
 

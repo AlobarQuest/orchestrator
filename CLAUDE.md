@@ -100,12 +100,24 @@ style of that module.
   returned 201 on the first attempt with the retry branch never firing — as has
   every other such POST. Real 401s on `/api` mean the route is M2M-only (see the
   routing bullets below), not that a retry is needed.
-- Production observation ingestion requires an `ActorRole.SYSTEM` actor. The
-  standing M2M credential is worker-role, so closeout-style observations use a
-  temporary credential: merge into `ORCHESTRATOR_M2M_CREDENTIALS` + map it in
-  `ORCHESTRATOR_M2M_ROLES`, restart, use, then revert. Verify EVERY env write
-  landed before restarting — a roles entry without its matching credential
-  fails startup validation closed and takes production down.
+- Production observation ingestion requires an `ActorRole.SYSTEM` actor — and
+  **two standing SYSTEM credentials already exist, so the temporary-credential
+  dance this bullet used to prescribe is unnecessary and must not be revived.**
+  Verified 2026-07-28 from the running container, `ORCHESTRATOR_M2M_ROLES` is
+  `{"orchestrator-drift-reporter": "system", "orchestrator-system": "system",
+  "orchestrator-verifier": "verifier"}`. The superseded claim ("the standing M2M
+  credential is worker-role") conflated `orchestrator-system` with
+  `factory-runner-github`, the one credential carrying no roles entry; it cost a
+  spec draft an outage-shaped deploy step before being caught in review.
+  Use `orchestrator-system` for SYSTEM-role writes; `orchestrator-drift-reporter`
+  belongs to the WS-P3.0 drift producer and **must not be borrowed for canonical
+  mutation** — its registry profile is observe-and-propose, and `agent_id`
+  attribution is permanent.
+  The env-write ordering rule still stands whenever a credential IS added:
+  write `ORCHESTRATOR_M2M_CREDENTIALS` before `ORCHESTRATOR_M2M_ROLES`, verify
+  each from inside the container before the next restart — a roles entry without
+  its matching credential fails startup validation closed and takes production
+  down.
 - Coolify's env PATCH endpoint intermittently 500s on this app; the reliable
   fallback is delete-by-env-uuid + recreate. All `/envs` API responses include
   `real_value` for every variable (DB URLs with passwords) — parse them

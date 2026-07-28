@@ -78,6 +78,10 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # WS-P2.7 Inc-2: inbound tracker reconciliation. SYSTEM-only, report-only -- records
         # append-only divergence conditions, never a transition.
         "/api/v1/reconciliation/tracker-detect",
+        # WS-P2.8: mints the work units whose package-declared follow-up reviews have come due.
+        # SYSTEM-only, externally invoked; a database read plus an append-only write, with no
+        # outbound call and no loop.
+        "/api/v1/follow-ups/mint",
         "/api/v1/knowledge-promotion-proposals",
         "/api/v1/knowledge-promotion-proposals/{proposal_id}/submit-to-brain",
         "/api/v1/work-units/{unit_id}/commands/{command}",
