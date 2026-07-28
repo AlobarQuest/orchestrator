@@ -355,6 +355,24 @@ def test_record_approval_has_explicit_validated_options(
     assert invalid.exit_code == 2
 
 
+def test_mint_follow_ups_posts_the_command_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_request(method: str, path: str, payload=None):
+        observed.update(method=method, path=path, payload=payload)
+        return {"minted": [], "skipped": [], "considered": 0}
+
+    monkeypatch.setattr("orchestrator.cli.request", fake_request)
+    result = CliRunner().invoke(app, ["mint-follow-ups", "--idempotency-key", "mint-1", "--json"])
+
+    assert result.exit_code == 0
+    assert observed == {
+        "method": "POST",
+        "path": "/api/v1/follow-ups/mint",
+        "payload": {"idempotency_key": "mint-1", "expected_version": 0},
+    }
+
+
 def test_cli_source_has_no_forbidden_domain_or_database_imports() -> None:
     source = Path("src/orchestrator/cli.py").read_text()
     imports = {
