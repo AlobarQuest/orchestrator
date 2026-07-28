@@ -2,8 +2,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import func, select
 
+from orchestrator.capability_vocabulary import RUNNER_CAPABILITIES
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
+from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
 from orchestrator.services.follow_ups import (
     FOLLOW_UP_CAPABILITY,
     SKIP_ALREADY_MINTED,
@@ -15,8 +20,15 @@ from orchestrator.services.follow_ups import (
     RevisionFacts,
     UnitFacts,
     evaluate_due,
+    mint_due_follow_ups,
     validate_follow_up,
 )
+from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.packages import register_approved_unit, register_revision
+from tests.services.test_package_registration import AUTHORITY
+from tests.services.test_package_registration import NOW as REVISION_NOW
+
+SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 
 VALID = {
     "required": True,
@@ -201,3 +213,195 @@ def test_a_completed_review_unit_still_stops_a_second_mint() -> None:
     decision = evaluate_due(facts(completed(), own), now=NOW, due_after_days=30)
 
     assert decision.skip_reason == SKIP_ALREADY_MINTED
+
+
+# ------------------------------------------------------------------------------------------------
+# mint_due_follow_ups -- needs the database, so these use `migrated_session`.
+# ------------------------------------------------------------------------------------------------
+
+DECLARATION = {
+    "required": True,
+    "revisit_when": "After the next quarterly review.",
+    "signals": ["A guard nobody triaged."],
+    "owner": "devon",
+}
+
+
+def _settled_revision(session, key: str, declaration) -> WorkPackageRevision:
+    # `work_package_revisions` is append-only (a trigger rejects UPDATE), so the declaration must
+    # be supplied at construction -- via `register_revision`'s `follow_up` parameter -- rather than
+    # assigned onto an already-registered revision. Each fixture also needs its OWN revision: the
+    # shared `tests.services.test_dependencies.register_unit` helper pins package_id="pkg-1" /
+    # revision=1 / content_hash="sha256:one" for every caller, so two calls in the same test would
+    # resolve to the identical revision row and conflict the moment their `follow_up` values
+    # differ. Registering directly, keyed on `key`, keeps the three fixtures independent.
+    revision = register_revision(
+        session,
+        package_id=f"pkg-{key}",
+        source_repository="owner/repo",
+        revision=1,
+        content_hash=f"sha256:{key}",
+        source_path="intent.md",
+        source_commit="abc123",
+        approved_by="human-1",
+        approved_at=REVISION_NOW,
+        approval_event_id=str(uuid.uuid4()),
+        enforcement_snapshot={"acceptance_criteria": ["ac-1"]},
+        authority=AUTHORITY,
+        registry_version=1,
+        follow_up=declaration,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    unit = register_approved_unit(
+        session,
+        revision_id=revision.id,
+        unit_key=key,
+        title=key,
+        outcome=f"{key} complete",
+        required_capability="repo.edit",
+        authority=AUTHORITY,
+        max_attempts=3,
+        approved_by="human-1",
+        approved_at=REVISION_NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    for target in (
+        WorkUnitState.READY,
+        WorkUnitState.CLAIMED,
+        WorkUnitState.EXECUTING,
+    ):
+        unit.state = target
+    session.flush()
+    # Drive the final hop through the ledger so `to_state="completed"` really exists: the
+    # predicate reads settling time from Event.occurred_at, never from updated_at.
+    session.add(
+        Event(
+            subject_type="work_unit",
+            subject_id=unit.id,
+            action="work_unit.transitioned",
+            to_state=WorkUnitState.COMPLETED,
+            actor_id="human-1",
+            correlation_id=uuid.uuid4(),
+            idempotency_key=f"settle:{unit.id}",
+            payload={},
+        )
+    )
+    unit.state = WorkUnitState.COMPLETED
+    session.flush()
+    return revision
+
+
+@pytest.fixture
+def due_revision(migrated_session):
+    return _settled_revision(migrated_session, "wsp28-due", DECLARATION)
+
+
+@pytest.fixture
+def degenerate_due_revision(migrated_session):
+    return _settled_revision(
+        migrated_session,
+        "wsp28-degenerate",
+        {"required": True, "revisit_when": None, "signals": [], "owner": None},
+    )
+
+
+@pytest.fixture
+def malformed_revision(migrated_session):
+    return _settled_revision(migrated_session, "wsp28-malformed", {"required": "yes"})
+
+
+def test_a_due_revision_mints_exactly_one_unit(migrated_session, due_revision) -> None:
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+
+    assert len(result.minted) == 1
+    migrated_session.expire_all()
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+    assert unit is not None
+    assert unit.state == WorkUnitState.AWAITING_REVIEW
+    assert unit.required_capability == "follow_up_review"
+    assert unit.authority_approval_id is None
+    assert unit.decomposition_approved_by == "system"
+    assert unit.max_attempts == 1
+
+
+def test_the_minted_envelope_carries_no_runner_capability(migrated_session, due_revision) -> None:
+    """A minted unit must be structurally unable to reach a runner: no runner capability, no
+    target repository, no command list."""
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+
+    envelope = normalize_authority(unit.authority)
+    assert set(envelope.capabilities) & RUNNER_CAPABILITIES == set()
+    assert envelope.constraints == {}
+    assert envelope.change_class is None
+
+
+def test_the_stored_envelope_is_a_fixed_point_of_normalisation(
+    migrated_session, due_revision
+) -> None:
+    """Storing a raw dict makes normalized() a non-fixed-point on re-read, and the re-derived
+    fingerprint then disagrees with the one that was minted."""
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+
+    assert authority_fingerprint(normalize_authority(unit.authority)) == unit.authority_fingerprint
+
+
+def test_running_the_pass_twice_mints_nothing_new(migrated_session, due_revision) -> None:
+    first = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    second = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+
+    assert len(first.minted) == 1
+    assert second.minted == ()
+    assert [row.reason for row in second.skipped] == ["already_minted"]
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(WorkUnit)
+            .where(WorkUnit.required_capability == "follow_up_review")
+        )
+        == 1
+    )
+
+
+def test_the_declaration_prose_reaches_the_unit(migrated_session, due_revision) -> None:
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+
+    assert "Revisit:" in unit.outcome
+    assert "After the next quarterly review." in unit.outcome
+
+
+def test_a_degenerate_declaration_still_produces_a_legible_unit(
+    migrated_session, degenerate_due_revision
+) -> None:
+    """required:true with everything else null is a VALID declaration. It must not yield an
+    empty outcome the reviewer cannot act on."""
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+    unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
+
+    assert unit.outcome.strip() != ""
+    assert "Signals" not in unit.outcome
+
+
+def test_one_malformed_declaration_does_not_abort_the_pass(
+    migrated_session, due_revision, malformed_revision
+) -> None:
+    """Per-item fail-open with a counted skip -- the ADR-0002 discipline. A pass that dies on
+    item three and discards items one and two reports nothing about either."""
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+
+    assert len(result.minted) == 1
+    assert "declaration_malformed" in {row.reason for row in result.skipped}
+
+
+def test_minting_writes_one_event_per_unit(migrated_session, due_revision) -> None:
+    result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
+
+    events = migrated_session.scalars(
+        select(Event).where(Event.action == "follow_up_unit.created")
+    ).all()
+    assert len(events) == 1
+    assert events[0].subject_id == result.minted[0].work_unit_id

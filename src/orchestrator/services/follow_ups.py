@@ -14,7 +14,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
+from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
+from orchestrator.services.lifecycle import ActorContext
 
 # The intent-packages `follow_up` block, mirrored field for field. Every key is mandatory-present;
 # `revisit_when` and `owner` may be null. Registered in the cross-boundary vocabulary registry.
@@ -144,3 +152,170 @@ def evaluate_due(facts: RevisionFacts, *, now: datetime, due_after_days: int) ->
     if now < due_at:
         return DueDecision(facts.revision_id, due_at, SKIP_NOT_YET_DUE)
     return DueDecision(facts.revision_id, due_at, None)
+
+
+_SETTLED_STATES = (WorkUnitState.COMPLETED, WorkUnitState.CANCELLED)
+_MINT_ACTION = "follow_up_unit.created"
+_DEFAULT_REVISIT = "No revisit condition was declared; confirm whether this outcome still holds."
+
+
+@dataclass(frozen=True)
+class MintedFollowUp:
+    work_unit_id: uuid.UUID
+    work_package_revision_id: uuid.UUID
+    due_at: datetime
+
+
+@dataclass(frozen=True)
+class SkippedRevision:
+    work_package_revision_id: uuid.UUID
+    reason: str
+
+
+@dataclass(frozen=True)
+class MintResult:
+    minted: tuple[MintedFollowUp, ...]
+    skipped: tuple[SkippedRevision, ...]
+    considered: int
+
+
+def _authorize_actor(actor: ActorContext) -> None:
+    if actor.role is not ActorRole.SYSTEM:
+        raise DomainError(
+            "role_forbidden",
+            "only the orchestrator system actor may mint follow-up reviews",
+            None,
+        )
+
+
+def follow_up_unit_id(revision_id: uuid.UUID) -> uuid.UUID:
+    """Content-addressed, so a second pass cannot create a second row.
+
+    This is the structural half of the idempotency story; the already-minted skip is the
+    reporting half. The unique constraint on (work_package_revision_id, unit_key) is the backstop
+    if both are somehow bypassed.
+    """
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"sds:follow-up:{revision_id}")
+
+
+def _describe(declaration: dict[str, Any]) -> str:
+    revisit = declaration.get("revisit_when") or _DEFAULT_REVISIT
+    lines = [f"Revisit: {revisit}"]
+    signals = declaration.get("signals") or []
+    if signals:
+        lines.append("Signals:")
+        lines.extend(f"- {signal}" for signal in signals)
+    owner = declaration.get("owner")
+    if owner:
+        lines.append(f"Owner: {owner}")
+    return "\n".join(lines)
+
+
+def _revision_facts(session: Session, revision: WorkPackageRevision) -> RevisionFacts:
+    rows = session.execute(
+        select(WorkUnit.id, WorkUnit.required_capability, WorkUnit.state).where(
+            WorkUnit.work_package_revision_id == revision.id
+        )
+    ).all()
+    units = []
+    for unit_id, capability, state in rows:
+        settled_at = None
+        if state in _SETTLED_STATES:
+            settled_at = session.scalar(
+                select(func.max(Event.occurred_at)).where(
+                    Event.subject_type == "work_unit",
+                    Event.subject_id == unit_id,
+                    Event.to_state == state,
+                )
+            )
+        units.append(UnitFacts(capability, state, settled_at))
+    # No already-minted flag: evaluate_due derives that from the units themselves, so there is
+    # exactly one mechanism and this function cannot contradict it.
+    return RevisionFacts(revision.id, revision.follow_up, tuple(units))
+
+
+def _mint(
+    session: Session,
+    revision: WorkPackageRevision,
+    declaration: dict[str, Any],
+    actor: ActorContext,
+    now: datetime,
+) -> WorkUnit:
+    authority = normalize_authority(
+        {
+            "capabilities": {FOLLOW_UP_CAPABILITY: "allowed"},
+            "budgets": {"max_attempts": 1},
+        }
+    )
+    unit = WorkUnit(
+        id=follow_up_unit_id(revision.id),
+        work_package_revision_id=revision.id,
+        unit_key=f"follow-up:{revision.id}",
+        title="Follow-up review",
+        outcome=_describe(declaration),
+        state=WorkUnitState.AWAITING_REVIEW,
+        # The system self-attests: ck_work_units_approved_beyond_draft requires both approval
+        # columns for any state other than draft, and this unit had no decomposition.
+        decomposition_approved_by=actor.actor_id,
+        decomposition_approved_at=now,
+        required_capability=FOLLOW_UP_CAPABILITY,
+        authority=authority.normalized(),
+        authority_fingerprint=authority_fingerprint(authority),
+        max_attempts=1,
+    )
+    session.add(unit)
+    session.flush()
+    session.add(
+        Event(
+            subject_type="work_unit",
+            subject_id=unit.id,
+            action=_MINT_ACTION,
+            to_state=WorkUnitState.AWAITING_REVIEW,
+            actor_id=actor.actor_id,
+            correlation_id=uuid.uuid4(),
+            idempotency_key=f"{_MINT_ACTION}:{unit.id}",
+            payload={"command": {"work_package_revision_id": str(revision.id)}},
+        )
+    )
+    session.flush()
+    return unit
+
+
+def mint_due_follow_ups(
+    session: Session,
+    *,
+    actor: ActorContext,
+    due_after_days: int,
+) -> MintResult:
+    """One pass over approved revisions, minting whatever is due. Externally invoked; nothing
+    loops and nothing schedules itself.
+
+    Per-item fail-open with a counted skip: one unusable revision is passed over and reported,
+    never allowed to abort the pass and discard the revisions already handled.
+    """
+    _authorize_actor(actor)
+    now = TransactionClock().now(session)
+    revisions = session.scalars(
+        select(WorkPackageRevision).order_by(WorkPackageRevision.registered_at)
+    ).all()
+    minted: list[MintedFollowUp] = []
+    skipped: list[SkippedRevision] = []
+    for revision in revisions:
+        try:
+            declaration = validate_follow_up(revision.follow_up)
+        except DomainError:
+            skipped.append(SkippedRevision(revision.id, SKIP_DECLARATION_MALFORMED))
+            continue
+        if declaration is None or declaration["required"] is not True:
+            continue
+        decision = evaluate_due(
+            _revision_facts(session, revision), now=now, due_after_days=due_after_days
+        )
+        if decision.skip_reason is not None:
+            skipped.append(SkippedRevision(revision.id, decision.skip_reason))
+            continue
+        assert decision.due_at is not None
+        unit = _mint(session, revision, declaration, actor, now)
+        minted.append(MintedFollowUp(unit.id, revision.id, decision.due_at))
+    session.commit()
+    return MintResult(tuple(minted), tuple(skipped), len(revisions))
