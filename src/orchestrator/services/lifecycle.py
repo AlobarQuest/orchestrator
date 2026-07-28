@@ -46,6 +46,15 @@ POST_DEPLOY_AC_IDS = (
     "post-deploy-routes",
 )
 
+# The capability that marks a generated follow-up review unit -- the same string
+# `services.follow_ups` mints units with and `_is_generated_follow_up_unit` /
+# `_is_generated_follow_up_subject` key their authorization checks on. Defined here rather than in
+# `follow_ups` (which is where it originally lived) because `follow_ups` already imports one-way
+# FROM this module (`ActorContext`); putting the constant in the module the others already depend
+# on avoids a cycle without inventing a new shared module. `follow_ups.FOLLOW_UP_CAPABILITY`
+# re-exports this value so its existing external imports are unaffected.
+FOLLOW_UP_CAPABILITY = "follow_up_review"
+
 # The single source of truth for the generated follow-up review AC id. Same producer/consumer
 # split as the tuple above: this module PRODUCES it (required_ac_ids for a review unit) and
 # `services.evidence` imports it to decide subject validity. One copy only.
@@ -523,7 +532,7 @@ def _is_generated_post_deploy_unit(
 
 def _is_generated_follow_up_unit(unit: WorkUnit) -> bool:
     """A pure attribute check -- the capability IS the marker, so no join is needed."""
-    return unit.required_capability == "follow_up_review"
+    return unit.required_capability == FOLLOW_UP_CAPABILITY
 
 
 def _packagerequired_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[str, ...] | None:

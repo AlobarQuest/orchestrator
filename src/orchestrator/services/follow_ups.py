@@ -23,7 +23,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
-from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.lifecycle import FOLLOW_UP_CAPABILITY, ActorContext
 
 # The intent-packages `follow_up` block, mirrored field for field. Every key is mandatory-present;
 # `revisit_when` and `owner` may be null. Registered in the cross-boundary vocabulary registry.
@@ -66,10 +66,13 @@ def validate_follow_up(value: object) -> dict[str, Any] | None:
     }
 
 
-# The capability a follow-up review unit requires. Registered in ORCHESTRATOR_ONLY_CAPABILITIES,
-# never in the runner vocabulary: no runner works one of these, and the byte-pinned cross-repo
-# envelope fixture stays untouched.
-FOLLOW_UP_CAPABILITY = "follow_up_review"
+# The capability a follow-up review unit requires -- imported from `services.lifecycle` (the
+# single source of truth also consulted by `lifecycle`'s own authorization predicates and by
+# `services.verifier_criteria` / `services.evidence`) rather than defined here a second time.
+# Re-exported under this name because external code (tests included) already imports it as
+# `orchestrator.services.follow_ups.FOLLOW_UP_CAPABILITY`. Registered in
+# ORCHESTRATOR_ONLY_CAPABILITIES, never in the runner vocabulary: no runner works one of these, and
+# the byte-pinned cross-repo envelope fixture stays untouched.
 
 # Why a revision was passed over. Individual constants rather than a collection: a module-level
 # tuple of strings used in a membership test becomes a discovered subject of the cross-boundary

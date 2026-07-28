@@ -26,7 +26,10 @@ from orchestrator.services.follow_ups import (
 )
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import register_approved_unit, register_revision
-from orchestrator.services.verifier_criteria import load_required_criteria
+from orchestrator.services.verifier_criteria import (
+    _FOLLOW_UP_DEFAULT_REVISIT,
+    load_required_criteria,
+)
 from tests.services.test_package_registration import AUTHORITY
 from tests.services.test_package_registration import NOW as REVISION_NOW
 
@@ -532,7 +535,10 @@ def test_a_review_unit_requires_exactly_one_generated_criterion(
 def test_a_degenerate_declaration_still_yields_a_non_empty_criterion(
     migrated_session, degenerate_due_revision
 ) -> None:
-    """approver falls back to revision.approved_by, which is NOT NULL and CHECK-non-empty."""
+    """approver falls back to revision.approved_by, which is NOT NULL and CHECK-non-empty.
+    evidence falls back to the exact default-revisit prose, not merely to something non-empty --
+    a bare non-empty check passes for the literal string "None", which is what `str(None)`
+    produces and is exactly the kind of value a reviewer cannot act on."""
     result = mint_due_follow_ups(migrated_session, actor=SYSTEM, due_after_days=0)
     unit = migrated_session.get(WorkUnit, result.minted[0].work_unit_id)
     revision = migrated_session.get(WorkPackageRevision, unit.work_package_revision_id)
@@ -540,7 +546,7 @@ def test_a_degenerate_declaration_still_yields_a_non_empty_criterion(
     criteria = load_required_criteria(migrated_session, unit, revision)
 
     assert criteria[0].approver == revision.approved_by
-    assert criteria[0].evidence.strip() != ""
+    assert criteria[0].evidence == _FOLLOW_UP_DEFAULT_REVISIT
 
 
 def test_a_human_may_adjudicate_the_generated_follow_up_criterion(
@@ -564,11 +570,72 @@ def test_a_human_may_adjudicate_the_generated_follow_up_criterion(
     assert adjudication.outcome == "passed"
 
 
+def test_a_colliding_package_ac_id_does_not_inherit_the_follow_up_carve_out(
+    migrated_session,
+) -> None:
+    """`_is_generated_follow_up_subject` -- both in `_validated_subject` and in
+    `_criterion_evidence_type`'s fallback -- must key on the UNIT's capability, not the ac_id
+    alone. `_validated_subject` has a second, capability-blind admission path: any unit on a
+    revision whose PACKAGE-declared `enforcement_snapshot["acceptance_criteria"]` happens to list
+    the literal string "follow-up-review" passes that check regardless of capability. If the
+    evidence-type fallback trusted `ac_id == FOLLOW_UP_AC_ID` alone, that ordinary unit would
+    silently inherit the generated criterion's `observation` evidence type and a HUMAN could
+    record `passed` on it -- an authorization widening, not merely a wrong id. This is a
+    package-declared AC with no persisted `PackageAcceptanceCriterion` row, so this is exactly
+    the "role_forbidden" a human hitting an ordinary judgment-less AC would get."""
+    revision = register_revision(
+        migrated_session,
+        package_id="pkg-wsp28-collision",
+        source_repository="owner/repo",
+        revision=1,
+        content_hash="sha256:wsp28-collision",
+        source_path="intent.md",
+        source_commit="abc123",
+        approved_by="human-1",
+        approved_at=REVISION_NOW,
+        approval_event_id=str(uuid.uuid4()),
+        enforcement_snapshot={"acceptance_criteria": ["follow-up-review"]},
+        authority=AUTHORITY,
+        registry_version=1,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    unit = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="wsp28-collision-unit",
+        title="an ordinary unit, not a follow-up review",
+        outcome="unrelated work",
+        required_capability="repo.edit",
+        authority=AUTHORITY,
+        max_attempts=3,
+        approved_by="human-1",
+        approved_at=REVISION_NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=revision.id,
+        work_unit_id=unit.id,
+        ac_id="follow-up-review",
+        outcome="passed",
+        actor=HUMAN,
+        rationale="wrong lane entirely",
+        idempotency_key="wsp28-collision-adjudication",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "role_forbidden"
+
+
 def test_the_release_observation_criteria_still_refuse_public_adjudication(
     migrated_session,
 ) -> None:
     """The counterpart carve-out points the OTHER way and must stay that way. Without this,
     a future reader assumes the two generated-AC rules match and loosens the wrong one."""
+    from orchestrator.persistence.models import DeploymentObservation
     from orchestrator.services.deployment_observations import record_deployment_observation
     from tests.services.test_deployment_observations import observation_command, release_binding
 
@@ -576,6 +643,7 @@ def test_the_release_observation_criteria_still_refuse_public_adjudication(
     observation = record_deployment_observation(
         migrated_session, observation_command(binding, key="wsp28-asymmetry-observation")
     )
+    assert isinstance(observation, DeploymentObservation)
 
     result = record_adjudication(
         migrated_session,

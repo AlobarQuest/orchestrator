@@ -34,6 +34,7 @@ from orchestrator.services.claims import validate_active_claim
 # ACCEPTED, not refused.
 from orchestrator.services.lifecycle import (
     FOLLOW_UP_AC_ID,
+    FOLLOW_UP_CAPABILITY,
     FOLLOW_UP_EVIDENCE_TYPE,
     POST_DEPLOY_AC_IDS,
     ActorContext,
@@ -241,7 +242,9 @@ def record_adjudication(
                 current_version=unit.version,
             )
         now = TransactionClock().now(session)
-        evidence_type = _criterion_evidence_type(session, work_package_revision_id, ac_id)
+        evidence_type = _criterion_evidence_type(
+            session, work_package_revision_id, work_unit_id, ac_id
+        )
         _authorize_outcome(actor, outcome, evidence_type)
         _validate_adjudication_fields(
             session,
@@ -624,7 +627,7 @@ def _is_generated_follow_up_subject(session: Session, unit_id: uuid.UUID, ac_id:
     if ac_id != FOLLOW_UP_AC_ID:
         return False
     unit = session.get(WorkUnit, unit_id)
-    return unit is not None and unit.required_capability == "follow_up_review"
+    return unit is not None and unit.required_capability == FOLLOW_UP_CAPABILITY
 
 
 def _validate_evidence_fields(
@@ -685,13 +688,23 @@ def _has_required_context(revision: WorkPackageRevision) -> bool:
     return isinstance(required, dict) and bool(required)
 
 
-def _criterion_evidence_type(session: Session, revision_id: uuid.UUID, ac_id: str) -> str | None:
+def _criterion_evidence_type(
+    session: Session, revision_id: uuid.UUID, unit_id: uuid.UUID, ac_id: str
+) -> str | None:
     """The generated follow-up criterion is never persisted as a `PackageAcceptanceCriterion` row
     (it is constructed transiently by `services.verifier_criteria`), so the DB lookup below always
-    misses for it. By the time this is called from `record_adjudication`, `_validated_subject` has
-    already confirmed the subject IS the generated follow-up criterion whenever `ac_id ==
-    FOLLOW_UP_AC_ID` -- any other case was already rejected as `evidence_subject_invalid`. So the
-    fallback below is safe without re-deriving that check here.
+    misses for it.
+
+    The fallback below re-runs `_is_generated_follow_up_subject` rather than trusting `ac_id ==
+    FOLLOW_UP_AC_ID` alone. `_validated_subject` admits a subject through TWO independent paths --
+    the generated-follow-up check, or `ac_id` merely appearing in the revision's
+    `enforcement_snapshot["acceptance_criteria"]` list. That second path is capability-blind: a
+    revision whose package-declared AC list happens to contain the literal string
+    `"follow-up-review"` would let ANY of its units past `_validated_subject`, for any capability.
+    Keying this fallback on `ac_id` alone would then hand every one of those units the generated
+    criterion's `observation` evidence type -- and with it, a HUMAN's authority to record `passed`
+    where none was intended. Re-checking capability here closes that: this function does not get to
+    assume `_validated_subject`'s admission reason.
     """
     evidence_type = session.scalar(
         select(PackageAcceptanceCriterion.evidence_type).where(
@@ -701,7 +714,7 @@ def _criterion_evidence_type(session: Session, revision_id: uuid.UUID, ac_id: st
     )
     if evidence_type is not None:
         return evidence_type
-    if ac_id == FOLLOW_UP_AC_ID:
+    if _is_generated_follow_up_subject(session, unit_id, ac_id):
         return FOLLOW_UP_EVIDENCE_TYPE
     return None
 

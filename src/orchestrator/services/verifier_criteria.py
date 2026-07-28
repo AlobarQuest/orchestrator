@@ -10,7 +10,11 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import FOLLOW_UP_AC_ID, FOLLOW_UP_EVIDENCE_TYPE
+from orchestrator.services.lifecycle import (
+    FOLLOW_UP_AC_ID,
+    FOLLOW_UP_CAPABILITY,
+    FOLLOW_UP_EVIDENCE_TYPE,
+)
 
 
 def load_required_criteria(
@@ -174,18 +178,29 @@ def _generated_follow_up_criteria(
     `{"required": true, "revisit_when": null, "signals": [], "owner": null}` is a valid
     declaration -- one that would otherwise produce a criterion a reviewer cannot act on.
     """
-    if unit.required_capability != "follow_up_review":
+    if unit.required_capability != FOLLOW_UP_CAPABILITY:
         return None
     declaration = revision.follow_up if isinstance(revision.follow_up, dict) else {}
-    revisit = declaration.get("revisit_when") or _FOLLOW_UP_DEFAULT_REVISIT
-    owner = declaration.get("owner") or revision.approved_by
+    revisit = _clean_str(declaration.get("revisit_when")) or _FOLLOW_UP_DEFAULT_REVISIT
+    owner = _clean_str(declaration.get("owner")) or revision.approved_by
     return (
         PackageAcceptanceCriterion(
             work_package_revision_id=revision.id,
             ac_id=FOLLOW_UP_AC_ID,
             condition="The follow-up questions declared by the package were answered.",
             evidence_type=FOLLOW_UP_EVIDENCE_TYPE,
-            evidence=str(revisit),
-            approver=str(owner),
+            evidence=revisit,
+            approver=owner,
         ),
     )
+
+
+def _clean_str(value: object) -> str | None:
+    """`validate_follow_up` already pins `revisit_when`/`owner` to `str | None`, so no cast is
+    needed here -- only a whitespace check. A bare truthiness fallback (`value or default`) treats
+    `"   "` as present, which would carry a blank-looking value into a criterion a reviewer must
+    act on."""
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
