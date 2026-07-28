@@ -97,7 +97,10 @@ WS-6.1 does not:
 
 - promote brain knowledge;
 - create lessons, rules, or governed proposals;
-- create follow-up work units;
+- create follow-up work units — **superseded in part by ADR-0007.** WS-6.1's ingestion path still
+  creates nothing. A package-declared `follow_up` block yields a work unit through the separate
+  WS-P2.8 minting pass, which reads the declaration and the clock and never reads an observation.
+  An observation still cannot create work.
 - canonicalize trackers or monitors;
 - call GitHub, Coolify, Healthchecks, uptime monitors, watchtower,
   ops-dashboard, Linear, Todoist, or brains;
