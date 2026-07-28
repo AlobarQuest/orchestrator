@@ -73,12 +73,11 @@ SETTLED = NOW - timedelta(days=40)
 REQUIRED = {"required": True, "revisit_when": "Later.", "signals": [], "owner": None}
 
 
-def facts(*units: UnitFacts, follow_up=REQUIRED, has_follow_up_unit=False) -> RevisionFacts:
+def facts(*units: UnitFacts, follow_up=REQUIRED) -> RevisionFacts:
     return RevisionFacts(
         revision_id=uuid.uuid4(),
         follow_up=follow_up,
         units=units,
-        has_follow_up_unit=has_follow_up_unit,
     )
 
 
@@ -154,6 +153,21 @@ def test_a_revision_with_no_units_at_all_never_mints() -> None:
     assert decision.skip_reason == SKIP_NO_COMPLETED_UNIT
 
 
+def test_a_lone_failed_unit_reports_unsettled_failed_not_no_completed_unit() -> None:
+    """FAILED must win over no_completed_unit's own absence-of-completion check -- the clause
+    order matters, and this pins it against the more generic reason swallowing the specific
+    one."""
+    decision = evaluate_due(facts(failed()), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_UNSETTLED_FAILED_UNIT
+
+
+def test_a_lone_in_flight_unit_reports_units_in_flight_not_no_completed_unit() -> None:
+    decision = evaluate_due(facts(in_flight()), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_UNITS_IN_FLIGHT
+
+
 def test_a_revision_inside_the_window_is_not_yet_due() -> None:
     recent = NOW - timedelta(days=5)
     decision = evaluate_due(facts(completed(recent)), now=NOW, due_after_days=30)
@@ -168,22 +182,22 @@ def test_zero_days_makes_a_settled_revision_immediately_due() -> None:
     assert decision.skip_reason is None
 
 
-def test_an_existing_follow_up_unit_short_circuits_everything() -> None:
-    decision = evaluate_due(facts(completed(), has_follow_up_unit=True), now=NOW, due_after_days=30)
-
-    assert decision.skip_reason == SKIP_ALREADY_MINTED
-
-
-def test_the_revisions_own_follow_up_unit_is_excluded_from_the_predicate() -> None:
-    """The minted unit is a unit of its own revision. Once a human completes it, 'everything
-    settled' would be true again and the revision would look due a second time. Excluding it
-    keeps the counted-skip output honest; the uuid5 id is the structural backstop."""
+def test_an_existing_review_unit_stops_the_revision_from_minting_again() -> None:
     own = UnitFacts(
         required_capability=FOLLOW_UP_CAPABILITY, state="awaiting_review", settled_at=None
     )
 
-    decision = evaluate_due(
-        facts(completed(), own, has_follow_up_unit=True), now=NOW, due_after_days=30
-    )
+    decision = evaluate_due(facts(completed(), own), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_ALREADY_MINTED
+
+
+def test_a_completed_review_unit_still_stops_a_second_mint() -> None:
+    """One review per revision, forever. Completing the review must not make the revision
+    eligible again -- which is exactly what a predicate that merely filtered the unit out of
+    the settled-set would do."""
+    own = UnitFacts(required_capability=FOLLOW_UP_CAPABILITY, state="completed", settled_at=SETTLED)
+
+    decision = evaluate_due(facts(completed(), own), now=NOW, due_after_days=30)
 
     assert decision.skip_reason == SKIP_ALREADY_MINTED
