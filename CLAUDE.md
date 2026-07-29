@@ -788,3 +788,38 @@ style of that module.
   single attempt is the workflow's `max_turns` literal, which is a separate number in
   factory-runner's workflow YAML and is not derived from the envelope. Read the field as
   "budget remaining before another attempt is allowed", not as a spend cap. (Verified 2026-07-29.)
+
+- **Coolify stores an `is_literal` env value wrapped in single quotes and injects the STRIPPED
+  form — so a write must send the RAW value, and `is_build_time` is rejected outright.** Two
+  independent traps in the same API, both hit during the GAP-7 password rotation. (1) The
+  production `ORCHESTRATOR_DATABASE_URL` is stored as 111 bytes (`'<109-byte DSN>'`) while the
+  container receives 109; POSTing the already-quoted form yields a **double-quoted** 113-byte
+  value that still parses one layer down, so a naive readback check passes while the app would
+  get a broken DSN. Verify by hashing what the CONTAINER receives
+  (`docker exec … sh -c 'printf %s "$VAR"' | sha256sum`), never what the API returns. (2)
+  `POST /api/v1/applications/{uuid}/envs` **422s on `is_build_time`** — `{"errors":
+  {"is_build_time":["This field is not allowed."]}}` — the accepted spelling is `is_buildtime`,
+  exactly as the GET response spells it. Because the reliable write path is
+  delete-by-uuid + recreate, a 422 leaves the variable **absent**: validate an unfamiliar body
+  against a throwaway key first, and retry rather than exit. (Verified 2026-07-29, GAP-7.)
+
+- **Coolify-managed Postgres runs `local all all trust`, which is why a password rotation is
+  survivable and why the backup lane is not a credential consumer.** `pg_hba.conf` in
+  `postgres:16-alpine` under Coolify trusts the container's local socket, so (a) `docker exec …
+  psql -U postgres` always works regardless of the password — a generated-then-lost credential is
+  recoverable by a second `ALTER USER`, not an outage — and (b) vps-backup's
+  `pg_dump_container` (`docker exec … pg_dump -U postgres`) needs **no password at all**, so it
+  never appears in a credential-consumer inventory. Only TCP connections from other containers
+  hit `host all all all scram-sha-256`. To prove a password is dead, probe over TCP against the
+  container's network name (not `127.0.0.1`, which is also `trust`), and always pair the probe
+  with a wrong-password control — otherwise a broken probe reads as a successful revocation.
+  (Verified 2026-07-29, GAP-7.)
+
+- **Never print a parsed component of a secret-bearing string; persist a generated secret before
+  the mutation that depends on it.** Both rules were learned by breaking them in one session.
+  `urlsplit()` on a value that fails to parse puts the ENTIRE raw string into `.path`, so a
+  diagnostic printing `parts.path` leaked a live DB password to the transcript — emit sha256
+  prefixes, lengths and booleans only. Separately, a rotation script that ran `ALTER USER` and
+  only afterwards persisted the value left the database on a credential nobody held when the
+  next step failed. Order is: generate → persist (0600 + clipboard) → mutate → verify.
+  (Verified 2026-07-29, GAP-7.)
