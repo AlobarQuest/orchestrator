@@ -738,3 +738,53 @@ style of that module.
   registration requires reloading the page to mint a fresh key. The payload's own
   `idempotency_key` is ignored for this purpose. Do not debug an unexpected "duplicate" intake
   before checking whether the page was reloaded. (Verified 2026-07-28, the form's first real use.)
+
+- **A REUSED `runner_attempt` makes dispatch a silent no-op that is indistinguishable from
+  success.** `dispatch_unit` (`services/dispatch.py`) looks up `DispatchRecord` by
+  `(work_unit_id, runner_attempt)` and, if one exists, **returns that existing record** — HTTP 200,
+  `status: "dispatched"`, `reason_code: null` — **without triggering any `workflow_dispatch`.** The
+  response is byte-shaped like a real dispatch; only the `id` differs, and only if you knew the
+  prior one. The correct next ordinal is `_next_runner_attempt` =
+  `max(unit.attempt_count, latest_runner_attempt) + 1`; read the prior ordinal from the last
+  `dispatch.dispatched` event's `payload.runner_attempt` (a `UniqueConstraint("work_unit_id",
+  "runner_attempt")` backs this). **Verify a dispatch by confirming a NEW record id and a new
+  Actions run — never by the `status` field alone.** Note this compounds the already-documented
+  independence of dispatch and claim ordinals: they drift apart the moment a dispatch is skipped or
+  a claim is reclaimed, so "attempt_count + 1" is not a safe substitute. (Verified 2026-07-29,
+  GAP-4 attempt 3 — the prior two dispatches were ordinals 1 and 2.)
+
+- **Closing the bounded dispatch window RESTARTS the orchestrator, and a restart while a dispatched
+  run is live strands the unit. Close the window only after the run is terminal.** The dispatch
+  gates (`ORCHESTRATOR_DISPATCH_ENABLED`, `..._ALLOWED_TARGET_REPOSITORIES`) are read at startup,
+  so reverting them requires a restart — and the runner calls the orchestrator at the *end* of its
+  run. On 2026-07-29 a window-close restart at `12:50:07Z` met the runner's `finalize-run` at
+  `12:50:18Z`: three 503s in two seconds (`finalize-run`, cost-actuals emit, `fail-run`). Because
+  **`fail-run` fails the same way**, the runner cannot even report the failure — a recoverable
+  failure becomes a strand in `executing`, and the attempt is spent. **There is no safe gap to aim
+  for:** the dependency-update coding action took **40 seconds** end to end (prepare `13:16:52` →
+  submit `13:17:50`), so guarding only the *start* of the run (waiting for the claim before
+  restarting) protects the wrong end. Terminal means all three: the Actions run concluded, the unit
+  has left `executing` for `submitted`, and cost-actuals exist. Holding the window open is bounded
+  by construction — dispatch admission requires a READY unit with its authority approval, so if the
+  target unit is the only one in the system there is nothing else an open window can dispatch.
+  (Verified 2026-07-29: attempt 2's tightly-optimised ~2.5 min window failed; attempt 3's ~13.5 min
+  window succeeded. Window duration trades directly against run integrity.)
+
+- **`gh search` cannot see PR comments on these repos — never measure the Evidence Pack marker with
+  it.** `gh search issues "sds-evidence-pack in:comments"` returns 0 with the marker demonstrably
+  present, and the index is stale enough that searching a term from a PR's own *title* also returns
+  nothing. The Wave-2 clause-1 baseline was taken this way and was only coincidentally right (no PR
+  existed at the time); the method reports 0 either way, so it is not evidence of absence. Count
+  markers by REST enumeration instead:
+  `gh api repos/<owner>/<repo>/issues/comments --paginate --jq '[.[] | select(.body | contains("sds-evidence-pack"))] | length'`.
+  More generally: before treating a zero from any search API as proof of absence, run the same
+  query against something you *know* is present. (Verified 2026-07-29, GAP-4 closeout.)
+
+- **`budgets.max_llm_calls` does not constrain a running attempt — it gates the NEXT one.**
+  `is_over_budget` is consulted only inside `_readiness_eligibility_error` (`services/claims.py`),
+  which runs on reclaim and requeue, so it decides whether a unit may be *claimed again*. Nothing
+  checks spend mid-run. GAP-4's envelope declared `max_llm_calls: 4` and attempt 3 recorded
+  **15** (`attempt.cost_recorded`, 23 turns, $0.176) and completed normally. The practical cap on a
+  single attempt is the workflow's `max_turns` literal, which is a separate number in
+  factory-runner's workflow YAML and is not derived from the envelope. Read the field as
+  "budget remaining before another attempt is allowed", not as a spend cap. (Verified 2026-07-29.)
