@@ -55,9 +55,14 @@ intake back with `GET /api/v1/package-intakes/{revision_id}` and map them explic
 | verifier | `orchestrator-verifier` | `660d5846-abcb-4751-be86-b483012899eb` |
 | worker | `factory-runner-github` | `d2a4c0fc-128b-4bf5-8e25-b481010e1be0` |
 
-Source `BWS_ACCESS_TOKEN` by **sourcing** `~/Projects/vps-backup/bws-token.sh` (it exports; it does
-not echo). Every M2M call sends `Authorization: Bearer` **and** `X-Credential-Key-Id`. Never echo a
-token; never `bash -x` the helper.
+Source `BWS_ACCESS_TOKEN` by **sourcing** `~/Projects/orchestrator/scripts/sds-token.sh` (it exports;
+it does not echo). Every M2M call sends `Authorization: Bearer` **and** `X-Credential-Key-Id`. Never
+echo a token; never `bash -x` the helper.
+
+> Changed 2026-07-30: this was `~/Projects/vps-backup/bws-token.sh`, which is now **DENIED** on these
+> secrets. They moved to the read-only `SDS Operator` BWS project. No value was rotated and the UUIDs
+> are unchanged — only the bootstrap identity differs. The `worker` row above
+> (`factory-runner-github`, `d2a4c0fc-…`) did **not** move and is still readable with the old helper.
 
 **How the role is actually decided** — not from the bundle. `authenticate_m2m`
 (`identity/auth.py:54`) returns `role=ActorRole.WORKER` for **every** M2M credential; the bundle

@@ -11,7 +11,7 @@
 #
 # Prerequisites:
 #   - `uv pip install -e .` so the `orchestrator` entry point exists.
-#   - The macOS login Keychain holds BWS_ACCESS_TOKEN_VPS_BACKUP (loaded by bws-token.sh).
+#   - The macOS login Keychain holds BWS_ACCESS_TOKEN_SDS (loaded by sds-token.sh).
 #
 # Usage:
 #   scripts/run-follow-up-mint.sh [--json]
@@ -23,7 +23,7 @@ SYSTEM_BEARER_UUID="221a48d5-3f29-4898-b300-b4820140c880"   # orchestrator-syste
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # shellcheck disable=SC1091
-source "$HOME/Projects/vps-backup/bws-token.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 
 # `bws secret get <uuid>` returns JSON; extract only the "value" field, never echoing it.
 _bws_value() {

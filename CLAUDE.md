@@ -431,14 +431,32 @@ style of that module.
 - **Driving a dispatch needs the M2M bearer tokens — fetch them, don't hunt.** The two
   credentials and how to get them are already recorded; do not re-derive them each session.
   `.bws-secrets.toml` (repo root) names the BWS UUIDs; source `BWS_ACCESS_TOKEN` via the
-  approved Keychain helper `~/Projects/vps-backup/bws-token.sh` (service `Claude`, account
-  `BWS_ACCESS_TOKEN_VPS_BACKUP`), then `bws secret get <uuid>` — never echo any value.
+  approved Keychain helper **`scripts/sds-token.sh` in this repo** (service `Claude`, account
+  `BWS_ACCESS_TOKEN_SDS`), then `bws secret get <uuid>` — never echo any value.
+  **Do NOT use `~/Projects/vps-backup/bws-token.sh` — it no longer works for these secrets.**
+  Until 2026-07-30 every SDS fetch bootstrapped with that helper, i.e. the shared broad machine
+  account (one account behind BOTH the `BWS_ACCESS_TOKEN_VPS_BACKUP` and
+  `BWS_ACCESS_TOKEN_INFRA_DRIFT` Keychain names — verified identical, sha256 `da55db37ea81`).
+  The three SDS runtime secrets now live in the `SDS Operator` BWS project, readable only by
+  the read-only `sds-operator` machine account. The old token is DENIED on all three; that is
+  the migration working, not a fault. No secret VALUE changed — this narrowed who can read.
+  Consumers resolve by UUID, and the UUIDs survived the project move unchanged.
   **SYSTEM** (`orchestrator-system`, decomposition-submit / `commands/ready` / dispatch):
   `221a48d5-3f29-4898-b300-b4820140c880`. **VERIFIER** (`orchestrator-verifier`,
   `verifier-evidence/named-check` + `/verify`): `660d5846-abcb-4751-be86-b483012899eb`. Every
   M2M call sends both `Authorization: Bearer <token>` and `X-Credential-Key-Id: <key-id>`.
   Read endpoints (`status-ledger`, `runner-brief`, …) also require the SYSTEM bearer — a
-  bare GET is `401`. (Verified 2026-07-22, AC-003.)
+  bare GET is `401`. (Verified 2026-07-22, AC-003; token migration 2026-07-30.)
+  The third SDS secret in that project is the Todoist token
+  (`ff396349-aec1-4250-b2f0-b493015188da`, BWS key `TODIST-API-DEVON-PERSONAL`), used by the
+  tracker launchers. **The SDS consumer set is five, not the three the migration plan named:**
+  this repo's three launchers, intent-packages' `credentials.py` (env-driven, no code change),
+  **and `infraops-mcp-server/scripts/drift-audit.sh`** — which runs on a 03:00 LaunchAgent and
+  fetches the SYSTEM bearer for its `mint-follow-ups` step with a *different* BWS identity from
+  every other secret it reads, so it overrides `BWS_ACCESS_TOKEN` for that one call.
+  `factory-validation-kit-restart-recovery/credentials.py` hardcodes the same SYSTEM UUID but is
+  operator-invoked, on no schedule. A grep of `src/` in one repo would have found neither: when
+  moving a secret, grep the whole portfolio for the UUID, not the repos you expect to own it.
 
 - **`factory decompose` (intent-packages) needs three env pieces the tool does not set itself,
   and the module has no `__main__`/installed console script.** Invoke it as
