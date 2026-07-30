@@ -443,7 +443,15 @@ style of that module.
   Consumers resolve by UUID, and the UUIDs survived the project move unchanged.
   **SYSTEM** (`orchestrator-system`, decomposition-submit / `commands/ready` / dispatch):
   `221a48d5-3f29-4898-b300-b4820140c880`. **VERIFIER** (`orchestrator-verifier`,
-  `verifier-evidence/named-check` + `/verify`): `660d5846-abcb-4751-be86-b483012899eb`. Every
+  `verifier-evidence/named-check` + `/verify`): `660d5846-abcb-4751-be86-b483012899eb`.
+  **WORKER** (`orchestrator-operator`, agent_id `claude-code-interactive` — claim / `start` /
+  evidence / `submit`): `bd71bed1-4aac-4af8-9094-b4970180bc59`, added WS-P2.13 2026-07-30.
+  A unit **cannot reach COMPLETED without a WORKER actor**: `CLAIMED→EXECUTING` and
+  `EXECUTING→SUBMITTED` are worker-only edges and there is no human path around them. It carries
+  **no `ORCHESTRATOR_M2M_ROLES` entry** — `authenticate_m2m` returns WORKER for every M2M
+  credential and the roles map only *promotes*, so worker is what an unpromoted credential falls
+  to. The alternative was `factory-runner-github`, whose `agent_id` attribution is permanent and
+  untrue for non-software operational work. Every
   M2M call sends both `Authorization: Bearer <token>` and `X-Credential-Key-Id: <key-id>`.
   Read endpoints (`status-ledger`, `runner-brief`, …) also require the SYSTEM bearer — a
   bare GET is `401`. (Verified 2026-07-22, AC-003; token migration 2026-07-30.)
