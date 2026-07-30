@@ -106,6 +106,33 @@ def test_register_accepts_orchestrator_only_post_deploy_capability(migrated_sess
     assert "post_deploy_verification" not in RUNNER_CAPABILITIES
 
 
+def test_register_accepts_operational_action_capability(migrated_session: Session):
+    # WS-P2.13: a non-software unit -- a credential rotation -- has no repository, opens no pull
+    # request and runs no command. Before this term it could only pass ingress by declaring a
+    # runner capability it never used.
+    unit = _register_unit(
+        migrated_session,
+        required_capability="operational_action",
+        capabilities={"operational_action": "allowed"},
+    )
+    assert unit.state == "draft"
+
+
+def test_operational_action_is_orchestrator_only_and_grants_no_runner_capability():
+    """The term must be accepted at ingress AND unusable by a runner.
+
+    Accepting it is half the guarantee; the half that matters is that an envelope declaring only
+    `operational_action` authorises nothing a runner could act on. `level_for` returns
+    "prohibited" for every runner capability, so an operational unit that somehow reached the
+    dispatch path would fail closed there rather than executing with borrowed authority.
+    """
+    assert "operational_action" in ORCHESTRATOR_CAPABILITIES
+    assert "operational_action" not in RUNNER_CAPABILITIES
+    envelope = AuthorityEnvelope(capabilities={"operational_action": "allowed"}, budgets=_BUDGETS)
+    assert envelope.level_for("operational_action") == "allowed"
+    assert {envelope.level_for(name) for name in RUNNER_CAPABILITIES} == {"prohibited"}
+
+
 # --- decomposition proposal gate (_validate_unit_constraints) -----------------------------------
 
 
@@ -129,6 +156,19 @@ def test_proposal_rejects_registry_vocabulary_envelope_capability():
             )
         )
     assert error.value.code == "unknown_capability"
+
+
+def test_proposal_accepts_operational_action():
+    # The proposal gate is the EARLIER of the two ingress paths and the one a hand-authored
+    # non-software decomposition actually meets first; admitting the term at unit construction
+    # while rejecting it here would block the profile before a human ever saw the proposal.
+    payload = _validate_unit_constraints(
+        _proposed_unit(
+            required_capability="operational_action",
+            capabilities={"operational_action": "allowed"},
+        )
+    )
+    assert payload["capabilities"] == {"operational_action": "allowed"}
 
 
 def test_proposal_accepts_runner_vocabulary():

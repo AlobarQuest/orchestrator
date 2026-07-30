@@ -11,10 +11,11 @@ golden envelope rather than being a
 second, independently hand-maintained copy -- a hash pin would prove the file matches without
 proving anyone consumes it, which is the exact unread-permission defect WS-P2.16 exists to close.
 
-The orchestrator's accepted set is a strict SUPERSET of the runner's: it adds the capability the
-orchestrator mints for its own WS-5.1 post-hoc release-observation verification units, which never
-traverse a runner. Enforcing the runner's six-term set at orchestrator ingress would make the
-orchestrator reject its own generated units.
+The orchestrator's accepted set is a strict SUPERSET of the runner's: it adds the capabilities for
+work no runner performs -- its own WS-5.1 post-hoc release-observation verification units, and the
+non-software operational units of WS-P2.13. Enforcing the runner's six-term set at orchestrator
+ingress would make the orchestrator reject both its own generated units and every unit of a
+delivery profile that has no repository at all.
 
 This module is a plain Python module rather than a data file so it ships by construction -- inside
 the wheel and the image -- with no packaging metadata to forget. A fixture under ``tests/`` is NOT
@@ -43,19 +44,33 @@ CAPABILITY_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
 
 RUNNER_CAPABILITIES: Final[frozenset[str]] = frozenset(CAPABILITY_VOCABULARY["runner"])
 
-# The orchestrator additionally mints `post_deploy_verification` for its own WS-5.1 post-hoc
-# release verification units, which never traverse a runner. It is in the orchestrator's accepted
-# set but NOT the runner's -- the orchestrator vocabulary is a superset.
+# The orchestrator additionally accepts capabilities that no runner executes. This set means
+# exactly "capabilities a unit may be AUTHORED with that the runner does not execute", and the
+# orchestrator vocabulary is therefore a strict superset of the runner's.
 #
-# WS-P2.8's `follow_up_review` is deliberately NOT here. Membership of this set is what unit
-# INGRESS accepts, and the follow-up minting pass constructs its unit directly, bypassing
-# `validate_unit_capabilities` exactly as post-deploy minting does. Listing it would therefore add
-# nothing the feature needs while letting an ordinary authored unit carry the marker -- which, when
-# the marker was capability-only, voided that unit's real acceptance criteria. Identity (the
-# derived `follow_up_unit_id`) is now the marker; keeping the capability out of ingress is the
-# second lock, and restores this set to meaning "capabilities a unit may be AUTHORED with that the
-# runner does not execute".
-ORCHESTRATOR_ONLY_CAPABILITIES: Final[frozenset[str]] = frozenset({"post_deploy_verification"})
+# `post_deploy_verification` (WS-5.1) is minted by the orchestrator for its own post-hoc release
+# verification units, which never traverse a runner.
+#
+# `operational_action` (WS-P2.13) is for a unit whose work is not software: a credential rotation,
+# an operational procedure, anything the `non-software-operational` delivery profile describes.
+# Such a unit has no repository, opens no pull request and runs no command, so before this term
+# existed the only way to pass ingress was to declare a runner capability the work never used --
+# which the 2026-07-27 production drill did, declaring `repo.edit` on units that touched no
+# repository. An envelope that attests a capability the work does not exercise is a false
+# attestation, and a human approving that envelope is approving a claim nobody checked. The term
+# is accepted at ingress and is deliberately absent from `RUNNER_CAPABILITIES`, so a unit carrying
+# it can never be handed to a runner: `level_for` returns "prohibited" for every runner capability
+# such a unit declares, and the WS-P2.16 pull-request binding guard keys on `github.pr.create`,
+# which an operational envelope does not grant.
+#
+# WS-P2.8's `follow_up_review` is deliberately NOT here. Unlike the two above, the follow-up
+# minting pass constructs its unit directly, bypassing `validate_unit_capabilities` exactly as
+# post-deploy minting does. Listing it would add nothing the feature needs while letting an
+# ordinary authored unit carry the marker -- which, when the marker was capability-only, voided
+# that unit's real acceptance criteria. Identity (the derived `follow_up_unit_id`) is the marker.
+ORCHESTRATOR_ONLY_CAPABILITIES: Final[frozenset[str]] = frozenset(
+    {"post_deploy_verification", "operational_action"}
+)
 
 # What orchestrator unit ingress accepts for ``required_capability`` and ``authority.capabilities``
 # keys: the runner set plus the orchestrator-only additions.
