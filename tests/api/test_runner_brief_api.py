@@ -1,6 +1,8 @@
+import json
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import cast
 
 from fastapi.testclient import TestClient
 
@@ -368,3 +370,115 @@ def test_runner_brief_uses_read_only_readiness_evaluation(
 
     assert response.status_code == 200
     assert calls == [False]
+
+
+ENRICHED_CONSTRAINTS = {"target_repository": "AlobarQuest/orchestrator"}
+ENRICHMENT_DOCUMENT = {
+    "schema_version": 1,
+    "profile": "software-delivery",
+    "change_class": "software-delivery",
+    "roads": [
+        {
+            "brain": "code",
+            "slug": "error-logging",
+            "name": "Error handling & structured logging",
+            "status": "paved",
+            "decided_approach": "structlog + asgi-correlation-id (Python) / pino (TS).",
+        }
+    ],
+    "rules": [
+        {
+            "brain": "code",
+            "road_slug": "error-logging",
+            "id": 5,
+            "category": "security",
+            "severity": "BLOCK",
+            "authority": "informational",
+            "rule": "Never log secrets, credentials, auth headers, tokens, or full bodies.",
+            "reason": "A secret in a log is a leaked secret.",
+        }
+    ],
+    "exemplars": [],
+    "content_fingerprint": "sha256:" + "0" * 64,
+    "resolved_at": "2026-07-30T00:00:00+00:00",
+    "sources": [{"brain": "code", "endpoint": "/api/road/error-logging", "query": "error-logging"}],
+}
+
+
+def _approved_unit_with_enrichment(db_client: TestClient, document: object) -> str:
+    revision_id = register_intake(db_client, package_id="enriched-pkg", idempotency_key="enriched")
+    ac_ids = acceptance_criteria_by_key(db_client, revision_id)
+    payload = proposal_payload(revision_id, ac_ids, idempotency_key="enriched-proposal")
+    for unit in cast(list[dict[str, object]], payload["proposed_units"]):
+        unit["context_enrichment"] = document
+        # runner_brief refuses a unit with no target repository, and the shared
+        # decomposition fixture declares none.
+        authority = cast(dict[str, object], unit["authority"])
+        unit["authority"] = {**authority, "constraints": ENRICHED_CONSTRAINTS}
+    proposal = db_client.post(
+        f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        headers=DECOMPOSITION_HUMAN,
+        json=payload,
+    )
+    assert proposal.status_code == 201, proposal.text
+    proposal_id = proposal.json()["id"]
+    approved = db_client.post(
+        f"/api/v1/decomposition-proposals/{proposal_id}/approve",
+        headers=DECOMPOSITION_HUMAN,
+        json=decision_payload("enriched-approve", "Approved with its governed material."),
+    )
+    assert approved.status_code == 200, approved.text
+    return approved.json()["created_work_unit_ids"]["unit-1"]
+
+
+def test_the_brief_carries_the_enrichment_document_verbatim(db_client: TestClient) -> None:
+    """Verbatim is what makes the projection deterministic: stored bytes out.
+
+    Canonical-JSON equality rather than field spot-checks, because "the worker saw
+    what the human approved" is a claim about the whole document.
+    """
+    unit_id = _approved_unit_with_enrichment(db_client, ENRICHMENT_DOCUMENT)
+
+    response = db_client.get(f"/api/v1/work-units/{unit_id}/runner-brief", headers=WORKER)
+
+    assert response.status_code == 200, response.text
+    served = response.json()["enrichment"]
+    assert json.dumps(served, sort_keys=True) == json.dumps(ENRICHMENT_DOCUMENT, sort_keys=True)
+
+
+def test_the_brief_is_byte_identical_across_repeated_reads(db_client: TestClient) -> None:
+    """Determinism, at the surface a worker actually reads."""
+    unit_id = _approved_unit_with_enrichment(db_client, ENRICHMENT_DOCUMENT)
+
+    first = db_client.get(f"/api/v1/work-units/{unit_id}/runner-brief", headers=WORKER)
+    second = db_client.get(f"/api/v1/work-units/{unit_id}/runner-brief", headers=WORKER)
+
+    assert json.dumps(first.json()["enrichment"], sort_keys=True) == json.dumps(
+        second.json()["enrichment"], sort_keys=True
+    )
+
+
+def test_an_oversized_enrichment_document_is_refused_at_ingress(db_client: TestClient) -> None:
+    """A DomainError, never a bare 500 — only two exception types have handlers."""
+    bloated = {
+        **ENRICHMENT_DOCUMENT,
+        "rules": [
+            {**ENRICHMENT_DOCUMENT["rules"][0], "id": n, "reason": "x" * 500} for n in range(150)
+        ],
+    }
+    revision_id = register_intake(db_client, package_id="bloated-pkg", idempotency_key="bloated")
+    ac_ids = acceptance_criteria_by_key(db_client, revision_id)
+    payload = proposal_payload(revision_id, ac_ids, idempotency_key="bloated-proposal")
+    for unit in cast(list[dict[str, object]], payload["proposed_units"]):
+        unit["context_enrichment"] = bloated
+        authority = cast(dict[str, object], unit["authority"])
+        unit["authority"] = {**authority, "constraints": ENRICHED_CONSTRAINTS}
+
+    response = db_client.post(
+        f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+        headers=DECOMPOSITION_HUMAN,
+        json=payload,
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "context_enrichment_too_large"

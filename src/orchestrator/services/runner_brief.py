@@ -75,6 +75,11 @@ def runner_brief(session: Session, unit_id: UUID) -> dict[str, object]:
         },
         "target": {"repository": target_repository},
         "standing_context": revision.enforcement_snapshot.get("required_context", {}),
+        # Served verbatim. Verbatim is what makes the projection byte-deterministic:
+        # the same unit yields the same bytes, so an auditor can compare what a
+        # worker was told against what a human approved. None means the unit
+        # predates enrichment, which is not the same as an empty document.
+        "enrichment": unit.context_enrichment,
     }
 
 

@@ -16,6 +16,7 @@ from orchestrator.kernel.authority import (
     normalize_authority,
 )
 from orchestrator.kernel.context import context_fingerprint
+from orchestrator.kernel.enrichment import validate_enrichment
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
 from orchestrator.kernel.readiness import (
     DependencyReadiness,
@@ -290,6 +291,7 @@ def register_approved_unit(
     required_capability: str,
     authority: AuthorityEnvelope,
     authority_payload: Mapping[str, Any] | None = None,
+    context_enrichment: Mapping[str, Any] | None = None,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     approved_by: str,
     approved_at: datetime,
@@ -394,6 +396,7 @@ def register_approved_unit(
         required_capability=required_capability,
         authority=unit_candidate["authority"],
         authority_fingerprint=authority_fingerprint(authority),
+        context_enrichment=validate_enrichment(context_enrichment),
         max_attempts=max_attempts,
     )
     session.add(unit)

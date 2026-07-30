@@ -14,6 +14,7 @@ from orchestrator.kernel.authority import (
     authority_fingerprint,
     normalize_authority,
 )
+from orchestrator.kernel.enrichment import validate_enrichment
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
 from orchestrator.kernel.runner_authority import dependency_update_authority_violation
 from orchestrator.kernel.states import ActorRole
@@ -55,6 +56,7 @@ class ProposedUnit:
     required_capability: str
     authority: AuthorityEnvelope
     authority_payload: Mapping[str, Any] | None = None
+    context_enrichment: Mapping[str, Any] | None = None
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
 
 
@@ -169,6 +171,7 @@ def submit_decomposition_proposal(
                 required_capability=unit.required_capability,
                 authority=stamped,
                 authority_fingerprint=authority_fingerprint(normalize_authority(stamped)),
+                context_enrichment=validate_enrichment(unit.context_enrichment),
                 max_attempts=unit.max_attempts,
             )
         )
@@ -317,6 +320,7 @@ def approve_decomposition_proposal(
             required_capability=proposal_unit.required_capability,
             authority=normalize_authority(proposal_unit.authority),
             authority_payload=proposal_unit.authority,
+            context_enrichment=proposal_unit.context_enrichment,
             max_attempts=proposal_unit.max_attempts,
             approved_by=actor.actor_id,
             approved_at=decided_at,
@@ -495,6 +499,7 @@ def _validated_units(
                 None,
             )
         payload = _validate_unit_constraints(unit)
+        validate_enrichment(unit.context_enrichment)
         observed_keys.add(unit.unit_key)
         validated_units.append(ValidatedProposedUnit(unit=unit, authority_payload=payload))
     return tuple(validated_units)
