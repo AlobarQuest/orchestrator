@@ -225,6 +225,12 @@ class WorkUnit(UUIDPrimaryKey, Base):
     authority: Mapped[dict[str, Any]] = mapped_column(JSONB)
     authority_fingerprint: Mapped[str] = mapped_column(String)
     authority_approval_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # Governed knowledge resolved at authoring time (WS-P2.12). Write-once: what a
+    # worker was told is a record of what the unit executed under, so a path that
+    # rewrote it would mean the stored document is no longer the approved one.
+    # NULL means "predates enrichment"; an empty document means "enriched, and the
+    # brains held nothing" -- the two must not collapse.
+    context_enrichment: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     max_attempts: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
@@ -985,6 +991,7 @@ class DecompositionProposalUnit(UUIDPrimaryKey, Base):
     required_capability: Mapped[str] = mapped_column(String)
     authority: Mapped[dict[str, Any]] = mapped_column(JSONB)
     authority_fingerprint: Mapped[str] = mapped_column(String)
+    context_enrichment: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     max_attempts: Mapped[int] = mapped_column(Integer, server_default="3")
 
 

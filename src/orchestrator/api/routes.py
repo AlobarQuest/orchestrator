@@ -1989,5 +1989,6 @@ def _proposed_unit(command: ProposedUnitCommand) -> ProposedUnit:
         required_capability=command.required_capability,
         authority=normalize_authority(command.authority),
         authority_payload=command.authority,
+        context_enrichment=command.context_enrichment,
         max_attempts=command.max_attempts,
     )

@@ -66,8 +66,13 @@ def _sources(root: Path) -> list[Path]:
     return sorted(root.rglob("*.py"))
 
 
-def _mutations(root: Path) -> list[str]:
-    """Every place the envelope is written OUTSIDE a WorkUnit(...) construction."""
+def _mutations(root: Path, attribute: str = AUTHORITY) -> list[str]:
+    """Every place `attribute` is written OUTSIDE a WorkUnit(...) construction.
+
+    Parameterised because WS-P2.12 added a second write-once column
+    (`context_enrichment`) with the same six evasion forms. One scanner, two
+    guards: a second copy would drift, and the copy would be the blind one.
+    """
     offenders: list[str] = []
     for path in _sources(root):
         rel = str(path.relative_to(root))
@@ -78,17 +83,17 @@ def _mutations(root: Path) -> list[str]:
             # 1. attribute assignment: x.authority = ...
             if isinstance(node, ast.Assign):
                 for target in node.targets:
-                    if isinstance(target, ast.Attribute) and target.attr == AUTHORITY:
-                        offenders.append(f"{where} attribute assignment to .{AUTHORITY}")
+                    if isinstance(target, ast.Attribute) and target.attr == attribute:
+                        offenders.append(f"{where} attribute assignment to .{attribute}")
                     # 4. in-place JSON mutation: x.authority["budgets"]["max_attempts"] = 9
-                    if isinstance(target, ast.Subscript) and _roots_in_authority_attr(target):
-                        offenders.append(f"{where} in-place mutation of .{AUTHORITY}[...]")
+                    if isinstance(target, ast.Subscript) and _roots_in_attr(target, attribute):
+                        offenders.append(f"{where} in-place mutation of .{attribute}[...]")
             if isinstance(node, ast.AugAssign):
                 target = node.target
-                if isinstance(target, ast.Attribute) and target.attr == AUTHORITY:
-                    offenders.append(f"{where} augmented assignment to .{AUTHORITY}")
-                if isinstance(target, ast.Subscript) and _roots_in_authority_attr(target):
-                    offenders.append(f"{where} in-place mutation of .{AUTHORITY}[...]")
+                if isinstance(target, ast.Attribute) and target.attr == attribute:
+                    offenders.append(f"{where} augmented assignment to .{attribute}")
+                if isinstance(target, ast.Subscript) and _roots_in_attr(target, attribute):
+                    offenders.append(f"{where} in-place mutation of .{attribute}[...]")
 
             if isinstance(node, ast.Call):
                 func = node.func
@@ -98,25 +103,25 @@ def _mutations(root: Path) -> list[str]:
                     and func.id == "setattr"
                     and len(node.args) >= 2
                     and isinstance(node.args[1], ast.Constant)
-                    and node.args[1].value == AUTHORITY
+                    and node.args[1].value == attribute
                 ):
-                    offenders.append(f"{where} setattr(..., '{AUTHORITY}', ...)")
+                    offenders.append(f"{where} setattr(..., '{attribute}', ...)")
                 # 3. update(WorkUnit).values(authority=...) -- keyword OR positional dict.
                 # `.values({"authority": ...})` is the same statement written the other way, and
                 # a guard that only sees the keyword form is a guard you evade by reformatting.
                 if isinstance(func, ast.Attribute) and func.attr == "values":
-                    if any(kw.arg == AUTHORITY for kw in node.keywords):
-                        offenders.append(f"{where} bulk update .values({AUTHORITY}=...)")
+                    if any(kw.arg == attribute for kw in node.keywords):
+                        offenders.append(f"{where} bulk update .values({attribute}=...)")
                     if any(
                         isinstance(arg, ast.Dict)
                         and any(
-                            isinstance(key, ast.Constant) and key.value == AUTHORITY
+                            isinstance(key, ast.Constant) and key.value == attribute
                             for key in arg.keys
                             if key is not None
                         )
                         for arg in node.args
                     ):
-                        offenders.append(f'{where} bulk update .values({{"{AUTHORITY}": ...}})')
+                        offenders.append(f'{where} bulk update .values({{"{attribute}": ...}})')
                 # SQLAlchemy's escape hatch for in-place JSON edits. Without flag_modified the ORM
                 # does not notice a mutated dict -- so its PRESENCE is the tell that someone is
                 # deliberately persisting one.
@@ -125,26 +130,26 @@ def _mutations(root: Path) -> list[str]:
                     and func.id == "flag_modified"
                     and len(node.args) >= 2
                     and isinstance(node.args[1], ast.Constant)
-                    and node.args[1].value == AUTHORITY
+                    and node.args[1].value == attribute
                 ):
-                    offenders.append(f"{where} flag_modified(..., '{AUTHORITY}')")
+                    offenders.append(f"{where} flag_modified(..., '{attribute}')")
                 # in-place dict API: x.authority.update(...) / .setdefault(...) / .pop(...)
                 if (
                     isinstance(func, ast.Attribute)
                     and func.attr in {"update", "setdefault", "pop", "clear"}
                     and isinstance(func.value, ast.Attribute)
-                    and func.value.attr == AUTHORITY
+                    and func.value.attr == attribute
                 ):
-                    offenders.append(f"{where} in-place .{AUTHORITY}.{func.attr}(...)")
+                    offenders.append(f"{where} in-place .{attribute}.{func.attr}(...)")
     return offenders
 
 
-def _roots_in_authority_attr(node: ast.Subscript) -> bool:
-    """True for `x.authority[...]` at any subscript depth (`x.authority['a']['b']`)."""
+def _roots_in_attr(node: ast.Subscript, attribute: str = AUTHORITY) -> bool:
+    """True for `x.<attribute>[...]` at any subscript depth (`x.a['b']['c']`)."""
     current: ast.expr = node
     while isinstance(current, ast.Subscript):
         current = current.value
-    return isinstance(current, ast.Attribute) and current.attr == AUTHORITY
+    return isinstance(current, ast.Attribute) and current.attr == attribute
 
 
 def test_the_work_unit_authority_envelope_is_never_mutated() -> None:

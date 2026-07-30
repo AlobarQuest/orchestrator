@@ -342,6 +342,10 @@ class RunnerBriefResponse(BaseModel):
     readiness: RunnerBriefReadinessResponse
     target: RunnerBriefTargetResponse
     standing_context: dict[str, Any]
+    # Undeclared keys are dropped here silently, so the service returning a field
+    # is not the same as a worker receiving one. factory-runner parses the HTTP
+    # body, not the service dict.
+    enrichment: dict[str, Any] | None = None
 
 
 class LeaseResponse(BaseModel):
@@ -840,6 +844,7 @@ class ProposedUnitCommand(BaseModel):
     outcome: str = Field(min_length=1)
     required_capability: str = Field(min_length=1)
     authority: dict[str, Any]
+    context_enrichment: dict[str, Any] | None = None
     max_attempts: int = Field(ge=0, default=3)
 
 
@@ -882,6 +887,7 @@ class DecompositionProposalUnitResponse(BaseModel):
     required_capability: str
     authority: dict[str, Any]
     authority_fingerprint: str
+    context_enrichment: dict[str, Any] | None
     max_attempts: int
 
 

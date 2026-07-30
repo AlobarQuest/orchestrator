@@ -527,6 +527,57 @@ style of that module.
   every-success-response-has-a-json-schema invariant. (Verified 2026-07-25, WS-P2.5 Inc 1 — the
   public-exposure decision was the final review's one Important finding.)
 
+- **The brains have a REST read API built for off-machine agents, it is approved-only by
+  default, and there is NO read-only credential.** Code Brain (`https://code-brain.devonwatkins.com`)
+  serves `GET /api/roads`, `/api/road/{slug}`, `/api/rules`, `/api/search`; Infra Brain
+  (`https://infra-brain.devonwatkins.com`) serves `GET /api/rules`. Auth is
+  `x-brain-key: <key>` (or `?key=`), and the middleware accepts **either** the approver key or
+  the contributor key, gating every non-allowlisted path identically — so the contributor key
+  (`CODE_BRAIN_CONTRIBUTOR_KEY` `750f737f-4cb6-4876-9a98-b48200ea1c0b`,
+  `INFRA_BRAIN_CONTRIBUTOR_KEY` `da8134b0-565f-45c8-8965-b48200ea1c40`, BWS project `brains`,
+  bootstrap identity Keychain `Claude`/`BWS_ACCESS_TOKEN_VPS_BACKUP`, **not** the SDS-narrow
+  account) is the least privilege available and can also POST proposals. Narrowing that is open.
+  Containment comes free from the repositories: `list_all` defaults `include_proposed=False`, so
+  REST serves approved-only records. The REST route exposes `category/severity/road_slug/
+  include_retired` but **not** `min_authority` (the repository supports it, the route does not
+  pass it), so an authority floor is applied client-side.
+  **Severity and authority are orthogonal and disagree** — Infra Brain has **12** BLOCK-severity
+  rules of which only **4** are `authority: required`, and Code Brain has **zero** at `required`
+  (all 11 of its rules are `informational`). A filter keyed on the wrong one carries three times
+  the material. Content is thin: the only substantive road is `error-logging` (9 rules, 2
+  exemplars, a real `decided_approach`); `dependency-update` is `paved` with `decided_approach:
+  null` and 0 rules/exemplars/lessons. (Verified live 2026-07-30, WS-P2.12.)
+
+- **A FastAPI `response_model` silently DROPS every key the service returns but the model does
+  not declare — so "the service returns it" is never evidence "the worker receives it".**
+  `runner_brief_route` declares `response_model=RunnerBriefResponse`. WS-P2.12 added an
+  `enrichment` key to `services/runner_brief.py`, every service-level assertion passed, and the
+  HTTP body carried nothing, because the response model had not been extended. This is the
+  WS-P2.1 shape (service correct, wire empty) in a new place, and it is invisible to exactly the
+  test you would reach for: a cross-repo contract test that asserts on the **service dict**
+  rather than the **served body** has its blind spot precisely where the consumer reads.
+  factory-runner parses the body. Two consequences: (1) adding a field to any service backing a
+  `response_model` route means editing the model in the same change; (2) a contract test for such
+  a route must pin the model — `tests/contract/test_runner_brief_contract.py` asserts
+  `set(RunnerBriefResponse.model_fields) == set(golden_brief())`, which needs no HTTP client and
+  cannot drift. Note the failure direction is silent-drop, never an error.
+  (Verified 2026-07-30, WS-P2.12.)
+
+- **The runner BRIEF is a cross-repo contract too, and until WS-P2.12 nothing tested it.**
+  `RunnerBrief` in factory-runner is `model_config = ConfigDict(extra="forbid")`, so a key the
+  orchestrator adds and the runner does not know about raises `extra_forbidden` at parse time and
+  kills **every** run at claim — not a degraded run, a dead one. WS-6.4.0 pinned the authority
+  *envelope* across both repos for exactly this reason and left the brief unpinned, and the brief
+  is the larger surface. It is now pinned the same way: byte-identical
+  `tests/fixtures/runner_brief.json` in both repos plus the same `CONTRACT_SHA256`
+  (`1cf3c51678ad…`). **Ordering is load-bearing: factory-runner must merge BEFORE the
+  orchestrator emits a new brief field**, and the runner is installed fresh per run from its
+  default branch, so merge-first suffices. The hash pin alone proves only that a file is
+  unchanged; both repos therefore also carry a *derivation* assertion (orchestrator: the served
+  key set; factory-runner: that the fixture's content reaches `_prompt`). Proven by control:
+  deleting the prompt's enrichment section leaves both **shape** tests green and reds only the
+  derivation test. (Verified 2026-07-30, WS-P2.12.)
+
 - **Adding a route — `/api` OR `/review` — or a new `src/orchestrator/` module trips a FAMILY of
   architecture guards. There are FIVE, and three are exact set-equality inventories that fail CI on
   a missing entry.** The `test_ws32_scope_guards.py` word guard (bare tokens `deploy`/`dispatch`,
