@@ -419,9 +419,15 @@ def test_verifier_fails_closed_for_failed_evidence(migrated_session: Session) ->
     assert result.evaluations[0].finding_evidence_id is not None
 
 
-def test_verifier_fails_closed_for_missing_deterministic_evidence(
+def test_verifier_asks_rather_than_fails_for_missing_deterministic_evidence(
     migrated_session: Session,
 ) -> None:
+    # SUPERSEDES test_verifier_fails_closed_for_missing_deterministic_evidence. That test encoded
+    # the pre-WS-P2.17 intent: a deterministic-floored criterion with no evidence at all was
+    # `failed_closed`, which drives the unit to REVISION_REQUIRED -> retry -> FAILED without ever
+    # asking anyone. WS-P2.17 fails TOWARD ASKING: absent evidence is not counter-evidence, so the
+    # unit routes to AWAITING_REVIEW and a human decides. A judgment_required evaluation records no
+    # verifier finding (`_record_evaluation` returns before minting one), hence no finding id.
     unit = mapped_submitted_unit(migrated_session, key="verify-missing")
 
     result = verify_work_unit(
@@ -434,10 +440,12 @@ def test_verifier_fails_closed_for_missing_deterministic_evidence(
         ),
     )
 
-    assert result.result == "revision_required"
-    assert result.state is WorkUnitState.REVISION_REQUIRED
-    assert result.evaluations[0].status == "failed_closed"
-    assert result.evaluations[0].finding_evidence_id is not None
+    assert result.result == "awaiting_review"
+    assert result.state is WorkUnitState.AWAITING_REVIEW
+    assert result.evaluations[0].status == "judgment_required"
+    assert result.evaluations[0].outcome is None
+    assert result.evaluations[0].evidence_id is None
+    assert result.evaluations[0].finding_evidence_id is None
 
 
 def test_verifier_routes_judgment_criteria_to_awaiting_review(

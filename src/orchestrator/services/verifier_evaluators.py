@@ -122,15 +122,16 @@ def evaluate_criterion(
     if floor_for(evidence_type) == "human":
         return ("judgment_required", None, f"{criterion.evidence_type} requires review")
     if evidence is None:
-        return ("failed_closed", "failed", "missing required evidence")
+        return ("judgment_required", None, "no evidence has been recorded for this criterion")
     if not isinstance(evidence.payload, dict):
-        return ("failed_closed", "failed", "evidence payload is missing or malformed")
-    evaluator = EVALUATORS.get(evidence_type)
+        return ("judgment_required", None, "evidence payload is not machine-readable")
+    arriving_type = evidence.evidence_type.strip().lower()
+    evaluator = EVALUATORS.get(arriving_type)
     if evaluator is not None:
         return evaluator(evidence.payload)
-    if evidence_type == "infra_lane.final":
+    if arriving_type == "infra_lane.final":
         return _infra_lane_result(evidence)
-    return ("judgment_required", None, f"{criterion.evidence_type} requires review")
+    return ("judgment_required", None, f"{evidence.evidence_type} has no deterministic evaluator")
 
 
 def _named_check_result(evidence: Evidence) -> tuple[EvaluationStatus, str, str]:

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.persistence.models import Evidence, PackageAcceptanceCriterion
+from orchestrator.services.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.verifier_evaluators import (
     DETERMINISTIC_PERMITTED_TYPES,
@@ -69,6 +70,106 @@ def test_human_floored_criterion_is_judgment_even_with_deterministic_evidence() 
     evidence = Evidence(evidence_type="test", payload={"status": "pass"})
 
     status, outcome, _ = evaluate_criterion(criterion, evidence)
+
+    assert (status, outcome) == ("judgment_required", None)
+
+
+# The five generated post-deploy criteria are the blast radius of keying evaluation on the
+# ARRIVING evidence type: they are the only criteria in the system whose evidence rows are minted
+# by the orchestrator itself. Left column: the `evidence_type` each generated criterion DECLARES
+# (`services/verifier_criteria.py::_generated_post_deploy_criteria`). Right column: the
+# `evidence_type` written on the paired evidence row
+# (`services/deployment_observations.py::_deployment_evidence`). They are equal per ac_id, which is
+# what makes this change transparent for post-deploy units -- this pin is what notices if they ever
+# diverge, since both spec tuples are function-local and cannot be imported and compared directly.
+POST_DEPLOY_PAIRS = (
+    (
+        "post-deploy-artifact",
+        "release.deployment_observed",
+        "release.deployment_observed",
+        {
+            "binding_id": "b6b8e0f6-0f4a-4a1e-9a1f-2c3d4e5f6a7b",
+            "release_artifact_digest": "sha256:" + "a" * 64,
+            "observed_artifact_digest": "sha256:" + "a" * 64,
+        },
+    ),
+    (
+        "post-deploy-health",
+        "production.health",
+        "production.health",
+        {"probes": [{"endpoint": "/health/live", "status_code": 200}]},
+    ),
+    (
+        "post-deploy-routes",
+        "production.route_presence",
+        "production.route_presence",
+        {"routes": [{"path": "/api/v1/work-units", "present": True}]},
+    ),
+    (
+        "post-deploy-auth",
+        "production.auth_behavior",
+        "production.auth_behavior",
+        {"missing_m2m_status": 401, "configured_m2m_status": 200},
+    ),
+    (
+        "post-deploy-dispatch",
+        "production.dispatch_posture",
+        "production.dispatch_posture",
+        {"dispatch_enabled": False},
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("ac_id", "criterion_type", "evidence_type", "payload"),
+    POST_DEPLOY_PAIRS,
+    ids=[pair[0] for pair in POST_DEPLOY_PAIRS],
+)
+def test_generated_post_deploy_criteria_still_evaluate_deterministically(
+    ac_id: str,
+    criterion_type: str,
+    evidence_type: str,
+    payload: dict[str, object],
+) -> None:
+    criterion = PackageAcceptanceCriterion(ac_id=ac_id, evidence_type=criterion_type)
+    evidence = Evidence(evidence_type=evidence_type, payload=payload)
+
+    status, outcome, _ = evaluate_criterion(criterion, evidence)
+
+    assert (status, outcome) == ("passed", "passed")
+
+
+def test_generated_post_deploy_ac_ids_are_the_ones_lifecycle_declares() -> None:
+    # If a sixth generated post-deploy criterion is ever added, this pin's table is incomplete and
+    # the new criterion's evidence pairing would go unexercised.
+    assert tuple(sorted(pair[0] for pair in POST_DEPLOY_PAIRS)) == tuple(sorted(POST_DEPLOY_AC_IDS))
+
+
+def test_evaluator_is_selected_by_the_arriving_evidence_type() -> None:
+    # The criterion says what "done" means; the evidence says what kind of thing it is.
+    criterion = PackageAcceptanceCriterion(ac_id="AC-001", evidence_type="gate.summary")
+    evidence = Evidence(evidence_type="security.scan", payload={"block": 0, "warn": 0})
+
+    status, outcome, _ = evaluate_criterion(criterion, evidence)
+
+    assert (status, outcome) == ("passed", "passed")
+
+
+def test_deterministic_criterion_with_unreadable_evidence_asks_rather_than_fails() -> None:
+    # Fail TOWARD ASKING. `failed_closed` here is what produces the documented
+    # REVISION_REQUIRED -> retry -> FAILED loop.
+    criterion = PackageAcceptanceCriterion(ac_id="AC-001", evidence_type="test")
+    evidence = Evidence(evidence_type="runner.pr.opened", payload={"pr_url": "https://example"})
+
+    status, outcome, _ = evaluate_criterion(criterion, evidence)
+
+    assert (status, outcome) == ("judgment_required", None)
+
+
+def test_deterministic_criterion_with_no_evidence_asks_rather_than_fails() -> None:
+    criterion = PackageAcceptanceCriterion(ac_id="AC-001", evidence_type="test")
+
+    status, outcome, _ = evaluate_criterion(criterion, None)
 
     assert (status, outcome) == ("judgment_required", None)
 
