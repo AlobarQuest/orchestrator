@@ -310,9 +310,11 @@ style of that module.
   idempotent replay before release and preserve the unit-then-claim row-lock order, or retries can
   mutate terminal metadata and concurrent lifecycle operations can deadlock.
 
-- **This system has THREE vocabulary mismatches, and nothing checks any of them.** Wherever two
-  vocabularies must agree, assume they don't until you have grepped both sides. All three below
-  surfaced in a single workstream (WS-P2.15) and none was caught by any test:
+- **This system had THREE vocabulary mismatches, and at the time nothing checked any of them.**
+  Wherever two vocabularies must agree, assume they don't until you have grepped both sides. All
+  three below surfaced in a single workstream (WS-P2.15) and none was caught by any test. Read the
+  per-item corrections: #1's consequence was closed by WS-P2.17 and #3's orchestrator half by
+  WS-P2.16; #2 stands unchanged. The lesson, not the inventory, is the durable part.
 
   1. **`evidence_type: automated_test` resolves to `judgment_required` in the verifier.**
      `DETERMINISTIC_TYPES` is `{test, tests, pytest, runner.verification, gate.summary,
@@ -323,14 +325,26 @@ style of that module.
      fell off the end of `DETERMINISTIC_TYPES`. That was true when written; **WS-P2.16 U4 moved it
      INTO `JUDGMENT_TYPES`**, so it is now a *named* judgment type — the same outcome by a
      deliberate route rather than by omission, which is exactly the difference between "a typo"
-     and "a decision". **The consequence is unchanged and still binding:** `evaluate_criterion`
-     returns `judgment_required` for **every automated AC, however good the evidence**, so package
-     authors must declare `evidence_type: "test"` and never `automated_test` until remediation
-     2.1/2.2/2.3 ship together (`docs/operations/production-drill-adaptations.md` carries the
-     authoring rule). This is the real
+     and "a decision". **CONSEQUENCE CLOSED 2026-07-31 (WS-P2.17 Inc 1).** It used to read:
+     `evaluate_criterion` returns `judgment_required` for every automated AC however good the
+     evidence, so package authors must declare `evidence_type: "test"` and never `automated_test`.
+     **That authoring rule was unfollowable and must not be revived** — `test` is not among the
+     five types `intent_packages/validate.py`'s `EVIDENCE_TYPES` permits (`automated_test`,
+     `automated_check`, `human_review`, `external_attestation`, `observation`), so `factory
+     validate` rejects a `test` criterion before it can ever reach intake.
+     **`automated_test` is now the correct declaration for an automated criterion.** It carries a
+     deterministic-permitted *floor*: `evaluate_criterion` resolves it deterministically when
+     readable evidence arrives (the evaluator is selected by the ARRIVING evidence row's type —
+     e.g. a `pytest` evidence row with `{"status": "pass"}` → `passed`), and still asks a human
+     when the evidence is absent or has no evaluator. `automated_test` remains in `JUDGMENT_TYPES`
+     and is deliberately still **not** in `DETERMINISTIC_TYPES` — adding it there halts the factory
+     (four adversarial reviews), which is why the floor is a separate concept layered over the
+     intake vocabulary rather than a rewrite of it. `HUMAN_FLOOR_TYPES` /
+     `DETERMINISTIC_PERMITTED_TYPES` / `floor_for()` live in `services/verifier_evaluators.py`; an
+     unknown or absent criterion type floors to human, fail-closed. This was the real
      root of the known "judgment_required ACs must be passed out-of-band via the verifier M2M
-     credential / no adjudication form in `/review`" gap. **It is a vocabulary gap, not a UI gap** —
-     fixing the UI would not fix it. `automated_check` is now a deliberately narrower supported
+     credential / no adjudication form in `/review`" gap. **It was a vocabulary gap, not a UI gap** —
+     fixing the UI would not have fixed it. `automated_check` is now a deliberately narrower supported
      vocabulary: it is deterministic only when the current evidence is verifier-owned
      `verifier.github.named_check`; pre-CI worker evidence continues to require review.
      Evidence ingestion and `/verify` are separate transactions, so the verifier must revalidate
@@ -347,11 +361,18 @@ style of that module.
      is a bare `package_acceptance_criterion_not_found` with no hint.
   3. **`github.pr.create` is validated as a NAME and ignored as a PERMISSION — and the orchestrator
      does neither.** Be precise here, because a first draft of this entry was wrong:
-     - **orchestrator:** `grep -rn "github.pr.create" src/` → **zero hits.** Nothing reads it, and
-       **nothing validates capability names at ingress at all** (`_validate_unit_constraints`
-       checks `constraints` and `conformance` only). ADR-0001 defers the
-       package-authority → unit-capability projection (`pr_open` → `github.pr.create`) to "the
-       decomposition author". So the orchestrator will accept **any string** as a capability.
+     - **orchestrator: STALE as of WS-P2.16 — corrected 2026-07-31.** This used to read
+       "`grep -rn "github.pr.create" src/` → **zero hits**; nothing reads it, and nothing validates
+       capability names at ingress at all (`_validate_unit_constraints` checks `constraints` and
+       `conformance` only); the orchestrator will accept **any string** as a capability." All three
+       clauses are now false. `github.pr.create` is a member of the capability vocabulary
+       (`capability_vocabulary.py`) and IS read as a permission —
+       `services/lifecycle.py` gates PR-opening on `envelope.level_for("github.pr.create") ==
+       "allowed"`. Names ARE validated at ingress: `validate_unit_capabilities`
+       (`capability_vocabulary.py`) is called from both `services/packages.py` and
+       `services/decomposition.py`, so an unknown capability string is a named error at the gate.
+       ADR-0001 still defers the package-authority → unit-capability projection (`pr_open` →
+       `github.pr.create`) to the decomposition author — that part stands.
      - **factory-runner:** *does* validate names — `SUPPORTED_CAPABILITIES` +
        `_validate_capabilities` raise `AuthorityError` on an unknown key. But it then computes
        `can_create_pr=_allowed(envelope, "github.pr.create")` into `RunnerPermissions`
