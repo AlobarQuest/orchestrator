@@ -72,6 +72,67 @@ def test_evidence_pack_shows_read_only_event_publication_status(
     assert "<form" not in page.text
 
 
+def test_the_evidence_pack_renders_the_reference_and_the_payload(
+    db_client: TestClient, migrated_engine: Engine, review_unit: WorkUnit
+) -> None:
+    """AC-014. `stable_ref or payload` hid the content of every row that carried a reference --
+    which is every row a runner writes."""
+    with Session(migrated_engine) as session:
+        session.add(
+            Evidence(
+                work_package_revision_id=review_unit.work_package_revision_id,
+                work_unit_id=review_unit.id,
+                ac_id="ac-1",
+                attempt=1,
+                evidence_type="test",
+                stable_ref="artifact://both",
+                payload={"detail": "collected 1795 items"},
+                source_revision="abc123",
+                recorded_by="worker",
+                event_id=uuid.uuid4(),
+                idempotency_key="web-evidence-both",
+            )
+        )
+        session.commit()
+
+    page = db_client.get(f"/review/units/{review_unit.id}/evidence-pack", headers=HUMAN)
+
+    assert page.status_code == 200
+    assert "artifact://both" in page.text
+    assert "collected 1795 items" in page.text
+
+
+def test_the_unit_page_renders_evidence_payload_content(
+    db_client: TestClient, migrated_engine: Engine, review_unit: WorkUnit
+) -> None:
+    """AC-015. The page CONTAINING the adjudication form rendered only `ac_id`, type and
+    current/superseded -- so the only prose a reviewer read was the criterion's own condition
+    text. "It had words that looked right" is what that produces."""
+    with Session(migrated_engine) as session:
+        session.add(
+            Evidence(
+                work_package_revision_id=review_unit.work_package_revision_id,
+                work_unit_id=review_unit.id,
+                ac_id="ac-1",
+                attempt=1,
+                evidence_type="test",
+                stable_ref="artifact://unit-page",
+                payload={"status": "pass", "detail": "836 passed, 0 failed"},
+                source_revision="abc123",
+                recorded_by="worker",
+                event_id=uuid.uuid4(),
+                idempotency_key="web-evidence-unit-page",
+            )
+        )
+        session.commit()
+
+    page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+
+    assert page.status_code == 200
+    assert "artifact://unit-page" in page.text
+    assert "836 passed, 0 failed" in page.text
+
+
 def test_evidence_pack_labels_supersession_and_named_waiver_facts(
     db_client: TestClient, migrated_engine: Engine, review_unit: WorkUnit
 ) -> None:

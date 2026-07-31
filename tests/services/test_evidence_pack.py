@@ -175,6 +175,38 @@ def test_render_markdown_redacts_approver_identity_and_rationale(
     assert approval.reason == "confidential business justification"
 
 
+def test_render_markdown_keeps_payload_out_of_a_row_that_has_a_reference(
+    migrated_session: Session,
+) -> None:
+    """WS-P2.17 Increment 4 made the `/review` HTML render `stable_ref` AND payload, because that
+    page is human-only behind forward-auth. This markdown is posted as a comment on the target
+    repository, which may be PUBLIC -- the same edit here would widen what leaves the system. The
+    two renderers have different rules on purpose; this pins the markdown side."""
+    _revision, unit = _build_unit(migrated_session, "evidence-pack-markdown-payload")
+    migrated_session.add(
+        Evidence(
+            work_package_revision_id=unit.work_package_revision_id,
+            work_unit_id=unit.id,
+            ac_id="ac-1",
+            attempt=1,
+            evidence_type="test",
+            stable_ref="artifact://public-ref",
+            payload={"detail": "internal-only payload zzz"},
+            source_revision="abc123",
+            recorded_by="worker",
+            event_id=uuid.uuid4(),
+            idempotency_key="evidence-pack-markdown-payload-evidence",
+        )
+    )
+    migrated_session.commit()
+
+    pack = evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
+    markdown = render_evidence_pack_markdown(pack)
+
+    assert "artifact://public-ref" in markdown
+    assert "internal-only payload zzz" not in markdown
+
+
 def _table_data_rows(markdown: str, section_header: str, row_marker: str) -> list[str]:
     """Pull the data rows (excluding the header/separator rows) of the table under
     `section_header` whose text contains `row_marker`, without assuming where the table ends."""
