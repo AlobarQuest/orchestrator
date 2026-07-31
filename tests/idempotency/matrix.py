@@ -27,6 +27,16 @@ NO_LOCK_PRECHECK_THEN_INTEGRITY_REPLAY = (
 # (uuid5 over the revision id), so a duplicate delivery cannot create a second row. The pass
 # reports `already_minted` rather than raising, and the unique (work_package_revision_id,
 # unit_key) constraint is the backstop if both the id and the pre-check were bypassed.
+# The `/review` adjudication form is no longer a pure delegate of the single-criterion ingress: it
+# mints ONE key per page render, binds it into the CSRF token, and holds the advisory lock on it,
+# while each criterion's Event carries a key DERIVED from it (events.idempotency_key is unique, so
+# N rows cannot share one). Replay compares the whole submission -- each criterion's command
+# carries the submission's ac_ids -- so re-using the key for a different or smaller set of
+# decisions is a conflict rather than a partial success.
+SUBMISSION_DERIVED_KEYS = (
+    "pg_advisory_xact_lock on the submission key + per-criterion derived unique "
+    "Event.idempotency_key + whole-submission replay-equality"
+)
 CONTENT_ADDRESSED_SUBJECT = (
     "uuid5 subject id + unique (work_package_revision_id, unit_key) + already_minted skip, "
     "NO advisory lock"
@@ -101,6 +111,12 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "/api/v1/work-units/{unit_id}/adjudications",
         ADVISORY_LOCK,
         "tests/services/test_adjudications.py::test_adjudication_idempotency_is_exact",
+    ),
+    MatrixRow(
+        "adjudication submission",
+        "/review/units/{unit_id}/adjudication",
+        SUBMISSION_DERIVED_KEYS,
+        "tests/services/test_adjudications.py::test_a_key_reused_for_a_different_submission_is_a_conflict",
     ),
     MatrixRow(
         "observation",
