@@ -992,3 +992,18 @@ style of that module.
   the inputs of the model it replaced** — the same shelf-life error that made an earlier plan cite
   `_adjudicatable_criteria` as it existed before Increment 4 moved it. When an increment changes
   what a surface is keyed on, re-derive expectations from the new key, not from the old census.
+
+- **`record_approval` enforces NO lifecycle state, for either subject type — an approval's reach is
+  bounded by what CONSUMES it, not by what the service refuses.** Verified 2026-07-31 against
+  `services/packages.py`: its entire guard set is `_require_human`, `subject_type ∈ {authority,
+  action}`, unit exists, the `dependency_update_authority_violation` check (authority only),
+  idempotency replay, and `expected_version`. **A human can record either approval on a `cancelled`
+  or `completed` unit and a row is written.** Nothing about the unit's state stops it. What bounds
+  the approval is downstream: an `action` approval is fingerprinted to `unit.version` and satisfies
+  exactly one guard on exactly one edge (`AWAITING_APPROVAL → READY`), and an `authority` approval is
+  consumed only when a unit is admitted for work. So on a settled unit both are inert rather than
+  refused. **Reading the route alone gives you the opposite impression** — HQ asserted in a WS-P2.17
+  Inc 7 handoff that a cancelled unit's five action forms were "every one of which the service would
+  refuse", and that was false for two of them. The `/review` page hides those two anyway, which is
+  the one place it is deliberately narrower than the service; the justification is inertness, not
+  refusal, and it is the increment's single judgment call.
