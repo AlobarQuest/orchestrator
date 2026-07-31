@@ -34,7 +34,9 @@
 {% if evidence %}<ul>{% for row in evidence %}<li>{{ row.ac_id }}: {{ row.evidence_type }}; <strong>{{ "current" if row.id in current_evidence_ids else "superseded" }}</strong> {% if row.supersedes_evidence_id %}(supersedes {{ row.supersedes_evidence_id }}){% endif %}
   <dl>
     <dt>Reference</dt><dd>{% if row.stable_ref %}<code>{{ row.stable_ref }}</code>{% else %}None recorded{% endif %}</dd>
-    <dt>Payload</dt><dd>{% if row.payload is not none %}<pre>{{ row.payload }}</pre>{% else %}None recorded{% endif %}</dd>
+    {# `tojson`, not the default repr: the payload is JSON the worker wrote, and a Python dict
+       repr renders it back in a notation nobody produced. #}
+    <dt>Payload</dt><dd>{% if row.payload is not none %}<pre>{{ row.payload|tojson(indent=2) }}</pre>{% else %}None recorded{% endif %}</dd>
     <dt>Recorded</dt><dd>{{ row.recorded_by }} at {{ row.recorded_at }}, attempt {{ row.attempt }}</dd>
   </dl>
 </li>{% endfor %}</ul>{% else %}<p class="empty">No evidence recorded.</p>{% endif %}
