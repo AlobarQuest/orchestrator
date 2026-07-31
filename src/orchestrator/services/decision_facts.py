@@ -59,6 +59,19 @@ _UNKNOWN_AFFECTS_AT_INTAKE = (
     "The package has not been broken into work units, so no target repository and no mutating "
     "command have been chosen yet."
 )
+_UNKNOWN_AFFECTS_FOR_UNIT = (
+    "The authority envelope declares no constraint at all, so what this work touches has not been "
+    "stated"
+)
+
+# The two keys this projection gives prominence to, because they are what repository work is
+# about. Every OTHER constraint is reported by name whatever it is called, so an envelope
+# declaring neither of these is still fully read back.
+#
+# not-a-vocabulary: not a set anything else must agree with. These two names are a rendering
+# preference within this module -- the envelope's constraints are an open map, and a key missing
+# from here is reported rather than dropped, which is the opposite of a vocabulary mismatch.
+_REPOSITORY_SHAPED_CONSTRAINTS = ("target_repository", "mutation_commands")
 _UNKNOWN_OUTCOME = "This package revision was registered without a recorded outcome statement."
 
 _DOES_LABEL = "What it does"
@@ -131,31 +144,70 @@ def _package_outcome(revision: WorkPackageRevision) -> str | None:
 
 
 def _affects_from_envelope(envelope: AuthorityEnvelope) -> dict[str, Any]:
-    """Target repository, mutating commands and granted capabilities, in that order.
+    """Everything the envelope declares about what this work touches, in its own terms.
 
-    Known iff a target repository is named: without one, "what it affects" has no answer, however
-    much else the envelope grants. The granted capabilities are still reported either way -- an
-    unknown fact is not an empty one.
+    The two repository-shaped keys keep their prominence, and while the envelope is repository-
+    shaped at all, the missing half of that pair is still stated as the negative it is: a unit
+    that names a repository but authorizes no mutating command is repository work with nothing to
+    change, which is worth saying.
+
+    But an envelope is an open map. For `non-software-operational` work -- the class where blast
+    radius matters most -- the answer arrives under other names entirely (`credential`,
+    `irreversible_actions`, `secret_value_handling`), and reading only the two repository keys
+    rendered an explicit unknown over an answer already on file. So every other constraint the
+    author declared is reported too, whatever it is called. A second fixed key list, chosen to fit
+    today's operational packages, would repeat this defect for the next profile.
+
+    The explicit unknown is therefore reserved for an envelope that declares nothing about what it
+    touches. The granted capabilities are reported either way -- an unknown fact is not an empty
+    one, but neither is a capability grant an answer to this question.
     """
-    target = envelope.constraints.get("target_repository")
+    constraints = envelope.constraints
     parts: list[str] = []
-    if isinstance(target, str) and target:
-        parts.append(f"Repository {target}")
-    else:
-        parts.append("No target repository is named in the authority envelope")
-    commands = envelope.constraints.get("mutation_commands")
-    if isinstance(commands, list) and commands:
-        parts.append("runs " + ", ".join(str(command) for command in commands))
-    else:
-        parts.append("no mutating command is authorized")
+    target = constraints.get("target_repository")
+    commands = constraints.get("mutation_commands")
+    if any(name in constraints for name in _REPOSITORY_SHAPED_CONSTRAINTS):
+        parts.append(
+            f"Repository {target}"
+            if isinstance(target, str) and target
+            else "No target repository is named in the authority envelope"
+        )
+        parts.append(
+            "runs " + ", ".join(str(command) for command in commands)
+            if isinstance(commands, list) and commands
+            else "no mutating command is authorized"
+        )
+    parts.extend(
+        statement
+        for name, value in constraints.items()
+        if name not in _REPOSITORY_SHAPED_CONSTRAINTS
+        and (statement := _constraint_statement(name, value)) is not None
+    )
+    known = bool(parts)
+    if not known:
+        parts.append(_UNKNOWN_AFFECTS_FOR_UNIT)
     granted = sorted(
         capability
         for capability, level in envelope.capabilities.items()
         if level not in {"prohibited", ""}
     )
     parts.append("grants " + (", ".join(granted) if granted else "no capability"))
-    known = isinstance(target, str) and bool(target)
     return _fact(_AFFECTS_LABEL, known, "; ".join(parts) + ".")
+
+
+def _constraint_statement(name: str, value: Any) -> str | None:
+    """One declared constraint, read back as the author wrote it, or `None` if it states nothing.
+
+    An empty list is a statement (`irreversible_actions: []` means there are none); an absent or
+    blank value is not, and rendering `credential ` followed by nothing would read as a fact.
+    """
+    if isinstance(value, str):
+        return f"{name} {value}" if value.strip() else None
+    if isinstance(value, list):
+        return f"{name} " + (", ".join(str(item) for item in value) if value else "none")
+    if value is None:
+        return None
+    return f"{name} {value}"
 
 
 def _reversibility(change_class: str | None, declared_plan: str | None) -> dict[str, Any]:
