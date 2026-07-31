@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.persistence.models import PackageAcceptanceCriterion
+from orchestrator.persistence.models import Evidence, PackageAcceptanceCriterion
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.verifier_evaluators import (
     DETERMINISTIC_PERMITTED_TYPES,
@@ -60,6 +60,17 @@ def test_every_supported_criterion_type_has_exactly_one_floor() -> None:
 
 def test_floor_is_case_and_whitespace_insensitive() -> None:
     assert floor_for("  Human_Review  ") == "human"
+
+
+def test_human_floored_criterion_is_judgment_even_with_deterministic_evidence() -> None:
+    # THE R1 FAIL-OPEN CONTROL. A criterion the author floored to human must not be auto-satisfied
+    # by evidence that merely happens to carry a deterministic evaluator's type.
+    criterion = PackageAcceptanceCriterion(ac_id="AC-001", evidence_type="human_review")
+    evidence = Evidence(evidence_type="test", payload={"status": "pass"})
+
+    status, outcome, _ = evaluate_criterion(criterion, evidence)
+
+    assert (status, outcome) == ("judgment_required", None)
 
 
 def test_automated_test_still_requires_judgment_unchanged() -> None:

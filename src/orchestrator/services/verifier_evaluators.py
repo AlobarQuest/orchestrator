@@ -119,7 +119,7 @@ def evaluate_criterion(
                 "automated_check requires verifier named-check evidence",
             )
         return _named_check_result(evidence)
-    if evidence_type in JUDGMENT_TYPES or evidence_type not in DETERMINISTIC_TYPES:
+    if floor_for(evidence_type) == "human":
         return ("judgment_required", None, f"{criterion.evidence_type} requires review")
     if evidence is None:
         return ("failed_closed", "failed", "missing required evidence")
