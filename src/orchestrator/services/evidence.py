@@ -39,7 +39,7 @@ from orchestrator.services.lifecycle import (
     ActorContext,
     is_generated_follow_up_unit,
 )
-from orchestrator.services.verifier_evaluators import JUDGMENT_TYPES
+from orchestrator.services.verifier_evaluators import human_may_adjudicate
 
 # not-a-vocabulary: internal policy subset of adjudication outcomes (which outcomes are not
 # waivers), not a value shared across a repo or subsystem boundary.
@@ -245,7 +245,16 @@ def record_adjudication(
         evidence_type = _criterion_evidence_type(
             session, work_package_revision_id, work_unit_id, ac_id
         )
-        _authorize_outcome(actor, outcome, evidence_type)
+        _authorize_outcome(
+            actor,
+            outcome,
+            evidence_type,
+            # The verifier's own current-evidence lookup, reused rather than reimplemented: a
+            # second, divergent notion of "the current evidence" is the defect class this
+            # increment closes.
+            current_evidence(session, work_package_revision_id, work_unit_id, ac_id),
+            unit.state,
+        )
         _validate_adjudication_fields(
             session,
             work_package_revision_id,
@@ -725,16 +734,27 @@ def _criterion_evidence_type(
     return None
 
 
-def _authorize_outcome(actor: ActorContext, outcome: str, evidence_type: str | None) -> None:
+def _authorize_outcome(
+    actor: ActorContext,
+    outcome: str,
+    evidence_type: str | None,
+    evidence: Evidence | None,
+    unit_state: str,
+) -> None:
     if outcome == "waived":
         allowed = actor.role is ActorRole.HUMAN
     elif actor.role is ActorRole.VERIFIER:
         allowed = outcome in NON_WAIVER_OUTCOMES
     elif actor.role is ActorRole.HUMAN and outcome in HUMAN_ADJUDICABLE_OUTCOMES:
-        # A-static: a human resolves only intrinsically-judgment ACs. A deterministic type is
-        # verifier-owned; keying on the static type (not the current evaluation) closes the
-        # automated_check-before-CI-evidence window.
-        allowed = evidence_type is not None and evidence_type.strip().lower() in JUDGMENT_TYPES
+        # A human resolves what the machine does not own. `human_may_adjudicate` is the single
+        # answer, shared with the /review form so it cannot offer what this refuses.
+        #
+        # This replaces a JUDGMENT_TYPES membership test that keyed on the criterion's STATIC
+        # declared type -- a proxy for the real concern, which is timing: an automated_check must
+        # not be settled by a human while CI evidence could still arrive. The predicate's clause
+        # (b) guards that timing directly, by requiring the unit to be in awaiting_review, where
+        # the verifier has already run and explicitly handed off.
+        allowed = human_may_adjudicate(evidence_type, evidence, unit_state)
     else:
         allowed = False
     if not allowed:

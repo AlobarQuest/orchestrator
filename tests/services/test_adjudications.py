@@ -1,3 +1,4 @@
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from typing import Any, cast
@@ -33,6 +34,24 @@ def add_criterion(session: Session, unit, ac_id: str, evidence_type: str) -> Non
     session.flush()
 
 
+def add_evidence(session: Session, unit, ac_id: str, evidence_type: str, payload: dict) -> None:
+    session.add(
+        Evidence(
+            work_package_revision_id=unit.work_package_revision_id,
+            work_unit_id=unit.id,
+            ac_id=ac_id,
+            attempt=1,
+            evidence_type=evidence_type,
+            payload=payload,
+            source_revision="abc1234",
+            recorded_by="worker-1",
+            event_id=uuid.uuid4(),
+            idempotency_key=f"evidence-{unit.id}-{ac_id}",
+        )
+    )
+    session.flush()
+
+
 def test_a_human_may_not_decide_a_criterion_the_machine_owns() -> None:
     # FAIL-OPEN CONTROL (the mirror of R1). `automated_test` floors to deterministic_permitted
     # after Increment 1, so readable evidence resolves it. A human must not pre-empt that -- not
@@ -63,6 +82,58 @@ def test_a_criterion_that_does_not_exist_is_decidable_by_nobody() -> None:
     # the fail-closed direction for an unknown TYPE is the opposite of the one for an absent
     # CRITERION.
     assert human_may_adjudicate(None, None, WorkUnitState.AWAITING_REVIEW) is False
+
+
+def test_human_may_not_pre_empt_the_verifier_on_a_resolved_automated_test(
+    migrated_session: Session, ready_unit
+) -> None:
+    # THE FAIL-OPEN THIS TASK CLOSES, end to end. Increment 1 made `automated_test`
+    # deterministically evaluable but left `_authorize_outcome` keyed on JUDGMENT_TYPES, which
+    # still contains it -- so a human could record `passed` over a verifier result they never saw.
+    # The unit is parked in AWAITING_REVIEW deliberately: clause (b) is then the ONLY thing that
+    # could admit this, and it must not, because the evidence resolves. A test that left the unit
+    # in READY would pass for the wrong reason.
+    ready_unit.state = WorkUnitState.AWAITING_REVIEW
+    add_criterion(migrated_session, ready_unit, "ac-1", "automated_test")
+    add_evidence(migrated_session, ready_unit, "ac-1", "pytest", {"status": "pass"})
+
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        rationale="the tests look green to me",
+        idempotency_key="human-pass-resolved-automated-test",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "role_forbidden"
+
+
+def test_human_may_decide_an_automated_test_the_verifier_could_not_resolve(
+    migrated_session: Session, ready_unit
+) -> None:
+    # Clause (b), end to end -- the companion that proves the refusal above is about the RESOLVED
+    # evidence and not about the type. Same criterion type, same unit state, no readable evidence:
+    # the verifier deferred, so the human is the only actor who can settle it.
+    ready_unit.state = WorkUnitState.AWAITING_REVIEW
+    add_criterion(migrated_session, ready_unit, "ac-1", "automated_test")
+
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        rationale="verified by hand; the suite never reported",
+        idempotency_key="human-pass-unresolved-automated-test",
+    )
+
+    assert isinstance(result, Adjudication)
+    assert result.outcome == "passed"
 
 
 def test_human_may_pass_a_judgment_type_ac(migrated_session: Session, ready_unit) -> None:
