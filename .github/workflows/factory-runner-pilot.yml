@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   factory-runner:
-    uses: AlobarQuest/factory-runner/.github/workflows/factory-runner.yml@main
+    uses: AlobarQuest/factory-runner/.github/workflows/factory-runner.yml@ec509ae495f8a0eef16dd4986970f7c69a33bf51
     with:
       work_unit_id: ${{ inputs.work_unit_id }}
       orchestrator_url: https://sds.alobar.net
