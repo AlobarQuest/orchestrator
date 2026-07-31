@@ -59,6 +59,16 @@
 {% for ac in adjudicatable_criteria %}
   <fieldset><legend>{{ ac.ac_id }} <small>({{ ac.evidence_type }})</small></legend>
   <input type="hidden" name="ac_id" value="{{ ac.ac_id }}">
+  {# The standard THIS criterion states, and the artifact its author asked for -- first, because a
+     reviewer must know what is required before reading what arrived, and decide only after both.
+     Until now `condition` appeared only on the queue, so the standard was a page away from the
+     control that judges against it. #}
+  <div class="ac-standard">
+    <dl>
+      <dt>Requirement</dt><dd>{{ ac.condition }}</dd>
+      <dt>Evidence required</dt><dd>{{ ac.expected_evidence }}</dd>
+    </dl>
+  </div>
   {# The evidence THIS criterion is decided against, beside the control that decides it. The
      Evidence section above is the full supersession-aware audit view and serves a different
      reader; this is the current row only, so a reviewer never scrolls away from what they are

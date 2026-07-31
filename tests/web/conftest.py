@@ -57,6 +57,22 @@ def review_unit(migrated_engine: Engine) -> WorkUnit:
     return _review_unit(migrated_engine, unit_key="review-unit")
 
 
+def criterion_condition(ac_id: str) -> str:
+    """The standard one criterion states -- distinct per criterion, on purpose.
+
+    A fieldset-scoped test can only state the negative that makes it discriminate ("this block does
+    not carry another criterion's standard") if the two texts differ. The placeholder these fixtures
+    used before was `"c"` for every criterion, under which a template rendering every condition into
+    every fieldset would satisfy the assertions.
+    """
+    return f"What {ac_id} requires of the change must be true."
+
+
+def criterion_expectation(ac_id: str) -> str:
+    """The evidence one criterion's author asked for. Distinct for the same reason."""
+    return f"The artifact recorded for {ac_id} showing it."
+
+
 def _review_unit_with_criteria(
     migrated_engine: Engine, *, unit_key: str, criteria: tuple[tuple[str, str], ...]
 ) -> WorkUnit:
@@ -71,9 +87,9 @@ def _review_unit_with_criteria(
                 PackageAcceptanceCriterion(
                     work_package_revision_id=unit.work_package_revision_id,
                     ac_id=ac_id,
-                    condition="c",
+                    condition=criterion_condition(ac_id),
                     evidence_type=evidence_type,
-                    evidence="e",
+                    evidence=criterion_expectation(ac_id),
                     approver="human-1",
                 )
             )
