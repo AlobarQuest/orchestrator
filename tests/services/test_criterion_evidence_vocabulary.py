@@ -16,11 +16,15 @@ from orchestrator.errors import DomainError
 from orchestrator.persistence.models import PackageAcceptanceCriterion
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.verifier_evaluators import (
+    DETERMINISTIC_PERMITTED_TYPES,
     DETERMINISTIC_TYPES,
     EVALUATORS,
+    HUMAN_FLOOR_TYPES,
     JUDGMENT_TYPES,
     SPECIAL_CASE_TYPES,
+    SUPPORTED_CRITERION_EVIDENCE_TYPES,
     evaluate_criterion,
+    floor_for,
 )
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
 
@@ -34,6 +38,28 @@ def test_every_deterministic_type_resolves_to_an_evaluator_or_a_declared_special
     assert unresolved == set(), f"deterministic types with no resolver: {sorted(unresolved)}"
     # A special case must actually be deterministic, or it documents a type that does not exist.
     assert SPECIAL_CASE_TYPES <= DETERMINISTIC_TYPES
+
+
+def test_an_unknown_criterion_type_floors_to_human() -> None:
+    # R1 fail-closed: forgetting to classify a type must produce a gate that fires too often
+    # (recoverable), never one that does not fire (not recoverable).
+    assert floor_for("automated_tset") == "human"
+    assert floor_for("") == "human"
+
+
+def test_human_floor_types_and_deterministic_permitted_types_are_disjoint() -> None:
+    assert HUMAN_FLOOR_TYPES & DETERMINISTIC_PERMITTED_TYPES == frozenset()
+
+
+def test_every_supported_criterion_type_has_exactly_one_floor() -> None:
+    covered = HUMAN_FLOOR_TYPES | DETERMINISTIC_PERMITTED_TYPES
+    assert SUPPORTED_CRITERION_EVIDENCE_TYPES <= covered, (
+        f"unclassified: {sorted(SUPPORTED_CRITERION_EVIDENCE_TYPES - covered)}"
+    )
+
+
+def test_floor_is_case_and_whitespace_insensitive() -> None:
+    assert floor_for("  Human_Review  ") == "human"
 
 
 def test_automated_test_still_requires_judgment_unchanged() -> None:

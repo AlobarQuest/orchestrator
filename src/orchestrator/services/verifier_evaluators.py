@@ -67,6 +67,27 @@ SPECIAL_CASE_TYPES = frozenset({"infra_lane.final", "automated_check"})
 # criterion type outside this set is a NAMED error at the gate instead of a silent
 # `judgment_required` at verify time.
 SUPPORTED_CRITERION_EVIDENCE_TYPES = DETERMINISTIC_TYPES | JUDGMENT_TYPES
+
+CriterionFloor = Literal["human", "deterministic_permitted"]
+
+# The MINIMUM scrutiny a criterion's declared evidence_type demands (WS-P2.17, ruling R1).
+# Evidence may satisfy AT or ABOVE this floor and never below it. This is a separate concept from
+# DETERMINISTIC_TYPES, which describes what the verifier knows how to READ; the floor describes what
+# the package author is entitled to INSIST ON. Keeping them separate is what lets `automated_test`
+# become machine-evaluable without being added to DETERMINISTIC_TYPES -- an addition CLAUDE.md
+# records as halting the factory.
+HUMAN_FLOOR_TYPES: frozenset[str] = JUDGMENT_TYPES - {"automated_test"}
+DETERMINISTIC_PERMITTED_TYPES: frozenset[str] = DETERMINISTIC_TYPES | {"automated_test"}
+
+
+def floor_for(evidence_type: str) -> CriterionFloor:
+    """The minimum scrutiny a criterion type demands. Unknown types floor to human (fail closed)."""
+    normalized = evidence_type.strip().lower()
+    if normalized in DETERMINISTIC_PERMITTED_TYPES:
+        return "deterministic_permitted"
+    return "human"
+
+
 PASS_VALUES = frozenset({"pass", "passed", "success", "successful", "ok", "green"})
 FAIL_VALUES = frozenset(
     {
