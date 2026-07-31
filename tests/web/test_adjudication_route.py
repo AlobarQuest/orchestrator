@@ -14,6 +14,7 @@ from orchestrator.services.evidence import (
 )
 from orchestrator.services.verifier_evaluators import human_may_adjudicate
 from tests.api.test_lifecycle_api import HUMAN
+from tests.web.conftest import criterion_condition, criterion_expectation
 
 
 def _record_readable_evidence(migrated_engine: Engine, unit: WorkUnit) -> None:
@@ -193,6 +194,59 @@ def test_the_fieldset_renders_the_payload_as_the_json_it_was_recorded_as(
     fieldset = _fieldsets(page.text, unit.id)["ac-1"]
     assert '"finding": "readable"' in fieldset
     assert "'finding': 'readable'" not in fieldset
+
+
+def test_each_fieldset_shows_the_standard_that_criterion_states(
+    db_client: TestClient, review_unit_with_two_judgment_acs: WorkUnit
+) -> None:
+    # The founding complaint of WS-P2.17, one level up. Devon adjudicated a criterion with the
+    # rationale "It had words that looked right :/" -- he was shown prose and asked whether it was
+    # acceptable, without being shown the standard it had to meet. Five increments later the
+    # criterion's own `condition` was still nowhere on the unit page: it appears on the queue, so a
+    # reviewer reads the standard, clicks through to decide, and loses it.
+    unit = review_unit_with_two_judgment_acs
+
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+
+    assert page.status_code == 200
+    fieldsets = _fieldsets(page.text, unit.id)
+    assert criterion_condition("ac-1") in fieldsets["ac-1"]
+    assert criterion_condition("ac-2") in fieldsets["ac-2"]
+    # The discriminating half: rendering every criterion's standard into every fieldset satisfies
+    # the positives above and leaves the reviewer judging against the wrong standard.
+    assert criterion_condition("ac-2") not in fieldsets["ac-1"]
+    assert criterion_condition("ac-1") not in fieldsets["ac-2"]
+
+
+def test_the_standard_is_read_before_the_control_that_decides_it(
+    db_client: TestClient, review_unit_with_two_judgment_acs: WorkUnit
+) -> None:
+    # Order is the substance, not styling. A criterion rendered BELOW its outcome select is read
+    # after the decision has been made, which is the adjacency failure Increment 2 fixed for the
+    # evidence and this one fixes for the standard.
+    unit = review_unit_with_two_judgment_acs
+
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+
+    fieldset = _fieldsets(page.text, unit.id)["ac-1"]
+    assert fieldset.index(criterion_condition("ac-1")) < fieldset.index('name="outcome"')
+
+
+def test_each_fieldset_shows_the_evidence_the_package_expected(
+    db_client: TestClient, review_unit_with_two_judgment_acs: WorkUnit
+) -> None:
+    # The judgment a human is making is "does what arrived satisfy what was required", which needs
+    # the expectation as well as the standard and the actual. `evidence_type` in the legend names
+    # the KIND of evidence; the package's declared `evidence` names the artifact it wanted.
+    unit = review_unit_with_two_judgment_acs
+
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+
+    fieldsets = _fieldsets(page.text, unit.id)
+    assert criterion_expectation("ac-1") in fieldsets["ac-1"]
+    assert criterion_expectation("ac-2") in fieldsets["ac-2"]
+    assert criterion_expectation("ac-2") not in fieldsets["ac-1"]
+    assert criterion_expectation("ac-1") not in fieldsets["ac-2"]
 
 
 def test_the_form_submits_every_open_criterion_at_once(

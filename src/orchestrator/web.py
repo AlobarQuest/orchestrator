@@ -202,10 +202,19 @@ def _adjudicatable_criteria(
     # criterion's fieldset. The page's evidence section is the full, supersession-aware audit
     # view; this is the one row the decision is actually about, next to the control that decides
     # it. It is the same row the predicate above was computed from, not a second lookup.
+    #
+    # `condition` is the standard the criterion states and `expected_evidence` is the artifact its
+    # author asked for. The judgment being made is "does what arrived satisfy what was required",
+    # so all three belong in one place. Until now the standard appeared only on the queue: a
+    # reviewer read it, clicked through, and decided without it -- WS-P2.17's founding complaint,
+    # one level up. `approver` is deliberately NOT carried: it is an identity, it decides nothing
+    # about whether the evidence is sufficient, and the person reading this page is the approver.
     return tuple(
         {
             "ac_id": criterion.ac_id,
             "evidence_type": criterion.evidence_type,
+            "condition": criterion.condition,
+            "expected_evidence": criterion.evidence,
             "human_may_decide": may_decide,
             "evidence": evidence,
         }
