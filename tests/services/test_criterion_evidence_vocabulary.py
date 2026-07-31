@@ -174,13 +174,32 @@ def test_deterministic_criterion_with_no_evidence_asks_rather_than_fails() -> No
     assert (status, outcome) == ("judgment_required", None)
 
 
-def test_automated_test_still_requires_judgment_unchanged() -> None:
-    # The no-regression control: declaring `automated_test` in JUDGMENT_TYPES must not change its
-    # evaluation. It was judgment_required by fall-through before; it is judgment_required by
-    # membership now. Byte-identical outcome -- U4 ships no evaluator.
+def test_automated_test_is_deterministically_evaluable_when_real_evidence_arrives() -> None:
+    # SUPERSEDES test_automated_test_still_requires_judgment_unchanged (WS-P2.16 U4). That control
+    # pinned the behaviour-preserving half: `automated_test` was judgment_required by membership.
+    # WS-P2.17 gives it a deterministic-permitted FLOOR, so real test evidence now resolves it --
+    # while evidence the verifier cannot read still asks a human.
     criterion = PackageAcceptanceCriterion(ac_id="AC-001", evidence_type="automated_test")
-    status, outcome, _ = evaluate_criterion(criterion, None)
-    assert (status, outcome) == ("judgment_required", None)
+
+    readable = Evidence(evidence_type="pytest", payload={"status": "pass"})
+    assert evaluate_criterion(criterion, readable)[:2] == ("passed", "passed")
+
+    unreadable = Evidence(evidence_type="runner.pr.opened", payload={"pr_url": "https://example"})
+    assert evaluate_criterion(criterion, unreadable)[:2] == ("judgment_required", None)
+
+    assert evaluate_criterion(criterion, None)[:2] == ("judgment_required", None)
+
+
+def test_automated_test_is_not_in_deterministic_types() -> None:
+    # The mechanism guard. CLAUDE.md records that adding `automated_test` to DETERMINISTIC_TYPES
+    # halts the factory (four adversarial reviews). WS-P2.17 deliberately achieves the outcome via
+    # the floor instead. If a later change moves it, this reds.
+    assert "automated_test" not in DETERMINISTIC_TYPES
+    assert "automated_test" in DETERMINISTIC_PERMITTED_TYPES
+    # The floor is a SEPARATE concept layered over the intake vocabulary, not a rewrite of it:
+    # `automated_test` stays a JUDGMENT_TYPES member, so intake validation and Assertion D are
+    # untouched by WS-P2.17. What changed is what the verifier does with the evidence, not what a
+    # package may declare.
     assert "automated_test" in JUDGMENT_TYPES
 
 
