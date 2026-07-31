@@ -29,6 +29,7 @@ from orchestrator.kernel.transitions import DESIGNED_HUMAN_GATES
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
     DecompositionProposal,
+    Evidence,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
@@ -90,12 +91,16 @@ def grouped_pending_decisions(session: Session) -> tuple[dict[str, Any], ...]:
 
 def adjudicable_criteria(
     session: Session, unit: WorkUnit, revision: WorkPackageRevision
-) -> tuple[tuple[PackageAcceptanceCriterion, bool], ...]:
+) -> tuple[tuple[PackageAcceptanceCriterion, bool, Evidence | None], ...]:
     """The criteria a human may be shown for this unit, each with whether they may decide it.
 
     The single source for that rule: the `/review` form renders these, and the queue counts the
     undecided ones among them. Two copies of "which criteria are a person's to decide" is the
     WS-P2.16 vocabulary-divergence shape, in a place where the divergence would be silent.
+
+    The criterion's current evidence is returned with it because the answer already depends on
+    that row -- the form renders it beside the decision, and reading it a second time there would
+    be both a repeated query and a second chance to disagree about which row is current.
 
     The criterion ids the verifier generates for its own post-release checks are excluded on the
     id alone -- they are verifier-owned, and public adjudication of them is refused.
@@ -104,18 +109,14 @@ def adjudicable_criteria(
         criteria = load_required_criteria(session, unit, revision)
     except DomainError:
         return ()
-    return tuple(
-        (
-            criterion,
-            human_may_adjudicate(
-                criterion.evidence_type,
-                current_evidence(session, revision.id, unit.id, criterion.ac_id),
-                unit.state,
-            ),
-        )
-        for criterion in criteria
-        if criterion.ac_id not in POST_DEPLOY_AC_IDS
-    )
+    rows = []
+    for criterion in criteria:
+        if criterion.ac_id in POST_DEPLOY_AC_IDS:
+            continue
+        evidence = current_evidence(session, revision.id, unit.id, criterion.ac_id)
+        may_decide = human_may_adjudicate(criterion.evidence_type, evidence, unit.state)
+        rows.append((criterion, may_decide, evidence))
+    return tuple(rows)
 
 
 def _entry(kind: str, subject: str, decision: str, detail: str, href: str) -> dict[str, Any]:
@@ -233,7 +234,7 @@ def _undecided_criteria(session: Session, unit: WorkUnit, href: str) -> list[dic
     if revision is None:
         return []
     entries = []
-    for criterion, may_decide in adjudicable_criteria(session, unit, revision):
+    for criterion, may_decide, _evidence in adjudicable_criteria(session, unit, revision):
         if not may_decide:
             continue
         if current_adjudication(session, revision.id, unit.id, criterion.ac_id) is not None:

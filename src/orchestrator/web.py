@@ -197,13 +197,19 @@ def _adjudicatable_criteria(
     # shared with the queue: `human_may_adjudicate` is the same predicate the service authorizes
     # on, so the form cannot offer an outcome that would be refused -- nor withhold one that
     # would be accepted. Two copies of that rule would diverge silently.
+    #
+    # Each criterion carries its own current evidence so the template can render it INSIDE that
+    # criterion's fieldset. The page's evidence section is the full, supersession-aware audit
+    # view; this is the one row the decision is actually about, next to the control that decides
+    # it. It is the same row the predicate above was computed from, not a second lookup.
     return tuple(
         {
             "ac_id": criterion.ac_id,
             "evidence_type": criterion.evidence_type,
             "human_may_decide": may_decide,
+            "evidence": evidence,
         }
-        for criterion, may_decide in adjudicable_criteria(session, unit, revision)
+        for criterion, may_decide, evidence in adjudicable_criteria(session, unit, revision)
     )
 
 

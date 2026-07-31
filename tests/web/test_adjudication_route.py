@@ -101,6 +101,100 @@ def _fieldset_legends(page: str, unit_id: object) -> tuple[str, ...]:
     return tuple(re.findall(r"<legend>([^ <]+)", _adjudication_form(page, unit_id)))
 
 
+def _fieldsets(page: str, unit_id: object) -> dict[str, str]:
+    """Each criterion's own fieldset, keyed by its ac_id.
+
+    Scoped to the fieldset rather than the form or the page ON PURPOSE. The unit page prints every
+    evidence row in its audit section, so a page-wide assertion that "the evidence is there" passes
+    with nothing built -- the Increment 4 failure. A per-fieldset assertion can also state the
+    negative that makes it discriminate: this criterion's fieldset must NOT carry another
+    criterion's evidence.
+    """
+    blocks = {}
+    for block in re.findall(r"<fieldset>([\s\S]*?)</fieldset>", _adjudication_form(page, unit_id)):
+        legend = re.search(r"<legend>([^ <]+)", block)
+        assert legend is not None
+        blocks[legend.group(1)] = block
+    return blocks
+
+
+def _record_evidence(migrated_engine: Engine, unit: WorkUnit, ac_id: str, marker: str) -> None:
+    """Evidence whose reference AND payload are unique to one criterion."""
+    with Session(migrated_engine) as session:
+        session.add(
+            Evidence(
+                work_package_revision_id=unit.work_package_revision_id,
+                work_unit_id=unit.id,
+                ac_id=ac_id,
+                attempt=1,
+                evidence_type="human.review",
+                stable_ref=f"artifact://{marker}",
+                payload={"finding": marker},
+                source_revision="abc1234",
+                recorded_by="reviewer-1",
+                event_id=uuid.uuid4(),
+                idempotency_key=f"evidence-{unit.id}-{ac_id}",
+            )
+        )
+        session.commit()
+
+
+def test_each_criterion_carries_its_own_evidence_inside_its_fieldset(
+    db_client: TestClient, migrated_engine: Engine, review_unit_with_two_judgment_acs: WorkUnit
+) -> None:
+    # Spec 5.4. Increment 4 put evidence CONTENT on the page; the form that decides it sits ~60
+    # lines below, so a reviewer scrolls away from the evidence and decides from memory. The
+    # decision and the thing it is about must be adjacent by construction.
+    unit = review_unit_with_two_judgment_acs
+    _record_evidence(migrated_engine, unit, "ac-1", "first-criterion")
+    _record_evidence(migrated_engine, unit, "ac-2", "second-criterion")
+
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+
+    assert page.status_code == 200
+    fieldsets = _fieldsets(page.text, unit.id)
+    assert set(fieldsets) == {"ac-1", "ac-2"}
+    assert "artifact://first-criterion" in fieldsets["ac-1"]
+    assert "first-criterion" in fieldsets["ac-1"]
+    assert "artifact://second-criterion" in fieldsets["ac-2"]
+    # The discriminating half: rendering EVERY evidence row into EVERY fieldset would satisfy the
+    # positive assertions above and leave the reviewer reading the wrong criterion's evidence.
+    assert "second-criterion" not in fieldsets["ac-1"]
+    assert "first-criterion" not in fieldsets["ac-2"]
+
+
+def test_a_criterion_with_no_evidence_says_so_inside_its_fieldset(
+    db_client: TestClient, migrated_engine: Engine, review_unit_with_two_judgment_acs: WorkUnit
+) -> None:
+    # An absent row reads as "nothing to worry about" exactly as it does on the decision surface.
+    # A reviewer deciding a criterion backed by nothing must be told that is what they are doing.
+    unit = review_unit_with_two_judgment_acs
+    _record_evidence(migrated_engine, unit, "ac-1", "only-criterion")
+
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+
+    fieldsets = _fieldsets(page.text, unit.id)
+    assert "No evidence is recorded" in fieldsets["ac-2"]
+    # And the criterion that HAS evidence must not carry the empty statement -- otherwise the
+    # marker is unconditional boilerplate and says nothing about either criterion.
+    assert "No evidence is recorded" not in fieldsets["ac-1"]
+
+
+def test_the_fieldset_renders_the_payload_as_the_json_it_was_recorded_as(
+    db_client: TestClient, migrated_engine: Engine, review_unit_with_judgment_ac: WorkUnit
+) -> None:
+    # The same reason the audit section uses `|tojson`: Jinja's default for a JSONB column is a
+    # Python dict repr, a notation nobody produced. Evidence a reviewer cannot read is not evidence.
+    unit = review_unit_with_judgment_ac
+    _record_evidence(migrated_engine, unit, "ac-1", "readable")
+
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+
+    fieldset = _fieldsets(page.text, unit.id)["ac-1"]
+    assert '"finding": "readable"' in fieldset
+    assert "'finding': 'readable'" not in fieldset
+
+
 def test_the_form_submits_every_open_criterion_at_once(
     db_client: TestClient, migrated_engine: Engine, review_unit_with_two_judgment_acs: WorkUnit
 ) -> None:

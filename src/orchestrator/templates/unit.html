@@ -59,6 +59,18 @@
 {% for ac in adjudicatable_criteria %}
   <fieldset><legend>{{ ac.ac_id }} <small>({{ ac.evidence_type }})</small></legend>
   <input type="hidden" name="ac_id" value="{{ ac.ac_id }}">
+  {# The evidence THIS criterion is decided against, beside the control that decides it. The
+     Evidence section above is the full supersession-aware audit view and serves a different
+     reader; this is the current row only, so a reviewer never scrolls away from what they are
+     judging. Full fidelity is correct here -- the page is human-only behind forward-auth. #}
+  {% if ac.evidence %}
+  <div class="ac-evidence"><p>Evidence: {{ ac.evidence.evidence_type }}, recorded by {{ ac.evidence.recorded_by }} at {{ ac.evidence.recorded_at }}, attempt {{ ac.evidence.attempt }}.</p>
+    <dl>
+      <dt>Reference</dt><dd>{% if ac.evidence.stable_ref %}<code>{{ ac.evidence.stable_ref }}</code>{% else %}None recorded{% endif %}</dd>
+      <dt>Payload</dt><dd>{% if ac.evidence.payload is not none %}<pre>{{ ac.evidence.payload|tojson(indent=2) }}</pre>{% else %}None recorded{% endif %}</dd>
+    </dl>
+  </div>
+  {% else %}<p class="empty">No evidence is recorded for this criterion.</p>{% endif %}
   <label for="outcome-{{ ac.ac_id }}">Outcome</label>
   <select id="outcome-{{ ac.ac_id }}" name="outcome">
     <option value="" selected>— No decision —</option>
