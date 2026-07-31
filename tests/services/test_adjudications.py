@@ -136,6 +136,37 @@ def test_human_may_decide_an_automated_test_the_verifier_could_not_resolve(
     assert result.outcome == "passed"
 
 
+def test_a_recorded_adjudication_survives_the_session(
+    migrated_session: Session, migrated_engine: Engine, ready_unit
+) -> None:
+    # WS-P2.1's defect shape: a service that flushes but never commits returns the right object and
+    # writes nothing. This is the guard for the non-committing-core refactor -- it must keep being
+    # true that the SINGLE-criterion entry point still owns and closes its transaction.
+    #
+    # The re-read is deliberately in a SECOND session. `expire_all()` alone would prove nothing
+    # here: a flushed-but-uncommitted row is visible to its own transaction, so re-reading through
+    # `migrated_session` would pass under exactly the defect being guarded against.
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("verifier-1", ActorRole.VERIFIER),
+        rationale="verified",
+        idempotency_key="adjudication-survives-the-session",
+    )
+
+    assert isinstance(result, Adjudication)
+    recorded_id, recorded_outcome = result.id, result.outcome
+
+    migrated_session.expire_all()
+    with Session(migrated_engine) as reader:
+        reread = reader.get(Adjudication, recorded_id)
+        assert reread is not None
+        assert reread.outcome == recorded_outcome
+
+
 def test_human_may_pass_a_judgment_type_ac(migrated_session: Session, ready_unit) -> None:
     add_criterion(migrated_session, ready_unit, "ac-1", "human.review")
     result = record_adjudication(

@@ -248,66 +248,22 @@ def record_adjudication(
                 current_state=unit.state,
                 current_version=unit.version,
             )
-        now = TransactionClock().now(session)
-        evidence_type = _criterion_evidence_type(
-            session, work_package_revision_id, work_unit_id, ac_id
-        )
-        _authorize_outcome(
-            actor,
-            outcome,
-            evidence_type,
-            # The verifier's own current-evidence lookup, reused rather than reimplemented: a
-            # second, divergent notion of "the current evidence" is the defect class this
-            # increment closes.
-            current_evidence(session, work_package_revision_id, work_unit_id, ac_id),
-            unit.state,
-        )
-        _validate_adjudication_fields(
+        row = _record_one_adjudication(
             session,
-            work_package_revision_id,
-            work_unit_id,
-            ac_id,
-            outcome,
-            rationale,
-            evidence_id,
-            failed_evidence_id,
-            risk,
-            follow_up,
-            expires_at,
-            now,
-        )
-        previous = current_adjudication(session, work_package_revision_id, work_unit_id, ac_id)
-        event_id = uuid.uuid4()
-        row = Adjudication(
+            unit=unit,
             work_package_revision_id=work_package_revision_id,
-            work_unit_id=work_unit_id,
             ac_id=ac_id,
             outcome=outcome,
-            evidence_id=evidence_id,
-            decided_by=actor.actor_id,
-            decided_at=now,
+            actor=actor,
             rationale=rationale,
+            command=command,
+            idempotency_key=idempotency_key,
+            evidence_id=evidence_id,
             failed_evidence_id=failed_evidence_id,
             risk=risk,
             follow_up=follow_up,
             scope=scope,
             expires_at=expires_at,
-            event_id=event_id,
-            supersedes_adjudication_id=previous.id if previous is not None else None,
-        )
-        session.add(row)
-        session.flush()
-        session.add(
-            _event(
-                event_id,
-                now,
-                actor,
-                "adjudication.recorded",
-                "adjudication",
-                row.id,
-                command,
-                idempotency_key,
-            )
         )
         session.commit()
         return row
@@ -320,6 +276,96 @@ def record_adjudication(
     except Exception:
         session.rollback()
         raise
+
+
+def _record_one_adjudication(
+    session: Session,
+    *,
+    unit: WorkUnit,
+    work_package_revision_id: uuid.UUID,
+    ac_id: str,
+    outcome: str,
+    actor: ActorContext,
+    rationale: str,
+    command: dict[str, object],
+    idempotency_key: str,
+    evidence_id: uuid.UUID | None,
+    failed_evidence_id: uuid.UUID | None,
+    risk: str | None,
+    follow_up: str | None,
+    scope: str | None,
+    expires_at: datetime | None,
+) -> Adjudication:
+    """One adjudication, authorized, validated and written -- but NOT committed.
+
+    Deliberately owns no transaction and no `except` structure. The caller opens the transaction,
+    holds the idempotency lock, checks the unit version and commits, which is what lets a batch
+    call this once per criterion and commit the whole submission exactly once: all-or-nothing.
+    Committing here would make a rejected criterion leave its predecessors behind.
+
+    `TransactionClock` reads `transaction_timestamp()`, so every criterion of one submission shares
+    a `decided_at` without the caller having to thread one through.
+    """
+    now = TransactionClock().now(session)
+    evidence_type = _criterion_evidence_type(session, work_package_revision_id, unit.id, ac_id)
+    _authorize_outcome(
+        actor,
+        outcome,
+        evidence_type,
+        # The verifier's own current-evidence lookup, reused rather than reimplemented: a
+        # second, divergent notion of "the current evidence" is the defect class this
+        # increment closes.
+        current_evidence(session, work_package_revision_id, unit.id, ac_id),
+        unit.state,
+    )
+    _validate_adjudication_fields(
+        session,
+        work_package_revision_id,
+        unit.id,
+        ac_id,
+        outcome,
+        rationale,
+        evidence_id,
+        failed_evidence_id,
+        risk,
+        follow_up,
+        expires_at,
+        now,
+    )
+    previous = current_adjudication(session, work_package_revision_id, unit.id, ac_id)
+    event_id = uuid.uuid4()
+    row = Adjudication(
+        work_package_revision_id=work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id=ac_id,
+        outcome=outcome,
+        evidence_id=evidence_id,
+        decided_by=actor.actor_id,
+        decided_at=now,
+        rationale=rationale,
+        failed_evidence_id=failed_evidence_id,
+        risk=risk,
+        follow_up=follow_up,
+        scope=scope,
+        expires_at=expires_at,
+        event_id=event_id,
+        supersedes_adjudication_id=previous.id if previous is not None else None,
+    )
+    session.add(row)
+    session.flush()
+    session.add(
+        _event(
+            event_id,
+            now,
+            actor,
+            "adjudication.recorded",
+            "adjudication",
+            row.id,
+            command,
+            idempotency_key,
+        )
+    )
+    return row
 
 
 def current_adjudication(
