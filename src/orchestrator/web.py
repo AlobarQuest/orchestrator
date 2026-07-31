@@ -404,7 +404,7 @@ def detail(
         session, context["unit"], context["revision"]
     )
     context["waiver_risk_classes"] = WAIVER_RISK_CLASSES
-    context["decision_facts"] = decision_facts_for_unit(context["unit"])
+    context["decision_facts"] = decision_facts_for_unit(context["unit"], context["revision"])
     return _render(request, "unit.html", context)
 
 

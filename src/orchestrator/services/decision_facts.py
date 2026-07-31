@@ -10,6 +10,8 @@ simply omitted reads as "nothing to worry about", where the truth is "nobody kno
 partial therefore always renders three rows.
 
 This module is a pure projection over rows already loaded by the caller -- no session, no query.
+Both entry points take the package revision, because the enforcement snapshot is where the
+package's author-written answers live.
 """
 
 from __future__ import annotations
@@ -21,8 +23,8 @@ from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
 
 # What a change of each class costs to undo. Editorial prose, keyed by the `change_class` an
 # authority envelope declares; a class with no entry resolves to the explicit unknown rather than
-# to a guess. WS-P2.18's policy artifact is where an authoritative per-package override belongs --
-# this is deliberately a statement about the class, not about the package.
+# to a guess. This is the FALLBACK: a package whose author declared a rollback plan is answered
+# from that plan, and this is deliberately a statement about the class, not about the package.
 #
 # not-a-vocabulary: a lookup whose keys need not agree with any producer. An unlisted change class
 # is a supported answer ("no reversibility is recorded for this class"), not a mismatch, so there
@@ -45,9 +47,14 @@ REVERSIBILITY_BY_CHANGE_CLASS: dict[str, str] = {
 # An unknown's detail says WHY it is unknown and nothing more: the surface renders the "not known"
 # marker itself, so a detail that opened with one would say it twice.
 _UNKNOWN_REVERSIBILITY = (
-    "This work declares no change class with a recorded way to back it out, so how reversible it "
-    "is has not been established."
+    "No rollback plan is declared for this package, and it names no change class with a recorded "
+    "way to back it out, so how reversible it is has not been established."
 )
+# The two answers a human can get are sourced differently, and only one of them is a commitment
+# somebody made about THIS package. Saying which is which is the point: an author's plan can be
+# held to; a sentence about a category cannot.
+_DECLARED_PLAN_PREFIX = "The package's author declared this rollback plan: "
+_CLASS_STATEMENT_PREFIX = "No rollback plan is declared for this package; for a "
 _UNKNOWN_AFFECTS_AT_INTAKE = (
     "The package has not been broken into work units, so no target repository and no mutating "
     "command have been chosen yet."
@@ -63,13 +70,15 @@ def _fact(label: str, known: bool, detail: str) -> dict[str, Any]:
     return {"label": label, "known": known, "detail": detail}
 
 
-def decision_facts_for_unit(unit: WorkUnit) -> dict[str, dict[str, Any]]:
+def decision_facts_for_unit(
+    unit: WorkUnit, revision: WorkPackageRevision
+) -> dict[str, dict[str, Any]]:
     """The three facts for a work unit, whose authority envelope names its blast radius."""
     envelope = normalize_authority(unit.authority)
     return {
         "does": _fact(_DOES_LABEL, True, unit.outcome),
         "affects": _affects_from_envelope(envelope),
-        "reversibility": _reversibility(envelope.change_class),
+        "reversibility": _reversibility(envelope.change_class, _declared_rollback_plan(revision)),
     }
 
 
@@ -84,8 +93,25 @@ def decision_facts_for_revision(revision: WorkPackageRevision) -> dict[str, dict
     return {
         "does": _fact(_DOES_LABEL, outcome is not None, outcome or _UNKNOWN_OUTCOME),
         "affects": _fact(_AFFECTS_LABEL, False, _UNKNOWN_AFFECTS_AT_INTAKE),
-        "reversibility": _reversibility(None),
+        # No change class exists here -- the package-level authority block is a capability
+        # declaration, not an envelope -- so intake is answerable only from the declared plan.
+        "reversibility": _reversibility(None, _declared_rollback_plan(revision)),
     }
+
+
+def _declared_rollback_plan(revision: WorkPackageRevision) -> str | None:
+    """`profile_fields.rollback_plan` from the enforcement snapshot, or `None`.
+
+    Three of the five intent-package profiles require this field as a non-empty string, and
+    `package_sources.py` copies `profile_fields` into the snapshot verbatim -- so for those
+    packages the orchestrator has held an author-written answer to "can we back out" since intake.
+    The snapshot is data from another repository and nothing here validates its shape, so a
+    missing, mistyped or blank plan falls back rather than rendering an empty commitment.
+    """
+    snapshot = revision.enforcement_snapshot
+    fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
+    plan = fields.get("rollback_plan") if isinstance(fields, dict) else None
+    return plan.strip() if isinstance(plan, str) and plan.strip() else None
 
 
 def _package_outcome(revision: WorkPackageRevision) -> str | None:
@@ -132,10 +158,22 @@ def _affects_from_envelope(envelope: AuthorityEnvelope) -> dict[str, Any]:
     return _fact(_AFFECTS_LABEL, known, "; ".join(parts) + ".")
 
 
-def _reversibility(change_class: str | None) -> dict[str, Any]:
+def _reversibility(change_class: str | None, declared_plan: str | None) -> dict[str, Any]:
+    """Declared plan, then class statement, then the explicit unknown.
+
+    The order is the point. A plan the package's author wrote is a per-package commitment; the
+    class statement is prose about a category that happens to contain this package. Rendering the
+    second while holding the first is strictly worse information.
+    """
+    if declared_plan is not None:
+        return _fact(_REVERSIBILITY_LABEL, True, f"{_DECLARED_PLAN_PREFIX}{declared_plan}")
     statement = (
         REVERSIBILITY_BY_CHANGE_CLASS.get(change_class) if change_class is not None else None
     )
     if statement is None:
         return _fact(_REVERSIBILITY_LABEL, False, _UNKNOWN_REVERSIBILITY)
-    return _fact(_REVERSIBILITY_LABEL, True, f"{change_class}: {statement}")
+    return _fact(
+        _REVERSIBILITY_LABEL,
+        True,
+        f"{_CLASS_STATEMENT_PREFIX}{change_class} change in general: {statement}",
+    )
