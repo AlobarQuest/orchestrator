@@ -307,11 +307,16 @@ def record_adjudications(
 ) -> tuple[Adjudication, ...] | DomainError:
     """One submission, N criteria, one transaction -- all of them or none of them.
 
-    The `/review` page used to render a form per criterion, each carrying an `expected_version`
-    fixed at render. Submitting one act at a time is what produced a wrong recorded outcome on
-    WS-P2.13 AC-002. Here the operator's whole answer is one act: one version check, one commit,
-    and a refusal anywhere discards every row -- a partial write would be worse than the bug being
-    fixed.
+    The `/review` page used to render a form per criterion, so a unit's criteria were decided by N
+    separately-committed acts and a refusal on the third left the first two recorded. Here the
+    operator's whole answer is one act: one version check, one commit, and a refusal anywhere
+    discards every row -- a partial write would be worse than the bug being fixed.
+
+    Note what does NOT happen: recording an adjudication never writes `work_units.version` (the
+    only two writers are `services.claims` and `_system_fail_without_new_attempt`). So one
+    `expected_version`, checked once against the locked unit row, stays valid for every criterion
+    of the submission; it guards against another actor TRANSITIONING the unit between render and
+    submit, not against a sibling criterion.
 
     Returns the recorded rows in submission order, or the first `DomainError` a criterion raised,
     unchanged, so the caller can still tell WHICH criterion was refused. Never raises it: the
