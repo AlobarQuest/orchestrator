@@ -169,8 +169,16 @@ def test_human_may_not_pass_a_deterministic_ac(migrated_session: Session, ready_
     assert result.code == "role_forbidden"
 
 
-def test_human_may_not_record_failed(migrated_session: Session, ready_unit) -> None:
+def test_a_human_may_record_failed_on_a_judgment_criterion(
+    migrated_session: Session, ready_unit
+) -> None:
+    # Spec AC-006, and the supersession of `test_human_may_not_record_failed`, which pinned the
+    # rule this increment exists to remove. Before now the human vocabulary was passed /
+    # not_applicable / waived -- the gate could say yes, doesn't apply, or nothing. It could not
+    # say no. `waived` is not the missing "no": it means "this failed and I accept it anyway", and
+    # demands a failed evidence id, a risk class, a follow-up and a future expiry.
     add_criterion(migrated_session, ready_unit, "ac-1", "human.review")
+
     result = record_adjudication(
         migrated_session,
         work_package_revision_id=ready_unit.work_package_revision_id,
@@ -181,6 +189,31 @@ def test_human_may_not_record_failed(migrated_session: Session, ready_unit) -> N
         rationale="not met",
         idempotency_key="human-failed-1",
     )
+
+    assert isinstance(result, Adjudication)
+    assert result.outcome == "failed"
+    assert result.decided_by == "human-1"
+
+
+def test_a_human_may_not_record_failed_on_a_machine_owned_criterion(
+    migrated_session: Session, ready_unit
+) -> None:
+    # Spec AC-007. `failed` inherits the same predicate as `passed` -- it is not a wider door.
+    ready_unit.state = WorkUnitState.AWAITING_REVIEW
+    add_criterion(migrated_session, ready_unit, "ac-1", "automated_test")
+    add_evidence(migrated_session, ready_unit, "ac-1", "pytest", {"status": "pass"})
+
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="failed",
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        rationale="I disagree with the suite",
+        idempotency_key="human-failed-machine-owned",
+    )
+
     assert isinstance(result, DomainError)
     assert result.code == "role_forbidden"
 

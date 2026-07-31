@@ -44,10 +44,17 @@ from orchestrator.services.verifier_evaluators import human_may_adjudicate
 # not-a-vocabulary: internal policy subset of adjudication outcomes (which outcomes are not
 # waivers), not a value shared across a repo or subsystem boundary.
 NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
-# not-a-vocabulary: internal policy subset of adjudication outcomes a HUMAN may record on an
-# intrinsically-judgment AC (see _authorize_outcome), not a value shared across a repo or
-# subsystem boundary.
-HUMAN_ADJUDICABLE_OUTCOMES = frozenset({"passed", "not_applicable"})
+# not-a-vocabulary: internal policy subset of adjudication outcomes a HUMAN may record on a
+# criterion `human_may_adjudicate` admits (see _authorize_outcome), not a value shared across a
+# repo or subsystem boundary.
+#
+# `failed` is here so the gate can say no. Without it the human vocabulary was yes / doesn't apply
+# / nothing, and since `failed` was VERIFIER-only while the verifier by definition records nothing
+# on a criterion it deferred, NO actor could fail a judgment criterion. It is not a wider door: it
+# flows through the same predicate as `passed`. `waived` is not a substitute -- it means "this
+# failed and I accept it anyway" and demands failed evidence, a risk class, a follow-up and an
+# expiry.
+HUMAN_ADJUDICABLE_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57503338
 
 
