@@ -979,3 +979,16 @@ style of that module.
   only afterwards persisted the value left the database on a credential nobody held when the
   next step failed. Order is: generate → persist (0600 + clipboard) → mutate → verify.
   (Verified 2026-07-29, GAP-7.)
+
+- **An all-terminal work-unit population does NOT imply an empty `/review` queue — the queue stopped
+  keying on unit state in WS-P2.17 Increment 4.** It lists *pending human decisions*, and decisions
+  are not only unit-shaped: an approved package revision with no breakdown in progress, and an open
+  reconciliation divergence, are both queue entries with no work unit in a live state behind them.
+  Verified in production 2026-07-31 immediately after the Inc 3–6 deploy: 42 units, **all terminal**
+  (29 completed, 13 cancelled), 0 in flight — and **4 queue items** (one approved package awaiting
+  breakdown, three divergences detected during the 2026-07-27 drills). HQ predicted an empty queue
+  from the unit census alone and wrote that prediction into a deploy handoff; the queue was
+  non-empty *because the new queue works*. **The general fault is reasoning about a subsystem from
+  the inputs of the model it replaced** — the same shelf-life error that made an earlier plan cite
+  `_adjudicatable_criteria` as it existed before Increment 4 moved it. When an increment changes
+  what a surface is keyed on, re-derive expectations from the new key, not from the old census.
