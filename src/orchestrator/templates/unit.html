@@ -39,20 +39,20 @@
 {% if not authority_violation %}<h3>Approve this authority envelope</h3><form method="post" action="/review/units/{{ unit.id }}/authority-approval">{{ hidden("authority_approval") }}<label for="authority-approval-reason">Reason</label><textarea id="authority-approval-reason" name="reason" required></textarea><label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm this authority approval.</label><button type="submit">Approve this authority envelope</button></form>{% endif %}
 <h3>Review outcome</h3><form method="post" action="/review/units/{{ unit.id }}/review">{{ hidden("review") }}<label for="outcome">Outcome</label><select id="outcome" name="outcome"><option value="completed">Complete</option><option value="revision_required">Request revision</option></select><label for="review-reason">Reason</label><textarea id="review-reason" name="reason" required></textarea><label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm this review outcome.</label><button type="submit">Record review outcome</button></form>
 {% if adjudicatable_criteria %}<h3>Adjudicate acceptance criteria</h3>
-{% for ac in adjudicatable_criteria %}
+<p>Decide as many criteria as you can in one submission. Anything left at “no decision” is not recorded, and if any decision is refused none of them are.</p>
 <form method="post" action="/review/units/{{ unit.id }}/adjudication">
-  <input type="hidden" name="csrf_token" value="{{ adjudication_csrf_tokens[ac.ac_id] }}">
-  <input type="hidden" name="idempotency_key" value="{{ adjudication_idempotency_keys[ac.ac_id] }}">
-  <input type="hidden" name="expected_version" value="{{ unit.version }}">
-  <input type="hidden" name="ac_id" value="{{ ac.ac_id }}">
+  {{ hidden("adjudication") }}
+{% for ac in adjudicatable_criteria %}
   <fieldset><legend>{{ ac.ac_id }} <small>({{ ac.evidence_type }})</small></legend>
+  <input type="hidden" name="ac_id" value="{{ ac.ac_id }}">
   <label for="outcome-{{ ac.ac_id }}">Outcome</label>
   <select id="outcome-{{ ac.ac_id }}" name="outcome">
+    <option value="" selected>— No decision —</option>
     {% if ac.human_may_decide %}<option value="passed">Passed</option><option value="failed">Failed</option><option value="not_applicable">Not applicable</option>{% endif %}
     <option value="waived">Waived</option>
   </select>
   <label for="rationale-{{ ac.ac_id }}">Rationale</label>
-  <textarea id="rationale-{{ ac.ac_id }}" name="rationale" required></textarea>
+  <textarea id="rationale-{{ ac.ac_id }}" name="rationale"></textarea>
   <details><summary>Waiver fields (required only when waiving)</summary>
     <label for="failed-{{ ac.ac_id }}">Failed evidence id</label>
     <input id="failed-{{ ac.ac_id }}" name="failed_evidence_id">
@@ -63,11 +63,12 @@
     <label for="expires-{{ ac.ac_id }}">Expires at (optional, ISO 8601 with timezone, e.g. 2027-06-01T00:00:00Z)</label>
     <input id="expires-{{ ac.ac_id }}" name="expires_at">
   </details>
-  <label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm this adjudication.</label>
-  <button type="submit">Record adjudication</button>
   </fieldset>
+{% endfor %}
+  <label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm these adjudications.</label>
+  <button type="submit">Record adjudications</button>
 </form>
-{% endfor %}{% endif %}
+{% endif %}
 <h3>Cancel work unit</h3><form method="post" action="/review/units/{{ unit.id }}/cancel">{{ hidden("cancel") }}<label for="cancel-reason">Reason</label><textarea id="cancel-reason" name="reason" required></textarea><label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm cancellation.</label><button class="danger" type="submit">Cancel work unit</button></form>
 {% if open_conditions %}<h3>Reconciliation conditions</h3><p>Pushed reality disagrees with stored state. Detection records the divergence; it never resolves it — that is your decision.</p>{% for condition in open_conditions %}<article class="condition"><h4>{{ condition.condition_type }} <small>({{ condition.observation_kind }})</small></h4><p>{{ condition.detail }}</p><dl><dt>Stored</dt><dd><code>{{ condition.stored_state }}</code></dd><dt>Observed</dt><dd><code>{{ condition.observed_state }}</code></dd></dl><form method="post" action="/review/reconciliation/conditions/{{ condition.id }}/resolution"><input type="hidden" name="csrf_token" value="{{ condition_csrf_tokens[condition.id|string] }}"><input type="hidden" name="idempotency_key" value="{{ condition_idempotency_keys[condition.id|string] }}"><label for="decision-{{ condition.id }}">Decision</label><select id="decision-{{ condition.id }}" name="decision"><option value="accepted">Accept (reality is correct)</option><option value="corrected">Corrected (I fixed it)</option><option value="dismissed">Dismiss (false alarm)</option></select><label for="rationale-{{ condition.id }}">Rationale</label><textarea id="rationale-{{ condition.id }}" name="rationale" required></textarea><label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm this resolution.</label><button type="submit">Resolve condition</button></form></article>{% endfor %}{% endif %}
 <h3>Authorize retry</h3><form method="post" action="/review/units/{{ unit.id }}/retry">{{ hidden("retry") }}<label for="new-max-attempts">New maximum attempts</label><input id="new-max-attempts" name="new_max_attempts" type="number" min="{{ unit.attempt_count + 1 }}" required><label for="retry-reason">Reason</label><textarea id="retry-reason" name="reason" required></textarea><label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm this retry authorization.</label><button type="submit">Authorize retry</button></form>

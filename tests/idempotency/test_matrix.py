@@ -31,9 +31,6 @@ NON_INGRESS_POST_ROUTES = frozenset(
         "/review/units/{unit_id}/cancel",
         "/review/units/{unit_id}/retry",
         "/review/units/{unit_id}/review",
-        # Delegates to record_adjudication, whose idempotency is already covered via the
-        # /api/v1/work-units/{unit_id}/adjudications row below.
-        "/review/units/{unit_id}/adjudication",
         # Delegates to register_package_intake, whose idempotency is already covered via the
         # /api/v1/package-intakes row. This form is the human surface for that same ingress
         # (ADR-0006), and it strengthens rather than weakens the story: the key is minted per
