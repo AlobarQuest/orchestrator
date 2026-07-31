@@ -7,10 +7,11 @@ from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Adjudication, PackageAcceptanceCriterion
+from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.persistence.models import Adjudication, Evidence, PackageAcceptanceCriterion
 from orchestrator.services.evidence import current_adjudication, record_adjudication
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.verifier_evaluators import human_may_adjudicate
 from tests.services.test_dependencies import register_unit
 
 
@@ -30,6 +31,38 @@ def add_criterion(session: Session, unit, ac_id: str, evidence_type: str) -> Non
         )
     )
     session.flush()
+
+
+def test_a_human_may_not_decide_a_criterion_the_machine_owns() -> None:
+    # FAIL-OPEN CONTROL (the mirror of R1). `automated_test` floors to deterministic_permitted
+    # after Increment 1, so readable evidence resolves it. A human must not pre-empt that -- not
+    # even in awaiting_review, where clause (b) would otherwise open the door.
+    readable = Evidence(evidence_type="pytest", payload={"status": "pass"})
+
+    assert human_may_adjudicate("automated_test", readable, WorkUnitState.AWAITING_REVIEW) is False
+
+
+def test_a_human_may_decide_a_human_floored_criterion_in_any_state() -> None:
+    assert human_may_adjudicate("human_review", None, WorkUnitState.SUBMITTED) is True
+    # The floor outranks the evidence: readable deterministic evidence does not demote a
+    # human-floored criterion. This is the R1 fail-open, restated at the authorization layer.
+    readable = Evidence(evidence_type="pytest", payload={"status": "pass"})
+    assert human_may_adjudicate("human_review", readable, WorkUnitState.SUBMITTED) is True
+
+
+def test_a_human_may_decide_a_deterministic_criterion_only_once_the_verifier_has_asked() -> None:
+    # Clause (b). Before the verifier routes to human review, evidence may still arrive -- this is
+    # the automated_check-before-CI window, closed by STATE rather than by type.
+    assert human_may_adjudicate("automated_check", None, WorkUnitState.VERIFYING) is False
+    assert human_may_adjudicate("automated_check", None, WorkUnitState.AWAITING_REVIEW) is True
+
+
+def test_a_criterion_that_does_not_exist_is_decidable_by_nobody() -> None:
+    # `_criterion_evidence_type` returns None when no criterion row backs the ac_id. Flooring an
+    # absent type to `human` (which `floor_for` does, by design) must NOT grant authority here --
+    # the fail-closed direction for an unknown TYPE is the opposite of the one for an absent
+    # CRITERION.
+    assert human_may_adjudicate(None, None, WorkUnitState.AWAITING_REVIEW) is False
 
 
 def test_human_may_pass_a_judgment_type_ac(migrated_session: Session, ready_unit) -> None:
