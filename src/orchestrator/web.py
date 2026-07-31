@@ -43,7 +43,11 @@ from orchestrator.services.decomposition import (
     reject_decomposition_proposal,
     require_decomposition_revision,
 )
-from orchestrator.services.evidence import current_evidence, record_adjudication
+from orchestrator.services.evidence import (
+    AdjudicationDecision,
+    current_evidence,
+    record_adjudications,
+)
 from orchestrator.services.evidence_pack import evidence_pack_projection
 from orchestrator.services.lifecycle import (
     POST_DEPLOY_AC_IDS,
@@ -375,7 +379,10 @@ def detail(
 ) -> HTMLResponse:
     _human(actor)
     context = evidence_pack_projection(session, unit_id)
-    actions = ["approval", "review", "cancel", "retry"]
+    # "adjudication" joins the standard action tokens because the unit's criteria are now decided
+    # by ONE form: one CSRF token, one idempotency key and one expected_version for the whole
+    # submission, instead of a set keyed per acceptance criterion.
+    actions = ["adjudication", "approval", "review", "cancel", "retry"]
     if context["authority_violation"] is None:
         actions.append("authority_approval")
     keys = {action: str(uuid.uuid4()) for action in actions}
@@ -404,16 +411,9 @@ def detail(
         str(row.id): _issue_token(request, actor, row.id, "resolve", condition_keys[str(row.id)])
         for row in conditions
     }
-    criteria = _adjudicatable_criteria(session, context["unit"], context["revision"])
-    adjudication_keys = {row["ac_id"]: str(uuid.uuid4()) for row in criteria}
-    context["adjudicatable_criteria"] = criteria
-    context["adjudication_idempotency_keys"] = adjudication_keys
-    context["adjudication_csrf_tokens"] = {
-        row["ac_id"]: _issue_token(
-            request, actor, unit_id, "adjudication", adjudication_keys[row["ac_id"]]
-        )
-        for row in criteria
-    }
+    context["adjudicatable_criteria"] = _adjudicatable_criteria(
+        session, context["unit"], context["revision"]
+    )
     context["waiver_risk_classes"] = WAIVER_RISK_CLASSES
     return _render(request, "unit.html", context)
 
@@ -684,6 +684,63 @@ def _parse_optional_datetime(value: str | None) -> datetime | None:
     return result
 
 
+def _aligned(values: list[str] | None, count: int, field: str) -> tuple[str | None, ...]:
+    """One criterion's worth of an optional field, positionally matched to the submitted ac_ids.
+
+    The form renders a fieldset per criterion and every control inside it always submits, so the
+    repeated fields arrive in document order and line up by index. A submission where they do NOT
+    line up is refused rather than realigned: guessing which decision an unmatched rationale or
+    waiver field belongs to would mis-attribute an outcome, which is the class of bug this
+    increment exists to close.
+    """
+    if not values:
+        return (None,) * count
+    if len(values) != count:
+        raise DomainError(
+            "adjudication_invalid",
+            f"submitted {field} values do not line up with the submitted acceptance criteria",
+            None,
+        )
+    return tuple(_blank_to_none(value) for value in values)
+
+
+def _submitted_decisions(
+    ac_ids: list[str],
+    outcomes: list[str],
+    rationales: list[str],
+    failed_evidence_ids: list[str] | None,
+    risks: list[str] | None,
+    follow_ups: list[str] | None,
+    expiries: list[str] | None,
+) -> tuple[AdjudicationDecision, ...]:
+    count = len(ac_ids)
+    if count == 0 or len(outcomes) != count or len(rationales) != count:
+        raise DomainError(
+            "adjudication_invalid",
+            "each submitted acceptance criterion needs exactly one outcome and rationale",
+            None,
+        )
+    failed = _aligned(failed_evidence_ids, count, "failed_evidence_id")
+    risk_classes = _aligned(risks, count, "risk")
+    follow_up_texts = _aligned(follow_ups, count, "follow_up")
+    expires = _aligned(expiries, count, "expires_at")
+    return tuple(
+        AdjudicationDecision(
+            ac_id=ac_ids[index],
+            outcome=outcomes[index],
+            rationale=rationales[index],
+            failed_evidence_id=_parse_optional_uuid(failed[index]),
+            risk=risk_classes[index],
+            follow_up=follow_up_texts[index],
+            expires_at=_parse_optional_datetime(expires[index]),
+        )
+        for index in range(count)
+        # A criterion the reviewer left blank is not a decision (AC-012). It is dropped here rather
+        # than defaulted, so answering two of three records exactly two.
+        if _blank_to_none(outcomes[index]) is not None
+    )
+
+
 @router.post("/units/{unit_id}/adjudication")
 def adjudicate(
     request: Request,
@@ -691,36 +748,32 @@ def adjudicate(
     actor: ActorDep,
     session: SessionDep,
     expected_version: Annotated[int, Form()],
-    ac_id: Annotated[str, Form(min_length=1)],
-    outcome: Annotated[str, Form()],
-    rationale: Annotated[str, Form(min_length=1)],
+    ac_id: Annotated[list[str], Form()],
+    outcome: Annotated[list[str], Form()],
+    rationale: Annotated[list[str], Form()],
     idempotency_key: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
     confirm: Annotated[str | None, Form()] = None,
-    failed_evidence_id: Annotated[str | None, Form()] = None,
-    risk: Annotated[str | None, Form()] = None,
-    follow_up: Annotated[str | None, Form()] = None,
-    expires_at: Annotated[str | None, Form()] = None,
+    failed_evidence_id: Annotated[list[str] | None, Form()] = None,
+    risk: Annotated[list[str] | None, Form()] = None,
+    follow_up: Annotated[list[str] | None, Form()] = None,
+    expires_at: Annotated[list[str] | None, Form()] = None,
 ) -> RedirectResponse:
     _human(actor)
     _require_form(request, actor, unit_id, "adjudication", csrf_token, idempotency_key, confirm)
     unit = session.get(WorkUnit, unit_id)
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
-    result = record_adjudication(
+    result = record_adjudications(
         session,
         work_package_revision_id=unit.work_package_revision_id,
         work_unit_id=unit_id,
-        ac_id=ac_id,
-        outcome=outcome,
+        decisions=_submitted_decisions(
+            ac_id, outcome, rationale, failed_evidence_id, risk, follow_up, expires_at
+        ),
         actor=actor,
-        rationale=rationale,
         idempotency_key=idempotency_key,
         expected_version=expected_version,
-        failed_evidence_id=_parse_optional_uuid(failed_evidence_id),
-        risk=_blank_to_none(risk),
-        follow_up=_blank_to_none(follow_up),
-        expires_at=_parse_optional_datetime(expires_at),
     )
     if isinstance(result, DomainError):
         raise result

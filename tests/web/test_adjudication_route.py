@@ -89,6 +89,125 @@ def test_human_pass_via_review_route_persists(
     assert "ac-1: passed" in detail.text
 
 
+def _adjudication_form(page: str, unit_id: object) -> str:
+    form = re.search(
+        rf'action="/review/units/{unit_id}/adjudication">(.*?)</form>', page, re.DOTALL
+    )
+    assert form is not None
+    return form.group(1)
+
+
+def _fieldset_legends(page: str, unit_id: object) -> tuple[str, ...]:
+    return tuple(re.findall(r"<legend>([^ <]+)", _adjudication_form(page, unit_id)))
+
+
+def test_the_form_submits_every_open_criterion_at_once(
+    db_client: TestClient, migrated_engine: Engine, review_unit_with_two_judgment_acs: WorkUnit
+) -> None:
+    # AC-010 at the HTTP boundary. One form, one expected_version, one CSRF token, one confirm --
+    # and both criteria recorded. Under the per-criterion forms this was two submissions, the
+    # second carrying an expected_version fixed before the first one ran.
+    unit = review_unit_with_two_judgment_acs
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+    assert _fieldset_legends(page.text, unit.id) == ("ac-1", "ac-2")
+    token, key = _form(page.text, unit.id, "adjudication")
+
+    response = db_client.post(
+        f"/review/units/{unit.id}/adjudication",
+        headers=HUMAN,
+        data={
+            "csrf_token": token,
+            "idempotency_key": key,
+            "expected_version": str(unit.version),
+            "ac_id": ["ac-1", "ac-2"],
+            "outcome": ["passed", "not_applicable"],
+            "rationale": ["reviewed and met", "out of scope here"],
+            "risk": ["", ""],
+            "follow_up": ["", ""],
+            "failed_evidence_id": ["", ""],
+            "expires_at": ["", ""],
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    with Session(migrated_engine) as verify:
+        verify.expire_all()
+        first = current_adjudication(verify, unit.work_package_revision_id, unit.id, "ac-1")
+        second = current_adjudication(verify, unit.work_package_revision_id, unit.id, "ac-2")
+        assert first is not None and first.outcome == "passed"
+        assert second is not None and second.outcome == "not_applicable"
+
+
+def test_a_blank_criterion_is_not_written(
+    db_client: TestClient, migrated_engine: Engine, review_unit_with_two_judgment_acs: WorkUnit
+) -> None:
+    # AC-012. Blank is not an outcome. A reviewer who answers one of two criteria must not
+    # silently record anything for the other -- which is what a select defaulting to `passed`
+    # would do the moment the form submits every criterion together.
+    unit = review_unit_with_two_judgment_acs
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+    token, key = _form(page.text, unit.id, "adjudication")
+
+    response = db_client.post(
+        f"/review/units/{unit.id}/adjudication",
+        headers=HUMAN,
+        data={
+            "csrf_token": token,
+            "idempotency_key": key,
+            "expected_version": str(unit.version),
+            "ac_id": ["ac-1", "ac-2"],
+            "outcome": ["passed", ""],
+            "rationale": ["reviewed and met", ""],
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    with Session(migrated_engine) as verify:
+        verify.expire_all()
+        assert (
+            current_adjudication(verify, unit.work_package_revision_id, unit.id, "ac-1") is not None
+        )
+        assert current_adjudication(verify, unit.work_package_revision_id, unit.id, "ac-2") is None
+
+
+def test_the_blank_outcome_is_the_default(
+    db_client: TestClient, review_unit_with_two_judgment_acs: WorkUnit
+) -> None:
+    # The companion AC-012 needs: a form whose first option is an outcome records that outcome for
+    # every criterion the reviewer never looked at. The no-decision option must be the selected one.
+    unit = review_unit_with_two_judgment_acs
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+    form = re.search(
+        rf'action="/review/units/{unit.id}/adjudication">(.*?)</form>', page.text, re.DOTALL
+    )
+    assert form is not None
+
+    for options in re.findall(r'name="outcome">(.*?)</select>', form.group(1), re.DOTALL):
+        first_option = re.search(r"<option[^>]*>", options)
+        assert first_option is not None
+        assert 'value=""' in first_option.group(0)
+        assert "selected" in first_option.group(0)
+
+
+def test_generated_post_deploy_criteria_are_still_excluded_from_the_form(
+    db_client: TestClient, review_unit_with_post_deploy_ac: WorkUnit
+) -> None:
+    # AC-013. The existing rule must survive the rewrite: generated post-deploy criteria are
+    # verifier-owned and public adjudication must reject them. Collapsing N forms into one is
+    # exactly the change that could quietly widen the set the form renders.
+    unit = review_unit_with_post_deploy_ac
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+
+    assert _fieldset_legends(page.text, unit.id) == ("ac-1",)
+    # Scoped to the form, not the page: the id legitimately appears elsewhere on a page that
+    # renders the package's own metadata. What must not exist is a control that submits it.
+    assert 'value="post-deploy-health"' not in _adjudication_form(page.text, unit.id)
+
+
 def _offered_outcomes(page: str, unit_id: object) -> set[str]:
     form = re.search(
         rf'action="/review/units/{unit_id}/adjudication">(.*?)</form>', page, re.DOTALL
@@ -96,7 +215,12 @@ def _offered_outcomes(page: str, unit_id: object) -> set[str]:
     assert form is not None
     select = re.search(r'name="outcome">(.*?)</select>', form.group(1), re.DOTALL)
     assert select is not None
-    return set(re.findall(r'<option value="([^"]*)"', select.group(1)))
+    options = set(re.findall(r'<option value="([^"]*)"', select.group(1)))
+    # The empty option is the ABSENCE of a decision (AC-012), not an outcome, so it is excluded
+    # from the offered set rather than compared against what the service accepts. Asserted here so
+    # the exclusion cannot quietly become "the no-decision option was dropped".
+    assert "" in options
+    return options - {""}
 
 
 def _service_would_accept(migrated_engine: Engine, unit: WorkUnit) -> set[str]:
