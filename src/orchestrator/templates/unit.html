@@ -6,6 +6,8 @@
 <p class="status">State: {{ unit.state|replace("_", " ") }}</p>
 <p><a href="/review/units/{{ unit.id }}/evidence-pack">Open read-only Evidence Pack</a></p>
 
+{% include "_decision.html" %}
+
 <h2>Package and authority</h2>
 <dl><dt>Revision</dt><dd>{{ revision.revision }}</dd><dt>Content hash</dt><dd>{{ revision.content_hash }}</dd><dt>Source</dt><dd>{{ revision.source_path }} at {{ revision.source_commit }}</dd><dt>Authority fingerprint</dt><dd>{{ unit.authority_fingerprint }}</dd><dt>Attempt budget</dt><dd>{{ unit.attempt_count }} of {{ unit.max_attempts }}</dd></dl>
 <h3>Authority envelope</h3>
@@ -25,7 +27,19 @@
 <h2>Claims and lease status</h2>
 {% if claims %}<table><caption>Claim attempts and lease disposition</caption><thead><tr><th scope="col">Attempt</th><th scope="col">Actor</th><th scope="col">Expires</th><th scope="col">Terminal reason</th></tr></thead><tbody>{% for row in claims %}<tr><td>{{ row.attempt }}</td><td>{{ row.claimed_by }}</td><td>{{ row.lease_expires_at }}</td><td>{{ row.terminal_reason or "Active" }}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="empty">No claims recorded.</p>{% endif %}
 <h2>Evidence</h2>
-{% if evidence %}<ul>{% for row in evidence %}<li>{{ row.ac_id }}: {{ row.evidence_type }}; <strong>{{ "current" if row.id in current_evidence_ids else "superseded" }}</strong> {% if row.supersedes_evidence_id %}(supersedes {{ row.supersedes_evidence_id }}){% endif %}</li>{% endfor %}</ul>{% else %}<p class="empty">No evidence recorded.</p>{% endif %}
+{# This page carries the adjudication form, so it renders evidence CONTENT, not a pointer to it:
+   metadata alone is what "it had words that looked right" reads. Full fidelity is correct here --
+   the page is human-only behind forward-auth. The markdown pack, which is relayed onto a possibly
+   public pull request, deliberately renders less; do not make these two agree. #}
+{% if evidence %}<ul>{% for row in evidence %}<li>{{ row.ac_id }}: {{ row.evidence_type }}; <strong>{{ "current" if row.id in current_evidence_ids else "superseded" }}</strong> {% if row.supersedes_evidence_id %}(supersedes {{ row.supersedes_evidence_id }}){% endif %}
+  <dl>
+    <dt>Reference</dt><dd>{% if row.stable_ref %}<code>{{ row.stable_ref }}</code>{% else %}None recorded{% endif %}</dd>
+    {# `tojson`, not the default repr: the payload is JSON the worker wrote, and a Python dict
+       repr renders it back in a notation nobody produced. #}
+    <dt>Payload</dt><dd>{% if row.payload is not none %}<pre>{{ row.payload|tojson(indent=2) }}</pre>{% else %}None recorded{% endif %}</dd>
+    <dt>Recorded</dt><dd>{{ row.recorded_by }} at {{ row.recorded_at }}, attempt {{ row.attempt }}</dd>
+  </dl>
+</li>{% endfor %}</ul>{% else %}<p class="empty">No evidence recorded.</p>{% endif %}
 <h2>Adjudications and waivers</h2>
 {% if adjudications %}<ul>{% for row in adjudications %}<li>{{ row.ac_id }}: {{ row.outcome }}; <strong>{{ "current" if row.id in current_adjudication_ids else "superseded" }}</strong>{% if row.outcome == "waived" %}; failed evidence {{ row.failed_evidence_id }}; risk {{ row.risk }}; follow-up {{ row.follow_up }}; scope {{ row.scope or "full" }}; expires {{ row.expires_at or "never" }}{% endif %}</li>{% endfor %}</ul>{% else %}<p class="empty">No adjudications recorded.</p>{% endif %}
 <h2>Approvals</h2>

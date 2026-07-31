@@ -6,7 +6,6 @@ import json
 import secrets
 import time
 import uuid
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -38,6 +37,10 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.claims import authorize_retry
+from orchestrator.services.decision_facts import (
+    decision_facts_for_revision,
+    decision_facts_for_unit,
+)
 from orchestrator.services.decomposition import (
     approve_decomposition_proposal,
     reject_decomposition_proposal,
@@ -45,26 +48,26 @@ from orchestrator.services.decomposition import (
 )
 from orchestrator.services.evidence import (
     AdjudicationDecision,
-    current_evidence,
     record_adjudications,
 )
 from orchestrator.services.evidence_pack import evidence_pack_projection
 from orchestrator.services.lifecycle import (
-    POST_DEPLOY_AC_IDS,
     ActorContext,
     TransitionCommand,
     transition_unit,
 )
 from orchestrator.services.package_intake import register_package_intake
-from orchestrator.services.packages import evaluate_readiness, record_approval
+from orchestrator.services.packages import record_approval
+from orchestrator.services.pending_decisions import (
+    adjudicable_criteria,
+    grouped_pending_decisions,
+)
 from orchestrator.services.reconciliation import (
     ResolutionCommand,
     open_conditions,
     record_resolution,
 )
 from orchestrator.services.release_evidence_pack import release_evidence_pack_response
-from orchestrator.services.verifier_criteria import load_required_criteria
-from orchestrator.services.verifier_evaluators import human_may_adjudicate
 
 router = APIRouter(prefix="/review", include_in_schema=False)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -178,44 +181,29 @@ def _require_form(
 
 @router.get("", response_class=HTMLResponse)
 def queue(request: Request, actor: ActorDep, session: SessionDep) -> HTMLResponse:
+    """Every decision waiting on a person, grouped by what the decision IS.
+
+    Grouping by lifecycle state meant you had to know which states imply a gate before you could
+    find your own work -- and four of the six kinds are not work-unit states at all.
+    """
     _human(actor)
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    units = tuple(session.scalars(select(WorkUnit).order_by(WorkUnit.state, WorkUnit.created_at)))
-    for unit in units:
-        readiness = evaluate_readiness(session, unit.id, for_update=False)
-        grouped[unit.state].append(
-            {
-                "unit": unit,
-                "readiness": readiness.status,
-                "reasons": readiness.reasons,
-            }
-        )
-    return _render(request, "queue.html", {"groups": dict(grouped)})
+    return _render(request, "queue.html", {"groups": grouped_pending_decisions(session)})
 
 
 def _adjudicatable_criteria(
     session: Session, unit: WorkUnit, revision: WorkPackageRevision
 ) -> tuple[dict[str, Any], ...]:
-    try:
-        criteria = load_required_criteria(session, unit, revision)
-    except DomainError:
-        return ()
+    # The rule for WHICH criteria a person may be shown, and which of those they may decide, is
+    # shared with the queue: `human_may_adjudicate` is the same predicate the service authorizes
+    # on, so the form cannot offer an outcome that would be refused -- nor withhold one that
+    # would be accepted. Two copies of that rule would diverge silently.
     return tuple(
         {
             "ac_id": criterion.ac_id,
             "evidence_type": criterion.evidence_type,
-            # The same predicate the service authorizes on, so the form cannot offer an outcome
-            # that would be refused -- nor withhold one that would be accepted. It replaces a
-            # JUDGMENT_TYPES membership test, the third and last consumer keyed on the declared
-            # type after WS-P2.17 Increment 1 moved evaluation onto the floor.
-            "human_may_decide": human_may_adjudicate(
-                criterion.evidence_type,
-                current_evidence(session, revision.id, unit.id, criterion.ac_id),
-                unit.state,
-            ),
+            "human_may_decide": may_decide,
         }
-        for criterion in criteria
-        if criterion.ac_id not in POST_DEPLOY_AC_IDS
+        for criterion, may_decide in adjudicable_criteria(session, unit, revision)
     )
 
 
@@ -249,6 +237,7 @@ def _package_intake_projection(session: Session, revision_id: uuid.UUID) -> dict
         "package": revision.work_package,
         "acceptance_criteria": acceptance_criteria,
         "authority": command.get("authority"),
+        "decision_facts": decision_facts_for_revision(revision),
     }
 
 
@@ -415,6 +404,7 @@ def detail(
         session, context["unit"], context["revision"]
     )
     context["waiver_risk_classes"] = WAIVER_RISK_CLASSES
+    context["decision_facts"] = decision_facts_for_unit(context["unit"])
     return _render(request, "unit.html", context)
 
 

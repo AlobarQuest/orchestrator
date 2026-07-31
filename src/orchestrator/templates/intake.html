@@ -6,6 +6,20 @@
 <p class="status">{{ package.package_id }} · revision {{ revision.revision }}</p>
 <p><a href="/review/revisions/{{ revision.id }}/evidence-pack">View release evidence pack →</a></p>
 
+{% include "_decision.html" %}
+
+<h2>What was verified, and by whom</h2>
+<p>The registration was accepted in mode <code>{{ revision.verification_mode or "not recorded" }}</code>: the
+  <code>orchestrator</code> CLI verified the facts below on the operator's machine, and the server
+  <strong>did not re-verify</strong> any of them. Registering this intake attests to the CLI's checks.</p>
+{# The column is typed `dict | list | None`, so a list must not reach `.items()` -- an unhandled
+   template error here is a bare HTTP 500, not a message the operator can act on. #}
+{% if revision.verification_limitations is mapping %}
+<ul>{% for name, value in revision.verification_limitations.items() %}<li><code>{{ name }}</code>: {{ value }}</li>{% endfor %}</ul>
+{% elif revision.verification_limitations %}
+<ul>{% for item in revision.verification_limitations %}<li><code>{{ item }}</code></li>{% endfor %}</ul>
+{% else %}<p class="empty">No verification facts were recorded for this revision.</p>{% endif %}
+
 <h2>Immutable source facts</h2>
 <dl>
   <dt>Source repository</dt><dd>{{ package.source_repository }}</dd>

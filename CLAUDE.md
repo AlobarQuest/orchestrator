@@ -253,9 +253,17 @@ style of that module.
   request-scoped session closed. Ten unit tests passed — they assert in-session, where the flush is
   visible. Request entry points in this repo OWN their transaction and must `session.commit()`
   (see `claim_unit`, `requeue_unit`, `record_observation`); functions invoked INSIDE another
-  transaction (`arm_verification_head`, called from the SUBMIT transition) must never commit. A
-  test that asserts persistence must `expire_all()` and re-read, or it is asserting that a call
-  returned an object.
+  transaction (`arm_verification_head`, called from the SUBMIT transition) must never commit.
+  **CORRECTED 2026-07-31 (WS-P2.17 Inc 4).** This bullet used to end: *"A test that asserts
+  persistence must `expire_all()` and re-read, or it is asserting that a call returned an
+  object."* That check **does not discriminate**, so following it produced a pin that passes
+  under the exact defect it was written to catch: `expire_all()` expires the identity map, and the
+  re-read then re-`SELECT`s **inside the same open transaction**, where a flushed-but-uncommitted
+  row is visible. WS-P2.17 Increment 3 proved it — it injected `session.commit()` into a core
+  that lacked one and watched the pin stay green. **A persistence assertion must re-read through a
+  DIFFERENT session** (a second `Session(engine)`, or a `TestClient` request), which is the only
+  reader that cannot see an uncommitted write. `expire_all()` remains useful for defeating the
+  identity map *within* a session; it is not evidence of persistence.
 - **A test fixture calling a service is not evidence the service has a caller.** WS-P2.1's PR-binding
   writers had no production call site at all: every reference in the approved plan was a test. The
   binding table was never written, the reconciliation runner (which discovers PRs to poll FROM those
@@ -279,6 +287,19 @@ style of that module.
   see an endpoint that is reachable but that no *client* calls (that is WS-P2.16 + drills), nor
   one that is called but wrong (that is the commit/re-read discipline). An allowlist entry that
   would read "in fact it is called" means the predicate is broken; fix the predicate.
+
+- **`work_units.version` has exactly THREE writers, and recording an adjudication is not one of
+  them.** They are `services/lifecycle.py::_perform_transition`, `services/claims.py::_transition`
+  and `services/evidence.py::_system_fail_without_new_attempt` — every one a state transition.
+  Consequently a submission's single `expected_version`, checked once against the locked unit row,
+  stays valid for every criterion in it: it guards against another actor **transitioning the unit**
+  between render and submit, not against a sibling criterion. Any note claiming that the old
+  per-criterion adjudication forms staleness-broke each other is **wrong**; the real WS-P2.13
+  AC-002 defects were the missing atomicity (a refusal on the third criterion left the first two
+  committed — fixed in WS-P2.17 Increment 3) and a `<select>` whose first option defaulted to
+  `passed`. Note the Increment 3 docstring on `record_adjudications` says "the only two writers",
+  omitting `_perform_transition`; the count is three. (Verified 2026-07-31 by grep, WS-P2.17
+  Inc 4.)
 
 - **`work_units.updated_at` cannot be back-dated — a DB trigger rewrites it on EVERY update.**
   `set_work_unit_updated_at` (migration 0001) sets `NEW.updated_at = now()` on any UPDATE, so a
@@ -681,7 +702,15 @@ style of that module.
   shaped context and **fails closed** on any mismatch (wrong/tampered actor registry), whether
   the build runs in CI or by hand. The **image SHA / running container's `RepoDigest`** is the
   separate **deploy-time identity** check Devon still does by hand after the Coolify swap —
-  proving prod is running bit-for-bit what the workflow pushed. Bumping either digest requires
+  proving prod is running bit-for-bit what the workflow pushed.
+  **CORRECTED 2026-07-31 (WS-P2.17 Inc 4): the recipe this file has been shipping for that check
+  does not work.** `docker inspect <container> --format '{{index .RepoDigests 0}}'` fails, because
+  `RepoDigests` is a property of an **image**, not of a container — inspecting a container returns
+  no such field. Go container → image → digest instead:
+  `docker image inspect "$(docker inspect <container> --format '{{.Image}}')" --format '{{index .RepoDigests 0}}'`.
+  The invariant ("ask production what it is running") was right; only the command was wrong, and
+  a wrong command that errors is at least loud — do not replace it with one that prints an empty
+  string. Bumping either digest requires
   bumping `security-standards.pin.toml`'s `revision` and `artifact_sha256` together (see that
   file's own header comment for the recompute recipe).
   **Fallback / differential baseline — keep this runnable, don't delete it:** the manual
@@ -695,7 +724,11 @@ style of that module.
   --build-context registry=$ART --build-arg SECURITY_STANDARDS_REVISION=$SHA --build-arg
   REGISTRY_ARTIFACT_SHA256=$DIGEST -t ghcr.io/alobarquest/orchestrator:<sha>-<ws>-amd64 --push .`
   produces a single amd64 v2 manifest; verify the running container's RepoDigest == the pushed
-  digest after Coolify swaps. A plain `docker build .` with no `registry` context fails at
+  digest after Coolify swaps (via `.Image`, per the correction above).
+  **A `workflow_dispatch` ref must be the FULL 40-character SHA.** `actions/checkout` treats a
+  non-40-character ref as a branch/tag pattern, matches nothing, and fails the run — so
+  dispatching the `Release image` workflow at a short SHA cannot build, however valid that short
+  SHA is to `git`. A plain `docker build .` with no `registry` context fails at
   `COPY --from=registry` — that is expected, not a Dockerfile bug. (Verified 2026-07-25, WS-P2.5
   Inc 2 deploy. Automation added 2026-07-26, image-build-automation workstream.)
 

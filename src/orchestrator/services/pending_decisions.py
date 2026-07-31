@@ -1,0 +1,272 @@
+"""What needs a human right now, across every gate kind (WS-P2.17, spec 5.5).
+
+The review queue used to group work units by lifecycle state and list readiness facts, so finding
+your own work meant already knowing which states imply a gate -- and four of the six kinds below
+are not work-unit states at all.
+
+`kernel/transitions.py::DESIGNED_HUMAN_GATES` names the three *transition* gates and is the source
+for exactly one kind here. It is not the whole set, and this module does not pretend otherwise:
+a package registered but never broken up, a proposed breakdown, a unit whose authority envelope
+nobody has approved, an undecided acceptance criterion and an open reconciliation condition are
+all decisions waiting on a person, and none of them is an edge.
+
+Every entry names **the decision required**, not the state the subject is in, and the whole list is
+DERIVED on read -- nothing is ticked off, so an entry disappears exactly when its decision is
+recorded.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from orchestrator.errors import DomainError
+from orchestrator.kernel.states import WorkUnitState
+from orchestrator.kernel.transitions import DESIGNED_HUMAN_GATES
+from orchestrator.persistence.models import (
+    ApprovedDecomposition,
+    DecompositionProposal,
+    PackageAcceptanceCriterion,
+    WorkPackageRevision,
+    WorkUnit,
+)
+from orchestrator.services.evidence import current_adjudication, current_evidence
+from orchestrator.services.lifecycle import POST_DEPLOY_AC_IDS
+from orchestrator.services.reconciliation import open_conditions
+from orchestrator.services.verifier_criteria import load_required_criteria
+from orchestrator.services.verifier_evaluators import human_may_adjudicate
+
+# A unit in one of these states is finished with people. FAILED is deliberately absent from the
+# concept but produces no entry of its own either -- see the module's known gap in the WS-P2.17
+# Increment 4 build report.
+SETTLED_STATES = frozenset({WorkUnitState.COMPLETED, WorkUnitState.CANCELLED})
+
+# Ordered so the entries that block everything downstream come first.
+KIND_ORDER = (
+    "package_breakdown",
+    "decomposition_proposal",
+    "authority_approval",
+    "unit_transition",
+    "criterion_adjudication",
+    "reconciliation_condition",
+)
+KIND_LABELS: dict[str, str] = {
+    "package_breakdown": "Packages with no breakdown in progress",
+    "decomposition_proposal": "Proposed breakdowns awaiting your decision",
+    "authority_approval": "Authority envelopes awaiting your approval",
+    "unit_transition": "Work units stopped at a gate",
+    "criterion_adjudication": "Acceptance criteria awaiting your judgment",
+    "reconciliation_condition": "Divergences between reality and stored state",
+}
+
+
+def pending_decisions(session: Session) -> tuple[dict[str, Any], ...]:
+    """Every decision waiting on a human, ordered by kind then by subject."""
+    entries: list[dict[str, Any]] = [
+        *_package_breakdowns(session),
+        *_proposed_breakdowns(session),
+        *_unit_decisions(session),
+        *_open_divergences(session),
+    ]
+    entries.sort(key=lambda entry: (KIND_ORDER.index(entry["kind"]), entry["subject"]))
+    return tuple(entries)
+
+
+def grouped_pending_decisions(session: Session) -> tuple[dict[str, Any], ...]:
+    """`pending_decisions` folded into its kinds, keeping `KIND_ORDER`. Empty kinds are dropped."""
+    entries = pending_decisions(session)
+    groups = []
+    for kind in KIND_ORDER:
+        members = [entry for entry in entries if entry["kind"] == kind]
+        if members:
+            # Keyed `entries`, never `items`: in Jinja `group.items` resolves the dict METHOD
+            # before the key, so the template would render a bound method and 500 on |length.
+            groups.append({"kind": kind, "label": KIND_LABELS[kind], "entries": tuple(members)})
+    return tuple(groups)
+
+
+def adjudicable_criteria(
+    session: Session, unit: WorkUnit, revision: WorkPackageRevision
+) -> tuple[tuple[PackageAcceptanceCriterion, bool], ...]:
+    """The criteria a human may be shown for this unit, each with whether they may decide it.
+
+    The single source for that rule: the `/review` form renders these, and the queue counts the
+    undecided ones among them. Two copies of "which criteria are a person's to decide" is the
+    WS-P2.16 vocabulary-divergence shape, in a place where the divergence would be silent.
+
+    The criterion ids the verifier generates for its own post-release checks are excluded on the
+    id alone -- they are verifier-owned, and public adjudication of them is refused.
+    """
+    try:
+        criteria = load_required_criteria(session, unit, revision)
+    except DomainError:
+        return ()
+    return tuple(
+        (
+            criterion,
+            human_may_adjudicate(
+                criterion.evidence_type,
+                current_evidence(session, revision.id, unit.id, criterion.ac_id),
+                unit.state,
+            ),
+        )
+        for criterion in criteria
+        if criterion.ac_id not in POST_DEPLOY_AC_IDS
+    )
+
+
+def _entry(kind: str, subject: str, decision: str, detail: str, href: str) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "subject": subject,
+        "decision": decision,
+        "detail": detail,
+        "href": href,
+    }
+
+
+def _package_breakdowns(session: Session) -> list[dict[str, Any]]:
+    """Packages registered through the CLI intake with nothing in flight.
+
+    There is no server-side record of an intake "awaiting registration" -- `emit-intake-payload`
+    writes to the operator's terminal, and the first row that exists is the registered revision.
+    So the pending decision a registered package can carry is the next one: have it broken into
+    work units, or decide it goes no further.
+
+    `manual_ws31` (the superseded bootstrap path) and `protocol_fixture` revisions are excluded:
+    a fixture can never produce work units at all, so nothing about it is a person's to decide.
+    """
+    active_approved = select(ApprovedDecomposition.work_package_revision_id).where(
+        ApprovedDecomposition.superseded_at.is_(None)
+    )
+    undecided_proposals = select(DecompositionProposal.work_package_revision_id).where(
+        DecompositionProposal.state == "proposed"
+    )
+    revisions = session.scalars(
+        select(WorkPackageRevision)
+        .where(
+            WorkPackageRevision.intake_source == "package_cli",
+            WorkPackageRevision.id.not_in(active_approved),
+            WorkPackageRevision.id.not_in(undecided_proposals),
+        )
+        .order_by(WorkPackageRevision.registered_at, WorkPackageRevision.id)
+    )
+    return [
+        _entry(
+            "package_breakdown",
+            f"{revision.work_package.package_id} revision {revision.revision}",
+            "Have this package broken into work units, or decide it goes no further",
+            "It is registered and approved, and no breakdown of it is in progress.",
+            f"/review/intakes/{revision.id}",
+        )
+        for revision in revisions
+    ]
+
+
+def _proposed_breakdowns(session: Session) -> list[dict[str, Any]]:
+    proposals = session.scalars(
+        select(DecompositionProposal)
+        .where(DecompositionProposal.state == "proposed")
+        .order_by(DecompositionProposal.proposed_at, DecompositionProposal.id)
+    )
+    return [
+        _entry(
+            "decomposition_proposal",
+            f"Proposal {proposal.proposal_number}",
+            "Approve, reject, or send back this proposed breakdown",
+            proposal.rationale,
+            f"/review/decomposition-proposals/{proposal.id}",
+        )
+        for proposal in proposals
+    ]
+
+
+def _gate_targets() -> dict[str, tuple[str, ...]]:
+    """The states a designed human gate can move a unit to, keyed by the state it waits in."""
+    targets: dict[str, set[str]] = {}
+    for source, target in DESIGNED_HUMAN_GATES:
+        targets.setdefault(str(source), set()).add(str(target))
+    return {source: tuple(sorted(values)) for source, values in targets.items()}
+
+
+def _unit_decisions(session: Session) -> list[dict[str, Any]]:
+    gates = _gate_targets()
+    entries: list[dict[str, Any]] = []
+    units = session.scalars(
+        select(WorkUnit)
+        .where(WorkUnit.state.not_in(tuple(str(state) for state in SETTLED_STATES)))
+        .order_by(WorkUnit.created_at, WorkUnit.id)
+    )
+    for unit in units:
+        href = f"/review/units/{unit.id}"
+        if unit.authority_approval_id is None:
+            entries.append(
+                _entry(
+                    "authority_approval",
+                    unit.title,
+                    "Approve this unit's authority envelope, or leave it unable to proceed",
+                    "No approval is bound to this unit's current authority fingerprint.",
+                    href,
+                )
+            )
+        targets = gates.get(unit.state)
+        if targets is not None:
+            outcomes = " or ".join(target.replace("_", " ") for target in targets)
+            entries.append(
+                _entry(
+                    "unit_transition",
+                    unit.title,
+                    f"Decide whether this unit becomes {outcomes}",
+                    f"It has been waiting in {unit.state.replace('_', ' ')}.",
+                    href,
+                )
+            )
+        entries.extend(_undecided_criteria(session, unit, href))
+    return entries
+
+
+def _undecided_criteria(session: Session, unit: WorkUnit, href: str) -> list[dict[str, Any]]:
+    revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
+    if revision is None:
+        return []
+    entries = []
+    for criterion, may_decide in adjudicable_criteria(session, unit, revision):
+        if not may_decide:
+            continue
+        if current_adjudication(session, revision.id, unit.id, criterion.ac_id) is not None:
+            continue
+        entries.append(
+            _entry(
+                "criterion_adjudication",
+                f"{unit.title} · {criterion.ac_id}",
+                "Judge this acceptance criterion against its evidence",
+                criterion.condition,
+                href,
+            )
+        )
+    return entries
+
+
+def _open_divergences(session: Session) -> list[dict[str, Any]]:
+    entries = []
+    for condition in open_conditions(session):
+        unit = session.get(WorkUnit, condition.work_unit_id)
+        title = unit.title if unit is not None else str(condition.work_unit_id)
+        entries.append(
+            _entry(
+                "reconciliation_condition",
+                f"{title} · {condition.condition_type}",
+                "Accept, correct, or dismiss this divergence",
+                condition.detail,
+                _condition_href(condition.work_unit_id),
+            )
+        )
+    return entries
+
+
+def _condition_href(work_unit_id: uuid.UUID) -> str:
+    """Conditions are resolved from the unit page, where the per-condition form lives."""
+    return f"/review/units/{work_unit_id}"
