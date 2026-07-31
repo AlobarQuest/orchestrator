@@ -19,6 +19,21 @@ TARGETED_AUTHORITY = AuthorityEnvelope(
     change_class="dependency-update",
 )
 
+# The WS-P2.13 credential rotation, as its envelope actually reads. No repository, no mutating
+# command -- and a plain answer to "what does this touch" under three other names.
+OPERATIONAL_AUTHORITY = AuthorityEnvelope(
+    capabilities={"secret.rotate": "requires_approval"},
+    budgets=AuthorityBudgets(max_attempts=1, max_llm_calls=4),
+    constraints={
+        "credential": "bws-machine-account:8ba33ccd-0000-4000-8000-000000000000",
+        "irreversible_actions": [],
+        "secret_value_handling": (
+            "Devon alone handles the token value, at the Bitwarden console and his own terminal"
+        ),
+    },
+    change_class="non-software-operational",
+)
+
 
 def test_an_undecomposed_revision_reports_affects_as_unknown(migrated_session: Session) -> None:
     # AC-021: an unknown is RENDERED as unknown, never omitted. A missing row reads as "nothing to
@@ -42,6 +57,98 @@ def test_a_unit_reports_its_target_repository_and_mutating_commands(
     assert facts["affects"]["known"] is True
     assert "AlobarQuest/change-manager" in facts["affects"]["detail"]
     assert "uv lock --upgrade" in facts["affects"]["detail"]
+
+
+def test_operational_constraints_are_reported_rather_than_reported_unknown(
+    migrated_session: Session,
+) -> None:
+    # Observed on the WS-P2.13 rotation unit, 2026-07-31: the envelope named the credential it
+    # rotates and whether the action is irreversible, three sections below a surface that said
+    # "Not known." The projection only looked for repository-shaped keys, so for the class where
+    # blast radius matters most it discarded an answer already on file.
+    revision, unit = _build_unit(migrated_session, "facts-operational")
+    unit.authority = OPERATIONAL_AUTHORITY.normalized()
+
+    affects = decision_facts_for_unit(unit, revision)["affects"]
+
+    assert affects["known"] is True
+    assert "bws-machine-account" in affects["detail"]
+    assert "irreversible_actions" in affects["detail"]
+    assert "Devon alone handles the token value" in affects["detail"]
+    # The negative: nothing about a repository, because this envelope is not about one. Saying
+    # "no target repository is named" over work that was never repository work is the noise that
+    # made the real answer easy to miss.
+    assert "repository" not in affects["detail"].lower()
+
+
+def test_a_constraint_the_projection_has_never_heard_of_is_still_reported(
+    migrated_session: Session,
+) -> None:
+    # The rule is "report what the envelope declares", not "report the operational keys today's
+    # packages happen to use" -- a second fixed key list would repeat the defect for the next
+    # profile. A key invented here, that no profile uses, must still reach the surface.
+    revision, unit = _build_unit(migrated_session, "facts-unheard-of-constraint")
+    unit.authority = AuthorityEnvelope(
+        capabilities={"repo.edit": "allowed"},
+        budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
+        constraints={"blast_radius_nobody_has_declared_yet": "the postal service of Liechtenstein"},
+    ).normalized()
+
+    affects = decision_facts_for_unit(unit, revision)["affects"]
+
+    assert affects["known"] is True
+    assert "blast_radius_nobody_has_declared_yet" in affects["detail"]
+    assert "the postal service of Liechtenstein" in affects["detail"]
+
+
+def test_an_empty_constraints_block_is_still_an_explicit_unknown(
+    migrated_session: Session,
+) -> None:
+    # The unknown is reserved for an envelope that declares nothing. AC-021: it is RENDERED, never
+    # omitted, and its detail says why.
+    revision, unit = _build_unit(migrated_session, "facts-no-constraints")
+
+    affects = decision_facts_for_unit(unit, revision)["affects"]
+
+    assert affects["known"] is False
+    assert affects["detail"]
+
+
+def test_a_repo_targeted_unit_still_reports_its_repository_and_mutating_commands(
+    migrated_session: Session,
+) -> None:
+    # Regression guard, not a failing-first control: the repository-shaped answer is what
+    # dependency-update work depends on, and widening the projection must not dilute it.
+    revision, unit = _build_unit(migrated_session, "facts-still-targeted")
+    unit.authority = TARGETED_AUTHORITY.normalized()
+
+    affects = decision_facts_for_unit(unit, revision)["affects"]
+
+    assert affects["known"] is True
+    assert "AlobarQuest/change-manager" in affects["detail"]
+    assert "uv lock --upgrade" in affects["detail"]
+    # And the third constraint that envelope declares, which the repository-shaped projection
+    # dropped on the floor.
+    assert "allowed_commands" in affects["detail"]
+
+
+def test_a_repo_shaped_envelope_missing_half_the_pair_still_states_the_negative(
+    migrated_session: Session,
+) -> None:
+    # A unit that names a repository but authorizes no mutating command is repository work with
+    # nothing to change, and saying so is the point. The negative is dropped only for an envelope
+    # that is not repository-shaped at all.
+    revision, unit = _build_unit(migrated_session, "facts-half-repo")
+    unit.authority = AuthorityEnvelope(
+        capabilities={"repo.edit": "allowed"},
+        budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
+        constraints={"target_repository": "AlobarQuest/orchestrator"},
+    ).normalized()
+
+    affects = decision_facts_for_unit(unit, revision)["affects"]
+
+    assert affects["known"] is True
+    assert "no mutating command is authorized" in affects["detail"]
 
 
 def test_an_unmapped_change_class_reports_reversibility_as_unknown(

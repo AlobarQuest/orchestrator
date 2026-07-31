@@ -24,6 +24,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.runner_authority import dependency_update_authority_violation
 from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorRole, WorkUnitState
+from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
     DecompositionProposal,
     DecompositionProposalAcMapping,
@@ -59,6 +60,7 @@ from orchestrator.services.lifecycle import (
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import record_approval
 from orchestrator.services.pending_decisions import (
+    SETTLED_STATES,
     adjudicable_criteria,
     grouped_pending_decisions,
 )
@@ -222,6 +224,70 @@ def _adjudicatable_criteria(
     )
 
 
+# The outcomes the review form offers, each with the state it moves the unit to. One definition,
+# read by the form (which renders the options) and by the route (which resolves the submitted
+# value): two copies would let the form offer an outcome the route cannot name.
+REVIEW_OUTCOMES: tuple[tuple[str, str, WorkUnitState], ...] = (
+    ("completed", "Complete", WorkUnitState.COMPLETED),
+    ("revision_required", "Request revision", WorkUnitState.REVISION_REQUIRED),
+)
+# The page models EDGE LEGALITY -- which is state-keyed and free -- and never guard satisfaction,
+# which costs queries. So it asks the kernel with every guard already met: "if the paperwork were
+# in order, could a person make this move at all?"
+_GUARDS_MET = TransitionGuards(True, True, True)
+
+
+def _a_human_could_move(state: WorkUnitState, target: WorkUnitState) -> bool:
+    try:
+        authorize_transition(state, target, ActorRole.HUMAN, _GUARDS_MET)
+    except DomainError:
+        return False
+    return True
+
+
+def _available_actions(unit: WorkUnit, authority_violation: object | None) -> dict[str, Any]:
+    """Which action forms this unit's page may render, each from the rule its service enforces.
+
+    Increment 2 established that the adjudication dropdown must offer exactly what the service
+    accepts; this is the same principle over the rest of the page. A form the service would refuse
+    wastes a click and reads as a broken control -- a cancelled unit offered five of them. A form
+    the service WOULD accept but the page hides is worse, because it removes the operator's only
+    route, so every condition below is a precondition somebody else already enforces:
+
+    * **approval** -- an action approval satisfies exactly one guard, on the one human edge into
+      READY, and it is bound to `str(unit.version)` so any move invalidates it. Offered where that
+      edge exists, which is where `status_ledger` already reports the approval as pending.
+    * **authority approval** -- refused outright while the envelope violates its own contract
+      (`record_approval` re-raises the violation). Otherwise offered until the unit is settled:
+      the approval's only consumer admits work, and `SETTLED_STATES` is the queue's own statement
+      that a completed or cancelled unit is finished with people.
+    * **review outcomes** -- each outcome offered iff a human could make that move. From SUBMITTED
+      only completion is a human's; requesting a revision there belongs to the verifier.
+    * **cancel** -- the human edges into CANCELLED.
+    * **retry** -- `_require_retry_allowed`: FAILED, with the attempt budget spent. A failed unit
+      with attempts left goes back through a requeue, which only SYSTEM may perform, so naming a
+      retry there sends a person to a form that refuses them.
+
+    The guard `authorize_transition` applies to a COMPLETED target is NOT modelled here: whether
+    every criterion is satisfied needs the criteria and the adjudications, so the review form is
+    offered on edge legality alone and the service still refuses an unfinished completion.
+    """
+    state = WorkUnitState(unit.state)
+    review_outcomes = tuple(
+        (value, label)
+        for value, label, target in REVIEW_OUTCOMES
+        if _a_human_could_move(state, target)
+    )
+    actions: dict[str, Any] = {
+        "approval": _a_human_could_move(state, WorkUnitState.READY),
+        "authority_approval": authority_violation is None and state not in SETTLED_STATES,
+        "review_outcomes": review_outcomes,
+        "cancel": _a_human_could_move(state, WorkUnitState.CANCELLED),
+        "retry": state is WorkUnitState.FAILED and unit.attempt_count >= unit.max_attempts,
+    }
+    return actions
+
+
 def _package_intake_projection(session: Session, revision_id: uuid.UUID) -> dict[str, Any]:
     revision = session.get(WorkPackageRevision, revision_id)
     if revision is None or revision.intake_source != "package_cli":
@@ -383,12 +449,21 @@ def detail(
 ) -> HTMLResponse:
     _human(actor)
     context = evidence_pack_projection(session, unit_id)
+    available = _available_actions(context["unit"], context["authority_violation"])
+    context["available_actions"] = available
+    # A token is minted for the forms the page will actually render, and for no others: an
+    # unusable token is a control the page is pretending to have.
+    #
     # "adjudication" joins the standard action tokens because the unit's criteria are now decided
     # by ONE form: one CSRF token, one idempotency key and one expected_version for the whole
     # submission, instead of a set keyed per acceptance criterion.
-    actions = ["adjudication", "approval", "review", "cancel", "retry"]
-    if context["authority_violation"] is None:
-        actions.append("authority_approval")
+    actions = ["adjudication"] + [
+        action
+        for action in ("approval", "authority_approval", "cancel", "retry")
+        if available[action]
+    ]
+    if available["review_outcomes"]:
+        actions.append("review")
     keys = {action: str(uuid.uuid4()) for action in actions}
     context["idempotency_keys"] = keys
     context["csrf_tokens"] = {
@@ -419,6 +494,11 @@ def detail(
         session, context["unit"], context["revision"]
     )
     context["waiver_risk_classes"] = WAIVER_RISK_CLASSES
+    # An empty "Human actions" heading reads as a bug rather than as an answer, and a settled unit
+    # legitimately has none. Computed here, over every control the section can carry.
+    context["no_action_available"] = not (
+        any(available.values()) or context["adjudicatable_criteria"] or context["open_conditions"]
+    )
     context["decision_facts"] = decision_facts_for_unit(context["unit"], context["revision"])
     return _render(request, "unit.html", context)
 
@@ -815,11 +895,10 @@ def review(
 ) -> RedirectResponse:
     _human(actor)
     _require_form(request, actor, unit_id, "review", csrf_token, idempotency_key, confirm)
-    targets = {
-        "completed": WorkUnitState.COMPLETED,
-        "revision_required": WorkUnitState.REVISION_REQUIRED,
-    }
-    target = targets.get(outcome)
+    target = next(
+        (state for value, _, state in REVIEW_OUTCOMES if value == outcome),
+        None,
+    )
     if target is None:
         raise DomainError("review_outcome_invalid", "invalid review outcome", None)
     _human_transition(session, unit_id, actor, target, expected_version, idempotency_key, reason)
