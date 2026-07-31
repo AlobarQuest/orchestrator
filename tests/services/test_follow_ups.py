@@ -890,4 +890,8 @@ def test_the_review_form_offers_a_human_outcome_for_the_review_unit(
     rows = _adjudicatable_criteria(migrated_session, unit, revision)
 
     assert [row["ac_id"] for row in rows] == ["follow-up-review"]
-    assert rows[0]["is_judgment"] is True
+    # `is_judgment` until WS-P2.17 Inc 2 renamed it: the flag no longer reports what KIND of
+    # criterion this is, but whether a human may decide THIS one, now. The value is unchanged and
+    # state-independent -- the follow-up's `observation` evidence type has a HUMAN floor, so it is
+    # admitted by clause (a) and never depends on the unit reaching awaiting_review.
+    assert rows[0]["human_may_decide"] is True
