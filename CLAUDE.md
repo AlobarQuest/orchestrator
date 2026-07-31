@@ -652,7 +652,16 @@ style of that module.
   (and merge-path phrases) anywhere under `src/orchestrator/` with NO allowlist** — a module docstring
   saying "never dispatches, deploys, or merges" reddens it; reword (e.g. "writes to git"). Note the
   tokenizer matches whole tokens: `merges`→forbidden, but `deployment`/`deployments` do NOT match
-  `deploy` and `dispatches` does NOT match `dispatch` (only the exact bare token does). (2)
+  `deploy` and `dispatches` does NOT match `dispatch` (only the exact bare token does).
+  **CORRECTED 2026-07-31 (WS-P2.17 Inc 5): "whole token" is not "whole word" — a COMPOUND
+  tokenizes into its parts and each part is matched.** The tokenizer is
+  `re.split(r"[^a-z0-9]+", camel_boundary_split(value).lower())` (`test_ws32_scope_guards.py`), so
+  **every** non-alphanumeric character is a separator and a camelCase boundary is one too:
+  `post-deploy`, `pre/deploy`, `deploy_hook` and `postDeploy` all yield a bare `deploy` token and
+  all red the guard. Increment 4 hit this on a docstring containing `post-deploy`. What survives is
+  only a longer single token — `deployment`, `redeploy`, `dispatches` — because no separator splits
+  it. (An ALL-CAPS identifier like `POST_DEPLOY_AC_IDS` shreds to single letters and is invisible,
+  which is why the token forms in prose and not in code.) Reword; never add an allowlist entry. (2)
   **`test_scope_guards.py::test_production_post_route_inventory_is_explicit` AND
   `::test_production_get_route_inventory_is_explicit` assert those path sets EXACTLY** — every new
   route must be added to the matching set literal or CI fails (the per-task `make check` may miss it
