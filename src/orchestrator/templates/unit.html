@@ -6,6 +6,8 @@
 <p class="status">State: {{ unit.state|replace("_", " ") }}</p>
 <p><a href="/review/units/{{ unit.id }}/evidence-pack">Open read-only Evidence Pack</a></p>
 
+{% include "_decision.html" %}
+
 <h2>Package and authority</h2>
 <dl><dt>Revision</dt><dd>{{ revision.revision }}</dd><dt>Content hash</dt><dd>{{ revision.content_hash }}</dd><dt>Source</dt><dd>{{ revision.source_path }} at {{ revision.source_commit }}</dd><dt>Authority fingerprint</dt><dd>{{ unit.authority_fingerprint }}</dd><dt>Attempt budget</dt><dd>{{ unit.attempt_count }} of {{ unit.max_attempts }}</dd></dl>
 <h3>Authority envelope</h3>

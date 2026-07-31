@@ -38,6 +38,10 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.claims import authorize_retry
+from orchestrator.services.decision_facts import (
+    decision_facts_for_revision,
+    decision_facts_for_unit,
+)
 from orchestrator.services.decomposition import (
     approve_decomposition_proposal,
     reject_decomposition_proposal,
@@ -249,6 +253,7 @@ def _package_intake_projection(session: Session, revision_id: uuid.UUID) -> dict
         "package": revision.work_package,
         "acceptance_criteria": acceptance_criteria,
         "authority": command.get("authority"),
+        "decision_facts": decision_facts_for_revision(revision),
     }
 
 
@@ -415,6 +420,7 @@ def detail(
         session, context["unit"], context["revision"]
     )
     context["waiver_risk_classes"] = WAIVER_RISK_CLASSES
+    context["decision_facts"] = decision_facts_for_unit(context["unit"])
     return _render(request, "unit.html", context)
 
 

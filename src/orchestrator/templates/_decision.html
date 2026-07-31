@@ -1,0 +1,16 @@
+{# The one decision surface (spec 5.6). Renders the three facts and nothing else -- it is not a
+   layout, and it owns no buttons. Every gate that asks a human for a decision includes it, so
+   the answers to "what does it do", "what does it affect" and "can we back out" are in the same
+   place, in the same order, whichever gate they are standing at.
+
+   An unknown is RENDERED (AC-021). Omitting the row would read as "nothing to worry about"; the
+   marker below reads as "nobody knows yet", which is the truth. The detail says why. #}
+<section class="decision" aria-labelledby="decision-heading">
+  <h2 id="decision-heading">What you are deciding</h2>
+  <dl>
+    {% for fact in decision_facts.values() %}
+    <dt>{{ fact.label }}</dt>
+    <dd class="{{ 'fact-known' if fact.known else 'fact-unknown' }}">{% if not fact.known %}<strong>Not known.</strong> {% endif %}{{ fact.detail }}</dd>
+    {% endfor %}
+  </dl>
+</section>
