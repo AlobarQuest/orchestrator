@@ -67,6 +67,27 @@ SPECIAL_CASE_TYPES = frozenset({"infra_lane.final", "automated_check"})
 # criterion type outside this set is a NAMED error at the gate instead of a silent
 # `judgment_required` at verify time.
 SUPPORTED_CRITERION_EVIDENCE_TYPES = DETERMINISTIC_TYPES | JUDGMENT_TYPES
+
+CriterionFloor = Literal["human", "deterministic_permitted"]
+
+# The MINIMUM scrutiny a criterion's declared evidence_type demands (WS-P2.17, ruling R1).
+# Evidence may satisfy AT or ABOVE this floor and never below it. This is a separate concept from
+# DETERMINISTIC_TYPES, which describes what the verifier knows how to READ; the floor describes what
+# the package author is entitled to INSIST ON. Keeping them separate is what lets `automated_test`
+# become machine-evaluable without being added to DETERMINISTIC_TYPES -- an addition CLAUDE.md
+# records as halting the factory.
+HUMAN_FLOOR_TYPES: frozenset[str] = JUDGMENT_TYPES - {"automated_test"}
+DETERMINISTIC_PERMITTED_TYPES: frozenset[str] = DETERMINISTIC_TYPES | {"automated_test"}
+
+
+def floor_for(evidence_type: str) -> CriterionFloor:
+    """The minimum scrutiny a criterion type demands. Unknown types floor to human (fail closed)."""
+    normalized = evidence_type.strip().lower()
+    if normalized in DETERMINISTIC_PERMITTED_TYPES:
+        return "deterministic_permitted"
+    return "human"
+
+
 PASS_VALUES = frozenset({"pass", "passed", "success", "successful", "ok", "green"})
 FAIL_VALUES = frozenset(
     {
@@ -98,18 +119,19 @@ def evaluate_criterion(
                 "automated_check requires verifier named-check evidence",
             )
         return _named_check_result(evidence)
-    if evidence_type in JUDGMENT_TYPES or evidence_type not in DETERMINISTIC_TYPES:
+    if floor_for(evidence_type) == "human":
         return ("judgment_required", None, f"{criterion.evidence_type} requires review")
     if evidence is None:
-        return ("failed_closed", "failed", "missing required evidence")
+        return ("judgment_required", None, "no evidence has been recorded for this criterion")
     if not isinstance(evidence.payload, dict):
-        return ("failed_closed", "failed", "evidence payload is missing or malformed")
-    evaluator = EVALUATORS.get(evidence_type)
+        return ("judgment_required", None, "evidence payload is not machine-readable")
+    arriving_type = evidence.evidence_type.strip().lower()
+    evaluator = EVALUATORS.get(arriving_type)
     if evaluator is not None:
         return evaluator(evidence.payload)
-    if evidence_type == "infra_lane.final":
+    if arriving_type == "infra_lane.final":
         return _infra_lane_result(evidence)
-    return ("judgment_required", None, f"{criterion.evidence_type} requires review")
+    return ("judgment_required", None, f"{evidence.evidence_type} has no deterministic evaluator")
 
 
 def _named_check_result(evidence: Evidence) -> tuple[EvaluationStatus, str, str]:

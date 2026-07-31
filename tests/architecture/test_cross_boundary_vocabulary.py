@@ -39,7 +39,17 @@ DELIBERATE BLIND SPOTS (documented, like WS-P2.15's detector documented its own)
    vocabulary (``RUNNER_CAPABILITIES``/``ORCHESTRATOR_CAPABILITIES`` in `capability_vocabulary.py`)
    and U4's ``SUPPORTED_CRITERION_EVIDENCE_TYPES`` are NOT discovered here. Each is guarded by its
    OWN test instead -- the U1 derivation contract test and U4's Assertion D -- which is why this
-   detector does not need to see them.
+   detector does not need to see them. WS-P2.17's criterion-floor sets
+   (``HUMAN_FLOOR_TYPES = JUDGMENT_TYPES - {...}`` and
+   ``DETERMINISTIC_PERMITTED_TYPES = DETERMINISTIC_TYPES | {...}``, both `verifier_evaluators.py`)
+   are the same shape and the same disposition: derived from the two registered literals above, so
+   not discovered, and guarded by their own tests in
+   `tests/services/test_criterion_evidence_vocabulary.py` -- the unknown-type fail-closed control,
+   the disjointness pin, the total-coverage pin over ``SUPPORTED_CRITERION_EVIDENCE_TYPES``, and
+   the ``automated_test``-not-in-``DETERMINISTIC_TYPES`` mechanism guard. They must NOT be added to
+   ``VOCABULARY_REGISTRY``: a registry key with no discovered literal definition reds
+   ``test_registry_entries_all_correspond_to_a_real_definition`` by design, because the registry
+   describes discovered subjects rather than doubling as prose.
  * **Only `in` / `.get` membership is seen.** Validation expressed as SET ALGEBRA
    (``set(x) - KNOWN``, ``.difference``, ``.issubset``, ``<=``) or a SQLAlchemy column ``.in_()``
    is not an ``ast.Compare/In`` and is invisible. So ``kernel/authority.py``'s ``KNOWN_FIELDS`` /
