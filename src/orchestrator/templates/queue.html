@@ -1,20 +1,20 @@
 {% extends "base.html" %}
-{% block title %}Review queue{% endblock %}
+{% block title %}What needs you{% endblock %}
 {% block content %}
-<h1>Review queue</h1>
-<p class="meta">Work units grouped by lifecycle state, with current readiness facts.</p>
+<h1>What needs you</h1>
+<p class="meta">Every decision waiting on a person, grouped by what the decision is. An item leaves
+  this list when its decision is recorded — nothing here has to be ticked off.</p>
 <p><a href="/review/intakes/new">Register a package intake →</a></p>
-{% for state, items in groups.items() %}
-<section class="group" aria-labelledby="state-{{ state }}">
-  <h2 id="state-{{ state }}">{{ state|replace("_", " ")|capitalize }} <small>({{ items|length }})</small></h2>
-  {% for item in items %}
-  <article class="unit">
-    <h3><a href="/review/units/{{ item.unit.id }}">{{ item.unit.title }}</a></h3>
-    <div><span class="status">Readiness: {{ item.readiness }}</span>
-      {% if item.reasons %}<ul>{% for reason in item.reasons %}<li><code>{{ reason.code }}</code>: {{ reason.detail }}</li>{% endfor %}</ul>{% else %}<p class="meta">No readiness blockers.</p>{% endif %}
-    </div>
+{% for group in groups %}
+<section class="group" aria-labelledby="kind-{{ group.kind }}">
+  <h2 id="kind-{{ group.kind }}">{{ group.label }} <small>({{ group.entries|length }})</small></h2>
+  {% for item in group.entries %}
+  <article class="decision-item">
+    <h3><a href="{{ item.href }}">{{ item.subject }}</a></h3>
+    <p class="decision-required"><strong>{{ item.decision }}.</strong></p>
+    <p class="meta">{{ item.detail }}</p>
   </article>
   {% endfor %}
 </section>
-{% else %}<p class="empty">No work units are waiting for review.</p>{% endfor %}
+{% else %}<p class="empty">Nothing is waiting on you.</p>{% endfor %}
 {% endblock %}
