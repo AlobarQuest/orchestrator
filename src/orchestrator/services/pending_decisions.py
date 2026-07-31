@@ -40,9 +40,8 @@ from orchestrator.services.reconciliation import open_conditions
 from orchestrator.services.verifier_criteria import load_required_criteria
 from orchestrator.services.verifier_evaluators import human_may_adjudicate
 
-# A unit in one of these states is finished with people. FAILED is deliberately absent from the
-# concept but produces no entry of its own either -- see the module's known gap in the WS-P2.17
-# Increment 4 build report.
+# A unit in one of these states is finished with people. FAILED is not one of them: it is stopped
+# and nothing automatic will move it, which is precisely a decision waiting on someone.
 SETTLED_STATES = frozenset({WorkUnitState.COMPLETED, WorkUnitState.CANCELLED})
 
 # Ordered so the entries that block everything downstream come first.
@@ -51,6 +50,7 @@ KIND_ORDER = (
     "decomposition_proposal",
     "authority_approval",
     "unit_transition",
+    "failed_disposition",
     "criterion_adjudication",
     "reconciliation_condition",
 )
@@ -59,6 +59,7 @@ KIND_LABELS: dict[str, str] = {
     "decomposition_proposal": "Proposed breakdowns awaiting your decision",
     "authority_approval": "Authority envelopes awaiting your approval",
     "unit_transition": "Work units stopped at a gate",
+    "failed_disposition": "Failed work units awaiting a disposition",
     "criterion_adjudication": "Acceptance criteria awaiting your judgment",
     "reconciliation_condition": "Divergences between reality and stored state",
 }
@@ -225,8 +226,36 @@ def _unit_decisions(session: Session) -> list[dict[str, Any]]:
                     href,
                 )
             )
+        if unit.state == str(WorkUnitState.FAILED):
+            entries.append(_failed_disposition(unit, href))
         entries.extend(_undecided_criteria(session, unit, href))
     return entries
+
+
+def _failed_disposition(unit: WorkUnit, href: str) -> dict[str, Any]:
+    """The disposition a failed unit needs, named for what this person can actually do.
+
+    `authorize_retry` is the only route back for a unit whose attempt budget is spent, and it
+    refuses `attempts_not_exhausted` for one that still has attempts left -- where the way back is
+    a requeue, which only SYSTEM may perform. Naming a retry in that case would send a person to a
+    form that refuses them, so the two cases read differently. Cancellation is always theirs.
+    """
+    attempts = f"It failed after {unit.attempt_count} of {unit.max_attempts} attempts."
+    if unit.attempt_count >= unit.max_attempts:
+        return _entry(
+            "failed_disposition",
+            unit.title,
+            "Authorize a retry with a raised attempt limit, or cancel this unit",
+            f"{attempts} Its attempt budget is spent, so running it again needs a raised limit.",
+            href,
+        )
+    return _entry(
+        "failed_disposition",
+        unit.title,
+        "Cancel this unit, or have the system requeue it",
+        f"{attempts} It has attempts left, so a requeue needs no raised limit.",
+        href,
+    )
 
 
 def _undecided_criteria(session: Session, unit: WorkUnit, href: str) -> list[dict[str, Any]]:

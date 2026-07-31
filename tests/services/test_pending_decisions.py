@@ -11,6 +11,7 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
     WorkUnit,
 )
+from orchestrator.services.claims import authorize_retry
 from orchestrator.services.decomposition import (
     approve_decomposition_proposal,
     submit_decomposition_proposal,
@@ -166,6 +167,77 @@ def test_an_item_with_nothing_to_decide_does_not_appear(migrated_session: Sessio
     migrated_session.commit()
 
     assert _kinds(migrated_session) == set()
+
+
+def _failed_unit(session: Session, key: str, *, exhausted: bool = True) -> WorkUnit:
+    unit = register_unit(session, key)
+    _approve_authority(session, unit)
+    unit.state = WorkUnitState.FAILED
+    unit.attempt_count = unit.max_attempts if exhausted else unit.max_attempts - 1
+    session.commit()
+    return unit
+
+
+def _entries_of_kind(session: Session, kind: str) -> list[dict]:
+    return [entry for entry in pending_decisions(session) if entry["kind"] == kind]
+
+
+def test_a_failed_unit_names_the_disposition_it_needs(migrated_session: Session) -> None:
+    """AC-017. A failed unit is stopped and nothing automatic will move it, so it is a pending
+    human decision -- but Increment 4's queue produced no entry for one at all: FAILED is neither
+    a settled state nor a designed gate, and no kind claimed it."""
+    unit = _failed_unit(migrated_session, "pending-failed")
+
+    entries = _entries_of_kind(migrated_session, "failed_disposition")
+
+    assert [entry["subject"] for entry in entries] == [unit.title]
+    assert "retry" in entries[0]["decision"] and "cancel" in entries[0]["decision"]
+    assert entries[0]["href"] == f"/review/units/{unit.id}"
+
+
+def test_a_failed_unit_with_budget_left_is_not_offered_a_retry_it_cannot_have(
+    migrated_session: Session,
+) -> None:
+    # `authorize_retry` refuses `attempts_not_exhausted`, and requeueing is SYSTEM-only -- so for
+    # this unit the only decision a person can act on is cancellation. Naming the other one would
+    # send them to a form that refuses them, which is the divergence Increment 2 pinned against.
+    _failed_unit(migrated_session, "pending-failed-with-budget", exhausted=False)
+
+    decision = _entries_of_kind(migrated_session, "failed_disposition")[0]["decision"].lower()
+
+    assert "cancel" in decision
+    assert "retry" not in decision
+
+
+def test_a_failed_unit_leaves_the_queue_once_cancelled(migrated_session: Session) -> None:
+    unit = _failed_unit(migrated_session, "pending-failed-cancelled")
+    assert "failed_disposition" in _kinds(migrated_session)
+
+    unit.state = WorkUnitState.CANCELLED
+    migrated_session.commit()
+
+    assert "failed_disposition" not in _kinds(migrated_session)
+
+
+def test_a_failed_unit_leaves_the_queue_once_a_retry_is_authorized(
+    migrated_session: Session,
+) -> None:
+    # Driven through the real service rather than by writing the state, so the entry's
+    # disappearance is a consequence of the decision being recorded, not of the test staging it.
+    unit = _failed_unit(migrated_session, "pending-failed-retried")
+    assert "failed_disposition" in _kinds(migrated_session)
+
+    approval = authorize_retry(
+        migrated_session,
+        unit.id,
+        human_actor(),
+        new_max_attempts=unit.max_attempts + 1,
+        reason="the runner environment was at fault",
+        idempotency_key="retry-pending-failed",
+    )
+
+    assert isinstance(approval, Approval)
+    assert "failed_disposition" not in _kinds(migrated_session)
 
 
 def test_an_item_disappears_once_its_decision_is_recorded(migrated_session: Session) -> None:
