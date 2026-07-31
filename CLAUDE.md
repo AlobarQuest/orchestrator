@@ -341,7 +341,23 @@ style of that module.
      (four adversarial reviews), which is why the floor is a separate concept layered over the
      intake vocabulary rather than a rewrite of it. `HUMAN_FLOOR_TYPES` /
      `DETERMINISTIC_PERMITTED_TYPES` / `floor_for()` live in `services/verifier_evaluators.py`; an
-     unknown or absent criterion type floors to human, fail-closed. This was the real
+     unknown or absent criterion type floors to human, fail-closed.
+     **`JUDGMENT_TYPES` had THREE consumers and Inc 1 moved only one — evaluation — which opened a
+     fail-open that reached `main`: a human could record `passed` on an `automated_test` criterion
+     the verifier would now resolve.** WS-P2.17 Inc 2 closed it. All three now route through
+     `human_may_adjudicate(declared_type, evidence, unit_state)`
+     (`services/verifier_evaluators.py`): evaluation, authorization (`evidence._authorize_outcome`),
+     and the `/review` form's per-criterion flag (`web.py`, renamed `is_judgment` →
+     `human_may_decide`), the last pinned to the first by set-equality test. A human may decide when
+     **(a)** the floor is `human`, **or (b)** the floor is deterministic-permitted, the current
+     evaluation is `judgment_required`, **and the unit is in `awaiting_review`**. Clause (b) is
+     load-bearing, not a convenience: Inc 1 made deterministic-floored-but-asking a common state,
+     and without it those criteria are adjudicable by **no actor at all** — the unit can neither
+     complete nor be failed. It also replaces the old `# A-static:` comment's protection, guarding
+     the `automated_check`-before-CI window **by timing** rather than by declared type, which was
+     only ever a proxy for it. A HUMAN may now also record `failed` (it was VERIFIER-only, and the
+     verifier records nothing on a criterion it deferred, so nobody could fail a judgment
+     criterion); it flows through the same predicate, so it is not a wider door. This was the real
      root of the known "judgment_required ACs must be passed out-of-band via the verifier M2M
      credential / no adjudication form in `/review`" gap. **It was a vocabulary gap, not a UI gap** —
      fixing the UI would not have fixed it. `automated_check` is now a deliberately narrower supported

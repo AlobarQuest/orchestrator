@@ -13,6 +13,7 @@ from orchestrator.kernel.evidence_types import (
     NAMED_CHECK_MAX_RUN_ID_LENGTH,
     VERIFIER_NAMED_CHECK_EVIDENCE_TYPE,
 )
+from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Evidence, PackageAcceptanceCriterion
 
 EvaluationStatus = Literal["passed", "failed", "failed_closed", "judgment_required"]
@@ -106,11 +107,49 @@ CHECK_PASS_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 CHECK_FAIL_CONCLUSIONS = frozenset({"failure", "cancelled", "timed_out", "action_required"})
 
 
+def human_may_adjudicate(
+    declared_type: str | None,
+    evidence: Evidence | None,
+    unit_state: str,
+) -> bool:
+    """May a HUMAN decide this criterion right now?
+
+    The single answer, consumed by the adjudication authorization gate AND by the `/review` form,
+    so the form can never offer an outcome the service will refuse. Increment 1 moved EVALUATION
+    onto the floor and left authorization and the form keyed on `JUDGMENT_TYPES`; that divergence
+    let a human pre-empt the verifier on machine-owned ground.
+
+    Takes the declared type rather than a criterion because that is what both call sites hold: the
+    authorization gate resolves it through `_criterion_evidence_type`, which returns a bare string
+    and has no row at all for the generated follow-up criterion.
+    """
+    if declared_type is None:
+        # No criterion backs this ac_id. `floor_for` would say `human` -- correct for an unknown
+        # type, wrong for an absent criterion, which nobody may decide.
+        return False
+    if floor_for(declared_type) == "human":
+        return True
+    status, _outcome, _detail = _evaluate_declared_type(declared_type, evidence)
+    # Clause (b): the verifier has run, could not resolve, and handed off. Requiring the handoff
+    # STATE (rather than the criterion's declared type) is what closes the window in which further
+    # evidence could still arrive -- the concern the superseded `A-static` comment expressed by
+    # proxy. Without it, a deterministic-floored criterion that is currently asking is decidable by
+    # no actor at all, and its unit can neither complete nor be failed.
+    return status == "judgment_required" and unit_state == WorkUnitState.AWAITING_REVIEW
+
+
 def evaluate_criterion(
     criterion: PackageAcceptanceCriterion,
     evidence: Evidence | None,
 ) -> tuple[EvaluationStatus, str | None, str]:
-    evidence_type = criterion.evidence_type.strip().lower()
+    return _evaluate_declared_type(criterion.evidence_type, evidence)
+
+
+def _evaluate_declared_type(
+    declared_type: str,
+    evidence: Evidence | None,
+) -> tuple[EvaluationStatus, str | None, str]:
+    evidence_type = declared_type.strip().lower()
     if evidence_type == "automated_check":
         if evidence is None or evidence.evidence_type != VERIFIER_NAMED_CHECK_EVIDENCE_TYPE:
             return (
@@ -120,7 +159,7 @@ def evaluate_criterion(
             )
         return _named_check_result(evidence)
     if floor_for(evidence_type) == "human":
-        return ("judgment_required", None, f"{criterion.evidence_type} requires review")
+        return ("judgment_required", None, f"{declared_type} requires review")
     if evidence is None:
         return ("judgment_required", None, "no evidence has been recorded for this criterion")
     if not isinstance(evidence.payload, dict):

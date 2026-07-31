@@ -169,14 +169,19 @@ One drill-designated package revision, decomposed once (Devon's decision, 2026-0
 - `package_id`: `drill-2026-07-27`
 - `source_repository`: `AlobarQuest/orchestrator`
 - `intake_purpose` / `status_at_intake`: mark plainly as a recovery drill
-- acceptance criteria: `AC-001` … `AC-005`, one per drill unit, `evidence_type: "test"`
+- acceptance criteria: `AC-001` … `AC-005`, one per drill unit, `evidence_type: "automated_test"`
 
-  **Not `automated_test`** — it resolves to `judgment_required` for every AC, so an automated AC
-  declared that way can never be discharged by automated evidence. (Mechanism corrected 2026-07-28:
-  WS-P2.16 U4 moved `automated_test` INTO `JUDGMENT_TYPES`, so it is now a *named* judgment type
-  rather than an unrecognised one falling off the end of `DETERMINISTIC_TYPES`. The outcome is
-  identical; the diagnosis is not, and the older phrasing survives in CLAUDE.md.) `test` is
-  deterministic. This authoring rule stands until remediation 2.1/2.2/2.3 ship together.
+  **RETIRED 2026-07-31 (WS-P2.17 Increment 2): this line used to say `test`, and never
+  `automated_test`.** That rule was unfollowable as well as obsolete. `test` is not among the five
+  types `intent_packages/validate.py` permits (`automated_test`, `automated_check`, `human_review`,
+  `external_attestation`, `observation`), so `factory validate` rejected a `test` criterion before
+  it could reach intake — the workaround could not be applied to a real package.
+
+  It is also no longer needed. Increment 1 gave `automated_test` a deterministic-permitted *floor*:
+  `evaluate_criterion` selects the evaluator from the ARRIVING evidence row, so a `pytest` evidence
+  row with `{"status": "pass"}` resolves the criterion deterministically, and a human is asked only
+  when the evidence is absent or has no evaluator. **`automated_test` is the correct declaration
+  for an automated criterion.**
 - unit keys: `drill-1-crash`, `drill-2-evidence-recovery`, `drill-3-pr-conflict`,
   `drill-4-split-brain`, `drill-5-stalled-approval`
 - per unit: `required_capability: "repo.edit"`, authority capabilities `repo.edit` +

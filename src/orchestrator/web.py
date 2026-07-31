@@ -43,7 +43,7 @@ from orchestrator.services.decomposition import (
     reject_decomposition_proposal,
     require_decomposition_revision,
 )
-from orchestrator.services.evidence import record_adjudication
+from orchestrator.services.evidence import current_evidence, record_adjudication
 from orchestrator.services.evidence_pack import evidence_pack_projection
 from orchestrator.services.lifecycle import (
     POST_DEPLOY_AC_IDS,
@@ -60,7 +60,7 @@ from orchestrator.services.reconciliation import (
 )
 from orchestrator.services.release_evidence_pack import release_evidence_pack_response
 from orchestrator.services.verifier_criteria import load_required_criteria
-from orchestrator.services.verifier_evaluators import JUDGMENT_TYPES
+from orchestrator.services.verifier_evaluators import human_may_adjudicate
 
 router = APIRouter(prefix="/review", include_in_schema=False)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -200,7 +200,15 @@ def _adjudicatable_criteria(
         {
             "ac_id": criterion.ac_id,
             "evidence_type": criterion.evidence_type,
-            "is_judgment": criterion.evidence_type.strip().lower() in JUDGMENT_TYPES,
+            # The same predicate the service authorizes on, so the form cannot offer an outcome
+            # that would be refused -- nor withhold one that would be accepted. It replaces a
+            # JUDGMENT_TYPES membership test, the third and last consumer keyed on the declared
+            # type after WS-P2.17 Increment 1 moved evaluation onto the floor.
+            "human_may_decide": human_may_adjudicate(
+                criterion.evidence_type,
+                current_evidence(session, revision.id, unit.id, criterion.ac_id),
+                unit.state,
+            ),
         }
         for criterion in criteria
         if criterion.ac_id not in POST_DEPLOY_AC_IDS
