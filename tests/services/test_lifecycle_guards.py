@@ -719,6 +719,69 @@ def test_worker_start_rejects_authority_approval_for_different_context_fingerpri
     assert error.value.code == "context_authority_expanding"
 
 
+def judgment_unit(session: Session) -> WorkUnit:
+    unit = submitted_unit(session)
+    session.add(
+        PackageAcceptanceCriterion(
+            work_package_revision_id=unit.work_package_revision_id,
+            ac_id="ac-1",
+            condition="condition",
+            evidence_type="human.review",
+            evidence="evidence",
+            approver="human-1",
+        )
+    )
+    session.commit()
+    return unit
+
+
+def human_adjudicates(session: Session, unit: WorkUnit, outcome: str, key: str) -> Adjudication:
+    result = record_adjudication(
+        session,
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id="ac-1",
+        outcome=outcome,
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        rationale="reviewed",
+        idempotency_key=key,
+    )
+    assert isinstance(result, Adjudication)
+    return result
+
+
+def test_human_recorded_failure_blocks_completion(migrated_session: Session) -> None:
+    # Spec AC-008. `failed` only became reachable for a HUMAN in WS-P2.17 Increment 2, so this
+    # path had never been exercised. It goes through `record_adjudication` rather than inserting
+    # an Adjudication row, because the claim under test is that a HUMAN-recorded failure blocks
+    # completion -- a hand-built row would prove only that the string "failed" does.
+    unit = judgment_unit(migrated_session)
+    failure = human_adjudicates(migrated_session, unit, "failed", "human-fail-gate")
+    assert failure.decided_by == "human-1"
+
+    migrated_session.refresh(unit)
+    assert_completion_rejected(migrated_session, unit)
+
+
+def test_human_passed_supersedes_a_human_recorded_failure(migrated_session: Session) -> None:
+    # Spec AC-009. Rework, then re-adjudication: the completion guard reads the current terminal
+    # of the supersession chain, and nothing in it consults WHO recorded an outcome -- which is
+    # why AC-008 and AC-009 need no source change. Were the guard to treat a human `failed`
+    # differently from a verifier one, this pair would red.
+    unit = judgment_unit(migrated_session)
+    failure = human_adjudicates(migrated_session, unit, "failed", "human-fail-then-pass")
+    migrated_session.refresh(unit)
+    assert_completion_rejected(migrated_session, unit)
+
+    recovery = human_adjudicates(migrated_session, unit, "passed", "human-pass-after-fail")
+    assert recovery.supersedes_adjudication_id == failure.id
+
+    migrated_session.refresh(unit)
+    transition_unit(migrated_session, completion_command(unit), clock=FixedClock())
+    migrated_session.refresh(unit)
+    assert unit.state == WorkUnitState.COMPLETED
+
+
 def test_human_passed_satisfies_completion_gate(migrated_session: Session) -> None:
     unit = submitted_unit(migrated_session)
     migrated_session.add(
