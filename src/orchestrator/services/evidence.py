@@ -1,4 +1,5 @@
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -56,6 +57,21 @@ NON_WAIVER_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
 # expiry.
 HUMAN_ADJUDICABLE_OUTCOMES = frozenset({"passed", "failed", "not_applicable"})
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57503338
+
+
+@dataclass(frozen=True)
+class AdjudicationDecision:
+    """One criterion's decision within a single adjudication submission."""
+
+    ac_id: str
+    outcome: str
+    rationale: str
+    evidence_id: uuid.UUID | None = None
+    failed_evidence_id: uuid.UUID | None = None
+    risk: str | None = None
+    follow_up: str | None = None
+    scope: str | None = None
+    expires_at: datetime | None = None
 
 
 def list_evidence(session: Session, work_unit_id: uuid.UUID) -> tuple[Evidence, ...]:
@@ -210,22 +226,23 @@ def record_adjudication(
     expires_at: datetime | None = None,
     allow_generated_post_deploy: bool = False,
 ) -> Adjudication | DomainError:
-    command = {
-        "ac_id": ac_id,
-        "actor_id": actor.actor_id,
-        "actor_role": actor.role,
-        "evidence_id": _uuid_text(evidence_id),
-        "expires_at": expires_at.isoformat() if expires_at is not None else None,
-        "expected_version": expected_version,
-        "failed_evidence_id": _uuid_text(failed_evidence_id),
-        "follow_up": follow_up,
-        "outcome": outcome,
-        "rationale": rationale,
-        "risk": risk,
-        "scope": scope,
-        "work_package_revision_id": str(work_package_revision_id),
-        "work_unit_id": str(work_unit_id),
-    }
+    command = _adjudication_command(
+        work_package_revision_id=work_package_revision_id,
+        work_unit_id=work_unit_id,
+        decision=AdjudicationDecision(
+            ac_id=ac_id,
+            outcome=outcome,
+            rationale=rationale,
+            evidence_id=evidence_id,
+            failed_evidence_id=failed_evidence_id,
+            risk=risk,
+            follow_up=follow_up,
+            scope=scope,
+            expires_at=expires_at,
+        ),
+        actor=actor,
+        expected_version=expected_version,
+    )
     try:
         lock_evidence_idempotency_key(session, idempotency_key)
         unit, revision = _validated_subject(
@@ -276,6 +293,150 @@ def record_adjudication(
     except Exception:
         session.rollback()
         raise
+
+
+def record_adjudications(
+    session: Session,
+    *,
+    work_package_revision_id: uuid.UUID,
+    work_unit_id: uuid.UUID,
+    decisions: tuple[AdjudicationDecision, ...],
+    actor: ActorContext,
+    idempotency_key: str,
+    expected_version: int | None = None,
+) -> tuple[Adjudication, ...] | DomainError:
+    """One submission, N criteria, one transaction -- all of them or none of them.
+
+    The `/review` page used to render a form per criterion, each carrying an `expected_version`
+    fixed at render. Submitting one act at a time is what produced a wrong recorded outcome on
+    WS-P2.13 AC-002. Here the operator's whole answer is one act: one version check, one commit,
+    and a refusal anywhere discards every row -- a partial write would be worse than the bug being
+    fixed.
+
+    Returns the recorded rows in submission order, or the first `DomainError` a criterion raised,
+    unchanged, so the caller can still tell WHICH criterion was refused. Never raises it: the
+    return-don't-raise convention is `record_adjudication`'s.
+
+    No `allow_generated_post_deploy` escape hatch, deliberately. This is the public human surface,
+    and generated post-deploy criteria are verifier-owned (AC-013); the only caller that may
+    adjudicate them is the verifier command, which records one criterion at a time.
+    """
+    ac_ids = [decision.ac_id for decision in decisions]
+    # The submission's composition travels in every criterion's command, so replay compares the
+    # whole act. Without it, re-using the key for a SUBSET of the criteria would replay each of
+    # them happily and report success for a submission that was never made.
+    commands = tuple(
+        _adjudication_command(
+            work_package_revision_id=work_package_revision_id,
+            work_unit_id=work_unit_id,
+            decision=decision,
+            actor=actor,
+            expected_version=expected_version,
+        )
+        | {"ac_ids": ac_ids}
+        for decision in decisions
+    )
+    # `events.idempotency_key` is UNIQUE, so N rows in one submission cannot share one key. Each
+    # criterion's event gets a key derived from the submission's, which stays the single key the
+    # caller mints, holds the advisory lock, and binds into the CSRF token.
+    keys = tuple(f"{idempotency_key}:{decision.ac_id}" for decision in decisions)
+    try:
+        if not decisions:
+            raise DomainError(
+                "adjudication_invalid", "a submission must decide at least one criterion", None
+            )
+        if len(set(ac_ids)) != len(ac_ids):
+            raise DomainError(
+                "adjudication_invalid",
+                "a submission may decide each acceptance criterion at most once",
+                None,
+            )
+        lock_evidence_idempotency_key(session, idempotency_key)
+        # Every criterion is validated before any is written, and the unit comes back locked. They
+        # all resolve to the same row, so the first is the unit this submission is about.
+        unit = tuple(
+            _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)[0]
+            for ac_id in ac_ids
+        )[0]
+        replays = tuple(
+            _adjudication_replay(session, key, command)
+            for key, command in zip(keys, commands, strict=True)
+        )
+        recorded = tuple(row for row in replays if row is not None)
+        if len(recorded) == len(decisions):
+            session.commit()
+            return recorded
+        if recorded:
+            # A submission that half-exists cannot have been written by this function, which
+            # commits once. Fail closed rather than complete somebody else's act.
+            raise _idempotency_conflict()
+        if expected_version is not None and unit.version != expected_version:
+            raise DomainError(
+                "version_conflict",
+                "work unit version has changed",
+                "reload",
+                current_state=unit.state,
+                current_version=unit.version,
+            )
+        rows = tuple(
+            _record_one_adjudication(
+                session,
+                unit=unit,
+                work_package_revision_id=work_package_revision_id,
+                ac_id=decision.ac_id,
+                outcome=decision.outcome,
+                actor=actor,
+                rationale=decision.rationale,
+                command=command,
+                idempotency_key=key,
+                evidence_id=decision.evidence_id,
+                failed_evidence_id=decision.failed_evidence_id,
+                risk=decision.risk,
+                follow_up=decision.follow_up,
+                scope=decision.scope,
+                expires_at=decision.expires_at,
+            )
+            for decision, command, key in zip(decisions, commands, keys, strict=True)
+        )
+        session.commit()
+        return rows
+    except DomainError as error:
+        session.rollback()
+        return error
+    except IntegrityError as error:
+        session.rollback()
+        return _adjudications_race_result(session, keys, commands, error)
+    except Exception:
+        session.rollback()
+        raise
+
+
+def _adjudication_command(
+    *,
+    work_package_revision_id: uuid.UUID,
+    work_unit_id: uuid.UUID,
+    decision: AdjudicationDecision,
+    actor: ActorContext,
+    expected_version: int | None,
+) -> dict[str, object]:
+    return {
+        "ac_id": decision.ac_id,
+        "actor_id": actor.actor_id,
+        "actor_role": actor.role,
+        "evidence_id": _uuid_text(decision.evidence_id),
+        "expires_at": (
+            decision.expires_at.isoformat() if decision.expires_at is not None else None
+        ),
+        "expected_version": expected_version,
+        "failed_evidence_id": _uuid_text(decision.failed_evidence_id),
+        "follow_up": decision.follow_up,
+        "outcome": decision.outcome,
+        "rationale": decision.rationale,
+        "risk": decision.risk,
+        "scope": decision.scope,
+        "work_package_revision_id": str(work_package_revision_id),
+        "work_unit_id": str(work_unit_id),
+    }
 
 
 def _record_one_adjudication(
@@ -959,6 +1120,25 @@ def _adjudication_race_result(
         return conflict
     if replay is not None:
         return replay
+    raise error
+
+
+def _adjudications_race_result(
+    session: Session,
+    keys: tuple[str, ...],
+    commands: tuple[dict[str, object], ...],
+    error: IntegrityError,
+) -> tuple[Adjudication, ...] | DomainError:
+    try:
+        replays = tuple(
+            _adjudication_replay(session, key, command)
+            for key, command in zip(keys, commands, strict=True)
+        )
+    except DomainError as conflict:
+        return conflict
+    recorded = tuple(row for row in replays if row is not None)
+    if replays and len(recorded) == len(replays):
+        return recorded
     raise error
 
 

@@ -27,8 +27,9 @@ def register_unit(
     *,
     unit_id: uuid.UUID | None = None,
     dependencies: tuple[DependencySpec, ...] = (),
+    acceptance_criteria: tuple[str, ...] = ("ac-1",),
 ) -> WorkUnit:
-    revision = register_test_revision(session)
+    revision = register_test_revision(session, acceptance_criteria=acceptance_criteria)
     return register_approved_unit(
         session,
         unit_id=unit_id,

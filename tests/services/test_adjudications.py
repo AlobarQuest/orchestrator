@@ -4,13 +4,23 @@ from threading import Barrier
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import Adjudication, Evidence, PackageAcceptanceCriterion
-from orchestrator.services.evidence import current_adjudication, record_adjudication
+from orchestrator.persistence.models import (
+    Adjudication,
+    Evidence,
+    PackageAcceptanceCriterion,
+    WorkUnit,
+)
+from orchestrator.services.evidence import (
+    AdjudicationDecision,
+    current_adjudication,
+    record_adjudication,
+    record_adjudications,
+)
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.verifier_evaluators import human_may_adjudicate
 from tests.services.test_dependencies import register_unit
@@ -50,6 +60,262 @@ def add_evidence(session: Session, unit, ac_id: str, evidence_type: str, payload
         )
     )
     session.flush()
+
+
+def register_multi_criterion_unit(session: Session, key: str, *ac_ids: str) -> WorkUnit:
+    """A unit whose revision DECLARES several acceptance criteria, parked in `awaiting_review`.
+
+    `work_package_revisions` is append-only at the database, so the declared list cannot be widened
+    after registration -- a submission covering several criteria needs the list up front, or every
+    criterion but `ac-1` is `evidence_subject_invalid`.
+    """
+    unit = register_unit(session, key, acceptance_criteria=ac_ids)
+    unit.state = WorkUnitState.AWAITING_REVIEW
+    session.commit()
+    return unit
+
+
+def adjudications_for(session: Session, unit, ac_id: str) -> tuple[Adjudication, ...]:
+    return tuple(
+        session.scalars(
+            select(Adjudication).where(
+                Adjudication.work_unit_id == unit.id, Adjudication.ac_id == ac_id
+            )
+        )
+    )
+
+
+def test_two_criteria_are_adjudicated_in_one_submission(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    # AC-010. The bug: each criterion had its own form and its own expected_version fixed at page
+    # render, so submitting one staleness-broke the next. This recorded a wrong outcome on
+    # WS-P2.13 AC-002.
+    unit = register_multi_criterion_unit(migrated_session, "two-criteria", "ac-1", "ac-2")
+    add_criterion(migrated_session, unit, "ac-1", "human.review")
+    add_criterion(migrated_session, unit, "ac-2", "human.review")
+    migrated_session.commit()
+    version_before = unit.version
+
+    result = record_adjudications(
+        migrated_session,
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        decisions=(
+            AdjudicationDecision(ac_id="ac-1", outcome="passed", rationale="reviewed and met"),
+            AdjudicationDecision(
+                ac_id="ac-2", outcome="not_applicable", rationale="out of scope here"
+            ),
+        ),
+        idempotency_key="submission-two-criteria",
+        expected_version=version_before,
+    )
+
+    assert not isinstance(result, DomainError)
+    assert tuple(row.ac_id for row in result) == ("ac-1", "ac-2")
+
+    migrated_session.expire_all()
+    with Session(migrated_engine) as reader:
+        assert len(adjudications_for(reader, unit, "ac-1")) == 1
+        assert len(adjudications_for(reader, unit, "ac-2")) == 1
+        first = current_adjudication(reader, unit.work_package_revision_id, unit.id, "ac-1")
+        second = current_adjudication(reader, unit.work_package_revision_id, unit.id, "ac-2")
+        assert first is not None and first.outcome == "passed"
+        assert second is not None and second.outcome == "not_applicable"
+        # One act, one timestamp -- both criteria share the transaction's clock.
+        assert first.decided_at == second.decided_at
+        # THE VERSION POST-CONDITION. Recording adjudications does not touch `work_units.version`
+        # at all -- not once per submission, not once per criterion. One `expected_version` is
+        # therefore checked once and stays valid for every criterion of the submission.
+        reread_unit = reader.get(WorkUnit, unit.id)
+        assert reread_unit is not None and reread_unit.version == version_before
+
+
+def test_a_refused_criterion_writes_nothing_at_all(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    # AC-011. All-or-nothing, proved where it can actually break: the refusal is raised by the
+    # SECOND criterion, after the first has already been added and flushed. A per-criterion commit
+    # would leave `ac-1` behind -- a worse bug than the one this increment fixes.
+    unit = register_multi_criterion_unit(migrated_session, "refused-criterion", "ac-1", "ac-2")
+    add_criterion(migrated_session, unit, "ac-1", "human.review")
+    add_criterion(migrated_session, unit, "ac-2", "automated_test")
+    add_evidence(migrated_session, unit, "ac-2", "pytest", {"status": "pass"})
+    migrated_session.commit()
+    version_before = unit.version
+
+    result = record_adjudications(
+        migrated_session,
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        decisions=(
+            AdjudicationDecision(ac_id="ac-1", outcome="passed", rationale="reviewed and met"),
+            AdjudicationDecision(ac_id="ac-2", outcome="passed", rationale="looks green to me"),
+        ),
+        idempotency_key="submission-refused-criterion",
+        expected_version=version_before,
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "role_forbidden"
+
+    migrated_session.expire_all()
+    with Session(migrated_engine) as reader:
+        assert adjudications_for(reader, unit, "ac-1") == ()
+        assert adjudications_for(reader, unit, "ac-2") == ()
+        reread_unit = reader.get(WorkUnit, unit.id)
+        assert reread_unit is not None and reread_unit.version == version_before
+
+
+def test_a_stale_submission_is_refused_as_a_whole(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    # AC-011's other half: the unit changed since the page rendered. One expected_version guards
+    # the whole submission, so a stale one refuses every criterion, not the tail of them.
+    unit = register_multi_criterion_unit(migrated_session, "stale-submission", "ac-1", "ac-2")
+    add_criterion(migrated_session, unit, "ac-1", "human.review")
+    add_criterion(migrated_session, unit, "ac-2", "human.review")
+    migrated_session.commit()
+
+    result = record_adjudications(
+        migrated_session,
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        decisions=(
+            AdjudicationDecision(ac_id="ac-1", outcome="passed", rationale="reviewed and met"),
+            AdjudicationDecision(ac_id="ac-2", outcome="passed", rationale="reviewed and met"),
+        ),
+        idempotency_key="submission-stale",
+        expected_version=unit.version - 1,
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "version_conflict"
+
+    migrated_session.expire_all()
+    with Session(migrated_engine) as reader:
+        assert adjudications_for(reader, unit, "ac-1") == ()
+        assert adjudications_for(reader, unit, "ac-2") == ()
+
+
+def test_a_replayed_submission_returns_the_same_rows(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    # One key for the submission. Replay is all-or-nothing too: the same submission returns the
+    # same rows and writes nothing new.
+    unit = register_multi_criterion_unit(migrated_session, "replayed", "ac-1", "ac-2")
+    add_criterion(migrated_session, unit, "ac-1", "human.review")
+    add_criterion(migrated_session, unit, "ac-2", "human.review")
+    migrated_session.commit()
+    submission: dict[str, Any] = {
+        "work_package_revision_id": unit.work_package_revision_id,
+        "work_unit_id": unit.id,
+        "actor": ActorContext("human-1", ActorRole.HUMAN),
+        "decisions": (
+            AdjudicationDecision(ac_id="ac-1", outcome="passed", rationale="reviewed and met"),
+            AdjudicationDecision(ac_id="ac-2", outcome="passed", rationale="reviewed and met"),
+        ),
+        "idempotency_key": "submission-replayed",
+    }
+
+    first = record_adjudications(migrated_session, **cast(Any, submission))
+    replay = record_adjudications(migrated_session, **cast(Any, submission))
+
+    assert not isinstance(first, DomainError)
+    assert not isinstance(replay, DomainError)
+    assert tuple(row.id for row in replay) == tuple(row.id for row in first)
+
+    migrated_session.expire_all()
+    with Session(migrated_engine) as reader:
+        assert len(adjudications_for(reader, unit, "ac-1")) == 1
+        assert len(adjudications_for(reader, unit, "ac-2")) == 1
+
+
+def test_a_key_reused_for_a_different_submission_is_a_conflict(migrated_session: Session) -> None:
+    # What replay compares is the WHOLE submission, not one criterion's decision. Changing any
+    # criterion's outcome -- or dropping a criterion from the submission -- is a different act, and
+    # a key that already stands for a different act may not silently succeed on a subset.
+    unit = register_multi_criterion_unit(migrated_session, "reused-key", "ac-1", "ac-2")
+    add_criterion(migrated_session, unit, "ac-1", "human.review")
+    add_criterion(migrated_session, unit, "ac-2", "human.review")
+    migrated_session.commit()
+    submission: dict[str, Any] = {
+        "work_package_revision_id": unit.work_package_revision_id,
+        "work_unit_id": unit.id,
+        "actor": ActorContext("human-1", ActorRole.HUMAN),
+        "decisions": (
+            AdjudicationDecision(ac_id="ac-1", outcome="passed", rationale="reviewed and met"),
+            AdjudicationDecision(ac_id="ac-2", outcome="passed", rationale="reviewed and met"),
+        ),
+        "idempotency_key": "submission-reused-key",
+    }
+    first = record_adjudications(migrated_session, **cast(Any, submission))
+    assert not isinstance(first, DomainError)
+
+    changed_outcome = record_adjudications(
+        migrated_session,
+        **cast(
+            Any,
+            submission
+            | {
+                "decisions": (
+                    submission["decisions"][0],
+                    AdjudicationDecision(ac_id="ac-2", outcome="failed", rationale="not met"),
+                )
+            },
+        ),
+    )
+    dropped_criterion = record_adjudications(
+        migrated_session,
+        **cast(Any, submission | {"decisions": (submission["decisions"][0],)}),
+    )
+
+    assert isinstance(changed_outcome, DomainError)
+    assert changed_outcome.code == "idempotency_conflict"
+    assert isinstance(dropped_criterion, DomainError)
+    assert dropped_criterion.code == "idempotency_conflict"
+
+
+def test_an_empty_submission_is_refused(migrated_session: Session, ready_unit) -> None:
+    # AC-012's service-side floor: a form where the reviewer answered nothing is not a submission
+    # that records nothing, it is not a submission.
+    result = record_adjudications(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        decisions=(),
+        idempotency_key="submission-empty",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "adjudication_invalid"
+
+
+def test_a_criterion_may_not_appear_twice_in_one_submission(
+    migrated_session: Session, ready_unit
+) -> None:
+    # Two decisions for one criterion would chain into a supersession within a single act, which
+    # is not something the form can mean. Fail closed rather than pick one.
+    add_criterion(migrated_session, ready_unit, "ac-1", "human.review")
+
+    result = record_adjudications(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        decisions=(
+            AdjudicationDecision(ac_id="ac-1", outcome="passed", rationale="reviewed and met"),
+            AdjudicationDecision(ac_id="ac-1", outcome="failed", rationale="on reflection, no"),
+        ),
+        idempotency_key="submission-duplicate-ac",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "adjudication_invalid"
 
 
 def test_a_human_may_not_decide_a_criterion_the_machine_owns() -> None:

@@ -31,19 +31,29 @@ NOW = datetime(2026, 7, 5, tzinfo=UTC)
 APPROVAL_EVENT_ID = str(uuid.UUID(int=1))
 
 
-def register_test_revision(session: Session) -> WorkPackageRevision:
+def register_test_revision(
+    session: Session, *, acceptance_criteria: tuple[str, ...] = ("ac-1",)
+) -> WorkPackageRevision:
+    """The canonical single-criterion revision, or a revision declaring several criteria.
+
+    `work_package_revisions` is append-only at the database (`reject_append_only_mutation`), so a
+    test that needs more than one declared criterion must say so at registration -- the list cannot
+    be widened afterwards. A non-default list gets its own package id and content hash so it is a
+    genuinely different revision rather than a conflicting registration of the canonical one.
+    """
+    suffix = "" if acceptance_criteria == ("ac-1",) else "-" + "-".join(acceptance_criteria)
     return register_revision(
         session,
-        package_id="pkg-1",
+        package_id=f"pkg-1{suffix}",
         source_repository="owner/repo",
         revision=1,
-        content_hash="sha256:one",
+        content_hash=f"sha256:one{suffix}",
         source_path="intent.md",
         source_commit="abc123",
         approved_by="human-1",
         approved_at=NOW,
-        approval_event_id=APPROVAL_EVENT_ID,
-        enforcement_snapshot={"acceptance_criteria": ["ac-1"]},
+        approval_event_id=APPROVAL_EVENT_ID if not suffix else f"{APPROVAL_EVENT_ID}{suffix}",
+        enforcement_snapshot={"acceptance_criteria": list(acceptance_criteria)},
         authority=AUTHORITY,
         registry_version=1,
         actor_id="human-1",
