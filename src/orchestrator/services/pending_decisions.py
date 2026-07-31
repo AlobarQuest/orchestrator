@@ -29,6 +29,7 @@ from orchestrator.kernel.transitions import DESIGNED_HUMAN_GATES
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
     DecompositionProposal,
+    Evidence,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
@@ -39,9 +40,8 @@ from orchestrator.services.reconciliation import open_conditions
 from orchestrator.services.verifier_criteria import load_required_criteria
 from orchestrator.services.verifier_evaluators import human_may_adjudicate
 
-# A unit in one of these states is finished with people. FAILED is deliberately absent from the
-# concept but produces no entry of its own either -- see the module's known gap in the WS-P2.17
-# Increment 4 build report.
+# A unit in one of these states is finished with people. FAILED is not one of them: it is stopped
+# and nothing automatic will move it, which is precisely a decision waiting on someone.
 SETTLED_STATES = frozenset({WorkUnitState.COMPLETED, WorkUnitState.CANCELLED})
 
 # Ordered so the entries that block everything downstream come first.
@@ -50,6 +50,7 @@ KIND_ORDER = (
     "decomposition_proposal",
     "authority_approval",
     "unit_transition",
+    "failed_disposition",
     "criterion_adjudication",
     "reconciliation_condition",
 )
@@ -58,6 +59,7 @@ KIND_LABELS: dict[str, str] = {
     "decomposition_proposal": "Proposed breakdowns awaiting your decision",
     "authority_approval": "Authority envelopes awaiting your approval",
     "unit_transition": "Work units stopped at a gate",
+    "failed_disposition": "Failed work units awaiting a disposition",
     "criterion_adjudication": "Acceptance criteria awaiting your judgment",
     "reconciliation_condition": "Divergences between reality and stored state",
 }
@@ -90,12 +92,16 @@ def grouped_pending_decisions(session: Session) -> tuple[dict[str, Any], ...]:
 
 def adjudicable_criteria(
     session: Session, unit: WorkUnit, revision: WorkPackageRevision
-) -> tuple[tuple[PackageAcceptanceCriterion, bool], ...]:
+) -> tuple[tuple[PackageAcceptanceCriterion, bool, Evidence | None], ...]:
     """The criteria a human may be shown for this unit, each with whether they may decide it.
 
     The single source for that rule: the `/review` form renders these, and the queue counts the
     undecided ones among them. Two copies of "which criteria are a person's to decide" is the
     WS-P2.16 vocabulary-divergence shape, in a place where the divergence would be silent.
+
+    The criterion's current evidence is returned with it because the answer already depends on
+    that row -- the form renders it beside the decision, and reading it a second time there would
+    be both a repeated query and a second chance to disagree about which row is current.
 
     The criterion ids the verifier generates for its own post-release checks are excluded on the
     id alone -- they are verifier-owned, and public adjudication of them is refused.
@@ -104,18 +110,14 @@ def adjudicable_criteria(
         criteria = load_required_criteria(session, unit, revision)
     except DomainError:
         return ()
-    return tuple(
-        (
-            criterion,
-            human_may_adjudicate(
-                criterion.evidence_type,
-                current_evidence(session, revision.id, unit.id, criterion.ac_id),
-                unit.state,
-            ),
-        )
-        for criterion in criteria
-        if criterion.ac_id not in POST_DEPLOY_AC_IDS
-    )
+    rows = []
+    for criterion in criteria:
+        if criterion.ac_id in POST_DEPLOY_AC_IDS:
+            continue
+        evidence = current_evidence(session, revision.id, unit.id, criterion.ac_id)
+        may_decide = human_may_adjudicate(criterion.evidence_type, evidence, unit.state)
+        rows.append((criterion, may_decide, evidence))
+    return tuple(rows)
 
 
 def _entry(kind: str, subject: str, decision: str, detail: str, href: str) -> dict[str, Any]:
@@ -224,8 +226,36 @@ def _unit_decisions(session: Session) -> list[dict[str, Any]]:
                     href,
                 )
             )
+        if unit.state == str(WorkUnitState.FAILED):
+            entries.append(_failed_disposition(unit, href))
         entries.extend(_undecided_criteria(session, unit, href))
     return entries
+
+
+def _failed_disposition(unit: WorkUnit, href: str) -> dict[str, Any]:
+    """The disposition a failed unit needs, named for what this person can actually do.
+
+    `authorize_retry` is the only route back for a unit whose attempt budget is spent, and it
+    refuses `attempts_not_exhausted` for one that still has attempts left -- where the way back is
+    a requeue, which only SYSTEM may perform. Naming a retry in that case would send a person to a
+    form that refuses them, so the two cases read differently. Cancellation is always theirs.
+    """
+    attempts = f"It failed after {unit.attempt_count} of {unit.max_attempts} attempts."
+    if unit.attempt_count >= unit.max_attempts:
+        return _entry(
+            "failed_disposition",
+            unit.title,
+            "Authorize a retry with a raised attempt limit, or cancel this unit",
+            f"{attempts} Its attempt budget is spent, so running it again needs a raised limit.",
+            href,
+        )
+    return _entry(
+        "failed_disposition",
+        unit.title,
+        "Cancel this unit, or have the system requeue it",
+        f"{attempts} It has attempts left, so a requeue needs no raised limit.",
+        href,
+    )
 
 
 def _undecided_criteria(session: Session, unit: WorkUnit, href: str) -> list[dict[str, Any]]:
@@ -233,7 +263,7 @@ def _undecided_criteria(session: Session, unit: WorkUnit, href: str) -> list[dic
     if revision is None:
         return []
     entries = []
-    for criterion, may_decide in adjudicable_criteria(session, unit, revision):
+    for criterion, may_decide, _evidence in adjudicable_criteria(session, unit, revision):
         if not may_decide:
             continue
         if current_adjudication(session, revision.id, unit.id, criterion.ac_id) is not None:
