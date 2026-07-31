@@ -5,7 +5,8 @@ status: active
 purpose: Canonical work-unit lifecycle control plane for the software factory.
 version: 0.1.0
 version_source: pyproject
-updated: '2026-07-08'
+updated: '2026-07-31'
+delivery_profile: dependency-update
 foundation: true
 foundation_contract: 1
 applicable_standards:
