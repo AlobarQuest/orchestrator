@@ -1,3 +1,9 @@
+# LOCALLY OWNED (no code-standards managed block). NOT a decision — this is the
+# pre-WS-P2.24 template, skip-semantics and all, and it stopped receiving updates
+# because sync was all-or-nothing. Adopting the current template (`code-standards
+# adopt --file Makefile`) is the intended fix and is a behaviour change to this
+# repo's gate, so it belongs to a change that can verify it, not to the migration
+# that made it visible.
 # code-standards Makefile (vendored). Edit upstream and `code-standards sync`.
 # check: full-repo lint/type/test pass for humans and CI.
 #        diff-scoping is the hook's job — this runs everything.
