@@ -19,16 +19,42 @@ def test_the_policy_surface_reports_the_version_and_every_reach_row(db_client: T
 
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == 1
+    assert body["version"] == 2
     assert body["source"] == "factory-policy.toml"
     assert [row["member"] for row in body["reach"]] == sorted(REACH_VOCABULARY)
     assert all(row["rationale"] and row["decided"] for row in body["reach"])
 
 
+def test_the_policy_surface_serves_the_known_good_patterns_a_row_declares(
+    db_client: TestClient,
+) -> None:
+    # A `response_model` silently DROPS every key the service returns but the schema does not
+    # declare, so "the loader reads it" is never evidence "an operator can see it". This is the
+    # surface that answers whether the running image would recognise a given envelope.
+    body = db_client.get("/api/v1/factory-policy", headers=SYSTEM).json()
+    rows = {row["member"]: row for row in body["reach"]}
+
+    assert rows["live_estate"]["known_good"] == []
+    pattern = rows["source_repository"]["known_good"][0]
+    assert pattern["command_prefixes"] == ["uv add", "uv lock"]
+    assert pattern["change_class"] == "dependency-update"
+    assert pattern["rationale"] and pattern["decided"] and pattern["capabilities"]
+
+
 def test_the_policy_surface_carries_no_permission_of_any_kind(db_client: TestClient) -> None:
     # The artifact answers only in refusals. A field on this response that read as "allowed" would
-    # be the one shape that lets policy appear to outrank the hard off-switch.
+    # be the one shape that lets policy appear to outrank the hard off-switch. Walked to the
+    # LEAVES: schema 2 nests patterns inside rows, and a scan of the top level only would have
+    # stopped seeing the values it exists to check the moment that nesting appeared.
     body = db_client.get("/api/v1/factory-policy", headers=SYSTEM).json()
 
-    values = [body["version"], body["source"], *[v for row in body["reach"] for v in row.values()]]
-    assert not any(isinstance(value, bool) for value in values)
+    assert _leaves(body)  # the control: a walk that finds nothing proves nothing
+    assert not any(isinstance(value, bool) for value in _leaves(body))
+
+
+def _leaves(value: object) -> list[object]:
+    if isinstance(value, dict):
+        return [leaf for item in value.values() for leaf in _leaves(item)]
+    if isinstance(value, list):
+        return [leaf for item in value for leaf in _leaves(item)]
+    return [value]

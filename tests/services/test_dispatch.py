@@ -11,9 +11,9 @@ from sqlalchemy.orm import Session
 
 import orchestrator.services.dispatch as dispatch_module
 from orchestrator.factory_policy import load_factory_policy
-from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
+from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import DispatchRecord, Event
+from orchestrator.persistence.models import Approval, DispatchRecord, Event, WorkUnit
 from orchestrator.services.dispatch import (
     DispatchCommand,
     DispatchSettings,
@@ -31,6 +31,7 @@ from orchestrator.services.packages import (
     register_approved_unit,
     register_revision,
 )
+from tests.services.test_authority_known_good import uv_bump
 
 PILOT_REPOSITORY = "AlobarQuest/orchestrator"
 GREEN_CONFORMANCE: dict[str, object] = {
@@ -662,3 +663,245 @@ def test_signature_failure_count_is_scoped_to_the_unit_and_signature(
     migrated_session.commit()
 
     assert signature_failure_count(migrated_session, unit.id, signature) == 2
+
+
+# ---------------------------------------------------------------------------------------------
+# WS-P2.18 Increment 3: the human-authority requirement is conditional on policy (ADR-0011)
+# ---------------------------------------------------------------------------------------------
+
+
+def recognised_unit(
+    session: Session,
+    *,
+    key: str,
+    reach: list[str] | None = None,
+    **constraints: Any,
+):
+    """A READY unit that NOBODY approved, carrying the envelope the uv profile emits today.
+
+    Deliberately skips `record_approval`: the whole question below is what happens to a unit with
+    no human approval bound to it, and a helper that quietly recorded one would answer it wrongly
+    in the direction that looks like success.
+    """
+    unit_id = uuid.uuid4()
+    payload = uv_bump(unit_id, **constraints)
+    revision = register_revision(
+        session,
+        package_id=f"pkg-{key}",
+        source_repository="AlobarQuest/orchestrator",
+        revision=1,
+        content_hash=f"sha256:{key}",
+        source_path="intent.md",
+        source_commit="abc123",
+        approved_by=HUMAN.actor_id,
+        approved_at=NOW,
+        approval_event_id=str(uuid.uuid4()),
+        enforcement_snapshot={} if reach is None else {"reach": reach},
+        authority=AUTHORITY,
+        registry_version=1,
+        actor_id=HUMAN.actor_id,
+        actor_role=HUMAN.role,
+    )
+    unit = register_approved_unit(
+        session,
+        revision_id=revision.id,
+        unit_key=key,
+        title="Bump a pin",
+        outcome="Runner opens a PR",
+        required_capability="repo.edit",
+        authority=normalize_authority(payload),
+        authority_payload=payload,
+        unit_id=unit_id,
+        max_attempts=3,
+        approved_by=HUMAN.actor_id,
+        approved_at=NOW,
+        actor_id=HUMAN.actor_id,
+        actor_role=HUMAN.role,
+    )
+    transition_unit(
+        session,
+        TransitionCommand(
+            unit_id=unit.id,
+            target=WorkUnitState.READY,
+            actor=SYSTEM,
+            expected_version=1,
+            idempotency_key=f"{key}-ready",
+        ),
+    )
+    return unit
+
+
+def recognising_settings(**overrides: object) -> DispatchSettings:
+    return settings(
+        allowed_change_classes=frozenset({"dependency-update"}),
+        allowed_target_repositories=frozenset({"AlobarQuest/change-manager"}),
+        **overrides,
+    )
+
+
+def gate_events(session: Session, unit_id: uuid.UUID) -> list[Event]:
+    return list(
+        session.scalars(
+            select(Event).where(
+                Event.subject_id == unit_id,
+                Event.action == "authority.human_gate_not_required",
+            )
+        )
+    )
+
+
+def test_a_unit_nobody_approved_is_admitted_when_policy_recognises_its_envelope(
+    migrated_session: Session,
+) -> None:
+    unit = recognised_unit(migrated_session, key="recognised", reach=["source_repository"])
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session, dispatch_command(unit.id), recognising_settings(), github
+    )
+
+    assert unit.authority_approval_id is None
+    assert (record.status, record.reason_code) == ("dispatched", None)
+    assert len(github.calls) == 1
+
+
+def test_the_same_unit_is_refused_when_no_pattern_recognises_its_envelope(
+    migrated_session: Session,
+) -> None:
+    """The control for the test above, differing in ONE field of the envelope.
+
+    `uv sync --locked` is a command the shipped pattern does not declare -- and it is the command
+    the one envelope this factory has actually dispatched carried, so this is the historical shape
+    being flagged rather than an invented one.
+    """
+    unit = recognised_unit(
+        migrated_session,
+        key="novel",
+        reach=["source_repository"],
+        allowed_commands=["uv add --dev 'ruff>=0.15.21'", "uv sync --locked"],
+        mutation_commands=["uv add --dev 'ruff>=0.15.21'"],
+    )
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session, dispatch_command(unit.id), recognising_settings(), github
+    )
+
+    assert (record.status, record.reason_code) == ("blocked", "authority_approval_missing")
+    assert github.calls == []
+
+
+def test_a_unit_whose_package_declared_no_reach_still_needs_a_human(
+    migrated_session: Session,
+) -> None:
+    # The population as it stands: no authored package declares reach, so this is what every unit
+    # gets today. The failure mode is benign -- it is exactly the behaviour that existed before.
+    unit = recognised_unit(migrated_session, key="no-reach", reach=None)
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session, dispatch_command(unit.id), recognising_settings(), github
+    )
+
+    assert (record.status, record.reason_code) == ("blocked", "authority_approval_missing")
+    assert gate_events(migrated_session, unit.id) == []
+
+
+def test_a_lifted_gate_never_writes_an_approval_row(migrated_session: Session) -> None:
+    """§3.1, and the one constraint here that cannot be walked back later.
+
+    There is no standing human credential (ADR-0006) and the graduation ledger reasons over this
+    evidence, so a machine-written "human" approval would corrupt the record this whole ladder is
+    supposed to climb. Asserted directly on the table, not inferred from behaviour.
+    """
+    unit = recognised_unit(migrated_session, key="no-approval-row", reach=["source_repository"])
+
+    dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        recognising_settings(),
+        FakeGitHubDispatcher([]),
+    )
+    migrated_session.commit()
+
+    with Session(migrated_session.get_bind()) as reader:
+        approvals = list(reader.scalars(select(Approval).where(Approval.subject_id == unit.id)))
+        assert approvals == []
+        stored = reader.get(WorkUnit, unit.id)
+        assert stored is not None
+        assert stored.authority_approval_id is None
+
+
+def test_a_lifted_gate_leaves_a_record_that_is_not_an_approval(
+    migrated_session: Session,
+) -> None:
+    """§3.2. Increment 6 reads this, and it must never be confusable with a person's decision."""
+    unit = recognised_unit(migrated_session, key="suppression-record", reach=["source_repository"])
+
+    dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        recognising_settings(),
+        FakeGitHubDispatcher([]),
+    )
+    migrated_session.commit()
+
+    with Session(migrated_session.get_bind()) as reader:
+        events = gate_events(reader, unit.id)
+        assert len(events) == 1
+        payload = events[0].payload
+        assert payload["recognised_by"] == ["uv dependency pin bump into a named repository"]
+        assert payload["policy_version"] == load_factory_policy().version
+        assert payload["policy_source"] == "factory-policy.toml"
+        stored = reader.get(WorkUnit, unit.id)
+        assert stored is not None
+        assert payload["authority_fingerprint"] == stored.authority_fingerprint
+        # Attributed to the system actor that read the artifact, and saying the requirement did
+        # not apply -- never that somebody agreed to anything.
+        assert events[0].actor_id == SYSTEM.actor_id
+        assert "approv" not in events[0].action
+
+
+def test_a_unit_a_human_did_approve_records_no_suppression(migrated_session: Session) -> None:
+    # The record cites the patterns where they were USED. A unit carrying an approval passed the
+    # term on that approval, so citing policy for it would record a suppression that never
+    # happened -- and Increment 6 would count it.
+    unit = ready_unit(migrated_session, key="human-approved")
+
+    dispatch_work_unit(
+        migrated_session, dispatch_command(unit.id), settings(), FakeGitHubDispatcher([])
+    )
+
+    assert unit.authority_approval_id is not None
+    assert gate_events(migrated_session, unit.id) == []
+
+
+def test_the_off_switch_outranks_a_recognising_pattern(migrated_session: Session) -> None:
+    """R4, on the path Increment 3 opened. Both halves, so the claim is not vacuous.
+
+    The first half is that policy DOES recognise this envelope -- proven by dispatching the same
+    unit with the switch on. Without it, "nothing was admitted" would be satisfied by a unit no
+    pattern recognised in the first place.
+    """
+    unit = recognised_unit(migrated_session, key="switch-outranks", reach=["source_repository"])
+    github = FakeGitHubDispatcher([])
+
+    blocked = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id, attempt=1),
+        recognising_settings(enabled=False),
+        github,
+    )
+    admitted = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id, attempt=2),
+        recognising_settings(enabled=True),
+        github,
+    )
+
+    assert (blocked.status, blocked.reason_code) == ("skipped", "dispatch_disabled")
+    assert (admitted.status, admitted.reason_code) == ("dispatched", None)
+    assert len(github.calls) == 1
+    # The switch is the FIRST term, so the authority term was never reached and nothing claims it
+    # was: one dispatch, one suppression record.
+    assert len(gate_events(migrated_session, unit.id)) == 1
