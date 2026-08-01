@@ -522,6 +522,19 @@ def _load_intake_payload(
     }
     if protocol_fixture_only:
         verification_limitations["protocol_fixture_only"] = True
+    enforcement_snapshot: dict[str, Any] = {
+        "title": package["title"],
+        "outcome": package["outcome"],
+        "scope": package["scope"],
+        "dependencies": package["dependencies"],
+        "profile_fields": package.get("profile_fields"),
+        "applicable_standards": package["applicable_standards"],
+    }
+    # Carried only when the author declared it (WS-P2.18). A `reach: null` key would read as a
+    # declaration that reaches nothing, where the truth for every package authored before this
+    # field existed is that nobody said. Membership is validated at intake, not here.
+    if "reach" in package:
+        enforcement_snapshot["reach"] = package["reach"]
     return {
         "package_id": package["package_id"],
         "source_repository": source_repository,
@@ -538,14 +551,7 @@ def _load_intake_payload(
         "intake_purpose": intake_purpose,
         "verification_mode": "caller_attested_cli_verified",
         "verification_limitations": verification_limitations,
-        "enforcement_snapshot": {
-            "title": package["title"],
-            "outcome": package["outcome"],
-            "scope": package["scope"],
-            "dependencies": package["dependencies"],
-            "profile_fields": package.get("profile_fields"),
-            "applicable_standards": package["applicable_standards"],
-        },
+        "enforcement_snapshot": enforcement_snapshot,
         "authority": package["authority"],
         "follow_up": package.get("follow_up"),
         "registry_version": 1,

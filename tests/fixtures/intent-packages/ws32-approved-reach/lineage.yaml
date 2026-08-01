@@ -1,0 +1,22 @@
+package_id: ws32-approved-reach
+current_state: approved
+revisions:
+  - revision: 1
+    hash: 771a3ddeb2248bd7268b4c90ad05d875b01ecdda4d2c28c184b4ac0c0d7d502b
+    created_at: "2026-07-05T00:00:00Z"
+    author: test
+transitions:
+  - kind: transition
+    from: draft
+    to: approved
+    at: "2026-07-05T00:01:00Z"
+    actor: test
+    event_id: "11111111-1111-1111-1111-111111111111"
+approvals:
+  - revision: 1
+    approved_hash: 771a3ddeb2248bd7268b4c90ad05d875b01ecdda4d2c28c184b4ac0c0d7d502b
+    approver: devon
+    approved_at: "2026-07-05T00:02:00Z"
+    commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    event_id: "22222222-2222-2222-2222-222222222222"
+grants: []

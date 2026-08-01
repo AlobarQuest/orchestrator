@@ -87,6 +87,44 @@ def test_emit_payload_fails_on_unapproved_package(tmp_path: Path) -> None:
     assert not out.exists()
 
 
+def test_emit_payload_carries_a_declared_reach_into_the_enforcement_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # WS-P2.18: the snapshot is what the orchestrator holds from intake onwards, so a declaration
+    # that does not reach it is a declaration nothing can ever be keyed on.
+    _pass_verification(monkeypatch)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "emit-intake-payload",
+            "tests/fixtures/intent-packages/ws32-approved-reach",
+            "--source-repository",
+            "AlobarQuest/intent-packages",
+            "--idempotency-key",
+            "package-intake-reach",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    snapshot = json.loads(result.stdout)["enforcement_snapshot"]
+    assert snapshot["reach"] == ["live_estate", "source_repository"]
+
+
+def test_emit_payload_omits_reach_entirely_when_the_package_declares_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A `reach: null` key would read as "reaches nothing", the most permissive claim available,
+    # for exactly the packages nobody has ever classified.
+    _pass_verification(monkeypatch)
+
+    result = CliRunner().invoke(app, ["emit-intake-payload", *_BASE_ARGS, "--json"])
+
+    assert result.exit_code == 0
+    assert "reach" not in json.loads(result.stdout)["enforcement_snapshot"]
+
+
 def test_emit_payload_reports_write_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

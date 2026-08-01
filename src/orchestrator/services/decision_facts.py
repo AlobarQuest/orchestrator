@@ -20,6 +20,7 @@ from typing import Any
 
 from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
+from orchestrator.reach_vocabulary import reach_from_snapshot, reach_statement
 
 # What a change of each class costs to undo. Editorial prose, keyed by the `change_class` an
 # authority envelope declares; a class with no entry resolves to the explicit unknown rather than
@@ -90,7 +91,7 @@ def decision_facts_for_unit(
     envelope = normalize_authority(unit.authority)
     return {
         "does": _fact(_DOES_LABEL, True, unit.outcome),
-        "affects": _affects_from_envelope(envelope),
+        "affects": _affects(_declared_reach(revision), _affects_from_envelope(envelope)),
         "reversibility": _reversibility(envelope.change_class, _declared_rollback_plan(revision)),
     }
 
@@ -98,18 +99,45 @@ def decision_facts_for_unit(
 def decision_facts_for_revision(revision: WorkPackageRevision) -> dict[str, dict[str, Any]]:
     """The three facts for a package revision at intake.
 
-    "What it affects" is genuinely unanswerable here and says so: the package-level authority
-    block is a capability declaration (`allowed`/`requires_approval`/`prohibited`), and the
-    target repository is chosen per unit when the package is broken up.
+    The envelope's half of "what it affects" is genuinely unanswerable here and says so: the
+    package-level authority block is a capability declaration
+    (`allowed`/`requires_approval`/`prohibited`), and the target repository is chosen per unit
+    when the package is broken up. The DECLARED half is answerable, and this is the gate it
+    matters most at -- the reach a package author declared is known before a single unit exists.
     """
     outcome = _package_outcome(revision)
     return {
         "does": _fact(_DOES_LABEL, outcome is not None, outcome or _UNKNOWN_OUTCOME),
-        "affects": _fact(_AFFECTS_LABEL, False, _UNKNOWN_AFFECTS_AT_INTAKE),
+        "affects": _affects(
+            _declared_reach(revision),
+            _fact(_AFFECTS_LABEL, False, _UNKNOWN_AFFECTS_AT_INTAKE),
+        ),
         # No change class exists here -- the package-level authority block is a capability
         # declaration, not an envelope -- so intake is answerable only from the declared plan.
         "reversibility": _reversibility(None, _declared_rollback_plan(revision)),
     }
+
+
+def _affects(reach: str | None, from_envelope: dict[str, Any]) -> dict[str, Any]:
+    """The declared reach first, then whatever the envelope says, as one fact.
+
+    The two are answers to the same question at different resolutions, and neither replaces the
+    other. Reach is a closed classification the author committed to and policy can be keyed on;
+    the envelope's half is the specifics, read back in the author's own words. Leading with the
+    classification is deliberate: it is the sentence that survives being skimmed.
+
+    Reach alone makes this fact KNOWN. At intake that is the whole change -- the envelope half is
+    an explicit unknown there, and a package that declared its reach has answered the question
+    even though no unit exists yet.
+    """
+    if reach is None:
+        return from_envelope
+    detail = f"{reach}. {from_envelope['detail']}" if from_envelope["known"] else f"{reach}."
+    return _fact(_AFFECTS_LABEL, True, detail)
+
+
+def _declared_reach(revision: WorkPackageRevision) -> str | None:
+    return reach_statement(reach_from_snapshot(revision.enforcement_snapshot))
 
 
 def _declared_rollback_plan(revision: WorkPackageRevision) -> str | None:
