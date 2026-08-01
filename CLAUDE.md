@@ -1066,7 +1066,23 @@ style of that module.
   `make check`" per repo; followed literally here it would have deleted the previous day's work, and
   only the build session noticing the ten-file `pairs` list prevented it.
 
-  **The unblock is upstream, not local:** code-standards needs a per-repo "locally owned vendored
-  file" declaration so a repo can keep its own `quality.yml` while still receiving Makefile updates.
-  Until that exists, treat `code-standards sync` as prohibited in these three repos — and note that
-  hand-copying only the Makefile is the correct manual substitute.
+  **The hazard here is EXACTLY ONE FILE, and the rest is safe** — classified 2026-08-01 by diffing
+  all nine verbatim-vendored files (sync writes 9 copied + 3 generated/merged, and only those a
+  repo's declared languages call for). Of the two that differ in this repo:
+  - `Makefile` — **pure drift, safe to overwrite.** Its entire local content is one character:
+    `export PATH :=` versus `PATH :=`, and the template adopted `export` upstream. Nothing to
+    preserve.
+  - `.github/workflows/quality.yml` — **local ownership, never re-vendor.** 177 lines of divergence;
+    structurally a different file, with no stale template content left in it to refresh.
+
+  So **hand-copying the Makefile is safe today**; it is `quality.yml` alone that must never be
+  replaced. Do not let the blanket prohibition above be read as "this repo cannot track the
+  template" — it can, minus one file.
+
+  **The upstream unblock:** code-standards needs a per-repo "locally owned vendored file"
+  declaration that `sync` honours. Its full known consumer set is **five files across four repos** —
+  this repo's `quality.yml`, `security-standards`' Makefile wrapper (a `PYBIN` block that refuses a
+  Python without `tomllib`, plus five local targets including the `make ownership` the global
+  CLAUDE.md references), `infraops-mcp-server`'s `eslint.config.mjs` and `.shellcheckrc` (both
+  carrying written rationales; overwriting them costs 89 findings), and code-standards' own Makefile.
+  Tracked as a P1 in `~/Developer/code-standards`.
