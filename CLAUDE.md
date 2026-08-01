@@ -1146,3 +1146,107 @@ style of that module.
   joined the same model), including `brain`'s Makefile, which had hand-rolled the block mechanism in
   a comment, and **four repos carrying a byte-identical stale `quality.yml` that nobody had chosen
   to own** — file-level ownership would have frozen all four in place and called it a decision.
+
+- **`reach` is a DECLARED SET of what work touches when it runs — not a severity, not a change
+  class, and not where the work executes.** WS-P2.18 Inc 1, ADR-0009,
+  `src/orchestrator/reach_vocabulary.py`. Four members: `source_repository` (writes land in a git
+  repo and nothing outside it changes until something separately acts on the result),
+  `live_estate` (something already serving changes — hosted app or its DB, the VPS, DNS, **the
+  orchestrator itself**), `external_system` (a system of record this estate does not run and cannot
+  put back on its own), `operator_machine` (runs on, or writes to, Devon's machine). Four properties
+  that are each load-bearing: it is **declared by the package author, never inferred** (R8 — an
+  inferred value trades a loud failure for a quiet one); it is a **set**, because real work touches
+  more than one thing (5 of 24 packages need two members, and `~/.claude` packages are both
+  `source_repository` and `operator_machine` — the repository IS the machine); composition is
+  **intersection-of-permission**, so adding a member can only ever NARROW; and **absence is
+  `unknown`, never "reaches nothing."** There is deliberately **no `orchestrator_self` member** —
+  the orchestrator is `live_estate`, and self-update keys on reach **plus a second dimension**.
+  **`reach_from_snapshot()` is the single reader; do not read the snapshot yourself.**
+  **Execution locus is a DIFFERENT dimension and is currently unmodelled.** `local-heavy` in
+  `routing-policy.toml` (which lives in `intent-packages`, not here) describes where work *executes*;
+  reach describes what it *touches*. A job can execute on a CI runner and touch Devon's machine, or
+  execute locally and touch only a repo. Do not conflate them or smuggle one into the other.
+
+- **`reach_from_snapshot()` was FAIL-OPEN for its first increment, and the test that should have
+  caught it asserted the right intent in prose while checking only the case that passes trivially.**
+  It did not return `None` for unrecognised shapes — it **filtered unknown members out**, so
+  `["source_repository", "invented"]` read as *"touches a repository and nothing else."* Increment
+  1's report asserted the fail-closed behaviour, HQ repeated it into Increment 2's handoff, and
+  Increment 2 found the truth by reading the code. Fixed there, with a discriminating test.
+  **The general lesson is the transmission vector, not the bug: every build report in this
+  programme is written by a session that verified its OWN work and restated its predecessor's from
+  prose.** Four inherited-claim errors have now occurred at increment boundaries in one workstream
+  (`is_expansion`-era guard claims, "14 of 24", the `None` fallback, "the consumer, singular").
+  When a handoff or report states a behaviour, `grep` it before building on it — including when HQ
+  wrote it.
+
+- **NO authored package declares `reach` — it is 0 of 24, not "14 of 24" as an earlier report
+  said** (verified 2026-08-01 by grep across `intent-packages/packages/*/package.yaml`).
+  Two consequences that pull in opposite directions. (1) The WS-P2.18 Inc 3 known-good mechanism is
+  **inert and therefore safe**: it recognises nothing, so the authority gate fires exactly as it did
+  before, and switching it on costs one `reach:` line in one package. (2) When WS-P2.18 Inc 4 binds
+  refusals into *admission*, `reach_undeclared` refuses **the entire population**, not a legacy
+  subset — so Inc 4 is a factory-halting change unless it ships an answer for undeclared reach.
+  Note the information already exists: Inc 1's census (`tests/fixtures/reach_census.json`) classified
+  all 24 packages from their own declared `profile` / `profile_fields` / `outcome.what` /
+  `deliverables`. The open question is therefore not *"where would reach come from"* but *"is a
+  derivation trustworthy enough to admit work on"* — which R8 answers `no` for new packages and
+  leaves open for grandfathering existing ones.
+
+- **`factory-policy.toml` can only ever REFUSE, and that is a structural guarantee, not a
+  convention.** WS-P2.18 Inc 2, ADR-0010. `refusals_for(reach)` returns why policy objects; empty
+  means *no objection*, which is **weaker than "go ahead"** — permission is the conjunction of every
+  admission term, and the hard off-switch (`ORCHESTRATOR_DISPATCH_ENABLED`) is one of them.
+  **No value in the schema permits anything and `factory_policy.py` imports nothing from config, so
+  policy cannot see the off-switch and nothing written in the artifact can widen what it allows.**
+  Do not add a permission field to "simplify" a later increment: WS-P2.18 Inc 3 wanted exactly that
+  (a known-good pattern is inherently permissive) and expressed it instead as a **withheld
+  refusal** — every envelope draws `authority_envelope_novel`, and a declared pattern withholds that
+  objection. **Total coverage** pins the artifact to `REACH_VOCABULARY`: exactly one row per member,
+  and a new member with no row **stops the document loading** — a document that does not load
+  permits nothing. `SUPPORTED_SCHEMA_VERSIONS` is an **exact set, not a floor**. The editing
+  contract is in the file's own header: a new field is an additive version bump made *only in the
+  same commit that teaches the loader and ships the code reading it*, because a field with no
+  consumer is a second copy of a value that still lives somewhere else.
+
+- **Changing policy costs a release, and a release restarts the orchestrator — the artifact is read
+  per call but its bytes arrive with the image.** WS-P2.18 Inc 2 separated two things that read as
+  one: *getting new bytes to the process* (a release) and *making the process notice bytes it has*
+  (free — `factory-policy.toml` is re-read per call, never cached). Only the second was decidable at
+  that increment, and it is the half that cannot be retrofitted. **Operational rule: change policy
+  only when no run is live** — the Actions run concluded, the unit out of `executing`, cost-actuals
+  recorded. This is the same rule closing a bounded window already imposes, and for the same reason:
+  the runner calls back at the *end* of its run, `fail-run` fails the same way `finalize-run` does,
+  and a restart in that window strands the unit with its attempt spent.
+
+- **An unhashable value in a membership test is an unhandled HTTP 500, not a validation error.**
+  Found reviewing WS-P2.18 Inc 3's own diff: a reach member that is not hashable made the
+  membership check raise `TypeError`, and since only `DomainError` and `APIAuthenticationError` have
+  registered handlers (`main.py`), it surfaced as a bare 500 from the human gate. Pre-existing, now
+  guarded. This is the same class as the WS-P2.3 findings — **any route-reachable parse or
+  membership test must raise `DomainError`, never let the stdlib raise** — and it generalises: when
+  validating a value of unknown shape, `in`/`set()`/`dict[...]` are as dangerous as
+  `uuid.UUID(bad)`.
+
+- **83% of this repo's test runtime is per-test schema rebuild, and no test runs in parallel.**
+  Measured 2026-08-01: `migrated_engine` (`tests/services/conftest.py`, re-exported by
+  `tests/persistence`, `tests/api` and `tests/web`) is **function-scoped** and does
+  `DROP SCHEMA public CASCADE` → `CREATE SCHEMA` → **a full `alembic upgrade head` over 21
+  migrations** for every test that requests it. One rebuild is **0.554s**; **305 test functions**
+  take it, which is **169s of a 203s local suite** (~620s of ~750s in CI). Separately,
+  `pytest-xdist` is a declared dev dependency that is **never invoked** — there is no `addopts`, so
+  nothing is parallel locally or in CI. The fix is a session-scoped schema plus a fast per-test
+  reset, and the reset must be **`TRUNCATE ... RESTART IDENTITY CASCADE`, not transaction
+  rollback**: services commit internally by design, and a persistence assertion must re-read through
+  a DIFFERENT session, neither of which survives being wrapped in an outer transaction. Only after
+  that is xdist safe, keyed per worker (`orchestrator_test_gw0…`), because the fixtures drop and
+  recreate the database and two suites must never share it.
+
+- **`coolify` is a forbidden runtime string literal in `src/orchestrator/`, in addition to the
+  `dispatch` / `deploy` / `merges` tokens documented above.** WS-P2.18 Inc 1 reddened both
+  `test_ws32_scope_guards` and `test_ws34_scope_guards` on the phrase "a Coolify application or
+  database" in a **description string**. The full ws32 forbidden sequence list is `factory-event/v1`,
+  `merge_pull_request`, `workflow_dispatch`, `factory-runner`, `production mutation`, `auto_merge`,
+  `productionmutation`, `coolify`, `dispatch`, `deploy`; ws34 adds `gh pr merge`,
+  `git push origin main`, `merge_to_main`. Compounds tokenize, so `post-deploy` matches `deploy`.
+  **Reword; never add an allowlist entry.**
