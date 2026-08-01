@@ -115,6 +115,61 @@ def test_a_malformed_declaration_is_rejected_at_the_gate(migrated_session: Sessi
     assert caught.value.code == "follow_up_invalid"
 
 
+def _snapshot_with(**extra: object) -> dict[str, object]:
+    return {**intake_command().enforcement_snapshot, **extra}
+
+
+def test_intake_persists_a_declared_reach_normalized(migrated_engine: Engine) -> None:
+    # Re-read through a DIFFERENT session: the only reader that cannot see an uncommitted write.
+    with Session(migrated_engine) as session:
+        revision = register_package_intake(
+            session,
+            intake_command(
+                package_id="pkg-reach",
+                content_hash="sha256:reach",
+                idempotency_key="package-intake-reach",
+                # Declared in the author's order; stored sorted, so two packages that reach the
+                # same places read identically at the gate.
+                enforcement_snapshot=_snapshot_with(reach=["source_repository", "live_estate"]),
+            ),
+            human_actor(),
+        )
+        session.commit()
+        revision_id = revision.id
+
+    with Session(migrated_engine) as reader:
+        reread = reader.get(WorkPackageRevision, revision_id)
+
+        assert reread is not None
+        assert reread.enforcement_snapshot["reach"] == ["live_estate", "source_repository"]
+
+
+def test_intake_without_a_reach_declaration_stores_no_reach_key(migrated_engine: Engine) -> None:
+    with Session(migrated_engine) as session:
+        revision = register_package_intake(
+            session,
+            intake_command(package_id="pkg-no-reach", content_hash="sha256:no-reach"),
+            human_actor(),
+        )
+        session.commit()
+        revision_id = revision.id
+
+    with Session(migrated_engine) as reader:
+        reread = reader.get(WorkPackageRevision, revision_id)
+
+        assert reread is not None
+        assert "reach" not in reread.enforcement_snapshot
+
+
+def test_an_unrecognised_reach_value_is_rejected_at_the_gate(migrated_session: Session) -> None:
+    command = intake_command(enforcement_snapshot=_snapshot_with(reach=["everywhere"]))
+
+    with pytest.raises(DomainError) as caught:
+        register_package_intake(migrated_session, command, human_actor())
+
+    assert caught.value.code == "reach_invalid"
+
+
 def test_a_pre_wsp28_intake_event_still_replays(migrated_session: Session) -> None:
     """An intake event written before the follow_up field existed must not become a conflict.
 

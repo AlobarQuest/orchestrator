@@ -1,0 +1,151 @@
+{
+  "taken": "2026-08-01",
+  "source": "AlobarQuest/intent-packages packages/ -- the complete authored population",
+  "note": "The reach column is a classification made from each package's own declared fields (profile, profile_fields, outcome.what, deliverables.destination/artifacts), recorded so the vocabulary is validated against the population rather than against examples. WS-P2.18 Increment 1, ADR-0009.",
+  "packages": [
+    {
+      "package_id": "conformance-claim-helper",
+      "profile": "software-delivery",
+      "reach": ["source_repository"],
+      "evidence": "repo AlobarQuest/orchestrator, release target null; a local-only helper module."
+    },
+    {
+      "package_id": "drill-2026-07-27-production-recovery",
+      "profile": "infrastructure-change",
+      "reach": ["live_estate"],
+      "evidence": "the five recovery drills executed against the running production orchestrator, including container restarts."
+    },
+    {
+      "package_id": "gap4-first-real-dispatch",
+      "profile": null,
+      "reach": ["source_repository"],
+      "evidence": "one runner-opened pull request against AlobarQuest/change-manager updating uv.lock only."
+    },
+    {
+      "package_id": "orchestrator-production-deploy",
+      "profile": "infrastructure-change",
+      "reach": ["live_estate"],
+      "evidence": "stands up sds.alobar.net with production PostgreSQL, health checks and forward-auth."
+    },
+    {
+      "package_id": "pre-phase4-foundation-cleanliness",
+      "profile": "software-delivery",
+      "reach": ["source_repository"],
+      "evidence": "repo AlobarQuest/foundation-and-phase3-addons, release target null."
+    },
+    {
+      "package_id": "ws-2.2-domain-profiles",
+      "profile": null,
+      "reach": ["source_repository"],
+      "evidence": "destination: the intent-packages repo (a profiles module plus example packages)."
+    },
+    {
+      "package_id": "ws-2.3-intent-authoring-skill",
+      "profile": null,
+      "reach": ["operator_machine", "source_repository"],
+      "evidence": "destination names the claude-control-plane repo, and the artifacts are ~/.claude/skills/project-initiation files -- that repository IS the operator's agent configuration."
+    },
+    {
+      "package_id": "ws-2.3-intent-authoring-skill-v2",
+      "profile": "software-delivery",
+      "reach": ["operator_machine", "source_repository"],
+      "evidence": "repo claude-control-plane, release target null: landing the commit is the change to the operator's machine, with no release step between."
+    },
+    {
+      "package_id": "ws-2.4-brain-approver-gate",
+      "profile": "software-delivery",
+      "reach": ["live_estate", "source_repository"],
+      "evidence": "repo brain; the only non-null release target in the population -- four Coolify MCP services redeploy on a shared-core change."
+    },
+    {
+      "package_id": "ws-2.4-ci-evidence-control",
+      "profile": "software-delivery",
+      "reach": ["source_repository"],
+      "evidence": "repo intent-packages, release target null."
+    },
+    {
+      "package_id": "ws-2.4-historical-listing-launch",
+      "profile": null,
+      "reach": ["operator_machine", "source_repository"],
+      "evidence": "destination: a LOCAL listing-launch-pilot git repository; the outcome states explicitly that nothing is published and no production system is mutated."
+    },
+    {
+      "package_id": "ws-3.1-orchestrator-core",
+      "profile": "software-delivery",
+      "reach": ["source_repository"],
+      "evidence": "repo AlobarQuest/orchestrator, release target null."
+    },
+    {
+      "package_id": "ws-3.2-package-intake-decomposition",
+      "profile": "software-delivery",
+      "reach": ["source_repository"],
+      "evidence": "repo AlobarQuest/orchestrator, release target null."
+    },
+    {
+      "package_id": "ws-3.3-protocol-smoke-runtime-semantics",
+      "profile": "software-delivery",
+      "reach": ["source_repository"],
+      "evidence": "repo AlobarQuest/orchestrator, release target null."
+    },
+    {
+      "package_id": "ws-3.4-evidence-events",
+      "profile": "software-delivery",
+      "reach": ["source_repository"],
+      "evidence": "repo AlobarQuest/orchestrator, release target null."
+    },
+    {
+      "package_id": "ws-6.4-dependency-update-fanout",
+      "profile": null,
+      "reach": ["source_repository"],
+      "evidence": "one runner-opened pull request against AlobarQuest/intent-packages moving a pinned dependency."
+    },
+    {
+      "package_id": "ws-p2.1-recovery-controls-drills",
+      "profile": "software-delivery",
+      "reach": ["source_repository"],
+      "evidence": "repo AlobarQuest/orchestrator, release target null."
+    },
+    {
+      "package_id": "ws-p2.15-fail-closed-lifecycle-guards",
+      "profile": "software-delivery",
+      "reach": ["source_repository"],
+      "evidence": "repo AlobarQuest/orchestrator, release target null."
+    },
+    {
+      "package_id": "wsp211-conformance-kit",
+      "profile": "software-delivery",
+      "reach": ["source_repository"],
+      "evidence": "repo AlobarQuest/project-standards, release target null."
+    },
+    {
+      "package_id": "wsp211-docs-canary",
+      "profile": "maintenance-remediation",
+      "reach": ["source_repository"],
+      "evidence": "repo AlobarQuest/change-manager; a runner-opened pull request adding one documentation file."
+    },
+    {
+      "package_id": "wsp213-bws-machine-token-rotation",
+      "profile": "non-software-operational",
+      "reach": ["external_system", "operator_machine"],
+      "evidence": "external_systems declares the Bitwarden Secrets Manager console, the macOS login Keychain, and the five launchd jobs that consume the token."
+    },
+    {
+      "package_id": "wsp221-orchestrator-certification",
+      "profile": "dependency-update",
+      "reach": ["source_repository"],
+      "evidence": "target repo AlobarQuest/orchestrator; one pin site plus a regenerated lockfile, delivered as a pull request."
+    },
+    {
+      "package_id": "wsp28-production-deploy",
+      "profile": "infrastructure-change",
+      "reach": ["live_estate"],
+      "evidence": "the production orchestrator at sds.alobar.net moves to a new image at a new migration head."
+    },
+    {
+      "package_id": "wsp29-production-drive",
+      "profile": "dependency-update",
+      "reach": ["source_repository"],
+      "evidence": "target repo AlobarQuest/change-manager; a declared floor moves, delivered as a pull request."
+    }
+  ]
+}

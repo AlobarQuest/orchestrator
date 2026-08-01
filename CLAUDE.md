@@ -162,6 +162,16 @@ style of that module.
   may not say the word for the gate it serves, and must reach for a synonym.
   Verified empirically 2026-07-12 (`conformance_claim.py` reddened the guard on
   its module docstring alone).
+  **The forbidden list is NOT just `dispatch`/`deploy`/`merges` — read it, don't
+  recall it.** `FORBIDDEN_SEQUENCES` (`test_ws32_scope_guards.py`) is
+  `factory-event/v1`, `merge_pull_request`, `workflow_dispatch`, `factory-runner`,
+  `production mutation`, `auto_merge`, `productionmutation`, **`coolify`**,
+  `dispatch`, `deploy`; `test_ws34_scope_guards.py` independently forbids
+  **`coolify`**, `gh pr merge`, `git push origin main`, `merge_to_main`; ws33 adds
+  `merges`. `coolify` is the one that surprises, because naming the platform is
+  the natural way to describe estate-facing work in prose — WS-P2.18 Inc 1 wrote
+  "a Coolify application or database" in a vocabulary description and reddened
+  **two** guards. Say "a hosted application" instead.
 - The **envelope contract and the workflow contract are different contracts.**
   WS-6.4.0's shared-fixture test validates the authority envelope across both
   repos and never executes the workflow. Two independent workflow bugs shipped

@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
+from orchestrator.reach_vocabulary import REACH_VOCABULARY
 from orchestrator.services.decision_facts import (
     REVERSIBILITY_BY_CHANGE_CLASS,
     decision_facts_for_revision,
@@ -331,3 +332,54 @@ def test_every_fact_is_rendered_with_the_same_shape(migrated_session: Session) -
             assert set(fact) == {"label", "known", "detail"}
             assert isinstance(fact["known"], bool)
             assert fact["label"] and fact["detail"]
+
+
+def test_a_declared_reach_answers_what_it_affects_before_any_unit_exists(
+    migrated_session: Session,
+) -> None:
+    # The intake gate's "what it affects" was previously ALWAYS unknown -- no unit exists, so no
+    # target repository has been chosen. A package that declared its reach has already answered.
+    revision, _unit = _build_unit(
+        migrated_session,
+        "facts-reach-intake",
+        enforcement={"acceptance_criteria": ["ac-1"], "reach": ["live_estate"]},
+    )
+
+    facts = decision_facts_for_revision(revision)
+
+    assert facts["affects"]["known"] is True
+    assert REACH_VOCABULARY["live_estate"] in facts["affects"]["detail"]
+
+
+def test_a_unit_leads_with_its_declared_reach_and_keeps_the_envelope_specifics(
+    migrated_session: Session,
+) -> None:
+    # Reach does not replace the envelope read-back: they are the same question at different
+    # resolutions, and the classification leads because it is what survives being skimmed.
+    revision, unit = _build_unit(
+        migrated_session,
+        "facts-reach-unit",
+        enforcement={
+            "acceptance_criteria": ["ac-1"],
+            "reach": ["source_repository", "live_estate"],
+        },
+    )
+    unit.authority = TARGETED_AUTHORITY.normalized()
+
+    detail = decision_facts_for_unit(unit, revision)["affects"]["detail"]
+
+    assert detail.startswith("This work reaches ")
+    assert REACH_VOCABULARY["live_estate"] in detail
+    assert "AlobarQuest/change-manager" in detail
+
+
+def test_a_package_that_declared_no_reach_reads_exactly_as_it_did_before(
+    migrated_session: Session,
+) -> None:
+    # 14 packages predate the field and can never be edited. Absence must keep rendering the
+    # explicit unknown, never a permissive "reaches nothing".
+    revision, unit = _build_unit(migrated_session, "facts-reach-absent")
+    unit.authority = OPERATIONAL_AUTHORITY.normalized()
+
+    assert decision_facts_for_revision(revision)["affects"]["known"] is False
+    assert "This work reaches" not in decision_facts_for_unit(unit, revision)["affects"]["detail"]
