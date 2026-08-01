@@ -1051,17 +1051,25 @@ style of that module.
   (code-standards ADR-0008): each vendored file wraps the canonical content in
   `code-standards:managed:start`/`:end` markers, sync replaces the block and preserves everything
   around it, and **a file with no markers is locally owned, is never written, and is REPORTED on
-  every sync**. This repo's `quality.yml`, `Makefile` and `.github/dependabot.yml` carry no markers
-  and each says so in a header comment. Proven here, not assumed: a full `sync` on 2026-08-01 left
+  every sync**. This repo's `quality.yml` and `.github/dependabot.yml` carry no markers and each says
+  so in a header comment; the `Makefile` now DOES carry a managed block (see below). Proven here,
+  not assumed: a full `sync` on 2026-08-01 left
   `quality.yml` byte-identical (sha `6403063119dce3fd` before and after) with the brief-compatibility
   job present, and printed a `LOCAL:` line for all three. **Before trusting any sync, run
   `code-standards sync --dry-run` — it reports, per file, exactly what sync would do, from the same
   classifier sync uses.**
 
-  Two consequences specific to this repo. (1) The `Makefile` is `local` because it is the
-  **pre-WS-P2.24 template** — skip-semantics, no refusal on a missing tool — not because anyone
-  chose to own it. `code-standards adopt --file Makefile` is the supported way to take the current
-  template; it is a real behaviour change to the gate and belongs to a change that can verify it.
+  Two consequences specific to this repo. (1) **RESOLVED 2026-08-01 (PR #113): the `Makefile` was
+  `local` only because it was the pre-WS-P2.24 template — skip-semantics, no refusal on a missing
+  tool — not because anyone chose to own it. It has been adopted; the gate now REFUSES.** Adoption
+  was a measured no-op (rc=0, 1883 collected, 1882 passed, zero `skipping` lines, before and after);
+  what changed is the failure mode. **Proving that required a control with BOTH conditions, and
+  neither alone discriminates here:** `ruff`, `pyright` and `pytest` are all on this machine's
+  **global** PATH (`~/.local/bin`, homebrew), so removing `.venv` leaves `command -v` succeeding;
+  and the Makefile re-prepends `$(CURDIR)/.venv/bin`, so a scrubbed PATH alone is undone. A tree with
+  **no `.venv`** under **`env PATH=/usr/bin:/bin`** gives the real differential — old: rc=0 with four
+  `skipping` lines; new: rc=2, `make check: ruff not found`. The global-PATH half is specific to this
+  machine and is the easier one to miss.
   (2) `.shellcheckrc` was absent and sync created it, so `make check` now runs shellcheck here.
   Verified clean under the Makefile's actual invocation (`find . … -exec shellcheck {} +`, all files
   in one call, relative paths from the repo root) with a positive control proving the sweep fires.
@@ -1069,6 +1077,21 @@ style of that module.
   conditions of use.
 
   **The rest of this bullet is the pre-WS-P2.25 record. It explains why the mechanism exists.**
+
+- **Dependabot's `pip` ecosystem does not update `uv.lock` — a repo that locks with uv and declares
+  `pip` gets a feed of PRs that are unmergeable from birth, and nothing reports it.** Under `pip`,
+  Dependabot edits `pyproject.toml` alone; `uv sync --frozen` then fails on the stale lockfile and
+  CI reds. The signature is a *repeated* bump of the same pin: this repo's #46, #61 and #74 are
+  three proposals to move the same `ruff` pin off `0.15.20`, none landed, and the pin was still
+  `0.15.20` when PR #113 switched the ecosystem to `uv` on 2026-08-01. **Read a stack of
+  same-version dependabot PRs as a broken producer, not as a busy one.** Eight repos in the estate
+  already declared `uv`; `code-standards`' generator keys this on the dependency **manifest**
+  (`uv.lock` → `uv`, else `pyproject.toml`/`requirements*.txt` → `pip`) since WS-P2.25, but this
+  repo's `dependabot.yml` is locally owned — it also tracks github-actions and docker — so `sync`
+  could not reach it. A locally-owned file does not receive that fix; check it by hand.
+  `pip` remains correct for a repo that genuinely uses `requirements.txt` (`brain`, `Contacts`) —
+  the defect is the mismatch, not the word `pip`. This one matters beyond hygiene: Dependabot is the
+  input source the SDS was built to consume, so the factory's intended feed was broken at the source.
 
 - **[SUPERSEDED 2026-08-01 — see the bullet above] DO NOT run `code-standards sync` in this repo. It
   re-vendors TEN files, including
