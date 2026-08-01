@@ -1045,3 +1045,28 @@ style of that module.
   refuse", and that was false for two of them. The `/review` page hides those two anyway, which is
   the one place it is deliberately narrower than the service; the justification is inertness, not
   refusal, and it is the increment's single judgment call.
+
+- **DO NOT run `code-standards sync` in this repo. It re-vendors TEN files, including
+  `.github/workflows/quality.yml`, and would destroy this repo's CI.** Verified 2026-08-01 against
+  `code_standards/initrepo.py:99-106`: the `pairs` list vendors the TS configs, `.shellcheckrc`,
+  `.editorconfig`, `Makefile`, `.pre-commit-config.yaml` **and
+  `.github/workflows/quality.yml`**. It is not a Makefile-only operation, and its own template header
+  ("Edit upstream and `code-standards sync`") reads as though it were.
+
+  This repo's `quality.yml` carries content that exists nowhere else and that a sync would silently
+  replace with the generic template: the **WS-P2.23 "Runner brief compatibility" job** (the build gate
+  that makes runner/orchestrator drift unshippable — the entire deliverable of that workstream), the
+  **`postgres:16-alpine` service**, **`SECURITY_STANDARDS_DIR`**, both database URLs, and
+  **`uv run alembic upgrade head`**. Without those, `make check` cannot run here at all (see the
+  invariant above: a bare clone fails ~18 tests for exactly this reason), so the loss would present as
+  a mysteriously broken suite rather than as a missing file.
+
+  WS-P2.24 synced nine repos and **deliberately excluded this one, `security-standards` and
+  `infraops-mcp-server`** for this reason. Its handoff instructed "run `code-standards sync`, then
+  `make check`" per repo; followed literally here it would have deleted the previous day's work, and
+  only the build session noticing the ten-file `pairs` list prevented it.
+
+  **The unblock is upstream, not local:** code-standards needs a per-repo "locally owned vendored
+  file" declaration so a repo can keep its own `quality.yml` while still receiving Makefile updates.
+  Until that exists, treat `code-standards sync` as prohibited in these three repos — and note that
+  hand-copying only the Makefile is the correct manual substitute.
