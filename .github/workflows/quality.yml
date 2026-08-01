@@ -7,11 +7,27 @@
 # shipped CI gate.
 name: Quality
 
+# `push` is main-only ON PURPOSE. With `branches: ["**"]` on both events, every commit on
+# a branch with an open PR ran this workflow TWICE -- once per event, same SHA, same name.
+# That doubled a ~13-minute billed job on a private repo, and it is also the cause of the
+# two indistinguishable `Quality` runs on one SHA: the named-check evidence mechanism
+# records a check by NAME, so it could not tell the pair apart. One run per commit is a
+# correctness property here, not only a cost saving.
+#
+# Consequence, accepted: a branch pushed with no open PR gets no CI. Signal arrives when the
+# PR is opened, which is when it is read. `main` is still verified on every push, so a merge
+# is never unverified.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
-    branches: ["**"]
+
+# A superseded run has nothing to say. Cancel in-progress runs for a PR branch when a new
+# commit lands -- but NEVER on `main`, where each commit's result is a record of that commit
+# and cancelling one would leave a merged SHA with no verdict.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # Separate from Quality on purpose. It answers a different question -- can the consumer
@@ -36,6 +52,8 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: "0.5.31"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       # The locked environment, not an ad-hoc pin: a second declaration of the YAML
       # parser's version is a second vocabulary, and this repo has been bitten by those.
@@ -81,6 +99,8 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: "0.5.31"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - name: Install locked dependencies
         run: uv sync --frozen
