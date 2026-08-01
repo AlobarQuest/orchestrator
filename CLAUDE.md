@@ -1046,7 +1046,32 @@ style of that module.
   the one place it is deliberately narrower than the service; the justification is inertness, not
   refusal, and it is the increment's single judgment call.
 
-- **DO NOT run `code-standards sync` in this repo. It re-vendors TEN files, including
+- **`code-standards sync` is SAFE in this repo as of 2026-08-01 (WS-P2.25) — the prohibition below
+  is lifted, and what made it necessary is worth keeping.** Ownership is now block-level
+  (code-standards ADR-0008): each vendored file wraps the canonical content in
+  `code-standards:managed:start`/`:end` markers, sync replaces the block and preserves everything
+  around it, and **a file with no markers is locally owned, is never written, and is REPORTED on
+  every sync**. This repo's `quality.yml`, `Makefile` and `.github/dependabot.yml` carry no markers
+  and each says so in a header comment. Proven here, not assumed: a full `sync` on 2026-08-01 left
+  `quality.yml` byte-identical (sha `6403063119dce3fd` before and after) with the brief-compatibility
+  job present, and printed a `LOCAL:` line for all three. **Before trusting any sync, run
+  `code-standards sync --dry-run` — it reports, per file, exactly what sync would do, from the same
+  classifier sync uses.**
+
+  Two consequences specific to this repo. (1) The `Makefile` is `local` because it is the
+  **pre-WS-P2.24 template** — skip-semantics, no refusal on a missing tool — not because anyone
+  chose to own it. `code-standards adopt --file Makefile` is the supported way to take the current
+  template; it is a real behaviour change to the gate and belongs to a change that can verify it.
+  (2) `.shellcheckrc` was absent and sync created it, so `make check` now runs shellcheck here.
+  Verified clean under the Makefile's actual invocation (`find . … -exec shellcheck {} +`, all files
+  in one call, relative paths from the repo root) with a positive control proving the sweep fires.
+  Note a probe using absolute paths from another cwd reports 5 spurious SC1091s — measure under
+  conditions of use.
+
+  **The rest of this bullet is the pre-WS-P2.25 record. It explains why the mechanism exists.**
+
+- **[SUPERSEDED 2026-08-01 — see the bullet above] DO NOT run `code-standards sync` in this repo. It
+  re-vendors TEN files, including
   `.github/workflows/quality.yml`, and would destroy this repo's CI.** Verified 2026-08-01 against
   `code_standards/initrepo.py:99-106`: the `pairs` list vendors the TS configs, `.shellcheckrc`,
   `.editorconfig`, `Makefile`, `.pre-commit-config.yaml` **and
@@ -1079,10 +1104,12 @@ style of that module.
   replaced. Do not let the blanket prohibition above be read as "this repo cannot track the
   template" — it can, minus one file.
 
-  **The upstream unblock:** code-standards needs a per-repo "locally owned vendored file"
-  declaration that `sync` honours. Its full known consumer set is **five files across four repos** —
-  this repo's `quality.yml`, `security-standards`' Makefile wrapper (a `PYBIN` block that refuses a
-  Python without `tomllib`, plus five local targets including the `make ownership` the global
-  CLAUDE.md references), `infraops-mcp-server`'s `eslint.config.mjs` and `.shellcheckrc` (both
-  carrying written rationales; overwriting them costs 89 findings), and code-standards' own Makefile.
-  Tracked as a P1 in `~/Developer/code-standards`.
+  **The upstream unblock** — SHIPPED 2026-08-01 as block-level ownership (ADR-0008), not the
+  file-level declaration this paragraph asked for. File-level was rejected because it converts
+  *clobbered* into *silently stale*: `security-standards` was already effectively file-level-owned
+  and its `check` recipe consequently had **no shellcheck step at all**, which nobody decided. The
+  consumer set this paragraph put at five files across four repos was undercounted — the portfolio
+  dry-run found **12 locally-owned files across 6 repos** (13 once the generated `dependabot.yml`
+  joined the same model), including `brain`'s Makefile, which had hand-rolled the block mechanism in
+  a comment, and **four repos carrying a byte-identical stale `quality.yml` that nobody had chosen
+  to own** — file-level ownership would have frozen all four in place and called it a decision.
