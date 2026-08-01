@@ -346,6 +346,7 @@ class RunnerBriefResponse(BaseModel):
     # is not the same as a worker receiving one. factory-runner parses the HTTP
     # body, not the service dict.
     enrichment: dict[str, Any] | None = None
+    cadence: int | None = None
 
 
 class LeaseResponse(BaseModel):
