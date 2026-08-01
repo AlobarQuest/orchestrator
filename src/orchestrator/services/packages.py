@@ -37,6 +37,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.persistence.repositories import PackageRepository
+from orchestrator.services.authority_gate import human_authority_gate
 
 
 @dataclass(frozen=True)
@@ -779,6 +780,7 @@ def evaluate_readiness(
                 unit.decomposition_approved_by and unit.decomposition_approved_at
             ),
             authority_approved=repository.exact_authority_approval(unit) is not None,
+            authority_recognised_by_policy=not human_authority_gate(unit, revision).refusals,
             dependencies=dependencies,
         )
     )

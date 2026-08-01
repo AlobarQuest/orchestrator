@@ -36,13 +36,23 @@
 # accepts exactly the versions it knows; one it does not know is a named, loud
 # failure, never a best-effort read.
 #
-# WHAT IS DELIBERATELY NOT HERE YET. The rows below carry only their provenance.
-# Each of the four policies lands its own field in the increment that ships the
-# code reading it, as an additive schema-version bump. A field with no consumer
-# is a second copy of a value that still lives somewhere else, and this
-# repository has paid four times over for two copies of one value.
+# WHAT IS DELIBERATELY NOT HERE YET. Beyond `known_good` below, the rows carry
+# only their provenance. Each remaining policy lands its own field in the
+# increment that ships the code reading it, as an additive schema-version bump.
+# A field with no consumer is a second copy of a value that still lives
+# somewhere else, and this repository has paid four times over for two copies of
+# one value.
+#
+# KNOWN-GOOD PATTERNS ARE STILL REFUSALS (schema 2, ADR-0011). A `known_good`
+# entry grants nothing. Every envelope draws the `authority_envelope_novel`
+# objection — a human must approve it — and a pattern only WITHHOLDS that
+# objection from an envelope it recognises completely. So the human requirement
+# is the default and recognition is the exception, and a pattern that does not
+# load, a reach nobody declared, and a field no pattern accounts for all resolve
+# the same way: to asking. Patterns are DECIDED here, never learned from what
+# was approved before.
 
-version = 1
+version = 2
 
 [reach.source_repository]
 rationale = """
@@ -53,6 +63,34 @@ restrain, and the reach where suppressing a ceremonial human gate is worth the
 most.
 """
 decided = "2026-08-01"
+
+[[reach.source_repository.known_good]]
+name = "uv dependency pin bump into a named repository"
+rationale = """
+The one shape of work this factory has taken end to end, and the shape R2 names:
+a pin moves, a lockfile follows, a pull request opens, and the target
+repository's own named check decides whether it was right. Nothing outside that
+repository changes, the whole change is one revert away, and a person reading
+the envelope learns only which version string moved — which is ceremony, not
+review. Recognised narrowly on purpose: only uv tooling (pip's mutator is a
+sed expression and npm's is an install, and neither has run here yet), only the
+repository below, only a conformance claim that is green and waives nothing, and
+only budgets at or under the profile's own defaults. Widening any of those is an
+edit to this file, decided once, and never inferred from what was approved
+before.
+"""
+decided = "2026-08-01"
+change_class = "dependency-update"
+capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "orchestrator.claim" = "allowed", "orchestrator.evidence.write" = "allowed", "repo.edit" = "allowed", "repo.read" = "allowed" }
+max_attempts = 3
+max_llm_calls = 4
+conformance_status = "green"
+target_repositories = ["AlobarQuest/change-manager"]
+# `uv add` edits the manifest and `uv lock` resolves the tree; `uv lock --check`
+# is the verifier and shares the second prefix. `uv run` is deliberately absent:
+# it is a way to run any program at all, and the delivery profile that emits
+# these lists already forbids the one verifier that used it.
+command_prefixes = ["uv add", "uv lock"]
 
 [reach.live_estate]
 rationale = """

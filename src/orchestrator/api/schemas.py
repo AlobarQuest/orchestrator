@@ -1128,12 +1128,35 @@ class CostActualsResponse(BaseModel):
     cost_known: bool
 
 
+class FactoryPolicyKnownGoodResponse(BaseModel):
+    """One declared known-good pattern, in full.
+
+    Everything the matcher reads is served, because an operator asking what this process enforces
+    needs to be able to answer "would it recognise THIS envelope" without reading the image. Every
+    field NARROWS what is recognised, so none of them reads as a permission.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    rationale: str
+    decided: date
+    change_class: str
+    capabilities: dict[str, str]
+    max_attempts: int
+    max_llm_calls: int
+    conformance_status: str
+    target_repositories: list[str]
+    command_prefixes: list[str]
+
+
 class FactoryPolicyReachResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     member: str
     rationale: str
     decided: date
+    known_good: list[FactoryPolicyKnownGoodResponse]
 
 
 class FactoryPolicyResponse(BaseModel):

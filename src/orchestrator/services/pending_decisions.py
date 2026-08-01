@@ -34,6 +34,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.authority_gate import human_authority_gate
 from orchestrator.services.evidence import current_adjudication, current_evidence
 from orchestrator.services.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.reconciliation import open_conditions
@@ -204,7 +205,7 @@ def _unit_decisions(session: Session) -> list[dict[str, Any]]:
     )
     for unit in units:
         href = f"/review/units/{unit.id}"
-        if unit.authority_approval_id is None:
+        if unit.authority_approval_id is None and _authority_gate_refusals(session, unit):
             entries.append(
                 _entry(
                     "authority_approval",
@@ -230,6 +231,20 @@ def _unit_decisions(session: Session) -> list[dict[str, Any]]:
             entries.append(_failed_disposition(unit, href))
         entries.extend(_undecided_criteria(session, unit, href))
     return entries
+
+
+def _authority_gate_refusals(session: Session, unit: WorkUnit) -> tuple[str, ...]:
+    """Why policy still wants a person on this unit's envelope; empty means it does not (ADR-0011).
+
+    This is the surface the whole increment is for: R2 is *"a dependency bump becomes something he
+    does not approve"*, and an entry that keeps appearing for work policy already recognises is the
+    ceremony R7 named. A revision that cannot be loaded leaves the entry standing, which is both
+    the fail-toward-asking rule and the behaviour this queue has always had.
+    """
+    revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
+    if revision is None:
+        return ("revision_not_found",)
+    return human_authority_gate(unit, revision).refusals
 
 
 def _failed_disposition(unit: WorkUnit, href: str) -> dict[str, Any]:

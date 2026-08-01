@@ -13,12 +13,14 @@ def facts(
     revision_approved: bool = True,
     decomposition_approved: bool = True,
     authority_approved: bool = True,
+    authority_recognised_by_policy: bool = False,
     dependencies: tuple[DependencyReadiness, ...] = (),
 ) -> ReadinessFacts:
     return ReadinessFacts(
         revision_approved=revision_approved,
         decomposition_approved=decomposition_approved,
         authority_approved=authority_approved,
+        authority_recognised_by_policy=authority_recognised_by_policy,
         dependencies=dependencies,
     )
 
@@ -100,3 +102,25 @@ def test_reasons_are_deterministic() -> None:
     decision = evaluate_readiness_facts(facts(dependencies=dependencies))
 
     assert [reason.subject_id for reason in decision.reasons] == [first_id, second_id]
+
+
+def test_a_unit_nobody_approved_is_authorized_when_policy_recognised_its_envelope() -> None:
+    """WS-P2.18 Increment 3. The two facts are SEPARATE and either satisfies the requirement.
+
+    They are kept apart deliberately: nobody approved this unit, and folding the second fact into
+    the first would have readiness report that somebody did.
+    """
+    recognised = evaluate_readiness_facts(
+        facts(authority_approved=False, authority_recognised_by_policy=True)
+    )
+
+    assert recognised.status is ReadinessStatus.READY
+
+
+def test_neither_fact_means_the_requirement_stands() -> None:
+    # The control, and the default: a caller that has not been taught about policy gets the
+    # behaviour every caller had before policy existed.
+    decision = evaluate_readiness_facts(facts(authority_approved=False))
+
+    assert decision.status is ReadinessStatus.NOT_AUTHORIZED
+    assert [reason.code for reason in decision.reasons] == ["authority_not_approved"]

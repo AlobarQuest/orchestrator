@@ -14,6 +14,7 @@ from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.runner_authority import dependency_update_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
+from orchestrator.services.authority_gate import AuthorityGate, human_authority_gate
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import ActorContext
 
@@ -48,6 +49,11 @@ class DispatchCommand:
 class AdmissionDecision:
     reason: str | None
     target_repository: str
+    # The known-good patterns this admission relied on in place of a human authority approval.
+    # Non-empty only when admission actually reached the authority term and passed it on policy:
+    # a decision blocked before that term never consulted it, so citing it would record a
+    # suppression that was never used.
+    authority_recognised_by: tuple[str, ...] = ()
 
 
 class WorkflowDispatcher(Protocol):
@@ -166,8 +172,11 @@ def _dispatch_work_unit(
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
 
-    admission = _blocked_reason(unit, settings)
+    gate = human_authority_gate(unit, revision)
+    admission = _blocked_reason(unit, settings, gate)
     repository = admission.target_repository
+    if admission.authority_recognised_by:
+        _record_authority_gate_not_required(session, command, unit, gate)
     if admission.reason is not None:
         return _record_dispatch(
             session,
@@ -264,7 +273,16 @@ def _validate_idempotent_record(
         )
 
 
-def _blocked_reason(unit: WorkUnit, settings: DispatchSettings) -> AdmissionDecision:
+def _blocked_reason(
+    unit: WorkUnit, settings: DispatchSettings, gate: AuthorityGate
+) -> AdmissionDecision:
+    """Why this unit may not run, in the order the terms are cheapest to answer.
+
+    The human-authority term is the one WS-P2.18 made conditional: an envelope a declared
+    known-good pattern recognises passes it without an approval (ADR-0011). Nothing else moves --
+    the hard off-switch is still the first term and policy cannot see it, so no pattern can widen
+    what it allows.
+    """
     envelope = normalize_authority(unit.authority)
     target_repository = _target_repository(envelope)
     if not settings.enabled:
@@ -273,23 +291,36 @@ def _blocked_reason(unit: WorkUnit, settings: DispatchSettings) -> AdmissionDeci
         return AdmissionDecision("github_app_credentials_missing", target_repository)
     if unit.state != "ready":
         return AdmissionDecision("work_unit_not_ready", target_repository)
-    if unit.authority_approval_id is None:
+    if unit.authority_approval_id is None and gate.refusals:
         return AdmissionDecision("authority_approval_missing", target_repository)
+    return AdmissionDecision(
+        _envelope_reason(unit, settings, envelope, target_repository),
+        target_repository,
+        # Cited only where it was USED: a unit carrying a human's approval passed the term on that
+        # approval, whatever policy would also have said about it.
+        () if unit.authority_approval_id is not None else gate.recognised_by,
+    )
+
+
+def _envelope_reason(
+    unit: WorkUnit,
+    settings: DispatchSettings,
+    envelope: AuthorityEnvelope,
+    target_repository: str,
+) -> str | None:
+    """The terms the envelope itself decides, for a unit already past the gates above."""
     if unit.required_capability not in settings.enabled_capabilities:
-        return AdmissionDecision("capability_not_enabled", target_repository)
+        return "capability_not_enabled"
     change_class = _change_class(envelope, unit.required_capability)
     if change_class not in settings.allowed_change_classes:
-        return AdmissionDecision("change_class_not_allowed", target_repository)
+        return "change_class_not_allowed"
     if envelope.level_for(unit.required_capability) != "allowed":
-        return AdmissionDecision("capability_not_authorized", target_repository)
+        return "capability_not_authorized"
     if not target_repository:
-        return AdmissionDecision("target_repository_missing", target_repository)
+        return "target_repository_missing"
     if target_repository not in settings.allowed_target_repositories:
-        return AdmissionDecision("target_repository_not_allowed", target_repository)
-    return AdmissionDecision(
-        _authority_violation_reason(envelope) or _conformance_blocked_reason(envelope),
-        target_repository,
-    )
+        return "target_repository_not_allowed"
+    return _authority_violation_reason(envelope) or _conformance_blocked_reason(envelope)
 
 
 def _is_skipped_reason(reason: str) -> bool:
@@ -408,6 +439,44 @@ def _payload(unit: WorkUnit, settings: DispatchSettings, repository: str) -> dic
             "sds_package_rev": str(unit.work_package_revision_id),
         },
     }
+
+
+def _record_authority_gate_not_required(
+    session: Session,
+    command: DispatchCommand,
+    unit: WorkUnit,
+    gate: AuthorityGate,
+) -> None:
+    """The trace left when the human-authority requirement was lifted by policy (ADR-0011).
+
+    Deliberately NOT an approval. It is an event, it names the system actor that read the artifact
+    rather than a person, it says the requirement did not apply rather than that anybody agreed to
+    anything, and `unit.authority_approval_id` stays null -- so no query for a human's approval can
+    ever return it. What it carries is what a later reader needs in order to re-derive the
+    decision: the patterns that recognised the envelope, the artifact version and file they were
+    read from, and the fingerprint of the envelope they recognised. The artifact is editable, so
+    citing the version is not decoration: it is the difference between a record of what was
+    decided and a guess made from whatever the file says later.
+    """
+    event = Event(
+        actor_id=command.actor.actor_id,
+        action="authority.human_gate_not_required",
+        subject_type="work_unit",
+        subject_id=unit.id,
+        from_state=unit.state,
+        to_state=unit.state,
+        payload={
+            "recognised_by": list(gate.recognised_by),
+            "policy_version": gate.policy_version,
+            "policy_source": gate.policy_source,
+            "authority_fingerprint": unit.authority_fingerprint,
+            "runner_attempt": command.runner_attempt,
+        },
+        correlation_id=uuid.uuid4(),
+        idempotency_key=f"{command.idempotency_key}:authority-gate",
+    )
+    session.add(event)
+    session.flush()
 
 
 def _record_dispatch(
