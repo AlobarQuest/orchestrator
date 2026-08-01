@@ -1,0 +1,81 @@
+# factory-policy.toml — the SOLE SOURCE of the four policies WS-P2.18 replaces:
+# the authority known-good pattern, the change window, the per-key lease, and
+# self-update. One versioned document, keyed on REACH (ADR-0009): what a
+# package's work touches when it runs.
+#
+# WHY THIS IS A SEPARATE FILE FROM routing-policy.toml (ADR-0010). That file
+# lives in AlobarQuest/intent-packages, is read by `factory decompose` there,
+# and keys on `change_class` to choose a MODEL. This one lives here, is read by
+# the orchestrator at request time, and keys on `reach` to decide whether work
+# may run at all. The two keys are disjoint, so there is nothing the two files
+# must agree about — and folding this into that one would have manufactured
+# exactly that obligation, across a repository boundary, with nothing checking
+# it. What is inherited is the FORM: one versioned document, per-row provenance,
+# an explicit editing contract, and no implicit default.
+#
+# THE READING RULE. This document can only ever REFUSE. No value in this schema
+# permits anything. An empty answer means "this policy raises no objection",
+# which is not the same as "go ahead": permission is the conjunction of every
+# admission check, and the hard off-switch (ORCHESTRATOR_DISPATCH_ENABLED) is
+# one of those checks. Nothing written here can widen what that switch allows,
+# because there is no way to write a permission at all.
+#
+# NO IMPLICIT DEFAULT, AND TOTAL COVERAGE. Every member of the reach vocabulary
+# (src/orchestrator/reach_vocabulary.py) has exactly one row here, and a row for
+# a member that vocabulary does not know is an error. A new reach member with no
+# row does not fall back to something permissive: this file stops loading, and a
+# document that does not load permits nothing. That follows routing-policy.toml,
+# where a change-class absent from the table is a hard error rather than a
+# default.
+#
+# EDITING CONTRACT. Every change is a versioned edit to THIS FILE — update the
+# row, its `rationale`, and its `decided` date. Never an inline override
+# anywhere else. `version` is the SCHEMA version, not an edit counter: bump it
+# only when the shape changes, and only in the same commit that teaches the
+# loader the new version and ships the code that reads the new field. The loader
+# accepts exactly the versions it knows; one it does not know is a named, loud
+# failure, never a best-effort read.
+#
+# WHAT IS DELIBERATELY NOT HERE YET. The rows below carry only their provenance.
+# Each of the four policies lands its own field in the increment that ships the
+# code reading it, as an additive schema-version bump. A field with no consumer
+# is a second copy of a value that still lives somewhere else, and this
+# repository has paid four times over for two copies of one value.
+
+version = 1
+
+[reach.source_repository]
+rationale = """
+Two thirds of the authored population reaches only here. Writes land in a git
+repository and nothing outside it changes until something separately acts on the
+result, so work of this reach is inert on arrival — the least a policy needs to
+restrain, and the reach where suppressing a ceremonial human gate is worth the
+most.
+"""
+decided = "2026-08-01"
+
+[reach.live_estate]
+rationale = """
+Something already serving is changed, so the effect is immediate and is felt by
+whatever depends on it. This is the reach a change window exists for, and it
+includes the orchestrator itself — self-update is governed here plus a second
+dimension, never by a member of its own.
+"""
+decided = "2026-08-01"
+
+[reach.external_system]
+rationale = """
+State changes in a system of record this estate does not run and cannot put back
+on its own. The least reversible reach in the vocabulary, and the one where a
+wrong answer costs the most to unwind, so it earns the most restraint.
+"""
+decided = "2026-08-01"
+
+[reach.operator_machine]
+rationale = """
+Distinct from every other member because the cost of running at a bad moment is
+paid by a person rather than by a system: a laptop busy at the wrong hour is an
+interruption, not an incident. This is the case a change window was wanted for
+in the first place.
+"""
+decided = "2026-08-01"

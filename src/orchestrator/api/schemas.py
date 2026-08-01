@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -1126,6 +1126,28 @@ class CostActualsResponse(BaseModel):
     attempt: int
     event_id: UUID
     cost_known: bool
+
+
+class FactoryPolicyReachResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    member: str
+    rationale: str
+    decided: date
+
+
+class FactoryPolicyResponse(BaseModel):
+    """What policy the running process is enforcing.
+
+    Deliberately carries no permission of any kind: the artifact answers only in refusals, so a
+    field here that read as "allowed" would be the one shape this schema must never grow.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    version: int
+    source: str
+    reach: list[FactoryPolicyReachResponse]
 
 
 class ConsistencyFindingResponse(BaseModel):

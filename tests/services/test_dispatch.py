@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import orchestrator.services.dispatch as dispatch_module
+from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import DispatchRecord, Event
@@ -167,6 +168,36 @@ def dispatch_command(unit_id: uuid.UUID, *, attempt: int = 1) -> DispatchCommand
 
 def test_dispatch_fails_closed_when_global_switch_disabled(migrated_session: Session) -> None:
     unit = ready_unit(migrated_session)
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(enabled=False),
+        github,
+    )
+
+    assert record.status == "skipped"
+    assert record.reason_code == "dispatch_disabled"
+    assert github.calls == []
+
+
+def test_the_off_switch_outranks_the_most_permissive_policy_expressible(
+    migrated_session: Session,
+) -> None:
+    """WS-P2.18 R4, end to end: the artifact objects to nothing, and nothing is admitted anyway.
+
+    Both halves matter. Without the first the claim is vacuous -- an artifact that refused
+    everything would satisfy "nothing is admitted" while proving nothing about precedence. The
+    shipped artifact IS the most permissive one expressible: there is no permission in its schema,
+    so raising no objection for every reach is as far as it can go.
+    """
+    policy = load_factory_policy()
+    for member in sorted(policy.rows):
+        assert policy.refusals_for((member,)) == ()
+    assert policy.refusals_for(tuple(sorted(policy.rows))) == ()
+
+    unit = ready_unit(migrated_session, key="policy-cannot-outrank-the-switch")
     github = FakeGitHubDispatcher([])
 
     record = dispatch_work_unit(
