@@ -1,8 +1,12 @@
 """The runner-brief cross-repo contract, orchestrator side.
 
-`RunnerBrief` in factory-runner is `extra="forbid"`, so a key added here that the
-runner does not know about raises at parse time and kills every run at claim --
-not a degraded run, a dead one.
+A key added here that factory-runner does not declare is a key no worker can read.
+Until 2026-08-01 it was worse than that -- `RunnerBrief` was `extra="forbid"`, so it
+raised at parse time and killed every run at claim, which is what happened for a full
+day from 2026-07-30. WS-P2.23 made the runner tolerate and report undeclared keys, and
+moved the refusal to where it belongs: the `Runner brief compatibility` job fails the
+pull request that adds a field the pinned runner does not declare. This file is the
+other half -- it pins the key SET the two repos agree on.
 
 WS-6.4.0 pinned the authority envelope across both repos precisely because the
 two ends had silently drifted into mutually unsatisfiable fixtures. It left the
@@ -54,8 +58,9 @@ def test_the_served_brief_has_exactly_the_contracted_keys(migrated_session: Sess
 
     assert set(served) == set(golden_brief()), (
         "the served brief's key set has drifted from the cross-repo fixture. "
-        'factory-runner\'s RunnerBrief is extra="forbid": an unknown key here kills every '
-        "run at claim. Change BOTH repos' fixtures and CONTRACT_SHA256 together."
+        "A key factory-runner does not declare is a key no worker can read. Merge it "
+        "there first, advance the pin in factory-runner-pilot.yml, and change BOTH "
+        "repos' fixtures and CONTRACT_SHA256 together."
     )
 
 

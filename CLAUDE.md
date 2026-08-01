@@ -630,19 +630,57 @@ style of that module.
   (Verified 2026-07-30, WS-P2.12.)
 
 - **The runner BRIEF is a cross-repo contract too, and until WS-P2.12 nothing tested it.**
-  `RunnerBrief` in factory-runner is `model_config = ConfigDict(extra="forbid")`, so a key the
-  orchestrator adds and the runner does not know about raises `extra_forbidden` at parse time and
-  kills **every** run at claim — not a degraded run, a dead one. WS-6.4.0 pinned the authority
-  *envelope* across both repos for exactly this reason and left the brief unpinned, and the brief
-  is the larger surface. It is now pinned the same way: byte-identical
+  WS-6.4.0 pinned the authority *envelope* across both repos and left the brief unpinned, and the
+  brief is the larger surface. It is now pinned the same way: byte-identical
   `tests/fixtures/runner_brief.json` in both repos plus the same `CONTRACT_SHA256`
-  (`1cf3c51678ad…`). **Ordering is load-bearing: factory-runner must merge BEFORE the
-  orchestrator emits a new brief field**, and the runner is installed fresh per run from its
-  default branch, so merge-first suffices. The hash pin alone proves only that a file is
-  unchanged; both repos therefore also carry a *derivation* assertion (orchestrator: the served
-  key set; factory-runner: that the fixture's content reaches `_prompt`). Proven by control:
-  deleting the prompt's enrichment section leaves both **shape** tests green and reds only the
-  derivation test. (Verified 2026-07-30, WS-P2.12.)
+  (`1cf3c51678ad…`). The hash pin alone proves only that a file is unchanged; both repos therefore
+  also carry a *derivation* assertion (orchestrator: the served key set; factory-runner: that the
+  fixture's content reaches `_prompt`). Proven by control: deleting the prompt's enrichment section
+  leaves both **shape** tests green and reds only the derivation test.
+  **TWO CORRECTIONS, 2026-08-01 (WS-P2.23) — this bullet was wrong in the way that cost a day.**
+  (1) It said "the runner is installed fresh per run from its **default branch**, so merge-first
+  suffices." **The runner has never been installed from a branch.** The reusable workflow installs
+  a pinned revision, so merge-first suffices for *nothing on its own* — the pin has to advance too.
+  Believing otherwise is precisely why the 2026-07-30 `enrichment` addition was thought safe: the
+  orchestrator merged the field, everyone assumed callers would pick up a runner that knew it, and
+  **every dispatch in the estate died at brief-parse for a full day with nothing noticing** while
+  `runner.caller` reported `[ok]` throughout (it compares SHAs, and a SHA says nothing about
+  whether the revision behind it can read what you serve).
+  (2) It said `RunnerBrief` is `extra="forbid"`, so an unknown key kills every run at claim. **True
+  when written; false since factory-runner `b0305b5`.** It is `extra="allow"` and *reports* what it
+  tolerated — see the next bullet. Do not restore strictness: it guarded only the safe case (an old
+  runner cannot use a field it does not know about), while a renamed or removed field is caught by
+  required-field validation whatever `extra` says.
+
+- **Drift between what the orchestrator serves on the brief and what its pinned consumer can use is
+  now refused at the PULL REQUEST, and the two guards are deliberately keyed on different things.**
+  WS-P2.23. Three parts, and the interaction between them is the whole design:
+  - factory-runner's reusable workflow installs `job.workflow_sha` — **its own commit.** `job.*`
+    describes the workflow file defining the job (factory-runner) even when called from another
+    repo; `github.*` describes the caller. So from `b0305b5` onward **the caller's `uses:` SHA IS
+    the CLI revision**: pin X → workflow at X → CLI at X. `workflow_sha`, never `workflow_ref` —
+    the ref is what the caller pinned, *unresolved*, so a branch ref appears verbatim and is
+    mutable. (Documented GitHub context properties, confirmed against docs 2026-08-01.)
+  - the `Runner brief compatibility` job in `quality.yml` runs
+    `scripts/check_brief_consumer_compatibility.py`: it reads the pin from
+    `factory-runner-pilot.yml`, asserts the workflow at that revision still installs itself (the
+    premise, checked rather than assumed), reads `RunnerBrief` at that revision **from source via
+    the GitHub contents API**, and fails if `RunnerBriefResponse` declares a field it does not.
+    Source rather than install: introspecting is more accurate but would drag factory-runner's
+    whole dependency tree into this repo's PR gate to read one attribute. The AST parse is pinned
+    against `RunnerBriefResponse.model_fields` in `tests/contract/test_brief_consumer_compatibility.py`,
+    so a parser that stopped agreeing with pydantic is caught before it can vet anything wrongly.
+  - **The check is keyed on DECLARED fields, not on whether the consumer would tolerate an
+    undeclared one — and that is load-bearing, not fussiness.** `RunnerBrief` is now
+    `extra="allow"`, so a "would it parse?" check would pass on everything and **part C would
+    silently switch part B off**, putting the ordering rule back to being prose. A field the
+    consumer does not declare is a field it cannot use: the run survives, the feature does not
+    exist. Proven to fire both directions on 2026-08-01 — adding `cadence` to
+    `RunnerBriefResponse` reds the job, removing it greens it.
+  So: **merge factory-runner first, then advance the pin in `factory-runner-pilot.yml`, then serve
+  the field.** That is now mechanical. And if a gate is ever bypassed, factory-runner records the
+  undeclared keys in the `runner.pr.opened` evidence payload (`unknown_brief_keys`), so an escape is
+  neither fatal nor invisible.
 
 - **Adding a route — `/api` OR `/review` — or a new `src/orchestrator/` module trips a FAMILY of
   architecture guards. There are FIVE, and three are exact set-equality inventories that fail CI on
