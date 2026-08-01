@@ -147,6 +147,7 @@ def test_production_get_route_inventory_is_explicit() -> None:
         "/api/v1/in-flight-units",
         "/api/v1/decomposition-proposals/{proposal_id}",
         "/api/v1/event-publications",
+        "/api/v1/factory-policy",
         "/api/v1/knowledge-promotion-proposals",
         "/api/v1/observations",
         "/api/v1/package-intakes/{revision_id}",

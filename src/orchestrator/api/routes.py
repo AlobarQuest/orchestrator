@@ -47,6 +47,7 @@ from orchestrator.api.schemas import (
     EvidenceCommand,
     EvidencePackResponse,
     EvidenceResponse,
+    FactoryPolicyResponse,
     FollowUpMintCommand,
     FollowUpMintResponse,
     InFlightUnitsResponse,
@@ -97,6 +98,7 @@ from orchestrator.api.schemas import (
 )
 from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
+from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
@@ -1136,6 +1138,19 @@ def in_flight_units(
     """AC-009. The reconciliation runner's read surface. Read-only."""
     require_operator_actor(actor)
     return in_flight_snapshot(session)
+
+
+@router.get("/factory-policy", response_model=FactoryPolicyResponse)
+def factory_policy_route(actor: ActorDep) -> object:
+    """WS-P2.18. The policy this running process is enforcing, read from the artifact per request.
+
+    Merged is not deployed: a policy that is correct on `main` says nothing about the image serving
+    traffic, and this is the surface that answers what that image actually holds. The artifact is
+    re-read on every call, so an operator sees the bytes in force now rather than the ones loaded
+    at start-up.
+    """
+    require_operator_actor(actor)
+    return load_factory_policy().report()
 
 
 @router.get("/consistency-check", response_model=ConsistencyReportResponse)

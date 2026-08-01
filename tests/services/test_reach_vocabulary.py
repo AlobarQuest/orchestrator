@@ -145,7 +145,29 @@ def test_a_stored_reach_that_is_not_a_list_of_known_members_reads_as_undeclared(
     # A shape nobody validated must fall back to the unknown, never to a partial answer.
     assert reach_from_snapshot({"reach": "source_repository"}) is None
     assert reach_from_snapshot({"reach": ["invented"]}) is None
+    assert reach_from_snapshot({"reach": []}) is None
     assert reach_from_snapshot("not a snapshot") is None
+
+
+def test_a_partly_unrecognised_declaration_reads_as_undeclared_not_as_its_known_part() -> None:
+    """WS-P2.18 Increment 2. The case the sentence above always claimed and never checked.
+
+    Until now the reader FILTERED unrecognised members out and returned what was left, so
+    ``["source_repository", "invented"]`` read as "touches a repository and nothing else" -- the
+    permissive answer, silently, for the one input where being wrong costs the most. The all-
+    unknown case above passed only because filtering everything leaves an empty tuple.
+    """
+    assert reach_from_snapshot({"reach": ["source_repository", "invented"]}) is None
+    assert reach_from_snapshot({"reach": ["invented", "live_estate"]}) is None
+    # An UNHASHABLE member is the same answer and not a crash: `x in REACH_VOCABULARY` raises
+    # TypeError on one, and nothing in this app has a handler for TypeError.
+    assert reach_from_snapshot({"reach": ["source_repository", {"nested": 1}]}) is None
+    assert reach_from_snapshot({"reach": [["source_repository"]]}) is None
+    # The control: an entirely recognised declaration still reads, normalized.
+    assert reach_from_snapshot({"reach": ["operator_machine", "live_estate"]}) == (
+        "live_estate",
+        "operator_machine",
+    )
 
 
 def test_the_statement_names_every_declared_member_in_words() -> None:

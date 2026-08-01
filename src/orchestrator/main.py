@@ -37,7 +37,12 @@ def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
     @application.exception_handler(DomainError)
     async def domain_error_handler(_request: Request, error: DomainError) -> JSONResponse:
         status = 404 if error.code.endswith("_not_found") else 409
-        if error.code == "csrf_unavailable":
+        # A fault in this process's own configuration, not a conflict with the caller's request.
+        if error.code in {
+            "csrf_unavailable",
+            "factory_policy_invalid",
+            "factory_policy_version_unsupported",
+        }:
             status = 503
         if error.code in {"role_forbidden", "human_actor_required", "csrf_rejected"}:
             status = 403
