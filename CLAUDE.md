@@ -1109,6 +1109,7 @@ style of that module.
   *clobbered* into *silently stale*: `security-standards` was already effectively file-level-owned
   and its `check` recipe consequently had **no shellcheck step at all**, which nobody decided. The
   consumer set this paragraph put at five files across four repos was undercounted — the portfolio
-  dry-run found **13 locally-owned files across 6 repos**, including `brain`'s Makefile (which had
-  hand-rolled the same block mechanism in a comment) and four repos carrying a byte-identical stale
-  `quality.yml` that nobody had chosen to own.
+  dry-run found **12 locally-owned files across 6 repos** (13 once the generated `dependabot.yml`
+  joined the same model), including `brain`'s Makefile, which had hand-rolled the block mechanism in
+  a comment, and **four repos carrying a byte-identical stale `quality.yml` that nobody had chosen
+  to own** — file-level ownership would have frozen all four in place and called it a decision.
