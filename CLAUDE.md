@@ -1436,3 +1436,40 @@ style of that module.
   life survives a lapse, so no stall report can distinguish a hung worker from a live one — only
   the narrower claim, *this attempt can no longer report anything*, is available and it is true
   either way.
+
+- **Build sessions run in their own git WORKTREE, with their own venv and their own test database.
+  HQ keeps the main tree — and that split is forced, not preferred.** A session's shell cwd resets to
+  its launch directory between tool calls, and the diff-scoped Stop hook runs from that cwd, so a
+  session **cannot relocate itself**; only the person launching it can. Until 2026-08-02 every
+  handoff said *"Repo: `~/Projects/orchestrator`"*, putting HQ and the build session in one tree.
+  That cost three false Stop-hook blocks in a single day — a build session's uncommitted
+  work-in-progress attributed to HQ, each needing an audited `CODE_STANDARDS_BYPASS=1` — plus a
+  CLAUDE.md batch held for hours and a running "the tree is busy" sequencing tax.
+  **Recipe, proven 2026-08-02** (created, ran 38 tests, torn down; shared `orchestrator_test`
+  untouched, and the worktree invisible to the main tree's `git status`):
+  `git worktree add .worktrees/<ws> -b <branch> main` · `uv sync --frozen` in it ·
+  `createdb -h 127.0.0.1 -U postgres orchestrator_test_<ws>` · export `TEST_DATABASE_URL` and
+  `ORCHESTRATOR_DATABASE_URL` at that database and `SECURITY_STANDARDS_DIR` at
+  `$PWD/tests/fixtures/security-standards` · `uv run alembic upgrade head`. Teardown is
+  `git worktree remove … --force` + `dropdb`.
+  **`.worktrees/` is ALREADY in `.gitignore` and already in the Makefile's `PRUNE_DIRS`** — the
+  convention was anticipated and simply never used. **The per-worktree DATABASE is the half that is
+  easy to miss and not optional:** `tests/conftest.py` drops and recreates whatever
+  `TEST_DATABASE_URL` names, so two sessions sharing one database corrupt each other *regardless of
+  which tree they are in* — a worktree alone fixes the Stop hook and leaves the real hazard intact.
+  `conftest` reads that variable from the environment, so no code change is needed. (An
+  `orchestrator_test_task6` database already existed, so somebody improvised this once without it
+  becoming convention.) Note the Agent tool's `isolation: "worktree"` covers subagents a session
+  spawns and does nothing for a session opened in a terminal, which is the case that was hurting.
+
+- **A claim is NOT released when a unit COMPLETES — only on failure and cancellation — so
+  "unreleased claim" carries no information about whether anything is wrong.** `release_claim`
+  (`services/lifecycle.py`) is called with `terminal_reason="work_unit_failed"` and
+  `"work_unit_cancelled"` and for nothing else; success leaves the row unreleased. Verified in
+  production 2026-08-02: **29 of 43 units carry an unreleased claim whose hold lapsed days ago, every
+  one of them on a finished unit.** WS-P2.19 found this by asking production before building, and it
+  killed the obvious stall predicate — *unreleased claim + lapsed hold* would have reported the
+  estate's entire history on its first run. It also means `released_at IS NULL` has no reachable
+  failure case to guard, so a test asserting it passes for the wrong reason. Whether the asymmetry is
+  intentional is undocumented; the claim is inert on a terminal unit, so it is harmless in itself —
+  the damage is entirely in predicates built on it.
