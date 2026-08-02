@@ -94,6 +94,13 @@ OUTBOUND_ALLOWLIST = {
     # put the observation outside the transaction that records it.
     Path("src/orchestrator/services/github_checks.py"),
     Path("src/orchestrator/services/knowledge_promotions.py"),
+    # WS-P2.28. Admission asks App Brain one question about the unit's target repository -- does
+    # landing on its default branch change something already serving -- and writes nothing. Same
+    # justification as github_checks.py above: a declaration is only worth checking if the
+    # orchestrator saw the estate's own answer, and the out-of-process alternative (ADR-0002's
+    # shape) would put that answer outside the transaction that records the admission decision.
+    # The credential is READ-ONLY and App Brain scopes it to two read paths.
+    Path("src/orchestrator/services/estate_landing.py"),
     # The reconciliation runner is a SEPARATE program (ADR-0002). Polling GitHub is its entire
     # job, and it may only push what it finds back through two endpoints -- enforced in code by
     # ALLOWED_WRITE_ENDPOINTS and in tests by test_reconciliation_runner_isolation.py. It is not

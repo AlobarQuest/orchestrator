@@ -30,6 +30,17 @@ from typing import Any, Final
 
 from orchestrator.errors import DomainError
 
+# Named because two consumers ask specifically about this member: the change window keys on it,
+# and the WS-P2.28 estate check asks whether a declaration that OMITS it is contradicted by what
+# App Brain records about the target repository.
+#
+# The string is repeated in the dict below rather than used as the key, and that is deliberate:
+# `tests/architecture/test_cross_boundary_vocabulary.py` recognises a vocabulary by finding a
+# collection of string LITERALS, and a dict keyed by names is invisible to it. Naming the member
+# here must not cost the registry its view of the vocabulary the member belongs to, so the two are
+# pinned to each other by test instead.
+LIVE_ESTATE: Final = "live_estate"
+
 # The four places work lands, each with the sentence a human reads at the gate. The description
 # is part of the vocabulary, not decoration: this field exists to answer "what does this touch"
 # for a person, and a bare token like ``live_estate`` answers it only for a scheduler.

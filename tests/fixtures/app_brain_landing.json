@@ -1,0 +1,80 @@
+{
+  "captured": "2026-08-02",
+  "responses": {
+    "AlobarQuest/brain": {
+      "apps": [
+        {
+          "default_branch_landing": "redeploys",
+          "determined_at": "2026-08-02T21:37:47.585171+00:00",
+          "evidence": "AlobarQuest/brain .github/workflows/ci.yml \u2014 on: push: branches: [main]; deploy job step 'Deploy brain apps' curls COOLIFY_WEBHOOK_URL for COOLIFY_APP_UUID_APP (Coolify app brain-app). Read: the workflow file.",
+          "slug": "app-brain"
+        },
+        {
+          "default_branch_landing": "redeploys",
+          "determined_at": "2026-08-02T21:37:48.264452+00:00",
+          "evidence": "AlobarQuest/brain .github/workflows/ci.yml deploy job, COOLIFY_APP_UUID_CODE (Coolify app brain-code). Its App Brain github_repo was NULL, so this app's answer was previously unreachable by repository \u2014 the fact for all four brains lives in one repository. Read: the workflow file.",
+          "slug": "code-brain"
+        },
+        {
+          "default_branch_landing": "redeploys",
+          "determined_at": "2026-08-02T21:37:49.084499+00:00",
+          "evidence": "AlobarQuest/brain .github/workflows/ci.yml deploy job, COOLIFY_APP_UUID_INFRA (Coolify app brain-infra), and the same workflow health-checks infra-brain.devonwatkins.com. This DIRECTLY CONTRADICTS its existing App Brain deployment chunk, which says 'No deployment needed' \u2014 that prose is false and is why the fact had to be determined rather than transcribed. Read: the workflow file.",
+          "slug": "infra-brain"
+        },
+        {
+          "default_branch_landing": "redeploys",
+          "determined_at": "2026-08-02T21:37:49.859842+00:00",
+          "evidence": "AlobarQuest/brain .github/workflows/ci.yml deploy job, COOLIFY_APP_UUID_OPEN (Coolify app brain-open). Read: the workflow file.",
+          "slug": "open-brain"
+        }
+      ],
+      "github_repo": "AlobarQuest/brain",
+      "landing": "redeploys",
+      "matched_apps": 4,
+      "reason": null
+    },
+    "AlobarQuest/change-manager": {
+      "apps": [
+        {
+          "default_branch_landing": "redeploys",
+          "determined_at": "2026-08-02T21:37:47.797396+00:00",
+          "evidence": ".github/workflows/deploy.yml \u2014 on: push: branches: [main]; job step 'Trigger Coolify redeploy'. Confirmed empirically 2026-08-02: merging PR #40 fired a deploy run two seconds later. Read: the workflow file, the Actions run history.",
+          "slug": "change-manager"
+        }
+      ],
+      "github_repo": "AlobarQuest/change-manager",
+      "landing": "redeploys",
+      "matched_apps": 1,
+      "reason": null
+    },
+    "AlobarQuest/intent-packages": {
+      "apps": [],
+      "github_repo": "AlobarQuest/intent-packages",
+      "landing": "unknown",
+      "matched_apps": 0,
+      "reason": "no_app_record"
+    },
+    "AlobarQuest/orchestrator": {
+      "apps": [
+        {
+          "default_branch_landing": "inert",
+          "determined_at": "2026-08-02T21:37:50.285039+00:00",
+          "evidence": "quality.yml runs on push but only lints, type-checks and tests; release-image.yml is workflow_dispatch only, so merging never fires it; attest-exit-criteria.yml and factory-runner-pilot.yml have no push trigger. No active repository webhook. The Coolify application orchestrator is a docker-image app (placeholder git_repository coollabsio/coolify) with no git-provider webhook configured \u2014 it pulls a pinned tag when a human points it at one. Read: all four workflow files, repo webhooks, Coolify application webhook configuration.",
+          "slug": "orchestrator"
+        }
+      ],
+      "github_repo": "AlobarQuest/orchestrator",
+      "landing": "inert",
+      "matched_apps": 1,
+      "reason": null
+    },
+    "AlobarQuest/project-standards": {
+      "apps": [],
+      "github_repo": "AlobarQuest/project-standards",
+      "landing": "unknown",
+      "matched_apps": 0,
+      "reason": "no_app_record"
+    }
+  },
+  "source": "GET /api/apps/default-branch-landing on app-brain.devonwatkins.com, read with the read-only APP_BRAIN_READ_KEY. Captured verbatim so a shape change on App Brain's side reds this repository rather than passing against an imagined API."
+}

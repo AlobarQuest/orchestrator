@@ -17,9 +17,14 @@ from orchestrator.kernel.runner_authority import dependency_update_authority_vio
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
 from orchestrator.services.authority_gate import AuthorityGate, human_authority_gate
+from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import ActorContext
-from orchestrator.services.reach_admission import change_window_refusal, reach_admission_refusal
+from orchestrator.services.reach_admission import (
+    change_window_refusal,
+    estate_refusal,
+    reach_admission_refusal,
+)
 
 ORCHESTRATOR_URL = "https://sds.alobar.net"
 
@@ -123,10 +128,11 @@ def dispatch_work_unit(
     command: DispatchCommand,
     settings: DispatchSettings,
     dispatcher: WorkflowDispatcher,
+    landing_source: EstateLandingSource,
     clock: Clock | None = None,
 ) -> DispatchRecord:
     try:
-        record = _dispatch_work_unit(session, command, settings, dispatcher, clock)
+        record = _dispatch_work_unit(session, command, settings, dispatcher, landing_source, clock)
         session.commit()
         return record
     except Exception:
@@ -139,6 +145,7 @@ def _dispatch_work_unit(
     command: DispatchCommand,
     settings: DispatchSettings,
     dispatcher: WorkflowDispatcher,
+    landing_source: EstateLandingSource,
     clock: Clock | None,
 ) -> DispatchRecord:
     _authorize_dispatch_actor(command.actor)
@@ -180,10 +187,12 @@ def _dispatch_work_unit(
     gate = human_authority_gate(unit, revision)
     admission = _blocked_reason(
         unit,
+        revision,
         settings,
         gate,
         reach_admission_refusal(session, revision),
         change_window_refusal(session, revision, clock),
+        landing_source,
     )
     repository = admission.target_repository
     if admission.authority_recognised_by:
@@ -286,10 +295,12 @@ def _validate_idempotent_record(
 
 def _blocked_reason(
     unit: WorkUnit,
+    revision: WorkPackageRevision,
     settings: DispatchSettings,
     gate: AuthorityGate,
     reach_refusal: str | None,
     window_refusal: str | None,
+    landing_source: EstateLandingSource,
 ) -> AdmissionDecision:
     """Why this unit may not run, in the order the terms are cheapest to answer.
 
@@ -306,6 +317,21 @@ def _blocked_reason(
     The change window (Increment 5) sits BELOW every one of them, for the mirror of that reason: it
     is the only term that clears without anybody doing anything, so reporting it ahead of a
     standing defect would hide the thing somebody has to fix behind the thing that fixes itself.
+
+    The estate term (WS-P2.28) sits DIRECTLY BELOW the reach term because it is the same kind of
+    defect one step further on: the first says nobody stated what this work touches, the second
+    says what they stated is contradicted by what the estate records. Checking a declaration
+    nobody made is meaningless, so the order between those two is forced. It stays ABOVE the
+    human-authority term for the reason that term is already ordered there -- approving cannot fix
+    a declaration, and a person clicking approve would be attesting to a blast radius the estate
+    disagrees with.
+
+    It is the one term that is EVALUATED here rather than handed in already answered, and that is
+    not a stylistic difference. It is the only term whose input costs a network round-trip, so
+    evaluating it in place is what keeps a closed off-switch reporting `dispatch_disabled` rather
+    than whatever App Brain happened to say -- and it is the only point that holds the target
+    repository without normalizing the envelope a second time, which this module deliberately does
+    exactly once.
     """
     envelope = normalize_authority(unit.authority)
     target_repository = _target_repository(envelope)
@@ -317,6 +343,9 @@ def _blocked_reason(
         return AdmissionDecision("work_unit_not_ready", target_repository)
     if reach_refusal is not None:
         return AdmissionDecision(reach_refusal, target_repository)
+    estate_reason = estate_refusal(revision, target_repository, landing_source)
+    if estate_reason is not None:
+        return AdmissionDecision(estate_reason, target_repository)
     if unit.authority_approval_id is None and gate.refusals:
         return AdmissionDecision("authority_approval_missing", target_repository)
     return AdmissionDecision(

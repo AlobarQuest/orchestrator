@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     github_app_id: str | None = None
     github_app_installation_id: str | None = None
     github_app_private_key_b64: SecretStr | None = None
+    # WS-P2.28. Where the estate's record of what a landing on a default branch changes is read
+    # from, and the READ-ONLY credential that reads it -- App Brain scopes that credential to two
+    # read paths and refuses it everywhere else, so it cannot write to the estate's knowledge.
+    # Both default to empty, and empty is a REFUSAL at admission rather than a permission: an
+    # unconfigured deployment must not be able to conclude that nothing already serving changes.
+    # Setting them is therefore a prerequisite of enabling routing, not an optional extra.
+    app_brain_url: str = ""
+    app_brain_read_key: SecretStr | None = None
+    app_brain_timeout_seconds: float = 10.0
     dispatch_failure_signature_threshold: int = 3
     dispatch_orchestrator_url: str = "https://sds.alobar.net"
     # How long a human approval gate may go unanswered before the dead-letter view reports it as

@@ -47,13 +47,35 @@ from orchestrator.errors import DomainError
 from orchestrator.factory_policy import FactoryPolicy, load_factory_policy
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
-from orchestrator.reach_vocabulary import reach_from_snapshot
+from orchestrator.reach_vocabulary import LIVE_ESTATE, reach_from_snapshot
+from orchestrator.services.estate_landing import (
+    LANDING_INERT,
+    LANDING_REDEPLOYS,
+    SOURCE_UNCONFIGURED,
+    EstateLandingSource,
+)
 
 # Policy could not be consulted or could not be evaluated, so it recognised nothing and objected to
 # nothing -- which is the one state where those two are not the same. Named separately from the
 # artifact's own refusals because it is a fault in this process rather than a statement about this
 # unit. Shared by both terms below: whichever notices first reports the same fault.
 REACH_POLICY_UNREADABLE = "reach_policy_unreadable"
+
+# The declaration says nothing already serving changes; App Brain says landing on this
+# repository's default branch changes something already serving. Fixing it means editing the
+# package, which is why this reads as a defect rather than as a wait.
+REACH_CONTRADICTS_ESTATE = "reach_contradicts_estate"
+
+# App Brain has no assessment for this repository -- either no app record at all, or a record it
+# has not assessed. Distinct from the two below because the fix is neither an environment variable
+# nor a service: somebody has to determine the answer and record it.
+REACH_ESTATE_UNKNOWN = "reach_estate_unknown"
+
+# This process could not obtain an answer. Two codes, not one, because they send different people
+# somewhere different: the first is a missing setting on this deployment and affects every unit
+# equally; the second is App Brain refusing or unreachable and may clear on its own.
+REACH_ESTATE_SOURCE_UNCONFIGURED = "reach_estate_source_unconfigured"
+REACH_ESTATE_SOURCE_UNREADABLE = "reach_estate_source_unreadable"
 
 # A unit in one of these states has stopped for good: neither has an outgoing edge in
 # `kernel.states.LEGAL_EDGES`, so nothing reached through it will be admitted again. FAILED is
@@ -84,6 +106,61 @@ def reach_admission_refusal(session: Session, revision: WorkPackageRevision) -> 
     # one reason, so reporting the rest would need a refusal list on every record for a case that
     # only arises when an author declares two broken things at once.
     return refusals[0] if refusals else None
+
+
+def estate_refusal(
+    revision: WorkPackageRevision,
+    target_repository: str,
+    source: EstateLandingSource,
+) -> str | None:
+    """Why this revision's declared reach is contradicted by the estate; ``None`` means it is not.
+
+    **Declared-and-verified, never derived.** The author still says what the work reaches (R8);
+    this only checks that saying so did not contradict what App Brain records about the repository
+    the work lands in. Nothing here writes a reach, infers one, or repairs one.
+
+    **The claim under test is made by OMITTING ``live_estate``, not by naming anything.** So the
+    term is keyed on that omission rather than on ``source_repository`` being present: a package
+    declaring only ``external_system`` makes the same implicit claim about this estate, and keying
+    on the positive member would have let it through while catching the honest case.
+
+    **It refuses a landing that redeploys even when the unit's own act is inert, and that is the
+    conservative direction on purpose.** Opening a pull request genuinely changes nothing running;
+    the work that started this -- a dependency bump against a repository that redeploys itself --
+    was correctly declared for its own execution and wrongly declared for its own definition of
+    done, whose success signal was a landed pull request. This function cannot read a success
+    signal, so it asks the narrower question it can answer and errs toward the restraint that
+    declaring ``live_estate`` buys: a change window and a longer hold. Being wrong that way costs
+    an author some hours; being wrong the other way is an unplanned change to something serving.
+
+    **Every path that is not an explicit ``inert`` refuses.** That is structural rather than
+    enumerated: an answer this build does not recognise, an absent one, and one that says the
+    estate has not looked all fall through to a refusal, so a fourth value shipped on the
+    authoring side cannot arrive here as permission.
+    """
+    declared = reach_from_snapshot(revision.enforcement_snapshot)
+    if declared is None:
+        # An undeclared reach is `reach_admission_refusal`'s term and it already refuses. Claiming
+        # it here too would report a second reason for one defect, and -- because this term sits
+        # below that one -- would only ever be the reason nobody sees.
+        return None
+    if LIVE_ESTATE in declared:
+        return None
+    if not target_repository:
+        # `target_repository_missing` is dispatch's own term, ordered below this one. Asking App
+        # Brain about the empty string would answer `unknown` and report a missing assessment in
+        # place of a missing constraint.
+        return None
+    answer = source.landing_for(target_repository)
+    if answer.landing == LANDING_INERT:
+        return None
+    if answer.landing == LANDING_REDEPLOYS:
+        return REACH_CONTRADICTS_ESTATE
+    if answer.landing is not None:
+        return REACH_ESTATE_UNKNOWN
+    if answer.reason == SOURCE_UNCONFIGURED:
+        return REACH_ESTATE_SOURCE_UNCONFIGURED
+    return REACH_ESTATE_SOURCE_UNREADABLE
 
 
 def change_window_refusal(
