@@ -1004,6 +1004,7 @@ class SkippedRevisionResponse(BaseModel):
         "not_yet_due",
         "already_minted",
         "declaration_malformed",
+        "reach_undeclared",
     ]
 
 
@@ -1159,6 +1160,20 @@ class FactoryPolicyReachResponse(BaseModel):
     known_good: list[FactoryPolicyKnownGoodResponse]
 
 
+class FactoryPolicyGrandfatheringResponse(BaseModel):
+    """The revisions exempt from having to declare reach, in full.
+
+    Not a count. This is a temporary exemption from a rule everything else is held to, and the
+    operator question is which records it still covers and whether it can be deleted yet.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    rationale: str
+    decided: date
+    revisions: list[str]
+
+
 class FactoryPolicyResponse(BaseModel):
     """What policy the running process is enforcing.
 
@@ -1170,6 +1185,9 @@ class FactoryPolicyResponse(BaseModel):
 
     version: int
     source: str
+    # A response model silently DROPS every key the service returns and the model does not declare,
+    # which is how WS-P2.12 served an empty enrichment while every service assertion passed.
+    grandfathered: FactoryPolicyGrandfatheringResponse | None
     reach: list[FactoryPolicyReachResponse]
 
 

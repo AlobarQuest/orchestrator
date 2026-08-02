@@ -19,7 +19,7 @@ def test_the_policy_surface_reports_the_version_and_every_reach_row(db_client: T
 
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == 2
+    assert body["version"] == 3
     assert body["source"] == "factory-policy.toml"
     assert [row["member"] for row in body["reach"]] == sorted(REACH_VOCABULARY)
     assert all(row["rationale"] and row["decided"] for row in body["reach"])

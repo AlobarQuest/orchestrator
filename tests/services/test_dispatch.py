@@ -13,7 +13,14 @@ import orchestrator.services.dispatch as dispatch_module
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import Approval, DispatchRecord, Event, WorkUnit
+from orchestrator.persistence.models import (
+    Approval,
+    DispatchRecord,
+    Event,
+    WorkPackageRevision,
+    WorkUnit,
+)
+from orchestrator.services.authority_gate import human_authority_gate
 from orchestrator.services.dispatch import (
     DispatchCommand,
     DispatchSettings,
@@ -100,10 +107,19 @@ def ready_unit(
     conformance: dict[str, object] | object = MISSING,
     target_repository: str | None = PILOT_REPOSITORY,
     enforcement_snapshot: dict[str, object] | None = None,
+    reach: list[str] | None = None,
 ):
     # Revisions are append-only at the database level, so a test that needs a different
     # enforcement snapshot must register it, not mutate it afterwards.
-    enforcement_snapshot = {} if enforcement_snapshot is None else enforcement_snapshot
+    #
+    # Reach is DECLARED here by default because a package authored today declares it (WS-P2.18
+    # Increment 4): an undeclared one is refused at admission, so a harness that omitted it would
+    # make every test below a test of that refusal. Pass `reach=[]` for the units that are meant
+    # to be undeclared.
+    enforcement_snapshot = {} if enforcement_snapshot is None else dict(enforcement_snapshot)
+    declared = ["source_repository"] if reach is None else reach
+    if declared:
+        enforcement_snapshot["reach"] = declared
     revision = register_revision(
         session,
         package_id=f"pkg-{key}",
@@ -791,20 +807,33 @@ def test_the_same_unit_is_refused_when_no_pattern_recognises_its_envelope(
     assert github.calls == []
 
 
-def test_a_unit_whose_package_declared_no_reach_still_needs_a_human(
+def test_a_unit_whose_package_declared_no_reach_is_refused_and_still_needs_a_human(
     migrated_session: Session,
 ) -> None:
-    # The population as it stands: no authored package declares reach, so this is what every unit
-    # gets today. The failure mode is benign -- it is exactly the behaviour that existed before.
+    """Increment 4 moved this: the refusal now comes EARLIER, and the old one still stands.
+
+    Until Increment 4 an undeclared reach cost a unit only its policy suppression -- it was blocked
+    on `authority_approval_missing`, which a person could clear by approving. It is now refused at
+    admission on the declaration itself, which nobody can clear by approving, because a person
+    cannot attest to a blast radius the package never stated.
+
+    Both halves are asserted because the second is what stops the exemption from widening. The gate
+    is consulted before the term that blocks, so its answer is real and not merely unreached: it
+    refuses on the same missing declaration, and no suppression was recorded.
+    """
     unit = recognised_unit(migrated_session, key="no-reach", reach=None)
+    revision = migrated_session.get(WorkPackageRevision, unit.work_package_revision_id)
+    assert revision is not None
     github = FakeGitHubDispatcher([])
 
     record = dispatch_work_unit(
         migrated_session, dispatch_command(unit.id), recognising_settings(), github
     )
 
-    assert (record.status, record.reason_code) == ("blocked", "authority_approval_missing")
+    assert (record.status, record.reason_code) == ("blocked", "reach_undeclared")
+    assert human_authority_gate(unit, revision).refusals == ("reach_undeclared",)
     assert gate_events(migrated_session, unit.id) == []
+    assert github.calls == []
 
 
 def test_a_lifted_gate_never_writes_an_approval_row(migrated_session: Session) -> None:
