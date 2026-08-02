@@ -132,6 +132,13 @@ def record_named_check_evidence(
         binding = _validate_bindings(session, unit, normalized, repository)
         # The armed head, not the caller's — the two are equal or `_validate_bindings` has
         # already refused, and reading canon keeps it that way if that check ever moves.
+        #
+        # This calls GitHub while holding the unit and binding row locks, which is deliberate:
+        # observing BEFORE the lock would mean observing a head that the locked state might no
+        # longer agree with, and the point of the observation is that it is about the armed head.
+        # The hold is bounded by the observer's own timeout times the number of runs on the head
+        # (typically one or two), and a unit sitting in `submitted`/`verifying` has no competing
+        # writer — its worker has finished and its claim is not being reclaimed.
         observation = _observe(observer, repository, binding.head_sha, normalized.check_name)
         payload = _payload(claim, observation)
         return append_verifier_evidence(
