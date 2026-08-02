@@ -52,6 +52,7 @@ from orchestrator.services.evidence import (
     record_adjudications,
 )
 from orchestrator.services.evidence_pack import evidence_pack_projection
+from orchestrator.services.graduation_ledger import graduation_ledger
 from orchestrator.services.lifecycle import (
     ActorContext,
     TransitionCommand,
@@ -500,6 +501,14 @@ def detail(
         any(available.values()) or context["adjudicatable_criteria"] or context["open_conditions"]
     )
     context["decision_facts"] = decision_facts_for_unit(context["unit"], context["revision"])
+    # Graduation evidence, computed only when the authority-approval control is actually rendered.
+    # It is decision support for one decision -- "have I cleared this envelope shape before, and
+    # how did it go?" -- so it belongs beside that form and nowhere else. On a unit with no such
+    # control there is no decision to support, and the counts would read as a verdict on settled
+    # work instead.
+    context["graduation_ledger"] = (
+        graduation_ledger(session, context["unit"]) if available["authority_approval"] else None
+    )
     return _render(request, "unit.html", context)
 
 
