@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig, get_actor, get_session
-from orchestrator.api.routes import package_intake_command
+from orchestrator.api.routes import SettingsDep, package_intake_command
 from orchestrator.api.schemas import PackageIntakeRegistration
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
@@ -183,14 +183,30 @@ def _require_form(
 
 
 @router.get("", response_class=HTMLResponse)
-def queue(request: Request, actor: ActorDep, session: SessionDep) -> HTMLResponse:
+def queue(
+    request: Request, actor: ActorDep, session: SessionDep, settings: SettingsDep
+) -> HTMLResponse:
     """Every decision waiting on a person, grouped by what the decision IS.
 
     Grouping by lifecycle state meant you had to know which states imply a gate before you could
-    find your own work -- and four of the six kinds are not work-unit states at all.
+    find your own work -- and five of the eight kinds are not work-unit states at all.
+
+    This is also where the WS-P2.19 stall report is read, and it is the whole of its wiring. A
+    stalled unit is a decision waiting on a person, so it belongs on the list a person already
+    opens rather than behind an operator query nobody runs; and being derived on read, it appears
+    and disappears with the fact itself, with no pass to schedule and nothing to switch off.
     """
     _human(actor)
-    return _render(request, "queue.html", {"groups": grouped_pending_decisions(session)})
+    return _render(
+        request,
+        "queue.html",
+        {
+            "groups": grouped_pending_decisions(
+                session,
+                execution_stall_grace_seconds=settings.execution_stall_grace_seconds,
+            )
+        },
+    )
 
 
 def _adjudicatable_criteria(

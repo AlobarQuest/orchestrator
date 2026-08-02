@@ -1410,3 +1410,29 @@ style of that module.
   gated: generated post-deploy verification units, a minted follow-up unit, and the three WS-P2.15
   units. Any question of the form "how has the gate performed" has 35 as its denominator, not 43 —
   the WS-P2.18 Inc 8 handoff used 43 and overstated the evidence base by a fifth.
+
+- **A claim is NOT released when its work succeeds — so "unreleased and long lapsed" describes most
+  of the estate's history, not a stalled unit.** `release_claim` is called only from the failure,
+  cancel, reclaim and expired-claim-recovery paths; a unit that completes leaves its claim row
+  behind with `released_at IS NULL` and a `lease_expires_at` receding into the past forever.
+  Measured 2026-08-02: **29 of 43 production units carry such a claim, and every one of those units
+  is `completed` or `cancelled`.** Any predicate over claims must therefore gate on the UNIT's state
+  (`claims.CLAIM_HOLDING_STATES` = `{claimed, executing}`, the write path's own definition of
+  "has an active claim") and on the NEWEST attempt. WS-P2.19's first formulation did neither and
+  would have reported the whole history of the estate as stalled on day one. Corollary for the
+  reverse direction: a `released_at IS NULL` clause has no reachable case of its own — every
+  `release_claim` caller transitions the unit out of those two states in the same transaction — so
+  adding one can only ever HIDE a unit some future path has stranded.
+
+- **A lapsed lease is TERMINAL for its attempt: there is no window in which a recovery action races
+  a worker that was about to report.** `renew_claim` refuses a lapsed claim (`lease_expired`) and
+  `validate_active_claim` refuses its evidence and PR-binding writes (`claim_not_active`), so the
+  moment the hold ends the worker is locked out permanently — a renewal cannot rescue it. The
+  WS-P2.19 handoff warned that a detector "can destroy work that was about to be reported"; that is
+  false at every instant such a detector can observe, because the work became unreportable at the
+  lapse. Same conclusion (do not auto-reclaim, do not auto-fail — WS-P2.19 reports only) for a
+  materially different reason, and the difference matters: read literally the warning argues for a
+  LONGER grace to protect work that is in fact already gone. It also means no in-band signal of
+  life survives a lapse, so no stall report can distinguish a hung worker from a live one — only
+  the narrower claim, *this attempt can no longer report anything*, is available and it is true
+  either way.

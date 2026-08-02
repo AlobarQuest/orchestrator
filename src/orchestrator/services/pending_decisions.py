@@ -1,7 +1,7 @@
 """What needs a human right now, across every gate kind (WS-P2.17, spec 5.5).
 
 The review queue used to group work units by lifecycle state and list readiness facts, so finding
-your own work meant already knowing which states imply a gate -- and four of the six kinds below
+your own work meant already knowing which states imply a gate -- and five of the eight kinds below
 are not work-unit states at all.
 
 `kernel/transitions.py::DESIGNED_HUMAN_GATES` names the three *transition* gates and is the source
@@ -36,6 +36,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.authority_gate import human_authority_gate
 from orchestrator.services.evidence import current_adjudication, current_evidence
+from orchestrator.services.execution_stall import stalled_executions
 from orchestrator.services.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.reconciliation import open_conditions
 from orchestrator.services.verifier_criteria import load_required_criteria
@@ -51,6 +52,7 @@ KIND_ORDER = (
     "decomposition_proposal",
     "authority_approval",
     "unit_transition",
+    "stalled_execution",
     "failed_disposition",
     "criterion_adjudication",
     "reconciliation_condition",
@@ -60,27 +62,40 @@ KIND_LABELS: dict[str, str] = {
     "decomposition_proposal": "Proposed breakdowns awaiting your decision",
     "authority_approval": "Authority envelopes awaiting your approval",
     "unit_transition": "Work units stopped at a gate",
+    "stalled_execution": "Work units whose worker went quiet",
     "failed_disposition": "Failed work units awaiting a disposition",
     "criterion_adjudication": "Acceptance criteria awaiting your judgment",
     "reconciliation_condition": "Divergences between reality and stored state",
 }
 
 
-def pending_decisions(session: Session) -> tuple[dict[str, Any], ...]:
-    """Every decision waiting on a human, ordered by kind then by subject."""
+def pending_decisions(
+    session: Session, *, execution_stall_grace_seconds: int
+) -> tuple[dict[str, Any], ...]:
+    """Every decision waiting on a human, ordered by kind then by subject.
+
+    The grace is required rather than defaulted, so no caller can arrive at a stall report by
+    accident and none can leave the threshold behind: a second default here would be a second
+    place for the configured one to disagree with.
+    """
     entries: list[dict[str, Any]] = [
         *_package_breakdowns(session),
         *_proposed_breakdowns(session),
         *_unit_decisions(session),
+        *_stalled_units(session, execution_stall_grace_seconds),
         *_open_divergences(session),
     ]
     entries.sort(key=lambda entry: (KIND_ORDER.index(entry["kind"]), entry["subject"]))
     return tuple(entries)
 
 
-def grouped_pending_decisions(session: Session) -> tuple[dict[str, Any], ...]:
+def grouped_pending_decisions(
+    session: Session, *, execution_stall_grace_seconds: int
+) -> tuple[dict[str, Any], ...]:
     """`pending_decisions` folded into its kinds, keeping `KIND_ORDER`. Empty kinds are dropped."""
-    entries = pending_decisions(session)
+    entries = pending_decisions(
+        session, execution_stall_grace_seconds=execution_stall_grace_seconds
+    )
     groups = []
     for kind in KIND_ORDER:
         members = [entry for entry in entries if entry["kind"] == kind]
@@ -293,6 +308,37 @@ def _undecided_criteria(session: Session, unit: WorkUnit, href: str) -> list[dic
             )
         )
     return entries
+
+
+def _stalled_units(session: Session, grace_seconds: int) -> list[dict[str, Any]]:
+    """A unit that was claimed, started, and then went quiet (WS-P2.19).
+
+    The decision names only what this person can actually do. Cancelling is theirs, from the
+    control on the unit page; recovering the expired claim is the system's, on request. Requeue is
+    deliberately not named -- it targets failed and blocked units, so offering it here would send
+    someone to an action that refuses them, which is the mistake `_failed_disposition` already
+    avoids in the other direction.
+
+    The detail says outright that the orchestrator cannot tell a dead worker from a live one,
+    because a reader who assumed it could would over-read the entry. What it CAN say is the part
+    that matters for the decision: that attempt is finished either way.
+    """
+    return [
+        _entry(
+            "stalled_execution",
+            stalled.title,
+            "Cancel this unit, or have the system recover its expired claim",
+            (
+                f"Attempt {stalled.attempt} has held it in {stalled.state} since its hold ended "
+                f"at {stalled.hold_ended_at.isoformat()}, {stalled.stalled_seconds}s ago. That "
+                "attempt can no longer report anything — a lapsed claim refuses both a renewal "
+                "and an evidence write — so this entry reads the same whether its worker died or "
+                "is still running."
+            ),
+            f"/review/units/{stalled.work_unit_id}",
+        )
+        for stalled in stalled_executions(session, grace_seconds=grace_seconds)
+    ]
 
 
 def _open_divergences(session: Session) -> list[dict[str, Any]]:

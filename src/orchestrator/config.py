@@ -61,6 +61,22 @@ class Settings(BaseSettings):
     # settles", which is maximally on and is what the production demonstration uses so it needs
     # no waiting.
     follow_up_due_after_days: int = Field(default=30, ge=0, le=365)
+    # How long after a claim's hold has ended before the review queue reports the unit as stalled.
+    # This is a MARGIN on top of the lease, never a duration of its own: the lease already says how
+    # long this unit's work may take, per what its package says that work reaches, so the only
+    # question left is how long after that we stop expecting the worker back. Keying it on the
+    # lease is what stops a second, disagreeing copy of "how long may this take" coming into
+    # existence next to the one that already answers it.
+    # A plain int with NO "off" value and BOUNDED at both ends, following
+    # dead_letter_stalled_approval_seconds and follow_up_due_after_days. The cap is what makes
+    # "cannot be switched off" true of the values an operator can actually set: the longest hold
+    # this build will ever grant is two hours (kernel.leases.LEASE_CEILING), so a day is already
+    # twelve times the largest thing this is a margin on, and anything past that silences the
+    # report as completely as a None ever did. The floor is not the risk -- 0 reports at the lapse
+    # itself, which is maximally on, and is what the tests use so they need no sleep.
+    execution_stall_grace_seconds: int = Field(
+        default=900, ge=0, le=86_400
+    )  # 15 minutes; capped at a day
 
 
 @lru_cache
