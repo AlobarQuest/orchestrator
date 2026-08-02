@@ -6,9 +6,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    StrictBool,
-    StrictInt,
-    StrictStr,
     model_validator,
 )
 
@@ -207,15 +204,14 @@ class VerifyCommandModel(CommandBase):
     pass
 
 
-class NamedCheckAssertionModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=100)
-    expected: StrictStr | StrictInt | StrictBool
-    observed: StrictStr | StrictInt | StrictBool
-
-
 class VerifierNamedCheckEvidenceCommandModel(CommandBase):
+    """WS-P2.20: the caller names a check and claims a conclusion; it does not report one.
+
+    There is no field for what the check actually concluded, nor for the run that produced it.
+    The orchestrator reads those from GitHub at ingestion, so a caller cannot supply both halves
+    of a comparison and have the criterion resolve on its own arithmetic.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     work_package_revision_id: UUID
@@ -226,7 +222,7 @@ class VerifierNamedCheckEvidenceCommandModel(CommandBase):
     pr_url: str = Field(min_length=1, max_length=2000)
     head_sha: str = Field(min_length=7, max_length=64)
     check_name: str = Field(min_length=1, max_length=200)
-    conclusion: Literal[
+    expected_conclusion: Literal[
         "success",
         "failure",
         "cancelled",
@@ -235,9 +231,6 @@ class VerifierNamedCheckEvidenceCommandModel(CommandBase):
         "neutral",
         "skipped",
     ]
-    run_id: str = Field(min_length=1, max_length=100)
-    run_url: str = Field(min_length=1, max_length=2000)
-    assertions: list[NamedCheckAssertionModel] = Field(min_length=1, max_length=32)
 
 
 class RevisionRegistration(CommandBase):

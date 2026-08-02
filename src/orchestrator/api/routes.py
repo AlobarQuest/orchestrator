@@ -169,6 +169,7 @@ from orchestrator.services.evidence_pack import (
 )
 from orchestrator.services.follow_ups import mint_due_follow_ups
 from orchestrator.services.github_app import github_app_credentials, token_provider_for
+from orchestrator.services.github_checks import CheckObserver, GitHubActionsCheckObserver
 from orchestrator.services.in_flight import in_flight_snapshot
 from orchestrator.services.infra_links import (
     InfraLaneLinkCommand,
@@ -234,7 +235,6 @@ from orchestrator.services.traceability import TraceabilityAnchor, traceability_
 from orchestrator.services.tracker_bindings import list_tracker_bindings, upsert_tracker_binding
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from orchestrator.services.verifier_evidence import (
-    NamedCheckAssertion,
     NamedCheckEvidenceCommand,
     record_named_check_evidence,
 )
@@ -242,6 +242,20 @@ from orchestrator.services.verifier_evidence import (
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[ActorContext, Depends(get_actor)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+
+
+def get_check_observer(settings: SettingsDep) -> CheckObserver:
+    """Build the thing that asks GitHub how a named check concluded.
+
+    A dependency rather than a call inside the route body so a test can substitute GitHub — the
+    same reason the workflow trigger is passed in rather than constructed where it is used. The
+    same App installation serves both, resolved through the one definition of "App credentials
+    are configured".
+    """
+    return GitHubActionsCheckObserver(token_provider_for(github_app_credentials(settings)))
+
+
+CheckObserverDep = Annotated[CheckObserver, Depends(get_check_observer)]
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorResponse, "description": "Authentication required or rejected"},
@@ -1464,6 +1478,7 @@ def record_verifier_named_check_evidence(
     body: VerifierNamedCheckEvidenceCommandModel,
     actor: ActorDep,
     session: SessionDep,
+    observer: CheckObserverDep,
 ) -> object:
     return _raise_error(
         record_named_check_evidence(
@@ -1478,21 +1493,12 @@ def record_verifier_named_check_evidence(
                 pr_url=body.pr_url,
                 head_sha=body.head_sha,
                 check_name=body.check_name,
-                conclusion=body.conclusion,
-                run_id=body.run_id,
-                run_url=body.run_url,
-                assertions=tuple(
-                    NamedCheckAssertion(
-                        name=assertion.name,
-                        expected=assertion.expected,
-                        observed=assertion.observed,
-                    )
-                    for assertion in body.assertions
-                ),
+                expected_conclusion=body.expected_conclusion,
                 actor=actor,
                 expected_version=body.expected_version,
                 idempotency_key=body.idempotency_key,
             ),
+            observer,
         )
     )
 
