@@ -750,7 +750,12 @@ style of that module.
   `build_registry_bundle.py` both hash the file verbatim, newline included). The `Release
   image` GitHub Actions workflow (`.github/workflows/release-image.yml`,
   `workflow_dispatch`, native `linux/amd64`) reads the pin, shapes the context, and runs
-  `docker buildx build --push` to `ghcr.io/alobarquest/orchestrator:<short-sha>[-<label>]-amd64`.
+  `docker buildx build --push` to **two** tags (WS-P2.18 Inc 7): the derivable
+  `ghcr.io/alobarquest/orchestrator:sha-<full-40-char-sha>`, which depends on the commit and
+  nothing else, and the human-readable `:<short-sha>[-<label>]-amd64`, which is kept as a caption.
+  Both are composed by `scripts/compute_image_tags.py` — it is the function, and it refuses a
+  revision that is not a full 40-character sha, so a malformed one fails the build rather than
+  producing an image that asserts an unresolvable provenance.
   **The workflow only builds and pushes — it never deploys.** Pointing Coolify at the new tag
   stays a separate, manual gate, same as before.
   Two digests, two different jobs, not competing checks: the **bundle digest**
@@ -782,6 +787,11 @@ style of that module.
   REGISTRY_ARTIFACT_SHA256=$DIGEST -t ghcr.io/alobarquest/orchestrator:<sha>-<ws>-amd64 --push .`
   produces a single amd64 v2 manifest; verify the running container's RepoDigest == the pushed
   digest after Coolify swaps (via `.Image`, per the correction above).
+  **A hand-run build must also pass the three `--label` flags the workflow passes**
+  (`org.opencontainers.image.revision` with the FULL sha, `.source`, `.created`) and the second
+  `-t sha-<full-sha>`, or the fallback silently produces a less-identifiable artifact than the
+  paved road — precisely the state Inc 7 closed. The workflow refuses such an image; a hand build
+  has nothing to refuse it.
   **The FULL 40-character SHA goes in the workflow's `ref` INPUT, not in `gh workflow run --ref`.**
   These are two different things and this bullet used to conflate them, which cost WS-P2.18 Inc 4 a
   422. `--ref` selects the git ref the workflow FILE is read from and expects a branch or tag;
@@ -792,6 +802,32 @@ style of that module.
   actual name rather than guessing it. A plain `docker build .` with no `registry` context fails at
   `COPY --from=registry` — that is expected, not a Dockerfile bug. (Verified 2026-07-25, WS-P2.5
   Inc 2 deploy. Automation added 2026-07-26, image-build-automation workstream.)
+
+- **An orchestrator image with NO labels is an old image, not a tampered one — every image built
+  before 2026-08-02 carries `Config.Labels: null`.** WS-P2.18 Inc 7 made the build assert
+  `org.opencontainers.image.revision` (full 40-char sha), `.source` and `.created`, and made the
+  workflow **pull the pushed image back from the registry and fail closed** unless the revision
+  label equals the commit built — a label present in the build command and absent from the
+  artifact proves nothing, which is exactly how the no-label state survived unnoticed. Ask an
+  image what it is with
+  `docker image inspect <ref> --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'`.
+  **Until an image is next rebuilt the answer is `<no value>`, and for those the ONLY provenance is
+  the tag's short sha** — `git rev-parse <short-sha>` back to the commit, and nothing at all if the
+  tag was lost. Production's `c755c99-wsp218inc5-amd64`
+  (`sha256:615c0b3053671fed9a33f9012f645f301eaf6da7aa9dafa29e14a7c06f820939`) is such an image; the
+  discontinuity ends the first time production is rebuilt, and nothing about the deployed image was
+  changed to close it. Note the container→image→digest correction above applies to reading labels
+  too: `Config.Labels` on a *container* is the container's own label set, not the image's.
+  **`sha-<full-sha>` is DERIVABLE, not IMMUTABLE — a rebuild silently re-points it, measured, not
+  assumed.** Two builds of `e1204893…` on 2026-08-02 produced the same tag name and the digests
+  `sha256:da035e69…` and `sha256:a0936e08…`. The `.created` label alone guarantees this (it is a
+  build timestamp), and `python:3.12-slim` is a moving base tag underneath it, so image
+  reproducibility was never a property this build had. **The digest is the identity; the tag is how
+  you find it.** Two consequences: a rollback target should be recorded as a digest whenever one is
+  to hand, and during a rebuild there is a real (seconds-long) window in which the two tags
+  disagree, because buildx pushes them sequentially — observed live, and a plausible way to
+  misdiagnose a defect that is not there. Making the derivable tag refuse to overwrite is an open
+  follow-up, not something GHCR enforces.
 
 - **A single-element closed-vocabulary tuple breaks a SQL `IN (...)` CHECK built with `!r`.**
   The established pattern for a closed vocabulary is `CheckConstraint(f"col IN {VOCAB!r}")` — and
