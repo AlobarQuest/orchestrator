@@ -10,6 +10,12 @@ on:
         description: optional tag suffix (e.g. wsp26)
         required: false
         default: ""
+      allow_overwrite:
+        description: >-
+          Re-point an EXISTING tag at fresh bytes. Only for a deliberate rebuild
+          (e.g. a base-image CVE under an unchanged tree). Default refuses.
+        required: false
+        default: "false"
 
 concurrency:
   group: release-image
@@ -71,6 +77,37 @@ jobs:
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # A tag that can be silently re-pointed is not an identity. Rebuilding a commit is a
+      # legitimate thing to want -- a base-image CVE lands underneath an unchanged tree -- but it
+      # produces DIFFERENT BYTES under the same name. That is measured rather than theoretical:
+      # WS-P2.18 Inc 7 built one commit twice and got digests da035e69... and a0936e08..., because
+      # `org.opencontainers.image.created` moves and `python:3.12-slim` moves underneath it. The
+      # runtime is pointed at a TAG, so a silent re-point can change what production serves with
+      # nothing visible having happened. So an overwrite must be a decision somebody made, not a
+      # side effect of re-running a workflow. This runs before the build: a refusal should cost
+      # seconds, not a full image build.
+      - name: Refuse to overwrite an existing tag
+        env:
+          ALLOW: ${{ inputs.allow_overwrite }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          SHA_TAG: ${{ steps.tag.outputs.sha_tag }}
+        run: |
+          if [ "$ALLOW" = "true" ]; then
+            echo "::warning::allow_overwrite=true -- existing tags may be re-pointed at fresh bytes"
+            echo "overwrite_allowed=yes" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          status=0
+          for ref in "$SHA_TAG" "$TAG"; do
+            [ -n "$ref" ] || continue
+            if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+              existing=$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}' 2>/dev/null || echo "unknown")
+              echo "::error::$ref already exists at $existing. Building would re-point it at different bytes. If that is what you intend, re-run with allow_overwrite=true."
+              status=1
+            fi
+          done
+          exit $status
 
       # Digest capture: `docker buildx build --push --metadata-file` writes the pushed
       # manifest digest (`containerimage.digest`) into a JSON file as part of the push
@@ -151,7 +188,11 @@ jobs:
             echo "- Digest: \`${{ steps.build.outputs.digest }}\`"
             echo "- Asserts \`org.opencontainers.image.revision=${{ steps.tag.outputs.revision }}\`, verified by reading the pushed image back from the registry."
             echo ""
-            echo "Both tags point at the same digest. Rebuilding this commit reproduces the derivable tag name, but re-points it at a fresh digest; the digest above is the artifact's identity."
+            if [ "${overwrite_allowed:-no}" = "yes" ]; then
+              echo "- ⚠️ **Built with \`allow_overwrite=true\`** — an existing tag may have been re-pointed at these bytes."
+              echo ""
+            fi
+            echo "Both tags point at the same digest. Rebuilding this commit reproduces the derivable tag name, but re-points it at a fresh digest; the digest above is the artifact's identity — which is why an overwrite now requires \`allow_overwrite=true\`."
             echo ""
             echo "This workflow only builds and pushes the image. Pointing the runtime at a tag is a separate, manual step; verify the running container's image digest matches the digest above after doing so."
           } >> "$GITHUB_STEP_SUMMARY"
