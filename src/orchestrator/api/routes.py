@@ -148,6 +148,7 @@ from orchestrator.services.dispatch import (
     GitHubActionsDispatcher,
     dispatch_work_unit,
 )
+from orchestrator.services.estate_landing import HttpEstateLandingSource
 from orchestrator.services.event_publications import (
     EventPublicationFilters,
     export_event_publications,
@@ -640,6 +641,16 @@ def dispatch_route(
         orchestrator_url=settings.dispatch_orchestrator_url,
     )
     dispatcher = GitHubActionsDispatcher(token_provider_for(credentials))
+    # Built here rather than inside the service so the admission path can be exercised without a
+    # network, and so an unset URL or credential arrives as the empty string the source itself
+    # refuses on — never as a source that silently answers.
+    landing_source = HttpEstateLandingSource(
+        base_url=settings.app_brain_url,
+        read_key=(
+            settings.app_brain_read_key.get_secret_value() if settings.app_brain_read_key else ""
+        ),
+        timeout_seconds=settings.app_brain_timeout_seconds,
+    )
     return dispatch_work_unit(
         session,
         DispatchCommand(
@@ -651,6 +662,7 @@ def dispatch_route(
         ),
         dispatch_settings,
         dispatcher,
+        landing_source,
     )
 
 

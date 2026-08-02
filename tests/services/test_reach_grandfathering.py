@@ -41,6 +41,7 @@ from orchestrator.services.reach_admission import (
     REACH_POLICY_UNREADABLE,
     reach_admission_refusal,
 )
+from tests.services.estate_doubles import inert_source
 from tests.services.test_authority_known_good import uv_bump
 from tests.services.test_dispatch import (
     HUMAN,
@@ -449,10 +450,18 @@ def test_an_undeclared_reach_is_refused_and_a_declared_one_is_not(
     github = FakeGitHubDispatcher([])
 
     refused = dispatch_work_unit(
-        migrated_session, dispatch_command(undeclared.id), settings(), github
+        migrated_session,
+        dispatch_command(undeclared.id),
+        settings(),
+        github,
+        inert_source(),
     )
     admitted = dispatch_work_unit(
-        migrated_session, dispatch_command(declared.id), settings(), github
+        migrated_session,
+        dispatch_command(declared.id),
+        settings(),
+        github,
+        inert_source(),
     )
 
     assert (refused.status, refused.reason_code) == ("blocked", REACH_UNDECLARED)
@@ -473,12 +482,18 @@ def test_a_grandfathered_revision_is_admitted_and_the_exemption_widens_nothing_e
     grandfathering(monkeypatch, tmp_path, unit.work_package_revision_id)
     github = FakeGitHubDispatcher([])
 
-    admitted = dispatch_work_unit(migrated_session, dispatch_command(unit.id), settings(), github)
+    admitted = dispatch_work_unit(
+        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+    )
 
     unit.authority_approval_id = None
     migrated_session.flush()
     unapproved = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id, attempt=2), settings(), github
+        migrated_session,
+        dispatch_command(unit.id, attempt=2),
+        settings(),
+        github,
+        inert_source(),
     )
 
     assert (admitted.status, admitted.reason_code) == ("dispatched", None)
@@ -497,12 +512,15 @@ def test_the_off_switch_outranks_the_exemption(
     grandfathering(monkeypatch, tmp_path, unit.work_package_revision_id)
     github = FakeGitHubDispatcher([])
 
-    admitted = dispatch_work_unit(migrated_session, dispatch_command(unit.id), settings(), github)
+    admitted = dispatch_work_unit(
+        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+    )
     switched_off = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id, attempt=2),
         settings(enabled=False),
         github,
+        inert_source(),
     )
 
     assert (admitted.status, admitted.reason_code) == ("dispatched", None)
@@ -533,6 +551,7 @@ def test_the_exemption_writes_no_approval_row_read_through_a_second_session(
         dispatch_command(unit.id),
         recognising_settings(),
         FakeGitHubDispatcher([]),
+        inert_source(),
     )
     migrated_session.commit()
 

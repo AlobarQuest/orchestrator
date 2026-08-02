@@ -36,6 +36,7 @@ from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.dispatch import dispatch_work_unit
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 from orchestrator.services.reach_admission import REACH_POLICY_UNREADABLE, change_window_refusal
+from tests.services.estate_doubles import inert_source
 from tests.services.test_dispatch import (
     FakeGitHubDispatcher,
     dispatch_command,
@@ -497,13 +498,19 @@ def test_out_of_window_work_is_refused_at_admission_and_in_window_work_is_not(
     github = FakeGitHubDispatcher([])
 
     refused = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id), settings(), github, FrozenClock(SHUT)
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        github,
+        inert_source(),
+        FrozenClock(SHUT),
     )
     admitted = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id, attempt=2),
         settings(),
         github,
+        inert_source(),
         FrozenClock(OPEN),
     )
 
@@ -525,6 +532,7 @@ def test_a_window_refusal_is_recorded_as_skipped_not_as_a_unit_needing_attention
         dispatch_command(unit.id),
         settings(),
         FakeGitHubDispatcher([]),
+        inert_source(),
         FrozenClock(SHUT),
     )
 
@@ -545,13 +553,19 @@ def test_the_off_switch_outranks_the_window_and_the_window_outranks_nothing(
     github = FakeGitHubDispatcher([])
 
     admitted = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id), settings(), github, FrozenClock(OPEN)
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        github,
+        inert_source(),
+        FrozenClock(OPEN),
     )
     off_in_window = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id, attempt=2),
         settings(enabled=False),
         github,
+        inert_source(),
         FrozenClock(OPEN),
     )
     off_out_of_window = dispatch_work_unit(
@@ -559,6 +573,7 @@ def test_the_off_switch_outranks_the_window_and_the_window_outranks_nothing(
         dispatch_command(unit.id, attempt=3),
         settings(enabled=False),
         github,
+        inert_source(),
         FrozenClock(SHUT),
     )
 
@@ -586,12 +601,22 @@ def test_a_standing_defect_is_reported_ahead_of_the_self_clearing_one(
     github = FakeGitHubDispatcher([])
 
     unapproved = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id), settings(), github, FrozenClock(SHUT)
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        github,
+        inert_source(),
+        FrozenClock(SHUT),
     )
 
     approved = ready_unit(migrated_session, key="transient-only", reach=["operator_machine"])
     windowed_out = dispatch_work_unit(
-        migrated_session, dispatch_command(approved.id), settings(), github, FrozenClock(SHUT)
+        migrated_session,
+        dispatch_command(approved.id),
+        settings(),
+        github,
+        inert_source(),
+        FrozenClock(SHUT),
     )
 
     assert (unapproved.status, unapproved.reason_code) == ("blocked", "authority_approval_missing")
@@ -639,7 +664,12 @@ def test_a_unit_already_running_survives_the_window_closing_over_it(
     unit = ready_unit(migrated_session, key="running-through-closing", reach=["operator_machine"])
     github = FakeGitHubDispatcher([])
     sent = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id), settings(), github, FrozenClock(OPEN)
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        github,
+        inert_source(),
+        FrozenClock(OPEN),
     )
     grant = claim_unit(migrated_session, unit.id, WORKER, "running-claim")
     assert isinstance(grant, LeaseGrant), grant
@@ -675,7 +705,12 @@ def test_a_unit_already_running_survives_the_window_closing_over_it(
 
     fresh = ready_unit(migrated_session, key="fresh-while-shut", reach=["operator_machine"])
     refused = dispatch_work_unit(
-        migrated_session, dispatch_command(fresh.id), settings(), github, FrozenClock(SHUT)
+        migrated_session,
+        dispatch_command(fresh.id),
+        settings(),
+        github,
+        inert_source(),
+        FrozenClock(SHUT),
     )
 
     assert sent.status == "dispatched"

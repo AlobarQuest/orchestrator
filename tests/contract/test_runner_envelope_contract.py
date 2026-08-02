@@ -41,6 +41,7 @@ from orchestrator.services.lifecycle import ActorContext, TransitionCommand, tra
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import record_approval
 from orchestrator.services.runner_brief import runner_brief
+from tests.services.estate_doubles import inert_source
 from tests.services.test_decomposition import package_ac_ids
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
 
@@ -241,6 +242,7 @@ def test_orchestrator_serves_the_golden_envelope_and_admits_it(migrated_session:
         ),
         _dispatch_settings(),
         github,
+        inert_source(),
     )
 
     assert record.status == "dispatched"
