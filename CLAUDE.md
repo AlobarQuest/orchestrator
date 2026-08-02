@@ -782,10 +782,14 @@ style of that module.
   REGISTRY_ARTIFACT_SHA256=$DIGEST -t ghcr.io/alobarquest/orchestrator:<sha>-<ws>-amd64 --push .`
   produces a single amd64 v2 manifest; verify the running container's RepoDigest == the pushed
   digest after Coolify swaps (via `.Image`, per the correction above).
-  **A `workflow_dispatch` ref must be the FULL 40-character SHA.** `actions/checkout` treats a
-  non-40-character ref as a branch/tag pattern, matches nothing, and fails the run — so
-  dispatching the `Release image` workflow at a short SHA cannot build, however valid that short
-  SHA is to `git`. A plain `docker build .` with no `registry` context fails at
+  **The FULL 40-character SHA goes in the workflow's `ref` INPUT, not in `gh workflow run --ref`.**
+  These are two different things and this bullet used to conflate them, which cost WS-P2.18 Inc 4 a
+  422. `--ref` selects the git ref the workflow FILE is read from and expects a branch or tag;
+  passing a raw SHA to it fails `HTTP 422`. The revision to build is a workflow **input**
+  (`-f <input>=<40-char-sha>`), and there `actions/checkout` treats a non-40-character value as a
+  branch/tag pattern, matches nothing, and fails the run — so a short SHA cannot build, however
+  valid it is to `git`. Read `.github/workflows/release-image.yml`'s `inputs:` block for the input's
+  actual name rather than guessing it. A plain `docker build .` with no `registry` context fails at
   `COPY --from=registry` — that is expected, not a Dockerfile bug. (Verified 2026-07-25, WS-P2.5
   Inc 2 deploy. Automation added 2026-07-26, image-build-automation workstream.)
 
@@ -1250,3 +1254,36 @@ style of that module.
   `productionmutation`, `coolify`, `dispatch`, `deploy`; ws34 adds `gh pr merge`,
   `git push origin main`, `merge_to_main`. Compounds tokenize, so `post-deploy` matches `deploy`.
   **Reword; never add an allowlist entry.**
+
+- **"Withholding a refusal" is NOT "softening a requirement" — where the consumer reads an empty
+  answer as permission, withholding DELETES the requirement.** WS-P2.18 Inc 4. The handoff specified
+  grandfathering as "a withheld `reach_undeclared` refusal", which is the correct idiom for the
+  policy artifact (ADR-0010) and a **fail-open** if applied inside `authority_refusals`: no reach →
+  no row → no pattern consulted → fall-through, and admission reads that as the human gate **lifted**.
+  Grandfathered units would have dispatched with no envelope examined by policy or by a person. The
+  fix was to split the questions — reach became its own admission term, with grandfathering applying
+  only there, and `human_authority_gate` left untouched. **Before expressing anything as a withheld
+  refusal, find every consumer of that refusal set and check what each does with empty.** The idiom
+  is safe only where empty means "this policy raises no objection" and some *other* term still has to
+  say yes.
+
+- **The grandfathering table deletes itself, which couples it to deployment: if its last live
+  revision settles while the table still ships, the artifact stops loading and recovery needs a
+  release.** WS-P2.18 Inc 4's rule names an explicit list of revision ids (never a date — a date can
+  still absolve a package created before it but decomposed after), and `require_live_subject` raises
+  once no listed revision can still produce work, so a spent rule forces its own deletion rather than
+  becoming a permanent hole. Its entire live subject as of 2026-08-01 is **one** revision:
+  `wsp211-conformance-kit` rev 1, `f921c842…`. Two consequences. (1) **Decomposing and settling that
+  revision is a factory-halting act while the table is deployed** — do it only in the same change
+  that removes the table. (2) A listed id the database has never seen reads **live**, deliberately,
+  so a restored or empty database cannot halt the factory on missing rows; "spent" requires positive
+  proof that units exist and are all stopped.
+
+- **Minted follow-up units are created in `AWAITING_REVIEW` and are not normally admitted at all.**
+  So requiring reach at mint time is right for a different reason than "they will be admitted": the
+  point is that minting is the last moment a human is in the loop before the unit exists, not that
+  the unit dispatches straight away. Note also the denominator — **7 approved revisions carry a
+  `follow_up` block** (not 17 packages, which is a different set that `mint_due_follow_ups` does not
+  iterate). Because minting now refuses rather than inheriting an unknown reach, none of those 7 can
+  mint until reach is supplied — which is also why the grandfathering list needs one entry instead of
+  twenty-one.
