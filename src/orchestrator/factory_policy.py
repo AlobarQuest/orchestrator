@@ -50,6 +50,17 @@ cannot reach the database and must not learn how -- but the effect is the artifa
 caller's: nothing here caches, so refusing at every consultation is refusing to load. A dead knob
 is the same defect as a dead function, and this one deletes itself rather than waiting to be
 noticed.
+
+**Schema version 4 adds the change window, and it too is only a refusal.** A window is the hours in
+which policy raises no objection to work of a reach STARTING; outside them the objection is
+``outside_change_window``. Written the other way round -- "work may run between these hours" -- it
+would be a grant, and this schema has no way to express one. Three properties are load-bearing.
+A row with no window declared raises no objection at all, and that is DISTINGUISHABLE from a window
+that failed to parse, which stops the document loading. Composition over a reach set is the union
+of its members' refusals, as everywhere else, so a unit reaching two places must be inside BOTH
+windows -- which means windows on rows that occur together have to overlap, or that combination can
+never run. And the window is asked about an INSTANT, never about a wall-clock reading of the local
+machine: :func:`_window_open` converts, and never constructs a local time from a naive one.
 """
 
 from __future__ import annotations
@@ -58,10 +69,11 @@ import shlex
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Final
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityEnvelope
@@ -74,18 +86,20 @@ PACKAGED_ARTIFACT: Final[Path] = Path(__file__).parent / "factory-policy.toml"
 # narrowing the new version introduced, which is the permissive reading of a version skew. A new
 # version is therefore a coordinated change -- the loader learns it in the same commit that ships
 # the document at it and the code that reads its new field.
-SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({3})
+SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({4})
 
 # Why policy objects. These are the whole output vocabulary of this module.
 REACH_UNDECLARED: Final = "reach_undeclared"
 REACH_UNRECOGNISED: Final = "reach_unrecognised"
 REACH_NOT_IN_POLICY: Final = "reach_not_in_policy"
 AUTHORITY_ENVELOPE_NOVEL: Final = "authority_envelope_novel"
+OUTSIDE_CHANGE_WINDOW: Final = "outside_change_window"
 
 _ROW_REQUIRED_FIELDS = frozenset({"rationale", "decided"})
-_ROW_OPTIONAL_FIELDS = frozenset({"known_good"})
+_ROW_OPTIONAL_FIELDS = frozenset({"known_good", "change_window"})
 _TOP_LEVEL_FIELDS = frozenset({"version", "reach", "grandfathered"})
 _GRANDFATHERED_FIELDS = frozenset({"rationale", "decided", "revisions"})
+_WINDOW_FIELDS = frozenset({"rationale", "decided", "timezone", "start", "end"})
 _PATTERN_FIELDS = frozenset(
     {
         "name",
@@ -128,6 +142,21 @@ def _invalid(detail: str) -> DomainError:
     )
 
 
+def _not_an_instant() -> DomainError:
+    """Policy was asked "is it now" with something that names no moment.
+
+    A naive datetime is not a time this module can answer about: converting one assumes the zone of
+    whatever machine is running, which is the single most common way a window becomes wrong on a
+    server and wrong twice a year at home. Refusing is the only honest answer, and every caller
+    turns it into a refusal rather than into an absence of one.
+    """
+    return DomainError(
+        "factory_policy_clock_invalid",
+        "policy was asked about a time carrying no zone, which names no instant",
+        "supply a timezone-aware time; policy refuses rather than guessing a zone for it",
+    )
+
+
 @dataclass(frozen=True)
 class KnownGoodPattern:
     """An envelope shape somebody decided, on a date, for a stated reason (ADR-0011).
@@ -166,6 +195,26 @@ class Grandfathering:
 
 
 @dataclass(frozen=True)
+class ChangeWindow:
+    """The hours somebody decided work of this reach may start in, held as a refusal boundary.
+
+    Declared in LOCAL time with an explicit zone, because the question a window answers is about a
+    person's day and a day is a local thing. The zone is a field rather than an assumption: a naive
+    local reading is wrong on a server, which runs in UTC, and wrong twice a year everywhere else.
+
+    ``start`` after ``end`` wraps midnight, which is the shape a nightly window naturally has.
+    ``start`` equal to ``end`` is rejected at load, because it reads equally as a window of no
+    length and one of a whole day, and a policy nobody can read is a policy nobody decided.
+    """
+
+    rationale: str
+    decided: date
+    zone: ZoneInfo
+    start: time
+    end: time
+
+
+@dataclass(frozen=True)
 class ReachPolicy:
     """One row -- everything policy currently says about a single reach member."""
 
@@ -173,6 +222,7 @@ class ReachPolicy:
     rationale: str
     decided: date
     known_good: tuple[KnownGoodPattern, ...] = ()
+    change_window: ChangeWindow | None = None
 
 
 @dataclass(frozen=True)
@@ -232,6 +282,42 @@ class FactoryPolicy:
         if refusals == (REACH_UNDECLARED,) and self._grandfathers(revision_id):
             return ()
         return refusals
+
+    def window_refusal(self, reach: Sequence[str] | None, now: datetime) -> str | None:
+        """Why policy objects to work of this reach STARTING at ``now``; ``None`` means it does not.
+
+        A separate question from :meth:`admission_refusals`, and separate on purpose. That one asks
+        whether the declaration is usable at all, which nothing but editing the package can fix;
+        this one asks whether it is the time, which fixes itself. Reporting the second in place of
+        the first would send an operator away to wait for a moment that changes nothing.
+
+        Composition is the union of the members' objections, so a unit reaching two places must be
+        inside both windows. A member with no window contributes nothing, which is why declaring one
+        can only ever narrow.
+
+        **A reach nobody declared draws no window objection, and that is deliberate and bounded.**
+        Every window hangs off a reach row, so there is no row to consult and no honest way to pick
+        one -- reach is declared, never inferred (ADR-0009 R8), and the fail-closed-looking
+        alternative of requiring every window at once is worse than it sounds: two rows whose hours
+        do not overlap would make such work unrunnable forever rather than merely restrained. The
+        exposure is exactly the set the admission term still lets through, which is the named
+        grandfathering list, which deletes itself.
+        """
+        # Before the early return, not after it: a clock this module cannot read is a fault whether
+        # or not this particular reach would have consulted a window, and a guard that only fires on
+        # the paths that were going to answer anyway is a guard with a hole in the shape of its
+        # cheapest case.
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise _not_an_instant()
+        if not reach:
+            return None
+        for member in reach:
+            row = self.rows.get(member)
+            if row is None or row.change_window is None:
+                continue
+            if not _window_open(row.change_window, now):
+                return OUTSIDE_CHANGE_WINDOW
+        return None
 
     def require_live_subject(self, live_revisions: Sequence[UUID]) -> None:
         """Raise once no grandfathered revision can still produce work needing admission.
@@ -313,10 +399,46 @@ class FactoryPolicy:
                     "rationale": row.rationale,
                     "decided": row.decided,
                     "known_good": [_pattern_report(pattern) for pattern in row.known_good],
+                    "change_window": _window_report(row.change_window),
                 }
                 for row in self.rows.values()
             ],
         }
+
+
+def _window_open(window: ChangeWindow, now: datetime) -> bool:
+    """Whether the instant ``now`` falls inside the window's local hours.
+
+    The instant is CONVERTED into the window's zone. A local wall time is never constructed from a
+    naive one, and that single choice is what makes daylight saving total rather than ambiguous --
+    the ambiguity lives entirely in the other direction, where one local reading names two instants
+    or none.
+
+    The two awkward hours therefore behave without a special case, and both directions are stated
+    here because neither is obvious. On the day an hour occurs TWICE, both occurrences read as the
+    same local time, so a window covering that hour is open across both of them -- one extra hour of
+    openness, once a year, in the widening direction. On the day an hour DOES NOT OCCUR, no instant
+    ever reads as a local time inside it, so a window covering only that hour is open for no time at
+    all that day -- in the narrowing direction, which is the safe one to be surprised by.
+    """
+    local = now.astimezone(window.zone).time()
+    if window.start < window.end:
+        return window.start <= local < window.end
+    return local >= window.start or local < window.end
+
+
+def _window_report(window: ChangeWindow | None) -> dict[str, Any] | None:
+    if window is None:
+        return None
+    return {
+        "rationale": window.rationale,
+        "decided": window.decided,
+        # `ZoneInfo.key` is the name the artifact declared, so the operator reads back what was
+        # written rather than an offset that is only true for half the year.
+        "timezone": window.zone.key,
+        "start": window.start.isoformat(timespec="minutes"),
+        "end": window.end.isoformat(timespec="minutes"),
+    }
 
 
 def _grandfathering_report(grandfathering: Grandfathering | None) -> dict[str, Any] | None:
@@ -566,7 +688,59 @@ def _row(member: str, value: object) -> ReachPolicy:
         rationale=" ".join(rationale.split()),
         decided=_decided(f"reach.{member}", value["decided"]),
         known_good=_patterns(member, value.get("known_good", [])),
+        # Absent is "this policy raises no objection on window grounds" -- never a default window,
+        # and never confusable with one that failed to parse, which stops the document loading.
+        change_window=(
+            _change_window(member, value["change_window"]) if "change_window" in value else None
+        ),
     )
+
+
+def _change_window(member: str, value: object) -> ChangeWindow:
+    where = f"reach.{member}.change_window"
+    if not isinstance(value, dict) or set(value) != _WINDOW_FIELDS:
+        raise _invalid(
+            f"`[{where}]` must be a table declaring exactly " + ", ".join(sorted(_WINDOW_FIELDS))
+        )
+    start = _local_time(where, "start", value["start"])
+    end = _local_time(where, "end", value["end"])
+    if start == end:
+        raise _invalid(
+            f"`{where}.start` and `{where}.end` are the same time, which reads equally as a "
+            "window of no length and one of a whole day"
+        )
+    return ChangeWindow(
+        rationale=_text(where, "rationale", value["rationale"]),
+        decided=_decided(where, value["decided"]),
+        zone=_zone(where, value["timezone"]),
+        start=start,
+        end=end,
+    )
+
+
+def _zone(where: str, value: object) -> ZoneInfo:
+    """The declared IANA zone, resolved once at load so an unknown name fails loudly and early."""
+    if not isinstance(value, str) or not value.strip():
+        raise _invalid(f'`{where}.timezone` must be an IANA zone name, e.g. "America/New_York"')
+    try:
+        return ZoneInfo(value)
+    except (KeyError, ValueError, OSError) as error:
+        raise _invalid(f"`{where}.timezone` is not a known IANA zone: {value!r}") from error
+
+
+def _local_time(where: str, field: str, value: object) -> time:
+    """A wall-clock ``HH:MM``, and nothing else.
+
+    Length is checked before parsing because ``time.fromisoformat`` accepts more than a window can
+    honestly mean: seconds nobody would review, and a trailing offset, which would put a second
+    zone in a row that already declares one.
+    """
+    if not isinstance(value, str) or len(value) != 5:
+        raise _invalid(f'`{where}.{field}` must be a local time written as HH:MM, e.g. "02:00"')
+    try:
+        return time.fromisoformat(value)
+    except ValueError as error:
+        raise _invalid(f"`{where}.{field}` is not a time: {value!r}") from error
 
 
 def _patterns(member: str, value: object) -> tuple[KnownGoodPattern, ...]:

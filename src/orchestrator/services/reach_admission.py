@@ -23,6 +23,15 @@ recognise them, so the person still reads it.
 nothing left to grandfather, and a declaration naming something this build does not know all return
 a refusal rather than an absence of one, because the alternative reading of "policy could not
 answer" is that it had nothing to object to.
+
+**The change window (Increment 5) is a SECOND term here, not part of the first.** ``may this work
+be admitted at all`` and ``may it be admitted now`` fail differently and are fixed differently: the
+first is a property of the package that only editing it can change, the second fixes itself when
+the clock moves. Folding them together would report the self-clearing one in place of the standing
+one and send an operator away to wait for a moment that changes nothing. Each term consults the
+artifact for itself, which costs one extra read of a small file and no state -- the artifact is
+deliberately never cached (ADR-0010), so there is no shared parse to reuse and nothing to
+invalidate.
 """
 
 from __future__ import annotations
@@ -33,15 +42,17 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from orchestrator.clock import Clock, TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import FactoryPolicy, load_factory_policy
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
 from orchestrator.reach_vocabulary import reach_from_snapshot
 
-# Policy could not be consulted, so it recognised nothing and objected to nothing -- which is the
-# one state where those two are not the same. Named separately from the artifact's own refusals
-# because it is a fault in this process rather than a statement about this unit.
+# Policy could not be consulted or could not be evaluated, so it recognised nothing and objected to
+# nothing -- which is the one state where those two are not the same. Named separately from the
+# artifact's own refusals because it is a fault in this process rather than a statement about this
+# unit. Shared by both terms below: whichever notices first reports the same fault.
 REACH_POLICY_UNREADABLE = "reach_policy_unreadable"
 
 # A unit in one of these states has stopped for good: neither has an outgoing edge in
@@ -73,6 +84,33 @@ def reach_admission_refusal(session: Session, revision: WorkPackageRevision) -> 
     # one reason, so reporting the rest would need a refusal list on every record for a case that
     # only arises when an author declares two broken things at once.
     return refusals[0] if refusals else None
+
+
+def change_window_refusal(
+    session: Session,
+    revision: WorkPackageRevision,
+    clock: Clock | None = None,
+) -> str | None:
+    """Why this revision's work may not START now; ``None`` means policy raises no objection.
+
+    Asked once, at admission, and nowhere else. Nothing consults this again after work has been
+    sent: a window closing over a run in progress must not touch it, because the worker reports
+    back at the END of its run and interrupting it there strands the unit with its attempt spent.
+
+    The clock is a parameter so that behaviour depending on the time can be exercised without
+    depending on the time. It defaults to the transaction's own timestamp, which is an aware
+    instant read from the database rather than from this process -- and the related trap is already
+    documented here: a row's ``updated_at`` cannot be back-dated, because a trigger rewrites it, so
+    ageing data is not a way to test anything that reads a clock.
+    """
+    try:
+        policy = load_factory_policy()
+        return policy.window_refusal(
+            reach_from_snapshot(revision.enforcement_snapshot),
+            (clock or TransactionClock()).now(session),
+        )
+    except DomainError:
+        return REACH_POLICY_UNREADABLE
 
 
 def _live_grandfathered_revisions(session: Session, policy: FactoryPolicy) -> Sequence[UUID]:

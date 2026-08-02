@@ -9,7 +9,9 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
+from orchestrator.factory_policy import OUTSIDE_CHANGE_WINDOW
 from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.runner_authority import dependency_update_authority_violation
 from orchestrator.kernel.states import ActorRole
@@ -17,7 +19,7 @@ from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRe
 from orchestrator.services.authority_gate import AuthorityGate, human_authority_gate
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import ActorContext
-from orchestrator.services.reach_admission import reach_admission_refusal
+from orchestrator.services.reach_admission import change_window_refusal, reach_admission_refusal
 
 ORCHESTRATOR_URL = "https://sds.alobar.net"
 
@@ -121,9 +123,10 @@ def dispatch_work_unit(
     command: DispatchCommand,
     settings: DispatchSettings,
     dispatcher: WorkflowDispatcher,
+    clock: Clock | None = None,
 ) -> DispatchRecord:
     try:
-        record = _dispatch_work_unit(session, command, settings, dispatcher)
+        record = _dispatch_work_unit(session, command, settings, dispatcher, clock)
         session.commit()
         return record
     except Exception:
@@ -136,6 +139,7 @@ def _dispatch_work_unit(
     command: DispatchCommand,
     settings: DispatchSettings,
     dispatcher: WorkflowDispatcher,
+    clock: Clock | None,
 ) -> DispatchRecord:
     _authorize_dispatch_actor(command.actor)
     if command.runner_attempt <= 0:
@@ -174,7 +178,13 @@ def _dispatch_work_unit(
         raise DomainError("revision_not_found", "package revision does not exist", None)
 
     gate = human_authority_gate(unit, revision)
-    admission = _blocked_reason(unit, settings, gate, reach_admission_refusal(session, revision))
+    admission = _blocked_reason(
+        unit,
+        settings,
+        gate,
+        reach_admission_refusal(session, revision),
+        change_window_refusal(session, revision, clock),
+    )
     repository = admission.target_repository
     if admission.authority_recognised_by:
         _record_authority_gate_not_required(session, command, unit, gate)
@@ -279,6 +289,7 @@ def _blocked_reason(
     settings: DispatchSettings,
     gate: AuthorityGate,
     reach_refusal: str | None,
+    window_refusal: str | None,
 ) -> AdmissionDecision:
     """Why this unit may not run, in the order the terms are cheapest to answer.
 
@@ -291,6 +302,10 @@ def _blocked_reason(
     it: a declaration nobody wrote is a property of the package, and a person clicking approve
     would be attesting to an envelope whose blast radius is still unstated. Reporting the authority
     term first would send an operator to a form that cannot help.
+
+    The change window (Increment 5) sits BELOW every one of them, for the mirror of that reason: it
+    is the only term that clears without anybody doing anything, so reporting it ahead of a
+    standing defect would hide the thing somebody has to fix behind the thing that fixes itself.
     """
     envelope = normalize_authority(unit.authority)
     target_repository = _target_repository(envelope)
@@ -305,7 +320,7 @@ def _blocked_reason(
     if unit.authority_approval_id is None and gate.refusals:
         return AdmissionDecision("authority_approval_missing", target_repository)
     return AdmissionDecision(
-        _envelope_reason(unit, settings, envelope, target_repository),
+        _envelope_reason(unit, settings, envelope, target_repository) or window_refusal,
         target_repository,
         # Cited only where it was USED: a unit carrying a human's approval passed the term on that
         # approval, whatever policy would also have said about it.
@@ -335,7 +350,10 @@ def _envelope_reason(
 
 
 def _is_skipped_reason(reason: str) -> bool:
-    return reason == "dispatch_disabled" or reason in {
+    # A window refusal is SKIPPED rather than BLOCKED, alongside the off-switch and for the same
+    # reason: nothing is wrong with the unit and nobody has to act. Recording it as blocked would
+    # put a nightly recurrence into the surfaces an operator reads for units that need attention.
+    return reason in {"dispatch_disabled", OUTSIDE_CHANGE_WINDOW} or reason in {
         "authority_command_run_required",
         "authority_allowed_commands_invalid",
         "authority_mutation_commands_invalid",

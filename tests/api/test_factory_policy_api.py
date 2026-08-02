@@ -19,10 +19,31 @@ def test_the_policy_surface_reports_the_version_and_every_reach_row(db_client: T
 
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == 3
+    assert body["version"] == 4
     assert body["source"] == "factory-policy.toml"
     assert [row["member"] for row in body["reach"]] == sorted(REACH_VOCABULARY)
     assert all(row["rationale"] and row["decided"] for row in body["reach"])
+
+
+def test_the_policy_surface_serves_the_change_window_a_row_declares(
+    db_client: TestClient,
+) -> None:
+    # Same reason as the patterns below: a `response_model` drops what it does not declare, so the
+    # only way to know an operator can read the window is to read it off the wire. Served in the
+    # local terms it was written in, zone included -- an offset would be true for half the year.
+    rows = {
+        row["member"]: row
+        for row in db_client.get("/api/v1/factory-policy", headers=SYSTEM).json()["reach"]
+    }
+
+    assert rows["source_repository"]["change_window"] is None
+    window = rows["operator_machine"]["change_window"]
+    assert (window["timezone"], window["start"], window["end"]) == (
+        "America/New_York",
+        "02:00",
+        "06:00",
+    )
+    assert window["rationale"] and window["decided"]
 
 
 def test_the_policy_surface_serves_the_known_good_patterns_a_row_declares(
