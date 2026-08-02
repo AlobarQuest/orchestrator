@@ -1490,8 +1490,28 @@ style of that module.
   not misrouted (its work was opening a PR, which genuinely is inert), but **the merge is
   `live_estate` work**, and it happened outside the 02:00–06:00 window `live_estate` declares.
   Harmless in that instance and merged knowingly; the determination METHOD is wrong for every repo
-  that self-deploys. Backlogged P1 `c99a4e598506`. Until it is fixed, treat "does merging deploy?"
-  as a question about the source repository's CI, never about the deploy platform's configuration.
+  that self-deploys. Backlogged P1 `c99a4e598506`.
+  **CORRECTED 2026-08-02 (WS-P2.29): this bullet used to end "treat 'does merging deploy?' as a
+  question about the source repository's CI, never about the deploy platform's configuration."
+  That is ALSO wrong — it is the same error pointing the other way.** Determining the answer for
+  all 25 registered apps found **three independent trigger mechanisms**, and reading CI sees one
+  of them: (1) a workflow step that calls the deploy target; (2) a **repository webhook** pointed
+  at the deploy target — `AlobarQuest/booking-system`'s `test.yml` runs tests and nothing else, so
+  a CI scan concludes inert while every push redeploys it through Coolify's manual webhook
+  endpoint; (3) the **hosting platform's own git integration** — `AdjustRight-Photo-Pro` is built
+  from `main` by Cloudflare Pages with no workflow and no webhook *in the repository at all*, so
+  neither the CI nor the repo's webhooks reveal it. Checking any single surface fails closed in
+  one direction and fail-OPEN in the other. **Do not derive this on demand: read it from App
+  Brain** — `GET https://app-brain.devonwatkins.com/api/apps/default-branch-landing?github_repo=Owner/Repo`
+  returns `redeploys` | `inert` | `unknown`, folded over every registered app fed by that
+  repository (`AlobarQuest/brain` feeds four), with `unknown` for a repository nobody assessed and
+  `matched_apps` so `inert` never arrives without its denominator. A read-only credential exists
+  for exactly this call (`APP_BRAIN_READ_KEY`, BWS `726a18ba-7a38-4ecc-aa03-b49a015fd302`): it
+  authenticates GET on app-brain's two read paths and is 401 everywhere else, including `/mcp`.
+  Note **2 of the 4 repositories the factory targets — `intent-packages` and `project-standards` —
+  have no App Brain app record at all** and answer `unknown` / `no_app_record`, which a
+  fail-closed consumer refuses; that decision belongs to WS-P2.28 and is not yet made. Evidence:
+  `~/docs/software-delivery-system/2026-08-02-wsp229-build-report.md`.
 
 - **The `Alobar SDS Dispatch` App has NO `checks` permission — the Checks API is 403 for the
   orchestrator, and named-check evidence is read from workflow JOBS instead.** Measured 2026-08-02
