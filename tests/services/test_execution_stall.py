@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.config import Settings
 from orchestrator.errors import DomainError
-from orchestrator.kernel.leases import LEASE_CEILING
+from orchestrator.kernel.leases import DEFAULT_LEASE, LEASE_CEILING
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Claim, Event, WorkUnit
 from orchestrator.services.claims import (
@@ -185,12 +185,14 @@ def test_work_declared_slow_is_not_reported_for_taking_the_time_it_declared(
     """Two units, the same age, opposite answers -- and reach is the only input that differs.
 
     A repository edit is granted the default fifteen minutes; work against somebody else's system
-    of record is granted ninety. Twenty minutes in, the first is five minutes past its hold and
-    the second has seventy left. This is the whole of the legitimately-slow discriminator, and it
-    works because the threshold is a margin on a hold that was already decided per reach rather
-    than a duration this report chose for everybody.
+    of record is granted the shipped artifact's sixty. Twenty minutes in, the first is five
+    minutes past its hold and the second has forty left. This is the whole of the
+    legitimately-slow discriminator, and it works because the threshold is a margin on a hold that
+    was already decided per reach rather than a duration this report chose for everybody.
 
-    Both claims are shifted by the SAME amount, so neither hold is edited -- only their age.
+    Both claims are shifted by the SAME amount, so neither hold is edited -- only their age. The
+    two holds are read back and asserted, so a change to the artifact that collapsed them onto one
+    number would red this rather than quietly making it prove nothing.
     """
     quick, quick_claim, _ = _held_unit(
         migrated_session, key="stall-repository", reach=["source_repository"]
@@ -198,6 +200,8 @@ def test_work_declared_slow_is_not_reported_for_taking_the_time_it_declared(
     slow, slow_claim, _ = _held_unit(
         migrated_session, key="stall-external", reach=["external_system"]
     )
+    assert quick_claim.lease_expires_at - quick_claim.acquired_at == DEFAULT_LEASE
+    assert slow_claim.lease_expires_at - slow_claim.acquired_at > DEFAULT_LEASE
     twenty_minutes = timedelta(minutes=20)
     _shift_back(migrated_session, quick_claim, twenty_minutes)
     _shift_back(migrated_session, slow_claim, twenty_minutes)
