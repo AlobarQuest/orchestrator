@@ -371,8 +371,8 @@ class FactoryPolicy:
         **Composition is the MAXIMUM**, which is the same monotonicity the refusal sets have and
         the same direction: adding a member can only lengthen the answer. A member with no lease
         declared, one this build does not recognise, and one no row covers all contribute the
-        default rather than nothing, so an answer is shortened only when EVERY member of the set
-        was decided to be longer -- and none of them can be decided to be shorter.
+        DEFAULT rather than nothing -- so an incomplete or unreadable declaration pulls the answer
+        toward the default it started at, and never below it.
 
         **Undeclared reach gets the default and does not raise.** Refusing here would be refusing
         to grant a lease at all, which is refusing to let a worker hold a unit it has already been
