@@ -1166,10 +1166,17 @@ style of that module.
   `unknown`, never "reaches nothing."** There is deliberately **no `orchestrator_self` member** —
   the orchestrator is `live_estate`, and self-update keys on reach **plus a second dimension**.
   **`reach_from_snapshot()` is the single reader; do not read the snapshot yourself.**
-  **Execution locus is a DIFFERENT dimension and is currently unmodelled.** `local-heavy` in
-  `routing-policy.toml` (which lives in `intent-packages`, not here) describes where work *executes*;
-  reach describes what it *touches*. A job can execute on a CI runner and touch Devon's machine, or
-  execute locally and touch only a repo. Do not conflate them or smuggle one into the other.
+  **Execution locus is a DIFFERENT dimension from reach, and is unmodelled ANYWHERE — there is no
+  partial precedent to build on.** Reach describes what work *touches*; execution locus would
+  describe where it *runs*, and a job can execute on a CI runner while touching Devon's machine.
+  **CORRECTED 2026-08-02 (WS-P2.18 Inc 6): this bullet previously offered `local-heavy` in
+  `intent-packages/routing-policy.toml` as the existing execution-locus dimension. That is wrong.**
+  `local-heavy` is one of eight `[[surface]]` entries and is a MODEL-ROUTING key —
+  `{id = "local-heavy", models = ["fable-5"], rationale = "Work routes here because it is the hard
+  kind (multi-repo, deep context)"}`. It selects which LLM handles a class of work and says nothing
+  about where anything executes; the name misleads, which is how this error survived several
+  handoffs. See the fuller correction later in this file. Do not conflate reach with execution
+  locus, and do not assume the latter has any precedent.
 
 - **`reach_from_snapshot()` was FAIL-OPEN for its first increment, and the test that should have
   caught it asserted the right intent in prose while checking only the case that passes trivially.**
