@@ -1151,6 +1151,24 @@ class FactoryPolicyKnownGoodResponse(BaseModel):
     command_prefixes: list[str]
 
 
+class FactoryPolicyChangeWindowResponse(BaseModel):
+    """The hours in which policy raises no objection to work of this reach starting.
+
+    ``null`` for a row that declares none, which is this policy having no objection on those
+    grounds -- never a window of zero length and never a default. Served in the local terms it was
+    written in, zone included: an offset would be true for only half the year, and the reason the
+    zone is in the artifact at all is that the question is about somebody's day.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    rationale: str
+    decided: date
+    timezone: str
+    start: str
+    end: str
+
+
 class FactoryPolicyReachResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -1158,6 +1176,7 @@ class FactoryPolicyReachResponse(BaseModel):
     rationale: str
     decided: date
     known_good: list[FactoryPolicyKnownGoodResponse]
+    change_window: FactoryPolicyChangeWindowResponse | None
 
 
 class FactoryPolicyGrandfatheringResponse(BaseModel):

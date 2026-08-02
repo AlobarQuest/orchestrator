@@ -70,8 +70,45 @@
 # deleting these four lines. That is deliberate: this repository already paid for
 # a rule that was switched off and reported nothing for a whole workstream, and a
 # rule that expires itself beats a rule plus a note to remove it.
+#
+# A CHANGE WINDOW IS WRITTEN AS A BOUNDARY, NOT AS A GRANT (schema 4). A
+# `change_window` names the hours in which policy raises no objection to work of
+# that reach STARTING; outside them the answer is `outside_change_window`. The
+# information is the same either way and the polarity is the guarantee — "work may
+# run between these hours" is a permission, and there is no way to write one here.
+# A row with no window is not a window of zero length and not a default: it is this
+# policy having no objection on those grounds, which is why two of the four rows
+# below carry none. A window that fails to parse is the opposite — the whole
+# document stops loading, and a document that does not load permits nothing.
+#
+# THE WINDOW GOVERNS ADMISSION, NEVER EXECUTION. It is consulted when work is
+# about to be sent and at no other moment. Work already running is never
+# interrupted by a window closing over it: the worker calls this orchestrator back
+# at the END of its run, so cutting it off there would strand the unit with its
+# attempt spent rather than stop it cleanly.
+#
+# WINDOWS COMPOSE BY INTERSECTION, so choose them accordingly. Work that reaches
+# two places must be inside BOTH of their windows, exactly as it must clear both of
+# their other objections. Two rows whose hours do not overlap therefore make any
+# package reaching both of them unrunnable — not restrained, unrunnable — so a
+# window is added here only after asking which rows it will occur alongside. The
+# two declared below are deliberately identical for that reason.
+#
+# TIME IS LOCAL AND THE ZONE IS EXPLICIT. A window is about a person's day, and a
+# day is a local thing; a naive reading would be wrong on a server, which runs in
+# UTC, and wrong twice a year everywhere else. `start` after `end` wraps midnight.
+# On the day an hour occurs twice, a window covering it is open across both
+# occurrences; on the day an hour does not occur, a window covering only that hour
+# is open for no time at all. Both follow from converting an instant into this zone
+# rather than reading a clock, and neither needs a special case.
+#
+# CHANGING A WINDOW COSTS A RELEASE, AND A RELEASE RESTARTS THIS PROCESS. Noticing
+# an edit is free — this file is re-read on every consultation and never cached —
+# but getting new bytes onto a running process is not. So a window is set once and
+# left, and it is edited only when no run is live: the workflow concluded, the unit
+# out of `executing`, cost actuals recorded.
 
-version = 3
+version = 4
 
 [grandfathered]
 rationale = """
@@ -136,11 +173,40 @@ dimension, never by a member of its own.
 """
 decided = "2026-08-01"
 
+[reach.live_estate.change_window]
+rationale = """
+Something already serving is changed, and the change is felt the moment it lands,
+so the hours it may start in are the hours in which nobody is relying on the thing
+being changed. The night is that answer for this estate, and it is also the answer
+for the orchestrator changing itself: a restart is invisible at 03:00 and is an
+outage at 15:00. Identical to the operator-machine window on purpose — these two
+rows are the pair most likely to be declared together, and windows compose by
+intersection, so hours that did not overlap would make such work unrunnable rather
+than restrained.
+"""
+decided = "2026-08-01"
+timezone = "America/New_York"
+start = "02:00"
+end = "06:00"
+
 [reach.external_system]
 rationale = """
 State changes in a system of record this estate does not run and cannot put back
 on its own. The least reversible reach in the vocabulary, and the one where a
 wrong answer costs the most to unwind, so it earns the most restraint.
+
+NO WINDOW, and the reason is worth writing down because the absence looks like an
+oversight. A window moves WHEN work runs; it does nothing about how hard the work
+is to undo. Restraint here is a person having read the envelope, which is what
+this row gets: no known-good pattern is declared under it, so every envelope of
+this reach draws the human objection. And a window would have had to be one of two
+wrong things. The same night hours as the rows below would be ceremony, since
+nothing about an external system of record cares what time it is here. Office
+hours — "run it while somebody can notice" — reads better and is worse: they do
+not overlap the night window, and windows compose by intersection, so a package
+rotating a credential in an external console AND writing it to the operator's
+machine would have become permanently unrunnable. That shape is named in the reach
+vocabulary as a real example, not a hypothetical one.
 """
 decided = "2026-08-01"
 
@@ -152,3 +218,17 @@ interruption, not an incident. This is the case a change window was wanted for
 in the first place.
 """
 decided = "2026-08-01"
+
+[reach.operator_machine.change_window]
+rationale = """
+The original constraint, in one line: if the operator is on the phone with a
+client, the machine may not be rebooted underneath him. That is a statement about
+his day, which is why the hours are local and the zone is written down rather than
+assumed. Chosen wide enough to be useful and narrow enough that nothing inside it
+can collide with a working day — a person asleep is the only reliable signal that
+an interruption costs nothing. Set once and left; changing it costs a release.
+"""
+decided = "2026-08-01"
+timezone = "America/New_York"
+start = "02:00"
+end = "06:00"
