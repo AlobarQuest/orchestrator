@@ -28,10 +28,15 @@ NOVEL_COMMANDS: dict[str, list[str]] = {
 }
 
 
+# Nothing in this file holds a claim, so any grace reports the same (nothing); the shipped
+# default is used so the call reads as the production one.
+GRACE = 900
+
+
 def authority_entries(session: Session, unit_id: object) -> list[dict[str, object]]:
     return [
         entry
-        for entry in pending_decisions(session)
+        for entry in pending_decisions(session, execution_stall_grace_seconds=GRACE)
         if entry["kind"] == "authority_approval" and str(unit_id) in str(entry["href"])
     ]
 

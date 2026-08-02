@@ -30,10 +30,15 @@ from tests.services.test_package_intake import acceptance_criterion, human_actor
 from tests.web.conftest import _review_unit_with_criteria
 
 SYSTEM_ACTOR = ActorContext("system", ActorRole.SYSTEM)
+# The stalled-execution kind has its own file. Nothing here holds a claim, so the shipped
+# default reports nothing and these assertions stay about the kinds they are named for.
+GRACE = 900
 
 
 def _kinds(session: Session) -> set[str]:
-    return {entry["kind"] for entry in pending_decisions(session)}
+    return {
+        entry["kind"] for entry in pending_decisions(session, execution_stall_grace_seconds=GRACE)
+    }
 
 
 def _seed_registered_package(session: Session, suffix: str):
@@ -108,7 +113,7 @@ def test_every_kind_of_pending_decision_appears(migrated_session: Session) -> No
     )
     migrated_session.commit()
 
-    entries = pending_decisions(migrated_session)
+    entries = pending_decisions(migrated_session, execution_stall_grace_seconds=GRACE)
     kinds = {entry["kind"] for entry in entries}
 
     assert kinds == {
@@ -179,7 +184,11 @@ def _failed_unit(session: Session, key: str, *, exhausted: bool = True) -> WorkU
 
 
 def _entries_of_kind(session: Session, kind: str) -> list[dict]:
-    return [entry for entry in pending_decisions(session) if entry["kind"] == kind]
+    return [
+        entry
+        for entry in pending_decisions(session, execution_stall_grace_seconds=GRACE)
+        if entry["kind"] == kind
+    ]
 
 
 def test_a_failed_unit_names_the_disposition_it_needs(migrated_session: Session) -> None:

@@ -33,6 +33,12 @@ from orchestrator.services.packages import evaluate_readiness
 # dedicated "WCRC" namespace for work-claim recovery commands.
 EXPIRED_CLAIM_RECOVERY_LOCK_NAMESPACE = 0x57435243
 
+# The states in which a unit still holds the claim it was granted. One definition, because the
+# three functions below and the stall report (`services.execution_stall`) all have to agree about
+# what "still held" means, and a report keyed on a narrower set than the write path enforces is
+# a vocabulary divergence in the place where it would be silent.
+CLAIM_HOLDING_STATES = frozenset({WorkUnitState.CLAIMED, WorkUnitState.EXECUTING})
+
 
 @dataclass(frozen=True)
 class LeaseGrant:
@@ -167,7 +173,7 @@ def renew_claim(
         now = TransactionClock().now(session)
         if claim.released_at is not None or claim.lease_expires_at <= now:
             raise DomainError("lease_expired", "claim lease has expired", "reclaim")
-        if WorkUnitState(unit.state) not in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}:
+        if WorkUnitState(unit.state) not in CLAIM_HOLDING_STATES:
             raise DomainError("claim_not_active", "work unit has no active claim", None)
         claim.renewed_at = now
         # The same source as the two grant sites. A renewal that reset the hold to the kernel
@@ -573,7 +579,7 @@ def _validate_reclaim_roles(actor: ActorContext, next_owner: ActorContext) -> No
 def _validate_expired_active_claim(unit: WorkUnit, claim: Claim, now: datetime) -> None:
     if claim.released_at is not None or claim.lease_expires_at > now:
         raise DomainError("lease_not_expired", "claim lease has not expired", None)
-    if WorkUnitState(unit.state) not in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}:
+    if WorkUnitState(unit.state) not in CLAIM_HOLDING_STATES:
         raise DomainError("claim_not_active", "work unit has no active claim", None)
 
 
@@ -1036,7 +1042,7 @@ def validate_active_claim(
     if (
         claim.released_at is not None
         or claim.lease_expires_at <= now
-        or WorkUnitState(unit.state) not in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}
+        or WorkUnitState(unit.state) not in CLAIM_HOLDING_STATES
     ):
         raise DomainError("claim_not_active", "work unit has no active claim", None)
     return claim
