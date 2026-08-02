@@ -19,7 +19,7 @@ def test_the_policy_surface_reports_the_version_and_every_reach_row(db_client: T
 
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == 4
+    assert body["version"] == 5
     assert body["source"] == "factory-policy.toml"
     assert [row["member"] for row in body["reach"]] == sorted(REACH_VOCABULARY)
     assert all(row["rationale"] and row["decided"] for row in body["reach"])
@@ -44,6 +44,28 @@ def test_the_policy_surface_serves_the_change_window_a_row_declares(
         "06:00",
     )
     assert window["rationale"] and window["decided"]
+
+
+def test_the_policy_surface_serves_the_lease_a_row_declares_and_the_bounds_around_it(
+    db_client: TestClient,
+) -> None:
+    # Same reason as the two above -- a `response_model` drops what it does not declare -- and one
+    # more specific to this field: a row's `lease: null` means "the build's default applies", which
+    # an operator cannot read without the default. So the bounds are served alongside, and they are
+    # also the whole of why a duration here cannot widen anything: no value between them shortens a
+    # hold and none of them switches reassignment off.
+    body = db_client.get("/api/v1/factory-policy", headers=SYSTEM).json()
+    rows = {row["member"]: row for row in body["reach"]}
+
+    assert body["lease_bounds"] == {"default_minutes": 15, "ceiling_minutes": 120}
+    assert rows["source_repository"]["lease"] is None
+    assert rows["operator_machine"]["lease"] is None
+    assert rows["live_estate"]["lease"]["minutes"] == 30
+    assert rows["external_system"]["lease"]["minutes"] == 60
+    assert all(
+        rows[member]["lease"]["rationale"] and rows[member]["lease"]["decided"]
+        for member in ("live_estate", "external_system")
+    )
 
 
 def test_the_policy_surface_serves_the_known_good_patterns_a_row_declares(

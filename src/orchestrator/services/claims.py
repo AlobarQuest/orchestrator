@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.context import context_fingerprint
-from orchestrator.kernel.leases import LEASE_DURATION, hash_lease_token
+from orchestrator.kernel.leases import hash_lease_token
 from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
@@ -25,6 +25,7 @@ from orchestrator.persistence.models import (
 from orchestrator.services.budget import is_over_budget
 from orchestrator.services.claim_release import release_claim
 from orchestrator.services.context import PreflightCommand, require_claim_context
+from orchestrator.services.lease_policy import claim_lease
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import evaluate_readiness
 
@@ -103,7 +104,7 @@ def claim_unit(
             idempotency_key=idempotency_key,
             context_snapshot_id=context_snapshot.id if context_snapshot is not None else None,
             acquired_at=now,
-            lease_expires_at=now + LEASE_DURATION,
+            lease_expires_at=now + claim_lease(session, unit),
         )
         session.add(claim)
         session.flush()
@@ -169,7 +170,9 @@ def renew_claim(
         if WorkUnitState(unit.state) not in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}:
             raise DomainError("claim_not_active", "work unit has no active claim", None)
         claim.renewed_at = now
-        claim.lease_expires_at = now + LEASE_DURATION
+        # The same source as the two grant sites. A renewal that reset the hold to the kernel
+        # default would silently undo a considered one on every extension.
+        claim.lease_expires_at = now + claim_lease(session, unit)
         if idempotency_key is not None:
             session.add(
                 Event(
@@ -831,7 +834,9 @@ def _acquire_reclaimed_claim(
         idempotency_key=idempotency_key,
         context_snapshot_id=context_snapshot.id if context_snapshot is not None else None,
         acquired_at=now,
-        lease_expires_at=now + LEASE_DURATION,
+        # THE path this must not be forgotten on: reclaim never calls `claim_unit`, so a duration
+        # read only there would be ignored on precisely the case a lapsed lease leads to.
+        lease_expires_at=now + claim_lease(session, unit),
     )
     session.add(claim)
     session.flush()
