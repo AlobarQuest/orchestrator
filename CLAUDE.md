@@ -1558,3 +1558,36 @@ style of that module.
   `sorted(SRC.rglob("*.py"))` — a **filesystem** walk, not `git ls-files`. So the new module's two
   parametrized scan cases were counted on both sides and silently cancelled out. Use
   `git stash -u` (or `git archive HEAD`) for any control that must not see the branch's new files.
+
+- **The reach check needs `ORCHESTRATOR_APP_BRAIN_URL` and `ORCHESTRATOR_APP_BRAIN_READ_KEY` in the
+  environment, and without them it fails closed SILENTLY.** WS-P2.28. Absent, admission refuses with
+  `reach_estate_source_unconfigured` — correct behaviour, but nothing is stranded and nothing
+  complains until somebody routes work and wonders why it will not run. **Both variables must ship
+  with the release that first carries the check**; verify them from inside the container after the
+  swap, the way `ORCHESTRATOR_M2M_*` is verified. Use the **read-only** key WS-P2.29 provisioned,
+  never the full-access one.
+
+- **App Brain's landing route answers with TWO fields and never 404s — `reason` is load-bearing, not
+  decoration.** `GET /api/apps/default-branch-landing?github_repo=Owner/Repo` returns a value plus a
+  reason, and an unregistered repository is a normal `unknown` + `no_app_record` response rather than
+  a missing resource. So `no_app_record` (nobody registered it) and `not_assessed` (registered,
+  nobody determined it) are **different states that a consumer must be able to tell apart** — a check
+  keyed on the value alone cannot distinguish "not an app we know" from "an app we never looked at".
+  The route also **folds multiple app records**: `AlobarQuest/brain` is one repository serving four
+  applications and resolves as one answer. HQ's WS-P2.28 handoff described three landing values and
+  that read as the whole contract; it is not.
+
+- **`REACH_VOCABULARY` must stay a dict of STRING LITERALS — naming a single member silently blinds
+  the cross-boundary scanner to the entire vocabulary.** `test_cross_boundary_vocabulary` finds
+  vocabularies by AST-scanning for module-level string collections. Key one member by a named
+  constant instead of a literal and the collection stops matching the pattern, so the registry loses
+  its view of **all** of it — not just the renamed member. The failure is silent in the direction
+  that matters: the guard stops guarding and nothing says so. Caught by that guard during WS-P2.28.
+  **The fix is a pinned duplicate, never an allowlist entry** — an exemption here would read "a
+  legitimate second copy", which is the predicate being wrong rather than the entry being justified.
+
+- **`_blocked_reason` normalizes the authority envelope exactly once, and a test enforces it.**
+  `services/dispatch.py`. Any new admission term that needs the unit's target repository must be
+  evaluated **inside** `_blocked_reason`, not computed by the caller and passed in — a second
+  normalization is a second reading of the envelope, and the envelope is what a human's authority
+  approval attests. WS-P2.28 added the reach term inside it for this reason.
