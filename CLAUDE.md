@@ -1369,3 +1369,44 @@ style of that module.
   second dimension has no partial precedent either. Do not add an `orchestrator_self` reach member,
   and do not compute a self-update refusal onto the policy report: it would be a second copy of the
   `live_estate` window row, which that same response already serves.
+
+- **The architecture-guard family has a SIXTH member, and it is keyed on a FILENAME appearing in
+  any `.py` — including in a docstring that only points at the file.**
+  `tests/services/test_factory_policy.py::test_no_second_copy_of_the_artifact_values_exists_in_the_source_tree`
+  asserts the policy artifact has **exactly one reader** in `src/orchestrator/`
+  (`readers == [MODULE_PATH]`), and it cannot distinguish a module that *loads* the artifact from
+  one that merely *names* it in prose. WS-P2.18 Inc 8 reddened it on a single docstring sentence
+  saying where a human goes to declare a pattern. **Reword; never allowlist** — the guard protects
+  exactly the one-reader property, and the natural place for that human-facing pointer is the
+  Jinja template, which the guard does not scan. The same test also forbids any row's rationale
+  (first eight words) appearing in the source tree. Note this is a *different* trap from the
+  ws32/ws33 word guards: those forbid a vocabulary, this one forbids a filename, and reading the
+  failure rather than guessing which guard fired is the only reliable way to tell them apart.
+
+- **Adding a module under `src/orchestrator/` adds TWO collected tests by itself, so
+  "baseline + tests I wrote" always under-predicts the collected count.**
+  `tests/architecture/test_wsp21_invariant_scan.py` parametrizes
+  `test_no_tracked_source_carries_a_secret` and `test_nothing_in_the_repo_merges_a_pull_request`
+  **one case per source file**. WS-P2.18 Inc 8 added 17 tests to a 2148 baseline and collected
+  **2167**. Reconcile a collected-count discrepancy by diffing node IDs between `main` and the
+  branch (`pytest --collect-only -q | grep :: | sort`, then `comm`) rather than explaining it away
+  — the two extra lines carry the new module's path in their parameter id, so the diff names them
+  outright.
+
+- **An absence-keyed marker absolves the future; a DATE-keyed marker certifies it. Both are the
+  same mistake, and only the first one is documented.** WS-P2.18 Inc 4 established that "rows with
+  no marker are construction-era" never expires and silently exempts everything written later. The
+  mirror image cost Inc 8 a design decision: a cutoff date laid down **while the defect it marks
+  is still live** asserts that rows after it are clean, which is false, and it is more dangerous
+  precisely because it looks like diligence. `/review` still reads the actor from the forward-auth
+  header, so **every** authority approval — past and future — is equally unattributable, and there
+  is no instant at which that changes until a mechanism ships. **A boundary is sound only if the
+  population on its CLEAN side is actually clean**; otherwise the boundary belongs to the change
+  that closes the hole, whose own record cannot be forged backwards. See ADR-0014.
+
+- **The gate-cleared population is smaller than the unit census, and reasoning from the census
+  overstates it.** On 2026-08-02 there were 43 work units and **35** with a human authority
+  approval bound to the unit's current fingerprint. The eight without are the ones no human ever
+  gated: generated post-deploy verification units, a minted follow-up unit, and the three WS-P2.15
+  units. Any question of the form "how has the gate performed" has 35 as its denominator, not 43 —
+  the WS-P2.18 Inc 8 handoff used 43 and overstated the evidence base by a fifth.
