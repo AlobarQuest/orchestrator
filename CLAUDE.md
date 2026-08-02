@@ -1492,3 +1492,49 @@ style of that module.
   Harmless in that instance and merged knowingly; the determination METHOD is wrong for every repo
   that self-deploys. Backlogged P1 `c99a4e598506`. Until it is fixed, treat "does merging deploy?"
   as a question about the source repository's CI, never about the deploy platform's configuration.
+
+- **The `Alobar SDS Dispatch` App has NO `checks` permission — the Checks API is 403 for the
+  orchestrator, and named-check evidence is read from workflow JOBS instead.** Measured 2026-08-02
+  from production's own credential: the installation (app `4259746`, installation `145535298`,
+  6 repos) carries exactly `{'actions': 'write', 'metadata': 'read'}`, so
+  `GET /repos/{repo}/commits/{sha}/check-runs` answers **403 Resource not accessible by
+  integration** while `GET /repos/{repo}/actions/runs?head_sha=` and `/actions/runs/{id}/jobs`
+  answer 200. WS-P2.20's observer (`services/github_checks.py`) therefore reads Actions jobs, which
+  is every check this estate produces — a check run published by any OTHER application is invisible
+  to it and refuses rather than guesses. **Two consequences.** (1) `check_name` must be the **job**
+  name, not the workflow name: in this repo both are `Quality`, but in `change-manager` the workflow
+  is `Quality` and the job is `Lint, type-check, and test`, and naming the workflow yields
+  `named_check_not_found`. (2) An App's *token-mint response* reports its own `permissions`, so
+  asking what a credential may do costs one call and never needs the private key locally:
+  `POST /app/installations/{id}/access_tokens` → `permissions`. Do not infer an App's reach from
+  what it is already used for — triggering a run (`actions`) and reading a check (`checks`) are
+  different permissions.
+
+- **`test_ws34_scope_guards` forbids the literal `github.actions`, and the CLAUDE.md list of ws34's
+  forbidden strings omits it.** The full set in
+  `test_ws34_adds_no_factory_runner_or_workflow_dispatch_code` is `workflow_dispatch`,
+  `factory_runner`, **`github.actions`**, allowlisted only in `services/dispatch.py`,
+  `api/routes.py`, `api/schemas.py`, `config.py` — a different and *smaller* allowlist than ws32's.
+  WS-P2.20 reddened it on a constant whose value was `"github.actions.jobs"`; reworded to
+  `"github.workflow_jobs"`. This is a *substring* match on the lowercased file text, not the
+  whole-token tokenizer ws32 uses, so `github.actions.jobs` matches where `deployment` would not.
+  Reword; never allowlist. (The separate ws34 list this file already documents — `coolify`,
+  `gh pr merge`, `git push origin main`, `merge_to_main` — belongs to a *different test* in the same
+  module.)
+
+- **`evidence` rows are append-only at the DATABASE level, so a test that mutates a stored payload
+  must do it in memory and never commit.** A `reject_append_only_mutation()` PL/pgSQL trigger raises
+  `IntegrityConstraintViolation: evidence is append-only` on any `UPDATE`. The established pattern
+  (`test_named_check_evaluator_revalidates_all_payload_bounds`) assigns `evidence.payload = …` on the
+  ORM instance and calls `evaluate_criterion` directly — never `session.commit()` and never through
+  `verify_work_unit`, which commits. A payload-corruption test written the obvious way fails on the
+  trigger rather than on the assertion, which reads as a bug in the change under test.
+
+- **`git stash` does not stash UNTRACKED files, so a stash-based control against `main` is
+  contaminated by any new file the branch adds.** WS-P2.20's collected-count reconciliation measured
+  `main` at 2187 rather than the true 2185, because the new `src/orchestrator/services/` module
+  stayed on disk through the stash and
+  `tests/architecture/test_wsp21_invariant_scan.py::PYTHON_SOURCES` is
+  `sorted(SRC.rglob("*.py"))` — a **filesystem** walk, not `git ls-files`. So the new module's two
+  parametrized scan cases were counted on both sides and silently cancelled out. Use
+  `git stash -u` (or `git archive HEAD`) for any control that must not see the branch's new files.
