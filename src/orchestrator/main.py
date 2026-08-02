@@ -37,11 +37,14 @@ def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
     @application.exception_handler(DomainError)
     async def domain_error_handler(_request: Request, error: DomainError) -> JSONResponse:
         status = 404 if error.code.endswith("_not_found") else 409
-        # A fault in this process's own configuration, not a conflict with the caller's request.
+        # Nothing about the request is wrong: this process cannot answer it right now, either
+        # because of its own configuration or because something it must read is unreachable.
+        # A 409 would tell the caller to change the request, which is the wrong instruction.
         if error.code in {
             "csrf_unavailable",
             "factory_policy_invalid",
             "factory_policy_version_unsupported",
+            "named_check_observation_unavailable",
         }:
             status = 503
         if error.code in {"role_forbidden", "human_actor_required", "csrf_rejected"}:

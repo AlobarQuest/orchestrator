@@ -87,6 +87,12 @@ OUTBOUND_ALLOWLIST = {
     Path("src/orchestrator/cli.py"),
     Path("src/orchestrator/services/dispatch.py"),
     Path("src/orchestrator/services/github_app.py"),
+    # WS-P2.20. Named-check evidence is only worth anything if the orchestrator saw the result
+    # itself, so this file READS one thing from GitHub -- how a named job concluded on a PR head
+    # -- and writes nothing. It is not a new outbound capability: it borrows github_app.py's
+    # installation token, and the alternative (an out-of-process poller, ADR-0002's shape) would
+    # put the observation outside the transaction that records it.
+    Path("src/orchestrator/services/github_checks.py"),
     Path("src/orchestrator/services/knowledge_promotions.py"),
     # The reconciliation runner is a SEPARATE program (ADR-0002). Polling GitHub is its entire
     # job, and it may only push what it finds back through two endpoints -- enforced in code by

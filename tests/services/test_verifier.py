@@ -19,9 +19,6 @@ from orchestrator.services.evidence import current_evidence
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.packages import register_approved_unit, register_revision
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
-from orchestrator.services.verifier_evidence import (
-    record_named_check_evidence,
-)
 from tests.fixtures.named_check import (
     AUTHORITY,
     AUTOMATED_CHECK_AUTHORITY,
@@ -31,9 +28,11 @@ from tests.fixtures.named_check import (
     PR_NUMBER,
     VERIFIER,
     WORKER,
+    StubCheckObserver,
     bind_dispatched_pull_request,
     mapped_submitted_unit,
     named_check_command,
+    record_named_check,
     record_worker_evidence,
 )
 
@@ -58,7 +57,7 @@ def test_verifier_named_check_supersedes_worker_evidence_and_completes(
     )
     dispatch = bind_dispatched_pull_request(migrated_session, unit)
 
-    named_check = record_named_check_evidence(
+    named_check = record_named_check(
         migrated_session,
         named_check_command(unit, dispatch),
     )
@@ -105,7 +104,7 @@ def test_verifier_named_check_fails_closed_when_pr_head_changes_after_recording(
         idempotency_key="automated-check-stale-recorded-head-worker-evidence",
     )
     dispatch = bind_dispatched_pull_request(migrated_session, unit)
-    named_check = record_named_check_evidence(
+    named_check = record_named_check(
         migrated_session,
         named_check_command(unit, dispatch),
     )
@@ -175,7 +174,7 @@ def test_verifier_rejects_superseded_passing_evidence_before_final_transition(
             idempotency_key="automated-check-superseded-during-verify-worker-evidence",
         )
         dispatch = bind_dispatched_pull_request(setup, unit)
-        passing = record_named_check_evidence(setup, named_check_command(unit, dispatch))
+        passing = record_named_check(setup, named_check_command(unit, dispatch))
         assert isinstance(passing, Evidence)
         command = VerifyCommand(
             unit_id=unit.id,
@@ -197,14 +196,15 @@ def test_verifier_rejects_superseded_passing_evidence_before_final_transition(
             current_dispatch = writer.get(DispatchRecord, dispatch.id)
             assert current_unit is not None
             assert current_dispatch is not None
-            superseding = record_named_check_evidence(
+            superseding = record_named_check(
                 writer,
                 named_check_command(
                     current_unit,
                     current_dispatch,
-                    conclusion="failure",
+                    expected_conclusion="failure",
                     idempotency_key="automated-check-superseding-failure",
                 ),
+                StubCheckObserver(conclusion="failure"),
             )
             assert isinstance(superseding, Evidence)
             assert superseding.supersedes_evidence_id == passing.id
@@ -251,7 +251,7 @@ def test_verifier_reloads_canonical_rows_after_passed_adjudication_commit(
             idempotency_key="automated-check-head-change-during-verify-worker-evidence",
         )
         dispatch = bind_dispatched_pull_request(setup, unit)
-        named_check = record_named_check_evidence(setup, named_check_command(unit, dispatch))
+        named_check = record_named_check(setup, named_check_command(unit, dispatch))
         assert isinstance(named_check, Evidence)
         command = VerifyCommand(
             unit_id=unit.id,
