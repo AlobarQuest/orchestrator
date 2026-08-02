@@ -54,19 +54,17 @@ jobs:
             --revision "${{ steps.pin.outputs.revision }}" \
             --output "$RUNNER_TEMP/registry"
 
-      - name: Compute tag
+      # `github.sha` is the sha of the ref the workflow file was read from, not of `inputs.ref`;
+      # only the checked-out HEAD is the commit actually being built.
+      - name: Compute tags
         id: tag
         env:
           LABEL: ${{ inputs.label }}
         run: |
-          if [ -n "$LABEL" ] && ! printf '%s' "$LABEL" | grep -Eq '^[a-z0-9-]+$'; then
-            echo "::error::label must match ^[a-z0-9-]+$"
-            exit 1
-          fi
-          SHA=$(git rev-parse --short HEAD)
-          SUFFIX=""
-          [ -n "$LABEL" ] && SUFFIX="-$LABEL"
-          echo "tag=ghcr.io/alobarquest/orchestrator:${SHA}${SUFFIX}-amd64" >> "$GITHUB_OUTPUT"
+          python3 scripts/compute_image_tags.py \
+            --revision "$(git rev-parse HEAD)" \
+            --label "$LABEL" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -89,7 +87,11 @@ jobs:
             --build-context registry="$RUNNER_TEMP/registry" \
             --build-arg SECURITY_STANDARDS_REVISION="${{ steps.pin.outputs.revision }}" \
             --build-arg REGISTRY_ARTIFACT_SHA256="${{ steps.pin.outputs.digest }}" \
+            --label org.opencontainers.image.revision="${{ steps.tag.outputs.revision }}" \
+            --label org.opencontainers.image.source="${{ steps.tag.outputs.source }}" \
+            --label org.opencontainers.image.created="${{ steps.tag.outputs.created }}" \
             -t "${{ steps.tag.outputs.tag }}" \
+            -t "${{ steps.tag.outputs.sha_tag }}" \
             --metadata-file "$RUNNER_TEMP/meta.json" \
             --push .
 
@@ -97,18 +99,59 @@ jobs:
           if [ -z "$DIGEST" ]; then
             DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${{ steps.tag.outputs.tag }}" 2>/dev/null || true)
           fi
-          if [ -z "$DIGEST" ]; then
+          # The two capture routes spell the digest differently (bare `sha256:...` vs a
+          # `repo@sha256:...` reference); normalise so downstream steps compare like with like.
+          DIGEST="sha256:${DIGEST##*sha256:}"
+          if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
             echo "::error::could not capture pushed image digest"
             exit 1
           fi
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
+      # A label that exists in the build command and not in the pushed image proves nothing, so
+      # this reads the artifact back out of the registry. Pulling the derivable tag proves both
+      # halves at once: that the tag resolves to the digest just pushed, and that what it
+      # resolves to asserts the commit it was built from.
+      - name: Verify the pushed image asserts its own provenance
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          REVISION: ${{ steps.tag.outputs.revision }}
+          SHA_TAG: ${{ steps.tag.outputs.sha_tag }}
+        run: |
+          docker pull --quiet "$SHA_TAG"
+          RESOLVED=$(docker image inspect "$SHA_TAG" --format '{{index .RepoDigests 0}}')
+          if [ "${RESOLVED##*@}" != "$DIGEST" ]; then
+            echo "::error::$SHA_TAG resolves to ${RESOLVED##*@}, expected $DIGEST"
+            exit 1
+          fi
+          LABELS=$(docker image inspect "$SHA_TAG" --format '{{json .Config.Labels}}')
+          echo "$LABELS"
+          LABELS="$LABELS" REVISION="$REVISION" python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          labels = json.loads(os.environ["LABELS"] or "null") or {}
+          revision = os.environ["REVISION"]
+          found = labels.get("org.opencontainers.image.revision")
+          if found != revision:
+              sys.exit(f"::error::revision label is {found!r}, expected {revision!r}")
+          for key in ("org.opencontainers.image.source", "org.opencontainers.image.created"):
+              if not labels.get(key):
+                  sys.exit(f"::error::pushed image is missing {key}")
+          print(f"pushed image asserts revision {revision}")
+          PY
+
       - name: Summary
         run: |
           {
             echo "### Image pushed"
-            echo "- Tag: \`${{ steps.tag.outputs.tag }}\`"
+            echo "- Derivable tag: \`${{ steps.tag.outputs.sha_tag }}\` (a function of the commit alone)"
+            echo "- Readable tag: \`${{ steps.tag.outputs.tag }}\`"
             echo "- Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- Asserts \`org.opencontainers.image.revision=${{ steps.tag.outputs.revision }}\`, verified by reading the pushed image back from the registry."
             echo ""
-            echo "This workflow only builds and pushes the image. Pointing the runtime at this tag is a separate, manual step; verify the running container's image digest matches the digest above after doing so."
+            echo "Both tags point at the same digest. Rebuilding this commit reproduces the derivable tag name, but re-points it at a fresh digest; the digest above is the artifact's identity."
+            echo ""
+            echo "This workflow only builds and pushes the image. Pointing the runtime at a tag is a separate, manual step; verify the running container's image digest matches the digest above after doing so."
           } >> "$GITHUB_STEP_SUMMARY"
