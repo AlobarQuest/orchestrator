@@ -136,7 +136,9 @@ steps.** They cannot be scripted with curl.
 
 ### 1.4 Lease expiry — wait the real fifteen minutes
 
-`LEASE_DURATION = timedelta(minutes=15)` (`kernel/leases.py:4`) is hardcoded with no override.
+`DEFAULT_LEASE = timedelta(minutes=15)` (`kernel/leases.py`) is hardcoded with no override, and
+since WS-P2.18 Increment 6 the policy artifact can only declare a *longer* hold — so fifteen
+minutes remains the shortest wait any drill can face, never a shorter one.
 `expire_lease`'s `UPDATE` is an ADR stop condition against production ("require private SQL").
 
 **Decision (Devon, 2026-07-27): wait the real 15 minutes.** Drills 1 and 2 are driven concurrently

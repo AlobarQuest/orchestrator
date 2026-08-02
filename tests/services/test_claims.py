@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
-from orchestrator.kernel.leases import LEASE_DURATION, hash_lease_token
+from orchestrator.kernel.leases import DEFAULT_LEASE, hash_lease_token
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Claim, ContextSnapshot
 from orchestrator.services.claims import LeaseGrant, claim_unit, release_claim, renew_claim
@@ -30,7 +30,9 @@ def test_claim_uses_database_time_and_stores_only_token_hash(
     assert before is not None
     claim = migrated_session.get(Claim, result.claim_id)
     assert claim is not None
-    assert result.expires_at - before == LEASE_DURATION
+    # This unit's package declares no reach, so it gets the build's default hold. Which hold a
+    # declared reach gets, and that every grant site reads the same source, is test_lease_policy.
+    assert result.expires_at - before == DEFAULT_LEASE
     assert claim.lease_token_hash == hash_lease_token(result.lease_token)
     assert result.lease_token not in claim.lease_token_hash
 
@@ -231,7 +233,7 @@ def test_hash_lease_token_is_stable_and_one_way() -> None:
     assert digest == hash_lease_token(token)
     assert len(digest) == 64
     assert token not in digest
-    assert LEASE_DURATION == timedelta(minutes=15)
+    assert DEFAULT_LEASE == timedelta(minutes=15)
 
 
 def test_release_claim_is_the_single_writer_of_released_at_and_terminal_reason(

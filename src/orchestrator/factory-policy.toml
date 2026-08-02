@@ -107,8 +107,38 @@
 # but getting new bytes onto a running process is not. So a window is set once and
 # left, and it is edited only when no run is live: the workflow concluded, the unit
 # out of `executing`, cost actuals recorded.
+#
+# A LEASE IS A REFUSAL TO REASSIGN, AND IT CAN ONLY EVER GET LONGER (schema 5,
+# ADR-0013). A `lease` names how long this orchestrator refuses to hand a unit of
+# that reach to a second claimant. It is a number rather than a code, and it is
+# still a refusal in the only sense that matters: every value writable here
+# LENGTHENS the period in which reassignment is refused. The loader rejects
+# anything at or below the default the build already grants, so there is no way to
+# write a shorter hold, and anything above the ceiling the build owns, so there is
+# no way to write one long enough to switch reassignment off.
+#
+# THE DEFAULT IS THE UNWRITTEN ROW, AND IT IS WHAT UNDESCRIBED WORK GETS. A row
+# with no `lease` is not a row with no lease: the kernel's default applies, and it
+# is also what a unit whose reach nobody declared receives. So the number here is
+# never "how long may this run", only "how much longer than usual must this one
+# be left alone".
+#
+# LEASES COMPOSE BY MAXIMUM, which is the same direction everything else in this
+# document composes in: adding a reach member can only lengthen the answer, exactly
+# as it can only lengthen the list of objections. That is the opposite arrangement
+# from the change window and for the same reason — the safe direction. Shortening
+# a hold is what hands a live worker's unit to somebody else, and a worker whose
+# lease lapses mid-run cannot even record its evidence, because the orchestrator
+# refuses the write. Lengthening one costs a wait before a genuinely dead attempt
+# can be reclaimed, and nothing reclaims automatically, so that cost is paid by an
+# operator who chooses to pay it.
+#
+# AND IT IS NOT STALL CONTROL. Nothing here notices a worker that has hung; a lapse
+# only makes the unit reclaimable by somebody who asks. The lease was never
+# bounding that and tuning it does not begin to. The hole is real and it is
+# WS-P2.19's.
 
-version = 4
+version = 5
 
 [grandfathered]
 rationale = """
@@ -133,6 +163,13 @@ repository and nothing outside it changes until something separately acts on the
 result, so work of this reach is inert on arrival — the least a policy needs to
 restrain, and the reach where suppressing a ceremonial human gate is worth the
 most.
+
+NO LEASE DECLARED, deliberately. This is the only reach whose work has been
+observed end to end here — a dependency bump ran from prepare to submit in under a
+minute — and it is the one where a second claimant arriving early costs a duplicate
+pull request rather than damage. The default hold is already an order of magnitude
+longer than the work; lengthening it would buy nothing and would be a number chosen
+to look decided.
 """
 decided = "2026-08-01"
 
@@ -173,6 +210,20 @@ dimension, never by a member of its own.
 """
 decided = "2026-08-01"
 
+[reach.live_estate.lease]
+rationale = """
+An estate change waits on things this estate runs but does not hurry: an image
+build, a container swap, a health check settling, a restart. Those are minutes of
+wall clock during which the worker is doing nothing a lease can see, and a hold
+that lapses under a run like that does not merely allow a second claimant — the
+worker cannot record its own evidence afterwards, because the orchestrator refuses
+a write from an attempt whose lease is gone. Thirty minutes is chosen against the
+slowest such sequence anybody has watched here rather than against a target, and it
+buys nothing except that the first attempt is still allowed to finish.
+"""
+decided = "2026-08-02"
+minutes = 30
+
 [reach.live_estate.change_window]
 rationale = """
 Something already serving is changed, and the change is felt the moment it lands,
@@ -210,12 +261,33 @@ vocabulary as a real example, not a hypothetical one.
 """
 decided = "2026-08-01"
 
+[reach.external_system.lease]
+rationale = """
+The longest hold in the vocabulary, for the two reasons this row is already the
+most restrained. Its wall clock belongs to somebody else — a console, a registrar,
+a tracker answers when it answers — so an attempt here can be idle for a stretch
+that says nothing about whether it is alive. And it is the reach where two
+claimants acting at once cannot be undone by this estate at all, which is the exact
+outcome a hold that lapses too early produces. An hour is not an estimate of how
+long such work takes; it is how long this orchestrator will decline to make that
+outcome possible.
+"""
+decided = "2026-08-02"
+minutes = 60
+
 [reach.operator_machine]
 rationale = """
 Distinct from every other member because the cost of running at a bad moment is
 paid by a person rather than by a system: a laptop busy at the wrong hour is an
 interruption, not an incident. This is the case a change window was wanted for
 in the first place.
+
+NO LEASE DECLARED, and the reason is that this row's work is repository-shaped.
+What actually lands on the operator's machine is an edit to a checkout — his agent
+configuration is itself a git repository — so it runs at the same speed as the row
+above and needs the same slack. A window is what this reach earns; a longer hold is
+not, and declaring one to keep the two restraints symmetrical would be symmetry
+standing in for a reason.
 """
 decided = "2026-08-01"
 

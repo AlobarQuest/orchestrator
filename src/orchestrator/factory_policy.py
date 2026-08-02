@@ -61,6 +61,24 @@ of its members' refusals, as everywhere else, so a unit reaching two places must
 windows -- which means windows on rows that occur together have to overlap, or that combination can
 never run. And the window is asked about an INSTANT, never about a wall-clock reading of the local
 machine: :func:`_window_open` converts, and never constructs a local time from a naive one.
+
+**Schema version 5 adds the per-reach lease, which is a number, and it is STILL only a refusal
+(ADR-0013).** A lease is the period during which this orchestrator refuses to hand a unit to a
+second claimant, so a longer one is a longer refusal. Three properties make that literally true
+rather than a way of speaking. A declared lease must be strictly longer than
+:data:`~orchestrator.kernel.leases.DEFAULT_LEASE`, so the artifact can only ever lengthen what the
+build already refuses for -- there is no way to write a shorter hold, which is the direction that
+would let policy hand a live worker's unit away sooner. It is bounded above by
+:data:`~orchestrator.kernel.leases.LEASE_CEILING`, so it cannot be written large enough to switch
+reassignment off. And composition over a reach set is the MAXIMUM, which is the same monotonicity
+the refusal sets have: adding a member can only lengthen the answer, exactly as adding a member can
+only lengthen the list of objections. A row that declares nothing contributes the default, so a set
+is shortened only when every member of it was decided to be shorter -- which none can be.
+
+**A duration is not in the admission conjunction at all, and that is why it is safe for it to be a
+number.** :meth:`FactoryPolicy.lease_for` is consulted after work has already been admitted,
+claimed and sent; it cannot cause work to run that the hard off-switch refuses, because it is never
+asked whether work may run.
 """
 
 from __future__ import annotations
@@ -69,7 +87,7 @@ import shlex
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Final
 from uuid import UUID
@@ -77,6 +95,7 @@ from zoneinfo import ZoneInfo
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityEnvelope
+from orchestrator.kernel.leases import DEFAULT_LEASE, LEASE_CEILING
 from orchestrator.reach_vocabulary import REACH_VOCABULARY
 
 PACKAGED_ARTIFACT: Final[Path] = Path(__file__).parent / "factory-policy.toml"
@@ -86,7 +105,7 @@ PACKAGED_ARTIFACT: Final[Path] = Path(__file__).parent / "factory-policy.toml"
 # narrowing the new version introduced, which is the permissive reading of a version skew. A new
 # version is therefore a coordinated change -- the loader learns it in the same commit that ships
 # the document at it and the code that reads its new field.
-SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({4})
+SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({5})
 
 # Why policy objects. These are the whole output vocabulary of this module.
 REACH_UNDECLARED: Final = "reach_undeclared"
@@ -96,10 +115,11 @@ AUTHORITY_ENVELOPE_NOVEL: Final = "authority_envelope_novel"
 OUTSIDE_CHANGE_WINDOW: Final = "outside_change_window"
 
 _ROW_REQUIRED_FIELDS = frozenset({"rationale", "decided"})
-_ROW_OPTIONAL_FIELDS = frozenset({"known_good", "change_window"})
+_ROW_OPTIONAL_FIELDS = frozenset({"known_good", "change_window", "lease"})
 _TOP_LEVEL_FIELDS = frozenset({"version", "reach", "grandfathered"})
 _GRANDFATHERED_FIELDS = frozenset({"rationale", "decided", "revisions"})
 _WINDOW_FIELDS = frozenset({"rationale", "decided", "timezone", "start", "end"})
+_LEASE_FIELDS = frozenset({"rationale", "decided", "minutes"})
 _PATTERN_FIELDS = frozenset(
     {
         "name",
@@ -215,6 +235,24 @@ class ChangeWindow:
 
 
 @dataclass(frozen=True)
+class Lease:
+    """How long somebody decided this orchestrator refuses to reassign work of this reach.
+
+    Written in whole minutes, because the question is how much slack a run of this shape needs
+    before somebody else may have the unit, and nobody decides that to the second.
+
+    ``duration`` is validated at load to be strictly longer than ``DEFAULT_LEASE`` and no longer
+    than ``LEASE_CEILING``. The lower bound is the polarity guarantee -- a row can only lengthen a
+    refusal -- and it also means a row cannot restate the default, which would be a second copy of
+    a number that already lives in the kernel.
+    """
+
+    rationale: str
+    decided: date
+    duration: timedelta
+
+
+@dataclass(frozen=True)
 class ReachPolicy:
     """One row -- everything policy currently says about a single reach member."""
 
@@ -223,6 +261,7 @@ class ReachPolicy:
     decided: date
     known_good: tuple[KnownGoodPattern, ...] = ()
     change_window: ChangeWindow | None = None
+    lease: Lease | None = None
 
 
 @dataclass(frozen=True)
@@ -319,6 +358,35 @@ class FactoryPolicy:
                 return OUTSIDE_CHANGE_WINDOW
         return None
 
+    def lease_for(self, reach: Sequence[str] | None) -> timedelta:
+        """How long this policy refuses to reassign work of this reach to a second claimant.
+
+        The one answer in this module that is not a refusal *code*, and it is still a refusal: what
+        it names is a period in which the orchestrator will not give the unit to anybody else. The
+        artifact can only make that period longer, because ``_lease`` rejects anything at or below
+        the default at load, and it cannot make it unbounded, because ``_lease`` rejects anything
+        above the ceiling. So there is no value writable here that hands a unit away sooner than
+        this build already would.
+
+        **Composition is the MAXIMUM**, which is the same monotonicity the refusal sets have and
+        the same direction: adding a member can only lengthen the answer. A member with no lease
+        declared, one this build does not recognise, and one no row covers all contribute the
+        DEFAULT rather than nothing -- so an incomplete or unreadable declaration pulls the answer
+        toward the default it started at, and never below it.
+
+        **Undeclared reach gets the default and does not raise.** Refusing here would be refusing
+        to grant a lease at all, which is refusing to let a worker hold a unit it has already been
+        given -- restraint pointed at the wrong actor. Whether such a unit should have been sent is
+        the admission question, and ``reach_admission`` already answers it.
+        """
+        if not reach:
+            return DEFAULT_LEASE
+        return max(self._member_lease(member) for member in reach)
+
+    def _member_lease(self, member: str) -> timedelta:
+        row = self.rows.get(member)
+        return DEFAULT_LEASE if row is None or row.lease is None else row.lease.duration
+
     def require_live_subject(self, live_revisions: Sequence[UUID]) -> None:
         """Raise once no grandfathered revision can still produce work needing admission.
 
@@ -392,6 +460,13 @@ class FactoryPolicy:
         return {
             "version": self.version,
             "source": self.source,
+            # Without these two an operator cannot read a row's `lease: null`: it means "the
+            # default applies", and the default lives in the image rather than in the document.
+            # The ceiling is served alongside because it is the other half of what a row may say.
+            "lease_bounds": {
+                "default_minutes": int(DEFAULT_LEASE.total_seconds() // 60),
+                "ceiling_minutes": int(LEASE_CEILING.total_seconds() // 60),
+            },
             "grandfathered": _grandfathering_report(self.grandfathered),
             "reach": [
                 {
@@ -400,6 +475,7 @@ class FactoryPolicy:
                     "decided": row.decided,
                     "known_good": [_pattern_report(pattern) for pattern in row.known_good],
                     "change_window": _window_report(row.change_window),
+                    "lease": _lease_report(row.lease),
                 }
                 for row in self.rows.values()
             ],
@@ -438,6 +514,23 @@ def _window_report(window: ChangeWindow | None) -> dict[str, Any] | None:
         "timezone": window.zone.key,
         "start": window.start.isoformat(timespec="minutes"),
         "end": window.end.isoformat(timespec="minutes"),
+    }
+
+
+def _lease_report(lease: Lease | None) -> dict[str, Any] | None:
+    """What a row declares, or ``None`` for a row that relies on the default.
+
+    Reported in the minutes it was written in rather than as a duration, so an operator reads back
+    the number somebody decided. ``None`` is not "no lease": every claim gets one, and a row
+    declaring nothing means the default applies -- which is why the report also carries the default
+    itself, next to the ceiling that bounds what a row may say.
+    """
+    if lease is None:
+        return None
+    return {
+        "rationale": lease.rationale,
+        "decided": lease.decided,
+        "minutes": int(lease.duration.total_seconds() // 60),
     }
 
 
@@ -693,6 +786,10 @@ def _row(member: str, value: object) -> ReachPolicy:
         change_window=(
             _change_window(member, value["change_window"]) if "change_window" in value else None
         ),
+        # Absent is "the default hold is the right one here", which is a decision as much as a
+        # declared one is -- and the artifact records the reason for it in the row's rationale
+        # rather than in a field that would restate the kernel's number.
+        lease=(_lease(member, value["lease"]) if "lease" in value else None),
     )
 
 
@@ -715,6 +812,39 @@ def _change_window(member: str, value: object) -> ChangeWindow:
         zone=_zone(where, value["timezone"]),
         start=start,
         end=end,
+    )
+
+
+def _lease(member: str, value: object) -> Lease:
+    """One row's declared lease, bounded on both sides by numbers this build owns.
+
+    The two bounds do different jobs and both are load-bearing. The lower one is the polarity
+    guarantee: a declared lease must be strictly LONGER than the default, so nothing writable here
+    hands a unit to a second claimant sooner than this build already would, and no row can restate
+    a number that already lives in the kernel. The upper one is why "policy cannot switch
+    reassignment off" is true of the values an operator can write rather than only of the type --
+    the same reason `dead_letter_stalled_approval_seconds` is capped.
+    """
+    where = f"reach.{member}.lease"
+    if not isinstance(value, dict) or set(value) != _LEASE_FIELDS:
+        raise _invalid(
+            f"`[{where}]` must be a table declaring exactly " + ", ".join(sorted(_LEASE_FIELDS))
+        )
+    minutes = value["minutes"]
+    if not isinstance(minutes, int) or isinstance(minutes, bool):
+        raise _invalid(f"`{where}.minutes` must be an integer number of minutes")
+    duration = timedelta(minutes=minutes)
+    if not DEFAULT_LEASE < duration <= LEASE_CEILING:
+        raise _invalid(
+            f"`{where}.minutes` is {minutes}, and a declared lease must be longer than the "
+            f"default {int(DEFAULT_LEASE.total_seconds() // 60)} minutes and no longer than the "
+            f"ceiling {int(LEASE_CEILING.total_seconds() // 60)} minutes; a row that would "
+            "shorten a hold, or restate the default, is not a decision this document can express"
+        )
+    return Lease(
+        rationale=_text(where, "rationale", value["rationale"]),
+        decided=_decided(where, value["decided"]),
+        duration=duration,
     )
 
 

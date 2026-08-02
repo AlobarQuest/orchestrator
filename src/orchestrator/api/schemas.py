@@ -1169,6 +1169,35 @@ class FactoryPolicyChangeWindowResponse(BaseModel):
     end: str
 
 
+class FactoryPolicyLeaseResponse(BaseModel):
+    """How much longer than the default this orchestrator refuses to reassign work of this reach.
+
+    ``null`` for a row that declares none, which means the build's default hold applies -- never a
+    row with no lease, because every claim has one. The default and the ceiling that bounds what a
+    row may declare are served at the top level, so ``null`` can be read without the image.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    rationale: str
+    decided: date
+    minutes: int
+
+
+class FactoryPolicyLeaseBoundsResponse(BaseModel):
+    """The two numbers the build owns, between which a declared lease must fall.
+
+    Served because they are what makes a row's ``lease: null`` legible, and because they are the
+    whole of why a duration in this document cannot widen anything: no value between them shortens
+    a hold, and none of them switches reassignment off.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    default_minutes: int
+    ceiling_minutes: int
+
+
 class FactoryPolicyReachResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -1177,6 +1206,7 @@ class FactoryPolicyReachResponse(BaseModel):
     decided: date
     known_good: list[FactoryPolicyKnownGoodResponse]
     change_window: FactoryPolicyChangeWindowResponse | None
+    lease: FactoryPolicyLeaseResponse | None
 
 
 class FactoryPolicyGrandfatheringResponse(BaseModel):
@@ -1206,6 +1236,7 @@ class FactoryPolicyResponse(BaseModel):
     source: str
     # A response model silently DROPS every key the service returns and the model does not declare,
     # which is how WS-P2.12 served an empty enrichment while every service assertion passed.
+    lease_bounds: FactoryPolicyLeaseBoundsResponse
     grandfathered: FactoryPolicyGrandfatheringResponse | None
     reach: list[FactoryPolicyReachResponse]
 

@@ -264,9 +264,10 @@ seed_unit() {
 # Age a claim's lease into the past, on the THROWAWAY database.
 #
 # This is ENVIRONMENT SETUP standing in for elapsed wall clock, not a state transition:
-# LEASE_DURATION is a hardcoded 15 minutes (kernel/leases.py) with no env override, so a drill
-# cannot make a lease lapse through any public surface without actually waiting 15 minutes. Every
-# orchestrator STATE CHANGE in these drills still goes through the public API.
+# DEFAULT_LEASE is a hardcoded 15 minutes (kernel/leases.py) with no env override, and the policy
+# artifact can only ever declare a LONGER hold, so a drill cannot make a lease lapse through any
+# public surface without actually waiting at least 15 minutes. Every orchestrator STATE CHANGE in
+# these drills still goes through the public API.
 expire_lease() {
     local unit="$1"
     scratch_sql "UPDATE claims SET lease_expires_at = acquired_at

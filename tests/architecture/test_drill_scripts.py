@@ -107,8 +107,9 @@ def test_a_drill_changes_state_only_through_the_public_api(drill: Path) -> None:
 
     Every state change must go through `api ...` -- the same HTTP surface an operator or a runner
     uses. SQL is allowed only to READ (assertions may look at canonical state) and, in the two
-    documented cases, to age a lease: LEASE_DURATION is a hardcoded 15 minutes with no override,
-    so a drill cannot make one lapse through any public surface without waiting 15 real minutes.
+    documented cases, to age a lease: DEFAULT_LEASE is a hardcoded 15 minutes with no override and
+    the policy artifact can only lengthen it, so a drill cannot make one lapse through any public
+    surface without waiting at least 15 real minutes.
     That is environment setup standing in for elapsed wall clock -- the same latitude the repo
     already grants its protocol smoke tests -- and it is confined to `expire_lease`.
 

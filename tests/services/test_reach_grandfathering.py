@@ -68,7 +68,7 @@ rationale = "the one revision that predates the key"
 revisions = ["{NOT_GRANDFATHERED}"]
 """
 VALID = f"""
-version = 4
+version = 5
 
 [reach.source_repository]
 rationale = "repository only"

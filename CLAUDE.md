@@ -1287,3 +1287,42 @@ style of that module.
   iterate). Because minting now refuses rather than inheriting an unknown reach, none of those 7 can
   mint until reach is supplied — which is also why the grandfathering list needs one entry instead of
   twenty-one.
+
+- **A lapsed lease does not merely permit a second claimant — it stops the FIRST worker recording
+  what it already did.** `validate_active_claim` (`services/claims.py`) raises `claim_not_active`
+  when `claim.lease_expires_at <= now`, and it is shared by evidence recording and PR-binding
+  reporting. So shortening a lease is a correctness hazard, not a scheduling preference: a run that
+  outlives its hold cannot submit its own evidence, and the natural first design — *give the fastest
+  reach the shortest hold* — is the one that breaks runs. This is why the WS-P2.18 Increment 6 policy
+  lease may only ever **lengthen** (`kernel/leases.py` bounds it strictly above `DEFAULT_LEASE` and
+  at or below `LEASE_CEILING`) and why a reach set composes by **maximum**, the opposite arrangement
+  from the change window, which composes by intersection. Both compose toward more restraint;
+  restraint points the other way for a hold than it does for an hour. Neither the WS-P2.18 spec nor
+  the Increment 6 handoff mentioned this, and without it the direction looks arbitrary. See ADR-0013.
+
+- **`work_units`' lease has THREE writers, not the two the reclaim trap suggests.**
+  `claim_unit`, `renew_claim` and `reclaim_expired_claim` → `_perform_reclaim` →
+  `_acquire_reclaimed_claim` (`services/claims.py`), all now reading
+  `services/lease_policy.py::claim_lease`. The documented trap is the third — reclaim never calls
+  `claim_unit`, so a per-claim rule placed only there is ignored on exactly the path a lapsed lease
+  leads to. **`renew_claim` is the one that gets forgotten after that**, because it extends rather
+  than grants: a renewal that reset the hold to the kernel default would silently undo a considered
+  one, on the path a long-running attempt takes by definition. Any future per-claim rule must name
+  all three. Separately, `RENEWAL_CADENCE` (a 5-minute constant in `kernel/leases.py` since WS-3.1)
+  had **no reader in either repository** and was deleted in Increment 6 — factory-runner renews only
+  on an explicit `local-heavy-renew` command, so nothing renews on a cadence at all.
+
+- **Policy 4 (self-update) is HALF SHIPPED and the shipped half is easy to re-litigate.** WS-P2.18
+  Increment 5 already answered *when* the orchestrator may update itself: `live_estate`'s
+  `change_window` governs it and its own rationale says so ("a restart is invisible at 03:00 and is
+  an outage at 15:00"). What is open is *to what* — and there is no subject to hang it on. A
+  self-update has no package, no revision and no enforcement snapshot, so `reach_from_snapshot` has
+  nothing to read; `authority.constraints.target_repository` is a per-**work-unit** constraint and a
+  self-update has no unit; and nothing models "which image tag production may be moved onto"
+  (`security-standards.pin.toml` is a build input, `release_artifact_bindings` binds a completed
+  unit, `deployment_observations` records a deployment after the fact). Note also that
+  `local-heavy` in `intent-packages/routing-policy.toml` is **not** an execution-locus dimension —
+  it is one of eight `[[surface]]` entries selecting which LLM handles a class of work — so the
+  second dimension has no partial precedent either. Do not add an `orchestrator_self` reach member,
+  and do not compute a self-update refusal onto the policy report: it would be a second copy of the
+  `live_estate` window row, which that same response already serves.
