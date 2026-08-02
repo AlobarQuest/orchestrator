@@ -1473,3 +1473,22 @@ style of that module.
   failure case to guard, so a test asserting it passes for the wrong reason. Whether the asymmetry is
   intentional is undocumented; the claim is inert on a terminal unit, so it is harmless in itself —
   the damage is entirely in predicates built on it.
+
+- **R13's "merging a PR deploys nothing" is TRUE OF COOLIFY AND FALSE OF THE ESTATE — a repo can
+  redeploy itself, and inspecting the deploy target cannot see it.** R13 verified `change-manager`
+  from Coolify's own settings (`source_id: null`, `source_type: null`,
+  `manual_webhook_secret_github: null`) and concluded a landed PR is inert. That check is correct and
+  answers the wrong direction: it establishes that **Coolify will not PULL on push**, not that
+  **nothing PUSHES to Coolify**. `change-manager/.github/workflows/deploy.yml` runs on
+  `push: branches: [main]` and its `build-and-deploy` job ends with a step named
+  *"Trigger Coolify redeploy"* that curls a `COOLIFY_DEPLOY_WEBHOOK` secret. Confirmed empirically
+  2026-08-02: merging PR #40 fired a `deploy` run **two seconds later**.
+  **Consequence for `reach` (ADR-0009): a package author cannot honestly declare reach without
+  reading the TARGET REPO'S OWN workflows.** The first pattern-recognised unit declared
+  `reach: [source_repository]` and asserted in `scope.excluded` that *"a landed pull request is inert
+  until something separately triggers a deployment"* — false for that repository. The unit itself was
+  not misrouted (its work was opening a PR, which genuinely is inert), but **the merge is
+  `live_estate` work**, and it happened outside the 02:00–06:00 window `live_estate` declares.
+  Harmless in that instance and merged knowingly; the determination METHOD is wrong for every repo
+  that self-deploys. Backlogged P1 `c99a4e598506`. Until it is fixed, treat "does merging deploy?"
+  as a question about the source repository's CI, never about the deploy platform's configuration.
