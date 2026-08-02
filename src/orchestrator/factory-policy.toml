@@ -51,8 +51,43 @@
 # load, a reach nobody declared, and a field no pattern accounts for all resolve
 # the same way: to asking. Patterns are DECIDED here, never learned from what
 # was approved before.
+#
+# GRANDFATHERING IS A LIST THAT EMPTIES ITSELF (schema 3). From this version on,
+# a package that declares no reach cannot be admitted at all. Revisions approved
+# before the field existed would be bricked by that, so `[grandfathered]` names
+# them — by REVISION ID, one at a time, never by a date and never by "reach is
+# absent". Both alternatives are permanent holes: a date still absolves a
+# package authored before it and broken down after it, and keying on absence
+# absolves every future package that forgets. A revision not on this list cannot
+# be grandfathered whenever it was made, which is a boundary tomorrow's package
+# cannot satisfy.
+#
+# AND IT IS REQUIRED TO DIE. Every listed revision is a subject only while it can
+# still produce work needing admission — it has not been broken down yet, or one
+# of its units is still moving. When none of them can, this table has no subject
+# left and the document REFUSES TO LOAD until it is deleted. A document that does
+# not load permits nothing, so the failure is fail-closed and loud, and the fix is
+# deleting these four lines. That is deliberate: this repository already paid for
+# a rule that was switched off and reported nothing for a whole workstream, and a
+# rule that expires itself beats a rule plus a note to remove it.
 
-version = 2
+version = 3
+
+[grandfathered]
+rationale = """
+The one approved revision that predates `reach` and has not been broken down
+yet, so it is the only record that can still produce a work unit which the new
+admission term would refuse for a declaration nobody could have written. The
+other twenty are already spent — every unit they produced is terminal, and a
+settled unit is never admitted again — so they need no exemption and get none.
+Backfilling was rejected instead: editing an approved package.yaml invalidates
+the lineage approval hashed over it, so conforming the old population would cost
+twenty-four fresh human approvals to satisfy a rule that will never be applied
+to it. Follow-up minting is deliberately NOT covered here; it supplies reach or
+refuses, so this list never has to grow to cover the revisions that mint.
+"""
+decided = "2026-08-01"
+revisions = ["f921c842-52b0-46f1-8568-caf5429d2d6b"]
 
 [reach.source_repository]
 rationale = """

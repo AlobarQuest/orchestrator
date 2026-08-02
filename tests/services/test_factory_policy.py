@@ -37,7 +37,7 @@ RATIONALE = 'rationale = "repository only"'
 DECIDED = 'decided = "2026-08-01"'
 
 VALID = f"""
-version = 2
+version = 3
 
 [reach.source_repository]
 {RATIONALE}
@@ -57,7 +57,7 @@ rationale = "the operator's own machine"
 """
 
 ROWS_ARE_NOT_TABLES = """
-version = 2
+version = 3
 
 [reach]
 source_repository = 1
@@ -68,11 +68,11 @@ operator_machine = 1
 
 MALFORMED: tuple[tuple[str, str], ...] = (
     ("not toml at all", "this is not = = toml"),
-    ("no version", VALID.replace("version = 2\n", "")),
-    ("version is a string", VALID.replace("version = 2", 'version = "2"')),
-    ("version is a boolean", VALID.replace("version = 2", "version = true")),
+    ("no version", VALID.replace("version = 3\n", "")),
+    ("version is a string", VALID.replace("version = 3", 'version = "3"')),
+    ("version is a boolean", VALID.replace("version = 3", "version = true")),
     ("an unknown top-level key", VALID + '\nlease = "15m"\n'),
-    ("no reach table", "version = 2\n"),
+    ("no reach table", "version = 3\n"),
     ("a missing row", VALID.replace("[reach.external_system]", "[reach.spare]")),
     ("an unknown row", VALID + f'\n[reach.invented]\nrationale = "x"\n{DECIDED}\n'),
     ("a row that is not a table", ROWS_ARE_NOT_TABLES),
@@ -104,7 +104,7 @@ def write(tmp_path: Path, text: str) -> Path:
 def test_the_shipped_artifact_loads_and_covers_every_reach_member() -> None:
     policy = load_factory_policy()
 
-    assert policy.version == 2
+    assert policy.version == 3
     assert set(policy.rows) == set(REACH_VOCABULARY)
     assert all(row.rationale and row.decided for row in policy.rows.values())
 
@@ -124,7 +124,7 @@ def test_the_artifact_ships_beside_the_module_that_reads_it() -> None:
 def test_a_valid_artifact_loads_the_control_for_every_malformation(tmp_path: Path) -> None:
     policy = load_factory_policy(write(tmp_path, VALID))
 
-    assert policy.version == 2
+    assert policy.version == 3
     assert sorted(policy.rows) == sorted(REACH_VOCABULARY)
 
 
@@ -152,10 +152,10 @@ def test_an_absent_artifact_is_a_named_failure_not_an_empty_policy(tmp_path: Pat
 
 
 def test_an_unknown_schema_version_fails_closed(tmp_path: Path) -> None:
-    assert load_factory_policy(write(tmp_path, VALID)).version == 2  # control
+    assert load_factory_policy(write(tmp_path, VALID)).version == 3  # control
 
     with pytest.raises(DomainError) as raised:
-        load_factory_policy(write(tmp_path, VALID.replace("version = 2", "version = 3")))
+        load_factory_policy(write(tmp_path, VALID.replace("version = 3", "version = 4")))
 
     assert raised.value.code == "factory_policy_version_unsupported"
 
@@ -164,7 +164,7 @@ def test_a_version_below_the_supported_one_fails_closed_too(tmp_path: Path) -> N
     # Compatibility is an exact set, not a floor: an artifact at an OLDER schema is as unreadable
     # as a newer one, because this loader was not written against its shape either.
     with pytest.raises(DomainError) as raised:
-        load_factory_policy(write(tmp_path, VALID.replace("version = 2", "version = 1")))
+        load_factory_policy(write(tmp_path, VALID.replace("version = 3", "version = 2")))
 
     assert raised.value.code == "factory_policy_version_unsupported"
 
@@ -383,7 +383,7 @@ def test_the_artifact_is_pinned_to_the_reach_vocabulary_not_a_second_copy_of_it(
 def test_the_report_names_the_version_the_source_and_every_row() -> None:
     report: dict[str, Any] = load_factory_policy().report()
 
-    assert report["version"] == 2
+    assert report["version"] == 3
     assert report["source"] == PACKAGED_ARTIFACT.name
     assert [row["member"] for row in report["reach"]] == sorted(REACH_VOCABULARY)
     assert all(isinstance(row["rationale"], str) and row["rationale"] for row in report["reach"])

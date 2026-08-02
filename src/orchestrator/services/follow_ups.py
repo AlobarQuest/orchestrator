@@ -23,6 +23,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
+from orchestrator.reach_vocabulary import reach_from_snapshot
 from orchestrator.services.lifecycle import (
     FOLLOW_UP_CAPABILITY,
     ActorContext,
@@ -83,6 +84,7 @@ def validate_follow_up(value: object) -> dict[str, Any] | None:
 # tuple of strings used in a membership test becomes a discovered subject of the cross-boundary
 # vocabulary detector, and these are internal policy, not a contract with another repo.
 SKIP_NOT_REQUIRED = "not_required"
+SKIP_REACH_UNDECLARED = "reach_undeclared"
 SKIP_NO_COMPLETED_UNIT = "no_completed_unit"
 SKIP_UNITS_IN_FLIGHT = "units_in_flight"
 SKIP_UNSETTLED_FAILED_UNIT = "unsettled_failed_unit"
@@ -119,6 +121,10 @@ class RevisionFacts:
     revision_id: uuid.UUID
     follow_up: dict[str, object] | None
     units: tuple[UnitFacts, ...]
+    # What the package said its work touches, read through the single reader. A minted unit hangs
+    # off this same revision, so this IS the minted unit's reach -- there is no second place to put
+    # one, which is why minting has to require it rather than assign it.
+    reach: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -131,9 +137,9 @@ class DueDecision:
 def evaluate_due(facts: RevisionFacts, *, now: datetime, due_after_days: int) -> DueDecision:
     """Decide whether a revision's declared follow-up review is due. Pure: no I/O, no clock.
 
-    A revision qualifies when its declaration asks for one, its work actually shipped (at least
-    one unit completed) and has stopped moving, the window has elapsed since the last unit
-    settled, and no review unit exists yet.
+    A revision qualifies when its declaration asks for one, the package said what its work
+    touches, its work actually shipped (at least one unit completed) and has stopped moving, the
+    window has elapsed since the last unit settled, and no review unit exists yet.
 
     FAILED deliberately blocks. It is not a terminal state -- a failed unit can return to READY
     or be retired -- so the package's outcome is not yet knowable and there is nothing to
@@ -158,6 +164,16 @@ def evaluate_due(facts: RevisionFacts, *, now: datetime, due_after_days: int) ->
     declaration = facts.follow_up
     if not isinstance(declaration, dict) or declaration.get("required") is not True:
         return DueDecision(facts.revision_id, None, SKIP_NOT_REQUIRED)
+    # Minting SUPPLIES reach; it never inherits an unknown one (WS-P2.18 Increment 4). A minted
+    # unit is new work on a live record, so admitting it on "nobody said what this touches" would
+    # reopen through the back door the exact gap the admission term just closed -- and it would
+    # reopen it for every revision that has ever settled, which is the whole population. Refused
+    # here rather than at the due check so it reports the moment it is asked, and refused for the
+    # grandfathered revisions too: that exemption covers records that already exist, not new units
+    # created today. The consequence is intended -- seven revisions declare a follow-up and none
+    # declares reach, so none can mint until a package that does reaches this point.
+    if facts.reach is None:
+        return DueDecision(facts.revision_id, None, SKIP_REACH_UNDECLARED)
 
     subjects = facts.units
     if any(unit.state == _FAILED for unit in subjects):
@@ -260,7 +276,12 @@ def _revision_facts(session: Session, revision: WorkPackageRevision) -> Revision
         units.append(UnitFacts(unit_id, capability, state, settled_at))
     # No already-minted flag: evaluate_due derives that from the units themselves, so there is
     # exactly one mechanism and this function cannot contradict it.
-    return RevisionFacts(revision.id, revision.follow_up, tuple(units))
+    return RevisionFacts(
+        revision.id,
+        revision.follow_up,
+        tuple(units),
+        reach_from_snapshot(revision.enforcement_snapshot),
+    )
 
 
 def _mint(

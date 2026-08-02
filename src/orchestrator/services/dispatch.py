@@ -17,6 +17,7 @@ from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRe
 from orchestrator.services.authority_gate import AuthorityGate, human_authority_gate
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import ActorContext
+from orchestrator.services.reach_admission import reach_admission_refusal
 
 ORCHESTRATOR_URL = "https://sds.alobar.net"
 
@@ -173,7 +174,7 @@ def _dispatch_work_unit(
         raise DomainError("revision_not_found", "package revision does not exist", None)
 
     gate = human_authority_gate(unit, revision)
-    admission = _blocked_reason(unit, settings, gate)
+    admission = _blocked_reason(unit, settings, gate, reach_admission_refusal(session, revision))
     repository = admission.target_repository
     if admission.authority_recognised_by:
         _record_authority_gate_not_required(session, command, unit, gate)
@@ -274,7 +275,10 @@ def _validate_idempotent_record(
 
 
 def _blocked_reason(
-    unit: WorkUnit, settings: DispatchSettings, gate: AuthorityGate
+    unit: WorkUnit,
+    settings: DispatchSettings,
+    gate: AuthorityGate,
+    reach_refusal: str | None,
 ) -> AdmissionDecision:
     """Why this unit may not run, in the order the terms are cheapest to answer.
 
@@ -282,6 +286,11 @@ def _blocked_reason(
     known-good pattern recognises passes it without an approval (ADR-0011). Nothing else moves --
     the hard off-switch is still the first term and policy cannot see it, so no pattern can widen
     what it allows.
+
+    The reach term (Increment 4) sits ABOVE the human-authority one because approving cannot fix
+    it: a declaration nobody wrote is a property of the package, and a person clicking approve
+    would be attesting to an envelope whose blast radius is still unstated. Reporting the authority
+    term first would send an operator to a form that cannot help.
     """
     envelope = normalize_authority(unit.authority)
     target_repository = _target_repository(envelope)
@@ -291,6 +300,8 @@ def _blocked_reason(
         return AdmissionDecision("github_app_credentials_missing", target_repository)
     if unit.state != "ready":
         return AdmissionDecision("work_unit_not_ready", target_repository)
+    if reach_refusal is not None:
+        return AdmissionDecision(reach_refusal, target_repository)
     if unit.authority_approval_id is None and gate.refusals:
         return AdmissionDecision("authority_approval_missing", target_repository)
     return AdmissionDecision(

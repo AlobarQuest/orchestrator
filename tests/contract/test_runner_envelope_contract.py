@@ -118,6 +118,7 @@ def _approved_ready_unit(session: Session):
             # repository, not once per package revision at intake.
             enforcement_snapshot={
                 "title": "Fan out a dependency update",
+                "reach": ["source_repository"],
                 "outcome": "Every target repo gets a PR",
                 "scope": {"in": ["dependency-update"]},
                 "dependencies": [],

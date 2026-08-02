@@ -100,7 +100,7 @@ def register_ready_unit(db_client: TestClient, *, key: str = "dispatch-api") -> 
             "approved_by": "devon",
             "approved_at": datetime(2026, 7, 8, tzinfo=UTC).isoformat(),
             "approval_event_id": str(uuid.uuid4()),
-            "enforcement_snapshot": {},
+            "enforcement_snapshot": {"reach": ["source_repository"]},
             "authority": AUTHORITY,
             "registry_version": 1,
         },
