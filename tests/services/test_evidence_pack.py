@@ -1,15 +1,17 @@
 import re
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import Adjudication, Approval, EventPublication, Evidence
+from orchestrator.services.budget import BREACH_ACTION
 from orchestrator.services.evidence_pack import (
     evidence_pack_projection,
     evidence_pack_response,
     render_evidence_pack_markdown,
 )
-from tests.services.test_slo_report import _build_unit
+from tests.services.test_slo_report import _add_event, _build_unit
 
 
 def test_projection_assembles_core_facts(migrated_session: Session) -> None:
@@ -292,3 +294,41 @@ def test_render_markdown_escapes_pipe_and_newline_in_table_cells(
             assert "\n" not in row
             unescaped_pipe_count = len(re.findall(r"(?<!\\)\|", row))
             assert unescaped_pipe_count == 6, row
+
+
+def test_render_markdown_surfaces_a_recorded_budget_breach(migrated_session: Session) -> None:
+    """The pack is where a human and a possibly-public PR comment learn a unit overran.
+
+    The breach reaches the pack through the event-history section's `reason`, which is why the
+    emitter writes `reason: budget_exceeded` rather than only the two counts.
+    """
+    _revision, unit = _build_unit(migrated_session, "evidence-pack-budget-breach")
+    _add_event(
+        migrated_session,
+        unit.id,
+        action=BREACH_ACTION,
+        to_state=None,
+        occurred_at=datetime(2026, 7, 3, tzinfo=UTC),
+        reason="budget_exceeded",
+    )
+    migrated_session.commit()
+
+    markdown = render_evidence_pack_markdown(
+        evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
+    )
+
+    assert BREACH_ACTION in markdown
+    assert "Reason: budget_exceeded" in markdown
+
+
+def test_render_markdown_omits_a_breach_when_none_was_recorded(migrated_session: Session) -> None:
+    """Control for the test above: the section renders for every unit, so a substring assertion
+    that never fails would look identical."""
+    _revision, unit = _build_unit(migrated_session, "evidence-pack-no-breach")
+    migrated_session.commit()
+
+    markdown = render_evidence_pack_markdown(
+        evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
+    )
+
+    assert BREACH_ACTION not in markdown

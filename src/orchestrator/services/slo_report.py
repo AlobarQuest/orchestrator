@@ -20,6 +20,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.budget import BREACH_ACTION
 from orchestrator.services.consistency import SATISFIED_ACS
 from orchestrator.services.lifecycle import required_ac_ids
 
@@ -348,26 +349,35 @@ def _improvisation(session, since, until, now) -> MetricValue:
 
 
 def _budget_breach(session, since, until, now) -> MetricValue:
-    breaches = (
-        session.scalar(
-            select(func.count(Event.id)).where(
-                Event.action == "work_unit.transitioned",
-                Event.to_state == "failed",
-                Event.payload["reason"].astext == "budget_exceeded",
-                Event.occurred_at >= since,
-                Event.occurred_at < until,
-            )
-        )
-        or 0
+    """Counts DISTINCT units over their llm-call ceiling, from two signals that reach it by
+    different routes and can both name the same unit.
+
+    The halt transition alone was blind to the commonest overrun: a unit is asked whether it is
+    over budget only when it is about to be granted another attempt, so an attempt that blows
+    its ceiling and then FINISHES produced no halt and no count. The window then read as clean.
+    `BREACH_ACTION` closes that -- it is emitted when the spend is reported, whatever the unit
+    does next -- and the two are unioned rather than summed because a unit that overran and was
+    later re-claimed emits both.
+    """
+    window = (Event.occurred_at >= since, Event.occurred_at < until)
+    halted = select(Event.subject_id).where(
+        Event.action == "work_unit.transitioned",
+        Event.to_state == "failed",
+        Event.payload["reason"].astext == "budget_exceeded",
+        *window,
     )
+    overran = select(Event.subject_id).where(Event.action == BREACH_ACTION, *window)
+    breaches = len(set(session.scalars(halted)) | set(session.scalars(overran)))
     if breaches == 0:
+        # "recorded", not "occurred": an overrun before BREACH_ACTION shipped left no row, so
+        # this metric can say what it holds and must not claim the window was clean.
         return MetricValue(
-            STATUS_NO_DATA, None, "no llm-call budget breaches occurred in the window"
+            STATUS_NO_DATA, None, "no llm-call budget breach is recorded in the window"
         )
     return MetricValue(
         STATUS_COMPUTED,
         float(breaches),
-        f"{breaches} unit(s) halted at their llm-call cap in the window",
+        f"{breaches} unit(s) exceeded their declared llm-call ceiling in the window",
     )
 
 

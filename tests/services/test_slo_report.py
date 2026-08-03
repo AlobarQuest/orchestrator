@@ -7,6 +7,7 @@ from orchestrator.clock import TransactionClock
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Adjudication, Claim, Event, Evidence, WorkUnit
+from orchestrator.services.budget import BREACH_ACTION
 from orchestrator.services.packages import register_approved_unit, register_revision
 from orchestrator.services.slo_report import (
     STATUS_COMPUTED,
@@ -672,4 +673,81 @@ def test_budget_breach_counts_in_window(migrated_session):
 
 def test_budget_breach_no_data_when_none(migrated_session):
     report = slo_report(migrated_session)
+    assert report.budget_breach.status == STATUS_NO_DATA
+
+
+def test_budget_breach_counts_an_overrun_the_halt_path_cannot_produce(migrated_session):
+    """The case that made this metric report a clean window while a unit had overrun.
+
+    A unit is asked whether it is over budget only when it is about to be granted another
+    attempt, so an attempt that blows its ceiling and then COMPLETES never transitions to
+    failed and never carried a `budget_exceeded` reason. Note the unit here has no halt
+    transition at all -- that absence is the point of the test.
+    """
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    _, unit = _build_unit(migrated_session, "overran-and-finished")
+    _add_event(
+        migrated_session,
+        unit.id,
+        action=BREACH_ACTION,
+        to_state=None,
+        occurred_at=datetime(2026, 7, 3, tzinfo=UTC),
+    )
+    migrated_session.commit()
+
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+
+    assert report.budget_breach.status == STATUS_COMPUTED
+    assert report.budget_breach.value == 1.0
+
+
+def test_budget_breach_counts_a_unit_once_when_both_signals_exist(migrated_session):
+    """A unit that overran and was LATER refused a re-claim emits both signals. They are
+    unioned on the unit, not summed, or one unit would read as two."""
+    since = datetime(2026, 7, 1, tzinfo=UTC)
+    until = datetime(2026, 7, 8, tzinfo=UTC)
+    _, unit = _build_unit(migrated_session, "overran-then-halted")
+    _add_event(
+        migrated_session,
+        unit.id,
+        action=BREACH_ACTION,
+        to_state=None,
+        occurred_at=datetime(2026, 7, 3, tzinfo=UTC),
+    )
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="failed",
+        from_state="ready",
+        occurred_at=datetime(2026, 7, 4, tzinfo=UTC),
+        reason="budget_exceeded",
+    )
+    migrated_session.commit()
+
+    report = slo_report(migrated_session, SloReportFilters(since=since, until=until))
+
+    assert report.budget_breach.value == 1.0
+
+
+def test_budget_breach_ignores_a_breach_outside_the_window(migrated_session):
+    """The control for the two tests above: the new signal must still be window-scoped."""
+    _, unit = _build_unit(migrated_session, "breach-out-of-window")
+    _add_event(
+        migrated_session,
+        unit.id,
+        action=BREACH_ACTION,
+        to_state=None,
+        occurred_at=datetime(2026, 6, 1, tzinfo=UTC),
+    )
+    migrated_session.commit()
+
+    report = slo_report(
+        migrated_session,
+        SloReportFilters(
+            since=datetime(2026, 7, 1, tzinfo=UTC), until=datetime(2026, 7, 8, tzinfo=UTC)
+        ),
+    )
+
     assert report.budget_breach.status == STATUS_NO_DATA
