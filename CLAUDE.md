@@ -1726,3 +1726,123 @@ style of that module.
   of one table is silent), and a divergent restatement on re-registration is **refused** rather than
   silently dropped. The shape cannot occur on the intake-born path: intake derives the snapshot's
   list *from* the criteria, so the two cannot disagree.
+
+- **factory-runner requires `constraints.mutation_commands` whenever `command.run` is allowed —
+  UNCONDITIONALLY — while the orchestrator requires it only for `change_class:
+  "dependency-update"`. So the orchestrator ADMITS envelopes the runner REFUSES, and nothing sees
+  the disagreement until a real dispatch.** Orchestrator:
+  `kernel/runner_authority.py::dependency_update_authority_violation` opens
+  `if envelope.change_class != "dependency-update": return None`. Runner:
+  `factory_runner/authority.py::_validate_commands` requires it under
+  `if _allowed(envelope, "command.run")` with no change-class condition. Measured 2026-08-03: a
+  `maintenance-remediation` unit cleared **every** orchestrator admission term — readiness `ready`,
+  authority approved, change class allowed, target repo allowed, reach admitted — and the run died
+  in 14 seconds with `AuthorityError: constraints.mutation_commands must be a non-empty list of
+  non-empty strings`.
+  **The mismatch is the symptom; the model is the finding. The runner assumes the MUTATION IS A
+  COMMAND.** That fits `dependency-update` (`uv add`) and does not fit edit-shaped work, where the
+  diff is produced by the coding agent and no command mutates a tracked file — so there is no
+  honest value for the field. A fig-leaf entry (`uv sync`, which only touches `.venv`) would make
+  the envelope lie about what mutates, and **the envelope is what a human's authority approval
+  attests.** This blocks Wave-3 exit criterion #1 for every non-dependency-update software profile.
+  Note the envelope AND the brief are both pinned cross-repo contracts and **neither pins this
+  rule**, which is exactly why byte-identical fixture tests stay green while the two sides disagree.
+  Backlogged P1 `08afee391813`.
+
+- **`allowed_commands` is ADVISORY to the coding agent and MANDATORY at finalize.** It reaches the
+  agent only as prompt text (`cli.py` `_prompt`, `"\n".join(f"- {command}" …)`) — nothing blocks the
+  agent from running something else — and it becomes `verification_commands` at finalize
+  (`cli.py:839`), which re-executes the ordered list before checking `git status`. Two consequences:
+  an unlisted command the agent improvises may make a run *appear* to work, and a listed command
+  that cannot run makes finalize fail **however well the coding phase went**. Read this together
+  with the ordering rule (mutators first, verifier last) — the ordering matters because of the
+  re-execution, and every listed command must therefore be idempotent.
+
+- **The reusable workflow syncs the RUNNER CLI, never the TARGET repository — so any envelope whose
+  verifier needs project dependencies must authorize the sync itself.** `factory-runner.yml` runs
+  `setup-uv` and `uv tool install git+…@job.workflow_sha` (the runner), then `actions/checkout` puts
+  the *caller's* repo on disk with **no `.venv`**. A verifier like `make check` then hard-fails
+  through the portfolio Makefile's `need` macro. Proven by control 2026-08-03 against
+  `intent-packages`: a tree from `git archive HEAD` under `env -i PATH=/usr/bin:/bin` gives
+  `make check: ruff not found — install it with: uv sync`, rc=2. **Both conditions are required on
+  this machine** — ruff/pytest are on the global PATH and the Makefile re-prepends `.venv/bin`, so
+  neither alone reproduces a CI checkout. The correct envelope is `["uv sync", "make check"]`.
+  HQ authored a first envelope without this dry-run, which the repo's own invariants require, and it
+  cost a whole package revision to fix — the envelope is inside the authority fingerprint, the human
+  approval is bound to it, and there is no supersede route for an approved decomposition.
+
+- **A package approval requires BOTH a hash-bound ledger entry AND a `package.approved` event in the
+  tamper-evident factory-events chain — a hand-written `lineage.yaml` approval can NEVER verify, by
+  design.** `operations.py::verify_approval` fails closed on either half, and its own docstring says
+  *"a forged/edited ledger entry cannot pass this — it isn't in the chain."* The audited path is the
+  **`intent_packages` CLI** (`approve`, `revise`, `transition`, `verify-approval`) — a *different*
+  CLI from `factory` — which emits the chain event FIRST and writes the ledger only after, so an
+  unaudited approval cannot exist. Do not hand-edit lineage; HQ tried on 2026-08-03 and the guard
+  refused it, correctly.
+
+- **`factory decompose` only speaks dependency-update: its interface is
+  `--tooling {pip,uv,npm} --package --from --to`.** It cannot express any of the other four profiles,
+  so `maintenance-remediation`, `software-delivery`, `infrastructure-change` and
+  `non-software-operational` decompositions must be hand-authored against
+  `POST /api/v1/package-intakes/{revision_id}/decomposition-proposals`. The factory is **built for
+  five profiles and mechanically served for one** — which also means Phase-3 WS-P3.1 (Dependabot →
+  proposed packages) is the only lane its existing tooling can feed.
+
+- **There is NO `(READY, CANCELLED)` transition for ANY role, so a misfired READY unit is permanent
+  debris — but dispatch is EXPLICIT-ONLY, so the debris is inert.** `HUMAN_EDGES` carries
+  `CLAIMED→CANCELLED`, `EXECUTING→CANCELLED`, `AWAITING_APPROVAL→CANCELLED` and
+  `FAILED→CANCELLED`; `READY` appears in none of them, for any role. Confirmed fresh on 2026-08-03
+  when a superseded package revision left unit `136c6c64` stranded in `ready` forever. The reason
+  this is survivable: `dispatch_work_unit` has exactly one caller —
+  `POST /work-units/{unit_id}/dispatch` — with no sweeper and no cron, so an open window dispatches
+  **nothing** on its own. Read "if the target unit is the only one in the system there is nothing
+  else an open window can dispatch" as a statement about blast radius, not about automatic pickup.
+  A `FAILED` unit CAN be cancelled, so letting a bad unit fail is the only route to retiring it.
+
+- **`POST /work-units/{id}/dispatch` requires `expected_version`** — omitting it is a FastAPI 422
+  before any service code runs, not a `DomainError`. Same for most command routes; read the
+  `detail[].loc` in the 422 rather than guessing which field is missing.
+
+- **The package-intake id IS the revision id.** `/review/intakes/{id}` and
+  `/review/revisions/{id}/evidence-pack` carry the same UUID, and it is what
+  `POST /api/v1/package-intakes/{revision_id}/decomposition-proposals` wants. There is no separate
+  revision UUID to hunt for.
+
+- **The conformance kit's `repo.protection` is an ADVISORY check, not an ADMISSION one — it never
+  affected `admission_passed`.** `readiness_schema.py` puts `git.current`, `project.manifest`,
+  `code.onboarded`, `ci.executed`, `security.clean`, `runner.caller`, `profile.declared` in
+  `ADMISSION_CHECKS`, and `deps.dependabot`, `repo.protection`, `backlog.hygiene`,
+  `standards.pinned` in `ADVISORY_CHECKS`. **HQ asserted on 2026-08-03 that exit criterion #2 was
+  "unsatisfiable" because protection blocked admission; that was wrong.** The real admission
+  blockers are `runner.caller` (6 repos), `profile.declared` (4), `security.clean` (1),
+  `code.onboarded` (1) — all fixable. Before calling a gate unsatisfiable, read which set the check
+  is in.
+
+- **Branch protection is UNAVAILABLE on private repos on this plan, and the API says so with a 403
+  whose body matches neither "Branch not protected" nor "Not Found".** Six of eight candidate repos
+  are private; `GET/PUT repos/{r}/branches/main/protection` answers
+  `403 "Upgrade to GitHub Pro or make this repository public to enable this feature."` A naive probe
+  that branches only on those two strings falls through to its `else` and reports the six as
+  **PROTECTED** — the exact inverse of the truth, which is how HQ first mis-answered it. The kit now
+  distinguishes four outcomes (`pass` / `violation` / `not-applicable` / `unknown`, project-standards
+  PR #14); `factory-runner` was the one genuinely-unprotected public repo and was protected
+  2026-08-03 with **required status check `Quality` + no force-push + no deletion and NO review
+  requirement** — a solo account cannot approve its own PR, so `required_approving_review_count=1`
+  (which the kit suggests) would make `main` unmergeable and strand every Dependabot PR.
+
+- **`runner.caller` asks "can the factory send work INTO this repo?", and it is three different
+  faults under one name.** It requires `.github/workflows/factory-runner-pilot.yml` calling
+  factory-runner's reusable workflow at a full SHA equal to `RECOMMENDED_CALLER_PIN` (a one-line file
+  at factory-runner's root). On 2026-08-03: `change-manager` and `brain` were BEHIND the pin
+  (`b8049127` vs `b0305b51`); `intent-packages` and `security-standards` used **`@main`** — the
+  GAP-4 class, pinned to nothing; `project-standards` and `factory-runner` had **no caller at all**.
+  Since it is really a *dispatchability* check, applying it to every onboarded repo is a category
+  error — `factory-runner` needing a caller means the runner would verify changes to itself using a
+  pinned older copy of itself, a trust loop that should be decided rather than acquired by default.
+
+- **`change_class` is a FREE STRING matched against `ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES`,
+  and that list was `["dependency-update"]` alone until 2026-08-03**, when Devon approved adding
+  `maintenance-remediation` (standing, not per-run). `_optional_change_class` validates shape only —
+  there is no closed vocabulary — and `_change_class()` falls back to `required_capability` when the
+  field is absent, so an envelope with no `change_class` is matched on its capability name and is
+  refused just the same. Widening this list is a standing authority change and outlives any window.
