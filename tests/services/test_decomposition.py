@@ -1214,6 +1214,26 @@ def test_edit_shaped_envelope_needs_no_mutation_commands() -> None:
     assert runner_command_authority_violation(envelope) is None
 
 
+def test_explicit_empty_mutation_commands_is_refused_for_any_class() -> None:
+    """Absence says "no command mutates"; present-and-empty is malformed, whatever
+    the change class — mirrored by the runner's own validation."""
+    envelope = normalize_authority(
+        {
+            "change_class": "maintenance-remediation",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": {
+                "allowed_commands": ["uv sync", "make check"],
+                "mutation_commands": [],
+            },
+        }
+    )
+
+    violation = runner_command_authority_violation(envelope)
+
+    assert violation is not None
+    assert violation.code == "authority_mutation_commands_invalid"
+
+
 def test_dependency_update_authority_accepts_ordered_valid_command_lists() -> None:
     envelope = normalize_authority(
         {
@@ -1353,6 +1373,50 @@ def test_proposal_rejects_author_supplied_work_unit_id(migrated_session: Session
         )
 
     assert error.value.code == "authority_work_unit_id_forbidden"
+
+
+def test_proposal_rejects_malformed_change_class(migrated_session: Session) -> None:
+    """change_class is load-bearing in the runner's command validation (WS-P2.33), and
+    normalize_authority reads a malformed value as absent — which would waive the
+    dependency-update mutation requirement here while the runner refuses the raw payload."""
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    payload = {
+        "capabilities": {"repo.edit": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {"target_repository": "AlobarQuest/brain"},
+        "change_class": 5,
+    }
+
+    with pytest.raises(DomainError) as error:
+        submit_decomposition_proposal(
+            migrated_session,
+            proposal_command(
+                revision.id,
+                ac_ids,
+                dependencies=(),
+                proposed_units=(
+                    ProposedUnit(
+                        unit_key="unit-1",
+                        title="Bump dependency",
+                        outcome="Dependency updated.",
+                        required_capability="repo.edit",
+                        authority=normalize_authority(payload),
+                        authority_payload=payload,
+                    ),
+                    ProposedUnit(
+                        unit_key="unit-2",
+                        title="Implement tests",
+                        outcome="Covered by tests.",
+                        required_capability="repo.edit",
+                        authority=AUTHORITY,
+                    ),
+                ),
+            ),
+            worker_actor(),
+        )
+
+    assert error.value.code == "authority_change_class_invalid"
 
 
 def test_proposal_rejects_malformed_conformance(migrated_session: Session) -> None:

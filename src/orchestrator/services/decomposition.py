@@ -522,6 +522,16 @@ def _validate_unit_constraints(unit: ProposedUnit) -> dict[str, Any]:
             "constraints.work_unit_id is assigned by the orchestrator at proposal time",
             "omit constraints.work_unit_id from the proposed authority envelope",
         )
+    # change_class is load-bearing in the runner's command validation (WS-P2.33), and
+    # normalize_authority reads a malformed value as absent — which would waive the
+    # dependency-update mutation requirement here while the runner refuses the raw payload.
+    change_class = payload.get("change_class")
+    if change_class is not None and (not isinstance(change_class, str) or not change_class.strip()):
+        raise DomainError(
+            "authority_change_class_invalid",
+            "authority change_class must be a non-empty string when present",
+            "declare change_class as a non-empty string, or omit it",
+        )
     # normalized() emits an explicit conformance=None for envelopes that omit it, so an
     # absent claim and a null claim are the same thing: nothing to validate, and dispatch
     # will fail closed on conformance_missing.
