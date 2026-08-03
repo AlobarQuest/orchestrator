@@ -37,7 +37,7 @@ tracker-projection-adapter = "tracker_projection_adapter.cli:app"
 dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.6",
-  "ruff==0.15.20",
+  "ruff==0.16.1",
   "pyright==1.1.411",
   "httpx2>=2.9.1",
 ]
