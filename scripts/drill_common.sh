@@ -232,6 +232,10 @@ seed_unit() {
         approved_by:"devon", approved_at:"2026-07-05T00:00:00+00:00",
         approval_event_id:"00000000-0000-4000-8000-000000000001",
         enforcement_snapshot:{acceptance_criteria:["ac-1"]},
+        acceptance_criteria:[{ac_id:"ac-1",
+            condition:"A human confirms the drill unit is fit to carry the scenario.",
+            evidence_type:"human_review", evidence:"the operator running the drill",
+            approver:"devon"}],
         authority:{capabilities:{repository_write:"allowed"},budgets:{max_attempts:3,max_llm_calls:4}},
         registry_version:1}')")
     revision=$(echo "$response" | jq -r '.id // empty')

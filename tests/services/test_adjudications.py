@@ -18,6 +18,7 @@ from orchestrator.persistence.models import (
 from orchestrator.services.evidence import (
     AdjudicationDecision,
     current_adjudication,
+    current_evidence,
     record_adjudication,
     record_adjudications,
 )
@@ -28,6 +29,14 @@ from tests.services.test_dependencies import register_unit
 
 def record(session: Session, command: dict[str, Any]) -> Adjudication | DomainError:
     return record_adjudication(session, **cast(Any, command))
+
+
+# Every VERIFIER adjudication in production comes from `verify_work_unit`, which derives the
+# outcome from the evidence chain and sets this (WS-P2.32). Tests below that use a verifier actor
+# INCIDENTALLY -- to reach persistence, idempotency, supersession or concurrency behaviour that has
+# nothing to do with who decided -- go through the same door production does. The direct-POST door
+# has its own tests, and they assert it is shut.
+FROM_EVALUATION: dict[str, Any] = {"from_verifier_evaluation": True}
 
 
 def add_criterion(session: Session, unit, ac_id: str, evidence_type: str) -> None:
@@ -421,6 +430,7 @@ def test_a_recorded_adjudication_survives_the_session(
         actor=ActorContext("verifier-1", ActorRole.VERIFIER),
         rationale="verified",
         idempotency_key="adjudication-survives-the-session",
+        **FROM_EVALUATION,
     )
 
     assert isinstance(result, Adjudication)
@@ -531,9 +541,11 @@ def test_human_may_not_pass_a_criterion_less_ac(migrated_session: Session, ready
 
 
 @pytest.mark.parametrize("outcome", ["passed", "failed", "not_applicable"])
-def test_verifier_records_each_non_waiver_outcome(
+def test_verifier_records_each_non_waiver_outcome_from_its_own_evaluation(
     migrated_session: Session, ready_unit, outcome: str
 ) -> None:
+    # The verifier's vocabulary is unchanged. What changed (WS-P2.32) is the ROUTE: this is what
+    # `verify_work_unit` does after `evaluate_criterion` has read the evidence chain.
     result = record_adjudication(
         migrated_session,
         work_package_revision_id=ready_unit.work_package_revision_id,
@@ -543,11 +555,115 @@ def test_verifier_records_each_non_waiver_outcome(
         actor=ActorContext("verifier-1", ActorRole.VERIFIER),
         rationale="verified",
         idempotency_key=f"adjudication-{outcome}",
+        **FROM_EVALUATION,
     )
 
     assert isinstance(result, Adjudication)
     assert result.outcome == outcome
     assert result.decided_by == "verifier-1"
+
+
+@pytest.mark.parametrize("outcome", ["passed", "failed", "not_applicable"])
+def test_verifier_may_not_adjudicate_outside_its_own_evaluation(
+    migrated_session: Session, migrated_engine: Engine, ready_unit, outcome: str
+) -> None:
+    # THE BYPASS, refused. Until WS-P2.32 this call succeeded, and a `passed` on each required
+    # criterion drove the unit to COMPLETED with no evidence anywhere in the system -- past the
+    # named-check observer, past unanimity, past `failed_closed` on divergence. `_completion_
+    # satisfied` reads adjudications and structurally cannot read evidence, so nothing downstream
+    # could notice; the reconciliation lane detects reality CHANGING, never reality having been
+    # MISREPORTED, and its `_detect_check` needs a prior OBSERVED success it would never have.
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome=outcome,
+        actor=ActorContext("verifier-1", ActorRole.VERIFIER),
+        rationale="I read the PR and it looks right to me",
+        idempotency_key=f"bypass-{outcome}",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "verifier_evaluation_required"
+    # Refused, not merely un-returned. A DIFFERENT session is the only reader that cannot see an
+    # uncommitted row.
+    with Session(migrated_engine) as reader:
+        assert adjudications_for(reader, ready_unit, "ac-1") == ()
+
+
+def test_a_verifier_evidence_reference_does_not_buy_the_bypass(
+    migrated_session: Session, ready_unit
+) -> None:
+    # THE DISCRIMINATING CONTROL, and the reason this is not "require an evidence_id". A non-null
+    # reference proves a row exists, not that it SUPPORTS the outcome -- it can point at the
+    # worker's own artifact. Here the reference is real, subject-valid and the current chain head,
+    # and the answer is still no: what the verifier lacks is not a citation, it is an evaluation.
+    add_criterion(migrated_session, ready_unit, "ac-1", "automated_check")
+    add_evidence(migrated_session, ready_unit, "ac-1", "runner.pr.opened", {"pr_number": 7})
+    migrated_session.commit()
+    evidence = current_evidence(
+        migrated_session, ready_unit.work_package_revision_id, ready_unit.id, "ac-1"
+    )
+    assert evidence is not None
+
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("verifier-1", ActorRole.VERIFIER),
+        rationale="the PR is open and CI is green on my screen",
+        idempotency_key="bypass-with-evidence-reference",
+        evidence_id=evidence.id,
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "verifier_evaluation_required"
+
+
+def test_the_refusal_names_the_route_and_not_the_role(
+    migrated_session: Session, ready_unit
+) -> None:
+    # A bare `role_forbidden` would say the verifier may not decide this, which is false and would
+    # send an operator looking for a different credential. The role is right; the door is wrong,
+    # and the recovery hint says which one to use. Same shape as `post_deploy_verifier_required`.
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("verifier-1", ActorRole.VERIFIER),
+        rationale="looks right",
+        idempotency_key="bypass-names-the-route",
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.recovery == "verify"
+
+
+def test_a_verifier_still_may_not_waive_even_from_its_own_evaluation(
+    migrated_session: Session, ready_unit
+) -> None:
+    # The waiver branch is checked FIRST and is unchanged: waiving is a human act about accepting
+    # a known failure, and no evaluation makes it a machine's to perform. Without this, a reader
+    # could reasonably think the new flag re-opened the whole vocabulary.
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=ready_unit.work_package_revision_id,
+        work_unit_id=ready_unit.id,
+        ac_id="ac-1",
+        outcome="waived",
+        actor=ActorContext("verifier-1", ActorRole.VERIFIER),
+        rationale="accepting the failure",
+        idempotency_key="verifier-waiver",
+        **FROM_EVALUATION,
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "role_forbidden"
 
 
 def test_non_waiver_risk_outside_vocabulary_is_a_clean_error(
@@ -563,6 +679,7 @@ def test_non_waiver_risk_outside_vocabulary_is_a_clean_error(
         rationale="verified",
         idempotency_key="non-waiver-bad-risk",
         risk="catastrophic",
+        **FROM_EVALUATION,
     )
 
     assert isinstance(result, DomainError)
@@ -594,6 +711,7 @@ def test_correction_supersedes_current_terminal_and_query_returns_it(
         "ac_id": "ac-1",
         "actor": ActorContext("verifier-1", ActorRole.VERIFIER),
         "rationale": "verified",
+        **FROM_EVALUATION,
     }
     first = record_adjudication(
         migrated_session, outcome="failed", idempotency_key="adjudication-1", **common
@@ -624,6 +742,7 @@ def test_adjudication_idempotency_is_exact(migrated_session: Session, ready_unit
         "actor": ActorContext("verifier-1", ActorRole.VERIFIER),
         "rationale": "verified",
         "idempotency_key": "adjudication-1",
+        **FROM_EVALUATION,
     }
     first = record(migrated_session, command)
     replay = record(migrated_session, command)
@@ -648,6 +767,7 @@ def test_adjudication_replay_precedes_current_version_validation(
         "rationale": "verified",
         "idempotency_key": "adjudication-versioned",
         "expected_version": ready_unit.version,
+        **FROM_EVALUATION,
     }
     first = record(migrated_session, command)
     assert isinstance(first, Adjudication)
@@ -678,6 +798,7 @@ def test_concurrent_identical_adjudications_converge(migrated_engine: Engine) ->
             "actor": ActorContext("verifier-1", ActorRole.VERIFIER),
             "rationale": "verified",
             "idempotency_key": "concurrent-adjudication-1",
+            **FROM_EVALUATION,
         }
 
     start = Barrier(2)

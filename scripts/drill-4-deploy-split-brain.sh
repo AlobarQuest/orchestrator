@@ -85,7 +85,10 @@ api POST "/api/v1/work-units/$unit/commands/submit" worker \
 api POST "/api/v1/work-units/$unit/commands/verify" verifier \
     "$(jq -nc --argjson v "$(unit_version "$unit")" '{idempotency_key:"drill4-verify", expected_version:$v}')" >/dev/null
 
-adjudication=$(api POST "/api/v1/work-units/$unit/adjudications" verifier \
+# A HUMAN adjudicates, because a verifier may only record what it evaluated (WS-P2.32). The
+# criterion `ac-1` describes is declared at registration -- see `seed_unit` -- which is what makes
+# it decidable by anyone at all.
+adjudication=$(api POST "/api/v1/work-units/$unit/adjudications" human \
     "$(jq -nc --arg r "$revision" --arg e "$evidence_id" --argjson v "$(unit_version "$unit")" '{
         idempotency_key:"drill4-adjudicate", expected_version:$v,
         work_package_revision_id:$r, ac_id:"ac-1", outcome:"passed",

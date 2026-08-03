@@ -198,6 +198,10 @@ def _record_evaluation(
         evidence_id=adjudication_evidence_id,
         failed_evidence_id=failed_evidence_id,
         allow_generated_post_deploy=True,
+        # The single site that may assert this. Every outcome reaching here came from
+        # `evaluate_criterion` reading the evidence chain -- a `passed` is only ever reached with
+        # evidence in hand, and a `failed` carries the finding recorded just above.
+        from_verifier_evaluation=True,
     )
     if isinstance(adjudication, DomainError):
         raise adjudication

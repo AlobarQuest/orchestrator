@@ -15,7 +15,7 @@ from orchestrator.persistence.models import (
     UnitPrBinding,
     WorkUnit,
 )
-from orchestrator.services.evidence import current_evidence
+from orchestrator.services.evidence import current_evidence, record_adjudication
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.packages import register_approved_unit, register_revision
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
@@ -83,6 +83,69 @@ def test_verifier_named_check_supersedes_worker_evidence_and_completes(
     adjudication = migrated_session.get(Adjudication, result.evaluations[0].adjudication_id)
     assert adjudication is not None
     assert adjudication.evidence_id == named_check.id
+
+
+def test_the_bypass_is_shut_on_the_very_unit_the_verifier_then_completes(
+    migrated_session: Session,
+) -> None:
+    """Both directions, on one unit, so the guard cannot be a blanket refusal (WS-P2.32).
+
+    The setup is a legitimate, fully-observed named check: the App-token observer stood behind the
+    conclusion, the identity bindings hold, and `evaluate_criterion` will resolve it `passed`. On
+    that exact state a direct POST of the same outcome is refused -- and then the verify command
+    records it. The difference between the two calls is not the evidence, the actor, the criterion
+    or the outcome. It is whether the verifier DERIVED the answer or asserted it.
+    """
+    unit = mapped_submitted_unit(
+        migrated_session,
+        key="bypass-vs-evaluation",
+        evidence_type="automated_check",
+        ac_id="AC-006",
+        authority=AUTOMATED_CHECK_AUTHORITY,
+    )
+    record_worker_evidence(
+        migrated_session,
+        unit,
+        ac_id="AC-006",
+        evidence_type="runner.pr.opened",
+        payload={"pr_number": PR_NUMBER, "head_sha": HEAD_SHA},
+        idempotency_key="bypass-vs-evaluation-worker-evidence",
+    )
+    dispatch = bind_dispatched_pull_request(migrated_session, unit)
+    named_check = record_named_check(migrated_session, named_check_command(unit, dispatch))
+    assert isinstance(named_check, Evidence)
+
+    refused = record_adjudication(
+        migrated_session,
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id="AC-006",
+        outcome="passed",
+        actor=VERIFIER,
+        rationale="the check is green, I looked",
+        idempotency_key="bypass-vs-evaluation-direct",
+        evidence_id=named_check.id,
+    )
+
+    assert isinstance(refused, DomainError)
+    assert refused.code == "verifier_evaluation_required"
+
+    result = verify_work_unit(
+        migrated_session,
+        VerifyCommand(
+            unit_id=unit.id,
+            actor=VERIFIER,
+            expected_version=unit.version,
+            idempotency_key="bypass-vs-evaluation-verify",
+        ),
+    )
+
+    assert result.state is WorkUnitState.COMPLETED
+    adjudication = migrated_session.get(Adjudication, result.evaluations[0].adjudication_id)
+    assert adjudication is not None
+    assert adjudication.outcome == "passed"
+    assert adjudication.evidence_id == named_check.id
+    assert adjudication.rationale == "the named check was observed to conclude success"
 
 
 def test_verifier_named_check_fails_closed_when_pr_head_changes_after_recording(

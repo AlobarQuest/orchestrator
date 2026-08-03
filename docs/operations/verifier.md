@@ -19,6 +19,30 @@ The request uses the standard command envelope:
 Only actors with the `verifier` role may run the command. Workers can submit
 evidence, but they cannot verify their own work or record adjudications.
 
+## The verify command is the verifier's only way to adjudicate
+
+A verifier adjudication may only arise from the verifier's own evaluation of
+evidence. `POST /api/v1/work-units/{unit_id}/adjudications` refuses a verifier
+actor with `verifier_evaluation_required` (recovery: `verify`) — the role is not
+the problem, the route is. The verifier's authority is that it *reads* evidence:
+`verify_work_unit` derives each outcome from the evidence chain through
+`evaluate_criterion` and records what it read. An adjudication typed by hand under
+the verifier credential carries prose in place of that derivation, is attributed
+forever to the credential rather than to the person, and settles a criterion
+without any of the guarantees the named-check observation exists to provide.
+
+**If the verifier cannot resolve a criterion, that is what `awaiting_review` is
+for.** The verifier defers, the unit lands in `awaiting_review`, and a *human*
+decides it through `/review` — clause (b) of `human_may_adjudicate`. Use that. It
+records who actually made the judgment.
+
+One shape has no actor at all, deliberately: a required `ac_id` listed in a
+revision's enforcement snapshot with no `package_acceptance_criteria` row behind
+it. `human_may_adjudicate` refuses an absent criterion, and `load_required_criteria`
+refuses to verify such a revision. Only the WS-3.1 bootstrap registration lane
+(`POST /api/v1/revisions`, unreachable in production) can create that shape;
+intake-born units always carry criterion rows.
+
 For an `automated_check` criterion, the verifier uses this sequence:
 
 1. Wait for the named CI check to reach a terminal conclusion on the submitted head.

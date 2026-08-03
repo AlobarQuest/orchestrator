@@ -6,7 +6,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from orchestrator.main import app
-from orchestrator.persistence.models import WorkUnit
+from orchestrator.persistence.models import PackageAcceptanceCriterion, WorkUnit
 
 
 def test_api_is_versioned() -> None:
@@ -317,9 +317,47 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
     assert forbidden.status_code == 403
     assert forbidden.json()["error"]["code"] == "role_forbidden"
 
-    adjudication = db_client.post(
+    # THE BYPASS, refused at the wire (WS-P2.32). Until now this POST returned 200, and a `passed`
+    # on every required criterion completed the unit on prose alone. The evidence reference is
+    # real and subject-valid here, which is the point: what is missing is not a citation but the
+    # verifier's own evaluation of it.
+    bypass = db_client.post(
         f"/api/v1/work-units/{unit_id}/adjudications",
         headers=VERIFIER,
+        json={
+            "idempotency_key": "adjudication-bypass",
+            "expected_version": 15,
+            "work_package_revision_id": revision_id,
+            "ac_id": "ac-1",
+            "outcome": "passed",
+            "evidence_id": evidence.json()["id"],
+            "rationale": "verified",
+        },
+    )
+    assert bypass.status_code == 409
+    assert bypass.json()["error"]["code"] == "verifier_evaluation_required"
+    assert bypass.json()["error"]["recovery"] == "verify"
+
+    # The supported replacement. This revision was registered through the WS-3.1 bootstrap lane,
+    # which writes no `package_acceptance_criteria` rows -- and with no criterion row backing
+    # `ac-1`, `human_may_adjudicate` refuses too, so the unit would be settleable by nobody. Give
+    # it the criterion an intake-born unit would have had, and the human gate opens.
+    with Session(migrated_engine) as seeder:
+        seeder.add(
+            PackageAcceptanceCriterion(
+                work_package_revision_id=uuid.UUID(revision_id),
+                ac_id="ac-1",
+                condition="A human reviews the change.",
+                evidence_type="human_review",
+                evidence="the reviewer's note",
+                approver="devon",
+            )
+        )
+        seeder.commit()
+
+    adjudication = db_client.post(
+        f"/api/v1/work-units/{unit_id}/adjudications",
+        headers=HUMAN,
         json={
             "idempotency_key": "adjudication-1",
             "expected_version": 15,

@@ -16,7 +16,12 @@ from orchestrator.kernel.authority import (
     normalize_authority,
 )
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Approval, Event, WorkPackageRevision
+from orchestrator.persistence.models import (
+    Approval,
+    Event,
+    PackageAcceptanceCriterion,
+    WorkPackageRevision,
+)
 from orchestrator.services.packages import (
     record_approval,
     register_approved_unit,
@@ -560,3 +565,112 @@ def test_concurrent_conflicting_first_registration_returns_stable_error(
         event.remove(migrated_engine, "before_cursor_execute", synchronize_registration_lock)
 
     assert sorted(results) == ["registered", "revision_conflict"]
+
+
+CRITERION = {
+    "ac_id": "ac-1",
+    "condition": "A human confirms the outcome.",
+    "evidence_type": "human_review",
+    "evidence": "the reviewer's note",
+    "approver": "human-1",
+}
+
+
+def register_with_criteria(
+    session: Session, criteria: list[dict[str, Any]], *, suffix: str
+) -> WorkPackageRevision:
+    return register_revision(
+        session,
+        package_id=f"pkg-declared{suffix}",
+        source_repository="owner/repo",
+        revision=1,
+        content_hash=f"sha256:declared{suffix}",
+        source_path="intent.md",
+        source_commit="abc123",
+        approved_by="human-1",
+        approved_at=NOW,
+        approval_event_id=f"{APPROVAL_EVENT_ID}-declared{suffix}",
+        enforcement_snapshot={"acceptance_criteria": ["ac-1"]},
+        authority=AUTHORITY,
+        registry_version=1,
+        acceptance_criteria=criteria,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+
+
+def test_a_registration_may_declare_what_its_required_criteria_are(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    # The bootstrap lane could always say WHICH ac_ids it requires and never what any of them was.
+    # A required ac_id with no criterion behind it is decidable by no actor -- which is why such a
+    # unit used to be completable only through the verifier bypass WS-P2.32 shuts.
+    revision = register_with_criteria(migrated_session, [dict(CRITERION)], suffix="")
+    migrated_session.commit()
+
+    with Session(migrated_engine) as reader:
+        rows = tuple(
+            reader.scalars(
+                select(PackageAcceptanceCriterion).where(
+                    PackageAcceptanceCriterion.work_package_revision_id == revision.id
+                )
+            )
+        )
+    assert len(rows) == 1
+    assert rows[0].ac_id == "ac-1"
+    assert rows[0].evidence_type == "human_review"
+
+
+@pytest.mark.parametrize("field", ["ac_id", "condition", "evidence_type", "evidence", "approver"])
+def test_an_empty_criterion_field_is_a_clean_error_not_a_500(
+    migrated_session: Session, field: str
+) -> None:
+    # The table's CHECK would reject each of these. Letting it fire is an unhandled IntegrityError,
+    # which this application serves as a bare HTTP 500 -- only DomainError has a handler.
+    with pytest.raises(DomainError) as error:
+        register_with_criteria(
+            migrated_session, [dict(CRITERION) | {field: "   "}], suffix=f"-{field}"
+        )
+
+    assert error.value.code == "acceptance_criterion_invalid"
+
+
+def test_a_criterion_declared_twice_is_a_clean_error_not_a_500(migrated_session: Session) -> None:
+    # The UNIQUE on (revision, ac_id) would reject this.
+    with pytest.raises(DomainError) as error:
+        register_with_criteria(
+            migrated_session, [dict(CRITERION), dict(CRITERION)], suffix="-twice"
+        )
+
+    assert error.value.code == "acceptance_criterion_invalid"
+
+
+def test_a_criterion_for_an_undeclared_ac_id_is_refused(migrated_session: Session) -> None:
+    # A criterion the completion guard never reads looks like scrutiny and is not: `required_ac_ids`
+    # reads the enforcement snapshot, so a criterion outside it is decoration.
+    with pytest.raises(DomainError) as error:
+        register_with_criteria(
+            migrated_session, [dict(CRITERION) | {"ac_id": "ac-9"}], suffix="-undeclared"
+        )
+
+    assert error.value.code == "acceptance_criterion_invalid"
+
+
+def test_declaring_nothing_leaves_the_lane_exactly_as_it_was(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    # The default is None, and None must mean "write no rows" rather than "write empty" -- every
+    # existing caller, including the whole package-intake path (which owns these rows itself),
+    # relies on that.
+    revision = register_test_revision(migrated_session)
+    migrated_session.commit()
+
+    with Session(migrated_engine) as reader:
+        assert (
+            reader.scalar(
+                select(func.count())
+                .select_from(PackageAcceptanceCriterion)
+                .where(PackageAcceptanceCriterion.work_package_revision_id == revision.id)
+            )
+            == 0
+        )

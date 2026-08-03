@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -32,6 +32,7 @@ from orchestrator.persistence.models import (
     DecompositionProposalUnit,
     Dependency,
     Event,
+    PackageAcceptanceCriterion,
     WorkPackage,
     WorkPackageRevision,
     WorkUnit,
@@ -181,12 +182,14 @@ def register_revision(
     verification_mode: str | None = None,
     verification_limitations: Mapping[str, Any] | list[Any] | None = None,
     follow_up: Mapping[str, Any] | None = None,
+    acceptance_criteria: Sequence[Mapping[str, Any]] | None = None,
     actor_id: str,
     actor_role: ActorRole,
     idempotency_key: str | None = None,
     expected_version: int | None = None,
 ) -> WorkPackageRevision:
     _require_human(actor_id, actor_role)
+    _validate_declared_criteria(acceptance_criteria, enforcement_snapshot)
     if expected_version not in {None, 0}:
         raise DomainError(
             "version_conflict",
@@ -278,8 +281,74 @@ def register_revision(
     )
     session.add(registered)
     session.flush()
+    # Written only on FIRST registration, and deliberately absent from `candidate`/`command`. A
+    # replay or an identical re-registration returns above without reaching here, so the rows this
+    # revision was born with are the rows it keeps -- there is no restatement path, and none is
+    # wanted: `package_acceptance_criteria` for an intake-born revision is owned by
+    # `package_intake._sync_acceptance_criteria`, and two writers of one table with different
+    # update semantics is how a vocabulary drifts.
+    for criterion in acceptance_criteria or ():
+        session.add(
+            PackageAcceptanceCriterion(
+                work_package_revision_id=registered.id,
+                ac_id=criterion["ac_id"],
+                condition=criterion["condition"],
+                evidence_type=criterion["evidence_type"],
+                evidence=criterion["evidence"],
+                approver=criterion["approver"],
+            )
+        )
+    session.flush()
     _record_registration(session, registered.id, actor_id, idempotency_key, command)
     return registered
+
+
+_CRITERION_FIELDS = ("ac_id", "condition", "evidence_type", "evidence", "approver")
+
+
+def _validate_declared_criteria(
+    acceptance_criteria: Sequence[Mapping[str, Any]] | None,
+    enforcement_snapshot: Mapping[str, Any],
+) -> None:
+    """Reject every value the table's own constraints would, before any row is written.
+
+    `package_acceptance_criteria` carries a CHECK that all five text columns are non-empty and a
+    UNIQUE on (revision, ac_id). Leaving either to fire is an unhandled `IntegrityError`, which
+    this application surfaces as a bare HTTP 500 -- only `DomainError` and
+    `APIAuthenticationError` have handlers.
+
+    The third rule is this lane's own: a criterion may only describe an `ac_id` the enforcement
+    snapshot already requires. Without it a registrant could attach criteria the completion guard
+    never reads, which look like scrutiny and are not.
+    """
+    if acceptance_criteria is None:
+        return
+    declared = enforcement_snapshot.get("acceptance_criteria")
+    required = set(declared) if isinstance(declared, list) else set()
+    seen: set[str] = set()
+    for criterion in acceptance_criteria:
+        for field in _CRITERION_FIELDS:
+            value = criterion.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise DomainError(
+                    "acceptance_criterion_invalid",
+                    f"acceptance criterion {field} must be non-empty text",
+                    None,
+                )
+        ac_id = criterion["ac_id"]
+        if ac_id in seen:
+            raise DomainError(
+                "acceptance_criterion_invalid",
+                "an acceptance criterion may be declared at most once",
+                None,
+            )
+        if ac_id not in required:
+            raise DomainError(
+                "acceptance_criterion_invalid",
+                "an acceptance criterion must describe a required acceptance criterion id",
+                None,
+            )
+        seen.add(ac_id)
 
 
 def register_approved_unit(
