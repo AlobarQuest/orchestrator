@@ -1827,7 +1827,14 @@ style of that module.
   distinguishes four outcomes (`pass` / `violation` / `not-applicable` / `unknown`, project-standards
   PR #14); `factory-runner` was the one genuinely-unprotected public repo and was protected
   2026-08-03 with **required status check `Quality` + no force-push + no deletion and NO review
-  requirement** — a solo account cannot approve its own PR, so `required_approving_review_count=1`
+  requirement**. **`enforce_admins` is FALSE, so the owner BYPASSES the required check on a direct
+  push to `main` — measured the same day: a direct push printed
+  `remote: - Required status check "Quality" is expected.` and **landed anyway**. That line is a
+  warning, not a rejection, and HQ initially read it as a refusal. So this protection stops
+  force-pushes and deletions outright, and gates only pushes by principals who are not admins —
+  which on this estate is nobody. Its real value is the force-push/deletion guard plus a visible
+  warning; if the intent is that CI must actually gate `main`, `enforce_admins` has to be true, and
+  that is a separate decision with real friction for a solo owner** — a solo account cannot approve its own PR, so `required_approving_review_count=1`
   (which the kit suggests) would make `main` unmergeable and strand every Dependabot PR.
 
 - **`runner.caller` asks "can the factory send work INTO this repo?", and it is three different
