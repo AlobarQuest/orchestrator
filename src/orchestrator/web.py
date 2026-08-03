@@ -22,7 +22,7 @@ from orchestrator.api.routes import SettingsDep, package_intake_command
 from orchestrator.api.schemas import PackageIntakeRegistration
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
-from orchestrator.kernel.runner_authority import dependency_update_authority_violation
+from orchestrator.kernel.runner_authority import runner_command_authority_violation
 from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
@@ -724,7 +724,7 @@ def approve_authority(
     unit = session.get(WorkUnit, unit_id)
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
-    violation = dependency_update_authority_violation(normalize_authority(unit.authority))
+    violation = runner_command_authority_violation(normalize_authority(unit.authority))
     if violation is not None:
         raise DomainError(violation.code, violation.message, violation.remediation)
     _require_form(

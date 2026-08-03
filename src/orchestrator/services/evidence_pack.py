@@ -28,7 +28,7 @@ from orchestrator.api.schemas import (
 )
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
-from orchestrator.kernel.runner_authority import dependency_update_authority_violation
+from orchestrator.kernel.runner_authority import runner_command_authority_violation
 from orchestrator.persistence.models import (
     Adjudication,
     Approval,
@@ -66,7 +66,7 @@ def evidence_pack_projection(session: Session, unit_id: uuid.UUID) -> dict[str, 
         )
     )
     authority = normalize_authority(unit.authority).normalized()
-    violation = dependency_update_authority_violation(normalize_authority(unit.authority))
+    violation = runner_command_authority_violation(normalize_authority(unit.authority))
     return {
         "unit": unit,
         "authority": authority,

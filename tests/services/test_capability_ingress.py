@@ -45,10 +45,14 @@ def _register_unit(session: Session, *, required_capability: str, capabilities: 
 
 
 def _proposed_unit(*, required_capability: str, capabilities: dict[str, str]) -> ProposedUnit:
-    payload = {
+    payload: dict[str, object] = {
         "capabilities": capabilities,
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
     }
+    if capabilities.get("command.run") == "allowed":
+        # command.run authority requires a declared command allowlist for every
+        # change class (WS-P2.33); these cases are about the capability VOCABULARY.
+        payload["constraints"] = {"allowed_commands": ["make check"]}
     return ProposedUnit(
         unit_key="proposed-ingress",
         title="Proposed ingress unit",

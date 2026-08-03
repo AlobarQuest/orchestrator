@@ -175,9 +175,11 @@ def _affects_from_envelope(envelope: AuthorityEnvelope) -> dict[str, Any]:
     """Everything the envelope declares about what this work touches, in its own terms.
 
     The two repository-shaped keys keep their prominence, and while the envelope is repository-
-    shaped at all, the missing half of that pair is still stated as the negative it is: a unit
-    that names a repository but authorizes no mutating command is repository work with nothing to
-    change, which is worth saying.
+    shaped at all, the missing half of that pair is still stated. Which negative it is depends on
+    repo.edit: with edit authority granted, an absent mutation_commands is the edit-shaped norm —
+    the coding agent produces the diff, and saying "nothing to change" would tell the approving
+    human the opposite of what the unit does (WS-P2.33). Without edit authority it really is
+    repository work with nothing to change, which is worth saying.
 
     But an envelope is an open map. For `non-software-operational` work -- the class where blast
     radius matters most -- the answer arrives under other names entirely (`credential`,
@@ -200,11 +202,12 @@ def _affects_from_envelope(envelope: AuthorityEnvelope) -> dict[str, Any]:
             if isinstance(target, str) and target
             else "No target repository is named in the authority envelope"
         )
-        parts.append(
-            "runs " + ", ".join(str(command) for command in commands)
-            if isinstance(commands, list) and commands
-            else "no mutating command is authorized"
-        )
+        if isinstance(commands, list) and commands:
+            parts.append("runs " + ", ".join(str(command) for command in commands))
+        elif envelope.level_for("repo.edit") == "allowed":
+            parts.append("mutates by direct edits; no command mutates")
+        else:
+            parts.append("no mutating command is authorized")
     parts.extend(
         statement
         for name, value in constraints.items()

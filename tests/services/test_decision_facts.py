@@ -136,12 +136,31 @@ def test_a_repo_targeted_unit_still_reports_its_repository_and_mutating_commands
 def test_a_repo_shaped_envelope_missing_half_the_pair_still_states_the_negative(
     migrated_session: Session,
 ) -> None:
-    # A unit that names a repository but authorizes no mutating command is repository work with
-    # nothing to change, and saying so is the point. The negative is dropped only for an envelope
-    # that is not repository-shaped at all.
+    # A unit that names a repository and holds repo.edit mutates through the coding agent's
+    # edits even when no command mutates — since WS-P2.33 that is the standard edit-shaped
+    # envelope, and telling the approving human "nothing to change" would state the opposite
+    # of what the unit does. The negative is dropped only for an envelope that is not
+    # repository-shaped at all.
     revision, unit = _build_unit(migrated_session, "facts-half-repo")
     unit.authority = AuthorityEnvelope(
         capabilities={"repo.edit": "allowed"},
+        budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
+        constraints={"target_repository": "AlobarQuest/orchestrator"},
+    ).normalized()
+
+    affects = decision_facts_for_unit(unit, revision)["affects"]
+
+    assert affects["known"] is True
+    assert "mutates by direct edits; no command mutates" in affects["detail"]
+
+
+def test_a_repo_shaped_envelope_without_edit_authority_states_nothing_to_change(
+    migrated_session: Session,
+) -> None:
+    # Without repo.edit the old reading stands: repository work with nothing to change.
+    revision, unit = _build_unit(migrated_session, "facts-no-edit")
+    unit.authority = AuthorityEnvelope(
+        capabilities={"repo.read": "allowed"},
         budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
         constraints={"target_repository": "AlobarQuest/orchestrator"},
     ).normalized()
