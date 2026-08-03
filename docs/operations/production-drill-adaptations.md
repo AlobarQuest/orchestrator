@@ -275,13 +275,22 @@ fabricated digest into the real traceability ledger. Keep `base_url` and `deploy
 `.invalid` hosts as the local drill does.
 
 **Sequence:** seed → carry the unit to `completed` through the public lifecycle (claim, start,
-evidence, PR binding, submit, verify, adjudicate, review, **complete via the `/review` GUI** — the
-`commands/complete` route is HUMAN and M2M-only) → bind a release artifact (system) → post a
-deployment observation (system) → read `post_deploy_work_unit_id` from the response → assert it is
+evidence, PR binding, submit, verify, adjudicate as **HUMAN**, review, **complete via the `/review`
+GUI** — the `commands/complete` route is HUMAN and M2M-only) → bind a release artifact (system) →
+post a deployment observation (system) → read `post_deploy_work_unit_id` from the response → assert it is
 `submitted` → sleep 2s → `POST /api/v1/reconciliation/detect` (system) → assert one condition
 recorded, zero skipped correlations, type `deploy_split_brain`, raised against the post-deploy unit
 → assert it is a report (no new units beyond baseline+2, nothing transitioned, nothing resolved) →
 second pass records 0 and suppresses 1.
+
+**The adjudication is HUMAN (WS-P2.32).** A verifier POST to `/adjudications` is now
+`verifier_evaluation_required` — a verifier decides only what `verify_work_unit` evaluated. A HUMAN
+may decide a criterion whose floor is `human` in any state, which is what the local drill relies on:
+`seed_unit` now DECLARES `ac-1` as `human_review` in the `POST /api/v1/revisions` body, because the
+WS-3.1 lane writes no `package_acceptance_criteria` rows unless asked and a required `ac_id` with no
+criterion behind it is decidable by nobody. **Against production none of that applies** — the
+seeding lane is unreachable, a production drill unit is intake-born and already carries its criterion
+rows, so adjudicate through the `/review` GUI as the criterion's floor allows.
 
 **Terminal exit — two units, and the second one matters.** The implementation unit ends `completed`
 (terminal). The **post-deploy unit ends `submitted`**, and if left there it stays permanently

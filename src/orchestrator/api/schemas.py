@@ -233,6 +233,23 @@ class VerifierNamedCheckEvidenceCommandModel(CommandBase):
     ]
 
 
+class AcceptanceCriterionDeclaration(BaseModel):
+    """What one of the revision's required acceptance criteria actually IS.
+
+    The bootstrap registration lane could always declare WHICH ac_ids a revision requires (the
+    enforcement snapshot's list of strings) and never what any of them meant. A required ac_id
+    with no criterion behind it is decidable by no actor: `human_may_adjudicate` refuses an absent
+    criterion, and the verify command refuses the whole revision. Such a unit used to be
+    completable only by a verifier asserting an outcome it had not evaluated (WS-P2.32).
+    """
+
+    ac_id: str = Field(min_length=1)
+    condition: str = Field(min_length=1)
+    evidence_type: str = Field(min_length=1)
+    evidence: str = Field(min_length=1)
+    approver: str = Field(min_length=1)
+
+
 class RevisionRegistration(CommandBase):
     package_id: str
     source_repository: str
@@ -246,6 +263,7 @@ class RevisionRegistration(CommandBase):
     enforcement_snapshot: dict[str, Any]
     authority: dict[str, Any]
     registry_version: int = Field(ge=0)
+    acceptance_criteria: list[AcceptanceCriterionDeclaration] | None = None
 
 
 class UnitRegistration(CommandBase):

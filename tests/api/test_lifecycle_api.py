@@ -91,6 +91,18 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
         "enforcement_snapshot": {"acceptance_criteria": ["ac-1"]},
         "authority": AUTHORITY,
         "registry_version": 1,
+        # Declaring WHICH ac_ids are required and never what any of them IS leaves a criterion no
+        # actor can decide (WS-P2.32). Declared over the wire, so this contract test covers the
+        # field rather than reaching past it into the table.
+        "acceptance_criteria": [
+            {
+                "ac_id": "ac-1",
+                "condition": "A human reviews the change.",
+                "evidence_type": "human_review",
+                "evidence": "the reviewer's note",
+                "approver": "devon",
+            }
+        ],
     }
     first_revision = db_client.post("/api/v1/revisions", headers=HUMAN, json=revision_body)
     replay_revision = db_client.post("/api/v1/revisions", headers=HUMAN, json=revision_body)
@@ -317,9 +329,32 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
     assert forbidden.status_code == 403
     assert forbidden.json()["error"]["code"] == "role_forbidden"
 
-    adjudication = db_client.post(
+    # THE BYPASS, refused at the wire (WS-P2.32). Until now this POST returned 200, and a `passed`
+    # on every required criterion completed the unit on prose alone. The evidence reference is
+    # real and subject-valid here, which is the point: what is missing is not a citation but the
+    # verifier's own evaluation of it.
+    bypass = db_client.post(
         f"/api/v1/work-units/{unit_id}/adjudications",
         headers=VERIFIER,
+        json={
+            "idempotency_key": "adjudication-bypass",
+            "expected_version": 15,
+            "work_package_revision_id": revision_id,
+            "ac_id": "ac-1",
+            "outcome": "passed",
+            "evidence_id": evidence.json()["id"],
+            "rationale": "verified",
+        },
+    )
+    assert bypass.status_code == 409
+    assert bypass.json()["error"]["code"] == "verifier_evaluation_required"
+    assert bypass.json()["error"]["recovery"] == "verify"
+
+    # The supported replacement: `ac-1` was declared `human_review` at registration, whose floor is
+    # `human`, so `human_may_adjudicate` admits the decision and it is recorded against a person.
+    adjudication = db_client.post(
+        f"/api/v1/work-units/{unit_id}/adjudications",
+        headers=HUMAN,
         json={
             "idempotency_key": "adjudication-1",
             "expected_version": 15,

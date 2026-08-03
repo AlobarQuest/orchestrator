@@ -85,7 +85,13 @@ api POST "/api/v1/work-units/$unit/commands/submit" worker \
 api POST "/api/v1/work-units/$unit/commands/verify" verifier \
     "$(jq -nc --argjson v "$(unit_version "$unit")" '{idempotency_key:"drill4-verify", expected_version:$v}')" >/dev/null
 
-adjudication=$(api POST "/api/v1/work-units/$unit/adjudications" verifier \
+# A HUMAN adjudicates, because a verifier may only record what it evaluated (WS-P2.32). Two things
+# make that legal HERE and both matter: `seed_unit` DECLARES what `ac-1` is (an ac_id with no
+# criterion behind it is decidable by nobody), and it declares it as `human_review`, whose floor is
+# `human` -- so `human_may_adjudicate` admits it in ANY state. The unit is in `verifying` at this
+# point, so a deterministic-permitted criterion would NOT be admissible: clause (b) requires
+# `awaiting_review`. Changing the declared evidence_type breaks this drill.
+adjudication=$(api POST "/api/v1/work-units/$unit/adjudications" human \
     "$(jq -nc --arg r "$revision" --arg e "$evidence_id" --argjson v "$(unit_version "$unit")" '{
         idempotency_key:"drill4-adjudicate", expected_version:$v,
         work_package_revision_id:$r, ac_id:"ac-1", outcome:"passed",

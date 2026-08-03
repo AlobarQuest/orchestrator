@@ -225,7 +225,16 @@ def record_adjudication(
     scope: str | None = None,
     expires_at: datetime | None = None,
     allow_generated_post_deploy: bool = False,
+    from_verifier_evaluation: bool = False,
 ) -> Adjudication | DomainError:
+    """Record one criterion's decision.
+
+    `from_verifier_evaluation` is not a caller's choice. `services/verifier.py` sets it because the
+    outcome it is recording was derived by `evaluate_criterion` from the evidence chain; no request
+    schema exposes it, so an actor reaching this through the public route cannot assert it. It is
+    deliberately absent from `_adjudication_command`: the replay record is what a CALLER asked for,
+    and a call-site fact that cannot differ between two callers of one key adds nothing to it.
+    """
     command = _adjudication_command(
         work_package_revision_id=work_package_revision_id,
         work_unit_id=work_unit_id,
@@ -281,6 +290,7 @@ def record_adjudication(
             follow_up=follow_up,
             scope=scope,
             expires_at=expires_at,
+            from_verifier_evaluation=from_verifier_evaluation,
         )
         session.commit()
         return row
@@ -401,6 +411,9 @@ def record_adjudications(
                 follow_up=decision.follow_up,
                 scope=decision.scope,
                 expires_at=decision.expires_at,
+                # The human submission surface. A VERIFIER cannot reach it (`/review` is
+                # `_human`-gated), and if one ever could, this is the answer it should get.
+                from_verifier_evaluation=False,
             )
             for decision, command, key in zip(decisions, commands, keys, strict=True)
         )
@@ -462,6 +475,7 @@ def _record_one_adjudication(
     follow_up: str | None,
     scope: str | None,
     expires_at: datetime | None,
+    from_verifier_evaluation: bool,
 ) -> Adjudication:
     """One adjudication, authorized, validated and written -- but NOT committed.
 
@@ -484,6 +498,7 @@ def _record_one_adjudication(
         # increment closes.
         current_evidence(session, work_package_revision_id, unit.id, ac_id),
         unit.state,
+        from_verifier_evaluation,
     )
     _validate_adjudication_fields(
         session,
@@ -960,10 +975,27 @@ def _authorize_outcome(
     evidence_type: str | None,
     evidence: Evidence | None,
     unit_state: str,
+    from_verifier_evaluation: bool,
 ) -> None:
     if outcome == "waived":
         allowed = actor.role is ActorRole.HUMAN
     elif actor.role is ActorRole.VERIFIER:
+        # The verifier's whole authority is that it READS evidence: `verify_work_unit` derives the
+        # outcome from the evidence chain through `evaluate_criterion` and records what it read.
+        # A verifier adjudication arriving any other way carries prose in place of that derivation
+        # -- a human judgment wearing a machine's identity, attributed forever to the credential
+        # rather than to the person -- and it settles a criterion without any of the guarantees
+        # the named-check observer exists to provide.
+        #
+        # Same shape as `post_deploy_verifier_required` in `_validated_subject`: a flag no wire
+        # schema exposes, set by exactly one call site, and a NAMED refusal rather than a bare
+        # `role_forbidden` -- the role is not the problem, the route to it is.
+        if not from_verifier_evaluation:
+            raise DomainError(
+                "verifier_evaluation_required",
+                "a verifier records an adjudication only from its own evaluation of evidence",
+                "verify",
+            )
         allowed = outcome in NON_WAIVER_OUTCOMES
     elif actor.role is ActorRole.HUMAN and outcome in HUMAN_ADJUDICABLE_OUTCOMES:
         # A human resolves what the machine does not own. `human_may_adjudicate` is the single
