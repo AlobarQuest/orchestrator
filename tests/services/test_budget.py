@@ -22,7 +22,11 @@ NO_CEILING_AUTHORITY = AuthorityEnvelope(
 )
 
 
-def _build_unit_no_ceiling(session: Session, key: str) -> WorkUnit:
+def _build_unit_with_ceiling(session: Session, key: str, *, ceiling: int | None) -> WorkUnit:
+    authority = AuthorityEnvelope(
+        capabilities={"repo.edit": "allowed"},
+        budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=ceiling),
+    )
     now = TransactionClock().now(session)
     revision = register_revision(
         session,
@@ -36,7 +40,7 @@ def _build_unit_no_ceiling(session: Session, key: str) -> WorkUnit:
         approved_at=now,
         approval_event_id=str(uuid.uuid4()),
         enforcement_snapshot={"acceptance_criteria": ["ac-1"]},
-        authority=NO_CEILING_AUTHORITY,
+        authority=authority,
         registry_version=1,
         actor_id="human-1",
         actor_role=ActorRole.HUMAN,
@@ -49,13 +53,17 @@ def _build_unit_no_ceiling(session: Session, key: str) -> WorkUnit:
         title=key,
         outcome=f"{key} complete",
         required_capability="repo.edit",
-        authority=NO_CEILING_AUTHORITY,
+        authority=authority,
         max_attempts=3,
         approved_by="human-1",
         approved_at=now,
         actor_id="human-1",
         actor_role=ActorRole.HUMAN,
     )
+
+
+def _build_unit_no_ceiling(session: Session, key: str) -> WorkUnit:
+    return _build_unit_with_ceiling(session, key, ceiling=None)
 
 
 def _cost_event(
