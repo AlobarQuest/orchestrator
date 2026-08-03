@@ -1727,9 +1727,11 @@ style of that module.
   silently dropped. The shape cannot occur on the intake-born path: intake derives the snapshot's
   list *from* the criteria, so the two cannot disagree.
 
-- **factory-runner requires `constraints.mutation_commands` whenever `command.run` is allowed —
-  UNCONDITIONALLY — while the orchestrator requires it only for `change_class:
-  "dependency-update"`. So the orchestrator ADMITS envelopes the runner REFUSES, and nothing sees
+- **[CLOSED 2026-08-03 by WS-P2.33 (`04e98cd` here, factory-runner #38). Read the closing note —
+  the fix's SHAPE was forced, not chosen.]** **factory-runner required `constraints.mutation_commands`
+  whenever `command.run` was allowed —
+  UNCONDITIONALLY — while the orchestrator required it only for `change_class:
+  "dependency-update"`. So the orchestrator ADMITTED envelopes the runner REFUSED, and nothing saw
   the disagreement until a real dispatch.** Orchestrator:
   `kernel/runner_authority.py::dependency_update_authority_violation` opens
   `if envelope.change_class != "dependency-update": return None`. Runner:
@@ -1744,10 +1746,64 @@ style of that module.
   diff is produced by the coding agent and no command mutates a tracked file — so there is no
   honest value for the field. A fig-leaf entry (`uv sync`, which only touches `.venv`) would make
   the envelope lie about what mutates, and **the envelope is what a human's authority approval
-  attests.** This blocks Wave-3 exit criterion #1 for every non-dependency-update software profile.
-  Note the envelope AND the brief are both pinned cross-repo contracts and **neither pins this
-  rule**, which is exactly why byte-identical fixture tests stay green while the two sides disagree.
-  Backlogged P1 `08afee391813`.
+  attests.** This blocked Wave-3 exit criterion #1 for every non-dependency-update software profile.
+  Note the envelope AND the brief are both pinned cross-repo contracts and **neither pinned this
+  rule**, which is exactly why byte-identical fixture tests stayed green while the two sides disagreed.
+  **CLOSING NOTE (WS-P2.33).** One predicate now lives in both repos
+  (`kernel/runner_authority.py`, renamed `runner_command_authority_violation`; runner
+  `_validate_commands`): `allowed_commands` required whenever `command.run` is allowed for EVERY
+  class (the early return had skipped it — the same defect one field over); `mutation_commands`
+  required iff `change_class == "dependency-update"`; a present `mutation_commands` always
+  validated (well-formed + subset), any class; absent outside dependency-update = valid, runner
+  derives `()`. **The conditional is keyed on `change_class` because the frozen pilot envelope
+  left no other discriminator** — shapes (b)/(c) from the handoff each needed a positive field a
+  fingerprinted, unre-authorable envelope could never gain, so they were foreclosed by the
+  acceptance test itself, not judged inferior. Pinned by a SECOND byte-identical golden fixture
+  (`runner_authority_envelope_edit.json`, `CONTRACT_SHA256_EDIT = 90b73de6…`) with rule-level
+  positive AND fires-negative tests both sides, each demonstrated to red under a one-sided
+  loosening — the byte pin alone provably cannot catch a rule disagreement. Direction invariant,
+  stated in the kernel docstring: the orchestrator may be STRICTER than the runner, never looser.
+  Proven end-to-end 2026-08-03: package revision 4 unit `327920cd` completed via
+  intent-packages#55 (+1/−1 caller-pin diff, named check observed green).
+
+- **A push that touches `.github/workflows/**` requires the `workflow` scope (classic PAT) or
+  Workflows: Read-and-write (fine-grained) on the pushing credential — and `FACTORY_PR_TOKEN`
+  lacked it, which killed two pilot units AFTER their coding and verification succeeded.** The
+  rejection is remote (`! [remote rejected] … refusing to allow a Personal Access Token to create
+  or update workflow … without workflow scope`), arrives only at finalize's `git push`, and every
+  caller-pin remediation — the maintenance-remediation profile's founding queue — edits exactly
+  such a file. Three traps inside the fix: GitHub Actions secrets are WRITE-ONLY, so nothing can
+  confirm which token a secret holds (Devon's first in-place scope edit landed on a classic token
+  while the secret held a fine-grained one); fine-grained PATs do NOT report `x-oauth-scopes` on
+  API responses (that header is classic-only), so the settings page is the only scope check; and
+  the token had NO BWS record at all (P1 `237b8599e7a1` — it now does: `a3240c2e…`, SDS Operator
+  project). **The pattern that broke the loop: verify the credential with a DISCRIMINATING PROBE
+  before spending a work unit** — a throwaway branch workflow that pushes a workflow-file-touching
+  commit using the secret costs one minute and no units (probe run `30842959171`).
+
+- **`budgets.max_llm_calls` is a write-once ratchet that environmental failures consume exactly
+  like real work — and `budget_exceeded`'s named recovery (`approve_retry`) CANNOT cure it, so an
+  over-budget unit is permanently dead.** `is_over_budget` sums `attempt.cost_recorded` across ALL
+  attempts against the fingerprinted envelope's ceiling and gates claim, requeue, and reclaim;
+  the ceiling has no mutation path (write-once envelope). `retry-authorization` refuses while
+  attempts remain (`attempts_not_exhausted`), and even a granted retry halts straight back to
+  FAILED at claim on the same budget check — the recovery hint names a cure that does not exist
+  for this refusal. Measured 2026-08-03: units `c609dac5` (9/6) and `992560d5` (26/24) both died
+  this way, each costing a full package revision plus fresh human approvals; a single coding
+  attempt burns 8–18 calls (18 when the verifier fails mid-run and the agent investigates).
+  **Authoring rule: the ceiling must cover `max_attempts × ~20`, not the optimistic single run**
+  — revision 4 shipped 60 and finished in one attempt at 8.
+
+- **Decomposition-proposal mechanics learned driving revisions 3–4 by hand:** the route's
+  `expected_version` is a route-level must-be-0 formality (`_require_zero_expected_version`), not
+  a revision-version check; a SECOND proposal for the same revision is accepted while none is
+  approved (only `decomposition_already_approved` blocks), so a wrong pending proposal is
+  recoverable by submitting a corrected one and approving THAT — the stale one becomes permanently
+  unapprovable, inert debris. And in intent-packages, **a package revision changes the package
+  hash, and `tests/fixtures/package_hashes.json` must move in the same commit** — revision 3
+  landed without it and broke the target repo's own `make check`, which the factory run's
+  finalize step then correctly refused (the clean-clone control identified it as pre-existing in
+  one step).
 
 - **`allowed_commands` is ADVISORY to the coding agent and MANDATORY at finalize.** It reaches the
   agent only as prompt text (`cli.py` `_prompt`, `"\n".join(f"- {command}" …)`) — nothing blocks the
