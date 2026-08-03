@@ -1025,13 +1025,21 @@ style of that module.
   query against something you *know* is present. (Verified 2026-07-29, GAP-4 closeout.)
 
 - **`budgets.max_llm_calls` does not constrain a running attempt — it gates the NEXT one.**
-  `is_over_budget` is consulted only inside `_readiness_eligibility_error` (`services/claims.py`),
-  which runs on reclaim and requeue, so it decides whether a unit may be *claimed again*. Nothing
-  checks spend mid-run. GAP-4's envelope declared `max_llm_calls: 4` and attempt 3 recorded
+  **CORRECTED 2026-08-03 (WS-P2.31): there are TWO call paths, not one.** This used to say
+  `is_over_budget` is "consulted only inside `_readiness_eligibility_error`". It is called at
+  `claims.py:81` — directly inside `claim_unit`, where it additionally **halts the unit to FAILED
+  and commits** before refusing, which the shared helper does not do — and at `claims.py:592`
+  inside `_readiness_eligibility_error`. Both are claim-time. The substantive claim stands:
+  it decides whether a unit may be *claimed again*, and **nothing checks spend mid-run**.
+  GAP-4's envelope declared `max_llm_calls: 4` and attempt 3 recorded
   **15** (`attempt.cost_recorded`, 23 turns, $0.176) and completed normally. The practical cap on a
   single attempt is the workflow's `max_turns` literal, which is a separate number in
   factory-runner's workflow YAML and is not derived from the envelope. Read the field as
-  "budget remaining before another attempt is allowed", not as a spend cap. (Verified 2026-07-29.)
+  "budget remaining before another attempt is allowed", not as a spend cap. (Verified 2026-07-29;
+  call paths corrected 2026-08-03.) **A breach is now RECORDED** where the SLO report and the
+  evidence pack can see it (WS-P2.31) — recording, never prevention: the orchestrator is push-only
+  and cannot interrupt a running runner, and making the runner stop itself would be the runner
+  attesting to its own compliance.
 
 - **Coolify stores an `is_literal` env value wrapped in single quotes and injects the STRIPPED
   form — so a write must send the RAW value, and `is_build_time` is rejected outright.** Two
@@ -1591,3 +1599,66 @@ style of that module.
   evaluated **inside** `_blocked_reason`, not computed by the caller and passed in — a second
   normalization is a second reading of the envelope, and the envelope is what a human's authority
   approval attests. WS-P2.28 added the reach term inside it for this reason.
+
+- **A VERIFIER credential can drive a unit to COMPLETED with ZERO evidence rows — the completion
+  guard reads adjudications and structurally cannot read evidence.** `_completion_satisfied`
+  (`services/lifecycle.py:473`) takes `(required_ac_ids, adjudications, occurred_at)`: there is no
+  evidence parameter, so completion is decided on adjudication rows alone. `_authorize_outcome`'s
+  VERIFIER branch (`services/evidence.py:966`) is `allowed = outcome in NON_WAIVER_OUTCOMES` with
+  no evidence requirement, and `_validate_adjudication_fields` demands evidence only for `waived`
+  (a `failed_evidence_id`) — `passed` needs a rationale string, and `evidence_id` is validated only
+  when non-null. `(SUBMITTED→COMPLETED)` is a verifier-held edge. So POSTing `passed` with prose on
+  each required AC completes the unit, and **everything WS-P2.20 built — the App-token observation
+  of the named check, unanimity, `failed_closed` on divergence — is bypassed by one POST.** The
+  `orchestrator-verifier` credential is standing in production. This may well be intentional (the
+  verifier as an out-of-band trusted actor) but nothing in the code says so, and it makes every
+  WS-P2.20 guarantee conditional on a credential that also holds the bypass. The second half of the
+  same hole: **the reconciliation lane detects reality CHANGING, never reality having been
+  MISREPORTED** — `_detect_check` (`reconciliation_detection.py:321-342`) needs a prior *observed*
+  success at the armed head before it will report a failure as a flip, and a claim that was never
+  observed leaves no such prior, so the predicate is False and the detector returns silently
+  without even incrementing `skipped_correlations`. There is no downstream net under this.
+  (Found by WS-P2.31 2026-08-03, independently re-verified by HQ the same day; backlogged P1
+  `3c99900baecc`.)
+
+- **`budgets.max_attempts` is DECORATION; the enforced cap is `unit.max_attempts`, a different
+  value on a different column reached from a different API field — and the name collision is what
+  makes it invisible.** The envelope budget is parsed (`kernel/authority.py:105`), contributes to
+  the authority fingerprint the human approves, and **has no enforcement reader**: the only
+  `.budgets.` access in `services/budget.py` is `max_llm_calls`. What actually bounds attempts is
+  the `work_units.max_attempts` column (`persistence/models.py:235`, defaulted from
+  `DEFAULT_MAX_ATTEMPTS` via `services/packages.py`), checked at `claims.py:79`, `:552` and `:590`,
+  and raised by `authorize_retry` with no reference to the envelope at all. Nothing ever compares
+  the two. **CORRECTS an earlier claim of HQ's** — a WS-P2.31 handoff asserted "`max_attempts` IS
+  enforced, so one of the two budget fields is decoration", offered as the contrast that made
+  `max_llm_calls` look like the outlier. Both halves were wrong: both envelope budget fields are
+  decoration, and this is the worse of the two because the name collision hides it. (Verified
+  2026-08-03.)
+
+- **The conformance anti-tautology rule is PROSE, not code — and the branch it would guard has
+  never been reached in production.** `services/dispatch.py`'s conformance gate carries a docstring
+  saying `accepted_standards` "must come from a real waiver source … never echoed from
+  `standards_touched`, or the subset branch below admits everything." **Nothing enforces it.** The
+  gate is `if status == "green": return None` / `if touched and touched <= accepted: return None` /
+  `return "conformance_not_green"`. Two consequences. (1) Anyone told "the anti-tautology precedent
+  already exists in this repo" will go looking for a check that is not there — there is **one**
+  exemplar of the observed-not-attested move (`services/github_checks.py`, WS-P2.20), not two.
+  (2) **Do NOT close it by deleting the green short-circuit.** Green claims then fall through to the
+  subset test, which is False whenever `accepted` does not cover `touched`; WS-P2.31 measured 28 of
+  28 production conformance blocks as `status: "green"` with **0 echoes**, and the canonical
+  cross-repo fixture `tests/fixtures/runner_authority_envelope.json` is
+  `green / touched=['project'] / accepted=[]` — so the pinned envelope shape **both repos agree on**
+  would be refused and every dispatch would stop. HQ proposed exactly that removal on 2026-08-03
+  and was wrong; the error was checking what a permit stops permitting without reading what the
+  fall-through then does — the WS-P2.18 Inc-4 withheld-refusal fail-open, mirrored into a
+  fail-closed halt. Closing it honestly means the orchestrator OBSERVING conformance, which it
+  structurally cannot: `compute_conformance_claim` needs a repository checkout, the orchestrator is
+  push-only and checks out nothing, and the only other producer is the runner — i.e. the runner
+  attesting to its own compliance. Backlogged P2 `7874128ae3ac` with a named trigger.
+
+- **`GET /api/v1/status-ledger` defaults `include_inactive=false` and every production unit is
+  terminal, so the bare call returns `[]`.** `routes.py:1217` / `services/status_ledger.py:25,95`.
+  This is the most misleading read on the production API surface, because an empty list **looks
+  like an answer** rather than like a filter — the same shape as the estate-wide rule that a search
+  zero is not evidence of absence. Pass `include_inactive=true` when the question is "what does the
+  ledger hold", and reserve the bare call for "what is live now". (Verified 2026-08-03.)
