@@ -674,3 +674,109 @@ def test_declaring_nothing_leaves_the_lane_exactly_as_it_was(
             )
             == 0
         )
+
+
+def test_an_unhashable_enforcement_snapshot_is_a_clean_error_not_a_500(
+    migrated_session: Session,
+) -> None:
+    # `enforcement_snapshot` is `dict[str, Any]` straight off the wire. `set(declared)` on a list
+    # of dicts raises TypeError, which has no handler -- a bare HTTP 500 from a validator whose
+    # whole job is to prevent one. The repo's own named invariant: an unhashable value in a
+    # membership test is a 500, not a validation error.
+    with pytest.raises(DomainError) as error:
+        register_revision(
+            migrated_session,
+            package_id="pkg-unhashable",
+            source_repository="owner/repo",
+            revision=1,
+            content_hash="sha256:unhashable",
+            source_path="intent.md",
+            source_commit="abc123",
+            approved_by="human-1",
+            approved_at=NOW,
+            approval_event_id=f"{APPROVAL_EVENT_ID}-unhashable",
+            enforcement_snapshot={"acceptance_criteria": [{"ac_id": "ac-1"}, ["ac-2"]]},
+            authority=AUTHORITY,
+            registry_version=1,
+            acceptance_criteria=[dict(CRITERION)],
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+        )
+
+    assert error.value.code == "acceptance_criterion_invalid"
+
+
+def test_an_unknown_evidence_type_is_refused_by_name(migrated_session: Session) -> None:
+    # The OTHER writer of this table (`package_intake._validate_acceptance_criteria`) rejects an
+    # unsupported type with this exact code, for the reason its comment gives: an unknown type
+    # floors to `human` and is indistinguishable from a typo, so the criterion becomes one the
+    # verifier can never resolve -- silently. Two writers of one table must agree on the
+    # vocabulary or it drifts.
+    with pytest.raises(DomainError) as error:
+        register_with_criteria(
+            migrated_session,
+            [dict(CRITERION) | {"evidence_type": "automated_tests"}],
+            suffix="-typo",
+        )
+
+    assert error.value.code == "unknown_evidence_type"
+
+
+def test_declaring_some_required_criteria_but_not_all_is_refused(migrated_session: Session) -> None:
+    # A SUBSET is worse than declaring nothing: it recreates the shape this feature exists to
+    # eliminate while looking equipped. `load_required_criteria` then refuses the whole revision as
+    # incomplete, at verify time, naming neither the missing id nor this registration.
+    with pytest.raises(DomainError) as error:
+        register_revision(
+            migrated_session,
+            package_id="pkg-partial",
+            source_repository="owner/repo",
+            revision=1,
+            content_hash="sha256:partial",
+            source_path="intent.md",
+            source_commit="abc123",
+            approved_by="human-1",
+            approved_at=NOW,
+            approval_event_id=f"{APPROVAL_EVENT_ID}-partial",
+            enforcement_snapshot={"acceptance_criteria": ["ac-1", "ac-2"]},
+            authority=AUTHORITY,
+            registry_version=1,
+            acceptance_criteria=[dict(CRITERION)],
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+        )
+
+    assert error.value.code == "acceptance_criterion_invalid"
+
+
+def test_declaring_an_empty_list_is_refused(migrated_session: Session) -> None:
+    # `[]` is a declaration that covers none of the required ids -- the subset rule's floor. Only
+    # `None` means "this lane declares nothing", which is what every pre-existing caller passes.
+    with pytest.raises(DomainError) as error:
+        register_with_criteria(migrated_session, [], suffix="-empty")
+
+    assert error.value.code == "acceptance_criterion_invalid"
+
+
+def test_a_re_registration_may_restate_its_criteria_but_may_not_change_them(
+    migrated_session: Session,
+) -> None:
+    # The rows a revision is born with are the rows it keeps -- but saying so by returning success
+    # and discarding what the caller declared is the wrong way to say it. An idempotent retry
+    # still succeeds; a divergent restatement is refused, here rather than at verify time.
+    register_with_criteria(migrated_session, [dict(CRITERION)], suffix="-restate")
+    migrated_session.commit()
+
+    replay = register_with_criteria(migrated_session, [dict(CRITERION)], suffix="-restate")
+    assert isinstance(replay, WorkPackageRevision)
+
+    with pytest.raises(DomainError) as error:
+        register_with_criteria(
+            migrated_session,
+            [dict(CRITERION) | {"condition": "Something else entirely."}],
+            suffix="-restate",
+        )
+
+    assert error.value.code == "acceptance_criterion_invalid"
+    # Both validators use that code, so pin the hint -- only the already-recorded check sets one.
+    assert error.value.recovery == "register a new revision"
