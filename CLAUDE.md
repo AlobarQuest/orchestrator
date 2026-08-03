@@ -1600,7 +1600,9 @@ style of that module.
   normalization is a second reading of the envelope, and the envelope is what a human's authority
   approval attests. WS-P2.28 added the reach term inside it for this reason.
 
-- **A VERIFIER credential can drive a unit to COMPLETED with ZERO evidence rows — the completion
+- **[CLOSED 2026-08-03 by WS-P2.32 — the FIRST half only. Read the closing note at the end of this
+  bullet before relying on it.]** **A VERIFIER credential could drive a unit to COMPLETED with ZERO
+  evidence rows — the completion
   guard reads adjudications and structurally cannot read evidence.** `_completion_satisfied`
   (`services/lifecycle.py:473`) takes `(required_ac_ids, adjudications, occurred_at)`: there is no
   evidence parameter, so completion is decided on adjudication rows alone. `_authorize_outcome`'s
@@ -1618,8 +1620,22 @@ style of that module.
   success at the armed head before it will report a failure as a flip, and a claim that was never
   observed leaves no such prior, so the predicate is False and the detector returns silently
   without even incrementing `skipped_correlations`. There is no downstream net under this.
-  (Found by WS-P2.31 2026-08-03, independently re-verified by HQ the same day; backlogged P1
-  `3c99900baecc`.)
+  (Found by WS-P2.31 2026-08-03, independently re-verified by HQ the same day.)
+  **CLOSING NOTE, WS-P2.32 (`52d7d7e`).** The bypass is shut: **a verifier adjudication may only
+  arise from `verify_work_unit`**, and a direct POST is refused as a named
+  `verifier_evaluation_required` — *"the role is not the problem, the route to it is."* Two things
+  survive and are the reason this bullet is superseded rather than deleted.
+  **(1) The measurement, which shows it was not a latent hole but standing practice:** of 70 current
+  adjudications, **36 of 59 verifier adjudications came through the bypass across 12 units**, 17 of
+  them on `ac_id`s with **no evidence row at all**, and **three completed production units hold zero
+  evidence**. Those 18 historical completions are left as they are — terminal, nothing re-evaluates
+  them, and back-dating a judgment about them is the mistake ADR-0014 names. The practice stopped on
+  2026-07-27 of its own accord, when WS-P2.17 Inc 2 gave the human the case it was being used for.
+  **(2) The SECOND HALF IS NOT CLOSED.** The reconciliation lane still detects reality *changing* and
+  never reality *having been misreported*, so there is still no downstream net under a false claim —
+  narrower now (the evaluator runs against real evidence rows) but not gone, because worker-recorded
+  evidence is itself attested. Backlogged P2; do not read the closure as "completion now rests on
+  observed fact."
 
 - **`budgets.max_attempts` is DECORATION; the enforced cap is `unit.max_attempts`, a different
   value on a different column reached from a different API field — and the name collision is what
@@ -1662,3 +1678,51 @@ style of that module.
   like an answer** rather than like a filter — the same shape as the estate-wide rule that a search
   zero is not evidence of absence. Pass `include_inactive=true` when the question is "what does the
   ledger hold", and reserve the bare call for "what is live now". (Verified 2026-08-03.)
+
+- **`Adjudication.evidence_id` and the adjudicating actor's ROLE are readable from NO production
+  API — a measurement written from the obvious surfaces matches ZERO events and reads as "no
+  adjudication cites evidence", which is false and alarming.** `GET /work-units/{id}/history`
+  filters `Event.subject_id == unit_id`, and an `adjudication.recorded` event's subject is the
+  **adjudication**, so the command payload — which carries both fields — never appears there. The
+  evidence pack projects `failed_evidence_id` and not `evidence_id`. The sound substitutes, both
+  used by WS-P2.32: **`decided_by`** for the actor, and **an adjudication on an `(unit, ac_id)` with
+  no evidence row provably carries `evidence_id = NULL`** (from `_validate_evidence_reference`'s
+  subject check) as a lower bound. A WS-P2.32 handoff asked for "whether the referenced evidence row
+  is the current evidence-chain head" and that is **not obtainable from production at all** — HQ
+  specified a measurement the read surface cannot answer. Backlogged P2.
+
+- **To tell a `verify_work_unit` adjudication from a hand-written one, classify the RATIONALE — and
+  the machine set has CHANGED OVER TIME, so a classifier keyed on today's strings misreads history.**
+  The verifier writes the evaluator's own `reason`, a closed set.
+  `"named check and assertions passed"` was the machine reason from `9f86cf7` (2026-07-15) until
+  WS-P2.20 (`8e13258`) replaced it with `"the named check was observed to conclude success"`. Keying
+  only on the current string misclassifies **nine** production adjudications as hand-written.
+  `git log -S "<the string>"` before assuming a vocabulary is stable — this is the same class as the
+  three vocabulary mismatches documented above, in the one place where the vocabulary is a
+  *historical* record rather than a live contract.
+
+- **The architecture-guard family has a SEVENTH member: `tests/architecture/test_drill_scripts.py`,
+  and it is the one that catches drill dishonesty.**
+  `test_a_drill_changes_state_only_through_the_public_api` forbids `INSERT|UPDATE|DELETE|TRUNCATE|
+  ALTER|DROP` via `scratch_sql`/`docker exec` in any `scripts/drill-*.sh`, and its sibling
+  `test_only_the_lease_helper_may_write_sql` pins harness SQL writers to **exactly**
+  `["expire_lease"]` — so the obvious workaround is closed too. That single exception is warranted by
+  **wall-clock impossibility** (`DEFAULT_LEASE` is 15 real minutes, there is no override, and policy
+  may only lengthen it), which is far narrower than "this is only fixture setup" — do not reach for
+  it as precedent. It fired on WS-P2.32's first drill fix, which seeded criteria with SQL, and was
+  right to. Note it is absent from every guard inventory in this file until now: an inventory of
+  guards is itself a vocabulary that drifts.
+
+- **The WS-3.1 bootstrap lane (`POST /api/v1/revisions`) could declare WHICH `ac_id`s a revision
+  requires and never what any of them WAS — producing a required criterion decidable by NO actor.**
+  `human_may_adjudicate(None, …)` refuses an absent criterion by design and `load_required_criteria`
+  raises `verification_subject_invalid` for the whole revision, so such units were completable
+  **only** through the verifier bypass — which is what drill 4 was quietly demonstrating for months.
+  Closing the bypass exposed it rather than causing it. WS-P2.32 gave the lane an optional
+  `acceptance_criteria` list with three guards, each of which is the interesting part: the declared
+  set must **equal** the required set (a subset recreates the very shape the feature eliminates while
+  looking equipped), the `evidence_type` must be in `SUPPORTED_CRITERION_EVIDENCE_TYPES` (the
+  *other* writer of `package_acceptance_criteria` enforces it, and disagreement between two writers
+  of one table is silent), and a divergent restatement on re-registration is **refused** rather than
+  silently dropped. The shape cannot occur on the intake-born path: intake derives the snapshot's
+  list *from* the criteria, so the two cannot disagree.
