@@ -13,7 +13,7 @@ from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import OUTSIDE_CHANGE_WINDOW
 from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
-from orchestrator.kernel.runner_authority import dependency_update_authority_violation
+from orchestrator.kernel.runner_authority import runner_command_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
 from orchestrator.services.authority_gate import AuthorityGate, human_authority_gate
@@ -391,7 +391,7 @@ def _is_skipped_reason(reason: str) -> bool:
 
 
 def _authority_violation_reason(envelope: AuthorityEnvelope) -> str | None:
-    violation = dependency_update_authority_violation(envelope)
+    violation = runner_command_authority_violation(envelope)
     return violation.code if violation is not None else None
 
 

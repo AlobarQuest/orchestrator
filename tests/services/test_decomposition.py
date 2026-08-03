@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
-from orchestrator.kernel.runner_authority import dependency_update_authority_violation
+from orchestrator.kernel.runner_authority import runner_command_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
@@ -168,7 +168,7 @@ def test_proposal_rejects_invalid_dependency_update_authority_before_persistence
         "change_class": "dependency-update",
         "constraints": {"allowed_commands": ["uv sync --locked"]},
     }
-    violation = dependency_update_authority_violation(normalize_authority(invalid_payload))
+    violation = runner_command_authority_violation(normalize_authority(invalid_payload))
     assert violation is not None
 
     with pytest.raises(DomainError) as error:
@@ -1094,7 +1094,7 @@ def test_dependency_update_authority_rejects_non_executable_contract(
         }
     )
 
-    violation = dependency_update_authority_violation(envelope)
+    violation = runner_command_authority_violation(envelope)
 
     assert violation is not None
     assert violation.code == code
@@ -1141,7 +1141,7 @@ def test_dependency_update_authority_rejects_invalid_command_entries(
         }
     )
 
-    violation = dependency_update_authority_violation(envelope)
+    violation = runner_command_authority_violation(envelope)
 
     assert violation is not None
     assert violation.code == code
@@ -1156,7 +1156,7 @@ def test_dependency_update_authority_requires_command_run() -> None:
         }
     )
 
-    violation = dependency_update_authority_violation(envelope)
+    violation = runner_command_authority_violation(envelope)
 
     assert violation is not None
     assert violation.code == "authority_command_run_required"
@@ -1170,6 +1170,7 @@ def test_dependency_update_authority_ignores_out_of_scope_envelopes(
     change_class: str,
     repo_edit_level: str,
 ) -> None:
+    """Without command.run there is nothing for the command contract to bind."""
     envelope = normalize_authority(
         {
             "change_class": change_class,
@@ -1178,7 +1179,39 @@ def test_dependency_update_authority_ignores_out_of_scope_envelopes(
         }
     )
 
-    assert dependency_update_authority_violation(envelope) is None
+    assert runner_command_authority_violation(envelope) is None
+
+
+def test_command_authority_requires_allowed_commands_for_every_change_class() -> None:
+    """WS-P2.33: command.run without allowed_commands dies at the runner whatever
+    the change class, so admission refuses it for every class, not only
+    dependency-update."""
+    envelope = normalize_authority(
+        {
+            "change_class": "maintenance-remediation",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": {},
+        }
+    )
+
+    violation = runner_command_authority_violation(envelope)
+
+    assert violation is not None
+    assert violation.code == "authority_allowed_commands_invalid"
+
+
+def test_edit_shaped_envelope_needs_no_mutation_commands() -> None:
+    """WS-P2.33: the coding agent produces the diff; the honest envelope omits
+    mutation_commands and admission accepts the omission."""
+    envelope = normalize_authority(
+        {
+            "change_class": "maintenance-remediation",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": {"allowed_commands": ["uv sync", "make check"]},
+        }
+    )
+
+    assert runner_command_authority_violation(envelope) is None
 
 
 def test_dependency_update_authority_accepts_ordered_valid_command_lists() -> None:
@@ -1193,7 +1226,7 @@ def test_dependency_update_authority_accepts_ordered_valid_command_lists() -> No
         }
     )
 
-    assert dependency_update_authority_violation(envelope) is None
+    assert runner_command_authority_violation(envelope) is None
 
 
 def _fanout_units() -> tuple[ProposedUnit, ...]:
