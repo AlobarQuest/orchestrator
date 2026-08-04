@@ -24,7 +24,10 @@ from orchestrator.kernel.readiness import (
     ReadinessFacts,
     evaluate_readiness_facts,
 )
-from orchestrator.kernel.runner_authority import runner_command_authority_violation
+from orchestrator.kernel.runner_authority import (
+    runner_command_authority_violation,
+    runner_envelope_field_violation,
+)
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
@@ -444,7 +447,15 @@ def register_approved_unit(
     expected_version: int | None = None,
 ) -> WorkUnit:
     _require_human(actor_id, actor_role)
-    validate_unit_capabilities(required_capability, authority.capabilities.keys())
+    validate_unit_capabilities(required_capability, authority.capabilities)
+    # Checked against the envelope that gets FINGERPRINTED, which is the one a human's authority
+    # approval attests -- not against `authority_payload`, which only the decomposition lane
+    # supplies and which that lane has already validated before stamping the unit id into it.
+    field_violation = runner_envelope_field_violation(authority)
+    if field_violation is not None:
+        raise DomainError(
+            field_violation.code, field_violation.message, field_violation.remediation
+        )
     if expected_version not in {None, 0}:
         raise DomainError(
             "version_conflict",

@@ -16,7 +16,10 @@ from orchestrator.kernel.authority import (
 )
 from orchestrator.kernel.enrichment import validate_enrichment
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
-from orchestrator.kernel.runner_authority import runner_command_authority_violation
+from orchestrator.kernel.runner_authority import (
+    runner_command_authority_violation,
+    runner_envelope_field_violation,
+)
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
@@ -508,7 +511,7 @@ def _validated_units(
 def _validate_unit_constraints(unit: ProposedUnit) -> dict[str, Any]:
     payload = _authority_payload(unit)
     envelope = normalize_authority(payload)
-    validate_unit_capabilities(unit.required_capability, envelope.capabilities.keys())
+    validate_unit_capabilities(unit.required_capability, envelope.capabilities)
     constraints = payload.get("constraints", {})
     if not isinstance(constraints, Mapping):
         raise DomainError(
@@ -538,7 +541,9 @@ def _validate_unit_constraints(unit: ProposedUnit) -> dict[str, Any]:
     conformance = payload.get("conformance")
     if conformance is not None:
         _validate_unit_conformance(conformance)
-    violation = runner_command_authority_violation(envelope)
+    violation = runner_envelope_field_violation(envelope) or runner_command_authority_violation(
+        envelope
+    )
     if violation is not None:
         raise DomainError(violation.code, violation.message, violation.remediation)
     return payload

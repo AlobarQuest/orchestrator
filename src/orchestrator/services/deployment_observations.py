@@ -243,8 +243,11 @@ def _post_deploy_work_unit(
     # No "unknown_fields" key here: it is not itself a KNOWN_FIELD, so passing it made
     # normalize_authority record an unknown field literally named "unknown_fields" --
     # every post-deploy unit was minted with a self-referential envelope that is not a
-    # fixed point of normalisation. Harmless only while nothing reads unknown_fields
-    # (WS-P2.15), and a landmine under any future fail-closed unknown-fields gate.
+    # fixed point of normalisation. WS-P2.34 shipped that fail-closed gate
+    # (runner_envelope_field_violation) and this path does NOT traverse it -- minting
+    # constructs the unit directly -- so the two units minted before this line was fixed
+    # keep their recorded unknown field, terminal and inert. Keep the key out of here: were
+    # this envelope ever routed through unit ingress it would be refused, correctly.
     authority = normalize_authority(
         {
             "capabilities": {"post_deploy_verification": "allowed"},

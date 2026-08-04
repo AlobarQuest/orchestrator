@@ -294,11 +294,22 @@ def test_approved_unit_registration_idempotency_conflicts_when_raw_authority_dif
 def test_approved_unit_registration_conflicts_when_unknown_field_values_differ(
     migrated_session: Session,
 ) -> None:
-    """Raw-payload replay identity guards what the fingerprint cannot see.
+    """An envelope the fingerprint cannot honestly cover is refused, not merely distinguished.
 
-    Normalization records unknown fields by *name* only, so two envelopes whose unknown
-    field values differ share a fingerprint. The stored raw payload must still make them
-    conflict, otherwise an approved fingerprint would cover an envelope nobody approved.
+    Normalization records unknown fields by *name* only, so two envelopes whose unknown field
+    values differ share a fingerprint -- an approved fingerprint would cover an envelope nobody
+    approved. Until WS-P2.34 registration ACCEPTED both and relied on comparing the stored raw
+    payload to make the second one conflict, which mitigates the hazard one step downstream of
+    where it is created. It is now refused at the gate, so the pair below can never both exist.
+
+    That raw-payload comparison remains in `register_approved_unit` as the reader for units
+    written before this gate, but it no longer has a reachable case of its own: every other way
+    to differ changes a KNOWN field, and a known field changes the fingerprint.
+
+    The refusal is checked BEFORE idempotent replay, matching `record_approval`'s authority
+    check. There is no accepted-then-refused asymmetry to protect: the first registration is
+    refused too, so only a unit predating the gate could be replayed, and such a replay is a
+    no-op nobody needs.
     """
     revision = register_test_revision(migrated_session)
     raw_authority = {
@@ -312,40 +323,26 @@ def test_approved_unit_registration_conflicts_when_unknown_field_values_differ(
         normalize_authority(conflicting_raw_authority)
     )
 
-    register_approved_unit(
-        migrated_session,
-        revision_id=revision.id,
-        unit_key="unit-unknown-field",
-        title="Respect raw authority",
-        outcome="Replay identity includes unknown field values.",
-        required_capability="repo.edit",
-        authority=normalize_authority(raw_authority),
-        authority_payload=raw_authority,
-        approved_by="human-1",
-        approved_at=NOW,
-        actor_id="human-1",
-        actor_role=ActorRole.HUMAN,
-        idempotency_key="unit-unknown-field",
-    )
+    for payload in (raw_authority, conflicting_raw_authority):
+        with pytest.raises(DomainError) as error:
+            register_approved_unit(
+                migrated_session,
+                revision_id=revision.id,
+                unit_key="unit-unknown-field",
+                title="Respect raw authority",
+                outcome="An unknown field never reaches an approval.",
+                required_capability="repo.edit",
+                authority=normalize_authority(payload),
+                authority_payload=payload,
+                approved_by="human-1",
+                approved_at=NOW,
+                actor_id="human-1",
+                actor_role=ActorRole.HUMAN,
+                idempotency_key="unit-unknown-field",
+            )
 
-    with pytest.raises(DomainError) as error:
-        register_approved_unit(
-            migrated_session,
-            revision_id=revision.id,
-            unit_key="unit-unknown-field",
-            title="Respect raw authority",
-            outcome="Replay identity includes unknown field values.",
-            required_capability="repo.edit",
-            authority=normalize_authority(conflicting_raw_authority),
-            authority_payload=conflicting_raw_authority,
-            approved_by="human-1",
-            approved_at=NOW,
-            actor_id="human-1",
-            actor_role=ActorRole.HUMAN,
-            idempotency_key="unit-unknown-field",
-        )
-
-    assert error.value.code == "idempotency_conflict"
+        assert error.value.code == "authority_unknown_fields"
+        assert "future_field" in error.value.message
 
 
 def test_authority_approval_idempotency_binds_expected_version(

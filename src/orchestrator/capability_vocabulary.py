@@ -22,7 +22,7 @@ the wheel and the image -- with no packaging metadata to forget. A fixture under
 in the image (Dockerfile copies ``src`` only); production ingress reads THIS module.
 """
 
-from collections.abc import Iterable
+from collections.abc import Mapping
 from typing import Final
 
 from orchestrator.errors import DomainError
@@ -78,19 +78,39 @@ ORCHESTRATOR_CAPABILITIES: Final[frozenset[str]] = (
     RUNNER_CAPABILITIES | ORCHESTRATOR_ONLY_CAPABILITIES
 )
 
+# The levels a capability may be declared at. Unlike the capability NAMES, this set is not a
+# superset of anything: the orchestrator accepts exactly what the runner accepts, because a level
+# is not a kind of work -- it is the grant itself, and `level_for` treats every value that is not
+# "allowed" as "prohibited" anyway.
+#
+# This is a cross-repo contract with the runner's `SUPPORTED_LEVELS`, pinned by the byte-identical
+# `tests/fixtures/runner_capability_levels.json` both repositories carry. The golden ENVELOPE
+# cannot carry it: both golden fixtures declare every capability "allowed", so their bytes are
+# satisfied by a one-term set and prove nothing about the second term (WS-P2.34).
+#
+# Ingress validated names and never levels until WS-P2.34, and `requires_approval` -- the
+# PACKAGE-authority vocabulary of ADR-0001, which a decomposition author projects into unit
+# capabilities BY HAND -- was therefore admitted here and refused by the runner ~14 seconds into
+# the run, with the ordinal spent.
+CAPABILITY_LEVELS: Final[frozenset[str]] = frozenset({"allowed", "prohibited"})
 
-def validate_unit_capabilities(required_capability: str, capabilities: Iterable[str]) -> None:
-    """Reject any unit capability outside the orchestrator's accepted set with a named error.
 
-    Applies to UNIT fields only -- ``required_capability`` and ``authority.capabilities`` keys.
+def validate_unit_capabilities(required_capability: str, capabilities: Mapping[str, str]) -> None:
+    """Reject any unit capability, or capability level, the orchestrator does not accept.
+
+    Applies to UNIT fields only -- ``required_capability`` and ``authority.capabilities``.
     Never to the package/revision ``authority`` (which legitimately speaks the registry
     vocabulary), and never inside ``normalize_authority`` or the kernel (post-deploy units are
     constructed directly and would self-reject). Enforced at both unit-ingress paths
     (``register_approved_unit`` and the decomposition proposal gate).
 
-    The prior failure mode was a SILENT one: ``level_for`` returns ``"prohibited"`` for an unknown
-    capability, so dispatch already fails closed as ``capability_not_authorized`` -- but late, and
-    without pointing at the offending key. This turns that into a named error at the gate.
+    Both failure modes were SILENT before they were named here, and in opposite directions. An
+    unknown NAME already failed closed at dispatch -- ``level_for`` returns ``"prohibited"`` for
+    a capability it does not know, so admission refused it as ``capability_not_authorized``, late
+    and without pointing at the offending key. An unknown LEVEL failed OPEN: ``level_for``
+    compares against ``"allowed"``, so a mistyped level on a capability the work does not need
+    reads as a prohibition and admission is happy -- while the runner, which validates every
+    level it is handed, refuses the whole envelope.
     """
     for capability in (required_capability, *capabilities):
         if capability not in ORCHESTRATOR_CAPABILITIES:
@@ -98,4 +118,12 @@ def validate_unit_capabilities(required_capability: str, capabilities: Iterable[
                 "unknown_capability",
                 f"unit capability {capability!r} is not a recognised orchestrator capability",
                 "declare one of: " + ", ".join(sorted(ORCHESTRATOR_CAPABILITIES)),
+            )
+    for capability, level in capabilities.items():
+        if level not in CAPABILITY_LEVELS:
+            raise DomainError(
+                "unknown_capability_level",
+                f"capability {capability!r} is declared at level {level!r}, "
+                "which the runner refuses",
+                "declare one of: " + ", ".join(sorted(CAPABILITY_LEVELS)),
             )

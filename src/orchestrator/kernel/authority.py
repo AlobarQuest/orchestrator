@@ -150,10 +150,17 @@ def _optional_change_class(value: Mapping[str, Any]) -> tuple[str | None, bool]:
     is stored verbatim as some units' envelope — round-trips without inventing unknown
     fields. A malformed value is reported as an unknown field.
 
-    NOTE (WS-P2.15): nothing reads `unknown_fields`. It used to feed `is_expansion()`, which
-    had no production caller and is now deleted. So an unknown field is RECORDED, not acted
-    on — this docstring previously claimed "every admission gate treats it as fail-closed",
-    which was already false. Before adding such a gate, see
+    NOTE (WS-P2.34): `unknown_fields` IS read, by two consumers, and this note used to say
+    nothing read it — true when WS-P2.15 deleted `is_expansion()`, false since WS-P2.18 Inc 3
+    gave `factory_policy._recognises` a clause on it. It is now also the whole basis of
+    `runner_envelope_field_violation`, which refuses such an envelope at both unit-ingress
+    paths: the runner's model is `extra="forbid"`, so a field this build does not understand
+    is a parse failure there, and a field outside `KNOWN_FIELDS` contributes only its NAME to
+    the fingerprint, so an approval of it attests to nothing about its value.
+
+    Units the orchestrator MINTS for itself are constructed directly and never traverse those
+    gates, which is why two historical release-verification units still carry a recorded
+    unknown field. Before adding a gate that reaches them, see
     tests/architecture/test_authority_write_once.py.
     """
     raw = value.get("change_class")
