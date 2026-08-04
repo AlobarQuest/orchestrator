@@ -1973,3 +1973,22 @@ style of that module.
   on `push:` that checks out with the secret and pushes a commit **touching
   `.github/workflows/**`**, which is the exact operation a token without Workflows:
   Read-and-write is rejected for. (Rewired and probed for all four, 2026-08-04, WS-P2.34.)
+
+- **The named-check evidence lane is closed to any criterion not declared `automated_check` — at
+  INGESTION, not only in intent-packages' `factory verify` pre-check.** `record_named_check_evidence`
+  (`services/verifier_evidence.py`) raises `evidence_subject_invalid: acceptance criterion is not a
+  mapped automated check` unless the criterion's declared `evidence_type` is exactly
+  `automated_check`. The deterministic-permitted floor of `automated_test` (WS-P2.17) does NOT make
+  the observed-check lane reachable for it: the floor governs how EVALUATION may resolve, the
+  ingestion gate governs which evidence can ARRIVE, and they key on different things. Measured live
+  2026-08-04 (WS-P2.35): the software-delivery profile maps `ci:` → `automated_test`, so the pilot's
+  named-check POST 409'd and AC-001 completed via clause-(b) human adjudication (evaluator reason:
+  "runner.pr.opened has no deterministic evaluator"). The profile-side fix is backlogged in
+  intent-packages (`9d97a27da81a`). Two adjacent discoveries from the same pilot: (1) the dispatch
+  window has a FOURTH env-keyed admission gate this file's window recipes omitted —
+  `ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES`, which `unit.required_capability` must be a member of
+  (blocked reason `capability_not_enabled`; widened standing to `["repo.edit","github.pr.create"]`,
+  Devon 2026-08-04, alongside `software-delivery` joining the change-class list). (2) Recording a
+  human adjudication does NOT complete a unit: `AWAITING_REVIEW → COMPLETED` is its own designed
+  HUMAN gate (a second `/review` click), and `/verify` refuses an `awaiting_review` unit with
+  `invalid_transition … recovery: submit`.
