@@ -1037,3 +1037,83 @@ def test_the_off_switch_outranks_a_recognising_pattern(migrated_session: Session
     # The switch is the FIRST term, so the authority term was never reached and nothing claims it
     # was: one dispatch, one suppression record.
     assert len(gate_events(migrated_session, unit.id)) == 1
+
+
+def test_dispatch_blocks_a_capability_level_the_runner_refuses(
+    migrated_session: Session,
+) -> None:
+    """WS-P2.34 shape 1, at the LAST gate rather than at authoring time.
+
+    Ingress refuses this now, but a unit's envelope is write-once and there is no supersede
+    route for an approved breakdown — so every envelope authored before the ingress rule
+    existed keeps what it was authored with, and that legacy population is exactly the one
+    that produced the defect. `requires_approval` on a capability the work does not even need
+    is invisible to every other term: `level_for` compares against "allowed", so it reads as a
+    prohibition and admission is satisfied while the runner refuses the whole envelope.
+    """
+    unit = ready_unit(migrated_session, key="legacy-bad-level")
+    unit.authority = {
+        "capabilities": {
+            "repo.edit": "allowed",
+            "command.run": "allowed",
+            "repo.read": "requires_approval",
+        },
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "target_repository": PILOT_REPOSITORY,
+            "allowed_commands": ["uv sync --locked", "uv lock --upgrade"],
+            "mutation_commands": ["uv lock --upgrade"],
+        },
+        "conformance": GREEN_CONFORMANCE,
+    }
+    migrated_session.flush()
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(allowed_change_classes=frozenset({"dependency-update"})),
+        github,
+        inert_source(),
+    )
+
+    assert record.reason_code == "unknown_capability_level"
+    assert github.calls == []
+
+
+def test_dispatch_blocks_an_envelope_field_the_runner_forbids(
+    migrated_session: Session,
+) -> None:
+    """WS-P2.34 shape 3 at the last gate, on the shape an operator copy-pastes.
+
+    A stored envelope carrying `unknown_fields` — what `normalized()` emits and what the
+    `/review` page renders — has an EMPTY unknown-field set, so a gate keyed on that set waves
+    it through. The runner's model refuses it before validating anything.
+    """
+    unit = ready_unit(migrated_session, key="legacy-normalized-copy")
+    unit.authority = {
+        "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "target_repository": PILOT_REPOSITORY,
+            "allowed_commands": ["uv sync --locked", "uv lock --upgrade"],
+            "mutation_commands": ["uv lock --upgrade"],
+        },
+        "conformance": GREEN_CONFORMANCE,
+        "unknown_fields": [],
+    }
+    migrated_session.flush()
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(allowed_change_classes=frozenset({"dependency-update"})),
+        github,
+        inert_source(),
+    )
+
+    assert record.reason_code == "authority_unknown_fields"
+    assert github.calls == []

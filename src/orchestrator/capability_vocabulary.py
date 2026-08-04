@@ -26,6 +26,8 @@ from collections.abc import Mapping
 from typing import Final
 
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
+from orchestrator.kernel.runner_authority import runner_capability_level_violation
 
 # The runner-executable capabilities, in the order the golden envelope sorts them. Byte-pinned
 # across repos through the authority envelope fixture; the contract test asserts
@@ -78,22 +80,6 @@ ORCHESTRATOR_CAPABILITIES: Final[frozenset[str]] = (
     RUNNER_CAPABILITIES | ORCHESTRATOR_ONLY_CAPABILITIES
 )
 
-# The levels a capability may be declared at. Unlike the capability NAMES, this set is not a
-# superset of anything: the orchestrator accepts exactly what the runner accepts, because a level
-# is not a kind of work -- it is the grant itself, and `level_for` treats every value that is not
-# "allowed" as "prohibited" anyway.
-#
-# This is a cross-repo contract with the runner's `SUPPORTED_LEVELS`, pinned by the byte-identical
-# `tests/fixtures/runner_capability_levels.json` both repositories carry. The golden ENVELOPE
-# cannot carry it: both golden fixtures declare every capability "allowed", so their bytes are
-# satisfied by a one-term set and prove nothing about the second term (WS-P2.34).
-#
-# Ingress validated names and never levels until WS-P2.34, and `requires_approval` -- the
-# PACKAGE-authority vocabulary of ADR-0001, which a decomposition author projects into unit
-# capabilities BY HAND -- was therefore admitted here and refused by the runner ~14 seconds into
-# the run, with the ordinal spent.
-CAPABILITY_LEVELS: Final[frozenset[str]] = frozenset({"allowed", "prohibited"})
-
 
 def validate_unit_capabilities(required_capability: str, capabilities: Mapping[str, str]) -> None:
     """Reject any unit capability, or capability level, the orchestrator does not accept.
@@ -119,11 +105,12 @@ def validate_unit_capabilities(required_capability: str, capabilities: Mapping[s
                 f"unit capability {capability!r} is not a recognised orchestrator capability",
                 "declare one of: " + ", ".join(sorted(ORCHESTRATOR_CAPABILITIES)),
             )
-    for capability, level in capabilities.items():
-        if level not in CAPABILITY_LEVELS:
-            raise DomainError(
-                "unknown_capability_level",
-                f"capability {capability!r} is declared at level {level!r}, "
-                "which the runner refuses",
-                "declare one of: " + ", ".join(sorted(CAPABILITY_LEVELS)),
-            )
+    # The level rule itself lives in the kernel, beside the other things the runner refuses, and
+    # is applied again at approval and admission for envelopes authored before it existed. One
+    # definition, three call sites -- a second copy here is exactly the divergence this
+    # workstream exists to close.
+    violation = runner_capability_level_violation(
+        AuthorityEnvelope(capabilities=dict(capabilities), budgets=AuthorityBudgets(None, None))
+    )
+    if violation is not None:
+        raise DomainError(violation.code, violation.message, violation.remediation)

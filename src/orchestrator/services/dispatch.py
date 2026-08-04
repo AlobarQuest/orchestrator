@@ -14,7 +14,7 @@ from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import OUTSIDE_CHANGE_WINDOW
 from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
-from orchestrator.kernel.runner_authority import runner_command_authority_violation
+from orchestrator.kernel.runner_authority import runner_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
 from orchestrator.services.authority_gate import AuthorityGate, human_authority_gate
@@ -394,7 +394,7 @@ def _envelope_reason(
         return "target_repository_missing"
     if target_repository not in settings.allowed_target_repositories:
         return "target_repository_not_allowed"
-    return _authority_violation_reason(envelope) or _conformance_blocked_reason(envelope)
+    return _authority_violation_reason(unit, envelope) or _conformance_blocked_reason(envelope)
 
 
 def _is_skipped_reason(reason: str) -> bool:
@@ -409,8 +409,23 @@ def _is_skipped_reason(reason: str) -> bool:
     }
 
 
-def _authority_violation_reason(envelope: AuthorityEnvelope) -> str | None:
-    violation = runner_command_authority_violation(envelope)
+def _authority_violation_reason(unit: WorkUnit, envelope: AuthorityEnvelope) -> str | None:
+    """Every envelope rule the runner enforces, applied to a unit already past the gates above.
+
+    Ingress refuses these shapes at authoring time, and this is the same rules again at the last
+    gate — for the population ingress cannot reach. A unit's envelope is write-once and there is
+    no supersede route for an approved breakdown, so every envelope authored before a rule
+    existed keeps whatever it was authored with. That legacy population is precisely the one
+    that produced the WS-P2.33 and WS-P2.34 defects, and it is the one an ingress-only rule
+    cannot see.
+
+    Cheap to be complete here, and the completeness is what matters: the level and field
+    vocabularies are IDENTICAL across the two repositories by construction of the shared
+    contract fixture, so a refusal here can never be stricter than the runner. That is not true
+    of capability NAMES — the orchestrator's set is a deliberate superset — which is why the
+    name term is a separate, narrower check in `_envelope_reason` rather than part of this one.
+    """
+    violation = runner_authority_violation(envelope, unit.authority)
     return violation.code if violation is not None else None
 
 

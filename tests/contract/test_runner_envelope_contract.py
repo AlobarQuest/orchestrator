@@ -29,10 +29,14 @@ from typing import Any, cast
 import pytest
 from sqlalchemy.orm import Session
 
-from orchestrator.capability_vocabulary import CAPABILITY_LEVELS, RUNNER_CAPABILITIES
+from orchestrator.capability_vocabulary import RUNNER_CAPABILITIES
 from orchestrator.errors import DomainError
-from orchestrator.kernel.authority import normalize_authority
-from orchestrator.kernel.runner_authority import runner_command_authority_violation
+from orchestrator.kernel.authority import KNOWN_FIELDS, normalize_authority, runner_payload
+from orchestrator.kernel.runner_authority import (
+    RUNNER_CAPABILITY_LEVELS,
+    RUNNER_ENVELOPE_FIELDS,
+    runner_command_authority_violation,
+)
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.services.decomposition import (
     AcMapping,
@@ -77,8 +81,10 @@ CONTRACT_SHA256_EDIT = "90b73de69bdd9d5ee88be38b0a0ac2eeff1e4bb467ec72062cd1b70f
 # bytes are satisfied by a one-term level set -- a runner that had dropped "prohibited" would
 # keep them green. The level vocabulary therefore gets its own byte-identical file, from which
 # both repositories derive their shipped set.
-FIXTURE_LEVELS = Path(__file__).resolve().parents[1] / "fixtures" / "runner_capability_levels.json"
-CONTRACT_SHA256_LEVELS = "f4e0d192f5f16b93cbb94f22f8ed6031fdd7b658554bddfd528b56737a76053f"
+FIXTURE_CONTRACT = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "runner_envelope_contract.json"
+)
+CONTRACT_SHA256_SURFACE = "c518e3a26a1e0d109ece3ccccaca0bc2fc7a069e26cba470e1f940742a55a1c0"
 
 TARGET_REPOSITORY = "AlobarQuest/change-manager"
 CHANGE_CLASS = "dependency-update"
@@ -105,8 +111,12 @@ def golden_edit_envelope() -> dict[str, Any]:
     return json.loads(FIXTURE_EDIT.read_text())
 
 
+def golden_contract() -> dict[str, list[str]]:
+    return cast(dict[str, list[str]], json.loads(FIXTURE_CONTRACT.read_text()))
+
+
 def golden_levels() -> list[str]:
-    return cast(list[str], json.loads(FIXTURE_LEVELS.read_text())["levels"])
+    return golden_contract()["levels"]
 
 
 # Derived, never restated: this was a hand-maintained second copy of the runner's SUPPORTED_LEVELS
@@ -233,10 +243,51 @@ def test_golden_edit_envelope_is_unchanged() -> None:
     assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_EDIT
 
 
-def test_golden_capability_levels_are_unchanged() -> None:
-    canonical = json.dumps(json.loads(FIXTURE_LEVELS.read_text()), sort_keys=True)
+def test_envelope_field_set_is_derived_from_the_pinned_contract() -> None:
+    """The field predicate is keyed on the RUNNER's declared fields, never on KNOWN_FIELDS.
 
-    assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_LEVELS
+    The two differ by exactly one member, in the fail-open direction: KNOWN_FIELDS contains
+    `unknown_fields` so that `normalized()` is a fixed point, and the runner's model does not
+    declare it. factory-runner derives the same set straight out of its pydantic model, so a
+    field added or renamed there reds this pin.
+    """
+    assert RUNNER_ENVELOPE_FIELDS == frozenset(golden_contract()["envelope_fields"])
+    assert "unknown_fields" in KNOWN_FIELDS
+    assert "unknown_fields" not in RUNNER_ENVELOPE_FIELDS
+
+
+def test_a_normalized_envelope_is_refused_as_a_hand_authored_one() -> None:
+    """The shape an operator copy-pastes, and the one keying on KNOWN_FIELDS would have missed.
+
+    `normalized()` always emits `unknown_fields`, and it is what the `/review` unit page and the
+    breakdown-proposal body render — so it is what gets copied into the next hand-authored
+    breakdown. Its unknown-field SET is empty, so a predicate reading `envelope.unknown_fields`
+    admits it; the runner's model refuses the whole envelope before validating it.
+    """
+    payload = _authored(golden_edit_envelope())
+    payload["unknown_fields"] = []
+
+    with pytest.raises(DomainError) as raised:
+        _validate_unit_constraints(_proposed_unit(payload, "normalized-copy"))
+
+    assert raised.value.code == "authority_unknown_fields"
+    assert "unknown_fields" in raised.value.message
+
+
+def test_runner_payload_drops_only_the_field_the_runner_forbids() -> None:
+    """What gets STORED when no raw payload is supplied must be parseable by the runner."""
+    envelope = normalize_authority(_authored(golden_edit_envelope()))
+
+    stored = runner_payload(envelope)
+
+    assert set(stored) == set(envelope.normalized()) - {"unknown_fields"}
+    assert set(stored) <= RUNNER_ENVELOPE_FIELDS
+
+
+def test_golden_capability_levels_are_unchanged() -> None:
+    canonical = json.dumps(json.loads(FIXTURE_CONTRACT.read_text()), sort_keys=True)
+
+    assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_SURFACE
 
 
 def test_capability_levels_are_derived_from_the_pinned_level_contract() -> None:
@@ -247,7 +298,7 @@ def test_capability_levels_are_derived_from_the_pinned_level_contract() -> None:
     updated. Hardcoding either module's set and dropping a term reds this, which is the control
     the golden ENVELOPES cannot provide: both declare every capability "allowed".
     """
-    assert CAPABILITY_LEVELS == frozenset(golden_levels())
+    assert RUNNER_CAPABILITY_LEVELS == frozenset(golden_levels())
 
 
 def test_capability_vocabulary_is_derived_from_the_golden_envelope() -> None:
