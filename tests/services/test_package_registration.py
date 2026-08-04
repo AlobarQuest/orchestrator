@@ -235,7 +235,7 @@ def test_approved_unit_registration_idempotency_conflicts_when_raw_authority_dif
 
     # Constraint values are covered by the authority fingerprint, so these two envelopes
     # are no longer normalization-identical. Raw-payload replay identity is still what
-    # catches differences the fingerprint cannot see — see the unknown-field test below.
+    # catches differences the fingerprint cannot see — see the explicitly-null test below.
     assert normalize_authority(raw_authority) != normalize_authority(conflicting_raw_authority)
 
     first = register_approved_unit(
@@ -294,11 +294,24 @@ def test_approved_unit_registration_idempotency_conflicts_when_raw_authority_dif
 def test_approved_unit_registration_conflicts_when_unknown_field_values_differ(
     migrated_session: Session,
 ) -> None:
-    """Raw-payload replay identity guards what the fingerprint cannot see.
+    """An envelope the fingerprint cannot honestly cover is refused, not merely distinguished.
 
-    Normalization records unknown fields by *name* only, so two envelopes whose unknown
-    field values differ share a fingerprint. The stored raw payload must still make them
-    conflict, otherwise an approved fingerprint would cover an envelope nobody approved.
+    Normalization records unknown fields by *name* only, so two envelopes whose unknown field
+    values differ share a fingerprint -- an approved fingerprint would cover an envelope nobody
+    approved. Until WS-P2.34 registration ACCEPTED both and relied on comparing the stored raw
+    payload to make the second one conflict, which mitigates the hazard one step downstream of
+    where it is created. It is now refused at the gate, so the pair below can never both exist.
+
+    That raw-payload comparison remains in `register_approved_unit` and is still LIVE — see
+    `test_approved_unit_registration_conflicts_when_a_known_field_is_explicitly_null`, which
+    keeps it pinned. An earlier draft of this docstring claimed it "no longer has a reachable
+    case of its own"; that was false, and a false unreachability note is exactly the licence a
+    later session needs to delete working behaviour.
+
+    The refusal is checked BEFORE idempotent replay, matching `record_approval`'s authority
+    check. There is no accepted-then-refused asymmetry to protect: the first registration is
+    refused too, so only a unit predating the gate could be replayed, and such a replay is a
+    no-op nobody needs.
     """
     revision = register_test_revision(migrated_session)
     raw_authority = {
@@ -312,40 +325,26 @@ def test_approved_unit_registration_conflicts_when_unknown_field_values_differ(
         normalize_authority(conflicting_raw_authority)
     )
 
-    register_approved_unit(
-        migrated_session,
-        revision_id=revision.id,
-        unit_key="unit-unknown-field",
-        title="Respect raw authority",
-        outcome="Replay identity includes unknown field values.",
-        required_capability="repo.edit",
-        authority=normalize_authority(raw_authority),
-        authority_payload=raw_authority,
-        approved_by="human-1",
-        approved_at=NOW,
-        actor_id="human-1",
-        actor_role=ActorRole.HUMAN,
-        idempotency_key="unit-unknown-field",
-    )
+    for payload in (raw_authority, conflicting_raw_authority):
+        with pytest.raises(DomainError) as error:
+            register_approved_unit(
+                migrated_session,
+                revision_id=revision.id,
+                unit_key="unit-unknown-field",
+                title="Respect raw authority",
+                outcome="An unknown field never reaches an approval.",
+                required_capability="repo.edit",
+                authority=normalize_authority(payload),
+                authority_payload=payload,
+                approved_by="human-1",
+                approved_at=NOW,
+                actor_id="human-1",
+                actor_role=ActorRole.HUMAN,
+                idempotency_key="unit-unknown-field",
+            )
 
-    with pytest.raises(DomainError) as error:
-        register_approved_unit(
-            migrated_session,
-            revision_id=revision.id,
-            unit_key="unit-unknown-field",
-            title="Respect raw authority",
-            outcome="Replay identity includes unknown field values.",
-            required_capability="repo.edit",
-            authority=normalize_authority(conflicting_raw_authority),
-            authority_payload=conflicting_raw_authority,
-            approved_by="human-1",
-            approved_at=NOW,
-            actor_id="human-1",
-            actor_role=ActorRole.HUMAN,
-            idempotency_key="unit-unknown-field",
-        )
-
-    assert error.value.code == "idempotency_conflict"
+        assert error.value.code == "authority_unknown_fields"
+        assert "future_field" in error.value.message
 
 
 def test_authority_approval_idempotency_binds_expected_version(
@@ -780,3 +779,109 @@ def test_a_re_registration_may_restate_its_criteria_but_may_not_change_them(
     assert error.value.code == "acceptance_criterion_invalid"
     # Both validators use that code, so pin the hint -- only the already-recorded check sets one.
     assert error.value.recovery == "register a new revision"
+
+
+def test_approved_unit_registration_conflicts_when_a_known_field_is_explicitly_null(
+    migrated_session: Session,
+) -> None:
+    """Raw-payload replay identity, pinned on a shape the field gate admits.
+
+    `normalized()` emits `change_class` and `conformance` unconditionally, so a payload that
+    states one of them as null and one that omits it produce the SAME envelope and therefore
+    the same fingerprint — while differing as stored bytes. Both carry an empty unknown-field
+    set and only declared top-level keys, so both pass `runner_envelope_field_violation`.
+
+    This is what makes the raw-payload comparison in `register_approved_unit` reachable. It
+    used to be pinned by the unknown-field test above, which now asserts a refusal instead;
+    without this, deleting the comparison outright leaves the suite green.
+    """
+    revision = register_test_revision(migrated_session)
+    omitted = {
+        "capabilities": {"repo.edit": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+    }
+    explicit_null = {**omitted, "change_class": None}
+
+    assert authority_fingerprint(normalize_authority(omitted)) == authority_fingerprint(
+        normalize_authority(explicit_null)
+    )
+
+    register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="unit-null-known-field",
+        title="Respect raw authority",
+        outcome="Replay identity sees what the fingerprint cannot.",
+        required_capability="repo.edit",
+        authority=normalize_authority(omitted),
+        authority_payload=omitted,
+        approved_by="human-1",
+        approved_at=NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        idempotency_key="unit-null-known-field",
+    )
+
+    with pytest.raises(DomainError) as error:
+        register_approved_unit(
+            migrated_session,
+            revision_id=revision.id,
+            unit_key="unit-null-known-field",
+            title="Respect raw authority",
+            outcome="Replay identity sees what the fingerprint cannot.",
+            required_capability="repo.edit",
+            authority=normalize_authority(explicit_null),
+            authority_payload=explicit_null,
+            approved_by="human-1",
+            approved_at=NOW,
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+            idempotency_key="unit-null-known-field",
+        )
+
+    assert error.value.code == "idempotency_conflict"
+
+
+def test_authority_approval_is_refused_for_an_envelope_the_runner_cannot_parse(
+    migrated_session: Session,
+) -> None:
+    """A human must not bind an approval to an envelope no runner can read.
+
+    An approval is what a person attests, so the envelope rules apply here too and not only at
+    authoring time — the units this reaches are the ones authored before the ingress rules
+    existed, whose envelopes are write-once. The command rule was already checked here; the
+    level and field rules were not, which left the two shapes WS-P2.34 closes approvable.
+    """
+    revision = register_test_revision(migrated_session)
+    unit = register_approved_unit(
+        migrated_session,
+        revision_id=revision.id,
+        unit_key="unit-approval-bad-level",
+        title="Approve nothing readable",
+        outcome="The envelope names a level the runner refuses.",
+        required_capability="repo.edit",
+        authority=normalize_authority({"capabilities": {"repo.edit": "allowed"}, "budgets": {}}),
+        approved_by="human-1",
+        approved_at=NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        idempotency_key="unit-approval-bad-level",
+    )
+    # Written directly: ingress refuses this shape, which is the point — the reachable
+    # population is envelopes that predate the rule, and there is no way to author one now.
+    unit.authority = {**unit.authority, "capabilities": {"repo.edit": "requires_approval"}}
+    migrated_session.flush()
+
+    with pytest.raises(DomainError) as error:
+        record_approval(
+            migrated_session,
+            unit_id=unit.id,
+            subject_type="authority",
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+            reason="Approve the envelope.",
+            idempotency_key="approval-bad-level",
+            expected_version=unit.version,
+        )
+
+    assert error.value.code == "unknown_capability_level"

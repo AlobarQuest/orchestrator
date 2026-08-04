@@ -22,10 +22,12 @@ the wheel and the image -- with no packaging metadata to forget. A fixture under
 in the image (Dockerfile copies ``src`` only); production ingress reads THIS module.
 """
 
-from collections.abc import Iterable
+from collections.abc import Mapping
 from typing import Final
 
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
+from orchestrator.kernel.runner_authority import runner_capability_level_violation
 
 # The runner-executable capabilities, in the order the golden envelope sorts them. Byte-pinned
 # across repos through the authority envelope fixture; the contract test asserts
@@ -79,18 +81,22 @@ ORCHESTRATOR_CAPABILITIES: Final[frozenset[str]] = (
 )
 
 
-def validate_unit_capabilities(required_capability: str, capabilities: Iterable[str]) -> None:
-    """Reject any unit capability outside the orchestrator's accepted set with a named error.
+def validate_unit_capabilities(required_capability: str, capabilities: Mapping[str, str]) -> None:
+    """Reject any unit capability, or capability level, the orchestrator does not accept.
 
-    Applies to UNIT fields only -- ``required_capability`` and ``authority.capabilities`` keys.
+    Applies to UNIT fields only -- ``required_capability`` and ``authority.capabilities``.
     Never to the package/revision ``authority`` (which legitimately speaks the registry
     vocabulary), and never inside ``normalize_authority`` or the kernel (post-deploy units are
     constructed directly and would self-reject). Enforced at both unit-ingress paths
     (``register_approved_unit`` and the decomposition proposal gate).
 
-    The prior failure mode was a SILENT one: ``level_for`` returns ``"prohibited"`` for an unknown
-    capability, so dispatch already fails closed as ``capability_not_authorized`` -- but late, and
-    without pointing at the offending key. This turns that into a named error at the gate.
+    Both failure modes were SILENT before they were named here, and in opposite directions. An
+    unknown NAME already failed closed at dispatch -- ``level_for`` returns ``"prohibited"`` for
+    a capability it does not know, so admission refused it as ``capability_not_authorized``, late
+    and without pointing at the offending key. An unknown LEVEL failed OPEN: ``level_for``
+    compares against ``"allowed"``, so a mistyped level on a capability the work does not need
+    reads as a prohibition and admission is happy -- while the runner, which validates every
+    level it is handed, refuses the whole envelope.
     """
     for capability in (required_capability, *capabilities):
         if capability not in ORCHESTRATOR_CAPABILITIES:
@@ -99,3 +105,12 @@ def validate_unit_capabilities(required_capability: str, capabilities: Iterable[
                 f"unit capability {capability!r} is not a recognised orchestrator capability",
                 "declare one of: " + ", ".join(sorted(ORCHESTRATOR_CAPABILITIES)),
             )
+    # The level rule itself lives in the kernel, beside the other things the runner refuses, and
+    # is applied again at approval and admission for envelopes authored before it existed. One
+    # definition, three call sites -- a second copy here is exactly the divergence this
+    # workstream exists to close.
+    violation = runner_capability_level_violation(
+        AuthorityEnvelope(capabilities=dict(capabilities), budgets=AuthorityBudgets(None, None))
+    )
+    if violation is not None:
+        raise DomainError(violation.code, violation.message, violation.remediation)

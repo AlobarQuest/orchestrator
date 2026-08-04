@@ -522,8 +522,11 @@ def test_comparability_reads_the_normalized_envelope_not_the_stored_json(
     peer = cleared_unit(migrated_session, "peer")
     migrated_session.commit()
 
-    # The stored JSON carries keys the authored envelope never had; the normalized reading does
-    # not, and it is the normalized reading the ledger groups on.
-    assert "unknown_fields" in peer.authority
+    # The stored JSON carries keys the authored envelope never had — normalized() emits every
+    # declared field explicitly, including the ones an author omits — and it is the normalized
+    # reading, not those bytes, that the ledger groups on. (It no longer carries
+    # `unknown_fields`: WS-P2.34 stores runner_payload(), since the runner's model forbids
+    # that key. The property under test is unchanged.)
+    assert "conformance" in peer.authority
     assert normalize_authority(peer.authority).capabilities == dict(CAPABILITIES)
     assert graduation_ledger(migrated_session, subject).total == 1

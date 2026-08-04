@@ -14,6 +14,7 @@ from orchestrator.kernel.authority import (
     AuthorityEnvelope,
     authority_fingerprint,
     normalize_authority,
+    runner_payload,
 )
 from orchestrator.kernel.context import context_fingerprint
 from orchestrator.kernel.enrichment import validate_enrichment
@@ -24,7 +25,10 @@ from orchestrator.kernel.readiness import (
     ReadinessFacts,
     evaluate_readiness_facts,
 )
-from orchestrator.kernel.runner_authority import runner_command_authority_violation
+from orchestrator.kernel.runner_authority import (
+    runner_authority_violation,
+    runner_envelope_field_violation,
+)
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
@@ -77,7 +81,11 @@ def record_approval(
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
     if subject_type == "authority":
-        violation = runner_command_authority_violation(normalize_authority(unit.authority))
+        # Every envelope rule the runner enforces, not just the command one: an approval is what
+        # a human attests, and attesting to an envelope the runner cannot parse is the failure
+        # this whole family produces. Checked against the STORED payload, which is what is
+        # served, and never rewritten to comply.
+        violation = runner_authority_violation(normalize_authority(unit.authority), unit.authority)
         if violation is not None:
             raise DomainError(violation.code, violation.message, violation.remediation)
     existing = session.scalar(select(Approval).where(Approval.idempotency_key == idempotency_key))
@@ -444,7 +452,18 @@ def register_approved_unit(
     expected_version: int | None = None,
 ) -> WorkUnit:
     _require_human(actor_id, actor_role)
-    validate_unit_capabilities(required_capability, authority.capabilities.keys())
+    validate_unit_capabilities(required_capability, authority.capabilities)
+    # Checked against the dict that will be STORED -- the exact bytes the brief serves the
+    # runner -- because that is where an undeclared top-level key becomes fatal. The fallback
+    # is the same projection the write below uses, so check and write cannot disagree.
+    field_violation = runner_envelope_field_violation(
+        authority,
+        authority_payload if authority_payload is not None else runner_payload(authority),
+    )
+    if field_violation is not None:
+        raise DomainError(
+            field_violation.code, field_violation.message, field_violation.remediation
+        )
     if expected_version not in {None, 0}:
         raise DomainError(
             "version_conflict",
@@ -477,7 +496,7 @@ def register_approved_unit(
         "outcome": outcome,
         "required_capability": required_capability,
         "authority": _normalize_json(
-            authority_payload if authority_payload is not None else authority.normalized()
+            authority_payload if authority_payload is not None else runner_payload(authority)
         ),
         "max_attempts": max_attempts,
         "approved_by": approved_by,
@@ -507,7 +526,7 @@ def register_approved_unit(
         "outcome": outcome,
         "required_capability": required_capability,
         "authority": _normalize_json(
-            authority_payload if authority_payload is not None else authority.normalized()
+            authority_payload if authority_payload is not None else runner_payload(authority)
         ),
         "authority_fingerprint": authority_fingerprint(authority),
         "max_attempts": max_attempts,

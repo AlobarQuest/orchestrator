@@ -26,17 +26,24 @@ import uuid
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 from sqlalchemy.orm import Session
 
 from orchestrator.capability_vocabulary import RUNNER_CAPABILITIES
-from orchestrator.kernel.authority import normalize_authority
-from orchestrator.kernel.runner_authority import runner_command_authority_violation
+from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import KNOWN_FIELDS, normalize_authority, runner_payload
+from orchestrator.kernel.runner_authority import (
+    RUNNER_CAPABILITY_LEVELS,
+    RUNNER_ENVELOPE_FIELDS,
+    runner_command_authority_violation,
+)
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.services.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
     ProposedUnit,
     RetainedAc,
+    _validate_unit_constraints,
     approve_decomposition_proposal,
     submit_decomposition_proposal,
 )
@@ -60,7 +67,6 @@ from tests.services.test_package_intake import acceptance_criterion, human_actor
 # the same six in its own `capability_vocabulary` and raises AuthorityError on anything outside
 # them, so an orchestrator envelope that strays can never be executed.
 RUNNER_SUPPORTED_CAPABILITIES = RUNNER_CAPABILITIES
-RUNNER_SUPPORTED_LEVELS = frozenset({"allowed", "prohibited"})
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "runner_authority_envelope.json"
 CONTRACT_SHA256 = "049ab53e2b257fa3d7eb24748a4278ffc7e0e91f8174b05220eefd7d526e5a56"
@@ -69,6 +75,16 @@ FIXTURE_EDIT = (
     Path(__file__).resolve().parents[1] / "fixtures" / "runner_authority_envelope_edit.json"
 )
 CONTRACT_SHA256_EDIT = "90b73de69bdd9d5ee88be38b0a0ac2eeff1e4bb467ec72062cd1b70f49888f6e"
+
+# WS-P2.34: a THIRD pinned artifact, and it exists because the two above provably cannot carry
+# what it carries. Every capability in both golden envelopes is declared "allowed", so their
+# bytes are satisfied by a one-term level set -- a runner that had dropped "prohibited" would
+# keep them green. The level vocabulary therefore gets its own byte-identical file, from which
+# both repositories derive their shipped set.
+FIXTURE_CONTRACT = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "runner_envelope_contract.json"
+)
+CONTRACT_SHA256_SURFACE = "c518e3a26a1e0d109ece3ccccaca0bc2fc7a069e26cba470e1f940742a55a1c0"
 
 TARGET_REPOSITORY = "AlobarQuest/change-manager"
 CHANGE_CLASS = "dependency-update"
@@ -93,6 +109,19 @@ def golden_envelope() -> dict[str, Any]:
 
 def golden_edit_envelope() -> dict[str, Any]:
     return json.loads(FIXTURE_EDIT.read_text())
+
+
+def golden_contract() -> dict[str, list[str]]:
+    return cast(dict[str, list[str]], json.loads(FIXTURE_CONTRACT.read_text()))
+
+
+def golden_levels() -> list[str]:
+    return golden_contract()["levels"]
+
+
+# Derived, never restated: this was a hand-maintained second copy of the runner's SUPPORTED_LEVELS
+# until WS-P2.34 gave it a pinned source.
+RUNNER_SUPPORTED_LEVELS = frozenset(golden_levels())
 
 
 def _authored(envelope: dict[str, Any]) -> dict[str, Any]:
@@ -212,6 +241,64 @@ def test_golden_edit_envelope_is_unchanged() -> None:
     """A one-sided edit here means factory-runner's copy has silently drifted."""
     canonical = json.dumps(golden_edit_envelope(), sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_EDIT
+
+
+def test_envelope_field_set_is_derived_from_the_pinned_contract() -> None:
+    """The field predicate is keyed on the RUNNER's declared fields, never on KNOWN_FIELDS.
+
+    The two differ by exactly one member, in the fail-open direction: KNOWN_FIELDS contains
+    `unknown_fields` so that `normalized()` is a fixed point, and the runner's model does not
+    declare it. factory-runner derives the same set straight out of its pydantic model, so a
+    field added or renamed there reds this pin.
+    """
+    assert RUNNER_ENVELOPE_FIELDS == frozenset(golden_contract()["envelope_fields"])
+    assert "unknown_fields" in KNOWN_FIELDS
+    assert "unknown_fields" not in RUNNER_ENVELOPE_FIELDS
+
+
+def test_a_normalized_envelope_is_refused_as_a_hand_authored_one() -> None:
+    """The shape an operator copy-pastes, and the one keying on KNOWN_FIELDS would have missed.
+
+    `normalized()` always emits `unknown_fields`, and it is what the `/review` unit page and the
+    breakdown-proposal body render — so it is what gets copied into the next hand-authored
+    breakdown. Its unknown-field SET is empty, so a predicate reading `envelope.unknown_fields`
+    admits it; the runner's model refuses the whole envelope before validating it.
+    """
+    payload = _authored(golden_edit_envelope())
+    payload["unknown_fields"] = []
+
+    with pytest.raises(DomainError) as raised:
+        _validate_unit_constraints(_proposed_unit(payload, "normalized-copy"))
+
+    assert raised.value.code == "authority_unknown_fields"
+    assert "unknown_fields" in raised.value.message
+
+
+def test_runner_payload_drops_only_the_field_the_runner_forbids() -> None:
+    """What gets STORED when no raw payload is supplied must be parseable by the runner."""
+    envelope = normalize_authority(_authored(golden_edit_envelope()))
+
+    stored = runner_payload(envelope)
+
+    assert set(stored) == set(envelope.normalized()) - {"unknown_fields"}
+    assert set(stored) <= RUNNER_ENVELOPE_FIELDS
+
+
+def test_golden_capability_levels_are_unchanged() -> None:
+    canonical = json.dumps(json.loads(FIXTURE_CONTRACT.read_text()), sort_keys=True)
+
+    assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_SURFACE
+
+
+def test_capability_levels_are_derived_from_the_pinned_level_contract() -> None:
+    """The shipped level vocabulary IS the pinned contract -- not a third copy of two strings.
+
+    factory-runner asserts the same equality against its own SUPPORTED_LEVELS and a
+    byte-identical copy of the same file, so a one-sided edit reds the side that was not
+    updated. Hardcoding either module's set and dropping a term reds this, which is the control
+    the golden ENVELOPES cannot provide: both declare every capability "allowed".
+    """
+    assert RUNNER_CAPABILITY_LEVELS == frozenset(golden_levels())
 
 
 def test_capability_vocabulary_is_derived_from_the_golden_envelope() -> None:
@@ -381,3 +468,80 @@ def test_orchestrator_serves_the_edit_envelope_and_admits_it(migrated_session: S
     assert record.status == "dispatched"
     assert record.target_repository == EDIT_TARGET_REPOSITORY
     assert github.calls[0]["repository"] == EDIT_TARGET_REPOSITORY
+
+
+def test_a_package_authority_level_is_refused_at_breakdown_ingress() -> None:
+    """WS-P2.34 shape 1. `requires_approval` is the PACKAGE-authority vocabulary of ADR-0001,
+    and projecting package authority into unit capabilities is deliberately left to the
+    decomposition author -- i.e. to a human writing this JSON by hand. The runner refuses any
+    level outside the pinned two, so admitting it here buys a dead run with the ordinal spent."""
+    payload = _authored(golden_edit_envelope())
+    payload["capabilities"] = {**payload["capabilities"], "command.run": "requires_approval"}
+
+    with pytest.raises(DomainError) as raised:
+        _validate_unit_constraints(_proposed_unit(payload, "level-typo"))
+
+    assert raised.value.code == "unknown_capability_level"
+    assert "requires_approval" in raised.value.message
+
+
+def test_an_extra_top_level_envelope_field_is_refused_at_breakdown_ingress() -> None:
+    """WS-P2.34 shape 3. The runner's model is `extra="forbid"`, so an unrecognised key is a
+    pydantic ValidationError before its own authority validation runs -- a crash, not even a
+    named AuthorityError. Refused here because the fingerprint records such a field's NAME and
+    never its value, so an approval of it attests to nothing about what it says."""
+    payload = _authored(golden_edit_envelope())
+    payload["notes"] = "why this unit exists"
+
+    with pytest.raises(DomainError) as raised:
+        _validate_unit_constraints(_proposed_unit(payload, "extra-key"))
+
+    assert raised.value.code == "authority_unknown_fields"
+    assert "notes" in raised.value.message
+
+
+def test_an_orchestrator_only_capability_is_refused_at_admission(
+    migrated_session: Session,
+) -> None:
+    """WS-P2.34 shape 2, and the one that cannot be an ingress check.
+
+    `operational_action` is legitimately authored on non-software units, which are claimed by a
+    human operator and never handed to a runner -- so ingress must keep accepting it. But the
+    runner validates EVERY entry of the map regardless of level, so the name sitting inertly at
+    "prohibited" alongside ordinary runner work is fatal. The unit below is otherwise perfectly
+    dispatchable: it clears the off-switch, readiness, reach, the estate, the authority approval,
+    its capability, its change class and its target repository.
+    """
+    unit_id = _approved_ready_unit(
+        migrated_session,
+        envelope={
+            **golden_edit_envelope(),
+            "capabilities": {
+                **golden_edit_envelope()["capabilities"],
+                "operational_action": "prohibited",
+            },
+        },
+        change_class=EDIT_CHANGE_CLASS,
+        prefix="mixedvocab",
+        unit_key="carries-an-operational-name",
+    )
+
+    record = dispatch_work_unit(
+        migrated_session,
+        DispatchCommand(
+            unit_id=unit_id,
+            runner_attempt=1,
+            actor=SYSTEM,
+            idempotency_key="mixedvocab-dispatch",
+        ),
+        _dispatch_settings(
+            change_class=EDIT_CHANGE_CLASS, target_repository=EDIT_TARGET_REPOSITORY
+        ),
+        FakeGitHubDispatcher(),
+        inert_source(),
+    )
+
+    assert record.reason_code == "capability_outside_runner_vocabulary"
+    # BLOCKED, not skipped: a unit that reached READY with an envelope no runner can parse is
+    # something a person has to act on, and only blocked reasons reach the surfaces they read.
+    assert record.status == "blocked"

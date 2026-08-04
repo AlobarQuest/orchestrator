@@ -9,11 +9,12 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from orchestrator.capability_vocabulary import RUNNER_CAPABILITIES
 from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import OUTSIDE_CHANGE_WINDOW
 from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
-from orchestrator.kernel.runner_authority import runner_command_authority_violation
+from orchestrator.kernel.runner_authority import runner_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
 from orchestrator.services.authority_gate import AuthorityGate, human_authority_gate
@@ -363,7 +364,23 @@ def _envelope_reason(
     envelope: AuthorityEnvelope,
     target_repository: str,
 ) -> str | None:
-    """The terms the envelope itself decides, for a unit already past the gates above."""
+    """The terms the envelope itself decides, for a unit already past the gates above.
+
+    `capability_outside_runner_vocabulary` is the one term here that CANNOT move to ingress, and
+    the reason is the whole of why it exists (WS-P2.34). The orchestrator's accepted capability
+    set is a deliberate superset of the runner's: `operational_action` and
+    `post_deploy_verification` name work no runner performs, and refusing them at ingress would
+    reject the orchestrator's own generated units and every unit of a profile that has no
+    repository at all. But the runner validates EVERY entry of the capabilities map regardless of
+    level, so one of those names sitting inertly at "prohibited" in an envelope that is otherwise
+    ordinary runner work raises `unsupported capability` and kills the run.
+
+    The documented containment -- that such a unit "can never be handed to a runner" -- keys on
+    `level_for`, so it protects against the unit being SELECTED, not against the string being
+    PRESENT. A unit whose `required_capability` is a runner capability passes every term above
+    while carrying a name the runner cannot parse; this is the term that sees it. Being the
+    runner lane by construction, admission is the honest place for it.
+    """
     if unit.required_capability not in settings.enabled_capabilities:
         return "capability_not_enabled"
     change_class = _change_class(envelope, unit.required_capability)
@@ -371,11 +388,13 @@ def _envelope_reason(
         return "change_class_not_allowed"
     if envelope.level_for(unit.required_capability) != "allowed":
         return "capability_not_authorized"
+    if not set(envelope.capabilities).issubset(RUNNER_CAPABILITIES):
+        return "capability_outside_runner_vocabulary"
     if not target_repository:
         return "target_repository_missing"
     if target_repository not in settings.allowed_target_repositories:
         return "target_repository_not_allowed"
-    return _authority_violation_reason(envelope) or _conformance_blocked_reason(envelope)
+    return _authority_violation_reason(unit, envelope) or _conformance_blocked_reason(envelope)
 
 
 def _is_skipped_reason(reason: str) -> bool:
@@ -390,8 +409,23 @@ def _is_skipped_reason(reason: str) -> bool:
     }
 
 
-def _authority_violation_reason(envelope: AuthorityEnvelope) -> str | None:
-    violation = runner_command_authority_violation(envelope)
+def _authority_violation_reason(unit: WorkUnit, envelope: AuthorityEnvelope) -> str | None:
+    """Every envelope rule the runner enforces, applied to a unit already past the gates above.
+
+    Ingress refuses these shapes at authoring time, and this is the same rules again at the last
+    gate — for the population ingress cannot reach. A unit's envelope is write-once and there is
+    no supersede route for an approved breakdown, so every envelope authored before a rule
+    existed keeps whatever it was authored with. That legacy population is precisely the one
+    that produced the WS-P2.33 and WS-P2.34 defects, and it is the one an ingress-only rule
+    cannot see.
+
+    Cheap to be complete here, and the completeness is what matters: the level and field
+    vocabularies are IDENTICAL across the two repositories by construction of the shared
+    contract fixture, so a refusal here can never be stricter than the runner. That is not true
+    of capability NAMES — the orchestrator's set is a deliberate superset — which is why the
+    name term is a separate, narrower check in `_envelope_reason` rather than part of this one.
+    """
+    violation = runner_authority_violation(envelope, unit.authority)
     return violation.code if violation is not None else None
 
 
