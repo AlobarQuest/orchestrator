@@ -436,6 +436,25 @@ style of that module.
   and the guard you build on it is decoration too. Three instances in one workstream is not three
   bugs — it is a missing class of test.
 
+- **A FOURTH vocabulary mismatch, and its failure mode is the opposite of the first three: the
+  correct answer WAS known, written down, and commented — in a sibling file — and nothing carried
+  it across.** `intent-packages`' per-profile `TAG_TO_EVIDENCE_TYPE` maps evidence tags to the
+  orchestrator's criterion vocabulary. `dependency_update.py` maps `ci:`/`gate:` →
+  `automated_check` above an explicit comment: *"Never automated_test: it resolves to
+  judgment_required in the verifier … which is exactly what automated_check evaluates
+  deterministically against."* `maintenance_remediation.py` matches it. **`software_delivery.py`
+  maps EVERY automated tag — `ci:`, `gate:`, `scan:`, `health:`, and even `review:` — to
+  `automated_test`**, and the orchestrator's named-check ingestion refuses anything but
+  `automated_check` **server-side** (`services/verifier_evidence.py:271`, not merely in a CLI
+  verb — a reviewer placed it in the CLI and was wrong). Consequence, measured by the WS-P2.35
+  pilot: **no software-delivery package can reach the observed-check verifier lane at all**; its
+  AC-001 completed on human adjudication instead. The two profiles that had actually been
+  dispatched were correct; the one that had not was not — so *being exercised* is what fixed the
+  other two, and nothing else would have. Read this as the standing hazard: a per-profile lookup
+  is N copies of one vocabulary, and only the copies that run get corrected. Backlogged
+  intent-packages P2 `9d97a27da81a`, deliberately scheduled as the NEXT software-delivery package
+  so that shipping the fix proves the lane it fixes.
+
 - **MERGED IS NOT DEPLOYED. Ask production what it is running before you reason about
   what it can do.** On 2026-07-12 production was serving
   `ghcr.io/alobarquest/orchestrator:d6d73b3-ws64-verifier-amd64` — a WS-6.4-era image —
