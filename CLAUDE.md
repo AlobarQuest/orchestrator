@@ -1909,3 +1909,62 @@ style of that module.
   there is no closed vocabulary — and `_change_class()` falls back to `required_capability` when the
   field is absent, so an envelope with no `change_class` is matched on its capability name and is
   refused just the same. Widening this list is a standing authority change and outlives any window.
+
+- **The orchestrator's `KNOWN_FIELDS` and the runner's declared envelope fields differ by exactly
+  ONE member, in the fail-open direction — and a gate keyed on the wrong one admits the shape an
+  operator is most likely to author.** `KNOWN_FIELDS` (`kernel/authority.py`) contains
+  `unknown_fields`, deliberately, so `normalized()` is a fixed point; the runner's
+  `AuthorityEnvelope` is `extra="forbid"` and does not declare it. So an envelope carrying
+  `"unknown_fields": []` has an **empty** `envelope.unknown_fields` set — a predicate reading that
+  set waves it through — and dies at pydantic **before** `validate_authority`, i.e. as a crash
+  rather than a named `AuthorityError`. That is not a synthetic input: it is precisely what
+  `normalized()` emits, hence what the `/review` unit page and the breakdown-proposal body render,
+  hence what gets copy-pasted into the next hand-authored breakdown. WS-P2.34's first draft made
+  exactly this mistake **inside the function written to close the same class of defect**, and two
+  independent adversarial reviewers found it. Key any such gate on
+  `kernel/runner_authority.py::RUNNER_ENVELOPE_FIELDS`, which is pinned to the runner's pydantic
+  model by `tests/fixtures/runner_envelope_contract.json`, never on `KNOWN_FIELDS`. Corollary:
+  `runner_payload(envelope)` (`normalized()` minus that key) is what the no-raw-payload fallback
+  must store — it previously stored `normalized()`, i.e. an unparseable envelope by construction.
+
+- **There is ONE composed predicate for "would the runner refuse this envelope?" —
+  `kernel/runner_authority.py::runner_authority_violation` — and FOUR surfaces must ask it.**
+  Breakdown ingress, unit registration, the human authority approval (both `record_approval` and
+  the `/review` form-gating path through `evidence_pack`), and admission. Before WS-P2.34 each
+  asked a different hand-written subset, which is how the level and field rules ended up enforced
+  at one surface out of four while the command rule had all four. **A unit's envelope is
+  write-once and there is no supersede route for an approved breakdown**, so an ingress-only rule
+  is structurally blind to every envelope authored before it existed — and that legacy population
+  is exactly the one that produced this defect family. Capability *names* are deliberately NOT in
+  the composition: the orchestrator's set is a superset (it authors work no runner performs), so
+  the name refusal (`capability_outside_runner_vocabulary`) belongs only on the surface that knows
+  the unit is runner-bound, which is admission.
+
+- **Capability LEVELS fail OPEN where unknown NAMES fail closed — the asymmetry is why levels went
+  unvalidated for so long.** `level_for` returns `"prohibited"` for a name it does not know, so an
+  unknown name was already refused (late, as `capability_not_authorized`). But it compares against
+  `"allowed"`, so a *mistyped level* on a capability the work does not even need reads as a
+  prohibition and satisfies every orchestrator gate, while the runner — which validates the level
+  of every entry — refuses the whole envelope. `requires_approval` is the shape that actually
+  occurs: it is the PACKAGE-authority vocabulary of ADR-0001, and projecting package authority into
+  unit capabilities is left to the breakdown author, i.e. to a human writing JSON by hand.
+
+- **`GET /work-units/{id}/evidence-pack` serves a PROJECTION of the authority envelope; the runner
+  brief serves the STORED COLUMN. Measure at the consumer's surface.** The pack renders
+  `normalize_authority(unit.authority).normalized()`, which always emits `unknown_fields` and every
+  other declared key — so a census taken there reports a shape no runner ever sees. WS-P2.34's
+  first sweep did this and concluded every stored envelope carried an `unknown_fields` key;
+  re-measured through `runner-brief` (which serves `unit.authority` verbatim), **41 of 41 carry
+  none**, and stored envelopes legitimately omit optional keys (`change_class` on 35, `conformance`
+  on 32). This is the same failure the `response_model` invariant describes, one layer out: the
+  surface you read is not necessarily the surface the consumer reads.
+
+- **`FACTORY_PR_TOKEN` now has a BWS record and a rotation trail** — `a3240c2e-92d7-4b32-a726-b49b0135565a`,
+  `SDS Operator` project, documented in **factory-runner's** `.bws-secrets.toml` (not this repo's).
+  **Four repos hold copies as write-only Actions secrets** — `intent-packages`, `change-manager`,
+  `brain`, `security-standards` — so a rotation means re-setting all four; a copy left behind is
+  dead on the next push with no signal until a run fails at auth. Verify any rotation with the
+  discriminating probe, never with a green `gh secret set`: a throwaway branch workflow triggered
+  on `push:` that checks out with the secret and pushes a commit **touching
+  `.github/workflows/**`**, which is the exact operation a token without Workflows:
+  Read-and-write is rejected for. (Rewired and probed for all four, 2026-08-04, WS-P2.34.)
