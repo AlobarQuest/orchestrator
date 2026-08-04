@@ -534,11 +534,12 @@ style of that module.
   operator-invoked, on no schedule. A grep of `src/` in one repo would have found neither: when
   moving a secret, grep the whole portfolio for the UUID, not the repos you expect to own it.
 
-- **`factory decompose` (intent-packages) needs three env pieces the tool does not set itself,
-  and the module has no `__main__`/installed console script.** Invoke it as
-  `python -c "import sys; from intent_packages.factory_cli import main; sys.exit(main(sys.argv[1:]))" decompose …`
-  (a bare `python -m intent_packages.factory_cli` imports but runs nothing → exit 0, no output;
-  `.venv/bin/factory` is not installed). Required env: (1) the orchestrator console script on
+- **`factory decompose` (intent-packages) needs three env pieces the tool does not set itself.**
+  **CORRECTED 2026-08-04: `.venv/bin/factory` IS installed and works** — `[project.scripts]`
+  declares it and `factory --help` prints usage, so invoke the console script directly. What is
+  still broken is only `python -m intent_packages.factory_cli`, which has no `__main__` guard and
+  so exits 0 with no output (backlogged in intent-packages; the WS-P2.35 pilot's subject). The old
+  `python -c "…main(sys.argv[1:])"` workaround is no longer needed. Required env: (1) the orchestrator console script on
   `PATH` (`PATH=~/Projects/orchestrator/.venv/bin:$PATH`) — the tool shells out to
   `orchestrator show-package-intake` / `conformance-claim` / `propose-decomposition`;
   (2) `ORCHESTRATOR_API_URL=https://sds.alobar.net` + `ORCHESTRATOR_API_TOKEN=<SYSTEM>` +
@@ -1839,10 +1840,14 @@ style of that module.
 - **`factory decompose` only speaks dependency-update: its interface is
   `--tooling {pip,uv,npm} --package --from --to`.** It cannot express any of the other four profiles,
   so `maintenance-remediation`, `software-delivery`, `infrastructure-change` and
-  `non-software-operational` decompositions must be hand-authored against
-  `POST /api/v1/package-intakes/{revision_id}/decomposition-proposals`. The factory is **built for
-  five profiles and mechanically served for one** — which also means Phase-3 WS-P3.1 (Dependabot →
-  proposed packages) is the only lane its existing tooling can feed.
+  `non-software-operational` **decompositions** must be hand-authored against
+  `POST /api/v1/package-intakes/{revision_id}/decomposition-proposals`.
+  **NARROWED 2026-08-04: this is true of the DECOMPOSE step only, and an earlier reading of it as
+  "the factory is mechanically served for one profile" overstated the gap.** Package *authoring*
+  is tooled for every registered profile — `factory create --profile <any> --reach <members>`
+  scaffolds it and takes `reach` as a first-class flag — and `factory submit` stages the intake.
+  So the hand-authored surface is the decomposition proposal, not the package. Phase-3 WS-P3.1
+  (Dependabot → proposed packages) remains the lane `decompose` can feed end to end.
 
 - **There is NO `(READY, CANCELLED)` transition for ANY role, so a misfired READY unit is permanent
   debris — but dispatch is EXPLICIT-ONLY, so the debris is inert.** `HUMAN_EDGES` carries
