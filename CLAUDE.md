@@ -447,13 +447,39 @@ style of that module.
   `automated_test`**, and the orchestrator's named-check ingestion refuses anything but
   `automated_check` **server-side** (`services/verifier_evidence.py:271`, not merely in a CLI
   verb — a reviewer placed it in the CLI and was wrong). Consequence, measured by the WS-P2.35
-  pilot: **no software-delivery package can reach the observed-check verifier lane at all**; its
+  pilot: **no software-delivery package could reach the observed-check verifier lane at all**; its
   AC-001 completed on human adjudication instead. The two profiles that had actually been
   dispatched were correct; the one that had not was not — so *being exercised* is what fixed the
   other two, and nothing else would have. Read this as the standing hazard: a per-profile lookup
-  is N copies of one vocabulary, and only the copies that run get corrected. Backlogged
-  intent-packages P2 `9d97a27da81a`, deliberately scheduled as the NEXT software-delivery package
-  so that shipping the fix proves the lane it fixes.
+  is N copies of one vocabulary, and only the copies that run get corrected.
+  **CLOSED 2026-08-04 (WS-P2.36, intent-packages PR #57 `d96ea73`), and the CLOSING is the more
+  useful half of this entry.** `ci:`/`gate:` now map to `automated_check`; `scan:`/`health:` stay
+  `automated_test` and `review:` became `human_review`; `infrastructure_change` was assessed and
+  deliberately left unchanged, with the reasoning recorded in the module. Proven the same day:
+  unit `a1493627…` completed with **AC-001 resolved from observed `verifier.github.named_check`
+  evidence**, evaluator reason *"the named check was observed to conclude success"*.
+  Three things worth carrying, none of which the handoff anticipated:
+  **(1) The two evidence types are NOT ordered — they are deterministic for DIFFERENT producers.**
+  `automated_check` is special-cased ahead of the evaluator lookup and resolves *only* on
+  verifier-owned `verifier.github.named_check` evidence; `automated_test` dispatches on the
+  *arriving* row's type and can resolve off a worker-recorded row. So declaring `automated_check`
+  for a tag no CI job produces does not merely fail to help — it **forfeits the producer that tag
+  actually has**. That, not "an unreachable lane", is why `scan:`/`health:` stayed put: measured
+  across the seven factory-target repos, only `security-standards` publishes a scan job and none
+  publishes a health probe reachable on a PR head (`brain`'s is a step inside a `deploy` job gated
+  to pushes on `main`). A per-profile map also cannot be per-repo.
+  **(2) The permissive map was NOT a lost lesson — it was a deliberate WS-P2.10 decision**, and
+  reading it as an oversight makes the fix look like a one-line edit when it is not. That spec says
+  the two profiles were *"wrapped, not changed … All 19 existing packages must validate
+  byte-identically"*, and `profiles/base.py` states the reason: an approved package's YAML cannot
+  be edited because `evidence_type` is inside the canonical hash, so editing it invalidates the
+  lineage approval (probed: `verify-approval` rc=0 → rc=1). The naive map change reds **12 of 16**
+  software-delivery packages. The fix therefore needed a grandfathering set keyed on
+  **`(package_id, revision)`** — never `package_id` alone, since a new revision is fresh authoring
+  that must comply, and `ws-3.4-evidence-events` was already at revision 2.
+  **(3) Generalise: when a validation rule changes in a repo whose artifacts are immutable and
+  hash-bound, the old population is EXEMPTED, never rewritten** — the same trade the factory-policy
+  grandfathering table records for reach.
 
 - **MERGED IS NOT DEPLOYED. Ask production what it is running before you reason about
   what it can do.** On 2026-07-12 production was serving
@@ -1017,7 +1043,27 @@ style of that module.
   a claim is reclaimed, so "attempt_count + 1" is not a safe substitute. (Verified 2026-07-29,
   GAP-4 attempt 3 — the prior two dispatches were ordinals 1 and 2.)
 
-- **Closing the bounded dispatch window RESTARTS the orchestrator, and a restart while a dispatched
+- **THE BOUNDED DISPATCH WINDOW NO LONGER EXISTS. `ORCHESTRATOR_DISPATCH_ENABLED` is `true`
+  PERMANENTLY** (Devon's standing decision, 2026-08-04, container-verified). **Do not open or close
+  a window; there is nothing to close.** Every "open the window / close it after terminal" recipe
+  elsewhere in this file is obsolete, and the restart hazard below is now a historical record of
+  why the practice was retired rather than an instruction.
+  The reasoning, because it reverses a long-standing ceremony. The flag is the **outermost of eight
+  admission terms and the only one that is not per-unit**, and `dispatch_work_unit` has **exactly
+  one caller** — `POST /work-units/{id}/dispatch`; no sweeper, no cron, no background loop — so an
+  open window dispatches **nothing** on its own. A dispatch still requires `ready` state, an
+  authority approval bound to the exact fingerprint (a human click), an allowlisted
+  repo/change-class/capability, declared reach the estate agrees with, and the change window.
+  Toggling, meanwhile, costs a restart, and a restart during a live run is the one thing that
+  genuinely strands a unit. Per-run toggling was buying a gate that stops nothing the seven inner
+  gates don't, while creating a hazard they cannot prevent. The other three gates are unchanged and
+  still standing: `CLASSES=["dependency-update","maintenance-remediation","software-delivery"]`,
+  `CAPS=["repo.edit","github.pr.create"]`, `REPOS=["AlobarQuest/intent-packages"]`.
+  **The restart hazard itself is still real for ANY restart** — a release, an env write, a Coolify
+  swap — so the rule survives in that form: never restart while a run is live.
+
+- **[HISTORICAL — the window is now permanently open, see above] Closing the bounded dispatch
+  window RESTARTS the orchestrator, and a restart while a dispatched
   run is live strands the unit. Close the window only after the run is terminal.** The dispatch
   gates (`ORCHESTRATOR_DISPATCH_ENABLED`, `..._ALLOWED_TARGET_REPOSITORIES`) are read at startup,
   so reverting them requires a restart — and the runner calls the orchestrator at the *end* of its
@@ -1060,6 +1106,18 @@ style of that module.
   evidence pack can see it (WS-P2.31) — recording, never prevention: the orchestrator is push-only
   and cannot interrupt a running runner, and making the runner stop itself would be the runner
   attesting to its own compliance.
+  **AUTHORING RULE, and it is `max_attempts × max_turns` — NOT a multiple of an observed run.**
+  `max_turns` (a literal in factory-runner's workflow — `"40"` at revision `0e047df`) is the only
+  thing that actually caps one attempt, so `max_attempts × max_turns` is the structural worst case.
+  Setting the ceiling there guarantees the **recoverable** gate (`attempts_exhausted`, curable by
+  `approve_retry`) binds before the **unrecoverable** one (`budget_exceeded`, curable by nothing —
+  see the bullet above). Over-provisioning costs nothing: nothing checks spend mid-run.
+  **Measured burn keeps beating the estimate: GAP-4 15, WS-P2.35 29, WS-P2.36 58** — the last a
+  small additive test change. WS-P2.36's envelope was authored at 60 on the WS-P2.35 figure and
+  raised to 120 by adversarial review before the human approval; the run then recorded 58, which
+  would have left **two** calls for a second attempt and killed the unit permanently. An envelope
+  is write-once and its approval cannot be taken back, so this number is one of the few that
+  genuinely cannot be fixed later.
 
 - **Coolify stores an `is_literal` env value wrapped in single quotes and injects the STRIPPED
   form — so a write must send the RAW value, and `is_build_time` is rejected outright.** Two
@@ -1536,10 +1594,16 @@ style of that module.
   `matched_apps` so `inert` never arrives without its denominator. A read-only credential exists
   for exactly this call (`APP_BRAIN_READ_KEY`, BWS `726a18ba-7a38-4ecc-aa03-b49a015fd302`): it
   authenticates GET on app-brain's two read paths and is 401 everywhere else, including `/mcp`.
-  Note **2 of the 4 repositories the factory targets — `intent-packages` and `project-standards` —
-  have no App Brain app record at all** and answer `unknown` / `no_app_record`, which a
-  fail-closed consumer refuses; that decision belongs to WS-P2.28 and is not yet made. Evidence:
-  `~/docs/software-delivery-system/2026-08-02-wsp229-build-report.md`.
+  **CORRECTED 2026-08-04 (WS-P2.36) — this used to say `intent-packages` and `project-standards`
+  "have no App Brain app record at all" and answer `unknown` / `no_app_record`, which a fail-closed
+  consumer refuses. That is false for `intent-packages`**, which answers **`landing: "inert"`** with
+  a dated evidence string (determined 2026-08-02) and `matched_apps: 0`. A repository-level
+  determination exists without any app record, so `matched_apps: 0` does **not** imply `unknown` —
+  and the estate admission term passed on the first attempt for the WS-P2.36 dispatch, which it
+  could not have done had the old claim been true. Do not infer the answer from the app census;
+  **ask the route**, which is the bullet's own advice one paragraph up. `project-standards` was not
+  re-checked and may still answer `unknown`. Evidence:
+  `~/docs/software-delivery-system/2026-08-02-wsp229-build-report.md` and the WS-P2.36 report.
 
 - **The `Alobar SDS Dispatch` App has NO `checks` permission — the Checks API is 403 for the
   orchestrator, and named-check evidence is read from workflow JOBS instead.** Measured 2026-08-02
@@ -2000,10 +2064,17 @@ style of that module.
   `automated_check`. The deterministic-permitted floor of `automated_test` (WS-P2.17) does NOT make
   the observed-check lane reachable for it: the floor governs how EVALUATION may resolve, the
   ingestion gate governs which evidence can ARRIVE, and they key on different things. Measured live
-  2026-08-04 (WS-P2.35): the software-delivery profile maps `ci:` → `automated_test`, so the pilot's
-  named-check POST 409'd and AC-001 completed via clause-(b) human adjudication (evaluator reason:
-  "runner.pr.opened has no deterministic evaluator"). The profile-side fix is backlogged in
-  intent-packages (`9d97a27da81a`). Two adjacent discoveries from the same pilot: (1) the dispatch
+  2026-08-04 (WS-P2.35): the software-delivery profile mapped `ci:` → `automated_test`, so the
+  pilot's named-check POST 409'd and AC-001 completed via clause-(b) human adjudication (evaluator
+  reason: "runner.pr.opened has no deterministic evaluator"). **The profile-side fix shipped the
+  same day (WS-P2.36, intent-packages PR #57) and the lane is now PROVEN for software-delivery** —
+  unit `a1493627…` completed with AC-001 resolved from observed `verifier.github.named_check`
+  evidence, evaluator reason *"the named check was observed to conclude success"*. **The ingestion
+  gate described above is unchanged and still the rule**: it was the profile that was wrong, not
+  the gate. `check_name` must be the JOB name (`Lint, type-check, and test` in intent-packages,
+  where the WORKFLOW is called `Quality`), and one head legitimately carries two identically-named
+  runs (push + pull_request) which the evaluator resolves by unanimity.
+  Two adjacent discoveries from the same pilot: (1) the dispatch
   window has a FOURTH env-keyed admission gate this file's window recipes omitted —
   `ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES`, which `unit.required_capability` must be a member of
   (blocked reason `capability_not_enabled`; widened standing to `["repo.edit","github.pr.create"]`,
