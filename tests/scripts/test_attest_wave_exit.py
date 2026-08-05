@@ -307,6 +307,31 @@ def test_a_command_that_exits_non_zero_is_a_fail():
     assert outcome.result == "fail"
 
 
+def test_a_failing_check_reports_what_the_probe_measured_not_only_its_exit_code():
+    """`proves` is written only on a pass, so a miss has to carry its own summary line.
+
+    Without this the one thing a reader most needs -- what was measured and found short -- lives
+    only inside the retained record, and the printed report says `exit 1`.
+    """
+    outcome = run_command_check(
+        {
+            "kind": "command",
+            "argv": [
+                sys.executable,
+                "-c",
+                "print('FAIL 0/2 releases answer every hop')\nraise SystemExit(1)",
+            ],
+            "proves": "this sentence is never written, because the check did not pass",
+        },
+        cwd=Path.cwd(),
+    )
+
+    assert outcome.result == "fail"
+    assert "0/2 releases answer every hop" in outcome.detail
+    assert "exit 1" in outcome.detail
+    assert "never written" not in outcome.detail
+
+
 def test_a_command_may_declare_the_exit_codes_that_mean_unmeasurable():
     outcome = run_command_check(
         {
@@ -576,6 +601,44 @@ def test_the_shipped_manifest_pins_the_clause_count_of_every_bar():
     counts = {bar.wave: len(bar.clauses) for bar in load_manifest(DEFAULT_MANIFEST).bars}
 
     assert counts == {1: 5, 2: 4, 3: 4}
+
+
+def test_a_declared_clause_count_that_disagrees_with_the_clauses_is_refused():
+    """`clause_count` earns its keep only if a wrong one is loud.
+
+    Every other route to a vanished clause is caught by the separator accounting, which is why
+    this declaration went untested: it is the backstop for a bar the accounting cannot see
+    through. A count that is merely decorative would restate the emergent number rather than
+    protect it.
+    """
+    manifest = _manifest(WAVE3_CLAUSES)
+    manifest["bar"][0]["clause_count"] = 3
+
+    with pytest.raises(ValueError, match="clause_count"):
+        load_manifest(manifest)
+
+
+def test_a_clauses_note_reaches_the_retained_record_whatever_the_result(tmp_path):
+    """Where a clause-level rationale must live, pinned -- because `proves` cannot hold one.
+
+    `proves` is per-CHECK and is written into the record only when that check PASSES: a check
+    that reports `unavailable` or `fail` carries the probe's own reason instead. So a rationale
+    for a clause that is deliberately unmeasured has to be a clause `note`, which is recorded
+    unconditionally. WS-P2.40 put the scope annotations for clauses 1.3 and 1.5 there for
+    exactly this reason.
+    """
+    record = tmp_path / "run.json"
+    main(
+        ["--manifest", str(DEFAULT_MANIFEST), "--wave", "1", "--pin-only", "--record", str(record)]
+    )
+    clauses = {
+        clause["number"]: clause
+        for clause in json.loads(record.read_text(encoding="utf-8"))["bars"][0]["clauses"]
+    }
+
+    assert clauses[3]["result"] == "unavailable"
+    assert "SCOPE PROPERTY OF THIS TOOL" in clauses[3]["note"]
+    assert "SCOPE PROPERTY OF THIS TOOL" in clauses[5]["note"]
 
 
 def test_a_clause_appended_to_the_plan_beneath_the_bar_breaks_the_pin():
