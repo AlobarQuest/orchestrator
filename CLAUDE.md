@@ -1785,6 +1785,49 @@ style of that module.
   three vocabulary mismatches documented above, in the one place where the vocabulary is a
   *historical* record rather than a live contract.
 
+- **A derived constant cannot pin the judgment that lives inside it.** WS-P2.40 shipped 86 tests
+  over an eight-hop traceability chain where every fixture built itself by iterating `ALL_HOPS` —
+  so the fixtures shrank with the list, and review *measured* that dropping `conditions`, or
+  `intent`, or `commit`, left all 86 green. The hop list WAS the judgment the workstream existed
+  to make, and it was pinned by nothing. Where a value is both the judgment and the fixture
+  generator, it needs a **literal** assertion of its members plus a second assertion that the
+  consumer emits exactly them; neither alone catches what the other does. This is WS-P2.39's own
+  lesson recurring inside its successor — a tool built against reasoning-from-a-summary whose
+  central judgment was derived rather than declared.
+
+- **A shape guard placed one level too high fails OPEN while looking like the fix.** Same
+  workstream: a guard added *specifically* to stop an absent key becoming a verdict was attached to
+  the report rather than to the metric under judgment, so a `budget_breach` object that lost its
+  `status` key read as instrumented. Its sibling: `len()` on whatever a hop lookup returned, where
+  `len("sha-abc")` is 7 — a scalar read as a populated hop. **Name the exact value the verdict is
+  computed from and guard THAT, not its container.** Same family as the WS-P2.18 Inc-4
+  withheld-refusal fail-open and WS-P2.34's `KNOWN_FIELDS` mis-keying: a check that is correct
+  about the wrong noun. Note both of these fail OPEN, where all seven defects the author found
+  himself failed closed — which is what adversarial review is for.
+
+- **In `wave-exit-manifest.toml`, a clause rationale goes in `note`, never in `proves`.**
+  `run_command_check` writes `proves` into the retained record **only when the check passes**, so a
+  rationale placed there on a `fail` or `unavailable` clause is dead text by construction — which
+  covers every clause that currently needs one. `_attest_clauses` writes `note` unconditionally.
+  Corollary: **nothing dated or result-specific belongs in either field** — the day the check
+  passes, the record would assert both the pass and a note saying it does not. Dated numbers belong
+  in a build report. (HQ prescribed `proves` in the WS-P2.40 handoff and was wrong.)
+
+- **"Not applicable" is a distinct answer from "not met", and this estate has now rediscovered
+  that in THREE subsystems in one week.** `repo.protection` reported `violation` for private repos
+  on a plan that does not offer the feature, which made a Wave-3 clause look unsatisfiable until
+  project-standards PR #14 taught it `not-applicable`. ADR-0015 asks for the same treatment of
+  `runner.caller` on a repo deliberately declared not-a-factory-target. And now the traceability
+  chain's `conditions` hop: `ReconciliationCondition` records *a divergence between pushed reality
+  and stored lifecycle state*, so requiring it makes the clause satisfiable only by a release that
+  went wrong. **HQ ruling 2026-08-05: a hop that can only be populated by something going wrong is
+  NOT required of a healthy release** — the chain must be able to carry conditions (the query must
+  join them), and their absence on a clean release is the correct answer, not a missing hop. The
+  probe has no per-hop `not_applicable` yet; until it does, `conditions` is a known
+  over-requirement and must not be silently deleted. **Generalise: whenever a check reports a
+  binary verdict over a population, ask whether some members can never satisfy it for reasons that
+  are facts about the world rather than defects.**
+
 - **Copying a derivation pin transfers the MECHANISM, not the PROPERTY — and the difference is
   whether the pinned artifact has one decomposition or many.** WS-P2.39 built an exit manifest
   pinned to the program plan's prose exit bar, copying the three existing pins (the envelope
