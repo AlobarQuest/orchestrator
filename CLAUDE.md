@@ -1971,15 +1971,22 @@ style of that module.
   distinguishes four outcomes (`pass` / `violation` / `not-applicable` / `unknown`, project-standards
   PR #14); `factory-runner` was the one genuinely-unprotected public repo and was protected
   2026-08-03 with **required status check `Quality` + no force-push + no deletion and NO review
-  requirement**. **`enforce_admins` is FALSE, so the owner BYPASSES the required check on a direct
-  push to `main` — measured the same day: a direct push printed
-  `remote: - Required status check "Quality" is expected.` and **landed anyway**. That line is a
-  warning, not a rejection, and HQ initially read it as a refusal. So this protection stops
-  force-pushes and deletions outright, and gates only pushes by principals who are not admins —
-  which on this estate is nobody. Its real value is the force-push/deletion guard plus a visible
-  warning; if the intent is that CI must actually gate `main`, `enforce_admins` has to be true, and
-  that is a separate decision with real friction for a solo owner** — a solo account cannot approve its own PR, so `required_approving_review_count=1`
-  (which the kit suggests) would make `main` unmergeable and strand every Dependabot PR.
+  requirement**. **`enforce_admins` was FALSE until 2026-08-04; Devon then turned it ON for
+  `factory-runner` only (ADR-0015 sibling decision), so CI now genuinely gates that branch.**
+  **THE WARNING LINE IS IDENTICAL IN BOTH STATES — you cannot tell enforced from unenforced by
+  reading it, and HQ misread it once for exactly this reason.** Measured both ways on the same
+  repository: with `enforce_admins: false` a direct push printed
+  `remote: - Required status check "Quality" is expected.` and **landed anyway**; with it true the
+  same line appears followed by `GH006: Protected branch update failed` and
+  `! [remote rejected] main -> main (protected branch hook declined)`, and nothing lands. Read the
+  `remote rejected` line or the exit state, never the "is expected" warning. Note the deadlock this
+  creates: if `Quality` itself breaks, no fix can merge until it passes — the escape is to disable
+  protection, push, re-enable. `infraops-mcp-server` is deliberately left at `enforce_admins:
+  false` (no blast radius), and the six private repos are deliberately unprotected — Devon opted
+  out of that level rather than buying Pro or going public. Never add
+  `required_approving_review_count` — a solo account cannot approve its own PR, so the value `1`
+  (which the kit suggests) would make `main` unmergeable and strand every Dependabot PR. That
+  hazard is now live rather than theoretical on `factory-runner`, since admins no longer bypass.
 
 - **`runner.caller` asks "can the factory send work INTO this repo?", and it is three different
   faults under one name.** It requires `.github/workflows/factory-runner-pilot.yml` calling
