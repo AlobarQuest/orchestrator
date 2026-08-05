@@ -1785,6 +1785,22 @@ style of that module.
   three vocabulary mismatches documented above, in the one place where the vocabulary is a
   *historical* record rather than a live contract.
 
+- **Copying a derivation pin transfers the MECHANISM, not the PROPERTY — and the difference is
+  whether the pinned artifact has one decomposition or many.** WS-P2.39 built an exit manifest
+  pinned to the program plan's prose exit bar, copying the three existing pins (the envelope
+  contract, the brief contract, WS-P2.38's routing policy). All three pin **JSON**, where
+  byte-identity and structural identity coincide: one document, one parse. **Prose has many
+  byte-identical decompositions.** The manifest's clause split was the entire point of the tool,
+  and the first pin protected the bar's *text* while leaving the *decomposition* unguarded —
+  three separate routes let a clause vanish with the bar still hashing identically, a fourth
+  because the pin was line-scoped so a clause appended on the next line was invisible, and nothing
+  asserted the clause COUNT. Found by adversarial review, not by the author, who had just written
+  a tool against reasoning-from-a-summary and then did exactly that inside it. **When copying a
+  pin onto a new artifact type, ask what the pin must make unique — not what the exemplar hashed.**
+  Two fail-opens in the same review are worth remembering as a pair: an all-`not_applicable` run
+  reported success having demonstrated nothing, and a clause could be excused while its checks ran
+  and their failure was discarded.
+
 - **The architecture-guard family has a SEVENTH member: `tests/architecture/test_drill_scripts.py`,
   and it is the one that catches drill dishonesty.**
   `test_a_drill_changes_state_only_through_the_public_api` forbids `INSERT|UPDATE|DELETE|TRUNCATE|
