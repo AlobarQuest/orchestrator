@@ -111,6 +111,7 @@ proves = "the report computes real numbers against production now, not merely th
 [[bar.clause]]
 number = 3
 text = "no unit completes with an unadjudicated AC"
+note = """`unavailable` HERE IS A SCOPE PROPERTY OF THIS TOOL, NOT A GAP IN WAVE 1. Proving the sufficient form over the REAL population needs the required-criterion set per unit, and the evidence pack projects `adjudications` and `evidence` and no criteria list, so the comparison cannot be made from outside the database. The clause's enforcement was closed by WS-P2.3 and its evidence lives in the suite and in the source, which this production-anchored tool deliberately does not read -- so that closure is asserted by the Wave-1 closeout, not by anything here. What production CAN answer is measured (the first check, a necessary condition); what it cannot is declared (the second). Do not read this as an unmet criterion, and do not invent a read surface to close it. Note the second check does NOT start working by itself if a release ever serves the criteria set: it reports `unavailable` in both branches by design, changing only its message, because promoting itself on the mere presence of a `criteri`-ish key would flip this clause green while nothing had ever compared the required set against the adjudicated one. Someone has to implement the comparison and delete that probe."""
 # The sufficient form of this clause is not measurable from outside the database: the evidence
 # pack serves adjudications and no REQUIRED-criteria list, so the comparison cannot be made. The
 # second check reports that rather than hiding it, which makes the clause `unavailable` on
@@ -150,6 +151,7 @@ number = 5
 text = "**every declared lifecycle guard is provably wired to a call path, and no reporting obligation can be silently skipped**"
 annotation_separator_count = 1
 annotation = " — **the mechanism exists (✅ WS-P2.15) and is now closed: ✅ WS-P2.16 binds every PR-producing unit to its PR (deployed 2026-07-23). Remaining Wave-1 exit items: ~~no-unadjudicated-AC completion (WS-P2.3)~~ ✅ 2026-07-24, ~~budget cap (WS-P2.4)~~ ✅ 2026-07-25 — none remain; Wave 1 closed 2026-07-25.**"
+note = """`unavailable` HERE IS A SCOPE PROPERTY OF THIS TOOL, NOT A GAP IN WAVE 1, and it applies to the SECOND CONJUNCT ONLY. The first ("every declared lifecycle guard is provably wired to a call path") is measured live by executing the guard that enforces it. The second ("no reporting obligation can be silently skipped") was closed by WS-P2.15, which deleted `age_out_human_gates` and gave its replacement a plain `int` threshold with no off value -- but that is a property of the SOURCE, and nothing production serves distinguishes an obligation that reported nothing from one that could not report at all. So the conjunct is declared unmeasured rather than inferred from the wiring guard, which answers wiring only. Do not read this as an unmet criterion, and do not close it by widening what the first check claims."""
 [[bar.clause.check]]
 kind = "command"
 basis = "live"
@@ -196,32 +198,40 @@ proves = "the merged half: GAP-4's record that change-manager PR #34 carried the
 [[bar.clause]]
 number = 2
 text = "the traceability query answers the C question-list end-to-end for a real release"
+note = """THE RULING (Devon, 2026-08-05), recorded so a future session inherits a decision rather than re-litigating the phrase. "End-to-end for a real release" means the RELEASE's chain, assembled across its units -- not one unit's chain spanning every hop. Requiring a single chain would require the system to violate its own design: `record_release_artifact` refuses until a unit is COMPLETED, so a release binding necessarily lands on a later unit than the one that opened the pull request, and no unit can ever carry both. The hop list is the plan's own enumeration of the C question-list from exit criterion #6: intent -> unit -> PR -> commit -> artifact -> deployment -> observation, "including the observation tail (reconciliation conditions + observations)". A ruling that makes a clause measurable is not a ruling that it passes; the run's own result below is the authority on whether it does. OPEN QUESTION for Devon, raised by WS-P2.40's adversarial review and deliberately NOT resolved here: `conditions` is the reconciliation-divergence hop, so requiring it non-empty means only a release that went wrong can ever satisfy this clause. Deleting the hop would be the loosening this workstream was told not to do; treating a clean release's `conditions` as inapplicable is a different fix and needs a ruling. It is not load-bearing for the current verdict -- `pr` and `observations` are unanswered too."""
 [[bar.clause.check]]
 kind = "routes_served"
 basis = "live"
 routes = ["/api/v1/traceability"]
 proves = "production serves the query"
-# The required hops are declared HERE, not chosen inside the probe, because which hops make a
-# chain "end-to-end" is a judgment and hiding it in code would be the summarising move.
-# Measured 2026-08-05: no single production chain spans every hop. A PR-producing unit's chain
-# carries `pr` and no release binding; the deploy-verification units that carry the binding never
-# had a PR. So `pr`, `conditions` and `observations` are deliberately NOT required here, which
-# matches what the Wave-2 closeout demonstrated -- and the probe reports the full hop census
-# every run, so the discontinuity is visible rather than assumed away. Whether "end-to-end"
-# should mean one chain spanning all of it is Devon's call, not this file's; see the WS-P2.39
-# build report.
+# The per-unit census is KEPT. It is honest about what one chain resolves, it is what surfaced
+# the discontinuity in the first place, and the release-level check below is additional rather
+# than a replacement. Its required hops are declared HERE, not chosen inside the probe, because
+# which hops make a chain "end-to-end" is a judgment and hiding it in code would be the
+# summarising move. Measured 2026-08-05: no single production chain spans every hop -- a
+# PR-producing unit's chain carries `pr` and no release binding, and the deploy-verification
+# units that carry the binding never had a PR -- so `pr`, `conditions` and `observations` are
+# deliberately not required of ONE chain, and the probe reports the full hop census every run.
 [[bar.clause.check]]
 kind = "command"
 basis = "live"
 argv = ["python3", "scripts/exit_probe.py", "traceability-answers-for-a-real-release", "intent", "unit", "commit", "artifact", "deployment"]
 unavailable_exit_codes = [7]
 proves = "a production-anchored chain resolves intent -> unit -> commit -> artifact -> deployment, and the full hop census is reported rather than passed over"
+# The clause itself, under the ruling above. The revisions are declared here rather than
+# discovered, because which revisions are REAL releases is a judgment: the estate also holds the
+# drill-fixture revision `92b95cd9`, whose composed chain DOES answer all eight hops -- on an
+# artifact digest of `sha256:aaaaaaaaaaaaa`. These two are the genuine production releases, each
+# carrying a release-artifact binding and a deployment observation:
+#   538e4228 — WS-P2.8, image `24d5e2d-wsp28-amd64`, implementation PR #89
+#   705bdc8c — phase5-production-closeout, implementation PR #22
 [[bar.clause.check]]
 kind = "command"
 basis = "live"
-argv = ["python3", "scripts/exit_probe.py", "unmeasured", "no single production chain spans every hop: a PR-producing unit's chain carries `pr` and no release binding, and the deploy-verification units carrying the binding never had a PR. Whether 'end-to-end' requires one chain to span all of it is an open ruling, so this clause is recorded as unmeasured rather than resolved in the passing direction."]
+argv = ["python3", "scripts/exit_probe.py", "release-chain-answers-every-hop", "538e4228-7da2-46d4-9b66-31df7fe93747", "705bdc8c-60e3-4d1c-b7fe-246030e9434f"]
 unavailable_exit_codes = [7]
-proves = "nothing -- it declares that the clause's 'end-to-end' reading is unresolved"
+timeout_seconds = 600
+proves = "at least one declared release's chain, composed across its units, answers every hop of the C question-list; the per-release hop census is recorded either way. It does NOT establish that a declared revision is a genuine production release rather than a fixture -- that is the manifest's declaration above, and the probe checks only that the revision shipped at all."
 
 [[bar.clause]]
 number = 3

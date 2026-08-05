@@ -417,7 +417,13 @@ def run_command_check(spec: dict[str, Any], cwd: Path) -> CheckOutcome:
         return CheckOutcome("unavailable", said or f"exit {completed.returncode}", evidence)
     if completed.returncode == 0:
         return CheckOutcome("pass", spec.get("proves", "exit 0"), evidence)
-    return CheckOutcome("fail", f"exit {completed.returncode}", evidence)
+    # A miss must carry WHAT was measured. `proves` is written only on a pass, and every probe
+    # prints its summary line first, so without this a failing clause reads `exit 1` and the
+    # measurement survives only inside the retained record -- the summarising move, in the one
+    # place this tool cannot afford it. WS-P2.40 shipped the first check that ever fails.
+    summary = next((line for line in completed.stdout.splitlines() if line.strip()), "")
+    detail = f"exit {completed.returncode}" + (f" — {summary}" if summary else "")
+    return CheckOutcome("fail", detail, evidence)
 
 
 def run_retained_evidence_check(spec: dict[str, Any], cwd: Path) -> CheckOutcome:

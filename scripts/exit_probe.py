@@ -130,6 +130,23 @@ def report(ok: bool, summary: str, **evidence) -> int:
     return PASS if ok else FAIL
 
 
+def _slo_metrics(payload: dict) -> dict[str, dict]:
+    """The report's status-bearing metrics, refusing to answer for a response that has none.
+
+    A report carrying no `status`-bearing metric is a SHAPE that changed, not a report that ran
+    and computed nothing -- and the two are the distinction this whole file exists to keep. Every
+    caller here would otherwise read the empty mapping as a miss and report the clause not met on
+    a question it never got to ask.
+    """
+    metrics = {k: v for k, v in payload.items() if isinstance(v, dict) and "status" in v}
+    if not metrics:
+        raise Unavailable(
+            "the SLO report served no status-bearing metric "
+            f"(keys: {sorted(payload)}), so what it computes could not be measured"
+        )
+    return metrics
+
+
 # --------------------------------------------------------------------------------------------
 # Wave 1
 # --------------------------------------------------------------------------------------------
@@ -167,7 +184,7 @@ def drills_are_scripted() -> int:
 def slo_report_runs() -> int:
     """Wave 1 clause 2: the SLO report computes real numbers against production, now."""
     payload = api_get("/api/v1/slo-report")
-    metrics = {k: v for k, v in payload.items() if isinstance(v, dict) and "status" in v}
+    metrics = _slo_metrics(payload)
     computed = sorted(k for k, v in metrics.items() if v["status"] == "computed")
     return report(
         bool(computed),
@@ -193,7 +210,14 @@ def completed_units_carry_adjudications() -> int:
     bare = []
     for row in rows:
         pack = api_get(f"/api/v1/work-units/{row['unit_id']}/evidence-pack")
-        current = [a for a in pack.get("adjudications", []) if a.get("current")]
+        if "adjudications" not in pack:
+            # An absent key must not read as "this unit completed with nothing adjudicated".
+            raise Unavailable(
+                "the evidence pack no longer projects an `adjudications` key "
+                f"(keys: {sorted(pack)}), so a unit carrying none cannot be told from a "
+                "projection that stopped carrying them"
+            )
+        current = [a for a in pack["adjudications"] if a.get("current")]
         if not current or any(not a.get("outcome") for a in current):
             bare.append(
                 {
@@ -216,9 +240,13 @@ def required_criteria_are_readable() -> int:
 
     Proving 'no unit completes with an unadjudicated AC' over the real population needs the
     REQUIRED criterion set per unit. The evidence pack projects `adjudications` and `evidence`
-    and no criteria list, so the comparison cannot be made from outside the database. This probe
-    looks for such a key and reports `unavailable` while none exists, so it starts working by
-    itself if a release ever serves one.
+    and no criteria list, so the comparison cannot be made from outside the database.
+
+    It reports `unavailable` in BOTH branches and can never return a verdict. A key appearing
+    changes only the message -- to one naming itself as the next piece of work -- because a probe
+    that promoted itself on the mere presence of a `criteri`-ish key would flip this clause green
+    while nothing had ever compared the required set against the adjudicated one. Do not describe
+    this as starting to work by itself; someone has to implement the comparison and delete it.
     """
     rows = [row for row in ledger() if row["unit_state"] == "completed"]
     if not rows:
@@ -249,10 +277,27 @@ def budget_breach_is_instrumented() -> int:
     the cap stopped working, so this probe deliberately does not assert a non-zero value.
     """
     payload = api_get("/api/v1/slo-report")
+    # `_slo_metrics` first, so "the report serves metrics and not this one" -- genuinely not
+    # instrumented -- stays distinguishable from "the report is no longer a report", which is
+    # unmeasurable. Reading only `budget_breach` would collapse the two into a miss.
+    metrics = _slo_metrics(payload)
     metric = payload.get("budget_breach")
     if not isinstance(metric, dict):
-        return report(False, "FAIL the SLO report serves no budget_breach metric")
-    ok = metric.get("status") != "not_instrumented"
+        return report(
+            False,
+            "FAIL the SLO report serves no budget_breach metric",
+            served_metrics=sorted(metrics),
+        )
+    if "status" not in metric:
+        # `_slo_metrics` proves SOME metric carries a status; this one is the subject, and
+        # `.get("status") != "not_instrumented"` reads `None` as instrumented -- a PASS for
+        # something never observed. Guarding only the report and not the metric was this
+        # probe's own version of the defect it exists to report.
+        raise Unavailable(
+            f"the budget_breach metric carries no `status` (keys: {sorted(metric)}), so whether "
+            "the counter is instrumented could not be read"
+        )
+    ok = metric["status"] != "not_instrumented"
     return report(
         ok,
         f"{'PASS' if ok else 'FAIL'} budget_breach is {metric.get('status')} "
@@ -292,6 +337,9 @@ def evidence_pack_reached_a_merged_pr(*repos: str) -> int:
     Never `gh search`, which is blind to comments on these repositories and reports 0 whether or
     not a marker is present -- a zero from it is not evidence of absence.
     """
+    if not repos:
+        # A manifest that names no repository is an authoring fact, not the marker being absent.
+        raise Unavailable("no repository was declared; the manifest must name where to count")
     marker = "sds-evidence-pack"
     found: dict[str, int] = {}
     for repo in repos:
@@ -316,7 +364,16 @@ def evidence_pack_reached_a_merged_pr(*repos: str) -> int:
                 f"gh api against {repo} exited {completed.returncode}: "
                 f"{completed.stderr.strip()[:200]}"
             )
-        found[repo] = sum(int(line) for line in completed.stdout.split() if line.isdigit())
+        counts = [int(line) for line in completed.stdout.split() if line.isdigit()]
+        if not counts:
+            # The estate rule that a search zero is not evidence of absence, made mechanical: a
+            # zero must come from a page that reported zero, never from output nothing parsed.
+            raise Unavailable(
+                f"gh reported no count for {repo} (exit 0, stdout "
+                f"{completed.stdout.strip()[:120]!r}), so the marker count is unread rather "
+                "than zero"
+            )
+        found[repo] = sum(counts)
     total = sum(found.values())
     return report(
         total > 0,
@@ -339,6 +396,48 @@ ALL_HOPS = (
 )
 
 
+def _chains(path: str) -> list[dict]:
+    """The chains a traceability answer carries. An absent key is not an absent chain."""
+    payload = api_get(path)
+    if "chains" not in payload:
+        raise Unavailable(
+            f"the traceability answer carries no `chains` key (keys: {sorted(payload)}), so "
+            "'no chain resolves this' cannot be told from 'the response was reshaped'"
+        )
+    return payload["chains"] or []
+
+
+def _hops(chain: dict) -> dict[str, int]:
+    """How many entries each hop of one chain carries; a singular hop counts 1 or 0.
+
+    Read defensively for the same reason `_chains` is, one level down, and it fails BOTH ways.
+    A renamed key counts 0 and reports the clause NOT MET on a fact about the response. A hop
+    whose value stopped being a container is counted by `len`, and `len("sha-abc")` is 7 -- so a
+    scalar reads as a populated hop and the probe PASSES on something it never observed. Both
+    are refused rather than counted.
+    """
+    counts: dict[str, int] = {}
+    for hop in ALL_HOPS:
+        if hop not in chain:
+            raise Unavailable(
+                f"a traceability chain carries no `{hop}` hop (hops: {sorted(chain)}), so an "
+                "unanswered hop cannot be told from a renamed one"
+            )
+        value = chain[hop]
+        if value is None:
+            counts[hop] = 0
+        elif isinstance(value, dict):
+            counts[hop] = 1
+        elif isinstance(value, list):
+            counts[hop] = len(value)
+        else:
+            raise Unavailable(
+                f"the `{hop}` hop is a {type(value).__name__} rather than an object or a list, "
+                "and counting its length would read a scalar as a populated hop"
+            )
+    return counts
+
+
 def traceability_answers_for_a_real_release(*required: str) -> int:
     """Wave 2 clause 2: a production-anchored chain resolves the hops the caller requires.
 
@@ -353,17 +452,13 @@ def traceability_answers_for_a_real_release(*required: str) -> int:
     unknown = [hop for hop in required if hop not in ALL_HOPS]
     if unknown:
         raise Unavailable(f"not hops of this chain: {unknown}")
-    payload = api_get("/api/v1/traceability?environment=production")
-    chains = payload.get("chains") or []
+    chains = _chains("/api/v1/traceability?environment=production")
     if not chains:
         return report(False, "FAIL no production-anchored chain exists")
     census = []
     complete = []
     for chain in chains:
-        hops = {
-            hop: (1 if isinstance(chain.get(hop), dict) else len(chain.get(hop) or []))
-            for hop in ALL_HOPS
-        }
+        hops = _hops(chain)
         census.append({"unit_key": chain["unit"]["unit_key"], "hops": hops})
         if all(hops[hop] for hop in required):
             complete.append(chain["unit"]["unit_key"])
@@ -380,10 +475,86 @@ def traceability_answers_for_a_real_release(*required: str) -> int:
     )
 
 
+def release_chain_answers_every_hop(*revisions: str) -> int:
+    """Wave 2 clause 2 under the 2026-08-05 ruling on what "end-to-end" means.
+
+    THE RULING. "End-to-end for a real release" is the RELEASE's chain assembled across its
+    units, not one unit's chain spanning every hop. Requiring a single chain would require the
+    system to violate its own design: `record_release_artifact` refuses until a unit is
+    COMPLETED, so a release binding necessarily lands on a later unit than the one that opened
+    the pull request, and no unit can ever carry both.
+
+    WHICH REVISIONS ARE REAL RELEASES IS THE MANIFEST'S DECLARATION, NOT THIS PROBE'S FINDING,
+    and the guard below is narrower than that word: it refuses a revision that never shipped (no
+    release-artifact binding), and nothing here can tell a production release from a fixture.
+    That is exactly why the revisions are an argument. The estate holds a drill-fixture revision
+    whose composed chain does answer every hop -- on an artifact digest of `sha256:aaaa…` -- and
+    it would clear this guard comfortably. What keeps it out is the manifest not naming it, in
+    the open, next to the reason.
+
+    Two surfaces, each answering the half it owns. The release-level evidence pack establishes
+    that the revision shipped at all; the traceability query anchored on the same revision
+    supplies the hops, because the clause is about what THAT query answers. The hop list is the
+    whole chain (`ALL_HOPS`), which is the plan's own enumeration of the C question-list.
+    """
+    if not revisions:
+        raise Unavailable("no revision was declared; the manifest must name the real release(s)")
+    census = []
+    complete = []
+    for revision in revisions:
+        pack = api_get(f"/api/v1/revisions/{revision}/evidence-pack")
+        for key in ("units", "release_artifacts", "deployments"):
+            if key not in pack:
+                raise Unavailable(
+                    f"the release evidence pack carries no `{key}` key (keys: {sorted(pack)}), "
+                    "so a revision that shipped could not be told from one that did not"
+                )
+        if not pack["release_artifacts"]:
+            raise Unavailable(
+                f"revision {revision} carries no release-artifact binding, so nothing was "
+                "released and this measurement has no subject"
+            )
+        chains = _chains(f"/api/v1/traceability?revision_id={revision}")
+        union = {hop: sum(_hops(chain)[hop] for chain in chains) for hop in ALL_HOPS}
+        missing = sorted(hop for hop, count in union.items() if not count)
+        census.append(
+            {
+                "revision_id": revision,
+                # `chains` is what the hops were composed from; `pack_units` is what the release
+                # pack holds. They are two different counts and must not share a name.
+                "chains": len(chains),
+                "pack_units": len(pack["units"]),
+                "release_artifacts": len(pack["release_artifacts"]),
+                "deployments": len(pack["deployments"]),
+                "composed_hops": union,
+                "unanswered_hops": missing,
+            }
+        )
+        if not missing:
+            complete.append(revision)
+    return report(
+        bool(complete),
+        f"{'PASS' if complete else 'FAIL'} {len(complete)}/{len(revisions)} declared real "
+        f"release(s) answer {' -> '.join(ALL_HOPS)} composed across their units",
+        required_hops=list(ALL_HOPS),
+        complete_releases=complete,
+        release_census=census,
+    )
+
+
 def tracker_is_a_projection() -> int:
     """Wave 2 clause 3: canonical-side bindings exist and the import ban is enforced."""
     bindings = api_get("/api/v1/tracker-bindings")
-    rows = bindings if isinstance(bindings, list) else bindings.get("bindings") or []
+    if isinstance(bindings, list):
+        rows = bindings
+    elif isinstance(bindings, dict) and "bindings" in bindings:
+        rows = bindings["bindings"] or []
+    else:
+        # A dict answer with no `bindings` key is a reshaped surface, not an empty estate.
+        raise Unavailable(
+            f"the tracker-bindings answer is a {type(bindings).__name__} carrying no `bindings` "
+            "key, so an empty projection cannot be told from a changed response"
+        )
     target = "tests/tracker_projection_adapter"
     pytest = REPO_ROOT / ".venv/bin/pytest"
     if not pytest.exists():
@@ -420,10 +591,17 @@ def every_pr_producing_unit_is_bound() -> int:
         capabilities = pack["authority"]["envelope"].get("capabilities") or {}
         if capabilities.get("github.pr.create") == "allowed":
             capable.append(row["unit_key"])
+    if not capable:
+        # Nothing has passed the guard this check reads THROUGH, so there is nothing to observe
+        # -- which is not the same as a guard that did not hold, and must not be reported as one.
+        raise Unavailable(
+            "no completed unit carries `github.pr.create`, so no unit has passed the submit "
+            "guard this check reads through and the binding rule is unexercised"
+        )
     return report(
-        bool(capable),
-        f"{'PASS' if capable else 'FAIL'} {route} is served and {len(capable)} completed "
-        "PR-capable unit(s) passed the submit guard that requires a binding",
+        True,
+        f"PASS {route} is served and {len(capable)} completed PR-capable unit(s) passed the "
+        "submit guard that requires a binding",
         pr_capable_completed_units=len(capable),
     )
 
@@ -460,8 +638,14 @@ def repositories_onboarded(minimum: str, *repos: str) -> int:
         if payload is None:
             results[repo] = f"unparseable output (exit {completed.returncode})"
             continue
+        if "admission_passed" not in payload:
+            # The kit renaming this key would read as every repository failing admission -- a
+            # verdict about the repositories taken from a fact about the tool. Routed into the
+            # unmeasured set so a shortfall alongside it stays `unavailable` rather than `fail`.
+            results[repo] = "the kit's JSON carries no admission_passed key"
+            continue
         results[repo] = {
-            "admission_passed": payload.get("admission_passed"),
+            "admission_passed": payload["admission_passed"],
             "not_passing": sorted(
                 check["id"]
                 for check in payload.get("checks", [])
@@ -657,34 +841,40 @@ def workflows_were_consecutive(first: str, second: str) -> int:
     )
 
 
+#: Every probe the manifest may name, by the name it names. Module-level rather than built inside
+#: `main` so a test can assert the manifest invokes nothing that is not here: a manifest naming a
+#: probe that does not exist reports `unavailable` for ever, and silently.
+PROBES: dict[str, Callable[..., int]] = {
+    "drills-are-scripted": drills_are_scripted,
+    "slo-report-runs": slo_report_runs,
+    "completed-units-carry-adjudications": completed_units_carry_adjudications,
+    "required-criteria-are-readable": required_criteria_are_readable,
+    "budget-breach-is-instrumented": budget_breach_is_instrumented,
+    "lifecycle-guards-are-wired": lifecycle_guards_are_wired,
+    "evidence-pack-reached-a-merged-pr": evidence_pack_reached_a_merged_pr,
+    "traceability-answers-for-a-real-release": traceability_answers_for_a_real_release,
+    "release-chain-answers-every-hop": release_chain_answers_every_hop,
+    "tracker-is-a-projection": tracker_is_a_projection,
+    "unmeasured": unmeasured,
+    "every-pr-producing-unit-is-bound": every_pr_producing_unit_is_bound,
+    "repositories-onboarded": repositories_onboarded,
+    "routing-policy-is-the-only-source": routing_policy_is_the_only_source,
+    "profiles-are-proven": profiles_are_proven,
+    "workflows-were-consecutive": workflows_were_consecutive,
+}
+
+
 def main(argv: list[str]) -> int:
-    probes: dict[str, Callable[..., int]] = {
-        "drills-are-scripted": drills_are_scripted,
-        "slo-report-runs": slo_report_runs,
-        "completed-units-carry-adjudications": completed_units_carry_adjudications,
-        "required-criteria-are-readable": required_criteria_are_readable,
-        "budget-breach-is-instrumented": budget_breach_is_instrumented,
-        "lifecycle-guards-are-wired": lifecycle_guards_are_wired,
-        "evidence-pack-reached-a-merged-pr": evidence_pack_reached_a_merged_pr,
-        "traceability-answers-for-a-real-release": traceability_answers_for_a_real_release,
-        "tracker-is-a-projection": tracker_is_a_projection,
-        "unmeasured": unmeasured,
-        "every-pr-producing-unit-is-bound": every_pr_producing_unit_is_bound,
-        "repositories-onboarded": repositories_onboarded,
-        "routing-policy-is-the-only-source": routing_policy_is_the_only_source,
-        "profiles-are-proven": profiles_are_proven,
-        "workflows-were-consecutive": workflows_were_consecutive,
-    }
     if not argv or argv[0] in {"--list", "-l"}:
-        for name in sorted(probes):
+        for name in sorted(PROBES):
             print(name)
         return PASS
     name, *arguments = argv
-    if name not in probes:
+    if name not in PROBES:
         print(f"unknown probe {name!r}; --list to see them all", file=sys.stderr)
         return UNAVAILABLE
     try:
-        return probes[name](*arguments)
+        return PROBES[name](*arguments)
     except Unavailable as reason:
         print(f"UNAVAILABLE {reason}", file=sys.stderr)
         return UNAVAILABLE
