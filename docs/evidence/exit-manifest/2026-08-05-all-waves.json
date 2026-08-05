@@ -1,0 +1,572 @@
+{
+  "measured_at": "2026-08-05T16:36:50.635918+00:00",
+  "verdict": "inconclusive",
+  "exit_code": 2,
+  "manifest": "/Users/devon/Projects/orchestrator/.worktrees/wsp239/docs/operations/wave-exit-manifest.toml",
+  "manifest_sha256": "b58174eabd8f675cdf5b0afb97488fc346384d5235b6c9c0a2c7851feadb54ea",
+  "authoritative_source": "/Users/devon/docs/software-delivery-system/2026-07-09-program-phase2-post-mvp-plan.md",
+  "authoritative_source_readable": true,
+  "openapi_url": "https://sds.alobar.net/openapi.json",
+  "pin_only": false,
+  "bars": [
+    {
+      "wave": 1,
+      "anchor": "**Wave 1 exit:**",
+      "body": "crash/retry/reconciliation drills pass and are scripted **(✅ 5 drills)**; the SLO report runs **(✅ WS-P2.2, deployed 2026-07-24)**; no unit completes with an unadjudicated AC; a budget-capped unit demonstrably halts at its cap; **every declared lifecycle guard is provably wired to a call path, and no reporting obligation can be silently skipped** — **the mechanism exists (✅ WS-P2.15) and is now closed: ✅ WS-P2.16 binds every PR-producing unit to its PR (deployed 2026-07-23). Remaining Wave-1 exit items: ~~no-unadjudicated-AC completion (WS-P2.3)~~ ✅ 2026-07-24, ~~budget cap (WS-P2.4)~~ ✅ 2026-07-25 — none remain; Wave 1 closed 2026-07-25.**",
+      "body_sha256": "23db51c6be63d2d8ba9d4dacfc0d4285dc8380e825c847296641a013f5bfa6cd",
+      "closeout": "~/docs/software-delivery-system/2026-07-25-wave1-close-wave2-start-closeout-evidence.md",
+      "pin": "verified",
+      "pin_reason": null,
+      "clauses": [
+        {
+          "number": 1,
+          "text": "crash/retry/reconciliation drills pass and are scripted",
+          "annotation": " **(✅ 5 drills)**",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "five drill scripts exist and run-drills.sh's own glob reaches every one",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "drills-are-scripted"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 5 drill scripts, 5 reached by run-drills.sh's own pattern ['scripts/drill-[0-9]*.sh']\n{\n  \"drills\": [\n    \"drill-1-dispatch-crash.sh\",\n    \"drill-2-evidence-recovery.sh\",\n    \"drill-3-external-pr-conflict.sh\",\n    \"drill-4-deploy-split-brain.sh\",\n    \"drill-5-stalled-approval.sh\"\n  ],\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"reached\": [\n    \"drill-1-dispatch-crash.sh\",\n    \"drill-2-evidence-recovery.sh\",\n    \"drill-3-external-pr-conflict.sh\",\n    \"drill-4-deploy-split-brain.sh\",\n    \"drill-5-stalled-approval.sh\"\n  ],\n  \"unreached\": []\n}\n",
+                "stderr": "",
+                "duration_seconds": 0.21
+              }
+            },
+            {
+              "kind": "retained_evidence",
+              "basis": "retained",
+              "result": "pass",
+              "detail": "the 5/5 production drill run of 2026-07-27 is retained and unaltered",
+              "evidence": {
+                "path": "/Users/devon/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md",
+                "sha256": "dc733b091d80df26ed26af9936afe5fe924933ebb52d119f321c5d0b458c91ff",
+                "declared_sha256": "dc733b091d80df26ed26af9936afe5fe924933ebb52d119f321c5d0b458c91ff"
+              }
+            }
+          ]
+        },
+        {
+          "number": 2,
+          "text": "the SLO report runs",
+          "annotation": " **(✅ WS-P2.2, deployed 2026-07-24)**",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "routes_served",
+              "basis": "live",
+              "result": "pass",
+              "detail": "production serves the report route",
+              "evidence": {
+                "openapi_url": "https://sds.alobar.net/openapi.json",
+                "routes": [
+                  "/api/v1/slo-report"
+                ],
+                "missing": []
+              }
+            },
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "the report computes real numbers against production now, not merely that it is served",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "slo-report-runs"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS SLO report served 9/10 metrics computed\n{\n  \"computed\": [\n    \"budget_breach\",\n    \"claim_expiry_rate\",\n    \"cost_per_unit\",\n    \"evidence_completeness\",\n    \"improvisation\",\n    \"intake_to_first_work\",\n    \"queue_age\",\n    \"token_consumption\",\n    \"waiver_frequency\"\n  ],\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"statuses\": {\n    \"budget_breach\": \"computed\",\n    \"claim_expiry_rate\": \"computed\",\n    \"cost_per_unit\": \"computed\",\n    \"evidence_completeness\": \"computed\",\n    \"improvisation\": \"computed\",\n    \"intake_to_first_work\": \"computed\",\n    \"queue_age\": \"computed\",\n    \"revert_rate\": \"partial\",\n    \"token_consumption\": \"computed\",\n    \"waiver_frequency\": \"computed\"\n  },\n  \"window\": [\n    \"2026-07-29T16:33:22.031738Z\",\n    \"2026-08-05T16:33:22.031738Z\"\n  ]\n}\n",
+                "stderr": "",
+                "duration_seconds": 0.999
+              }
+            }
+          ]
+        },
+        {
+          "number": 3,
+          "text": "no unit completes with an unadjudicated AC",
+          "annotation": "",
+          "result": "unavailable",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "a necessary condition: every completed unit carries a current adjudication with an outcome",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "completed-units-carry-adjudications"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 35/35 completed units carry at least one current adjudication with an outcome\n{\n  \"completed_units\": 35,\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"without_adjudications\": []\n}\n",
+                "stderr": "",
+                "duration_seconds": 6.23
+              }
+            },
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "unavailable",
+              "detail": "the required-criteria set is served by no production read surface (evidence-pack keys: ['adjudications', 'approvals', 'authority', 'claims', 'dependencies', 'event_publications', 'events', 'evidence', 'provenance', 'work_unit']), so completeness cannot be measured over the real population -- only the guard that enforces it can be exercised, in the suite",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "required-criteria-are-readable"
+                ],
+                "exit_code": 7,
+                "stdout": "",
+                "stderr": "UNAVAILABLE the required-criteria set is served by no production read surface (evidence-pack keys: ['adjudications', 'approvals', 'authority', 'claims', 'dependencies', 'event_publications', 'events', 'evidence', 'provenance', 'work_unit']), so completeness cannot be measured over the real population -- only the guard that enforces it can be exercised, in the suite\n",
+                "duration_seconds": 3.759
+              }
+            }
+          ]
+        },
+        {
+          "number": 4,
+          "text": "a budget-capped unit demonstrably halts at its cap",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "the breach counter is a real metric; deliberately not that a breach occurred recently, since that number is windowed and a zero would mean quiet, not broken",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "budget-breach-is-instrumented"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS budget_breach is computed (value 2.0 in window)\n{\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"metric\": {\n    \"basis\": \"2 unit(s) exceeded their declared llm-call ceiling in the window\",\n    \"status\": \"computed\",\n    \"value\": 2.0\n  }\n}\n",
+                "stderr": "",
+                "duration_seconds": 0.875
+              }
+            },
+            {
+              "kind": "retained_evidence",
+              "basis": "retained",
+              "result": "pass",
+              "detail": "the WS-P2.4 Increment 2 demonstration of a unit halting at its cap is retained and unaltered",
+              "evidence": {
+                "path": "/Users/devon/docs/software-delivery-system/2026-07-25-wave1-close-wave2-start-closeout-evidence.md",
+                "sha256": "99cf494b79ceff7953353165c0843f6e80b93efb0d02d28253b8051eb864723c",
+                "declared_sha256": "99cf494b79ceff7953353165c0843f6e80b93efb0d02d28253b8051eb864723c"
+              }
+            }
+          ]
+        },
+        {
+          "number": 5,
+          "text": "**every declared lifecycle guard is provably wired to a call path, and no reporting obligation can be silently skipped**",
+          "annotation": " — **the mechanism exists (✅ WS-P2.15) and is now closed: ✅ WS-P2.16 binds every PR-producing unit to its PR (deployed 2026-07-23). Remaining Wave-1 exit items: ~~no-unadjudicated-AC completion (WS-P2.3)~~ ✅ 2026-07-24, ~~budget cap (WS-P2.4)~~ ✅ 2026-07-25 — none remain; Wave 1 closed 2026-07-25.**",
+          "result": "unavailable",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "the FIRST conjunct only: the reachability guard this clause names is executed, not merely cited",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "lifecycle-guards-are-wired"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS tests/architecture/test_unreachable_guards.py: 8 passed in 4.04s\n{\n  \"exit_code\": 0,\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"summary_line\": \"8 passed in 4.04s\"\n}\n",
+                "stderr": "",
+                "duration_seconds": 9.144
+              }
+            },
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "unavailable",
+              "detail": "the clause's second conjunct -- that no reporting obligation can be silently skipped -- is not demonstrated by the reachability guard, which answers wiring only. WS-P2.15 closed it by making a nullable threshold a plain int with no off value; nothing here re-establishes that, so the clause is not fully measured.",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "unmeasured",
+                  "the clause's second conjunct -- that no reporting obligation can be silently skipped -- is not demonstrated by the reachability guard, which answers wiring only. WS-P2.15 closed it by making a nullable threshold a plain int with no off value; nothing here re-establishes that, so the clause is not fully measured."
+                ],
+                "exit_code": 7,
+                "stdout": "",
+                "stderr": "UNAVAILABLE the clause's second conjunct -- that no reporting obligation can be silently skipped -- is not demonstrated by the reachability guard, which answers wiring only. WS-P2.15 closed it by making a nullable threshold a plain int with no off value; nothing here re-establishes that, so the clause is not fully measured.\n",
+                "duration_seconds": 0.257
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "anchor": "**Wave 2 exit:**",
+      "body": "a merged PR carries its Evidence Pack; the traceability query answers the C question-list end-to-end for a real release; the pilot queue is orchestrator-canonical with the tracker as pure projection (Inc 1 established this model + closed the D8 interim documentarily; Inc 2's inbound path completes the two-way discipline). **Precondition (✅ MET 2026-07-23): WS-P2.16 has landed and is deployed, so every PR-producing unit is bound to its PR and the chain has no silent hole at its first joint.**",
+      "body_sha256": "e16d4a2dd3db7db6f936777cee8546ba13b844a50a5a8403a728f3bfd8821a8a",
+      "closeout": "~/docs/software-delivery-system/2026-07-28-wave2-closeout-and-wsp28-deploy-evidence.md",
+      "pin": "verified",
+      "pin_reason": null,
+      "clauses": [
+        {
+          "number": 1,
+          "text": "a merged PR carries its Evidence Pack",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "at least one Evidence Pack marker comment exists in the target repositories, counted by REST enumeration (never `gh search`, which is blind to comments here and reports zero either way). Merged-ness is NOT established by this check -- comment enumeration cannot see it.",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "evidence-pack-reached-a-merged-pr",
+                  "AlobarQuest/change-manager",
+                  "AlobarQuest/intent-packages",
+                  "AlobarQuest/orchestrator",
+                  "AlobarQuest/brain"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 9 'sds-evidence-pack' marker comment(s) across 4 repositories\n{\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"method\": \"REST comment enumeration\",\n  \"per_repository\": {\n    \"AlobarQuest/brain\": 0,\n    \"AlobarQuest/change-manager\": 4,\n    \"AlobarQuest/intent-packages\": 3,\n    \"AlobarQuest/orchestrator\": 2\n  }\n}\n",
+                "stderr": "",
+                "duration_seconds": 4.0
+              }
+            },
+            {
+              "kind": "retained_evidence",
+              "basis": "retained",
+              "result": "pass",
+              "detail": "the merged half: GAP-4's record that change-manager PR #34 carried the marker and was merged (3d47088) is retained and unaltered",
+              "evidence": {
+                "path": "/Users/devon/docs/software-delivery-system/2026-07-29-gap4-closeout-evidence.md",
+                "sha256": "ee73bc0980e5cf7f5ae550a60d2483a88636a3cef48c12c72952c7ba31b951a5",
+                "declared_sha256": "ee73bc0980e5cf7f5ae550a60d2483a88636a3cef48c12c72952c7ba31b951a5"
+              }
+            }
+          ]
+        },
+        {
+          "number": 2,
+          "text": "the traceability query answers the C question-list end-to-end for a real release",
+          "annotation": "",
+          "result": "unavailable",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "routes_served",
+              "basis": "live",
+              "result": "pass",
+              "detail": "production serves the query",
+              "evidence": {
+                "openapi_url": "https://sds.alobar.net/openapi.json",
+                "routes": [
+                  "/api/v1/traceability"
+                ],
+                "missing": []
+              }
+            },
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "a production-anchored chain resolves intent -> unit -> commit -> artifact -> deployment, and the full hop census is reported rather than passed over",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "traceability-answers-for-a-real-release",
+                  "intent",
+                  "unit",
+                  "commit",
+                  "artifact",
+                  "deployment"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 2/2 production chains resolve intent -> unit -> commit -> artifact -> deployment; hops empty on every chain: ['conditions', 'observations', 'pr']\n{\n  \"complete_chains\": [\n    \"wsp28-production-deploy-verification\",\n    \"phase5-production-closeout\"\n  ],\n  \"empty_on_every_chain\": [\n    \"conditions\",\n    \"observations\",\n    \"pr\"\n  ],\n  \"hop_census\": [\n    {\n      \"hops\": {\n        \"artifact\": 1,\n        \"commit\": 1,\n        \"conditions\": 0,\n        \"deployment\": 1,\n        \"intent\": 1,\n        \"observations\": 0,\n        \"pr\": 0,\n        \"unit\": 1\n      },\n      \"unit_key\": \"wsp28-production-deploy-verification\"\n    },\n    {\n      \"hops\": {\n        \"artifact\": 1,\n        \"commit\": 1,\n        \"conditions\": 0,\n        \"deployment\": 1,\n        \"intent\": 1,\n        \"observations\": 0,\n        \"pr\": 0,\n        \"unit\": 1\n      },\n      \"unit_key\": \"phase5-production-closeout\"\n    }\n  ],\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"required_hops\": [\n    \"intent\",\n    \"unit\",\n    \"commit\",\n    \"artifact\",\n    \"deployment\"\n  ]\n}\n",
+                "stderr": "",
+                "duration_seconds": 0.644
+              }
+            },
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "unavailable",
+              "detail": "no single production chain spans every hop: a PR-producing unit's chain carries `pr` and no release binding, and the deploy-verification units carrying the binding never had a PR. Whether 'end-to-end' requires one chain to span all of it is an open ruling, so this clause is recorded as unmeasured rather than resolved in the passing direction.",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "unmeasured",
+                  "no single production chain spans every hop: a PR-producing unit's chain carries `pr` and no release binding, and the deploy-verification units carrying the binding never had a PR. Whether 'end-to-end' requires one chain to span all of it is an open ruling, so this clause is recorded as unmeasured rather than resolved in the passing direction."
+                ],
+                "exit_code": 7,
+                "stdout": "",
+                "stderr": "UNAVAILABLE no single production chain spans every hop: a PR-producing unit's chain carries `pr` and no release binding, and the deploy-verification units carrying the binding never had a PR. Whether 'end-to-end' requires one chain to span all of it is an open ruling, so this clause is recorded as unmeasured rather than resolved in the passing direction.\n",
+                "duration_seconds": 0.361
+              }
+            }
+          ]
+        },
+        {
+          "number": 3,
+          "text": "the pilot queue is orchestrator-canonical with the tracker as pure projection",
+          "annotation": " (Inc 1 established this model + closed the D8 interim documentarily; Inc 2's inbound path completes the two-way discipline).",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "routes_served",
+              "basis": "live",
+              "result": "pass",
+              "detail": "the canonical-side projection surfaces are served",
+              "evidence": {
+                "openapi_url": "https://sds.alobar.net/openapi.json",
+                "routes": [
+                  "/api/v1/tracker-bindings",
+                  "/api/v1/work-units/{unit_id}/tracker-binding",
+                  "/api/v1/reconciliation/tracker-detect"
+                ],
+                "missing": []
+              }
+            },
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "two necessary conditions: canonical-side bindings exist, and the adapter's isolation suite passes so it imports nothing from the orchestrator. Neither establishes write-direction, so 'orchestrator-canonical' is evidenced, not proven.",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "tracker-is-a-projection"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 4 canonical tracker binding(s); adapter isolation suite exit 0\n{\n  \"bindings\": 4,\n  \"isolation_exit_code\": 0,\n  \"measured_against\": \"https://sds.alobar.net\"\n}\n",
+                "stderr": "",
+                "duration_seconds": 8.329
+              }
+            }
+          ]
+        },
+        {
+          "number": 4,
+          "text": "**Precondition (✅ MET 2026-07-23): WS-P2.16 has landed and is deployed, so every PR-producing unit is bound to its PR and the chain has no silent hole at its first joint.**",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "Counted as a clause because the plan states it inside the exit paragraph and the programme's own 'four of four' needs four members. Treating it as decoration would be the summarising move this file exists to prevent.",
+          "checks": [
+            {
+              "kind": "routes_served",
+              "basis": "live",
+              "result": "pass",
+              "detail": "the binding route is deployed -- the WS-P2.1 failure was a route that existed in main and not in production",
+              "evidence": {
+                "openapi_url": "https://sds.alobar.net/openapi.json",
+                "routes": [
+                  "/api/v1/work-units/{unit_id}/pr-binding"
+                ],
+                "missing": []
+              }
+            },
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "a NECESSARY condition for the precondition's head, that WS-P2.16 has landed and is deployed: the route is served and PR-capable units have completed through the submit guard. It does NOT establish the trailing 'every PR-producing unit is bound' over the whole population -- the binding table has no GET, and most completed units predate the guard's 2026-07-23 deploy.",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "every-pr-producing-unit-is-bound"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS /api/v1/work-units/{unit_id}/pr-binding is served and 27 completed PR-capable unit(s) passed the submit guard that requires a binding\n{\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"pr_capable_completed_units\": 27\n}\n",
+                "stderr": "",
+                "duration_seconds": 5.917
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wave": 3,
+      "anchor": "**Wave 3 exit:**",
+      "body": "≥5 repositories onboarded through the kit; three software profiles + one non-software profile proven; the routing policy file is the only place model selection lives; two consecutive real workflows complete without improvisation (the C exit bar).",
+      "body_sha256": "9a4e78498fef50e1da345378c7c4c11603db6f441288cb3739e0ec1ee4293f25",
+      "closeout": "~/docs/software-delivery-system/2026-08-04-wave3-closeout.md",
+      "pin": "verified",
+      "pin_reason": null,
+      "clauses": [
+        {
+          "number": 1,
+          "text": "≥5 repositories onboarded through the kit",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "the kit itself is run across all eight candidates and the admission-clean count is read from its JSON",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "repositories-onboarded",
+                  "5",
+                  "brain",
+                  "change-manager",
+                  "orchestrator",
+                  "infraops-mcp-server",
+                  "intent-packages",
+                  "security-standards",
+                  "factory-runner",
+                  "project-standards"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 6 of 8 repositories are admission-clean (bar: >=5)\n{\n  \"admission_passed\": [\n    \"brain\",\n    \"change-manager\",\n    \"infraops-mcp-server\",\n    \"intent-packages\",\n    \"orchestrator\",\n    \"security-standards\"\n  ],\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"per_repository\": {\n    \"brain\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    },\n    \"change-manager\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    },\n    \"factory-runner\": {\n      \"admission_passed\": false,\n      \"not_passing\": [\n        \"code.onboarded\",\n        \"profile.declared\",\n        \"runner.caller\"\n      ]\n    },\n    \"infraops-mcp-server\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    },\n    \"intent-packages\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    },\n    \"orchestrator\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    },\n    \"project-standards\": {\n      \"admission_passed\": false,\n      \"not_passing\": [\n        \"profile.declared\",\n        \"runner.caller\"\n      ]\n    },\n    \"security-standards\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    }\n  }\n}\n",
+                "stderr": "",
+                "duration_seconds": 155.206
+              }
+            }
+          ]
+        },
+        {
+          "number": 2,
+          "text": "three software profiles + one non-software profile proven",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "each cited unit is completed in production under the change class it is cited for; keyed on unit id because unit_key is not unique",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "profiles-are-proven",
+                  "7a81c2c2:dependency-update",
+                  "327920cd:maintenance-remediation",
+                  "a1493627:software-delivery",
+                  "cdc2ef5a:non-software-operational"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 4/4 cited profiles carried a real unit through to completion\n{\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"per_profile\": {\n    \"327920cd:maintenance-remediation\": {\n      \"change_class\": \"maintenance-remediation\",\n      \"proven\": true,\n      \"state\": \"completed\",\n      \"unit_key\": \"caller-pin\"\n    },\n    \"7a81c2c2:dependency-update\": {\n      \"change_class\": \"dependency-update\",\n      \"proven\": true,\n      \"state\": \"completed\",\n      \"unit_key\": \"orchestrator-ac-001\"\n    },\n    \"a1493627:software-delivery\": {\n      \"change_class\": \"software-delivery\",\n      \"proven\": true,\n      \"state\": \"completed\",\n      \"unit_key\": \"ac-001-tag-matching-guards\"\n    },\n    \"cdc2ef5a:non-software-operational\": {\n      \"change_class\": \"non-software-operational\",\n      \"proven\": true,\n      \"state\": \"completed\",\n      \"unit_key\": \"rotation-execute\"\n    }\n  }\n}\n",
+                "stderr": "",
+                "duration_seconds": 3.123
+              }
+            }
+          ]
+        },
+        {
+          "number": 3,
+          "text": "the routing policy file is the only place model selection lives",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "WS-P2.38's derivation pin is executed and resolves both sides; the literal still exists in the runner's workflow, so what is established is that an edit diverging from the policy is refused at a gate",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "routing-policy-is-the-only-source"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS routing pin exit 0\n{\n  \"exit_code\": 0,\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"stdout\": \"policy: routing-policy.toml [[surface]] 'runner-implementation' -> claude-sonnet-5\\nrunner: AlobarQuest/factory-runner@0e047df5 .github/workflows/factory-runner.yml -> claude-sonnet-5\\n\\nPASS: the policy and the pinned runner agree on 'claude-sonnet-5'.\"\n}\n",
+                "stderr": "",
+                "duration_seconds": 1.884
+              }
+            }
+          ]
+        },
+        {
+          "number": 4,
+          "text": "two consecutive real workflows complete without improvisation (the C exit bar).",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "both units completed and no runner-claimed unit ran between them",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "workflows-were-consecutive",
+                  "0c9203bb",
+                  "7a81c2c2"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS change-manager-ac-001 then orchestrator-ac-001: states ['completed', 'completed'], 0 runner-claimed unit(s) between them\n{\n  \"between\": [],\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"note\": \"'without improvisation' is a windowed SLO counter and is not readable per unit; that half is carried by the retained reconciliation record\",\n  \"units\": [\n    {\n      \"last_event_at\": \"2026-08-02T17:37:13.080725Z\",\n      \"state\": \"completed\",\n      \"unit_id\": \"0c9203bb-7661-52a2-ba57-98be95ac6fe6\",\n      \"unit_key\": \"change-manager-ac-001\"\n    },\n    {\n      \"last_event_at\": \"2026-08-03T00:02:44.844020Z\",\n      \"state\": \"completed\",\n      \"unit_id\": \"7a81c2c2-0835-5bba-a308-36e868719b62\",\n      \"unit_key\": \"orchestrator-ac-001\"\n    }\n  ]\n}\n",
+                "stderr": "",
+                "duration_seconds": 7.468
+              }
+            },
+            {
+              "kind": "retained_evidence",
+              "basis": "retained",
+              "result": "pass",
+              "detail": "the no-improvisation half is retained and unaltered; the improvisation counter is windowed and not readable per unit",
+              "evidence": {
+                "path": "/Users/devon/docs/software-delivery-system/2026-08-03-wave3-exit-reconciliation.md",
+                "sha256": "2fd4ad600cd33c33e2aa702385214c015cad34b7830f61b8675980cc33bd6590",
+                "declared_sha256": "2fd4ad600cd33c33e2aa702385214c015cad34b7830f61b8675980cc33bd6590"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

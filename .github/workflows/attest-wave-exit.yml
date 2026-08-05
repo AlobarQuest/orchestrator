@@ -1,0 +1,69 @@
+name: Attest wave exit bars
+
+# WS-P2.39's guard, made standing. It reads docs/operations/wave-exit-manifest.toml and refuses
+# a wave exit bar whose clause decomposition no longer reconstructs the plan's own sentence --
+# the failure that let Wave 3's four-clause bar be tracked as three clauses for two days.
+#
+# WHAT THIS JOB CAN AND CANNOT SEE, because the difference decides how to read a green tick.
+# The authoritative plan lives in ~/docs, which is not this repository and is not reachable from
+# a runner; the credentialed probes need a BWS-held bearer and sibling checkouts that only exist
+# on the operator's machine. So here the tool necessarily reports those layers `unavailable` and
+# exits 2 (INCONCLUSIVE). That is structural, not a signal, and failing every Monday on it would
+# only teach everyone to ignore this job.
+#
+# What the job DOES establish, with no credential at all:
+#   * exit 3 -- the manifest's clauses stopped reconstructing their stored mirror, or a mirror was
+#     edited without restating its digest. This is the pin, and it is a hard failure here.
+#   * exit 1 -- a clause was measured and missed. The route checks need only one unauthenticated
+#     GET of production's public OpenAPI document, so a route a Wave-2 clause depends on going
+#     missing reds this job.
+#
+# The AUTHORITATIVE run is the operator's, on a machine that can read the plan and hold the
+# bearer; its record is committed under docs/evidence/exit-manifest/. Read those before declaring
+# a wave met -- a green tick here is not that measurement.
+#
+# Deliberately NOT part of the pull-request gate, for the same reason attest-exit-criteria.yml
+# is not: a red here can mean production regressed, which is not a property of the branch under
+# review. Read-only throughout; no writes, no secrets.
+
+on:
+  schedule:
+    # Mondays 08:15 UTC -- just after the scorecard route attestation, so the two weekly
+    # exit-criteria guards report together.
+    - cron: "15 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      openapi_url:
+        description: "OpenAPI document to measure route claims against"
+        required: false
+        default: "https://sds.alobar.net/openapi.json"
+
+permissions:
+  contents: read
+
+jobs:
+  attest:
+    name: Attest wave exit bars
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Attest every wave exit bar
+        run: |
+          set +e
+          python3 scripts/attest_wave_exit.py \
+            --openapi-url "${{ inputs.openapi_url || 'https://sds.alobar.net/openapi.json' }}"
+          code=$?
+          set -e
+          case "$code" in
+            0) echo "::notice::Attested -- every clause in scope is demonstrated." ;;
+            2) echo "::notice::Inconclusive, as expected on a runner: the authoritative plan and the credentialed read surfaces are unreachable here. The operator's committed run under docs/evidence/exit-manifest/ is the measurement." ;;
+            1) echo "::error::A clause was measured and is NOT met."; exit 1 ;;
+            3) echo "::error::PIN BROKEN -- the manifest no longer reconstructs its stored bar. No clause result means anything until it is reconciled with the plan."; exit 1 ;;
+            *) echo "::error::Unexpected exit $code"; exit 1 ;;
+          esac

@@ -11,8 +11,11 @@ def test_workflows_never_merge_deploy_or_push_main() -> None:
     # attest-exit-criteria.yml is a third, weaker exception: it is read-only (one unauthenticated
     # GET of production's public OpenAPI document) and carries workflow_dispatch so the guard can
     # be re-run on demand after a production image swap. It merges nothing and writes nothing.
+    # attest-wave-exit.yml (WS-P2.39) is the same weakest kind for the same reason: read-only,
+    # one unauthenticated GET, workflow_dispatch so a wave bar can be re-attested on demand.
     manual_dispatch_workflows = {
         "attest-exit-criteria.yml",
+        "attest-wave-exit.yml",
         "factory-runner-pilot.yml",
         "release-image.yml",
     }
