@@ -144,9 +144,11 @@ def test_no_workflow_dispatch_or_factory_runner_dispatch_code_exists() -> None:
     # runner involvement) — both are deliberate human-triggered exceptions to this guard.
     # attest-exit-criteria.yml is a third and weakest exception: read-only (one unauthenticated
     # GET of production's public OpenAPI document), carrying workflow_dispatch only so the
-    # scorecard guard can be re-run on demand after a production image swap.
+    # scorecard guard can be re-run on demand after a production image swap. attest-wave-exit.yml
+    # (WS-P2.39) is a fourth of exactly that kind: same read, same reason, for the wave exit bars.
     manual_dispatch_workflows = {
         "attest-exit-criteria.yml",
+        "attest-wave-exit.yml",
         "factory-runner-pilot.yml",
         "release-image.yml",
     }
