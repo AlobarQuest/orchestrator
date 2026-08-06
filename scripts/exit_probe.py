@@ -466,32 +466,55 @@ def _chain_unit_ids(chains: list[dict]) -> list[str]:
     return ids
 
 
-def _a_production_chain_carries_a_condition() -> dict:
-    """Run the conditions join against something KNOWN to be present, and report what it found.
+def _estate_divergence_reading(release_units: set[str]) -> dict:
+    """One pass over the estate, unit-anchored, answering the two questions the excuse turns on.
 
-    This is the estate's own rule made mechanical: a zero is not evidence of absence until the
-    same query has answered non-zero for a subject that has one. Without it, a join that silently
-    stopped carrying conditions would make EVERY release read "no divergence" for ever, and the
-    hop would be permanently excused with nothing saying so -- the switched-off reporting
-    obligation, in hop form.
+    * DOES THE RELEASE ITSELF HAVE A DIVERGENCE ITS OWN CHAIN DID NOT CARRY? The release's hops
+      were composed from the REVISION-anchored answer; this asks the UNIT-anchored one about the
+      same units. A unit of the release carrying a condition here, when the composed count was
+      zero, is precisely "a release that does have recorded divergences whose chain fails to carry
+      them" -- and the excuse must be refused. The two anchors resolve through different branches
+      of `resolve_anchors`, and the readings are taken seconds apart, so this is a real
+      disagreement to look for rather than a restatement of the first read.
+    * IS THE JOIN STILL CARRYING CONDITIONS AT ALL? The estate's own rule: a zero is not evidence
+      of absence until the same query has answered non-zero for a subject known to have one.
+      Without it, a join that silently stopped carrying conditions would make EVERY release read
+      "no divergence" for ever and the hop would be excused permanently with nothing saying so --
+      the switched-off reporting obligation, in hop form. The carrier must lie OUTSIDE the release
+      or the demonstration would cite the release's own divergence as evidence it has none.
 
-    A per-unit read that fails is counted and skipped rather than raised: it must never
-    manufacture a demonstration, and it must not turn a clause the rest of the run measured into
-    an unmeasurable one. A renamed or scalar hop still raises out of `_hops`, loudly, because that
-    is a fact about the response rather than about one unit.
+    NOTHING HERE MAY VOID A VERDICT THE REST OF THE RUN MEASURED. An unreadable estate is recorded
+    and returns no demonstration, so the hop simply is not excused and the release fails on it --
+    the conservative answer, and the one this probe gave before any of this existed. Raising
+    instead would let an unrelated unit's response turn an honest `fail` into `unavailable`, and
+    only ever on the branch where the answer would have been `fail`.
     """
-    scanned = unread = 0
-    for row in ledger():
-        scanned += 1
+    reading: dict = {
+        "carrier_unit_key": None,
+        "release_units_carrying_a_divergence": [],
+        "scanned": 0,
+        "unread": 0,
+    }
+    try:
+        rows = ledger()
+    except Unavailable as reason:
+        return reading | {"estate_unread": str(reason)}
+    for row in rows:
+        reading["scanned"] += 1
         try:
-            chains = _chains(f"/api/v1/traceability?work_unit_id={row['unit_id']}")
-        except Unavailable:
-            unread += 1
+            unit_id = str(row["unit_id"])
+            chains = _chains(f"/api/v1/traceability?work_unit_id={unit_id}")
+            carries = any(_hops(chain)["conditions"] for chain in chains)
+        except (Unavailable, KeyError, TypeError):
+            reading["unread"] += 1
             continue
-        for chain in chains:
-            if _hops(chain)["conditions"]:
-                return {"carrier_unit_key": row["unit_key"], "scanned": scanned, "unread": unread}
-    return {"carrier_unit_key": None, "scanned": scanned, "unread": unread}
+        if not carries:
+            continue
+        if unit_id in release_units:
+            reading["release_units_carrying_a_divergence"].append(row.get("unit_key", unit_id))
+        elif reading["carrier_unit_key"] is None:
+            reading["carrier_unit_key"] = row.get("unit_key", unit_id)
+    return reading
 
 
 def _conditions_hop_is_inapplicable(pack: dict, chains: list[dict]) -> tuple[str | None, dict]:
@@ -500,39 +523,57 @@ def _conditions_hop_is_inapplicable(pack: dict, chains: list[dict]) -> tuple[str
     `ReconciliationCondition` records a divergence between pushed reality and stored lifecycle
     state, so a release that went perfectly has none and requiring the hop non-empty makes the
     clause satisfiable only by a release that went wrong (HQ ruling, 2026-08-06). But "there was
-    nothing to carry" is a claim about the world, and it is refused unless two things were
-    MEASURED in this run:
+    nothing to carry" is a claim about the world, and it is refused unless every reading below was
+    MEASURED in this run. Any of them unmet and the hop is NOT excused: it stays unanswered and
+    the release fails on it, which is what it did before this existed. Nothing a manifest, an
+    argument or an environment variable can say reaches this function.
 
-      * the query looked at every unit of the release -- a chain set short of the release's own
-        unit list cannot report "no divergence", only "no divergence among the units it read",
-        and a divergence on an omitted unit is exactly the case this must not excuse;
-      * the conditions join demonstrably still carries conditions somewhere in production.
+    The readings, in the order they are taken:
 
-    Either unmet and the hop is NOT excused: it stays unanswered and the release fails on it,
-    which is what it did before this existed. Nothing a manifest, an argument or an environment
-    variable can say reaches this function -- an inapplicable hop is earned from the two readings
-    below or it is not granted.
-
-    A release resolving to NO chain is refused first and separately. Both readings would be
-    vacuously satisfied by it -- nothing uncovered, because nothing was covered -- and a release
-    nothing was read for is the empty population that lets a check pass having asked no question.
+      * the release resolves to at least one chain, and holds at least one unit. Every reading
+        below is vacuously satisfied by an empty collection -- nothing uncovered, because nothing
+        was covered -- and a release nothing was read for is the empty population that lets a
+        check pass having asked no question. Both directions are refused, because closing only the
+        one that occurred to the author is how the mirror image ships;
+      * the release's chain set covers every unit of the release. Both surfaces select on the same
+        revision, so a coherent server cannot make this fire; it is kept because it costs one set
+        difference and it is the reading that would notice if that ever stopped being true;
+      * no unit of the release carries a divergence its own composed chain did not -- the
+        discriminating reading, and the one that can genuinely fail (see
+        `_estate_divergence_reading`);
+      * the conditions join is demonstrably still carrying conditions somewhere OUTSIDE this
+        release.
     """
-    if not chains:
-        return None, {"chains": 0}
-    covered = set(_chain_unit_ids(chains))
-    uncovered = sorted(set(_release_unit_ids(pack)) - covered)
-    demonstration: dict = {"units_not_covered_by_a_chain": uncovered}
-    if uncovered:
-        return None, demonstration
-    demonstration |= _a_production_chain_carries_a_condition()
-    if not demonstration["carrier_unit_key"]:
-        return None, demonstration
+    release_units = set(_release_unit_ids(pack))
+    # `refused_at` names the reading that refused, so a record can never be read as "the scan ran
+    # and found nothing" when in fact the scan never ran. An absent key and a null value are the
+    # same thing to `.get`, and that ambiguity is the whole point of recording this.
+    reading: dict = {
+        "refused_at": None,
+        "chains": len(chains),
+        "release_units": len(release_units),
+    }
+    if not chains or not release_units:
+        return None, reading | {"refused_at": "the release resolves to no chain, or holds no unit"}
+    reading["units_not_covered_by_a_chain"] = sorted(release_units - set(_chain_unit_ids(chains)))
+    if reading["units_not_covered_by_a_chain"]:
+        return None, reading | {"refused_at": "a unit of the release resolves to no chain"}
+    reading |= _estate_divergence_reading(release_units)
+    if reading["release_units_carrying_a_divergence"]:
+        return None, reading | {
+            "refused_at": "a unit of the release carries a divergence its composed chain did not"
+        }
+    if not reading["carrier_unit_key"]:
+        return None, reading | {
+            "refused_at": "no chain outside this release carries a condition, so an empty hop "
+            "could not be told from a join that stopped carrying them"
+        }
     return (
-        "the release's chain set covers every unit of the release and carries no divergence, and "
-        "the conditions join is demonstrably still carrying them elsewhere in production "
-        f"(unit {demonstration['carrier_unit_key']}) -- so a divergence exists to be recorded "
-        "and this release has none",
-        demonstration,
+        "the release's chain set covers every unit of the release, no unit of the release carries "
+        "a divergence its composed chain did not, and the conditions join is demonstrably still "
+        f"carrying them outside this release (unit {reading['carrier_unit_key']}) -- so a "
+        "divergence exists to be recorded and this release has none",
+        reading,
     )
 
 
