@@ -609,16 +609,49 @@ def test_a_hop_that_stops_being_a_container_is_unavailable_rather_than_a_populat
 # =============================================================================================
 
 
-def _release_routes(revision: str, chains: list[dict], *, artifacts: int = 1) -> dict:
+def _release_routes(
+    revision: str,
+    chains: list[dict],
+    *,
+    artifacts: int = 1,
+    pack_units: list[str] | None = None,
+) -> dict:
+    """A release: its evidence pack, and the chains the revision-anchored query resolves.
+
+    `pack_units` overrides the pack's unit list so the two surfaces can be made to DISAGREE --
+    the release holding a unit the traceability query never returned. That divergence is not
+    cosmetic: it is the case in which "this release records no divergence" is a statement about
+    what the query happened to read rather than about the release.
+    """
+    units = pack_units if pack_units is not None else [chain["unit"]["id"] for chain in chains]
     return {
         f"/api/v1/revisions/{revision}/evidence-pack": {
             "revision": {"id": revision},
-            "units": [{"work_unit": {"id": chain["unit"]["id"]}} for chain in chains],
+            "units": [{"work_unit": {"id": unit_id}} for unit_id in units],
             "release_artifacts": [{"artifact_digest": "sha256:x"}] * artifacts,
             "deployments": [{"environment": "production"}],
         },
         f"/api/v1/traceability?revision_id={revision}": {"chains": chains},
     }
+
+
+def _estate(*carrying: str, quiet: tuple[str, ...] = ()) -> dict:
+    """The whole-estate surface the inapplicability reading scans: a ledger, and a chain per unit.
+
+    `carrying` are units whose chain carries a reconciliation condition; `quiet` are units whose
+    chain carries none. This is the world in which "the conditions join still works" is either
+    demonstrable or not.
+    """
+    units = [*carrying, *quiet]
+    routes: dict = {
+        "/api/v1/status-ledger?include_inactive=true": [
+            _ledger_row(unit_id, "completed") for unit_id in units
+        ]
+    }
+    for unit_id in units:
+        chain = _chain(unit_id, conditions=unit_id in carrying)
+        routes[f"/api/v1/traceability?work_unit_id={unit_id}"] = {"chains": [chain]}
+    return routes
 
 
 def test_release_chain_passes_when_the_revisions_units_together_answer_every_hop(monkeypatch):
@@ -651,6 +684,13 @@ def test_release_chain_passes_on_one_whole_release_among_several(monkeypatch):
 
 
 def test_release_chain_fails_when_the_revision_resolves_to_no_chain(monkeypatch):
+    """And nothing about it is excusable: a release nothing was read for answers no hop.
+
+    The world serves no estate surface, so a reading that ran here would report unmeasurable --
+    which is the point. Both of its clauses are vacuously satisfied by an empty chain set (nothing
+    uncovered, because nothing was covered), and that is the empty population letting a check pass
+    having asked no question.
+    """
     monkeypatch.setattr(exit_probe, "api_get", _api(_release_routes("rev-1", [])))
 
     assert exit_probe.release_chain_answers_every_hop("rev-1") == FAIL
@@ -693,6 +733,177 @@ def test_release_chain_is_unavailable_when_the_traceability_response_loses_chain
     monkeypatch.setattr(exit_probe, "api_get", _api(routes))
 
     with pytest.raises(Unavailable, match="chains"):
+        exit_probe.release_chain_answers_every_hop("rev-1")
+
+
+# =============================================================================================
+# Wave 2 clause 2 -- the conditions hop, which exists only when something went wrong
+# =============================================================================================
+
+
+def _clean_release(revision: str, *units: str, pack_units: list[str] | None = None) -> dict:
+    """A release whose units answer every hop EXCEPT `conditions` -- a release that went well."""
+    return _release_routes(
+        revision,
+        [_chain(unit, conditions=False) for unit in units],
+        pack_units=pack_units,
+    )
+
+
+def test_only_the_conditions_hop_may_ever_be_inapplicable():
+    """`observations` must NOT join this, and the difference is not a matter of degree.
+
+    `conditions` is structurally only-on-failure: `ReconciliationCondition` records a divergence,
+    so a healthy release has none. A unit-scoped observation is an ordinary thing that nothing
+    currently produces -- a real gap in the system, recorded as such. Marking it inapplicable
+    would convert an absence into a shrug, and this is the assertion that notices someone doing
+    it, since the mechanism would otherwise accept the new key without comment.
+    """
+    assert tuple(exit_probe.INAPPLICABLE_WHEN) == ("conditions",)
+
+
+def test_a_clean_release_reports_conditions_inapplicable_and_answers_the_clause(
+    monkeypatch, capsys
+):
+    """No divergence to record, every unit read, and the join demonstrably still carrying."""
+    routes = _clean_release("rev-1", "u1")
+    routes.update(_estate("carrier", quiet=("u1",)))
+    monkeypatch.setattr(exit_probe, "api_get", _api(routes))
+
+    assert exit_probe.release_chain_answers_every_hop("rev-1") == PASS
+    census = json.loads(capsys.readouterr().out.split("\n", 1)[1])["release_census"][0]
+    assert census["unanswered_hops"] == []
+    assert "conditions" in census["inapplicable_hops"]
+    assert census["composed_hops"]["conditions"] == 0
+    assert census["inapplicability_measured"]["conditions"]["carrier_unit_key"] == "unit-carrier"
+
+
+def test_a_release_whose_chain_set_omits_a_divergence_bearing_unit_still_fails(monkeypatch, capsys):
+    """THE discriminator. A release that DOES have divergences its chain fails to carry.
+
+    The release holds two units; the revision-anchored query returns a chain for one. The
+    divergence is on the unit the query omitted, so "this release records no divergence" is a
+    statement about what was read, not about the release -- and an inapplicability granted here
+    would be a blanket exemption wearing an N/A label. The premise is verified rather than
+    asserted: the same world's scan below does find that divergence.
+    """
+    routes = _clean_release("rev-1", "u1", pack_units=["u1", "u2"])
+    routes.update(_estate("u2", quiet=("u1",)))
+    monkeypatch.setattr(exit_probe, "api_get", _api(routes))
+
+    assert exit_probe._a_production_chain_carries_a_condition()["carrier_unit_key"] == "unit-u2"
+    assert exit_probe.release_chain_answers_every_hop("rev-1") == FAIL
+    census = json.loads(capsys.readouterr().out.split("\n", 1)[1])["release_census"][0]
+    assert census["unanswered_hops"] == ["conditions"]
+    assert census["inapplicable_hops"] == {}
+    assert census["inapplicability_measured"]["conditions"]["units_not_covered_by_a_chain"] == [
+        "u2"
+    ]
+
+
+def test_conditions_is_not_excused_when_no_production_chain_carries_one(monkeypatch):
+    """A zero is not evidence of absence until the same query answers non-zero somewhere.
+
+    If the conditions join silently stopped carrying anything, every release would read "no
+    divergence" for ever and the hop would be excused permanently with nothing saying so -- the
+    switched-off reporting obligation, in hop form. So the excuse is refused while the join is
+    undemonstrated, and the release fails on the hop exactly as it did before.
+    """
+    routes = _clean_release("rev-1", "u1")
+    routes.update(_estate(quiet=("u1", "u2")))
+    monkeypatch.setattr(exit_probe, "api_get", _api(routes))
+
+    assert exit_probe.release_chain_answers_every_hop("rev-1") == FAIL
+
+
+def test_an_inapplicable_conditions_hop_does_not_mask_a_genuinely_unanswered_one(
+    monkeypatch, capsys
+):
+    """The excuse is per-hop and must not spread to hops nothing measured anything about."""
+    routes = _release_routes(
+        "rev-1", [_chain("u1", conditions=False, pr=False, observations=False)]
+    )
+    routes.update(_estate("carrier", quiet=("u1",)))
+    monkeypatch.setattr(exit_probe, "api_get", _api(routes))
+
+    assert exit_probe.release_chain_answers_every_hop("rev-1") == FAIL
+    census = json.loads(capsys.readouterr().out.split("\n", 1)[1])["release_census"][0]
+    assert census["unanswered_hops"] == ["observations", "pr"]
+    assert list(census["inapplicable_hops"]) == ["conditions"]
+
+
+def test_a_release_carrying_conditions_never_consults_the_inapplicability_reading(monkeypatch):
+    """A hop that is answered is answered; nothing about it is excused, or even asked.
+
+    The world here serves no ledger at all, so the reading would report unmeasurable if it ran.
+    """
+    monkeypatch.setattr(exit_probe, "api_get", _api(_release_routes("rev-1", [_chain("u1")])))
+
+    assert exit_probe.release_chain_answers_every_hop("rev-1") == PASS
+
+
+def test_a_unit_whose_chain_cannot_be_read_is_counted_and_never_demonstrates(monkeypatch):
+    """An unread unit must not become a demonstration, and must not become a verdict either.
+
+    It is skipped and counted: raising would turn a clause the rest of the run measured into an
+    unmeasurable one on a transient failure over an unrelated unit, and treating it as a carrier
+    would grant the excuse on something never observed.
+    """
+    routes = _clean_release("rev-1", "u1")
+    routes.update(_estate(quiet=("u1",)))
+    routes.pop("/api/v1/traceability?work_unit_id=u1")
+    monkeypatch.setattr(exit_probe, "api_get", _api(routes))
+
+    assert exit_probe.release_chain_answers_every_hop("rev-1") == FAIL
+    assert exit_probe._a_production_chain_carries_a_condition() == {
+        "carrier_unit_key": None,
+        "scanned": 1,
+        "unread": 1,
+    }
+
+
+def test_a_carrier_still_demonstrates_the_join_alongside_an_unreadable_unit(monkeypatch):
+    """The demonstration is positive evidence: one carrier establishes it, unread units or not."""
+    routes = _clean_release("rev-1", "u1")
+    routes.update(_estate("carrier", quiet=("u1",)))
+    routes.pop("/api/v1/traceability?work_unit_id=u1")
+    monkeypatch.setattr(exit_probe, "api_get", _api(routes))
+
+    assert exit_probe.release_chain_answers_every_hop("rev-1") == PASS
+
+
+def test_a_release_pack_that_stops_identifying_its_units_is_unavailable(monkeypatch):
+    """Coverage unread is not coverage complete -- the fail-OPEN direction of this reading."""
+    routes = _clean_release("rev-1", "u1")
+    routes["/api/v1/revisions/rev-1/evidence-pack"]["units"] = [{"work_unit": {"unit_key": "u1"}}]
+    routes.update(_estate("carrier", quiet=("u1",)))
+    monkeypatch.setattr(exit_probe, "api_get", _api(routes))
+
+    with pytest.raises(Unavailable, match="work_unit.id"):
+        exit_probe.release_chain_answers_every_hop("rev-1")
+
+
+def test_a_chain_that_stops_identifying_its_unit_is_unavailable(monkeypatch):
+    """The same refusal one surface over: an unidentifiable chain covers nothing in particular."""
+    routes = _clean_release("rev-1", "u1")
+    chains = routes["/api/v1/traceability?revision_id=rev-1"]["chains"]
+    chains[0]["unit"] = {"unit_key": "u1"}
+    routes.update(_estate("carrier", quiet=("u1",)))
+    monkeypatch.setattr(exit_probe, "api_get", _api(routes))
+
+    with pytest.raises(Unavailable, match="unit.id"):
+        exit_probe.release_chain_answers_every_hop("rev-1")
+
+
+def test_the_estate_scan_reads_the_conditions_hop_defensively(monkeypatch):
+    """A renamed hop is a fact about the response and must stay loud, not be skipped as unread."""
+    routes = _clean_release("rev-1", "u1")
+    routes.update(_estate("carrier"))
+    carrier = routes["/api/v1/traceability?work_unit_id=carrier"]["chains"][0]
+    carrier["divergences"] = carrier.pop("conditions")
+    monkeypatch.setattr(exit_probe, "api_get", _api(routes))
+
+    with pytest.raises(Unavailable, match="renamed"):
         exit_probe.release_chain_answers_every_hop("rev-1")
 
 

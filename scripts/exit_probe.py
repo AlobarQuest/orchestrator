@@ -438,6 +438,114 @@ def _hops(chain: dict) -> dict[str, int]:
     return counts
 
 
+def _release_unit_ids(pack: dict) -> list[str]:
+    """The unit ids a release evidence pack holds. An unreadable projection is not an empty one."""
+    ids = []
+    for entry in pack["units"]:
+        unit = entry.get("work_unit") if isinstance(entry, dict) else None
+        if not isinstance(unit, dict) or not unit.get("id"):
+            raise Unavailable(
+                "a release evidence pack unit carries no `work_unit.id`, so whether the "
+                "release's chain set covers every unit of the release could not be established"
+            )
+        ids.append(str(unit["id"]))
+    return ids
+
+
+def _chain_unit_ids(chains: list[dict]) -> list[str]:
+    """The unit ids a set of chains resolves. Mirrors `_release_unit_ids`, one surface over."""
+    ids = []
+    for chain in chains:
+        unit = chain.get("unit")
+        if not isinstance(unit, dict) or not unit.get("id"):
+            raise Unavailable(
+                "a traceability chain carries no `unit.id`, so which unit it answers for could "
+                "not be established"
+            )
+        ids.append(str(unit["id"]))
+    return ids
+
+
+def _a_production_chain_carries_a_condition() -> dict:
+    """Run the conditions join against something KNOWN to be present, and report what it found.
+
+    This is the estate's own rule made mechanical: a zero is not evidence of absence until the
+    same query has answered non-zero for a subject that has one. Without it, a join that silently
+    stopped carrying conditions would make EVERY release read "no divergence" for ever, and the
+    hop would be permanently excused with nothing saying so -- the switched-off reporting
+    obligation, in hop form.
+
+    A per-unit read that fails is counted and skipped rather than raised: it must never
+    manufacture a demonstration, and it must not turn a clause the rest of the run measured into
+    an unmeasurable one. A renamed or scalar hop still raises out of `_hops`, loudly, because that
+    is a fact about the response rather than about one unit.
+    """
+    scanned = unread = 0
+    for row in ledger():
+        scanned += 1
+        try:
+            chains = _chains(f"/api/v1/traceability?work_unit_id={row['unit_id']}")
+        except Unavailable:
+            unread += 1
+            continue
+        for chain in chains:
+            if _hops(chain)["conditions"]:
+                return {"carrier_unit_key": row["unit_key"], "scanned": scanned, "unread": unread}
+    return {"carrier_unit_key": None, "scanned": scanned, "unread": unread}
+
+
+def _conditions_hop_is_inapplicable(pack: dict, chains: list[dict]) -> tuple[str | None, dict]:
+    """Whether THIS release's empty `conditions` hop is inapplicable, and what established that.
+
+    `ReconciliationCondition` records a divergence between pushed reality and stored lifecycle
+    state, so a release that went perfectly has none and requiring the hop non-empty makes the
+    clause satisfiable only by a release that went wrong (HQ ruling, 2026-08-06). But "there was
+    nothing to carry" is a claim about the world, and it is refused unless two things were
+    MEASURED in this run:
+
+      * the query looked at every unit of the release -- a chain set short of the release's own
+        unit list cannot report "no divergence", only "no divergence among the units it read",
+        and a divergence on an omitted unit is exactly the case this must not excuse;
+      * the conditions join demonstrably still carries conditions somewhere in production.
+
+    Either unmet and the hop is NOT excused: it stays unanswered and the release fails on it,
+    which is what it did before this existed. Nothing a manifest, an argument or an environment
+    variable can say reaches this function -- an inapplicable hop is earned from the two readings
+    below or it is not granted.
+
+    A release resolving to NO chain is refused first and separately. Both readings would be
+    vacuously satisfied by it -- nothing uncovered, because nothing was covered -- and a release
+    nothing was read for is the empty population that lets a check pass having asked no question.
+    """
+    if not chains:
+        return None, {"chains": 0}
+    covered = set(_chain_unit_ids(chains))
+    uncovered = sorted(set(_release_unit_ids(pack)) - covered)
+    demonstration: dict = {"units_not_covered_by_a_chain": uncovered}
+    if uncovered:
+        return None, demonstration
+    demonstration |= _a_production_chain_carries_a_condition()
+    if not demonstration["carrier_unit_key"]:
+        return None, demonstration
+    return (
+        "the release's chain set covers every unit of the release and carries no divergence, and "
+        "the conditions join is demonstrably still carrying them elsewhere in production "
+        f"(unit {demonstration['carrier_unit_key']}) -- so a divergence exists to be recorded "
+        "and this release has none",
+        demonstration,
+    )
+
+
+#: The hops that may EARN `not_applicable`, and the reading that earns it for each. Membership
+#: excuses nothing by itself. `observations` is deliberately absent and must stay absent: a
+#: unit-scoped observation is an ordinary thing that nothing currently produces, which is a real
+#: gap in the system rather than a condition of the world, and marking it inapplicable would
+#: convert an absence into a shrug.
+INAPPLICABLE_WHEN: dict[str, Callable[[dict, list[dict]], tuple[str | None, dict]]] = {
+    "conditions": _conditions_hop_is_inapplicable,
+}
+
+
 def traceability_answers_for_a_real_release(*required: str) -> int:
     """Wave 2 clause 2: a production-anchored chain resolves the hops the caller requires.
 
@@ -496,6 +604,11 @@ def release_chain_answers_every_hop(*revisions: str) -> int:
     that the revision shipped at all; the traceability query anchored on the same revision
     supplies the hops, because the clause is about what THAT query answers. The hop list is the
     whole chain (`ALL_HOPS`), which is the plan's own enumeration of the C question-list.
+
+    A hop may resolve INAPPLICABLE rather than unanswered, but only by earning it -- see
+    `INAPPLICABLE_WHEN`. The hop list itself never shrinks: every hop is required of every
+    release, and an inapplicable one is recorded with the reading that established it, so the
+    record shows a measurement rather than an exemption.
     """
     if not revisions:
         raise Unavailable("no revision was declared; the manifest must name the real release(s)")
@@ -517,6 +630,16 @@ def release_chain_answers_every_hop(*revisions: str) -> int:
         chains = _chains(f"/api/v1/traceability?revision_id={revision}")
         union = {hop: sum(_hops(chain)[hop] for chain in chains) for hop in ALL_HOPS}
         missing = sorted(hop for hop, count in union.items() if not count)
+        inapplicable: dict[str, str] = {}
+        demonstrations: dict[str, dict] = {}
+        for hop, resolve in INAPPLICABLE_WHEN.items():
+            if hop not in missing:
+                continue
+            reason, demonstration = resolve(pack, chains)
+            demonstrations[hop] = demonstration
+            if reason is not None:
+                missing.remove(hop)
+                inapplicable[hop] = reason
         census.append(
             {
                 "revision_id": revision,
@@ -528,14 +651,20 @@ def release_chain_answers_every_hop(*revisions: str) -> int:
                 "deployments": len(pack["deployments"]),
                 "composed_hops": union,
                 "unanswered_hops": missing,
+                # Both are recorded whether or not the hop was excused, so the record shows what
+                # the reading found rather than only that it granted something.
+                "inapplicable_hops": inapplicable,
+                "inapplicability_measured": demonstrations,
             }
         )
         if not missing:
             complete.append(revision)
+    excused = sorted({hop for row in census for hop in row["inapplicable_hops"]})
     return report(
         bool(complete),
         f"{'PASS' if complete else 'FAIL'} {len(complete)}/{len(revisions)} declared real "
-        f"release(s) answer {' -> '.join(ALL_HOPS)} composed across their units",
+        f"release(s) answer {' -> '.join(ALL_HOPS)} composed across their units"
+        + (f"; inapplicable on measurement: {excused}" if excused else ""),
         required_hops=list(ALL_HOPS),
         complete_releases=complete,
         release_census=census,
