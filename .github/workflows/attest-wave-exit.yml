@@ -26,11 +26,22 @@ name: Attest wave exit bars
 # is not: a red here can mean production regressed, which is not a property of the branch under
 # review. Read-only throughout; no writes, no secrets.
 
+# ON DEMAND ONLY -- deliberately unscheduled, and the reason is worth keeping.
+#
+# This was scheduled weekly at first, by analogy with attest-exit-criteria.yml. The analogy does
+# not hold. THAT job watches claims of the form "criterion #7 is met because these five routes are
+# live" -- whose truth depends on mutable production state, so a deploy can falsify one silently
+# and it genuinely needs watching. A wave exit bar is a decision made once, and its clauses split
+# two ways: some are historical facts that cannot regress (a completed unit stays completed), and
+# the ones that CAN regress already have guards closer to their source -- repo onboarding is what
+# `portfolio onboard` measures, and the routing pin runs on every intent-packages pull request,
+# catching a divergence at the edit rather than up to seven days later.
+#
+# So a cron here re-proved the past weekly and re-measured the present less precisely than the
+# guards that own it, while a clause with a legitimately open hop would have held the job red for
+# months -- which is how a reporting obligation goes silent. Run it when the question is live:
+# closing a wave, auditing a claim, or checking whether something you were told is still true.
 on:
-  schedule:
-    # Mondays 08:15 UTC -- just after the scorecard route attestation, so the two weekly
-    # exit-criteria guards report together.
-    - cron: "15 8 * * 1"
   workflow_dispatch:
     inputs:
       openapi_url:
