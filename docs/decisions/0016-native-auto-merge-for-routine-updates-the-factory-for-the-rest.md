@@ -35,9 +35,9 @@ end (WS-P2.33).**
 
 | landing | repos | disposition |
 |---|---|---|
-| `inert` | orchestrator, intent-packages, infraops-mcp-server, project-standards | auto-merge — an outage is structurally impossible; merging changes nothing running |
-| `redeploys` | change-manager, brain | **a separate decision**: auto-merge here is an unattended production deploy at whatever hour CI goes green |
-| `unknown` (`no_app_record`) | factory-runner, security-standards | no auto-merge until assessed — fail closed |
+| `inert` | orchestrator, intent-packages, infraops-mcp-server, project-standards | auto-merge — an outage is structurally impossible; merging changes nothing running. **orchestrator subsequently excluded, see the implementation note** |
+| `redeploys` | change-manager, brain | **a separate decision**: auto-merge here is an unattended production deploy at whatever hour CI goes green. Held pending the windowing mechanism (enable auto-merge at the window open, disable at its close, using `live_estate`'s declared 02:00–06:00) |
+| `unknown` (`no_app_record`) | factory-runner, security-standards | **ASSESSED 2026-08-06 and included.** `no_app_record` is the correct answer, not a gap: neither is an application. Both are **tool homes** — a merge deploys nothing and reaches consumers only when a consumer deliberately advances a pin. Recorded per-repo in `security-standards/governance-map.toml` (`class = "tool-home"`; factory-runner was absent and has been registered) and as a class-level rule in Infra Brain (id 1502) |
 
 This is Devon's own stated risk model — *what is changing, what it affects, and when* —
 operationalised against the data that already answers it.
