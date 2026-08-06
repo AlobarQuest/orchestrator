@@ -2082,6 +2082,38 @@ style of that module.
   (which the kit suggests) would make `main` unmergeable and strand every Dependabot PR. That
   hazard is now live rather than theoretical on `factory-runner`, since admins no longer bypass.
 
+- **Branch protection across the six factory repos, and WHY each setting is what it is — because
+  the reasoning going missing is how a setting becomes folklore.** Applied 2026-08-06 after the Pro
+  upgrade made protection available on private repos. Every repo: a **required status check that
+  actually runs on pull requests**, no force-push, no deletion, **`required_approving_review_count`
+  absent**, `strict: false`, `allow_auto_merge: true`.
+  - **The required check must be the JOB name, not the workflow name**, and it must be verified
+    against a real open PR — a context string that does not match blocks every pull request
+    forever, silently. The six: orchestrator `Quality` + `Runner brief compatibility`;
+    intent-packages `Lint, type-check, and test` + `Routing policy compatibility` + `validate`;
+    infraops-mcp-server `build` + `Lint, type-check, and test`; project-standards and
+    security-standards `Lint, type-check, and test` (+ `scan` for the latter); factory-runner
+    `Quality`.
+  - **NEVER set `required_approving_review_count: 1`** — a solo account cannot approve its own pull
+    request, so it makes `main` unmergeable and strands every Dependabot PR. The conformance kit
+    suggests it; do not take the suggestion.
+  - **`allow_auto_merge` with an EMPTY required-check list merges instantly** — there is nothing to
+    wait for. `infraops-mcp-server` was already in that state (protected, zero checks) and would
+    have merged on enablement. Always read the check list back before enabling auto-merge.
+  - **`strict: false` everywhere, deliberately.** `strict: true` requires a branch to be up to date
+    before merging, so with auto-merge live and ~27 open Dependabot PRs each merge staled the rest
+    and serialised them behind rebase + re-run cycles — hours on orchestrator's 25-minute suite.
+    What it buys is protection against two bumps that pass separately and fail together: real,
+    uncommon, and immediately visible when `main` goes red. factory-runner carried `strict: true`
+    from its initial 2026-08-03 application rather than from a decision, and was flipped to `false`
+    on 2026-08-06 for uniformity.
+  - **`enforce_admins` is TRUE on `factory-runner` alone, and that asymmetry is the considered
+    part.** It is the one repo where a bad merge stops every dispatch in the estate, and its CI is
+    ~20 seconds, so enforcement is nearly free. It is off elsewhere chiefly because orchestrator's
+    suite is 25 minutes and enforcing there taxes every CLAUDE.md, ADR and backlog commit — the
+    lowest-risk commits, hardest. Note `enforce_admins` does **not** affect auto-merge, which
+    merges through GitHub once required checks pass either way.
+
 - **`runner.caller` asks "can the factory send work INTO this repo?", and it is three different
   faults under one name.** It requires `.github/workflows/factory-runner-pilot.yml` calling
   factory-runner's reusable workflow at a full SHA equal to `RECOMMENDED_CALLER_PIN` (a one-line file
