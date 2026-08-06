@@ -71,7 +71,33 @@ is built.
 
 ## Note for whoever implements it
 
-An auto-merge workflow must live in the **target** repositories. Placing one in `orchestrator`
-would trip that repo's own no-merge architecture guards, which forbid `gh pr merge` and its
-siblings across six test files — correctly, since nothing in the orchestrator may merge a pull
-request. The guards are not in the way here; they are pointing at the right home.
+An auto-merge workflow must live in the **target** repositories.
+
+**CORRECTED 2026-08-06 during implementation — the original note was right about the constraint and
+wrong about its consequence.** It read: *"Placing one in `orchestrator` would trip that repo's own
+no-merge architecture guards … The guards are not in the way here; they are pointing at the right
+home."* That was written assuming `orchestrator` was not itself a target. **It is** — App Brain
+records it `inert`, so it is one of the four repos this decision covers. The guard therefore
+**excludes a target** rather than redirecting to a different one, and the cost is real: its seven
+open Dependabot pull requests stay manual.
+
+The mechanics: `tests/architecture/test_no_automatic_merge.py` scans every file in
+`.github/workflows/` outside four named exceptions and fails on the string `gh pr merge`. Since
+`Quality` is now a required check on that repo, a pull request adding the workflow cannot merge
+while the guard is red.
+
+**Decision (Devon, 2026-08-06): leave `orchestrator` out for now.** Not because a fifth named
+exception would be wrong — the workflow is repo hygiene rather than the factory merging its own
+work, and the guard cannot tell the difference — but because amending a foundational constraint as
+a side effect of a hygiene improvement is how this estate has gone wrong before. Revisit when the
+other five have run clean and handling orchestrator's queue by hand actually grates: that is a
+decision made on evidence rather than anticipation.
+
+**Explicitly rejected: reaching the same outcome through the GraphQL
+`enablePullRequestAutoMerge` mutation**, which contains no forbidden string and would pass the
+guard untouched. Enabling auto-merge *is* causing a merge; passing a check by renaming the verb is
+the validated-as-a-name-ignored-as-a-permission failure this estate keeps finding. If the exception
+is ever wanted, take it openly.
+
+Stage 3 therefore covers **five** repos: intent-packages, infraops-mcp-server, project-standards,
+factory-runner and security-standards.
