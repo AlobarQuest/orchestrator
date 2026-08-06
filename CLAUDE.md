@@ -1785,6 +1785,41 @@ style of that module.
   three vocabulary mismatches documented above, in the one place where the vocabulary is a
   *historical* record rather than a live contract.
 
+- **`ReconciliationCondition` has exactly ONE production read surface — the traceability chain's
+  `conditions` hop — so nothing can corroborate a divergence from a second surface.** No `/api/v1`
+  GET exists (only the two `POST …/detect` routes); a `reconciliation.required` event's subject is
+  the **condition**, not the unit, so it never appears in a unit's evidence-pack `events`; the
+  release pack carries revision/units/release_artifacts/deployments; `consistency-check` reports
+  evidence-head, completion and waiver findings only; the SLO report has no reconciliation metric;
+  and `graduation_ledger` counts them per unit but is reachable only from `/review` HTML.
+
+- **But the revision-anchored and unit-anchored traceability answers are DIFFERENT query paths and
+  can disagree — so "no second surface" is not "no second reading".** `resolve_anchors` branches,
+  and the reconciliation runner writes on a schedule, so asking the unit-anchored query about the
+  same units is a genuine second reading rather than a restatement. **Concluding that production
+  serves no corroborating surface, and stopping there, is what shipped WS-P2.41's severe defect** —
+  a carrier scan that failed to exclude the release's own units, so a release whose unit carried a
+  divergence its chain omitted PASSED, citing that very divergence as proof it had none. A
+  discriminator that consumes the thing it is meant to detect is the sharpest form of the
+  correct-about-the-wrong-noun family; reproduce it under a passing exit before fixing it.
+
+- **The wave-exit manifest breaks in TWO directions and they exit DIFFERENTLY — verify the one you
+  mean.** Truncating the **plan's** bar (the authoritative text loses a clause while the manifest
+  still declares it) reaches **exit 3 `PIN BROKEN`** with every clause suppressed — measured three
+  times, and it is the WS-P2.39 acceptance test. Truncating the **manifest** (dropping a clause,
+  or lowering `clause_count` to match) never reaches the pin at all: it is refused at load by
+  `clause_count`, then by the separator-accounting guard, **both exit 1**. Rewording a clause also
+  reaches `PIN BROKEN`. A WS-P2.41 correction stated only the manifest direction and read as a
+  blanket denial of exit 3; both halves are true of different edits. **Collision worth deciding:
+  a manifest that fails to LOAD exits 1, the same code as "a clause was measured and is not met" —
+  a broken tool and an honest failure are indistinguishable by exit code.**
+
+- **A control written before a fix can survive the fix and stop discriminating.** Two of WS-P2.41's
+  21 mutations initially survived because controls written hours earlier pinned behaviour the fix
+  changed, and passed either way. Re-run the mutation set *after* the last behavioural change, not
+  once when the tests are written — a green control is evidence only about the code it was last
+  run against.
+
 - **A derived constant cannot pin the judgment that lives inside it.** WS-P2.40 shipped 86 tests
   over an eight-hop traceability chain where every fixture built itself by iterating `ALL_HOPS` —
   so the fixtures shrank with the list, and review *measured* that dropping `conditions`, or
