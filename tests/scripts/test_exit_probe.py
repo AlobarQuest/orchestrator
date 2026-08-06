@@ -895,6 +895,28 @@ def test_a_chain_that_stops_identifying_its_unit_is_unavailable(monkeypatch):
         exit_probe.release_chain_answers_every_hop("rev-1")
 
 
+def test_the_estate_scan_does_not_stop_at_the_first_unit(monkeypatch, capsys):
+    """The carrier is last here, which is the shape production has: it was unit 23 of 51.
+
+    Found by mutating the scan to give up after one unit and watching every other control stay
+    green -- because each of them happens to put the carrier first. The mutation fails CLOSED (an
+    excuse becomes harder to earn, not easier), which is exactly why nothing noticed it.
+    """
+    routes = _clean_release("rev-1", "u1")
+    routes.update(_estate("carrier", quiet=("u1", "u2")))
+    routes["/api/v1/status-ledger?include_inactive=true"].reverse()
+    monkeypatch.setattr(exit_probe, "api_get", _api(routes))
+
+    assert exit_probe.release_chain_answers_every_hop("rev-1") == PASS
+    census = json.loads(capsys.readouterr().out.split("\n", 1)[1])["release_census"][0]
+    assert census["inapplicability_measured"]["conditions"] == {
+        "carrier_unit_key": "unit-carrier",
+        "scanned": 3,
+        "units_not_covered_by_a_chain": [],
+        "unread": 0,
+    }
+
+
 def test_the_estate_scan_reads_the_conditions_hop_defensively(monkeypatch):
     """A renamed hop is a fact about the response and must stay loud, not be skipped as unread."""
     routes = _clean_release("rev-1", "u1")
