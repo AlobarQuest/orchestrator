@@ -22,6 +22,18 @@ class ActorRole(StrEnum):
     WORKER = "worker"
     VERIFIER = "verifier"
     HUMAN = "human"
+    # WS-P3.6: the observe-and-report role. It may record an observation and nothing else.
+    #
+    # It is confined by ABSENCE, not by a rule written for it: every role gate in this codebase
+    # is an allowlist naming the roles it admits, so a member added here is refused everywhere
+    # until some gate names it. `EDGE_ROLES` below is the strongest case -- OBSERVER appears in
+    # none of the four edge sets, so `authorize_transition` refuses it on every legal edge, which
+    # is every lifecycle command in the system.
+    #
+    # The one gate that names it is `services/observations.py::_authorize_actor`. If you are
+    # adding a second, you are widening what an observation producer may do to this estate --
+    # which is the thing this role exists to prevent. See ADR-0017.
+    OBSERVER = "observer"
 
 
 # not-a-vocabulary: DB CHECK-pinned, not a cross-boundary vocabulary. This tuple is the SINGLE

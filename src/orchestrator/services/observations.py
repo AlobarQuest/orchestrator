@@ -223,11 +223,22 @@ def _record_observation(session: Session, command: ObservationCommand) -> Observ
     return row
 
 
+OBSERVATION_ROLES = frozenset({ActorRole.SYSTEM, ActorRole.OBSERVER})
+
+
 def _authorize_actor(actor: ActorContext) -> None:
-    if actor.role is not ActorRole.SYSTEM:
+    """The only gate in this codebase that admits OBSERVER (WS-P3.6, ADR-0017).
+
+    SYSTEM is retained deliberately. Removing it would be a second change riding a security
+    change: every observation producer in this estate posts as SYSTEM today, so dropping it
+    would couple this merge to the runtime credential rewrite and take the producers down in
+    between. OBSERVER is the role a producer SHOULD hold; SYSTEM remains the role it MAY hold,
+    and narrowing that is a later, separately-verifiable step.
+    """
+    if actor.role not in OBSERVATION_ROLES:
         raise DomainError(
             "role_forbidden",
-            "only the orchestrator system actor may record observations",
+            "only an observer or the orchestrator system actor may record observations",
             None,
         )
 

@@ -39,6 +39,15 @@ from orchestrator.services.packages import (
 
 _PROPOSAL_ACTION = "decomposition.proposed"
 _PACKAGE_CLI_SOURCE = "package_cli"
+# Every role EXCEPT OBSERVER. This set was authored when it held every member of `ActorRole`,
+# so it read as "the role does not matter here" -- and that reading is what makes it the one
+# gate in this codebase a new role could join by accident rather than by decision (WS-P3.6).
+#
+# OBSERVER is excluded on purpose: submitting a breakdown proposal authors work units, and
+# authorship is not observation. An observe-and-report producer that could propose units could
+# introduce work into the estate on the strength of something it merely saw.
+#
+# Keep this an enumeration. Never rewrite it as "all known roles" or as a negation of one role.
 _ALLOWED_ROLES = frozenset(
     {
         ActorRole.WORKER,
