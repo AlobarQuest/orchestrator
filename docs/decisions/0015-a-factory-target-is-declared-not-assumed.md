@@ -1,6 +1,6 @@
 # ADR-0015 — A factory target is declared, not assumed; and the runner may not maintain itself
 
-- **Status:** Accepted
+- **Status:** Accepted; **partially reversed 2026-08-07 — see the amendment at the end.**
 - **Date:** 2026-08-04
 - **Workstream:** Wave-3 closeout (follows WS-P2.37)
 - **Supersedes:** nothing. **Relates to:** the conformance kit's `runner.caller` check
@@ -95,3 +95,50 @@ The declaration belongs in `PROJECT.md` frontmatter alongside `delivery_profile:
 already reads — repo-local and self-describing, rather than a list inside the kit that the affected
 repository cannot see. The check then reports `not-applicable` with the declared reason. This is a
 `project-standards` change and, per the decision above, a manual one.
+
+---
+
+## Amendment, 2026-08-07 — `project-standards` becomes a factory target
+
+**Decision 1 is reversed for `project-standards` and stands unchanged for `factory-runner`**
+(Devon, 2026-08-07). Decision 2 — that being a target is *declared*, and that a repo which
+declares itself not-a-target must read `not-applicable` rather than `violation` — is untouched,
+and is now needed for exactly one repository instead of two.
+
+**This is the reversal the original anticipated, not a contradiction of it.** The record above
+says plainly that `project-standards` was excluded by "a scope choice, now made", explicitly not
+for the governance reason it raises and dismisses, and it names the expected trajectory —
+"maintained through a different mechanism, beginning manual and automated over time." Three days
+later the choice was made differently. Devon's reasoning, recorded because it inverts the usual
+one: *"My initial hesitation was a general sensitivity because it handles so much work. But that's
+the same reason to get into governance rather than leave it out."*
+
+The governance-shaped discomfort the original raised — that the artifact measuring the estate's
+conformance becomes modifiable by the process it measures — is unchanged and was already judged
+remote and fully gated (human authority approval plus a human merge). It is now a live property
+rather than a hypothetical one, and worth re-reading if the gates are ever narrowed.
+
+**`factory-runner`'s exclusion is untouched and is not the same kind of thing.** It is
+structural: the reusable workflow installs its own commit, `RECOMMENDED_CALLER_PIN` lags by one
+by construction, so any change to the harness would ship through the harness it is changing. The
+answer there remains a second, distinct runner — not the allowlist.
+
+**Consequences that changed.**
+
+- Criterion #2's "6 of 8" becomes 7 of 8, and 8 of 8 remains not a goal — one repository is
+  permanently outside the factory's reach by choice.
+- The kit's `not-applicable` path is still unbuilt and still needed, now for `factory-runner`
+  alone. Until it ships, one `runner.caller` violation is a decision rather than a defect.
+- The implementation note's `PROJECT.md` frontmatter declaration is now moot for
+  `project-standards` and still open for `factory-runner`.
+
+**Executed the same day.** Caller workflow at the recommended pin (`0e047df5`, byte-identical to
+the other six), four Actions secrets set from BWS by UUID, and the repository added to
+`ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` alongside `security-standards`,
+`change-manager`, `brain` and `infraops-mcp-server`.
+
+**One prerequisite was discovered by probing and is not in this ADR's original mechanics:** a
+factory target must also appear in `FACTORY_PR_TOKEN`'s fine-grained repository access list. All
+three documented steps were complete and the probe run still died in 35 seconds at
+`actions/checkout` with a 403. That list is a settings-page property of the account holding the
+PAT; no API extends it. See the corresponding invariant in `CLAUDE.md`.

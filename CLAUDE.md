@@ -2201,10 +2201,37 @@ style of that module.
   on 32). This is the same failure the `response_model` invariant describes, one layer out: the
   surface you read is not necessarily the surface the consumer reads.
 
-- **`FACTORY_PR_TOKEN` now has a BWS record and a rotation trail** — `a3240c2e-92d7-4b32-a726-b49b0135565a`,
+- **Onboarding a factory target has FOUR parts, and the fourth is invisible until a run dies at
+  checkout: the fine-grained PAT's REPOSITORY ACCESS LIST.** The three obvious parts are the caller
+  workflow (`.github/workflows/factory-runner-pilot.yml` at `RECOMMENDED_CALLER_PIN`), the four
+  Actions secrets, and the orchestrator's `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` entry.
+  All three can be correct while every run fails, because `FACTORY_PR_TOKEN` is a **fine-grained**
+  PAT and a fine-grained PAT is scoped to an explicit list of repositories chosen when it was
+  issued. Setting the secret in a new repo copies a token that has no access to that repo.
+  Measured 2026-08-07 onboarding `project-standards`: caller, secrets and allowlist all in place,
+  and the probe run failed in 35 seconds at `actions/checkout` with
+  `fatal: unable to access '…/project-standards/': The requested URL returned error: 403` — never
+  reaching the claim call. Confirmed by control: the token answers 200 on all seven other repos and
+  DENIED on that one. **Extending the list is a settings-page operation on the account that owns the
+  PAT; no API does it, and no amount of re-setting the secret helps.**
+  **Two consequences.** (1) Fire a throwaway `workflow_dispatch` at a new caller with a well-formed
+  but nonexistent `work_unit_id` before believing it works — it costs 35 seconds, mutates nothing
+  (the runner claims before it codes, and here it does not even get that far), and it is the only
+  thing that distinguishes *configured* from *working*. This is the same class as the 2026-08-03
+  failure where the PAT lacked `workflow` scope and it surfaced only at `git push`, after coding and
+  verification had already succeeded, costing two work units. (2) **Two sets are now tracked and
+  they disagree in both directions** — repos holding a `FACTORY_PR_TOKEN` Actions secret
+  (`orchestrator`, `intent-packages`, `infraops-mcp-server`, `security-standards`, `change-manager`,
+  `brain`, `project-standards`) versus repos the PAT can reach (the same list minus
+  `project-standards`, plus `factory-runner`, which holds no secret because it is not a target).
+  Neither set is derivable from the other.
+
+- **`FACTORY_PR_TOKEN` has a BWS record and a rotation trail** — `a3240c2e-92d7-4b32-a726-b49b0135565a`,
   `SDS Operator` project, documented in **factory-runner's** `.bws-secrets.toml` (not this repo's).
-  **Four repos hold copies as write-only Actions secrets** — `intent-packages`, `change-manager`,
-  `brain`, `security-standards` — so a rotation means re-setting all four; a copy left behind is
+  **SEVEN repos hold copies as write-only Actions secrets** as of 2026-08-07 — `orchestrator`,
+  `intent-packages`, `infraops-mcp-server`, `security-standards`, `change-manager`, `brain`,
+  `project-standards`. (This bullet said "four" until 2026-08-07; the count had drifted twice.)
+  A rotation means re-setting all seven; a copy left behind is
   dead on the next push with no signal until a run fails at auth. Verify any rotation with the
   discriminating probe, never with a green `gh secret set`: a throwaway branch workflow triggered
   on `push:` that checks out with the secret and pushes a commit **touching
