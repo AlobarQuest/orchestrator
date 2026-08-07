@@ -25,10 +25,11 @@ why the service-level guards are also exercised directly, below the HTTP layer.
 import uuid
 
 import pytest
+from fastapi import Request
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from orchestrator.api.dependencies import OBSERVER_WRITE_ROUTES
+from orchestrator.api.dependencies import OBSERVER_WRITE_ROUTES, _confine_observer
 from orchestrator.api.routes import router as api_router
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
@@ -269,3 +270,40 @@ def test_an_observer_is_not_a_human_reviewer() -> None:
     with pytest.raises(DomainError) as error:
         _human(_actor(ActorRole.OBSERVER))
     assert error.value.code == "human_actor_required"
+
+
+def test_a_request_with_no_matched_route_is_refused() -> None:
+    """The unknown case refuses, which nothing else in this file pins.
+
+    `_confine_observer` reads the matched route off `request.scope` and compares the
+    template against the allowlist. Its docstring claims an unmatched route "yields None,
+    which is not in the allowlist -- the unknown case refuses", and that claim survived a
+    mutation: rewriting the comparison as `matched is not None and matched not in ...`
+    left all 61 tests in this file green (found in review, 2026-08-07).
+
+    The branch is probably unreachable over HTTP -- FastAPI resolves dependencies only
+    after routing, so a request that matches nothing 404s before this runs. That is
+    exactly why no route-driven test reaches it, and exactly why the assertion belongs
+    here instead: a defensive branch nobody can execute still has to mean what it says, or
+    it is decoration that reads as protection. Asserted directly against the function, so
+    reachability is not the question.
+    """
+    request = Request({"type": "http", "method": "POST", "headers": []})
+    with pytest.raises(DomainError) as raised:
+        _confine_observer(request)
+    assert raised.value.code == "role_forbidden"
+
+
+def test_a_read_with_no_matched_route_is_still_allowed() -> None:
+    """Reads are exempt from the route check, and that exemption must survive.
+
+    The obvious wrong way to kill the mutation above is to delete the safe-method
+    short-circuit so every request consults the allowlist. That refuses reads this role is
+    meant to have, and reads are deliberately unconfined (see OBSERVER_WRITE_ROUTES).
+
+    NOTE on what this does NOT pin: merely reordering the `matched = ...` assignment
+    relative to the short-circuit is not a behaviour change, because the lookup is pure.
+    A mutation that only moves it survives, correctly. The behaviour worth pinning is the
+    exemption itself, which is what this asserts.
+    """
+    _confine_observer(Request({"type": "http", "method": "GET", "headers": []}))
