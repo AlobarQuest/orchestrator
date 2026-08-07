@@ -2124,6 +2124,51 @@ style of that module.
   error — `factory-runner` needing a caller means the runner would verify changes to itself using a
   pinned older copy of itself, a trust loop that should be decided rather than acquired by default.
 
+- **`ActorRole` has FIVE members: an OBSERVER role exists and its entire write surface is
+  `POST /api/v1/observations`.** WS-P3.6 Inc 1, live on `51c5a57-wsp36inc1-amd64` since
+  2026-08-07. `orchestrator-drift-reporter` now holds it (was `system`), which closes the
+  Phase-3 exit-criterion-3 hole where the one external producer held the role that drives
+  `commands/ready` and dispatch. **Every future observe-and-report producer uses this one
+  credential** — per-producer identities are deliberately not used, because the observation row
+  already carries `source_system` / `source_reference`, so the row says who spoke and the
+  credential does not have to. Registry actor `orchestrator-observer`, profile `observer-v1`
+  (one capability `event_emit`, fourteen explicit prohibitions).
+  **The confinement is at ONE place — `api/dependencies.py::_confine_observer` — and that is
+  load-bearing, not stylistic.** It keys on the matched route TEMPLATE, fires above request
+  validation, and an unmatched route yields `None`, which is not in the allowlist, so the unknown
+  case refuses. Reads are deliberately unconfined. **Confining it by the ~20 service-level
+  allowlists instead would have failed**, because four POST routes carry no role check at all —
+  `work-units/{id}/preflight` and the three `/event-publications/*` — and `services/context.py`
+  and `services/event_publications.py` contain **zero** `ActorRole` references between them. "The
+  service layer gates writes" is not a property the service layer provides. Those four are a live
+  defect for every other role (backlogged); OBSERVER is simply not exposed to them.
+  **Proven against production 2026-08-07, not just in tests:** `commands/ready`, `dispatch`,
+  `verify`, `preflight`, `event-publications/queue` and `/export` all **403**; `POST
+  /observations` reaches request validation and a valid post returns **201** attributed to
+  `drift-reconciler`; `GET /observations` returns 200. Note approval-shaped routes answer **302**
+  from outside — they sit behind the human forward-auth chain at the proxy, so the request never
+  reaches the app; that surface is covered by the in-process architecture test over all 49
+  confined routes, not by an external probe.
+
+- **A build-session worktree gets a DIFFERENT Python than CI unless you pin it, and the digest in
+  a handoff is stale the moment anything merges.** Two release-time traps, both hit on 2026-08-07.
+  (1) `uv sync` in a fresh worktree picks the newest interpreter satisfying `requires-python =
+  ">=3.12"` — it chose **3.14.3** while `quality.yml` pins **3.12**, so the session's green
+  `make check` was measured on an interpreter CI never uses. Add `uv venv --clear --python 3.12`
+  to the worktree recipe. Also note this repo is on **psycopg 3**: `TEST_DATABASE_URL` must be
+  `postgresql+psycopg://`, not `+psycopg2://`, which fails with a bare `ModuleNotFoundError` that
+  reads like a broken environment.
+  (2) **`artifact_sha256` cannot be computed before the merge SHA and cannot be carried across a
+  rebase.** `SOURCE_REVISION` is hashed into the bundle, so the digest is a function of the
+  security-standards commit. The Inc-1 report quoted `6fee03e9…` for `abfaf41`; unrelated merges
+  advanced `main`, the branch rebased to `85125a1`, and the real digest was `9cea9814…`. Always
+  recompute from the **merged** revision:
+  `scripts/shape_registry_context.py --source <checkout> --revision <sha> --output <dir>` then
+  `build_registry_bundle.py`'s `artifact_digest`. Verify by assembling the bundle and reading back
+  `source_revision` and the actor list before pinning. The in-build gate fails closed on a wrong
+  digest, so the cost of getting it wrong is a failed build rather than a bad image — but it is a
+  25-minute failed build.
+
 - **`uv sync` installs what the repository PINS, so a remediation whose whole point is to adopt a
   proposed version cannot be produced from the checkout — and the envelope that authorises only
   `uv sync` and the verifier looks entirely correct while being unsatisfiable.** The first live
