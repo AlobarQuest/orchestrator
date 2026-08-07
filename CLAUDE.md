@@ -2124,6 +2124,27 @@ style of that module.
   error — `factory-runner` needing a caller means the runner would verify changes to itself using a
   pinned older copy of itself, a trust loop that should be decided rather than acquired by default.
 
+- **`uv sync` installs what the repository PINS, so a remediation whose whole point is to adopt a
+  proposed version cannot be produced from the checkout — and the envelope that authorises only
+  `uv sync` and the verifier looks entirely correct while being unsatisfiable.** The first live
+  execution of `docs/operations/dependency-remediation.md` (2026-08-07, `intent-packages` #50, ruff
+  0.15.22 → 0.16.1) died on exactly this: revision 1's `allowed_commands` was `["uv sync", "make
+  check"]`, `make fix` was a no-op because the tree's own ruff already considered those seven files
+  correct, and the coding agent ran `make check` seven times and then spent its remaining turns
+  trying to research what 0.16 had changed. **The fix is `uvx <tool>@<version>`** — it fetches the
+  proposed version for the run without committing the bump, so Dependabot's own PR still lands the
+  version change, which is the ADR-0016 composition. Three consequences worth carrying:
+  (1) the repo's documented dry-run rule ("prove the mutator yields a diff") must be read as
+  **prove it from the RUNNER's environment**, since a local machine that happens to have the newer
+  tool proves nothing; (2) `allowed_commands` reaches the coding agent only as prompt text, so the
+  unit's **`outcome` is what actually steers it** — revision 2 named the command and said `make fix`
+  is a no-op here, and finished in 90 seconds on 10 LLM calls against a 60 budget, where revision 1
+  burned 40 turns and $1.39; (3) **an attempt that ends on `error_max_turns` is under-specified, not
+  under-budgeted** — the 40-turn ceiling is a literal in factory-runner's workflow and is unrelated
+  to `max_llm_calls`, which was barely touched. And the price of getting it wrong is the documented
+  one: an approved decomposition cannot be superseded, so this cost a whole new package revision
+  plus both human approvals again.
+
 - **`change_class` is a FREE STRING matched against `ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES`,
   and that list was `["dependency-update"]` alone until 2026-08-03**, when Devon approved adding
   `maintenance-remediation` (standing, not per-run). `_optional_change_class` validates shape only —
