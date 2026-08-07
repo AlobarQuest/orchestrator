@@ -38,7 +38,6 @@ from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.observations import _authorize_actor
 from orchestrator.web import _human
 from orchestrator.web import router as web_router
-from tests.api.test_lifecycle_api import SYSTEM
 from tests.api.test_observations_api import observation_body
 
 OBSERVER = {"Authorization": "Bearer observer-token", "X-Credential-Key-Id": "observer-key"}
