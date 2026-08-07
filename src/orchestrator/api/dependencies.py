@@ -5,13 +5,13 @@ from fastapi import Request
 from sqlalchemy.orm import Session
 
 from orchestrator.db import session_factory
+from orchestrator.errors import DomainError
 from orchestrator.identity.auth import (
     AuthenticationError,
     M2MCredential,
     authenticate_human,
     authenticate_m2m,
 )
-from orchestrator.errors import DomainError
 from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.kernel.states import ActorRole
 from orchestrator.services.lifecycle import ActorContext
