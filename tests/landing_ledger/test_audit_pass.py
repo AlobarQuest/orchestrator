@@ -12,12 +12,21 @@ import pytest
 from typer.testing import CliRunner
 
 from landing_ledger.audit import STALL_ELIGIBLE_NOT_ARMED
-from landing_ledger.cli import EXIT_FINDINGS, EXIT_INCOMPLETE, EXIT_OK, app, audit_pass
+from landing_ledger.cli import (
+    EXIT_FINDINGS,
+    EXIT_INCOMPLETE,
+    EXIT_OK,
+    _exit_code,
+    app,
+    audit_pass,
+)
 from landing_ledger.github import (
     GitHubReader,
+    _gate_revision,
     current_rule_revision,
     read_pending_updates,
 )
+from landing_ledger.orchestrator_client import LedgerWriteError
 from landing_ledger.rules import GATE_PATH
 from tests.landing_ledger.test_audit import PATCH_AND_MINOR, UNDERSCORED
 from tests.landing_ledger.test_github import REPO, reader_for
@@ -145,6 +154,14 @@ def test_a_repository_with_no_gate_answers_none_rather_than_raising() -> None:
     assert current_rule_revision(reader_for(_routes()), REPO, "main") == UNDERSCORED
 
 
+def test_a_landing_with_no_gate_at_its_commit_pins_NOTHING_rather_than_a_placeholder() -> None:
+    """The landing path's own gate read, which had no test of the absent case. A fabricated
+    revision would reach the ledger as a pinned rule, and the audit would then report it as
+    untranscribed -- a finding manufactured by the recorder rather than found in reality."""
+    assert _gate_revision(reader_for(_routes(gate=None)), REPO, "c" * 40) is None
+    assert _gate_revision(reader_for(_routes()), REPO, "c" * 40) == UNDERSCORED
+
+
 # ---------------------------------------------------------------------------------------------
 # One pass over one repository.
 # ---------------------------------------------------------------------------------------------
@@ -198,13 +215,17 @@ def test_github_being_unreadable_makes_the_answer_MISSING_not_clean() -> None:
     assert recorder.bodies[0]["facts"]["unavailable"] is True
 
 
-def test_a_pass_whose_own_row_cannot_be_filed_reports_itself_as_missing() -> None:
+def test_a_pass_whose_own_row_cannot_be_filed_reports_itself_as_MISSING() -> None:
+    """The measurement can be perfect and the answer still absent. Reporting the verdict as filed
+    when the write was refused would make a broken orchestrator look like a clean estate."""
+
     class _Refuses:
         def record_observation(self, payload: dict[str, Any]) -> dict[str, Any]:
-            raise httpx.HTTPError("nope")
+            raise LedgerWriteError("orchestrator rejected POST /api/v1/observations: 503")
 
-    with pytest.raises(httpx.HTTPError):
-        _run(_routes(), _Ledger(), _Refuses())
+    audit, _ = _run(_routes(), _Ledger(), _Refuses())
+
+    assert audit.unavailable is True
 
 
 def test_a_dry_run_writes_nothing_and_still_computes_the_row() -> None:
@@ -261,3 +282,103 @@ def test_the_three_exit_codes_are_distinct() -> None:
     already paid for once."""
     assert len({EXIT_OK, EXIT_FINDINGS, EXIT_INCOMPLETE}) == 3
     assert EXIT_OK == 0
+
+
+def test_could_not_measure_outranks_found_something() -> None:
+    """An incomplete pass cannot claim it found everything there was to find, so when both are
+    true the caller must be told the weaker thing."""
+    assert _exit_code(findings=False, incomplete=False) == EXIT_OK
+    assert _exit_code(findings=True, incomplete=False) == EXIT_FINDINGS
+    assert _exit_code(findings=False, incomplete=True) == EXIT_INCOMPLETE
+    assert _exit_code(findings=True, incomplete=True) == EXIT_INCOMPLETE
+
+
+class _FakeClient:
+    """Stands in for the orchestrator half so the command can be driven end to end."""
+
+    def __init__(self, rows: list[dict[str, Any]] | None = None, **_: Any) -> None:
+        self.rows = rows or []
+        self.bodies: list[dict[str, Any]] = []
+
+    def __enter__(self) -> "_FakeClient":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read_landings(self, repository: str) -> list[dict[str, Any]]:
+        return self.rows
+
+    def record_observation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.bodies.append(payload)
+        return {}
+
+
+def _drive(
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    *,
+    routes: dict[str, Any] | None = None,
+    unreachable: bool = False,
+    rows: list[dict[str, Any]] | None = None,
+) -> Any:
+    def _reader(**_: Any) -> GitHubReader:
+        if unreachable:
+            return GitHubReader(
+                token="fixture",
+                transport=httpx.MockTransport(lambda request: httpx.Response(503)),
+            )
+        return reader_for(routes if routes is not None else _routes())
+
+    monkeypatch.setattr("landing_ledger.cli.GitHubReader", _reader)
+    monkeypatch.setattr(
+        "landing_ledger.cli.OrchestratorClient", lambda **kwargs: _FakeClient(rows, **kwargs)
+    )
+    env = {"LANDING_LEDGER_GITHUB_TOKEN": "x", "LANDING_LEDGER_TOKEN": "y"}
+    return CliRunner(env=env).invoke(app, argv)
+
+
+def test_a_clean_audit_pass_exits_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The healthy case, so the codes below are a discrimination rather than a constant."""
+    routes = _routes(armed=True, conclusion="failure")
+
+    assert _drive(monkeypatch, ["audit", "--repository", REPO], routes=routes).exit_code == EXIT_OK
+
+
+def test_an_audit_pass_that_FOUND_something_tells_its_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _drive(monkeypatch, ["audit", "--repository", REPO])
+
+    assert result.exit_code == EXIT_FINDINGS
+    assert STALL_ELIGIBLE_NOT_ARMED in result.output
+
+
+def test_an_audit_pass_that_could_not_MEASURE_tells_its_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _drive(monkeypatch, ["audit", "--repository", REPO], unreachable=True)
+
+    assert result.exit_code == EXIT_INCOMPLETE
+
+
+def test_a_complete_recording_pass_exits_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    routes = dict(_routes())
+    routes[f"/repos/{REPO}/branches/main"] = {"commit": {"sha": "z" * 40}}
+    routes[f"/repos/{REPO}/commits"] = []
+
+    result = _drive(monkeypatch, ["record", "--repository", REPO], routes=routes)
+
+    assert result.exit_code == EXIT_OK
+
+
+def test_a_recording_pass_that_read_NOTHING_does_not_exit_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The generator-3 defect, in the very thing being scheduled: the per-repository flag was
+    printed into an aggregate nobody had to look at, and the pass exited 0 over a window it had
+    not recorded."""
+    result = _drive(monkeypatch, ["record", "--repository", REPO], unreachable=True)
+
+    assert '"unavailable": true' in result.output
+    assert result.exit_code == EXIT_INCOMPLETE

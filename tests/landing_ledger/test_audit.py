@@ -5,6 +5,7 @@ six rule-permitted landings of 2026-08-07, whose facts were read back through
 `GET /api/v1/observations?observation_type=landing` while this was written.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -17,6 +18,7 @@ from landing_ledger.audit import (
     DRIFT_RULE_DID_NOT_SUCCEED,
     DRIFT_RULE_MISSING,
     DRIFT_RULE_UNKNOWN,
+    MAX_LIST,
     STALL_ARMED_NOT_LANDED,
     STALL_ELIGIBLE_NOT_ARMED,
     STALL_METADATA_UNREADABLE,
@@ -413,11 +415,20 @@ def test_one_pass_answering_its_own_id_DIFFERENTLY_is_loud_rather_than_a_second_
 
 
 def test_a_flood_of_findings_is_trimmed_to_fit_with_its_true_count_beside_it() -> None:
-    """The orchestrator bounds facts at 4096 encoded bytes and rejects anything larger, so an
-    unbounded list would make a bad day the day the detector stops being able to report."""
+    """The orchestrator bounds facts at 4096 ENCODED bytes and rejects anything larger, so an
+    unbounded list would make a bad day the day the detector stops being able to report.
+
+    Measured on the encoded bytes, and with findings long enough that the per-list cap alone does
+    not save it: a first version asserted only that fewer entries survived than went in, which the
+    20-entry cap satisfies on its own -- so the byte trim could be deleted entirely and the test
+    still passed.
+    """
     audit = audit_repository(
-        repository=REPO,
-        landings=[landing(revision=PATCH_AND_MINOR, update_type=MAJOR) for _ in range(200)],
+        repository="AlobarQuest/a-repository-with-a-name-long-enough-to-fill-the-record",
+        landings=[
+            landing(revision=PATCH_AND_MINOR, update_type=MAJOR, ecosystem="e" * 200)
+            for _ in range(200)
+        ],
         pending=(),
         rule_revision=UNDERSCORED,
         now=NOW,
@@ -425,6 +436,26 @@ def test_a_flood_of_findings_is_trimmed_to_fit_with_its_true_count_beside_it() -
 
     body = audit_observation(audit, "20260808T120000Z", NOW)
 
+    encoded = json.dumps(body["facts"], sort_keys=True, separators=(",", ":")).encode("utf-8")
     assert body["facts"]["findings_found"] == 200
-    assert len(body["facts"]["findings"]) < 200
-    assert len(str(body["facts"])) < 4096
+    assert 0 < len(body["facts"]["findings"]) < MAX_LIST
+    assert len(encoded) <= 4096
+
+
+def test_caveats_are_dropped_before_findings_when_the_record_will_not_fit() -> None:
+    """A caveat qualifies evidence; a finding asserts a violation. The violation must survive."""
+    audit = audit_repository(
+        repository=REPO,
+        landings=[
+            landing(revision=PATCH_AND_MINOR, update_type=MAJOR, ecosystem="e" * 200),
+            *[landing(files=[GATE_PATH], ecosystem="e" * 200) for _ in range(60)],
+        ],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        now=NOW,
+    )
+
+    body = audit_observation(audit, "20260808T120000Z", NOW)
+
+    assert body["facts"]["findings"], "the finding was trimmed before the caveats"
+    assert len(body["facts"]["caveats"]) < len(body["facts"]["findings"]) + MAX_LIST
