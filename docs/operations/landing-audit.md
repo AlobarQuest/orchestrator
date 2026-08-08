@@ -109,4 +109,10 @@ and an honest finding sharing one exit code is a collision this estate has alrea
   `observation_type` is bounded by a database CHECK and by the running image's vocabulary.
 - `LANDING_LEDGER_TOKEN` — the OBSERVER bearer, BWS `f793576f-…` in `SDS Operator`.
 - `LANDING_LEDGER_GITHUB_TOKEN` — **has no BWS record.** The launcher falls back to `gh auth
-  token`, which means a scheduled job resting on an interactive login. Backlogged.
+  token`, which means a scheduled job resting on an interactive login, and it dies silently when
+  that login is re-issued. Backlogged P2 `113af446955b`.
+
+The launcher records a **seven-day** window, not the thirty-day default. Recording costs about
+twelve GitHub requests per landing and the 2026-08-08 backfill exhausted the 5000/hour limit in one
+thirty-day pass, so a daily job at that window would run out partway through every morning and exit
+3 forever. A gap longer than a week needs one manual `landing-ledger record --days N`.

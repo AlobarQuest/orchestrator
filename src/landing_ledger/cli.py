@@ -121,6 +121,19 @@ def record_landings(
     return summary
 
 
+# A pass IS a moment, so its identity spells one -- the shape the sibling adapters already use for
+# `--pass-id`. Requiring it rather than accepting any string is what lets the record's `observed_at`
+# be a function of the pass instead of of the clock, which is what makes a re-run replay.
+PASS_ID_FORMAT = "%Y%m%dT%H%M%SZ"
+
+
+def pass_moment(pass_id: str) -> datetime:
+    try:
+        return datetime.strptime(pass_id, PASS_ID_FORMAT).replace(tzinfo=UTC)
+    except ValueError as error:
+        raise ValueError(f"pass id must be {PASS_ID_FORMAT}, got {pass_id!r}") from error
+
+
 class LedgerReader(Protocol):
     """The read surface the audit needs, structural so a test can pass a hermetic fake."""
 
@@ -150,6 +163,10 @@ def audit_pass(
     Unavailable is deliberately not the same as clean. The observation is still written -- the
     heartbeat has to exist for the pass to be distinguishable from a pass that never ran -- but it
     carries no verdict, and the caller turns it into the incomplete exit code.
+
+    TWO CLOCKS, deliberately. `now` is the wall, and it is what "has this been green long enough
+    to be worth reporting" must be measured against, because the GitHub state was read just now.
+    The RECORD's clock is the pass's own moment, so that re-running a pass by its id replays.
     """
     try:
         base_ref = default_branch(reader, repository)
@@ -170,7 +187,11 @@ def audit_pass(
             pending_audited=0,
             unavailable=True,
         )
-    body = audit_observation(audit, pass_id, now)
+    # The record's own clock is the PASS's, never the wall's. The orchestrator's replay check
+    # compares the whole stored command, `observed_at` included, so a wall-clock timestamp would
+    # make re-running a pass by its own id an `idempotency_conflict` -- the same key, a different
+    # payload -- rather than the replay it obviously is.
+    body = audit_observation(audit, pass_id, pass_moment(pass_id))
     if not dry_run:
         try:
             writer.record_observation(body)
@@ -232,7 +253,8 @@ def record_command(
 def audit_command(
     repository: Annotated[list[str], typer.Option(help="Repository as owner/name; repeatable.")],
     pass_id: Annotated[
-        str | None, typer.Option(help="Identity of this pass; defaults to the UTC now.")
+        str | None,
+        typer.Option(help=f"Identity of this pass as {PASS_ID_FORMAT}; defaults to the UTC now."),
     ] = None,
     settle_seconds: Annotated[
         int, typer.Option(help="How long armed-and-green must persist before it is reported.")
@@ -253,7 +275,14 @@ def audit_command(
         typer.echo("LANDING_LEDGER_TOKEN is required", err=True)
         raise typer.Exit(code=1)
     now = datetime.now(UTC)
-    identity = pass_id or now.strftime("%Y%m%dT%H%M%SZ")
+    identity = pass_id or now.strftime(PASS_ID_FORMAT)
+    try:
+        # Validated here, once, before anything is read: `audit_pass` promises never to raise, and
+        # a malformed identity is the operator's typo rather than a repository being unreadable.
+        pass_moment(identity)
+    except ValueError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1) from error
     audits: list[RepoAudit] = []
     bodies: list[dict[str, Any]] = []
     with (

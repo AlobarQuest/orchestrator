@@ -78,7 +78,15 @@ done
 PASS_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 LEDGER="$REPO_ROOT/.venv/bin/landing-ledger"
 
-"$LEDGER" record "${TARGETS[@]}" "$@"
+# SEVEN DAYS, NOT THE THIRTY-DAY DEFAULT, and this is a correctness setting rather than a
+# preference. Recording costs about twelve GitHub requests per landing; the 2026-08-08 backfill
+# read thirty days across these eight repositories and exhausted the 5000/hour limit in one pass.
+# A daily job at that window would therefore run out partway through every morning, mark the later
+# repositories unavailable, and exit 3 forever -- a permanently red signal, which is a signal
+# nobody reads. Seven days is roughly ninety landings, survives a week of the machine being
+# closed (re-recording an unchanged landing replays rather than conflicting), and leaves headroom
+# for the audit's own reads. A LONGER gap than that needs one manual `record --days N`.
+"$LEDGER" record "${TARGETS[@]}" --days 7 "$@"
 record_rc=$?
 
 "$LEDGER" audit "${TARGETS[@]}" --pass-id "$PASS_ID" "$@"

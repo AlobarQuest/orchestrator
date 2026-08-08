@@ -4,7 +4,7 @@ The exit codes are the point of most of this. A launcher is the only consumer a 
 has, and a launcher reads one number.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -19,6 +19,7 @@ from landing_ledger.cli import (
     _exit_code,
     app,
     audit_pass,
+    pass_moment,
 )
 from landing_ledger.github import (
     GitHubReader,
@@ -202,7 +203,7 @@ def test_github_being_unreadable_makes_the_answer_MISSING_not_clean() -> None:
         _Ledger(),
         recorder,
         repository=REPO,
-        pass_id="p",
+        pass_id="20260808T120000Z",
         now=NOW,
         settle_seconds=3600,
         dry_run=False,
@@ -282,6 +283,44 @@ def test_the_three_exit_codes_are_distinct() -> None:
     already paid for once."""
     assert len({EXIT_OK, EXIT_FINDINGS, EXIT_INCOMPLETE}) == 3
     assert EXIT_OK == 0
+
+
+def test_the_records_clock_is_the_PASS_not_the_wall(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The orchestrator's replay check compares the whole stored command, `observed_at` included.
+    A wall-clock timestamp would make re-running a pass by its own id an `idempotency_conflict` --
+    the same key, a different payload -- rather than the replay it obviously is. Measured here by
+    running the same pass id at two different wall times and demanding one record."""
+    routes = _routes(armed=True, conclusion="failure")
+
+    def _at(wall: datetime) -> dict[str, Any]:
+        # Asserted on the body the PASS returns, never on `audit_observation` called by hand: the
+        # question is which clock the pass hands it, and a test that supplies the clock itself
+        # answers a different question and would pass with the defect present.
+        _, body = audit_pass(
+            reader_for(routes),
+            _Ledger(),
+            _Recorder(),
+            repository=REPO,
+            pass_id="20260808T120000Z",
+            now=wall,
+            settle_seconds=3600,
+            dry_run=True,
+        )
+        return body
+
+    assert _at(NOW) == _at(NOW + timedelta(days=3))
+    assert _at(NOW)["observed_at"] == pass_moment("20260808T120000Z").isoformat()
+    assert _at(NOW)["observed_at"] == "2026-08-08T12:00:00+00:00"
+
+
+def test_a_pass_id_that_is_not_a_moment_is_refused_at_the_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`audit_pass` promises never to raise, so a malformed identity is caught once, up front."""
+    result = _drive(monkeypatch, ["audit", "--repository", REPO, "--pass-id", "yesterday"])
+
+    assert result.exit_code == 1
+    assert "pass id must be" in result.output
 
 
 def test_could_not_measure_outranks_found_something() -> None:
