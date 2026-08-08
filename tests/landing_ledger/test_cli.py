@@ -7,8 +7,12 @@ from typer.testing import CliRunner
 
 from landing_ledger.cli import app, record_landings
 from landing_ledger.github import GitHubReader
-from landing_ledger.orchestrator_client import LedgerWriteError
+from landing_ledger.orchestrator_client import LedgerWriteError, OrchestratorClient
 from tests.landing_ledger.test_github import REPO, gate_routes, reader_for
+
+
+def _refuse(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("connection refused")
 
 
 class _Recorder:
@@ -64,7 +68,7 @@ def test_a_pass_records_every_landing_it_can_read() -> None:
     assert len(recorder.bodies) == 1
 
 
-def test_github_being_unreachable_costs_the_pass_and_nothing_else() -> None:
+def test_github_being_unhealthy_costs_the_pass_and_nothing_else() -> None:
     """A recorder is not a gate: nothing waits on it, so an outage must not raise."""
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -78,6 +82,41 @@ def test_github_being_unreachable_costs_the_pass_and_nothing_else() -> None:
     assert summary["unavailable"] is True
     assert summary["recorded"] == 0
     assert recorder.bodies == []
+
+
+def test_github_being_UNREACHABLE_costs_the_pass_and_nothing_else() -> None:
+    """The other outage, and the one a 503 fixture does not reach.
+
+    A refused connection, a DNS failure or a timeout raises before any response exists, so it is
+    not an HTTP status and it is not one of the shapes a status-code test produces. Nothing in
+    this estate waits on the ledger; an unreachable GitHub must cost the pass and no more.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    reader = GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
+    recorder = _Recorder()
+
+    summary = _run(reader, recorder)
+
+    assert summary["unavailable"] is True
+    assert recorder.bodies == []
+
+
+def test_the_orchestrator_being_UNREACHABLE_is_counted_not_raised() -> None:
+    class _Unreachable:
+        def record_observation(self, payload: dict[str, Any]) -> dict[str, Any]:
+            return OrchestratorClient(
+                base_url="https://x",
+                credential_key_id="orchestrator-observer",
+                token="t",
+                transport=httpx.MockTransport(_refuse),
+            ).record_observation(payload)
+
+    summary = _run(reader_for(_pass_routes()), _Unreachable())
+
+    assert (summary["recorded"], summary["skipped"]) == (0, 1)
 
 
 def test_one_unreadable_landing_is_counted_rather_than_discarding_the_pass() -> None:

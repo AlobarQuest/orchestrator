@@ -76,7 +76,18 @@ class GitHubReader:
     def _request(self, path: str, **params: Any) -> Any:
         if not path.startswith("/"):
             raise ForbiddenMethodError(f"the reader may not fetch {path}")
-        response = self._client.request("GET", path, params=params or None)
+        try:
+            response = self._client.request("GET", path, params=params or None)
+        except httpx.HTTPError as error:
+            # UNREACHABLE is not the same as UNHEALTHY, and only one of them has a status code.
+            # A refused connection, a DNS failure or a timeout raises here, before any response
+            # exists, so it has to become the reader's own error or it escapes the pass entirely
+            # -- which is the one thing a recorder must never do. Type name only: an exception
+            # from a client carries the request, and a diagnostic that prints what it was given
+            # is how a value that should not be in a transcript gets into one.
+            raise LedgerError(
+                f"github is unreachable for GET {path}: {type(error).__name__}"
+            ) from (error)
         if response.status_code == 404:
             return None
         if response.status_code >= 400:

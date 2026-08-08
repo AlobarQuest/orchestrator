@@ -64,7 +64,15 @@ class OrchestratorClient:
     def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not is_allowed_write(path):
             raise ForbiddenEndpointError(f"the ledger may not write to {path}")
-        response = self._client.request("POST", path, json=payload)
+        try:
+            response = self._client.request("POST", path, json=payload)
+        except httpx.HTTPError as error:
+            # An unreachable orchestrator raises before any status code exists. Same reasoning as
+            # the reader's: it must become this client's own error, or one landing's write takes
+            # the whole pass down.
+            raise LedgerWriteError(
+                f"orchestrator is unreachable for POST {path}: {type(error).__name__}"
+            ) from error
         if response.status_code >= 400:
             # The status only. A rejection body echoes the command back, and a diagnostic that
             # prints what it was given is how a value that should not be in a transcript gets
