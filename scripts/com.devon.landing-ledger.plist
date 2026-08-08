@@ -6,8 +6,11 @@
      No secrets live here: the wrapper fetches the OBSERVER bearer from BWS at runtime and takes
      the GitHub credential from the environment or from `gh`.
 
-     RunAtLoad is false. The ledger reads a 30-day window every pass, so a missed day costs
-     nothing and a login-time run would only add load. StartCalendarInterval is 07:30 local:
+     RunAtLoad is false. The wrapper reads a SEVEN-day window every pass (see its own comment for
+     why seven and not the CLI's thirty-day default), so a missed day costs nothing -- a week of
+     the machine being closed is still covered, and re-recording an unchanged landing replays
+     rather than conflicting. A login-time run would only add load. StartCalendarInterval is 07:30
+     local:
      after the night's dependency updates have been raised and their checks have concluded, and
      early enough that a stalled one is seen the same morning.
 
