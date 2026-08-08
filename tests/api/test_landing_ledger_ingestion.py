@@ -84,7 +84,9 @@ def test_every_landing_kind_is_accepted_by_the_real_ingestion_route(
 
     stored = _stored(migrated_engine)
     assert [row.subject_type for row in stored] == ["repo", "repo", "repo"]
-    assert {row.observation_type for row in stored} == {"github_pr", "inventory"}
+    # One type for every route -- and asserted against the DB rows, so it also proves the
+    # `ck_observations_type` CHECK accepts the member migration 0022 added.
+    assert {row.observation_type for row in stored} == {"landing"}
     assert {row.facts["permitted_by"]["basis"] for row in stored} == {
         "auto_merge_rule",
         "human",

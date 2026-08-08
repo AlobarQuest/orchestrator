@@ -165,17 +165,25 @@ def fact_digest(facts: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def observation_type_for(landing: Landing) -> str:
-    """`github_pr` where a pull request exists; `inventory` where one does not.
+# One type for one kind of event. Every row this adapter writes says the same thing -- a commit
+# reached the default branch -- and the ROUTE it took is `permitted_by`, not a second type.
+#
+# The earlier split (`github_pr` with a pull request, `inventory` without) was the honest version
+# of a missing vocabulary member, and it was wrong in both directions once one existed. `github_pr`
+# already means "a fact about a pull request bound to a work unit" in the reconciliation lane
+# (`reconciliation_runner/facts.py` writes it, `services/reconciliation_detection.py` reads it to
+# decide which observation is current); those rows are subject_type `work_unit` keyed by unit id
+# and a landing is subject_type `repo` keyed by `owner/name`, so the two never actually collide --
+# but relying on two namespaces staying disjoint is a coincidence, not a design. `inventory`
+# meanwhile asserted nothing at all.
+#
+# `landing` was added to OBSERVATION_TYPES by migration 0022 (Devon, 2026-08-07).
+OBSERVATION_TYPE = "landing"
 
-    NEITHER IS A GOOD ANSWER, and the split is the honest version of a gap rather than a design.
-    `OBSERVATION_TYPES` has no member meaning "a commit reached the default branch". `github_pr`
-    is true of the two routes that go through a pull request and would be a plain falsehood for a
-    direct push -- the case the ledger exists to make visible. `inventory` has no producer and no
-    established meaning, so it asserts nothing untrue. Adding a member is a schema decision, not
-    something to take while fitting a record.
-    """
-    return "github_pr" if landing.pull_request is not None else "inventory"
+
+def observation_type_for(landing: Landing) -> str:
+    """Every landing is a landing, whatever route it took to get there."""
+    return OBSERVATION_TYPE
 
 
 def landing_observation(landing: Landing) -> dict[str, Any]:

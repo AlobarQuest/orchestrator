@@ -138,15 +138,20 @@ def test_an_unattributed_landing_says_so_rather_than_claiming_a_basis() -> None:
     assert "rule_path" not in permitted
 
 
-def test_the_observation_type_splits_because_no_member_means_landing() -> None:
-    """`github_pr` is true where a pull request exists and would be a plain falsehood for a push.
+def test_every_route_records_the_same_observation_type() -> None:
+    """One type for one kind of event; the route lives in `permitted_by`.
 
-    `OBSERVATION_TYPES` has no member meaning "a commit reached the default branch"; adding one is
-    a schema decision, so the record takes the two members that assert nothing untrue.
+    Pinned as a set over all three routes rather than three separate equalities, so a change
+    that reintroduced a per-route split would fail here even if each individual value were a
+    real member of the vocabulary. `github_pr` in particular is NOT available to this adapter:
+    it already means "a fact about a pull request bound to a work unit" in the reconciliation
+    lane, and the two only fail to collide because their subject namespaces are disjoint.
     """
-    assert landing_observation(gate_landing())["observation_type"] == "github_pr"
-    assert landing_observation(human_landing())["observation_type"] == "github_pr"
-    assert landing_observation(push_landing())["observation_type"] == "inventory"
+    types = {
+        landing_observation(landing)["observation_type"]
+        for landing in (gate_landing(), human_landing(), push_landing())
+    }
+    assert types == {"landing"}
 
 
 def test_the_landing_identity_is_the_commit_and_the_key_is_the_facts() -> None:
