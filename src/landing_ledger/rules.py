@@ -26,6 +26,7 @@ GATE_PATH = ".github/workflows/dependabot-auto-merge.yml"
 
 SEMVER_PATCH = "version-update:semver-patch"
 SEMVER_MINOR = "version-update:semver-minor"
+SEMVER_MAJOR = "version-update:semver-major"
 
 
 @dataclass(frozen=True)
@@ -46,11 +47,29 @@ class Rule:
     revision: str
     update_types: frozenset[str]
     ecosystems: frozenset[str] = field(default_factory=frozenset)
+    major_ecosystems: frozenset[str] = field(default_factory=frozenset)
     requires_upstream_author: bool = True
 
     def permits(self, update_type: str | None, ecosystem: str | None) -> bool:
-        return update_type in self.update_types or (
-            ecosystem is not None and ecosystem in self.ecosystems
+        """Evaluated as the cascade the gate became on 2026-08-08 (ADR-0018).
+
+        Two ecosystem fields, because the revisions genuinely differ in SHAPE and this is a
+        transcription rather than a policy. `ecosystems` is the older, unconditional form --
+        anything at all in that ecosystem, which is what those bytes actually said. From
+        `e849b3a8` the gate asks a major only, so `major_ecosystems` records that. Collapsing
+        them would make the registry describe a rule no revision implemented.
+        """
+        # Q1 -- is the declared intent sufficient on its own?
+        if update_type in self.update_types:
+            return True
+        # Q2, older form -- the ecosystem permitted anything, whatever the intent.
+        if ecosystem is not None and ecosystem in self.ecosystems:
+            return True
+        # Q2, from e849b3a8 -- a major, where the check that gates it exercises the thing bumped.
+        return (
+            update_type == SEMVER_MAJOR
+            and ecosystem is not None
+            and ecosystem in self.major_ecosystems
         )
 
 
@@ -84,6 +103,25 @@ _UNDERSCORED_ACTIONS_NEWER_METADATA = Rule(
     ecosystems=frozenset({"github_actions"}),
 )
 
+# ADR-0018 restated the disjunction as a cascade: majors are permitted only in github_actions,
+# where the required check that gates the pull request IS the thing being bumped. Behaviourally
+# this differs from the revision above in exactly one cell -- an absent update-type in
+# github_actions, which armed before and refuses now, and which has never occurred.
+_CASCADE = Rule(
+    revision="e849b3a8411fabeff1dedd138e6e3e3a2f535319",
+    update_types=frozenset({SEMVER_PATCH, SEMVER_MINOR}),
+    major_ecosystems=frozenset({"github_actions"}),
+)
+
+# The cascade as it landed in factory-runner: same predicate, four bytes apart, because that
+# repository is a `fetch-metadata` release ahead. The ledger keys on bytes, so it needs its own
+# entry -- the same reason 12880ce7 and 43e37ed9 are both present.
+_CASCADE_NEWER_METADATA = Rule(
+    revision="a4a4b8da035292fe434badd007607d8a69bc54e2",
+    update_types=frozenset({SEMVER_PATCH, SEMVER_MINOR}),
+    major_ecosystems=frozenset({"github_actions"}),
+)
+
 REGISTRY: dict[str, Rule] = {
     rule.revision: rule
     for rule in (
@@ -91,6 +129,8 @@ REGISTRY: dict[str, Rule] = {
         _HYPHENATED_ACTIONS,
         _UNDERSCORED_ACTIONS,
         _UNDERSCORED_ACTIONS_NEWER_METADATA,
+        _CASCADE,
+        _CASCADE_NEWER_METADATA,
     )
 }
 

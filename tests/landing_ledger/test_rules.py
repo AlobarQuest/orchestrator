@@ -101,3 +101,33 @@ def test_a_rule_that_names_no_ecosystem_never_permits_on_an_absent_one() -> None
 
     assert not rule.permits(SEMVER_MAJOR, None)
     assert not rule.permits(None, None)
+
+
+def test_the_cascade_permits_a_major_only_in_the_ecosystem_that_exercises_it() -> None:
+    """ADR-0018. The distinguishing behaviour of `e849b3a8` against the revision before it.
+
+    Asserted across the whole grid rather than on one happy case: the predecessor permitted
+    ANYTHING in github_actions, and the only way to see the difference is to ask about an
+    intent that is neither patch, minor, nor major.
+    """
+    cascade = rule_for("e849b3a8411fabeff1dedd138e6e3e3a2f535319")
+    previous = rule_for("12880ce77ab97c3f4d9281195041eed8c5d52609")
+    assert cascade is not None and previous is not None
+
+    # Identical everywhere the estate has ever been.
+    for update_type in (SEMVER_PATCH, SEMVER_MINOR, SEMVER_MAJOR):
+        for ecosystem in ("uv", "npm_and_yarn", "docker", "github_actions"):
+            assert cascade.permits(update_type, ecosystem) == previous.permits(
+                update_type, ecosystem
+            ), f"{update_type} / {ecosystem} must not have changed"
+
+    # The one cell that differs: no declared intent, in github_actions.
+    assert previous.permits(None, "github_actions") is True
+    assert cascade.permits(None, "github_actions") is False
+
+
+def test_a_major_outside_that_ecosystem_is_still_refused_by_the_cascade() -> None:
+    cascade = rule_for("e849b3a8411fabeff1dedd138e6e3e3a2f535319")
+    assert cascade is not None
+    assert cascade.permits(SEMVER_MAJOR, "uv") is False
+    assert cascade.permits(SEMVER_MAJOR, "docker") is False
