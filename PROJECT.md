@@ -18,6 +18,33 @@ required_checks:
   executor: github-actions:quality.yml
 ---
 
+## Standing constraint — merges
+
+**SDS never merges without authorization, and the absence of authorization is a refusal.**
+
+Authorization can arrive by more than one route, and the routes are named rather than assumed:
+a rule the estate wrote down and can re-evaluate afterwards (ADR-0016, ADR-0018); a person
+deciding; or a work unit whose authority envelope a human approved and whose acceptance criteria
+were then satisfied without human judgment (ADR-0020). Each route has to say which one it was —
+that is what the landing ledger's permission basis records.
+
+What is never permitted is a merge with **no basis at all**. If nothing granted permission, do
+not merge. Where permission is unclear, unreadable, or came from a source that cannot be checked
+afterwards, that is a refusal and not a judgment call.
+
+Two consequences worth stating, because both have been got wrong:
+
+- **A merge that deploys is a different question** and is out of scope until SDS-initiated
+  deploys route through change-manager (ADR-0019). The basis name `factory-approved-no-deploy`
+  encodes that boundary deliberately: it cannot be applied to a deploying merge without saying
+  something false.
+- **Lifting a prohibition is done openly, by amending the guard**, never by finding a verb the
+  guard does not cover. ADR-0016 refused `enablePullRequestAutoMerge` on exactly that ground.
+
+This supersedes the earlier framing that the merge gate was *permanent*. It was, until the
+evidence a merge could rest on existed; the closeout notes below record that state accurately
+for their date and are not current policy.
+
 ## Backlog
 
 - [ ] (P2) Clean up 4 stale `bump-dependencies-*` work units in production (change-manager `3a650c23`, infraops-mcp-server `69e63f39`, security-standards `ddda84ac`, brain `4afb7207`), all in `ready` state from the original 2026-07-09 fanout, superseded by the rev-4..9 re-proofs. Each has `authority_approval_id: None`, `mutation_commands: None`, and the old `allowed_commands: ['make check']` — so they fail dispatch admission closed and cannot call GitHub, but they are debris that could be mistaken for a corrected replacement. **CORRECTED 2026-07-28: these units ARE retirable, and the "un-retireable" claim below was wrong.** The 2026-07-23 finding was accurate about the DIRECT edge and wrong about the conclusion: `(READY, CANCELLED)` is indeed not legal for any role, but `(READY, FAILED)` is a **SYSTEM** edge and `(FAILED, CANCELLED)` is a **HUMAN** edge (`kernel/transitions.py`), so the two-step path `ready → SYSTEM commands/fail → HUMAN /review cancel` retires them today with no code change. Proven in production by the 2026-07-27 drill run, which drove five drill units terminal by exactly this route. A `(READY, CANCELLED)` HUMAN edge remains **optional ergonomics** (one hop instead of two), not a prerequisite — do not gate the cleanup on it. Retirement runbook: `docs/operations/production-drill-adaptations.md`; being executed 2026-07-28 (gap-closure workplan GAP-3). Original finding 2026-07-22 during the AC-003 dispatch; cancel-path claim confirmed-then-corrected 2026-07-23 → 2026-07-28. — added 2026-07-22
@@ -207,8 +234,9 @@ Production was repaired after WS-4.1 closeout with
 `factory-runner` registry actor from `security-standards` commit `972c64a`.
 Post-rollout smoke checks showed `/health/live` and `/health/ready` returning
 200, missing M2M auth returning 401, and the configured key ID plus BWS-backed
-bearer returning 200. Devon's merge gate remains permanent; no automatic merge
-behavior was added.
+bearer returning 200. No automatic merge behavior was added by this workstream. (See the standing merge
+constraint at the top of this file; ADR-0020 later replaced 'permanent' with 'never
+unauthorized'.)
 
 ## WS-4.2 dispatch-adapter verification
 
@@ -222,7 +250,8 @@ events.
 
 Runtime dispatch remains disabled unless explicitly configured through approved
 secret/config rollout. No production config was mutated during implementation.
-Devon's merge gate remains permanent; no worker or dispatcher may merge PRs.
+No worker or dispatcher may merge pull requests. (See the standing merge constraint at
+the top of this file; ADR-0020 later replaced 'permanent' with 'never unauthorized'.)
 
 Verification at implementation closeout:
 
