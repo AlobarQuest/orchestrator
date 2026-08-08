@@ -9,7 +9,10 @@ import pytest
 from landing_ledger.github import ForbiddenMethodError, GitHubReader
 from landing_ledger.orchestrator_client import (
     ForbiddenEndpointError,
+    ForbiddenReadError,
+    LedgerWriteError,
     OrchestratorClient,
+    is_allowed_read,
     is_allowed_write,
 )
 
@@ -65,6 +68,56 @@ def test_the_write_surface_is_the_observer_roles_whole_write_surface_and_no_more
     assert not is_allowed_write(f"{unit}/evidence")
     assert not is_allowed_write(f"{unit}/adjudications")
     assert not is_allowed_write(f"{unit}/dispatch")
+
+
+def test_the_read_surface_is_the_one_path_the_audit_needs_and_no_more() -> None:
+    """The audit re-evaluates what the LEDGER recorded, so it reads -- and that changed this
+    client's contract in WS-P3.6 Increment 3 rather than drifting. Server-side, OBSERVER reads are
+    deliberately unconfined, so this bound is the only one there is."""
+    assert is_allowed_read("/api/v1/observations")
+    assert not is_allowed_read("/api/v1/observations/")
+    assert not is_allowed_read("/api/v1/work-units")
+    assert not is_allowed_read("/api/v1/in-flight-units")
+    assert not is_allowed_read("/api/v1/status-ledger")
+
+
+def test_a_forbidden_read_never_reaches_the_transport() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return httpx.Response(200, json=[])
+
+    client = OrchestratorClient(
+        base_url="https://x",
+        credential_key_id="orchestrator-observer",
+        token="t",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ForbiddenReadError):
+        client.get("/api/v1/status-ledger")
+    assert seen == []
+    assert client.get("/api/v1/observations") == []
+    assert seen == ["/api/v1/observations"]
+
+
+def test_a_ledger_that_is_not_a_LIST_is_refused_rather_than_iterated() -> None:
+    """A proxy error page, or a route that started answering an object, would otherwise become an
+    empty audit -- zero landings, zero findings, and no way to tell that from a clean estate."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"detail": "not a list"})
+
+    client = OrchestratorClient(
+        base_url="https://x",
+        credential_key_id="orchestrator-observer",
+        token="t",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(LedgerWriteError):
+        client.read_landings("AlobarQuest/orchestrator")
 
 
 def test_a_forbidden_write_never_reaches_the_transport() -> None:

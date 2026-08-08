@@ -22,10 +22,13 @@ from typing import Any
 
 import httpx
 
-from landing_ledger.model import Check, Landing, RuleApplication, UpdateMetadata
+from landing_ledger.model import Check, Landing, PendingUpdate, RuleApplication, UpdateMetadata
+from landing_ledger.rules import GATE_PATH
 
 API = "https://api.github.com"
-GATE_PATH = ".github/workflows/dependabot-auto-merge.yml"
+
+# The pull-request author the gate's own job-level condition names.
+UPSTREAM_AUTHOR = "dependabot[bot]"
 
 # The `updated-dependencies` block Dependabot writes into its commit message. This is the same
 # text `dependabot/fetch-metadata` parses, so reading it here reads what the gate read.
@@ -283,3 +286,89 @@ def default_branch(reader: GitHubReader, repository: str) -> str:
     if repo is None:
         raise LedgerError(f"github has no repository {repository}")
     return str(repo["default_branch"])
+
+
+def current_rule_revision(reader: GitHubReader, repository: str, base_ref: str) -> str | None:
+    """The blob sha of the gate at the branch tip, or None when the repository has no gate.
+
+    None is a real answer, not an error: three repositories in this estate deliberately have no
+    gate, and one of them cannot have one -- its own architecture guards forbid the command the
+    gate runs.
+    """
+    blob = reader.get(f"/repos/{repository}/contents/{GATE_PATH}", ref=base_ref)
+    return blob.get("sha") if isinstance(blob, dict) else None
+
+
+def _concluded_checks(
+    reader: GitHubReader, repository: str, head_sha: str
+) -> tuple[tuple[Check, ...], datetime | None]:
+    """Every pull-request job that has concluded at this head, and when the last one did.
+
+    Only `pull_request` runs, for the reason `_checks_and_gate` gives: the same head also carries
+    `push` runs of the same workflows, and counting both doubles every name. The gate's own run is
+    excluded too -- it reports whether the gate EXECUTED, never whether the change is sound, so
+    counting it as evidence of health would let a repository look green on the strength of the
+    very workflow under audit.
+    """
+    payload = reader.get(f"/repos/{repository}/actions/runs", head_sha=head_sha, per_page=100)
+    runs = (payload or {}).get("workflow_runs", []) if payload else []
+    checks: list[Check] = []
+    latest: datetime | None = None
+    for run in runs:
+        if run.get("event") != "pull_request" or run.get("path") == GATE_PATH:
+            continue
+        jobs = reader.get(f"/repos/{repository}/actions/runs/{run['id']}/jobs", per_page=100)
+        for job in (jobs or {}).get("jobs", []):
+            if job.get("conclusion") is None:
+                continue
+            checks.append(Check(name=job["name"], conclusion=job["conclusion"], run=run["id"]))
+            completed = job.get("completed_at")
+            if completed is not None:
+                finished = datetime.fromisoformat(completed)
+                latest = finished if latest is None or finished > latest else latest
+    return tuple(sorted(checks, key=lambda c: (c.name, c.run))), latest
+
+
+def read_pending_updates(
+    reader: GitHubReader, repository: str, base_ref: str
+) -> tuple[PendingUpdate, ...]:
+    """Every open pull request the update bot has raised against the default branch.
+
+    `auto_merge` is populated ONLY on the single-pull-request GET, exactly as `merged_by` is on
+    the landing path -- the list endpoint returns it as null for every row, which would read as
+    "nothing is armed" and turn every repository into a finding.
+    """
+    listing = (
+        reader.get(
+            f"/repos/{repository}/pulls",
+            state="open",
+            base=base_ref,
+            per_page=100,
+        )
+        or []
+    )
+    pending: list[PendingUpdate] = []
+    for row in listing:
+        if (row.get("user") or {}).get("login") != UPSTREAM_AUTHOR:
+            continue
+        detail = reader.get(f"/repos/{repository}/pulls/{row['number']}")
+        if detail is None:
+            raise LedgerError(f"github has no pull request {repository}#{row['number']}")
+        head_sha = detail["head"]["sha"]
+        head = reader.get(f"/repos/{repository}/commits/{head_sha}")
+        message = head["commit"]["message"] if head else ""
+        checks, last_concluded = _concluded_checks(reader, repository, head_sha)
+        pending.append(
+            PendingUpdate(
+                repository=repository,
+                number=detail["number"],
+                head_commit=head_sha,
+                opened_at=datetime.fromisoformat(detail["created_at"]),
+                armed=detail.get("auto_merge") is not None,
+                title=str(detail.get("title") or "").split("\n")[0],
+                checks=checks,
+                update=update_metadata(message, detail["head"].get("ref")),
+                last_concluded_at=last_concluded,
+            )
+        )
+    return tuple(pending)

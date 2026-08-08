@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the daily landing-ledger + audit LaunchAgent (WS-P3.6 Increment 3). Install with
+     scripts/install-landing-ledger-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
+     writes ~/Library/LaunchAgents/com.devon.landing-ledger.plist.
+
+     No secrets live here: the wrapper fetches the OBSERVER bearer from BWS at runtime and takes
+     the GitHub credential from the environment or from `gh`.
+
+     RunAtLoad is false. The ledger reads a 30-day window every pass, so a missed day costs
+     nothing and a login-time run would only add load. StartCalendarInterval is 07:30 local:
+     after the night's dependency updates have been raised and their checks have concluded, and
+     early enough that a stalled one is seen the same morning.
+
+     The exit code is the report. launchd discards it, so read the log -- 0 clean, 2 findings,
+     3 something could not be measured. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.landing-ledger</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-landing-ledger.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/landing-ledger.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/landing-ledger.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

@@ -58,6 +58,32 @@ class UpdateMetadata:
 
 
 @dataclass(frozen=True)
+class PendingUpdate:
+    """An OPEN pull request from the upstream update bot -- a landing that has not happened.
+
+    The ledger records landings, so a pull request that never merges leaves no trace in it at
+    all. That absence is the quiet failure this shape exists to make visible, and it is why it
+    is read from GitHub rather than from the ledger.
+
+    `armed` is whether the repository has been asked to land this pull request once its required
+    checks pass. `checks` is every job that has CONCLUDED at the head -- the same standard the
+    landing record uses, and the same disclaimer applies: it is not a claim that any of them was
+    required. `last_concluded_at` is the newest of those conclusions, so a caller can tell a pull
+    request that has been sitting green for a day from one whose checks finished a second ago.
+    """
+
+    repository: str
+    number: int
+    head_commit: str
+    opened_at: datetime
+    armed: bool
+    title: str
+    checks: tuple[Check, ...] = ()
+    update: UpdateMetadata | None = None
+    last_concluded_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class Landing:
     """One commit on the default branch, with everything observable about how it got there.
 
