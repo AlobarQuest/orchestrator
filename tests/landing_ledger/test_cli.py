@@ -141,13 +141,41 @@ def test_the_orchestrator_being_unreachable_is_counted_not_raised() -> None:
     assert (summary["recorded"], summary["skipped"]) == (0, 1)
 
 
-def test_a_dry_run_writes_nothing() -> None:
-    class _Explodes:
-        def record_observation(self, payload: dict[str, Any]) -> dict[str, Any]:
-            raise AssertionError("dry run must not record observations")
+class _Explodes:
+    def record_observation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("dry run must not record observations")
 
+
+def test_a_dry_run_writes_nothing() -> None:
     summary = _run(reader_for(_pass_routes()), _Explodes(), dry_run=True)
 
+    assert summary["recorded"] == 1
+
+
+def test_a_dry_run_emits_the_records_it_would_write() -> None:
+    """Counts are not a dry run.
+
+    `--dry-run` exists so the permission basis can be read BEFORE anything permanent is
+    written, and observations are append-only -- there is no second chance to look. The first
+    version computed each record and threw it away, printing totals while its help promised
+    "Print the records", which is a check that says something it does not do.
+
+    Asserted on the record's CONTENT, not on a non-empty list: a regression that emitted
+    placeholders, or dropped `permitted_by` while keeping the envelope, still fails here.
+    """
+    summary = _run(reader_for(_pass_routes()), _Explodes(), dry_run=True)
+
+    records = summary["records"]
+    assert len(records) == summary["recorded"] == 1
+    assert records[0]["observation_type"] == "landing"
+    assert records[0]["facts"]["permitted_by"]["basis"] == "auto_merge_rule"
+
+
+def test_a_write_run_carries_no_records_key() -> None:
+    """A scheduled pass emits a small, constant-shaped summary and holds nothing in memory."""
+    summary = _run(reader_for(_pass_routes()), _Recorder(), dry_run=False)
+
+    assert "records" not in summary
     assert summary["recorded"] == 1
 
 
