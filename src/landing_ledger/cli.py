@@ -1,27 +1,43 @@
-"""The ledger's entry point. Operator-invoked; there is no scheduler and no loop.
+"""The ledger's entry point. Operator- or launcher-invoked; there is no scheduler and no loop.
 
 FAILING OPEN IS THE DESIGN. This is a recorder, not a gate: nothing downstream waits on it, so
 GitHub being unreachable, or one landing being unreadable, must cost that landing and nothing
 else. Every failure is caught per landing and COUNTED -- a pass that dies on the third landing
 would discard the two it already read, and a pass that swallows failures silently is a reporting
 obligation that has been switched off.
+
+FAILING OPEN IS NOT THE SAME AS EXITING ZERO, and until WS-P3.6 Increment 3 this file conflated
+them. A pass that read six of eight repositories printed its per-repository `unavailable: true`
+into an aggregate nobody had to look at, and exited 0 -- success-shaped output over a measurement
+that did not happen. The three exit codes below separate the three answers a caller actually
+needs, because a broken tool and an honest finding sharing one code is a collision this estate has
+already paid for once.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Protocol
 
 import typer
 
+from landing_ledger.audit import (
+    SETTLE_SECONDS,
+    RepoAudit,
+    audit_observation,
+    audit_repository,
+)
 from landing_ledger.github import (
     GitHubReader,
     LedgerError,
+    current_rule_revision,
     default_branch,
     landing_shas,
     read_landing,
+    read_pending_updates,
 )
 from landing_ledger.orchestrator_client import LedgerWriteError, OrchestratorClient
 from landing_ledger.record import landing_observation
@@ -29,6 +45,20 @@ from landing_ledger.record import landing_observation
 app = typer.Typer(no_args_is_help=True)
 
 RECOVERABLE = (LedgerError, LedgerWriteError, KeyError, TypeError, ValueError)
+
+# Nothing to report, and everything was measured.
+EXIT_OK = 0
+# Something was found. The pass worked; reality did not.
+EXIT_FINDINGS = 2
+# Some part of reality could not be read, so the answer is missing rather than clean. This
+# outranks findings: an incomplete pass cannot claim it found everything there was to find.
+EXIT_INCOMPLETE = 3
+
+
+def _exit_code(*, findings: bool, incomplete: bool) -> int:
+    if incomplete:
+        return EXIT_INCOMPLETE
+    return EXIT_FINDINGS if findings else EXIT_OK
 
 
 @app.callback()
@@ -91,11 +121,64 @@ def record_landings(
     return summary
 
 
+class LedgerReader(Protocol):
+    """The read surface the audit needs, structural so a test can pass a hermetic fake."""
+
+    def read_landings(self, repository: str) -> list[dict[str, Any]]: ...
+
+
 class _NullWriter:
     """A dry-run writer: any use is a bug, so it fails loudly rather than looking successful."""
 
     def record_observation(self, payload: dict[str, Any]) -> dict[str, Any]:
         raise AssertionError("dry run must not record observations")
+
+
+def audit_pass(
+    reader: GitHubReader,
+    ledger: LedgerReader,
+    writer: ObservationWriter,
+    *,
+    repository: str,
+    pass_id: str,
+    now: datetime,
+    settle_seconds: int,
+    dry_run: bool,
+) -> tuple[RepoAudit, dict[str, Any]]:
+    """One audit pass over one repository. Never raises; an unreadable repository is UNAVAILABLE.
+
+    Unavailable is deliberately not the same as clean. The observation is still written -- the
+    heartbeat has to exist for the pass to be distinguishable from a pass that never ran -- but it
+    carries no verdict, and the caller turns it into the incomplete exit code.
+    """
+    try:
+        base_ref = default_branch(reader, repository)
+        audit = audit_repository(
+            repository=repository,
+            landings=[row.get("facts") for row in ledger.read_landings(repository)],
+            pending=read_pending_updates(reader, repository, base_ref),
+            rule_revision=current_rule_revision(reader, repository, base_ref),
+            now=now,
+            settle_seconds=settle_seconds,
+        )
+    except RECOVERABLE:
+        audit = RepoAudit(
+            repository=repository,
+            rule_revision=None,
+            landings_audited=0,
+            permitted_landings=0,
+            pending_audited=0,
+            unavailable=True,
+        )
+    body = audit_observation(audit, pass_id, now)
+    if not dry_run:
+        try:
+            writer.record_observation(body)
+        except RECOVERABLE:
+            # The heartbeat did not land, so this repository's answer is missing however good the
+            # measurement was. Say so rather than reporting the verdict as filed.
+            audit = replace(audit, unavailable=True)
+    return audit, body
 
 
 @app.command("record")
@@ -136,3 +219,72 @@ def record_command(
                     for name in repository
                 ]
     typer.echo(json.dumps(summaries, indent=2, sort_keys=True))
+    # A pass that could not read a repository, or that dropped a landing it did read, has NOT
+    # recorded the window it claims to cover. Exiting 0 there is the aggregate hiding the
+    # per-repository flag, which is the whole defect. A skipped landing counts too: it is usually
+    # an unreadable commit, but it is also how a rejected write -- a landing whose facts have
+    # drifted -- arrives, and that is worth a person's attention either way.
+    incomplete = any(summary["unavailable"] or summary["skipped"] for summary in summaries)
+    raise typer.Exit(code=_exit_code(findings=False, incomplete=incomplete))
+
+
+@app.command("audit")
+def audit_command(
+    repository: Annotated[list[str], typer.Option(help="Repository as owner/name; repeatable.")],
+    pass_id: Annotated[
+        str | None, typer.Option(help="Identity of this pass; defaults to the UTC now.")
+    ] = None,
+    settle_seconds: Annotated[
+        int, typer.Option(help="How long armed-and-green must persist before it is reported.")
+    ] = SETTLE_SECONDS,
+    orchestrator_url: Annotated[str, typer.Option()] = "https://sds.alobar.net",
+    credential_key_id: Annotated[str, typer.Option()] = "orchestrator-observer",
+    dry_run: Annotated[bool, typer.Option(help="Print the audit; write nothing.")] = False,
+) -> None:
+    """Re-evaluate what the rule permitted, and look for what it silently stopped permitting."""
+    github_token = os.environ.get("LANDING_LEDGER_GITHUB_TOKEN")
+    if not github_token:
+        typer.echo("LANDING_LEDGER_GITHUB_TOKEN is required", err=True)
+        raise typer.Exit(code=1)
+    token = os.environ.get("LANDING_LEDGER_TOKEN", "")
+    if not token:
+        # Required even for a dry run, unlike `record`: the audit READS the ledger through the
+        # same credential, so without it there is nothing to audit.
+        typer.echo("LANDING_LEDGER_TOKEN is required", err=True)
+        raise typer.Exit(code=1)
+    now = datetime.now(UTC)
+    identity = pass_id or now.strftime("%Y%m%dT%H%M%SZ")
+    audits: list[RepoAudit] = []
+    bodies: list[dict[str, Any]] = []
+    with (
+        GitHubReader(token=github_token) as reader,
+        OrchestratorClient(
+            base_url=orchestrator_url, credential_key_id=credential_key_id, token=token
+        ) as client,
+    ):
+        for name in repository:
+            audit, body = audit_pass(
+                reader,
+                client,
+                _NullWriter() if dry_run else client,
+                repository=name,
+                pass_id=identity,
+                now=now,
+                settle_seconds=settle_seconds,
+                dry_run=dry_run,
+            )
+            audits.append(audit)
+            bodies.append(body)
+    report: dict[str, Any] = {
+        "pass_id": identity,
+        "repositories": [asdict(audit) for audit in audits],
+    }
+    if dry_run:
+        report["records"] = bodies
+    typer.echo(json.dumps(report, indent=2, sort_keys=True))
+    raise typer.Exit(
+        code=_exit_code(
+            findings=any(audit.findings for audit in audits),
+            incomplete=any(audit.unavailable for audit in audits),
+        )
+    )

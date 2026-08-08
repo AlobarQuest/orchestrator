@@ -100,6 +100,12 @@ OBSERVATION_TYPES = (
     # never collide today only because their subject_reference namespaces are disjoint, which
     # is a coincidence to rely on rather than a design.
     "landing",
+    # One repository's answer from one pass of the landing audit (WS-P3.6 Increment 3): were the
+    # landings the rule permitted actually within it, and is anything eligible and green sitting
+    # unlanded. A separate type from `landing` because it is a JUDGMENT about records rather than
+    # a record, and a row is written every pass whether or not anything was found -- so its
+    # ABSENCE is the signal that the audit stopped running.
+    "landing_audit",
 )
 OBSERVATION_STATUSES = (
     "passed",
