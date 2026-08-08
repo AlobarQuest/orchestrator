@@ -64,6 +64,12 @@ def record_landings(
         "skipped": 0,
         "unavailable": False,
     }
+    # A dry run's whole purpose is to show WHAT would be written -- the permission basis in
+    # particular -- before anything permanent exists. Counts alone cannot serve that: they say
+    # a record was computed, not what it says. Carried on the summary rather than printed
+    # inline so the output stays one parseable JSON document.
+    if dry_run:
+        summary["records"] = []
     try:
         base_ref = default_branch(reader, repository)
         shas = landing_shas(reader, repository, base_ref, since, pages)
@@ -74,7 +80,9 @@ def record_landings(
     for sha in shas:
         try:
             body = landing_observation(read_landing(reader, repository, base_ref, sha))
-            if not dry_run:
+            if dry_run:
+                summary["records"].append(body)
+            else:
                 writer.record_observation(body)
         except RECOVERABLE:
             summary["skipped"] += 1
