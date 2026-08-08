@@ -1607,8 +1607,14 @@ style of that module.
 
 - **The `Alobar SDS Dispatch` App has NO `checks` permission — the Checks API is 403 for the
   orchestrator, and named-check evidence is read from workflow JOBS instead.** Measured 2026-08-02
-  from production's own credential: the installation (app `4259746`, installation `145535298`,
-  6 repos) carries exactly `{'actions': 'write', 'metadata': 'read'}`, so
+  from production's own credential. **UPDATED 2026-08-08: the permission set is now
+  `{'actions': 'write', 'metadata': 'read', 'pull_requests': 'write'}`** (app `4259746`,
+  installation `145535298`, `repository_selection: all`), granted for ADR-0020. `checks` is still
+  absent, so everything below stands unchanged — only the merge capability was added, and
+  `administration` is absent too, so **branch protection is 403 to this App: whether a merge would
+  be blocked can only be learned by attempting it, never by reading the protection settings.**
+  At the 2026-08-02 measurement the installation carried exactly
+  `{'actions': 'write', 'metadata': 'read'}`, so
   `GET /repos/{repo}/commits/{sha}/check-runs` answers **403 Resource not accessible by
   integration** while `GET /repos/{repo}/actions/runs?head_sha=` and `/actions/runs/{id}/jobs`
   answer 200. WS-P2.20's observer (`services/github_checks.py`) therefore reads Actions jobs, which
@@ -1620,7 +1626,15 @@ style of that module.
   asking what a credential may do costs one call and never needs the private key locally:
   `POST /app/installations/{id}/access_tokens` → `permissions`. Do not infer an App's reach from
   what it is already used for — triggering a run (`actions`) and reading a check (`checks`) are
-  different permissions.
+  different permissions. (3) **ADDED 2026-08-08: the APP and the INSTALLATION carry separate
+  permission sets, and only the installation's is the credential.** Granting a permission on the
+  App raises a *request*; the installation owner must accept it before any minted token carries
+  it. Observed in the gap: `GET /app` reported `pull_requests: write` while
+  `GET /app/installations/{id}` still reported `{'actions': 'write', 'metadata': 'read'}`, so a
+  check written against `/app` would have said "done" and the token could not have merged
+  anything. Read the installation, or the mint response, never the App. And confirm the
+  permission *does* something — `GET /repos/{repo}/pulls` answered 403 before and 200 after —
+  because a reported permission and a functioning one are the same class of difference.
 
 - **`test_ws34_scope_guards` forbids the literal `github.actions`, and the CLAUDE.md list of ws34's
   forbidden strings omits it.** The full set in
