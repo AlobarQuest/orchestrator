@@ -32,6 +32,7 @@ dependencies = [
 orchestrator = "orchestrator.cli:app"
 reconciliation-runner = "reconciliation_runner.cli:app"
 tracker-projection-adapter = "tracker_projection_adapter.cli:app"
+landing-ledger = "landing_ledger.cli:app"
 
 [dependency-groups]
 dev = [
