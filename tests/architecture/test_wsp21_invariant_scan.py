@@ -114,6 +114,14 @@ OUTBOUND_ALLOWLIST = {
     # test_tracker_projection_adapter_isolation.py. Its egress is not the orchestrator's.
     Path("src/tracker_projection_adapter/orchestrator_client.py"),
     Path("src/tracker_projection_adapter/tracker.py"),
+    # WS-P3.6 Increment 2. The landing ledger is a SEPARATE program, the same report-only shape as
+    # ADR-0002. It reads GitHub -- which commits reached a default branch, and what can be observed
+    # about how each got there -- and records one observation per landing. Its GitHub half refuses
+    # any method but GET, and its orchestrator half may write to exactly one endpoint, the OBSERVER
+    # role's whole write surface; both are enforced in code and pinned by
+    # test_landing_ledger_isolation.py. Its egress is not the orchestrator's.
+    Path("src/landing_ledger/github.py"),
+    Path("src/landing_ledger/orchestrator_client.py"),
 }
 
 
