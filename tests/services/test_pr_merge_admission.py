@@ -22,9 +22,12 @@ from sqlalchemy.orm import Session
 import orchestrator.services.pr_merge_admission as admission_module
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
+from orchestrator.kernel.evidence_types import VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
+    Adjudication,
     Event,
+    Evidence,
     PackageAcceptanceCriterion,
     ReconciliationCondition,
     ReconciliationResolution,
@@ -50,8 +53,9 @@ from tests.services.estate_doubles import (
 )
 from tests.services.test_adjudications import FROM_EVALUATION, add_criterion
 from tests.services.test_package_registration import NOW, register_test_revision
-from tests.services.test_verifier_decided_completion import HUMAN, VERIFIER, _decide
+from tests.services.test_verifier_decided_completion import VERIFIER, _decide
 
+OBSERVED_TYPE = VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
 TARGET = "owner/repo"
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
@@ -102,8 +106,35 @@ def _revision(session: Session, unit: WorkUnit) -> WorkPackageRevision:
     return revision
 
 
-def _verifier_decided(session: Session, unit: WorkUnit) -> None:
-    _decide(session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
+def _evidence(session: Session, unit: WorkUnit, evidence_type: str) -> Evidence:
+    """One evidence row for `ac-1`, returned so an adjudication can cite it.
+
+    The type is the whole point of the parameter: `verifier.github.named_check` is evidence the
+    orchestrator OBSERVED from GitHub's own workflow jobs, and anything else is evidence a worker
+    recorded about its own run.
+    """
+    row = Evidence(
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id="ac-1",
+        attempt=1,
+        evidence_type=evidence_type,
+        payload={"status": "pass"},
+        source_revision="abc1234",
+        recorded_by="orchestrator-verifier",
+        event_id=uuid.uuid4(),
+        idempotency_key=f"evidence-{unit.id}-{evidence_type}",
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def _verifier_decided(
+    session: Session, unit: WorkUnit, *, evidence_type: str = OBSERVED_TYPE
+) -> None:
+    evidence = _evidence(session, unit, evidence_type)
+    _decide(session, unit, "ac-1", actor=VERIFIER, evidence_id=evidence.id, **FROM_EVALUATION)
 
 
 def _approve_authority(session: Session, unit: WorkUnit) -> None:
@@ -269,11 +300,31 @@ def test_a_criterion_a_human_decided_refuses_the_whole_unit(migrated_session: Se
     """ADR-0020's safety condition, called rather than re-derived. If a human had to decide, a
     human is already in the loop and the landing is theirs to make."""
     unit = _unit(migrated_session, "human-decided")
-    # The state a human actually adjudicates from: a deterministic-floored criterion is decidable
-    # by a person only while the unit is awaiting review (WS-P2.17 Inc 2, clause (b)).
-    unit.state = WorkUnitState.AWAITING_REVIEW.value
+    # Observed evidence, decided by a HUMAN -- so only the decider clause fires. The two clauses
+    # of ADR-0020's sentence are independent, and this is the case that proves it: good evidence
+    # does not make a human's decision the verifier's.
+    #
+    # Written at the row rather than through `record_adjudication`, and the reason is itself the
+    # finding: once observed named-check evidence exists, an `automated_check` criterion resolves
+    # DETERMINISTICALLY, so `human_may_adjudicate` refuses the person outright (WS-P2.17 Inc 2,
+    # clause (b) requires the current evaluation to be `judgment_required`). The state is
+    # therefore unreachable through the public API for this vocabulary -- which is the system
+    # working, and is exactly why the clause is asserted structurally rather than assumed.
+    evidence = _evidence(migrated_session, unit, OBSERVED_TYPE)
+    migrated_session.add(
+        Adjudication(
+            work_package_revision_id=unit.work_package_revision_id,
+            work_unit_id=unit.id,
+            ac_id="ac-1",
+            outcome="passed",
+            decided_by="devon",
+            decided_by_role="human",
+            rationale="I read the check myself",
+            evidence_id=evidence.id,
+            event_id=uuid.uuid4(),
+        )
+    )
     migrated_session.commit()
-    _decide(migrated_session, unit, "ac-1", actor=HUMAN)
     _approve_authority(migrated_session, unit)
     _bind_and_arm(migrated_session, unit)
     _complete(migrated_session, unit)
@@ -282,6 +333,37 @@ def test_a_criterion_a_human_decided_refuses_the_whole_unit(migrated_session: Se
 
     assert answer.satisfied is False
     assert answer.refusals == ("criteria_not_verifier_decided",)
+
+
+def test_a_criterion_resting_on_attested_evidence_is_refused(migrated_session: Session) -> None:
+    """ADR-0020's OTHER clause, and the one Increment 1 did not implement.
+
+    The verifier's evaluator dispatches on the ARRIVING row's type, so a row the WORKER recorded
+    about its own run resolves deterministically and the verifier records `passed`. Verifier-
+    decided, and nobody checked. The decider clause is satisfied here; only the evidence clause
+    fires, which is what makes them two terms rather than one.
+    """
+    unit = _unit(migrated_session, "attested-evidence")
+    _verifier_decided(migrated_session, unit, evidence_type="test")
+    _approve_authority(migrated_session, unit)
+    _bind_and_arm(migrated_session, unit)
+    _complete(migrated_session, unit)
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("criteria_evidence_not_observed",)
+
+
+def test_a_criterion_citing_no_evidence_at_all_is_refused(migrated_session: Session) -> None:
+    """An adjudication naming no evidence rested on nothing this side can point at."""
+    unit = _unit(migrated_session, "no-evidence-cited")
+    _decide(migrated_session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
+    _approve_authority(migrated_session, unit)
+    _bind_and_arm(migrated_session, unit)
+    _complete(migrated_session, unit)
+
+    assert _answer(migrated_session, unit).refusals == ("criteria_evidence_not_observed",)
 
 
 def test_an_unresolved_reconciliation_condition_refuses(migrated_session: Session) -> None:
@@ -535,6 +617,7 @@ def test_every_unmet_term_is_reported_not_only_the_first(migrated_session: Sessi
     assert set(answer.refusals) == {
         "work_unit_not_completed",
         "criteria_not_verifier_decided",
+        "criteria_evidence_not_observed",
         "merge_capability_not_authorized",
         "authority_approval_not_bound",
         "pr_binding_missing",

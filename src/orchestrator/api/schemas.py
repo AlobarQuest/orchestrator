@@ -1423,6 +1423,12 @@ class EvidencePackVerifierDecidedResponse(BaseModel):
     """
 
     satisfied: bool
+    # ADR-0020's sentence, as its two clauses. `decided_by_verifier` is "with no human
+    # adjudication"; `evidence_observed` is "from observed evidence". Served separately because a
+    # criterion can fail either one alone, and an off-process consumer that can only read the AND
+    # cannot tell which -- which is the whole reason Increment 1 made the condition readable.
+    decided_by_verifier: bool
+    evidence_observed: bool
     refusals: list[EvidencePackCriterionRefusalResponse]
 
 

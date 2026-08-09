@@ -72,18 +72,22 @@ MERGE_CAPABILITY: Final = "github.pr.merge"
 # The unit has not finished. Everything below is about a result, and there is no result yet.
 WORK_UNIT_NOT_COMPLETED: Final = "work_unit_not_completed"
 
-# Some required criterion was not settled by the verifier from its own evaluation of evidence.
-# One code, because the per-criterion detail is already served in full by
-# `verifier_decided_completion` on the evidence pack, and duplicating it here would be a second
-# projection of one answer.
+# ADR-0020's condition is one sentence with two clauses -- "resolved deterministically from
+# OBSERVED evidence, with no human adjudication" -- and they are two terms here because they fail
+# for different reasons and are fixed by different people. Increment 1 implemented the second;
+# Increment 4b implements the first. Per-criterion detail for both is served in full by
+# `verifier_decided_completion` on the evidence pack, so each is one code here rather than a
+# second projection of one answer.
 #
-# **This is the "no human decided" half of ADR-0020's condition, and not the whole of it.** The
-# decision says every criterion must have resolved deterministically from OBSERVED evidence; the
-# predicate asks who decided and whether the outcome settles, never whether the evidence was
-# observed. A criterion declared `automated_test` resolves off a row the WORKER recorded about its
-# own run, so this term can be met on attested rather than observed evidence -- the known-open
-# second half of WS-P2.32, surfacing here. Do not read a satisfied answer as "observed".
+# Some required criterion was not settled by the VERIFIER from its own evaluation.
 CRITERIA_NOT_VERIFIER_DECIDED: Final = "criteria_not_verifier_decided"
+
+# Some required criterion rested on evidence this estate was TOLD about rather than evidence it
+# OBSERVED. The verifier's evaluator dispatches on the arriving row's type, so a row the worker
+# recorded about its own run resolves deterministically and the verifier records `passed` -- the
+# runner saying its tests passed, with nobody checking. That was survivable while a person saw the
+# result before anything landed; it stops being survivable when the factory lands its own work.
+CRITERIA_EVIDENCE_NOT_OBSERVED: Final = "criteria_evidence_not_observed"
 
 # An operator has an unresolved question about this unit. The reconciliation lane records what it
 # observed of the pull request and its checks -- already landed elsewhere, a head that moved, a
@@ -208,7 +212,7 @@ def admission_for(
     target_repository = target_repository if isinstance(target_repository, str) else ""
 
     completed = unit.state == WorkUnitState.COMPLETED.value
-    criteria_verifier_decided = verifier_decided_completion(session, revision, unit).satisfied
+    criteria = verifier_decided_completion(session, revision, unit)
     capability_authorized = envelope.level_for(MERGE_CAPABILITY) == "allowed"
     authority_bound = PackageRepository(session).exact_authority_approval(unit) is not None
 
@@ -221,8 +225,10 @@ def admission_for(
     refusals: list[str] = []
     if not completed:
         refusals.append(WORK_UNIT_NOT_COMPLETED)
-    if not criteria_verifier_decided:
+    if not criteria.decided_by_verifier:
         refusals.append(CRITERIA_NOT_VERIFIER_DECIDED)
+    if not criteria.evidence_observed:
+        refusals.append(CRITERIA_EVIDENCE_NOT_OBSERVED)
     if not nothing_open:
         refusals.append(OPEN_RECONCILIATION_CONDITION)
     if not capability_authorized:
@@ -235,7 +241,8 @@ def admission_for(
     return MergeAdmission(
         satisfied=(
             completed
-            and criteria_verifier_decided
+            and criteria.decided_by_verifier
+            and criteria.evidence_observed
             and nothing_open
             and capability_authorized
             and authority_bound

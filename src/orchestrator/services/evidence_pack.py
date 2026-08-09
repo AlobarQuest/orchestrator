@@ -167,6 +167,8 @@ def _verifier_decided_response(
 ) -> EvidencePackVerifierDecidedResponse:
     return EvidencePackVerifierDecidedResponse(
         satisfied=answer.satisfied,
+        decided_by_verifier=answer.decided_by_verifier,
+        evidence_observed=answer.evidence_observed,
         refusals=[
             EvidencePackCriterionRefusalResponse(ac_id=refusal.ac_id, code=refusal.code)
             for refusal in answer.refusals

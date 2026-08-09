@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
+from orchestrator.kernel.evidence_types import VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
@@ -103,12 +104,50 @@ def _insert_raw_adjudication(
     return row
 
 
+def _observed(session: Session, unit: WorkUnit, ac_id: str) -> Evidence:
+    """Evidence the orchestrator OBSERVED for itself, returned so an adjudication can cite it.
+
+    ADR-0020's condition has two clauses and most of this file is about the second one -- *who*
+    decided. Supplying observed evidence is what keeps those tests measuring that clause rather
+    than tripping over the first, which has its own section at the end.
+    """
+    row = Evidence(
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id=ac_id,
+        attempt=1,
+        evidence_type=VERIFIER_NAMED_CHECK_EVIDENCE_TYPE,
+        payload={"status": "pass"},
+        source_revision="abc1234",
+        recorded_by="orchestrator-verifier",
+        event_id=uuid.uuid4(),
+        idempotency_key=f"observed-{unit.id}-{ac_id}",
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def _decide_observed(session: Session, unit: WorkUnit, ac_id: str, **kwargs: Any) -> Adjudication:
+    return _decide(session, unit, ac_id, evidence_id=_observed(session, unit, ac_id).id, **kwargs)
+
+
 def _answer(session: Session, unit: WorkUnit):
     return verifier_decided_completion(session, _revision(session, unit), unit)
 
 
 def _refusals(session: Session, unit: WorkUnit) -> list[tuple[str | None, str]]:
-    return [(refusal.ac_id, refusal.code) for refusal in _answer(session, unit).refusals]
+    """Refusals of the DECIDER clause only.
+
+    The evidence clause raises its own code on the same criteria, and these tests predate it and
+    are not about it -- filtering keeps each assertion measuring one clause, which is the point of
+    the two being separate fields.
+    """
+    return [
+        (refusal.ac_id, refusal.code)
+        for refusal in _answer(session, unit).refusals
+        if refusal.code != "criterion_evidence_not_observed"
+    ]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -120,14 +159,14 @@ def test_every_criterion_decided_by_the_verifier_satisfies_the_condition(
     migrated_session: Session,
 ) -> None:
     unit = _unit(migrated_session, "verifier-decided-all", "ac-1", "ac-2")
-    _decide(migrated_session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
-    _decide(
-        migrated_session, unit, "ac-2", actor=VERIFIER, outcome="not_applicable", **FROM_EVALUATION
-    )
+    _decide_observed(migrated_session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
+    _decide_observed(migrated_session, unit, "ac-2", actor=VERIFIER, **FROM_EVALUATION)
 
     answer = _answer(migrated_session, unit)
 
     assert answer.satisfied is True
+    assert answer.decided_by_verifier is True
+    assert answer.evidence_observed is True
     assert answer.refusals == ()
 
 
@@ -141,22 +180,22 @@ def test_a_human_decision_on_any_criterion_disqualifies_the_unit(
 ) -> None:
     """The point of the condition: if a human had to decide, a human is already in the loop."""
     unit = _unit(migrated_session, "one-human-decision", "ac-1", "ac-2")
-    _decide(migrated_session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
+    _decide_observed(migrated_session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
     _decide(migrated_session, unit, "ac-2", actor=HUMAN)
 
     answer = _answer(migrated_session, unit)
 
-    assert answer.satisfied is False
+    assert answer.decided_by_verifier is False
     assert _refusals(migrated_session, unit) == [("ac-2", "decider_was_not_the_verifier")]
 
 
 def test_an_undecided_criterion_disqualifies_the_unit(migrated_session: Session) -> None:
     unit = _unit(migrated_session, "one-undecided", "ac-1", "ac-2")
-    _decide(migrated_session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
+    _decide_observed(migrated_session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
 
     answer = _answer(migrated_session, unit)
 
-    assert answer.satisfied is False
+    assert answer.decided_by_verifier is False
     assert _refusals(migrated_session, unit) == [("ac-2", "no_current_adjudication")]
 
 
@@ -201,7 +240,7 @@ def test_an_unrecorded_decider_kind_refuses_rather_than_reading_as_machine_decid
 
     answer = _answer(migrated_session, unit)
 
-    assert answer.satisfied is False
+    assert answer.decided_by_verifier is False
     assert _refusals(migrated_session, unit) == [("ac-1", "decider_kind_unrecorded")]
 
 
@@ -220,12 +259,12 @@ def test_a_human_decision_on_a_non_required_criterion_still_disqualifies_the_uni
     what the insert produces.
     """
     unit = _unit(migrated_session, "outside-decision", "ac-1")
-    _decide(migrated_session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
+    _decide_observed(migrated_session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
     _insert_raw_adjudication(migrated_session, unit, "ac-2", "human")
 
     answer = _answer(migrated_session, unit)
 
-    assert answer.satisfied is False
+    assert answer.decided_by_verifier is False
     assert [(r.ac_id, r.code) for r in answer.refusals] == [
         ("ac-2", "decision_outside_required_criteria")
     ]
@@ -241,7 +280,7 @@ def test_a_revision_declaring_no_usable_criteria_refuses_instead_of_raising(
 
     answer = _answer(migrated_session, unit)
 
-    assert answer.satisfied is False
+    assert answer.decided_by_verifier is False
     assert [(r.ac_id, r.code) for r in answer.refusals] == [(None, "required_criteria_undeclared")]
 
 
@@ -250,12 +289,12 @@ def test_the_answer_reads_the_current_adjudication_not_a_superseded_one(
 ) -> None:
     """A verifier decision that a human later overrode must not still qualify the unit."""
     unit = _unit(migrated_session, "superseded-decision", "ac-1")
-    _decide(migrated_session, unit, "ac-1", actor=VERIFIER, key="first", **FROM_EVALUATION)
+    _decide_observed(migrated_session, unit, "ac-1", actor=VERIFIER, key="first", **FROM_EVALUATION)
     _decide(migrated_session, unit, "ac-1", actor=HUMAN, key="second")
 
     answer = _answer(migrated_session, unit)
 
-    assert answer.satisfied is False
+    assert answer.decided_by_verifier is False
     assert _refusals(migrated_session, unit) == [("ac-1", "decider_was_not_the_verifier")]
 
 
@@ -325,3 +364,96 @@ def test_the_column_refuses_a_value_that_is_not_an_actor_role(migrated_session: 
     with pytest.raises(IntegrityError, match="ck_adjudications_decided_by_role"):
         _insert_raw_adjudication(migrated_session, unit, "ac-1", "not-a-role")
     migrated_session.rollback()
+
+
+# ---------------------------------------------------------------------------------------------
+# The OTHER clause: what the decision rested on. Increment 4b, on Devon's ruling that requiring
+# observed evidence "is not an extra term ... you are finishing the sentence, not raising the bar."
+# ---------------------------------------------------------------------------------------------
+
+
+def _attested(session: Session, unit: WorkUnit, ac_id: str) -> Evidence:
+    """Evidence the WORKER recorded about its own run. Deterministic to the evaluator, attested."""
+    row = Evidence(
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id=ac_id,
+        attempt=1,
+        evidence_type="pytest",
+        payload={"status": "pass"},
+        source_revision="abc1234",
+        recorded_by="claude-code-runner",
+        event_id=uuid.uuid4(),
+        idempotency_key=f"attested-{unit.id}-{ac_id}",
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def test_evidence_the_worker_attested_to_does_not_satisfy_the_observed_clause(
+    migrated_session: Session,
+) -> None:
+    """The hole this closes, stated as the estate found it: the evaluator dispatches on the
+    ARRIVING row's type, so a `pytest` row the worker wrote saying it passed resolves
+    deterministically and the verifier records `passed`. The runner said its tests passed and
+    nobody checked. Verifier-decided is TRUE here; observed is not."""
+    unit = _unit(migrated_session, "attested-not-observed", "ac-1")
+    _decide(
+        migrated_session,
+        unit,
+        "ac-1",
+        actor=VERIFIER,
+        evidence_id=_attested(migrated_session, unit, "ac-1").id,
+        **FROM_EVALUATION,
+    )
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.decided_by_verifier is True
+    assert answer.evidence_observed is False
+    assert answer.satisfied is False
+    assert [(r.ac_id, r.code) for r in answer.refusals] == [
+        ("ac-1", "criterion_evidence_not_observed")
+    ]
+
+
+def test_an_adjudication_citing_no_evidence_does_not_satisfy_the_observed_clause(
+    migrated_session: Session,
+) -> None:
+    unit = _unit(migrated_session, "cites-nothing", "ac-1")
+    _decide(migrated_session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.evidence_observed is False
+    assert answer.satisfied is False
+
+
+def test_evidence_on_a_DIFFERENT_unit_does_not_satisfy_the_observed_clause(
+    migrated_session: Session,
+) -> None:
+    """The observed set is scoped to THIS unit. Resolving it by id alone, across units, would let
+    a neighbour's observed check vouch for a criterion nobody looked at."""
+    unit = _unit(migrated_session, "own-unit", "ac-1")
+    # A different criteria list, so `register_test_revision` mints a genuinely different
+    # revision -- it is idempotent on the default list, and two units sharing one revision
+    # collide on UNIQUE(revision, ac_id).
+    other = _unit(migrated_session, "neighbour-unit", "ac-1", "ac-9")
+    borrowed = _observed(migrated_session, other, "ac-1")
+    migrated_session.add(
+        Adjudication(
+            work_package_revision_id=unit.work_package_revision_id,
+            work_unit_id=unit.id,
+            ac_id="ac-1",
+            outcome="passed",
+            decided_by="orchestrator-verifier",
+            decided_by_role="verifier",
+            rationale="the named check was observed to conclude success",
+            evidence_id=borrowed.id,
+            event_id=uuid.uuid4(),
+        )
+    )
+    migrated_session.commit()
+
+    assert _answer(migrated_session, unit).evidence_observed is False
