@@ -31,6 +31,16 @@ the same binding `exact_authority_approval` enforces for readiness, and uncondit
 the policy-pattern substitute that admission allows (ADR-0011) has no counterpart here: an
 envelope granting this capability matches no known-good pattern and falls to the human gate by
 totality (Increment 3).
+
+**What this answer INHERITS FROM NOTHING, said out loud rather than left to be discovered.** It is
+not admission and shares none of admission's environment gates: there is no target-repository
+allowlist here, no hard off-switch, and no change window. Each absence is a position rather than
+an oversight. The allowlist governs where work may be SENT, and a unit that was never sent can
+still finish by hand. The change window belongs to a reach that names something already serving,
+and the only landing this answer can approve is one the estate calls inert. **The off-switch is
+the one that is genuinely open**: the flag admission reads is matched against
+`unit.required_capability`, and a grant to land is a secondary entry in the capabilities map, so
+no existing environment term could ever see it.
 """
 
 from __future__ import annotations
@@ -53,6 +63,7 @@ from orchestrator.services.estate_landing import (
     EstateLandingSource,
 )
 from orchestrator.services.lifecycle import verifier_decided_completion
+from orchestrator.services.reconciliation import open_conditions
 
 # The capability a human approves per unit, in the envelope, the way every other capability is
 # approved. Landing is never an ambient property of the factory (ADR-0020).
@@ -61,11 +72,26 @@ MERGE_CAPABILITY: Final = "github.pr.merge"
 # The unit has not finished. Everything below is about a result, and there is no result yet.
 WORK_UNIT_NOT_COMPLETED: Final = "work_unit_not_completed"
 
-# ADR-0020's whole safety condition: some required criterion was not settled by the verifier from
-# its own evaluation of evidence. One code, because the per-criterion detail is already served in
-# full by `verifier_decided_completion` on the evidence pack, and duplicating it here would be a
-# second projection of one answer.
+# Some required criterion was not settled by the verifier from its own evaluation of evidence.
+# One code, because the per-criterion detail is already served in full by
+# `verifier_decided_completion` on the evidence pack, and duplicating it here would be a second
+# projection of one answer.
+#
+# **This is the "no human decided" half of ADR-0020's condition, and not the whole of it.** The
+# decision says every criterion must have resolved deterministically from OBSERVED evidence; the
+# predicate asks who decided and whether the outcome settles, never whether the evidence was
+# observed. A criterion declared `automated_test` resolves off a row the WORKER recorded about its
+# own run, so this term can be met on attested rather than observed evidence -- the known-open
+# second half of WS-P2.32, surfacing here. Do not read a satisfied answer as "observed".
 CRITERIA_NOT_VERIFIER_DECIDED: Final = "criteria_not_verifier_decided"
+
+# An operator has an unresolved question about this unit. The reconciliation lane records what it
+# observed of the pull request and its checks -- already landed elsewhere, a head that moved, a
+# check that flipped red afterwards -- and a condition stays open until a person decides it. Those
+# are the only observations of GitHub this repository holds about a unit, and the failure modes
+# they name are exactly the ones the terms below can only approximate from rows written on this
+# side. Landing past a pending human decision is the thing this whole increment must not do.
+OPEN_RECONCILIATION_CONDITION: Final = "open_reconciliation_condition"
 
 # The envelope does not grant landing at `allowed`. `level_for` answers `prohibited` for a name it
 # does not carry, so an envelope that never mentioned the capability refuses here rather than
@@ -86,8 +112,14 @@ VERIFICATION_HEAD_UNARMED: Final = "verification_head_unarmed"
 # was never armed, so the armed value describes a tree an earlier adjudication was about.
 VERIFICATION_HEAD_NOT_CURRENT_ATTEMPT: Final = "verification_head_not_current_attempt"
 
-# The pull request's head moved after the head that was adjudicated was handed over. The tree that
+# A NEWER HEAD WAS REPORTED after the head that was adjudicated was handed over, so the tree that
 # would land is not the tree the criteria were decided about.
+#
+# Reported, not observed, and the distinction is the point: both values are columns this side
+# wrote, and the orchestrator never reads GitHub, so a push nobody reported leaves this term
+# answering "unmoved". What actually closes that gap is naming the armed head at the moment of the
+# act, which is why the answer reports it; the reconciliation term above is what sees a moved head
+# that WAS observed.
 PR_HEAD_MOVED_SINCE_VERIFICATION: Final = "pr_head_moved_since_verification"
 
 # The envelope names no repository, so there is nothing to ask the estate about and nothing to
@@ -114,8 +146,10 @@ class MergeAdmission:
     """The composed answer.
 
     `verified_head_sha` is the head that was adjudicated -- the armed head, not the latest one.
-    It is reported because the act must name it: a landing that does not state which tree it is
-    landing has re-opened the window between deciding and doing.
+    It is reported because the act must name it, and for a sharper reason than tidiness: every
+    head this side holds is one somebody REPORTED, so an unreported push is invisible to the terms
+    below. Naming the armed head at the moment of the act is what makes the remote refuse a tree
+    the criteria were not decided about, which is a guarantee no local comparison can offer.
     """
 
     satisfied: bool
@@ -152,10 +186,23 @@ def admission_for(
     moment it is about to act -- evaluates the same terms over the row it locked, rather than
     re-reading a unit that could have moved in between.
 
+    **That split is why the revision is CHECKED rather than trusted.** `required_ac_ids` derives
+    the required criterion set entirely from the revision it is handed, so a caller passing the
+    wrong one asks about a different set of criteria and can turn a refusal into an affirmative
+    answer. Today's only caller loads the right revision; the split exists to invite a second one,
+    and a precondition that holds by the good behaviour of a caller that does not exist yet is the
+    correct-about-the-wrong-noun shape this module is written against.
+
     The envelope is normalized EXACTLY ONCE here, for the reason admission normalizes once: the
     envelope is what a human's authority approval attests, and a second normalization is a second
     reading of it.
     """
+    if revision.id != unit.work_package_revision_id:
+        raise DomainError(
+            "revision_not_for_unit",
+            "package revision does not belong to this work unit",
+            "ask about the revision the unit was created from",
+        )
     envelope = normalize_authority(unit.authority)
     target_repository = envelope.constraints.get("target_repository")
     target_repository = target_repository if isinstance(target_repository, str) else ""
@@ -164,6 +211,8 @@ def admission_for(
     criteria_verifier_decided = verifier_decided_completion(session, revision, unit).satisfied
     capability_authorized = envelope.level_for(MERGE_CAPABILITY) == "allowed"
     authority_bound = PackageRepository(session).exact_authority_approval(unit) is not None
+
+    nothing_open = not open_conditions(session, unit.id)
 
     binding = session.get(UnitPrBinding, unit.id)
     head = _head_terms(binding, unit)
@@ -174,6 +223,8 @@ def admission_for(
         refusals.append(WORK_UNIT_NOT_COMPLETED)
     if not criteria_verifier_decided:
         refusals.append(CRITERIA_NOT_VERIFIER_DECIDED)
+    if not nothing_open:
+        refusals.append(OPEN_RECONCILIATION_CONDITION)
     if not capability_authorized:
         refusals.append(MERGE_CAPABILITY_NOT_AUTHORIZED)
     if not authority_bound:
@@ -185,6 +236,7 @@ def admission_for(
         satisfied=(
             completed
             and criteria_verifier_decided
+            and nothing_open
             and capability_authorized
             and authority_bound
             and head.met

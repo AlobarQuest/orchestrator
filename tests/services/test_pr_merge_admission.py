@@ -16,12 +16,21 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import orchestrator.services.pr_merge_admission as admission_module
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
+from orchestrator.persistence.models import (
+    Event,
+    PackageAcceptanceCriterion,
+    ReconciliationCondition,
+    ReconciliationResolution,
+    WorkPackageRevision,
+    WorkUnit,
+)
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import record_approval, register_approved_unit
 from orchestrator.services.pr_bindings import record_verification_read_head, upsert_pr_binding
@@ -72,7 +81,17 @@ def _unit(session: Session, key: str, *, envelope: AuthorityEnvelope | None = No
         actor_id="human-1",
         actor_role=ActorRole.HUMAN,
     )
-    add_criterion(session, unit, "ac-1", "automated_check")
+    # `register_test_revision` is idempotent on the default criteria list -- fixed package id,
+    # fixed content hash -- so a second unit here shares the FIRST unit's revision, and declaring
+    # the criterion again violates UNIQUE(revision, ac_id). Declare it once per revision.
+    already_declared = session.scalar(
+        select(PackageAcceptanceCriterion.id).where(
+            PackageAcceptanceCriterion.work_package_revision_id == revision.id,
+            PackageAcceptanceCriterion.ac_id == "ac-1",
+        )
+    )
+    if already_declared is None:
+        add_criterion(session, unit, "ac-1", "automated_check")
     session.commit()
     return unit
 
@@ -137,6 +156,62 @@ def _ready_unit(session: Session, key: str, **envelope_kwargs) -> WorkUnit:
 
 def _answer(session: Session, unit: WorkUnit, source=None):
     return admission_for(session, unit, _revision(session, unit), source or inert_source())
+
+
+def _open_condition(session: Session, unit: WorkUnit) -> ReconciliationCondition:
+    """A divergence the reconciliation lane observed and nobody has decided yet."""
+    event = Event(
+        actor_id="drift-reconciler",
+        action="reconciliation.required",
+        subject_type="work_unit",
+        subject_id=unit.id,
+        payload={},
+        correlation_id=uuid.uuid4(),
+        idempotency_key=str(uuid.uuid4()),
+    )
+    session.add(event)
+    session.flush()
+    condition = ReconciliationCondition(
+        work_unit_id=unit.id,
+        condition_type="external_merge_alarm",
+        observation_kind="github_pr",
+        detected_at=NOW,
+        detail="the pull request was observed already landed",
+        stored_state="open",
+        observed_state="closed",
+        lineage_hash=f"sha256:{unit.unit_key}",
+        normalized_divergence_hash=f"sha256:{unit.unit_key}-divergence",
+        event_id=event.id,
+        idempotency_key=str(uuid.uuid4()),
+    )
+    session.add(condition)
+    session.commit()
+    return condition
+
+
+def _resolve_condition(session: Session, condition: ReconciliationCondition) -> None:
+    event = Event(
+        actor_id="devon",
+        action="reconciliation.resolved",
+        subject_type="reconciliation_condition",
+        subject_id=condition.id,
+        payload={},
+        correlation_id=uuid.uuid4(),
+        idempotency_key=str(uuid.uuid4()),
+    )
+    session.add(event)
+    session.flush()
+    session.add(
+        ReconciliationResolution(
+            condition_id=condition.id,
+            resolved_by="devon",
+            decision="dismissed",
+            rationale="I looked; it was a false alarm",
+            event_id=event.id,
+            idempotency_key=str(uuid.uuid4()),
+        )
+    )
+    session.commit()
 
 
 # ---------------------------------------------------------------------------------------------
@@ -207,6 +282,56 @@ def test_a_criterion_a_human_decided_refuses_the_whole_unit(migrated_session: Se
 
     assert answer.satisfied is False
     assert answer.refusals == ("criteria_not_verifier_decided",)
+
+
+def test_an_unresolved_reconciliation_condition_refuses(migrated_session: Session) -> None:
+    """The only observations of GitHub this repository holds about a unit. A pull request already
+    landed elsewhere, a head observed to move, a check that flipped red afterwards -- each is a
+    recorded fact and a pending human decision, and the factory must not land past one."""
+    unit = _ready_unit(migrated_session, "open-condition")
+    _open_condition(migrated_session, unit)
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("open_reconciliation_condition",)
+
+
+def test_a_resolved_reconciliation_condition_does_not_refuse(migrated_session: Session) -> None:
+    """Open means *no resolution row* -- the estate's own set difference, with no status column to
+    drift. A condition somebody has decided is not a pending decision, and a term that kept
+    refusing after the decision would make every unit that ever diverged permanently unlandable."""
+    unit = _ready_unit(migrated_session, "resolved-condition")
+    condition = _open_condition(migrated_session, unit)
+    _resolve_condition(migrated_session, condition)
+
+    assert _answer(migrated_session, unit).satisfied is True
+
+
+def test_a_condition_on_another_unit_does_not_refuse_this_one(migrated_session: Session) -> None:
+    unit = _ready_unit(migrated_session, "condition-elsewhere")
+    other = _ready_unit(migrated_session, "the-other-unit")
+    _open_condition(migrated_session, other)
+
+    assert _answer(migrated_session, unit).satisfied is True
+
+
+def test_a_revision_that_is_not_the_units_own_is_refused_rather_than_answered(
+    migrated_session: Session,
+) -> None:
+    """`required_ac_ids` derives the required criteria from the revision it is HANDED, so a caller
+    passing a foreign one asks about a different set and can convert a refusal into an affirmative
+    answer. The holder split exists to invite exactly such a caller in the acting increment."""
+    unit = _ready_unit(migrated_session, "own-revision")
+    # A genuinely different revision: `register_test_revision` keys its package id on the declared
+    # criteria, so a different list is a different package rather than a replay of the same one.
+    foreign = register_test_revision(migrated_session, acceptance_criteria=("ac-1", "ac-2"))
+    assert foreign.id != unit.work_package_revision_id
+
+    with pytest.raises(DomainError) as error:
+        admission_for(migrated_session, unit, foreign, inert_source())
+
+    assert error.value.code == "revision_not_for_unit"
 
 
 def test_an_envelope_that_does_not_grant_landing_is_refused(migrated_session: Session) -> None:
@@ -415,6 +540,26 @@ def test_every_unmet_term_is_reported_not_only_the_first(migrated_session: Sessi
         "pr_binding_missing",
         "merge_target_repository_redeploys",
     }
+
+
+def test_the_answer_reads_one_normalized_authority_snapshot(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The envelope is what a human's authority approval attests, so it is read exactly once --
+    the property admission pins for the same reason. Asserted rather than asserted-in-prose,
+    because a second normalization is a second reading of the thing under approval."""
+    unit = _ready_unit(migrated_session, "one-authority-snapshot")
+    original = admission_module.normalize_authority
+    calls: list[object] = []
+
+    def track(value):
+        calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(admission_module, "normalize_authority", track)
+
+    assert _answer(migrated_session, unit).satisfied is True
+    assert len(calls) == 1
 
 
 def test_the_loader_refuses_a_unit_that_does_not_exist(migrated_session: Session) -> None:

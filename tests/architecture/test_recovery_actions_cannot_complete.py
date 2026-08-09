@@ -16,10 +16,10 @@ from pathlib import Path
 import pytest
 from fastapi.routing import APIRoute
 
+from orchestrator.api.routes import router as api_router
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import LEGAL_EDGES, WorkUnitState
 from orchestrator.kernel.transitions import EDGE_ROLES, TransitionGuards, authorize_transition
-from orchestrator.main import create_app
 from orchestrator.web import router as web_router
 
 RECOVERY_ENTRY_POINTS = (
@@ -82,42 +82,68 @@ def test_no_recovery_path_grants_a_waiver() -> None:
 
 # ADR-0020's named exception, in this guard -- the EIGHTH place the merge prohibition lives, and
 # one that neither the ADR's inventory of four nor the workstream's revised inventory of six names.
-# It is keyed by exact route path, and an entry must NAME A MERGE AND NOTHING ELSE FORBIDDEN: a
-# path that also names a landing which changes something already serving is precisely what this
-# exception must remain too narrow to cover.
+#
+# **Keyed on (METHOD, path), not on path alone, and that is the whole narrowness.** A set of paths
+# excuses every verb served at them, so an ACTING endpoint hung off a path a reporting one already
+# made respectable would inherit its excuse silently -- which is precisely the shape the acting
+# increment would otherwise take. Adding a verb is adding an entry, in the open, with a reason.
+#
+# What this cannot enforce, and should not pretend to: whether a landing changes something already
+# serving is a fact about the target repository, decided at runtime by asking the estate, not
+# something readable from the spelling of a route. This guard's job is that no endpoint can NAME a
+# merge without somebody deciding it may.
 MERGE_NAMING_ROUTES = {
     # Report-only. It answers whether the factory MAY land a unit's pull request; it holds no
     # credential, imports no client, and nothing it returns causes anything to happen.
-    "/api/v1/work-units/{unit_id}/pr-merge-admission",
+    ("GET", "/api/v1/work-units/{unit_id}/pr-merge-admission"),
 }
 
 
-def _routed_paths() -> set[str]:
-    paths = set(create_app().openapi()["paths"])
-    paths.update(route.path for route in web_router.routes if isinstance(route, APIRoute))
-    return paths
+def _routed_endpoints() -> set[tuple[str, str]]:
+    """Every (method, path) the application serves, read STRUCTURALLY from the routers.
+
+    Deliberately not `openapi()["paths"]`, which this guard used until ADR-0020 gave it an
+    allowlist. That surface is SCHEMA-visible only, so a route declared `include_in_schema=False`
+    is invisible to it -- demonstrated by registering one -- and it collapses every verb onto one
+    key. Both blind spots are survivable under a blanket prohibition and are not under an
+    exemption, because both let an endpoint reach the excused set without being named.
+
+    Read from the two routers rather than from the assembled application: composition wraps them
+    in an internal type whose nested routes are not reachable by the obvious attribute, so walking
+    the app finds a fraction of the surface and the guard passes on what it cannot see. The route
+    inventories in `test_scope_guards.py` already read the `/review` router this way.
+    """
+    return {
+        (method, route.path)
+        for route in [*api_router.routes, *web_router.routes]
+        if isinstance(route, APIRoute)
+        for method in (route.methods or set())
+    }
+
+
+def _merge_naming_endpoints() -> set[tuple[str, str]]:
+    return {(method, path) for method, path in _routed_endpoints() if "merge" in path}
 
 
 def test_nothing_in_the_system_can_merge() -> None:
     assert not any("merge" in state.value for state in WorkUnitState)
 
-    named = {path for path in _routed_paths() if "merge" in path}
+    named = _merge_naming_endpoints()
 
     assert named <= MERGE_NAMING_ROUTES, (
-        f"these routes name a merge and are not the bounded exception ADR-0020 allows: "
-        f"{sorted(named - MERGE_NAMING_ROUTES)}. Merging was Devon's gate; a route that names one "
-        "must be added here openly, with a reason -- never by rewording the path."
+        f"these endpoints name a merge and are not the bounded exception ADR-0020 allows: "
+        f"{sorted(named - MERGE_NAMING_ROUTES)}. Merging was Devon's gate; an endpoint that names "
+        "one must be added here openly, with a reason -- never by rewording the path, and never "
+        "by hanging a new verb off a path that was excused for a different one."
     )
 
 
-def test_the_merge_naming_exception_names_only_routes_that_need_it() -> None:
+def test_the_merge_naming_exception_names_only_endpoints_that_need_it() -> None:
     """The same rot check the other merge exemptions carry: an exemption nobody needs is an
-    exemption nobody is watching, and one that could cover a landing which changes something
-    already serving is wider than ADR-0020 permits."""
-    named = {path for path in _routed_paths() if "merge" in path}
+    exemption nobody is watching."""
+    named = _merge_naming_endpoints()
 
     assert MERGE_NAMING_ROUTES <= named, (
-        f"these exempt paths are not routes that name a merge: "
+        f"these exempt endpoints are not served, or no longer name a merge: "
         f"{sorted(MERGE_NAMING_ROUTES - named)}"
     )
-    assert not [path for path in MERGE_NAMING_ROUTES if "deploy" in path]
