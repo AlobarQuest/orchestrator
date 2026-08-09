@@ -155,6 +155,9 @@ def test_the_served_pack_answers_whether_the_verifier_decided_every_criterion(
     answer = body["verifier_decided_completion"]
     assert answer["satisfied"] is False
     assert {refusal["code"] for refusal in answer["refusals"]} == {
+        # ADR-0020's first clause: a waived criterion rests on evidence that FAILED, which is
+        # nothing the orchestrator observed and passed.
+        "criterion_evidence_not_observed",
         "criterion_waived",
         "outcome_does_not_settle_criterion",
         "decider_was_not_the_verifier",
@@ -194,7 +197,12 @@ def test_the_pack_models_declare_exactly_the_fields_the_route_serves() -> None:
         "expires_at",
         "failed_evidence_id",
     }
-    assert set(EvidencePackVerifierDecidedResponse.model_fields) == {"satisfied", "refusals"}
+    assert set(EvidencePackVerifierDecidedResponse.model_fields) == {
+        "satisfied",
+        "decided_by_verifier",
+        "evidence_observed",
+        "refusals",
+    }
     assert set(EvidencePackCriterionRefusalResponse.model_fields) == {"ac_id", "code"}
 
 

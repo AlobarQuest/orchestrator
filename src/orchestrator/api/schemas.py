@@ -496,6 +496,43 @@ class PrMergeAdmissionResponse(BaseModel):
     verified_head_sha: str | None
 
 
+class PrMergeCommandModel(CommandBase):
+    """Ask the factory to land a unit's pull request.
+
+    `expected_version` is REQUIRED, like every other mutation on this API -- a repo-wide invariant
+    asserts it over the whole OpenAPI document, and it caught this model when it first shipped the
+    field as optional. The rule earns itself here: the caller has just read an admission answer,
+    and stating the version it read is what makes "nothing moved in between" the caller's claim
+    rather than an assumption. The act re-evaluates every term regardless, so this is a second
+    guard rather than the only one.
+    """
+
+
+class PrMergeResponse(BaseModel):
+    """The orchestrator's record of its own act.
+
+    `status` is `merged` when this call landed it, `already_merged` when the pull request was
+    found landed (either by somebody else, or by a previous call of ours whose response was lost),
+    and `refused` otherwise. The three are distinct because a lost response and a refusal are
+    indistinguishable at the remote and must not be indistinguishable here.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    work_unit_id: UUID
+    repository: str
+    pr_number: int
+    head_sha: str
+    status: str
+    reason_code: str | None
+    merge_commit_sha: str | None
+    github_status: int | None
+    event_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class InfraLaneLinkResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -1423,6 +1460,12 @@ class EvidencePackVerifierDecidedResponse(BaseModel):
     """
 
     satisfied: bool
+    # ADR-0020's sentence, as its two clauses. `decided_by_verifier` is "with no human
+    # adjudication"; `evidence_observed` is "from observed evidence". Served separately because a
+    # criterion can fail either one alone, and an off-process consumer that can only read the AND
+    # cannot tell which -- which is the whole reason Increment 1 made the condition readable.
+    decided_by_verifier: bool
+    evidence_observed: bool
     refusals: list[EvidencePackCriterionRefusalResponse]
 
 

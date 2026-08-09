@@ -131,6 +131,18 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_deployment_observations.py::test_replay_is_idempotent_and_conflict_rejects_changed_facts",
     ),
     MatrixRow(
+        "pr merge",
+        "/api/v1/work-units/{unit_id}/pr-merge",
+        # No advisory lock and no idempotency-key replay: the guard is the UNIT ROW LOCK plus a
+        # unique record per unit. A landing is not idempotent and its failure is asymmetric -- a
+        # lost response answers 405 on retry, exactly like a refusal -- so the question "did we
+        # already do this?" is answered from our own record BEFORE the call, never by asking the
+        # remote after it. A second request with a different key replays the same record rather
+        # than acting again, which is why the key is not what makes this safe.
+        "unique UnitPrMerge per work unit + WorkUnit row lock (with_for_update), NO advisory lock",
+        "tests/services/test_pr_merge.py::test_a_repeat_replays_the_record_and_never_calls_the_remote_again",
+    ),
+    MatrixRow(
         "dispatch",
         "/api/v1/work-units/{unit_id}/dispatch",
         "unique DispatchRecord.idempotency_key + (unit, runner_attempt) guard",
