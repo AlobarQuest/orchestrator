@@ -59,6 +59,17 @@ POST_DEPLOY_AC_IDS = (
 # refuses it outright -- `_mint` constructs its unit directly and never consults that vocabulary.
 FOLLOW_UP_CAPABILITY = "follow_up_review"
 
+# The two outcomes that settle a criterion without reservation. `waived` deliberately is not one
+# of them: a waiver settles a criterion whose evidence FAILED, and only a HUMAN may record one
+# (`_authorize_outcome`). Kept here so the completion check and the verifier-decided check below
+# agree on what "satisfying" means -- they differ only in who is allowed to have said it.
+#
+# not-a-vocabulary: internal policy subset of adjudication outcomes (which outcomes settle a
+# criterion outright), not a set any producer outside this repository must agree with. The full
+# outcome vocabulary is pinned by `ck_adjudications_outcome`; this is a judgment made over it, the
+# same shape as `evidence.NON_WAIVER_OUTCOMES`.
+SATISFYING_OUTCOMES = frozenset({"passed", "not_applicable"})
+
 # The single source of truth for the generated follow-up review AC id. Same producer/consumer
 # split as the tuple above: this module PRODUCES it (required_ac_ids for a review unit) and
 # `services.evidence` imports it to decide subject validity. One copy only.
@@ -577,9 +588,135 @@ def _packagerequired_ac_ids(enforcement_snapshot: dict[str, object]) -> tuple[st
     return ac_ids
 
 
-def _current_terminal_is_satisfied(
-    adjudications: tuple[Adjudication, ...], occurred_at: datetime
-) -> bool:
+@dataclass(frozen=True)
+class CriterionDecisionRefusal:
+    """Why one criterion (or the unit as a whole, when `ac_id` is None) does not qualify."""
+
+    ac_id: str | None
+    code: str
+
+
+@dataclass(frozen=True)
+class VerifierDecidedCompletion:
+    satisfied: bool
+    refusals: tuple[CriterionDecisionRefusal, ...]
+
+
+def verifier_decided_completion(
+    session: Session,
+    revision: WorkPackageRevision,
+    unit: WorkUnit,
+) -> VerifierDecidedCompletion:
+    """Did EVERY required acceptance criterion reach a current terminal adjudication that the
+    verifier recorded from its own evaluation of evidence?
+
+    This is a strictly narrower question than `_completion_satisfied`, which asks only whether the
+    criteria were settled acceptably and never asks who settled them, or how. Four things
+    disqualify a criterion, and each is a separate refusal because each fails for its own reason:
+
+    * there is no single valid current adjudication for it;
+    * its outcome is not one that settles a criterion outright -- which excludes `waived`
+      SPECIFICALLY and independently of the role column, since a waiver settles FAILED evidence
+      and `_authorize_outcome` admits one only from a HUMAN;
+    * the deciding actor's kind was not recorded, i.e. the row predates the column. NULL is
+      *unknown*, and unknown refuses; it is never read as "not a human";
+    * the deciding actor was not the verifier.
+
+    A fifth disqualifies the UNIT rather than a criterion: a non-verifier adjudication recorded on
+    this unit against an `ac_id` that is not one of its required ones. That is reachable -- for a
+    unit born of a decomposition, `_validated_subject` admits any `ac_id` the REVISION declares,
+    which is a superset of the ones mapped to this unit -- and a per-criterion scan cannot see it.
+    ADR-0020's condition is "with no human adjudication", not "with no human adjudication among
+    the criteria that happened to be required", so a human who decided anything at all here was in
+    the loop and the answer is no.
+
+    `role == verifier` carries its weight only because `_authorize_outcome` refuses a verifier
+    adjudication that did not come from `verify_work_unit`'s own evaluation
+    (`verifier_evaluation_required`, WS-P2.32). That implication lives in code rather than in the
+    schema, so it is asserted by test rather than assumed here.
+
+    Never raises. `required_ac_ids` returns None rather than refusing for a unit whose revision
+    declares nothing usable, and None is simply a refusal here -- this answer is served from a read
+    surface that must keep answering for every unit that exists, including the historical ones.
+    """
+    required = required_ac_ids(session, revision, unit)
+    if not required:
+        return VerifierDecidedCompletion(
+            satisfied=False,
+            refusals=(CriterionDecisionRefusal(None, "required_criteria_undeclared"),),
+        )
+
+    grouped: dict[str, list[Adjudication]] = {ac_id: [] for ac_id in required}
+    outside: list[CriterionDecisionRefusal] = []
+    rows = session.scalars(select(Adjudication).where(Adjudication.work_unit_id == unit.id))
+    for adjudication in rows:
+        if adjudication.ac_id in grouped:
+            grouped[adjudication.ac_id].append(adjudication)
+        elif adjudication.decided_by_role != ActorRole.VERIFIER.value:
+            outside.append(
+                CriterionDecisionRefusal(adjudication.ac_id, "decision_outside_required_criteria")
+            )
+
+    verdicts = tuple(
+        _criterion_decision_verdict(ac_id, tuple(grouped[ac_id])) for ac_id in required
+    )
+    # `qualifies` is each criterion's own positive answer, never "no refusal was raised". An
+    # answer whose affirmative case is an empty objection list is the fail-open shape this
+    # repository keeps finding, and it is the reason the two fields are computed separately.
+    # Safe as an emptiness test only because `outside` is filled by the SAME pass that fills
+    # `grouped`: a query returning nothing leaves every criterion refusing `no_current_adjudication`
+    # rather than leaving this term quietly true.
+    nobody_decided_anything_else = not outside
+    return VerifierDecidedCompletion(
+        satisfied=all(verdict.qualifies for verdict in verdicts) and nobody_decided_anything_else,
+        refusals=tuple(refusal for verdict in verdicts for refusal in verdict.refusals)
+        + tuple(outside),
+    )
+
+
+@dataclass(frozen=True)
+class _CriterionVerdict:
+    qualifies: bool
+    refusals: tuple[CriterionDecisionRefusal, ...]
+
+
+def _criterion_decision_verdict(
+    ac_id: str, adjudications: tuple[Adjudication, ...]
+) -> _CriterionVerdict:
+    terminal = _current_terminal(adjudications)
+    if terminal is None:
+        return _CriterionVerdict(
+            qualifies=False,
+            refusals=(CriterionDecisionRefusal(ac_id, "no_current_adjudication"),),
+        )
+    settles = terminal.outcome in SATISFYING_OUTCOMES
+    # Asked separately from `settles`, which already excludes it, because a waiver is the one
+    # outcome that is HUMAN by construction -- two reasons to refuse, the second of which does not
+    # depend on a schema column that can be NULL.
+    waived = terminal.outcome == "waived"
+    decided_by_verifier = terminal.decided_by_role == ActorRole.VERIFIER.value
+    refusals: list[CriterionDecisionRefusal] = []
+    if waived:
+        refusals.append(CriterionDecisionRefusal(ac_id, "criterion_waived"))
+    if not settles:
+        refusals.append(CriterionDecisionRefusal(ac_id, "outcome_does_not_settle_criterion"))
+    if terminal.decided_by_role is None:
+        refusals.append(CriterionDecisionRefusal(ac_id, "decider_kind_unrecorded"))
+    elif not decided_by_verifier:
+        refusals.append(CriterionDecisionRefusal(ac_id, "decider_was_not_the_verifier"))
+    return _CriterionVerdict(
+        qualifies=settles and not waived and decided_by_verifier,
+        refusals=tuple(refusals),
+    )
+
+
+def _current_terminal(adjudications: tuple[Adjudication, ...]) -> Adjudication | None:
+    """The one valid chain head for a criterion, or None if there isn't exactly one.
+
+    Extracted so that the two questions asked of a criterion -- "is it satisfied?" and "who
+    decided it?" -- resolve "which row is current" identically. A second notion of the current
+    adjudication is the defect class `_record_one_adjudication` already warns about for evidence.
+    """
     by_id = {adjudication.id: adjudication for adjudication in adjudications}
     superseded_ids: set[uuid.UUID] = set()
     for adjudication in adjudications:
@@ -593,14 +730,22 @@ def _current_terminal_is_satisfied(
             or previous_id in superseded_ids
             or previous_id == adjudication.id
         ):
-            return False
+            return None
         superseded_ids.add(previous_id)
 
     current = tuple(row for row in adjudications if row.id not in superseded_ids)
     if len(current) != 1 or not _is_single_chain(current[0], by_id):
+        return None
+    return current[0]
+
+
+def _current_terminal_is_satisfied(
+    adjudications: tuple[Adjudication, ...], occurred_at: datetime
+) -> bool:
+    terminal = _current_terminal(adjudications)
+    if terminal is None:
         return False
-    terminal = current[0]
-    if terminal.outcome in {"passed", "not_applicable"}:
+    if terminal.outcome in SATISFYING_OUTCOMES:
         return True
     return (
         terminal.outcome == "waived"

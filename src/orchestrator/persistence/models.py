@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from orchestrator.kernel.states import WAIVER_RISK_CLASSES
+from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorRole
 
 
 class Base(DeclarativeBase):
@@ -467,6 +467,15 @@ class Adjudication(UUIDPrimaryKey, Base):
             + ")",
             name="ck_adjudications_risk_class",
         ),
+        # WS-P3.7. NULL is every row written before the column existed, and it must read as
+        # *unknown* rather than as *not human* -- the historical population is not clean, so no
+        # boundary drawn through it is sound (ADR-0014). Not back-filled, deliberately.
+        CheckConstraint(
+            "decided_by_role IS NULL OR decided_by_role IN ("
+            + ", ".join(f"'{role.value}'" for role in ActorRole)
+            + ")",
+            name="ck_adjudications_decided_by_role",
+        ),
     )
 
     work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
@@ -477,6 +486,11 @@ class Adjudication(UUIDPrimaryKey, Base):
     outcome: Mapped[str] = mapped_column(String)
     evidence_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("evidence.id"))
     decided_by: Mapped[str] = mapped_column(String)
+    # The KIND of actor that decided, recorded at the moment of the decision. `decided_by` is a
+    # free-text identity string with no naming contract, so classifying it after the fact is a
+    # heuristic keyed on spelling; this is a fact. Written once, by the single construction site
+    # in `services/evidence.py`, from the authenticated actor's own role.
+    decided_by_role: Mapped[str | None] = mapped_column(String)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     rationale: Mapped[str] = mapped_column(Text)
     failed_evidence_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("evidence.id"))

@@ -27,7 +27,24 @@ from orchestrator.kernel.transitions import EDGE_ROLES
 SRC = Path("src")
 SCRIPTS = Path("scripts")
 PYTHON_SOURCES = sorted(SRC.rglob("*.py"))
+SCRIPT_PYTHON_SOURCES = sorted(SCRIPTS.glob("*.py"))
 SHELL_SOURCES = sorted(SCRIPTS.glob("*.sh"))
+
+# The merge scan covers `scripts/*.py` as well; the egress and secret scans deliberately do not.
+#
+# Those scripts have always been outside every merge guard: the string check reads `src/**.py` plus
+# `scripts/*.sh`, so a `scripts/land_pr.py` running `gh pr merge` fired nothing while the identical
+# code under `src/` reddened. `scripts/` is a plausible home for exactly the ADR-0020 landing code,
+# so shipping a residual-gap fix that inherited the same blind spot would have closed one hole
+# under a comment claiming both were closed.
+#
+# It is a SEPARATE list rather than a wider `PYTHON_SOURCES` because four of these scripts import
+# `urllib.request`. Widening the shared list would red the outbound scan below and force four new
+# OUTBOUND_ALLOWLIST entries -- weakening the structural chokepoint in order to strengthen the
+# merge guard, which is a trade in the wrong direction and one this increment is not allowed to
+# make. (The secret scan's identical blind spot is left alone here; it is not this change's
+# subject.)
+MERGE_SCAN_SOURCES = [*PYTHON_SOURCES, *SCRIPT_PYTHON_SOURCES]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -45,15 +62,79 @@ MERGE_ACTIONS = (
     "/merge",  # the GitHub REST merge endpoints: PUT /pulls/{n}/merge, POST /merges
 )
 
+# ADR-0020 lifts the prohibition for a bounded class, and says it must be lifted OPENLY -- by
+# amending this guard with a named exception, never by finding a verb it does not cover. This is
+# that exception, and it ships EMPTY: nothing in the repository may land a pull request today, and
+# the mechanism is built now, while nothing is entitled to use it, so that its first entry arrives
+# into a door already shown to open and to close.
+#
+# Keyed by exact relative path, the shape OUTBOUND_ALLOWLIST and ws32's WS42_DISPATCH_PATHS
+# already use. Every entry carries a reason, and the rot check below refuses one that no longer
+# needs the exemption.
+MERGE_EXEMPT_PATHS: set[Path] = set()
 
-@pytest.mark.parametrize("source", [*PYTHON_SOURCES, *SHELL_SOURCES], ids=lambda p: str(p))
+
+@pytest.mark.parametrize("source", [*MERGE_SCAN_SOURCES, *SHELL_SOURCES], ids=lambda p: str(p))
 def test_nothing_in_the_repo_merges_a_pull_request(source: Path) -> None:
+    if source in MERGE_EXEMPT_PATHS:
+        return
     text = source.read_text(encoding="utf-8").lower()
     for action in MERGE_ACTIONS:
         assert action not in text, (
             f"{source} performs a merge ({action!r}). Merging is Devon's gate; "
-            "code that merges has removed it."
+            "code that merges has removed it. If this file is the bounded exception ADR-0020 "
+            "allows, add it to MERGE_EXEMPT_PATHS with a reason -- openly, never by rewording."
         )
+
+
+# The residual gap WS-P3.7 measured: a merge performed as a METHOD CALL on a client object --
+# `pull_request.merge(...)` -- spells none of the strings above and none of the token sequences the
+# ws32/ws33/ws34 scanners look for. Measured 2026-08-08 against all five guard files individually:
+# caught by nothing. Structural rather than textual, because the shape has no characteristic
+# spelling to match.
+#
+# SQLAlchemy's `Session.merge()` would fire this too. That is intended and is not a false positive
+# to be special-cased: the exemption above is the answer if such a call is ever genuinely needed,
+# and today `src/` contains no `.merge(` call of any kind.
+def _merge_method_calls(source: Path) -> list[str]:
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    return [
+        f"{source}:{node.lineno}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "merge"
+    ]
+
+
+@pytest.mark.parametrize("source", MERGE_SCAN_SOURCES, ids=lambda p: str(p))
+def test_nothing_in_the_repo_calls_a_merge_method(source: Path) -> None:
+    if source in MERGE_EXEMPT_PATHS:
+        return
+    calls = _merge_method_calls(source)
+    assert not calls, (
+        f"{calls} calls a .merge() method. Merging is Devon's gate; code that merges has "
+        "removed it. If this file is the bounded exception ADR-0020 allows, add it to "
+        "MERGE_EXEMPT_PATHS with a reason."
+    )
+
+
+def test_the_merge_exemption_names_only_files_that_need_it() -> None:
+    """An exemption nobody needs is an exemption nobody is watching -- the same rot check the
+    outbound allowlist carries, and the reason this one can ship empty without going stale."""
+    missing = [str(path) for path in MERGE_EXEMPT_PATHS if not path.exists()]
+    assert not missing, f"the merge exemption names files that no longer exist: {missing}"
+
+    unused = [
+        str(path)
+        for path in MERGE_EXEMPT_PATHS
+        if not any(action in path.read_text(encoding="utf-8").lower() for action in MERGE_ACTIONS)
+        and not (path.suffix == ".py" and _merge_method_calls(path))
+    ]
+    assert not unused, (
+        f"these files are exempt from the merge guard but no longer merge anything: {unused}. "
+        "Remove them -- an exemption nobody needs is an exemption nobody is watching."
+    )
 
 
 # ---------------------------------------------------------------------------------------------

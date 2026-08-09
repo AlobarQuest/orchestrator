@@ -1369,12 +1369,40 @@ class EvidencePackAdjudicationResponse(BaseModel):
     outcome: str
     current: bool
     decided_by: str
+    # WS-P3.7. The KIND of actor that decided, as a stored fact. NULL on every row written before
+    # the column existed, and NULL means *unknown* -- a consumer must never read it as "not human".
+    decided_by_role: str | None = None
+    # The evidence the decision was recorded against. `failed_evidence_id` below is the waiver
+    # field and answers a different question; only it was projected before.
+    evidence_id: UUID | None = None
     rationale: str
     risk: str | None = None
     follow_up: str | None = None
     scope: str | None = None
     expires_at: datetime | None = None
     failed_evidence_id: UUID | None = None
+
+
+class EvidencePackCriterionRefusalResponse(BaseModel):
+    """One reason the unit does not qualify. `ac_id` is null when the reason is unit-wide."""
+
+    ac_id: str | None = None
+    code: str
+
+
+class EvidencePackVerifierDecidedResponse(BaseModel):
+    """Whether every required acceptance criterion of this unit reached a current terminal
+    adjudication that the verifier recorded from its own evaluation of evidence.
+
+    Computed once, in `services/lifecycle.py`, and served here so an off-process consumer can read
+    the answer without parsing `/history` for an opaque event payload. Fails closed in every
+    direction: an unrecorded decider kind, a criterion with no single current adjudication, a
+    waiver, or a revision that declares no usable criteria all make `satisfied` false and name
+    themselves in `refusals`.
+    """
+
+    satisfied: bool
+    refusals: list[EvidencePackCriterionRefusalResponse]
 
 
 class EvidencePackApprovalResponse(BaseModel):
@@ -1417,6 +1445,7 @@ class EvidencePackResponse(BaseModel):
     claims: list[EvidencePackClaimResponse]
     evidence: list[EvidencePackEvidenceResponse]
     adjudications: list[EvidencePackAdjudicationResponse]
+    verifier_decided_completion: EvidencePackVerifierDecidedResponse
     approvals: list[EvidencePackApprovalResponse]
     event_publications: list[EvidencePackEventPublicationResponse]
     events: list[EvidencePackEventResponse]
