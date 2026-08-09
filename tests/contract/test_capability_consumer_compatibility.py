@@ -118,6 +118,24 @@ def test_one_revision_falling_behind_is_enough_to_refuse() -> None:
     }
 
 
+def test_a_revision_that_is_both_pinned_and_recommended_says_both() -> None:
+    """The healthy steady state must not read as though only one revision was checked.
+
+    A mapping keyed by revision silently keeps whichever label was written last when the two
+    coincide, so the output claimed the recommendation was read and said nothing about the
+    pin. Caught by running the PASS path rather than by reading it.
+    """
+    same = check._roles("a" * 40, "a" * 40)
+
+    assert len(same) == 1
+    assert "pinned by" in same["a" * 40] and "recommended" in same["a" * 40]
+
+    apart = check._roles("a" * 40, "b" * 40)
+
+    assert "pinned by" in apart["a" * 40] and "recommended" not in apart["a" * 40]
+    assert "recommended" in apart["b" * 40] and "pinned by" not in apart["b" * 40]
+
+
 def test_a_recommendation_that_is_not_an_immutable_revision_is_loud(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

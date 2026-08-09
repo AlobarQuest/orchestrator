@@ -152,6 +152,18 @@ def recommended_revision(repo: str) -> str:
     return ref
 
 
+def _roles(pinned: str, recommended: str) -> dict[str, str]:
+    """What each revision IS, for the human reading the output.
+
+    When the two coincide -- the healthy steady state -- a naive mapping keyed by revision
+    silently keeps whichever label was written last, so the line reads as though only the
+    recommendation was checked and the pin went unread. Say both.
+    """
+    if pinned == recommended:
+        return {pinned: f"pinned by {CALLER_WORKFLOW.name}, and recommended to every caller"}
+    return {pinned: f"pinned by {CALLER_WORKFLOW.name}", recommended: "recommended to every caller"}
+
+
 def revisions_that_cannot_parse(
     served: set[str], accepted: dict[str, set[str]]
 ) -> dict[str, list[str]]:
@@ -169,7 +181,7 @@ def revisions_that_cannot_parse(
 
 def main() -> int:
     try:
-        repo, workflow, ref = pinned_consumer(CALLER_WORKFLOW.read_text())
+        repo, _workflow, ref = pinned_consumer(CALLER_WORKFLOW.read_text())
         assert_the_workflow_installs_its_own_commit(fetch(repo, CONSUMER_WORKFLOW_PATH, ref), ref)
         recommended = recommended_revision(repo)
         # `dict` rather than a set of revisions: order matters in the report, and the two are
@@ -183,7 +195,7 @@ def main() -> int:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
 
-    role = {ref: f"pinned by {CALLER_WORKFLOW.name}", recommended: "recommended to every caller"}
+    role = _roles(ref, recommended)
     for revision, names in accepted.items():
         print(f"consumer:  {repo}@{revision[:8]} ({role[revision]}) -- recognises {len(names)}")
     print(f"served:    {SERVED_VOCABULARY_SOURCE.name} declares {len(served)}")
@@ -191,8 +203,8 @@ def main() -> int:
     unknown = revisions_that_cannot_parse(served, accepted)
     if not unknown:
         print(
-            f"\nPASS: every runner capability this repo declares is known at {workflow}'s "
-            "pinned revision and at the one recommended to every caller."
+            f"\nPASS: every runner capability this repo declares is known at the revision "
+            f"{CALLER_WORKFLOW.name} pins and at the one recommended to every caller."
         )
         return 0
 
