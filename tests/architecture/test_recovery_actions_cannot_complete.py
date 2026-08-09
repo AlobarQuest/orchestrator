@@ -11,16 +11,17 @@ The real guarantee is two-fold:
 """
 
 import ast
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 import pytest
 from fastapi.routing import APIRoute
+from starlette.routing import BaseRoute
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import LEGAL_EDGES, WorkUnitState
 from orchestrator.kernel.transitions import EDGE_ROLES, TransitionGuards, authorize_transition
 from orchestrator.main import create_app
-from orchestrator.web import router as web_router
 
 RECOVERY_ENTRY_POINTS = (
     ("src/orchestrator/services/claims.py", "requeue_unit"),
@@ -80,10 +81,107 @@ def test_no_recovery_path_grants_a_waiver() -> None:
     assert "waived" not in literals
 
 
+# ADR-0020's named exception, in this guard -- the EIGHTH place the merge prohibition lives, and
+# one that neither the ADR's inventory of four nor the workstream's revised inventory of six names.
+#
+# **Keyed on (METHOD, path), not on path alone, and that is the whole narrowness.** A set of paths
+# excuses every verb served at them, so an ACTING endpoint hung off a path a reporting one already
+# made respectable would inherit its excuse silently -- which is precisely the shape the acting
+# increment would otherwise take. Adding a verb is adding an entry, in the open, with a reason.
+#
+# What this cannot enforce, and should not pretend to: whether a landing changes something already
+# serving is a fact about the target repository, decided at runtime by asking the estate, not
+# something readable from the spelling of a route. This guard's job is that no endpoint can NAME a
+# merge without somebody deciding it may.
+MERGE_NAMING_ROUTES = {
+    # Report-only. It answers whether the factory MAY land a unit's pull request; it holds no
+    # credential, imports no client, and nothing it returns causes anything to happen.
+    ("GET", "/api/v1/work-units/{unit_id}/pr-merge-admission"),
+}
+
+
+def _routed_endpoints() -> set[tuple[str, str]]:
+    """Every (method, path) the application serves, read STRUCTURALLY from the assembled app.
+
+    Deliberately not `openapi()["paths"]`, which this guard used until ADR-0020 gave it an
+    allowlist. That surface is SCHEMA-visible only, so a route declared `include_in_schema=False`
+    is invisible to it -- demonstrated by registering one -- and it collapses every verb onto one
+    key. Both blind spots are survivable under a blanket prohibition and are not under an
+    exemption, because both let an endpoint reach the excused set without being named.
+
+    Derived from the application rather than from a hand-kept list of routers, and that is the
+    third version of this function: naming the routers it knows about means a router somebody
+    includes later is silently outside the guard, which is the same failure as the schema blind
+    spot wearing different clothes. `create_app` includes three routers today and a list of two
+    already missed one.
+    """
+    return {
+        (method, route.path)
+        for route in _api_routes(create_app().routes)
+        for method in (route.methods or set())
+    }
+
+
+def _api_routes(routes: Iterable[BaseRoute]) -> Iterator[APIRoute]:
+    """Every `APIRoute` reachable from these, however the application nests its routers.
+
+    Composition wraps an included router in an internal type that does NOT expose the nested
+    routes under the obvious attribute -- a flat `isinstance` filter over `app.routes` finds
+    exactly ZERO, which would make this guard pass while looking at nothing. Measured, not
+    guessed; the rot check below is what caught it, and `test_the_guard_sees_the_whole_surface`
+    is what keeps it caught.
+    """
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield route
+            continue
+        nested = getattr(route, "routes", None)
+        if not nested:
+            wrapped = getattr(route, "original_router", None)
+            nested = getattr(wrapped, "routes", ()) if wrapped is not None else ()
+        yield from _api_routes(nested)
+
+
+def _merge_naming_endpoints() -> set[tuple[str, str]]:
+    return {(method, path) for method, path in _routed_endpoints() if "merge" in path}
+
+
 def test_nothing_in_the_system_can_merge() -> None:
     assert not any("merge" in state.value for state in WorkUnitState)
 
-    paths = set(create_app().openapi()["paths"])
-    paths.update(route.path for route in web_router.routes if isinstance(route, APIRoute))
+    named = _merge_naming_endpoints()
 
-    assert not any("merge" in path for path in paths)
+    assert named <= MERGE_NAMING_ROUTES, (
+        f"these endpoints name a merge and are not the bounded exception ADR-0020 allows: "
+        f"{sorted(named - MERGE_NAMING_ROUTES)}. Merging was Devon's gate; an endpoint that names "
+        "one must be added here openly, with a reason -- never by rewording the path, and never "
+        "by hanging a new verb off a path that was excused for a different one."
+    )
+
+
+def test_the_guard_sees_the_whole_surface() -> None:
+    """A guard that enumerates nothing refuses nothing, and says so in exactly the same words.
+
+    Every endpoint under this exemption is one somebody decided may name a merge, so the set it is
+    checked against has to be the WHOLE served surface. Pinned by three routers rather than one:
+    the `/api` router this increment touched, the `/review` router, and `health` -- which is on
+    neither of the two an earlier version of this file enumerated by hand, and is therefore the
+    case that proves the derivation covers routers nobody thought about.
+    """
+    endpoints = _routed_endpoints()
+
+    assert ("GET", "/health/live") in endpoints
+    assert ("GET", "/review") in endpoints
+    assert ("POST", "/api/v1/work-units/{unit_id}/dispatch") in endpoints
+    assert len(endpoints) > 50
+
+
+def test_the_merge_naming_exception_names_only_endpoints_that_need_it() -> None:
+    """The same rot check the other merge exemptions carry: an exemption nobody needs is an
+    exemption nobody is watching."""
+    named = _merge_naming_endpoints()
+
+    assert MERGE_NAMING_ROUTES <= named, (
+        f"these exempt endpoints are not served, or no longer name a merge: "
+        f"{sorted(MERGE_NAMING_ROUTES - named)}"
+    )

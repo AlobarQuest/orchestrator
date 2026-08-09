@@ -475,6 +475,27 @@ class DispatchResponse(BaseModel):
     updated_at: datetime
 
 
+class PrMergeAdmissionResponse(BaseModel):
+    """Whether the factory may land this unit's pull request itself, and every reason it may not.
+
+    Report-only (ADR-0020, Increment 4a). Reading this causes nothing to happen; it exists so the
+    composed answer can be inspected against real completed units before anything obeys it.
+
+    `refusals` carries EVERY term that was not met, not the first, because the question is asked
+    about a unit that has already finished and the useful answer is the whole list.
+    `verified_head_sha` is the head that was adjudicated -- the armed head, not the latest -- and
+    is reported because it is what an act would have to name.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    satisfied: bool
+    refusals: list[str]
+    target_repository: str
+    pr_number: int | None
+    verified_head_sha: str | None
+
+
 class InfraLaneLinkResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
