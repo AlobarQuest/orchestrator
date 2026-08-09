@@ -1618,9 +1618,20 @@ style of that module.
   determination exists without any app record, so `matched_apps: 0` does **not** imply `unknown` —
   and the estate admission term passed on the first attempt for the WS-P2.36 dispatch, which it
   could not have done had the old claim been true. Do not infer the answer from the app census;
-  **ask the route**, which is the bullet's own advice one paragraph up. `project-standards` was not
-  re-checked and may still answer `unknown`. Evidence:
-  `~/docs/software-delivery-system/2026-08-02-wsp229-build-report.md` and the WS-P2.36 report.
+  **ask the route**, which is the bullet's own advice one paragraph up. **`project-standards` also
+  answers `inert`** — measured 2026-08-09, correcting this bullet's own "was not re-checked and may
+  still answer `unknown`".
+  **The registry holds 21 repositories as of 2026-08-09 and `factory-runner` is the one factory-
+  adjacent repo still absent** — it answers `unknown` / `no_app_record`, which a fail-closed
+  consumer refuses. That is harmless only because ADR-0015 makes it not a factory target;
+  `security-standards`, which IS one, was in the same state until WS-P3.7 Increment 4's dry run
+  found it and it was recorded `inert` the same day. **A repository can hold a caller workflow, a
+  `FACTORY_PR_TOKEN` and an allowlist entry and still be un-landable**, because the estate never
+  determined what landing on it does — that is a fourth onboarding step, invisible until an
+  admission term refuses. The determination itself is cheap and must read all three mechanisms:
+  every workflow, the repository's webhooks, and the hosting platform's own git integration.
+  Evidence: `~/docs/software-delivery-system/2026-08-02-wsp229-build-report.md`, the WS-P2.36
+  report, and the WS-P3.7 Increment 4 dry run.
 
 - **The `Alobar SDS Dispatch` App has NO `checks` permission — the Checks API is 403 for the
   orchestrator, and named-check evidence is read from workflow JOBS instead.** Measured 2026-08-02
