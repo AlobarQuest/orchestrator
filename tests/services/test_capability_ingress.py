@@ -1,7 +1,8 @@
 """WS-P2.16 U1 -- capability-vocabulary enforcement at orchestrator unit ingress.
 
 A work unit's ``required_capability`` and every key in its ``authority.capabilities`` must name a
-capability the orchestrator recognises (the runner six plus ``post_deploy_verification``). The
+capability the orchestrator recognises (the runner vocabulary plus the orchestrator-only terms
+``post_deploy_verification`` and ``operational_action``). The
 registry vocabulary (``repository_write``) is a package-level vocabulary; a UNIT carrying it is
 test-only drift and must be rejected with a NAMED error at the gate, where a human can fix it --
 not left to fail closed and silently as ``capability_not_authorized`` at dispatch.
