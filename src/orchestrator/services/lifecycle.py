@@ -622,6 +622,14 @@ def verifier_decided_completion(
       *unknown*, and unknown refuses; it is never read as "not a human";
     * the deciding actor was not the verifier.
 
+    A fifth disqualifies the UNIT rather than a criterion: a non-verifier adjudication recorded on
+    this unit against an `ac_id` that is not one of its required ones. That is reachable -- for a
+    unit born of a decomposition, `_validated_subject` admits any `ac_id` the REVISION declares,
+    which is a superset of the ones mapped to this unit -- and a per-criterion scan cannot see it.
+    ADR-0020's condition is "with no human adjudication", not "with no human adjudication among
+    the criteria that happened to be required", so a human who decided anything at all here was in
+    the loop and the answer is no.
+
     `role == verifier` carries its weight only because `_authorize_outcome` refuses a verifier
     adjudication that did not come from `verify_work_unit`'s own evaluation
     (`verifier_evaluation_required`, WS-P2.32). That implication lives in code rather than in the
@@ -639,10 +647,15 @@ def verifier_decided_completion(
         )
 
     grouped: dict[str, list[Adjudication]] = {ac_id: [] for ac_id in required}
+    outside: list[CriterionDecisionRefusal] = []
     rows = session.scalars(select(Adjudication).where(Adjudication.work_unit_id == unit.id))
     for adjudication in rows:
         if adjudication.ac_id in grouped:
             grouped[adjudication.ac_id].append(adjudication)
+        elif adjudication.decided_by_role != ActorRole.VERIFIER.value:
+            outside.append(
+                CriterionDecisionRefusal(adjudication.ac_id, "decision_outside_required_criteria")
+            )
 
     verdicts = tuple(
         _criterion_decision_verdict(ac_id, tuple(grouped[ac_id])) for ac_id in required
@@ -650,9 +663,14 @@ def verifier_decided_completion(
     # `qualifies` is each criterion's own positive answer, never "no refusal was raised". An
     # answer whose affirmative case is an empty objection list is the fail-open shape this
     # repository keeps finding, and it is the reason the two fields are computed separately.
+    # Safe as an emptiness test only because `outside` is filled by the SAME pass that fills
+    # `grouped`: a query returning nothing leaves every criterion refusing `no_current_adjudication`
+    # rather than leaving this term quietly true.
+    nobody_decided_anything_else = not outside
     return VerifierDecidedCompletion(
-        satisfied=all(verdict.qualifies for verdict in verdicts),
-        refusals=tuple(refusal for verdict in verdicts for refusal in verdict.refusals),
+        satisfied=all(verdict.qualifies for verdict in verdicts) and nobody_decided_anything_else,
+        refusals=tuple(refusal for verdict in verdicts for refusal in verdict.refusals)
+        + tuple(outside),
     )
 
 

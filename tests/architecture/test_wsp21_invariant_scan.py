@@ -27,7 +27,24 @@ from orchestrator.kernel.transitions import EDGE_ROLES
 SRC = Path("src")
 SCRIPTS = Path("scripts")
 PYTHON_SOURCES = sorted(SRC.rglob("*.py"))
+SCRIPT_PYTHON_SOURCES = sorted(SCRIPTS.glob("*.py"))
 SHELL_SOURCES = sorted(SCRIPTS.glob("*.sh"))
+
+# The merge scan covers `scripts/*.py` as well; the egress and secret scans deliberately do not.
+#
+# Those scripts have always been outside every merge guard: the string check reads `src/**.py` plus
+# `scripts/*.sh`, so a `scripts/land_pr.py` running `gh pr merge` fired nothing while the identical
+# code under `src/` reddened. `scripts/` is a plausible home for exactly the ADR-0020 landing code,
+# so shipping a residual-gap fix that inherited the same blind spot would have closed one hole
+# under a comment claiming both were closed.
+#
+# It is a SEPARATE list rather than a wider `PYTHON_SOURCES` because four of these scripts import
+# `urllib.request`. Widening the shared list would red the outbound scan below and force four new
+# OUTBOUND_ALLOWLIST entries -- weakening the structural chokepoint in order to strengthen the
+# merge guard, which is a trade in the wrong direction and one this increment is not allowed to
+# make. (The secret scan's identical blind spot is left alone here; it is not this change's
+# subject.)
+MERGE_SCAN_SOURCES = [*PYTHON_SOURCES, *SCRIPT_PYTHON_SOURCES]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -57,7 +74,7 @@ MERGE_ACTIONS = (
 MERGE_EXEMPT_PATHS: set[Path] = set()
 
 
-@pytest.mark.parametrize("source", [*PYTHON_SOURCES, *SHELL_SOURCES], ids=lambda p: str(p))
+@pytest.mark.parametrize("source", [*MERGE_SCAN_SOURCES, *SHELL_SOURCES], ids=lambda p: str(p))
 def test_nothing_in_the_repo_merges_a_pull_request(source: Path) -> None:
     if source in MERGE_EXEMPT_PATHS:
         return
@@ -90,7 +107,7 @@ def _merge_method_calls(source: Path) -> list[str]:
     ]
 
 
-@pytest.mark.parametrize("source", PYTHON_SOURCES, ids=lambda p: str(p))
+@pytest.mark.parametrize("source", MERGE_SCAN_SOURCES, ids=lambda p: str(p))
 def test_nothing_in_the_repo_calls_a_merge_method(source: Path) -> None:
     if source in MERGE_EXEMPT_PATHS:
         return

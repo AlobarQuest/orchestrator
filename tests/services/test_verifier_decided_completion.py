@@ -205,6 +205,32 @@ def test_an_unrecorded_decider_kind_refuses_rather_than_reading_as_machine_decid
     assert _refusals(migrated_session, unit) == [("ac-1", "decider_kind_unrecorded")]
 
 
+def test_a_human_decision_on_a_non_required_criterion_still_disqualifies_the_unit(
+    migrated_session: Session,
+) -> None:
+    """A per-criterion scan cannot see this. `_validated_subject` admits any `ac_id` the REVISION
+    declares, which for a decomposed unit is a superset of the ones mapped to this unit -- so a
+    human can decide something here that `required_ac_ids` never iterates. ADR-0020's condition is
+    "with no human adjudication", not "none among the criteria that happened to be required".
+
+    The row is inserted directly, which is what makes the state reachable in a test: reproducing
+    it through the service needs an approved decomposition whose mapping makes this unit's
+    required set a strict subset of the revision's declared one. The state under test is simply
+    "an adjudication exists on this unit for an `ac_id` that is not required", and that is exactly
+    what the insert produces.
+    """
+    unit = _unit(migrated_session, "outside-decision", "ac-1")
+    _decide(migrated_session, unit, "ac-1", actor=VERIFIER, **FROM_EVALUATION)
+    _insert_raw_adjudication(migrated_session, unit, "ac-2", "human")
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.satisfied is False
+    assert [(r.ac_id, r.code) for r in answer.refusals] == [
+        ("ac-2", "decision_outside_required_criteria")
+    ]
+
+
 def test_a_revision_declaring_no_usable_criteria_refuses_instead_of_raising(
     migrated_session: Session,
 ) -> None:
