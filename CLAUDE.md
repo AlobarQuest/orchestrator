@@ -1607,12 +1607,23 @@ style of that module.
 
 - **The `Alobar SDS Dispatch` App has NO `checks` permission — the Checks API is 403 for the
   orchestrator, and named-check evidence is read from workflow JOBS instead.** Measured 2026-08-02
-  from production's own credential. **UPDATED 2026-08-08: the permission set is now
-  `{'actions': 'write', 'metadata': 'read', 'pull_requests': 'write'}`** (app `4259746`,
-  installation `145535298`, `repository_selection: all`), granted for ADR-0020. `checks` is still
-  absent, so everything below stands unchanged — only the merge capability was added, and
-  `administration` is absent too, so **branch protection is 403 to this App: whether a merge would
-  be blocked can only be learned by attempting it, never by reading the protection settings.**
+  from production's own credential. **UPDATED 2026-08-09: the permission set is now
+  `{'actions': 'write', 'contents': 'write', 'metadata': 'read', 'pull_requests': 'write'}`**
+  (app `4259746`, installation `145535298`, `repository_selection: all`), granted for ADR-0020.
+  `checks` is still absent, so everything below stands unchanged — only the merge capability was
+  added, and `administration` is absent too, so **branch protection is 403 to this App: whether a
+  merge would be blocked can only be learned by attempting it, never by reading the protection
+  settings.**
+  **`pull_requests: write` alone CANNOT merge — a merge writes a commit to the base branch, so it
+  needs `contents: write` too.** Measured 2026-08-09 (WS-P3.7 Inc 2): with `pull_requests: write`
+  only, `PUT /repos/{repo}/pulls/{n}/merge` returned **403 `Resource not accessible by
+  integration` on a pull request GitHub itself reported `MERGEABLE/CLEAN`** — which is what
+  isolates the cause to permission rather than to protection, and the trap is that the identical
+  403 on a *red* pull request reads like the safety property working. With `contents: write`
+  added, the same call on the same two pull requests answers **405 `Required status check
+  "Quality" is failing.`** on the red one and **200 `merged=True`** on the green one. So branch
+  protection does bind a GitHub App, and the App now carries a write that reaches every
+  repository in the account (backlogged `880ba73ecc24`).
   At the 2026-08-02 measurement the installation carried exactly
   `{'actions': 'write', 'metadata': 'read'}`, so
   `GET /repos/{repo}/commits/{sha}/check-runs` answers **403 Resource not accessible by
