@@ -3,19 +3,28 @@ authority envelope may name.
 
 A work unit's ``required_capability`` and every key in its ``authority.capabilities`` must be one
 of these strings. The runner (the worker repo named in the contract test) enforces the SAME
-six-term runner vocabulary in its own ``capability_vocabulary`` module, from which its supported
+runner vocabulary in its own ``capability_vocabulary`` module, from which its supported
 set is derived, and both sides are pinned to the byte-identical
-``tests/fixtures/runner_authority_envelope.json``. The contract test
+``tests/fixtures/runner_envelope_contract.json``. The contract test
 ``test_runner_envelope_contract`` asserts ``RUNNER_CAPABILITIES`` here is *derived from* that
-golden envelope rather than being a
+declaration rather than being a
 second, independently hand-maintained copy -- a hash pin would prove the file matches without
 proving anyone consumes it, which is the exact unread-permission defect WS-P2.16 exists to close.
+The two golden ENVELOPE fixtures are specimens of dispatched work and are asserted to be subsets
+of this set; until WS-P3.7 the vocabulary was derived from one of them, which meant a name the
+factory had never dispatched had to be written into a record of what it did.
 
 The orchestrator's accepted set is a strict SUPERSET of the runner's: it adds the capabilities for
 work no runner performs -- its own WS-5.1 post-hoc release-observation verification units, and the
-non-software operational units of WS-P2.13. Enforcing the runner's six-term set at orchestrator
+non-software operational units of WS-P2.13. Enforcing the runner's set at orchestrator
 ingress would make the orchestrator reject both its own generated units and every unit of a
 delivery profile that has no repository at all.
+
+Adding a name here is a CROSS-REPO act with a fixed order, because the runner's envelope model
+forbids unrecognised capabilities outright: it must be merged there and pinned by every caller
+before this module may say it, or every dispatch of a unit carrying the new name dies at envelope
+parse. ``scripts/check_capability_consumer_compatibility.py`` refuses the pull request that gets
+that order wrong; it was prose until WS-P3.7.
 
 This module is a plain Python module rather than a data file so it ships by construction -- inside
 the wheel and the image -- with no packaging metadata to forget. A fixture under ``tests/`` is NOT
@@ -29,14 +38,23 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.runner_authority import runner_capability_level_violation
 
-# The runner-executable capabilities, in the order the golden envelope sorts them. Byte-pinned
-# across repos through the authority envelope fixture; the contract test asserts
-# ``RUNNER_CAPABILITIES == frozenset(golden_envelope()["capabilities"])`` so a divergence here or in
-# the envelope is loud, and hardcoding a term reds the derivation.
+# The runner-executable capabilities, sorted. Byte-pinned across repos through the contract
+# fixture; the contract test asserts
+# ``RUNNER_CAPABILITIES == frozenset(golden_contract()["capabilities"])`` so a divergence here or
+# in the declaration is loud, and hardcoding a term reds the derivation.
 CAPABILITY_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
     "runner": (
         "command.run",
         "github.pr.create",
+        # ADR-0020, WS-P3.7 Increment 3. The name exists so that landing a pull request can be an
+        # authority term a human approves per unit, in the envelope, the way every other
+        # capability is -- rather than an ambient property of the factory. NOTHING reads it yet:
+        # no code in either repository derives a permission from it, and no envelope has ever
+        # carried it. Making the name sayable is the whole of this increment.
+        #
+        # An envelope that does carry it matches no known-good authority pattern -- totality --
+        # so it falls to the human authority gate, which is where ADR-0020 puts the decision.
+        "github.pr.merge",
         "orchestrator.claim",
         "orchestrator.evidence.write",
         "repo.edit",
