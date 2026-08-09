@@ -76,20 +76,28 @@ from orchestrator.services.pr_merge_admission import MergeAdmission, admission_f
 
 GITHUB_API_URL: Final = "https://api.github.com"
 
-# The pull request does not target the branch the estate's answer is about. The estate says what
-# landing on a repository's DEFAULT branch does; a different base is a different question.
-PR_BASE_NOT_DEFAULT_BRANCH: Final = "pr_base_not_default_branch"
+# Refusals that leave NO RECORD, because nothing happened and each can be tried again. The pull
+# request does not target the branch the estate's answer is about; the pull request is not open;
+# the remote could not be read; the remote refused and a confirming read established that nothing
+# landed. A record is permanent, so recording any of these would bar a unit for a condition that
+# clears on its own or with one edit.
+PR_MERGE_BASE_NOT_DEFAULT_BRANCH: Final = "pr_merge_base_not_default_branch"
+PR_MERGE_NOT_OPEN: Final = "pr_merge_not_open"
+PR_MERGE_REMOTE_UNREADABLE: Final = "pr_merge_remote_unreadable"
+PR_MERGE_REFUSED_BY_REMOTE: Final = "pr_merge_refused_by_remote"
 
-# The pull request is closed, or already landed, or otherwise not in a state that can be landed.
-PR_NOT_OPEN: Final = "pr_not_open"
+# The App credentials are not configured, so nothing can be minted and no call can be made. Asked
+# BEFORE the remote is touched, the way the workflow trigger asks it -- its own definition of
+# "configured" says why: the gate and the minter must read the same answer, or the gate attests to
+# credentials the actor does not have. Without this term a deployment that shipped without the App
+# variables would meet the remote-unreadable path on every unit.
+PR_MERGE_APP_CREDENTIALS_MISSING: Final = "pr_merge_app_credentials_missing"
 
-# The remote refused. Branch protection is the expected reason and is the floor under this whole
-# increment: the App cannot read protection settings, so a refusal is learned by attempting and
-# reading the answer, never by asking permission first.
+# Recorded on the one ambiguous outcome: the remote refused and the confirming read also failed,
+# so a landing cannot be ruled out. Branch protection is the expected reason for a refusal and is
+# the floor under this whole increment -- the App cannot read protection settings, so a refusal is
+# learned by attempting and reading the answer, never by asking permission first.
 MERGE_REFUSED_BY_REMOTE: Final = "merge_refused_by_remote"
-
-# The remote could not be reached, or answered something unreadable.
-REMOTE_UNREADABLE: Final = "remote_unreadable"
 
 
 @dataclass(frozen=True)
@@ -132,7 +140,11 @@ class MergeCommand:
     unit_id: uuid.UUID
     actor: ActorContext
     idempotency_key: str
-    expected_version: int | None = None
+    # REQUIRED, with no default. A default of `None` meaning "skip the check" is a precondition
+    # that holds by the good behaviour of the one caller that exists — the same shape the revision
+    # argument was corrected for one module over. The caller has just read an admission answer;
+    # stating the version it read is what makes "nothing moved in between" its claim.
+    expected_version: int
 
 
 def land_unit_pull_request(
@@ -140,6 +152,7 @@ def land_unit_pull_request(
     command: MergeCommand,
     gateway: PullRequestGateway,
     landing_source: EstateLandingSource,
+    credentials_configured: bool = True,
 ) -> UnitPrMerge:
     """Own the transaction, the way every request entry point in this repository does.
 
@@ -148,7 +161,9 @@ def land_unit_pull_request(
     state the whole idempotency story depends on not reaching.
     """
     try:
-        record = _land_unit_pull_request(session, command, gateway, landing_source)
+        record = _land_unit_pull_request(
+            session, command, gateway, landing_source, credentials_configured
+        )
         session.commit()
         return record
     except Exception:
@@ -161,12 +176,13 @@ def _land_unit_pull_request(
     command: MergeCommand,
     gateway: PullRequestGateway,
     landing_source: EstateLandingSource,
+    credentials_configured: bool,
 ) -> UnitPrMerge:
     _authorize_actor(command.actor)
     unit = session.scalar(select(WorkUnit).where(WorkUnit.id == command.unit_id).with_for_update())
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
-    if command.expected_version is not None and unit.version != command.expected_version:
+    if unit.version != command.expected_version:
         raise DomainError(
             "version_conflict",
             "work unit version has changed",
@@ -181,6 +197,29 @@ def _land_unit_pull_request(
     )
     if existing is not None:
         return existing
+
+    # A key already spent on a DIFFERENT unit, refused here rather than at the flush. Both
+    # `unit_pr_merge.idempotency_key` and `events.idempotency_key` are globally unique, so an
+    # operator who copies one request and changes only the unit id would otherwise reach the
+    # remote, LAND THE PULL REQUEST, and then lose the whole transaction to an `IntegrityError`
+    # with no registered handler -- a bare 500 that reads as "nothing happened" over a merge that
+    # did. Found by two independent reviews; the cost of the check is one indexed read.
+    spent = session.scalar(
+        select(UnitPrMerge).where(UnitPrMerge.idempotency_key == command.idempotency_key)
+    )
+    if spent is not None:
+        raise DomainError(
+            "idempotency_conflict",
+            "this idempotency key belongs to a different work unit",
+            "use a new idempotency key",
+        )
+
+    if not credentials_configured:
+        raise DomainError(
+            PR_MERGE_APP_CREDENTIALS_MISSING,
+            "the GitHub App credentials are not configured",
+            "configure the App credentials before asking the factory to land anything",
+        )
 
     revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
     if revision is None:
@@ -210,7 +249,21 @@ def _act(
     gateway: PullRequestGateway,
     admission: MergeAdmission,
 ) -> UnitPrMerge:
-    """The three remote terms, the call, and the reconciling re-read."""
+    """The remote terms, the call, and the reconciling re-read.
+
+    **A RECORD IS WRITTEN ONLY FOR AN OUTCOME THAT CANNOT BE RETRIED**, and getting that boundary
+    wrong is how the row meant to protect the unit becomes the thing that bars it. The row is
+    unique per unit and there is no delete path, so every recorded outcome is permanent — which is
+    correct for *it landed* and *we cannot rule out that it landed*, and badly wrong for *GitHub
+    answered 502 once*. Two independent reviews found the first draft recording a transient read
+    failure here, which would have permanently barred a unit from being landed for the duration of
+    one bad response.
+
+    So the boundary is `submit_merge`, which is the only call that is not idempotent. Everything
+    before it — a failed read, a base that is not the default branch, a closed pull request — is
+    a REFUSAL WITHOUT A RECORD: each is either transient or fixable (a pull request can be
+    retargeted or reopened), and none of them changed anything.
+    """
     number = admission.pr_number
     head_sha = admission.verified_head_sha
     if number is None or not head_sha:
@@ -222,33 +275,22 @@ def _act(
     try:
         state = gateway.read_pull_request(repository=admission.target_repository, number=number)
     except GitHubGatewayError as error:
-        return _record(
-            session,
-            command,
-            unit,
-            revision,
-            admission,
-            number,
-            head_sha,
-            status="refused",
-            reason_code=REMOTE_UNREADABLE,
-            github_status=error.status_code,
-        )
+        raise DomainError(
+            PR_MERGE_REMOTE_UNREADABLE,
+            f"the pull request could not be read: {error.code}",
+            "retry once the remote answers",
+        ) from error
 
     if state.base_ref != state.default_branch:
-        return _record(
-            session,
-            command,
-            unit,
-            revision,
-            admission,
-            number,
-            head_sha,
-            status="refused",
-            reason_code=PR_BASE_NOT_DEFAULT_BRANCH,
+        raise DomainError(
+            PR_MERGE_BASE_NOT_DEFAULT_BRANCH,
+            f"the pull request targets {state.base_ref}, not the default branch",
+            "retarget the pull request, or land it by hand",
         )
     if state.landed:
-        # Somebody else landed it. Recorded truthfully rather than as our own act.
+        # Terminal and true, so it is recorded — but as somebody else's act, never as ours. This
+        # is also the state a crash between acting and recording leaves behind, which is why the
+        # branch has to exist rather than being folded into a refusal.
         return _record(
             session,
             command,
@@ -261,6 +303,48 @@ def _act(
             reason_code=None,
         )
     if not state.open:
+        raise DomainError(
+            PR_MERGE_NOT_OPEN,
+            "the pull request is not open",
+            "reopen the pull request, or land it by hand",
+        )
+
+    try:
+        outcome = gateway.submit_merge(
+            repository=admission.target_repository, number=number, head_sha=head_sha
+        )
+    except GitHubGatewayError as error:
+        # THE RECONCILING READ, and the three answers it can give are three different outcomes.
+        # A refusal is indistinguishable from a lost response to a call that succeeded, so ask
+        # what is true before writing what happened. Asked ONCE and bound to a name: reading twice
+        # would be two answers to one question.
+        landed = _landed_after_all(gateway, admission, number)
+        if landed is True:
+            return _record(
+                session,
+                command,
+                unit,
+                revision,
+                admission,
+                number,
+                head_sha,
+                status="already_merged",
+                reason_code=None,
+                github_status=error.status_code,
+            )
+        if landed is False:
+            # CONFIRMED not landed, so nothing happened and this is retryable — a required check
+            # that is red today can be green tomorrow. No record: the row is for outcomes that
+            # cannot be retried.
+            raise DomainError(
+                PR_MERGE_REFUSED_BY_REMOTE,
+                f"the remote refused to land the pull request: {error.code}",
+                "resolve what the remote objected to, then ask again",
+            ) from error
+        # The reconciling read ITSELF failed, so we cannot rule out that it landed. This is the
+        # one genuinely ambiguous outcome, and it is recorded — terminal and conservative, because
+        # a retry would meet the same refusal and be no better informed. The ledger observes the
+        # landing independently and can settle it.
         return _record(
             session,
             command,
@@ -270,29 +354,7 @@ def _act(
             number,
             head_sha,
             status="refused",
-            reason_code=PR_NOT_OPEN,
-        )
-
-    try:
-        outcome = gateway.submit_merge(
-            repository=admission.target_repository, number=number, head_sha=head_sha
-        )
-    except GitHubGatewayError as error:
-        # THE RECONCILING READ. A refusal here is indistinguishable from a lost response to a call
-        # that succeeded, so ask what is true before writing what happened. Asked ONCE and bound to
-        # a name: reading twice would be two answers to one question, and the record would be
-        # composed from whichever each happened to give.
-        landed = _landed_after_all(gateway, admission, number)
-        return _record(
-            session,
-            command,
-            unit,
-            revision,
-            admission,
-            number,
-            head_sha,
-            status="already_merged" if landed else "refused",
-            reason_code=None if landed else MERGE_REFUSED_BY_REMOTE,
+            reason_code=f"{MERGE_REFUSED_BY_REMOTE}:{error.code}",
             github_status=error.status_code,
         )
 
@@ -311,15 +373,21 @@ def _act(
     )
 
 
-def _landed_after_all(gateway: PullRequestGateway, admission: MergeAdmission, number: int) -> bool:
-    """Did the pull request land despite the refusal? Never raises: a second failure to read
-    leaves the honest answer, which is that we do not know it landed."""
+def _landed_after_all(
+    gateway: PullRequestGateway, admission: MergeAdmission, number: int
+) -> bool | None:
+    """Did the pull request land despite the refusal? `None` means WE DO NOT KNOW.
+
+    Three answers, not two, and the third is the one the caller must treat differently: a second
+    failure to read cannot be collapsed into "it did not land", because that reads a lost success
+    as a clean refusal — which is exactly the confusion this whole path exists to resolve.
+    """
     try:
         return gateway.read_pull_request(
             repository=admission.target_repository, number=number
         ).landed
     except GitHubGatewayError:
-        return False
+        return None
 
 
 def _authorize_actor(actor: ActorContext) -> None:
@@ -418,7 +486,10 @@ class GitHubPullRequests:
         url = f"{GITHUB_API_URL}/repos/{repository}/pulls/{number}"
         try:
             response = httpx.get(url, headers=self._headers(), timeout=self._timeout)
-        except httpx.RequestError as error:
+        # `InvalidURL` is not an `httpx.RequestError` (nor an `HTTPError`) -- the same gap this
+        # branch closed one module over. `repository` is an operator-authored string interpolated
+        # into the URL path, so a stray character in it would otherwise escape as a bare 500.
+        except (httpx.RequestError, httpx.InvalidURL) as error:
             raise GitHubGatewayError(f"request_error:{error.__class__.__name__}") from error
         if response.status_code != 200:
             raise GitHubGatewayError("read_status", response.status_code)
@@ -443,7 +514,10 @@ class GitHubPullRequests:
                 json={"sha": head_sha, "merge_method": "squash"},
                 timeout=self._timeout,
             )
-        except httpx.RequestError as error:
+        # `InvalidURL` is not an `httpx.RequestError` (nor an `HTTPError`) -- the same gap this
+        # branch closed one module over. `repository` is an operator-authored string interpolated
+        # into the URL path, so a stray character in it would otherwise escape as a bare 500.
+        except (httpx.RequestError, httpx.InvalidURL) as error:
             raise GitHubGatewayError(f"request_error:{error.__class__.__name__}") from error
         if response.status_code != 200:
             raise GitHubGatewayError("merge_status", response.status_code)

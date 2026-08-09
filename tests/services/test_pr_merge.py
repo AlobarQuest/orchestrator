@@ -88,7 +88,12 @@ def _land(
 ):
     return land_unit_pull_request(
         session,
-        MergeCommand(unit_id=unit.id, actor=SYSTEM, idempotency_key=key),
+        MergeCommand(
+            unit_id=unit.id,
+            actor=SYSTEM,
+            idempotency_key=key,
+            expected_version=unit.version,
+        ),
         gateway,
         source or inert_source(),
     )
@@ -176,12 +181,21 @@ def test_a_repeat_replays_the_record_and_never_calls_the_remote_again(
     assert len(gateway.merges) == 1
 
 
-def test_a_repeat_after_a_refusal_also_does_not_call_again(migrated_session: Session) -> None:
-    """A recorded refusal is still a record that the call was MADE. Retrying it would ask the
-    remote a question it has already answered, and the answer to a landed-but-lost call is the one
-    that reads as a refusal."""
+def test_a_refusal_we_could_not_confirm_is_terminal_and_does_not_call_again(
+    migrated_session: Session,
+) -> None:
+    """The ONE ambiguous outcome: the remote refused and the confirming read also failed, so a
+    landing cannot be ruled out. Recorded, and terminal — a retry would meet the same refusal and
+    be no better informed, and the ledger observes the landing independently."""
     unit = _ready_unit(migrated_session, "repeat-after-refusal")
-    gateway = FakeGateway(merge_error=GitHubGatewayError("merge_status", 405))
+
+    class Blind(FakeGateway):
+        def read_pull_request(self, *, repository: str, number: int) -> PullRequestState:
+            if self.merges:
+                raise GitHubGatewayError("request_error:ConnectError")
+            return super().read_pull_request(repository=repository, number=number)
+
+    gateway = Blind(merge_error=GitHubGatewayError("merge_status", 405))
 
     first = _land(migrated_session, unit, gateway)
     assert first.status == "refused"
@@ -226,22 +240,32 @@ def test_a_refusal_is_reconciled_against_reality_before_it_is_recorded(
     assert len(gateway.reads) == 2
 
 
-def test_a_genuine_refusal_stays_a_refusal(migrated_session: Session) -> None:
-    """The other half of the same read: branch protection refusing a red check is a real refusal,
-    and reconciling must not launder it into a success."""
+def test_a_refusal_CONFIRMED_not_to_have_landed_leaves_no_record_and_is_retryable(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Branch protection refusing a red required check is a real refusal — and nothing happened,
+    so it must not consume the unit's one row. A check that is red today can be green tomorrow;
+    recording this would bar the unit from ever being landed by the factory."""
     unit = _ready_unit(migrated_session, "genuine-refusal")
     gateway = FakeGateway(merge_error=GitHubGatewayError("merge_status", 405))
 
-    record = _land(migrated_session, unit, gateway)
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, unit, gateway)
 
-    assert record.status == "refused"
-    assert record.reason_code == "merge_refused_by_remote"
-    assert record.github_status == 405
+    assert error.value.code == "pr_merge_refused_by_remote"
+    with Session(migrated_engine) as reader:
+        assert reader.scalar(select(UnitPrMerge).where(UnitPrMerge.work_unit_id == unit.id)) is None
+
+    # ... and the retry reaches the remote again, which is the whole point.
+    healthy = FakeGateway()
+    assert _land(migrated_session, unit, healthy, key="merge-2").status == "merged"
 
 
-def test_a_second_failure_to_read_leaves_the_honest_answer(migrated_session: Session) -> None:
-    """If the reconciling read itself fails, we do not know it landed -- and not knowing is
-    recorded as a refusal, which the ledger's independent observation can correct."""
+def test_the_ambiguous_refusal_records_the_gateway_code_it_could_not_resolve(
+    migrated_session: Session,
+) -> None:
+    """An operator reading a `refused` record must be able to tell a red required check from a
+    connection that died — the gateway's own code is the only value that distinguishes them."""
     unit = _ready_unit(migrated_session, "read-fails-too")
 
     class Flaky(FakeGateway):
@@ -255,10 +279,18 @@ def test_a_second_failure_to_read_leaves_the_honest_answer(migrated_session: Ses
     )
 
     assert record.status == "refused"
+    assert record.reason_code == "merge_refused_by_remote:merge_status"
+    assert record.github_status == 405
+
+
+def _no_record(session: Session, unit: WorkUnit) -> bool:
+    session.expire_all()
+    return session.scalar(select(UnitPrMerge).where(UnitPrMerge.work_unit_id == unit.id)) is None
 
 
 # ---------------------------------------------------------------------------------------------
-# The three terms only the remote knows.
+# The terms only the remote knows. NONE of them writes a record: nothing happened, and each is
+# transient or fixable, so consuming the unit's one row would bar it permanently.
 # ---------------------------------------------------------------------------------------------
 
 
@@ -274,11 +306,12 @@ def test_a_pull_request_against_a_non_default_base_is_refused_without_landing(
         )
     )
 
-    record = _land(migrated_session, unit, gateway)
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, unit, gateway)
 
-    assert record.status == "refused"
-    assert record.reason_code == "pr_base_not_default_branch"
+    assert error.value.code == "pr_merge_base_not_default_branch"
     assert gateway.merges == []
+    assert _no_record(migrated_session, unit)
 
 
 def test_a_closed_pull_request_is_refused_without_landing(migrated_session: Session) -> None:
@@ -287,11 +320,12 @@ def test_a_closed_pull_request_is_refused_without_landing(migrated_session: Sess
         state=PullRequestState(base_ref="main", default_branch="main", open=False, landed=False)
     )
 
-    record = _land(migrated_session, unit, gateway)
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, unit, gateway)
 
-    assert record.status == "refused"
-    assert record.reason_code == "pr_not_open"
+    assert error.value.code == "pr_merge_not_open"
     assert gateway.merges == []
+    assert _no_record(migrated_session, unit)
 
 
 def test_a_pull_request_somebody_else_landed_is_recorded_as_such_not_claimed(
@@ -312,11 +346,16 @@ def test_an_unreadable_remote_is_refused_without_landing(migrated_session: Sessi
     unit = _ready_unit(migrated_session, "unreadable-remote")
     gateway = FakeGateway(read_error=GitHubGatewayError("read_status", 502))
 
-    record = _land(migrated_session, unit, gateway)
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, unit, gateway)
 
-    assert record.status == "refused"
-    assert record.reason_code == "remote_unreadable"
+    assert error.value.code == "pr_merge_remote_unreadable"
     assert gateway.merges == []
+    # THE FINDING both reviews made severe: a transient read failure must not consume the unit's
+    # one and only row. Recording it barred the unit from ever being landed by the factory, for
+    # the duration of one bad response, with no repair path.
+    assert _no_record(migrated_session, unit)
+    assert _land(migrated_session, unit, FakeGateway(), key="merge-2").status == "merged"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -380,7 +419,12 @@ def test_only_the_system_actor_may_ask_for_a_landing(
     with pytest.raises(DomainError) as error:
         land_unit_pull_request(
             migrated_session,
-            MergeCommand(unit_id=unit.id, actor=actor, idempotency_key="role-check"),
+            MergeCommand(
+                unit_id=unit.id,
+                actor=actor,
+                idempotency_key="role-check",
+                expected_version=unit.version,
+            ),
             gateway,
             inert_source(),
         )
@@ -416,9 +460,68 @@ def test_a_unit_that_does_not_exist_is_a_named_domain_error(migrated_session: Se
     with pytest.raises(DomainError) as error:
         land_unit_pull_request(
             migrated_session,
-            MergeCommand(unit_id=uuid.uuid4(), actor=SYSTEM, idempotency_key="missing"),
+            MergeCommand(
+                unit_id=uuid.uuid4(),
+                actor=SYSTEM,
+                idempotency_key="missing",
+                expected_version=0,
+            ),
             FakeGateway(),
             inert_source(),
         )
 
     assert error.value.code == "work_unit_not_found"
+
+
+# ---------------------------------------------------------------------------------------------
+# Two more the reviews found, both of which end in a bare 500 without their guard.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_unconfigured_app_credentials_refuse_before_the_remote_is_touched(
+    migrated_session: Session,
+) -> None:
+    """The workflow trigger asks this at its gate and says why: the gate and the minter must read
+    the same answer. Without the term, a release that shipped without the App variables would meet
+    the remote on every unit, fail to mint, and record a permanent refusal each time."""
+    unit = _ready_unit(migrated_session, "no-credentials")
+    gateway = FakeGateway()
+
+    with pytest.raises(DomainError) as error:
+        land_unit_pull_request(
+            migrated_session,
+            MergeCommand(
+                unit_id=unit.id,
+                actor=SYSTEM,
+                idempotency_key="no-creds",
+                expected_version=unit.version,
+            ),
+            gateway,
+            inert_source(),
+            False,
+        )
+
+    assert error.value.code == "pr_merge_app_credentials_missing"
+    assert gateway.reads == []
+    assert gateway.merges == []
+    assert _no_record(migrated_session, unit)
+
+
+def test_an_idempotency_key_spent_on_another_unit_is_refused_before_the_call(
+    migrated_session: Session,
+) -> None:
+    """An operator copies one request and changes only the unit id. Without this check the second
+    unit's pull request IS LANDED and the flush then violates the global unique key, rolling the
+    whole transaction back and losing the record of a merge that happened — as a bare 500, since
+    `IntegrityError` has no registered handler. Reproduced by review before it was closed."""
+    first = _ready_unit(migrated_session, "key-owner")
+    second = _ready_unit(migrated_session, "key-borrower")
+    _land(migrated_session, first, FakeGateway(), key="shared-key")
+    gateway = FakeGateway()
+
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, second, gateway, key="shared-key")
+
+    assert error.value.code == "idempotency_conflict"
+    assert gateway.merges == []
+    assert _no_record(migrated_session, second)

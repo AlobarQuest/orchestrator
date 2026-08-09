@@ -689,7 +689,9 @@ def pr_merge_route(
     thing that acts and the thing that reports what it may do can never disagree about which
     credentials are in play.
     """
-    gateway = GitHubPullRequests(token_provider_for(github_app_credentials(settings)))
+    # One resolution feeds both the gate and the actor, so the gate can never attest to
+    # credentials the gateway does not actually hold — the rule the workflow trigger states.
+    credentials = github_app_credentials(settings)
     return land_unit_pull_request(
         session,
         MergeCommand(
@@ -698,8 +700,9 @@ def pr_merge_route(
             idempotency_key=body.idempotency_key,
             expected_version=body.expected_version,
         ),
-        gateway,
+        GitHubPullRequests(token_provider_for(credentials)),
         landing_source,
+        credentials is not None,
     )
 
 

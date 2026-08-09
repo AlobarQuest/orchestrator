@@ -449,8 +449,17 @@ def _render_verifier_decided_lines(pack: EvidencePackResponse) -> list[str]:
     """The one derived answer, rendered because it is the headline of the section above and
     carries no identity: refusal codes name criteria, never people."""
     answer = pack.verifier_decided_completion
-    verdict = "yes" if answer.satisfied else "no"
-    lines = [f"Every required criterion decided by the verifier from its own evaluation: {verdict}"]
+    # Both clauses, separately labelled. The headline used to read only the decider clause while
+    # rendering `satisfied`, which since Increment 4b is the AND of two — so a unit whose criteria
+    # WERE all verifier-decided, off evidence the worker attested to, rendered "no" under a
+    # sentence about who decided. This markdown is relayed onto a possibly-public pull request,
+    # which makes it the surface most likely to be quoted out of its context.
+    lines = [
+        "Every required criterion decided by the verifier from its own evaluation: "
+        + ("yes" if answer.decided_by_verifier else "no"),
+        "Every required criterion resolved from evidence the orchestrator observed: "
+        + ("yes" if answer.evidence_observed else "no"),
+    ]
     for refusal in answer.refusals:
         subject = refusal.ac_id or "unit"
         lines.append(f"- {subject}: {refusal.code}")

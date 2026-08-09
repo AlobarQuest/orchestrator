@@ -27,7 +27,12 @@ def upgrade() -> None:
     op.create_table(
         "unit_pr_merge",
         sa.Column("id", sa.UUID(as_uuid=True), primary_key=True),
-        sa.Column("work_unit_id", sa.UUID(as_uuid=True), sa.ForeignKey("work_units.id")),
+        sa.Column(
+            "work_unit_id",
+            sa.UUID(as_uuid=True),
+            sa.ForeignKey("work_units.id"),
+            nullable=False,
+        ),
         sa.Column("repository", sa.String(), nullable=False),
         sa.Column("pr_number", sa.Integer(), nullable=False),
         sa.Column("head_sha", sa.String(), nullable=False),
@@ -36,6 +41,9 @@ def upgrade() -> None:
         sa.Column("merge_commit_sha", sa.String(), nullable=True),
         sa.Column("github_status", sa.Integer(), nullable=True),
         sa.Column("event_id", sa.UUID(as_uuid=True), sa.ForeignKey("events.id"), nullable=True),
+        # NOT NULL deliberately: Postgres treats NULLs as distinct in a unique index, so a
+        # nullable `work_unit_id` would let `uq_unit_pr_merge_work_unit` be evaded and the
+        # one-row-per-unit guarantee this whole design rests on would not hold at the schema.
         sa.Column("idempotency_key", sa.String(), nullable=False),
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
