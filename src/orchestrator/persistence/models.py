@@ -1239,6 +1239,62 @@ class UnitPrBinding(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+# What the record of a landing can say. Three, because the middle one is the whole reason the
+# record exists: a landing whose response was lost looks identical to a refusal when you ask
+# GitHub again, so a retry that finds the pull request already landed must be able to say so
+# rather than write `refused` over something that happened.
+PR_MERGE_STATUSES = ("merged", "already_merged", "refused")
+
+
+class UnitPrMerge(UUIDPrimaryKey, Base):
+    """The orchestrator's own record that it asked GitHub to land a unit's pull request.
+
+    **One row per unit, ever, and the uniqueness is the point.** A landing is not idempotent and
+    its failure is asymmetric: if the call succeeds and the response is lost, asking again returns
+    405, which is shaped exactly like a refusal. So "did we already do this?" cannot be answered by
+    asking GitHub after the fact — it is answered here, before the call.
+
+    **A row is written only when the factory ACTED.** An admission refusal writes nothing: it is
+    already reportable from the read surface, and recording it here would consume the unit's one
+    row and refuse every later legitimate attempt. So the presence of a row means the call was
+    made, which is exactly what a repeat needs to detect.
+
+    This is deliberately NOT the ledger's record of the landing. The ledger observes GitHub
+    independently and attributes what it finds; this is the orchestrator's account of its own act,
+    and the two agreeing is what makes the account auditable rather than self-certified.
+    """
+
+    __tablename__ = "unit_pr_merge"
+    __table_args__ = (
+        UniqueConstraint("work_unit_id", name="uq_unit_pr_merge_work_unit"),
+        UniqueConstraint("idempotency_key", name="uq_unit_pr_merge_idempotency"),
+        CheckConstraint(
+            "status IN ({})".format(", ".join(f"'{status}'" for status in PR_MERGE_STATUSES)),
+            name="ck_unit_pr_merge_status",
+        ),
+        CheckConstraint("pr_number > 0", name="ck_unit_pr_merge_positive_pr_number"),
+        CheckConstraint(
+            "repository <> '' AND head_sha <> '' AND idempotency_key <> ''",
+            name="ck_unit_pr_merge_required_text",
+        ),
+    )
+
+    work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
+    repository: Mapped[str] = mapped_column(String)
+    pr_number: Mapped[int] = mapped_column(Integer)
+    # The head the criteria were adjudicated at — the ARMED head, which is also what the call
+    # named, so the remote refused anything else.
+    head_sha: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)
+    reason_code: Mapped[str | None] = mapped_column(String)
+    merge_commit_sha: Mapped[str | None] = mapped_column(String)
+    github_status: Mapped[int | None] = mapped_column(Integer)
+    event_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("events.id"))
+    idempotency_key: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class UnitTrackerBinding(Base):
     """A work unit's projection onto an external tracker item.
 

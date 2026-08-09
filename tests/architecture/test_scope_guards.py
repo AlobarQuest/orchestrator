@@ -56,6 +56,9 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/work-units/{unit_id}/recover-expired-claim",
         "/api/v1/work-units/{unit_id}/preflight",
         "/api/v1/work-units/{unit_id}/dispatch",
+        # ADR-0020: the factory lands its own pull request. SYSTEM-only, one caller (whoever
+        # drives verification, immediately after), no scheduler.
+        "/api/v1/work-units/{unit_id}/pr-merge",
         "/api/v1/work-units/{unit_id}/verify",
         "/api/v1/work-units/{unit_id}/verifier-evidence/named-check",
         "/api/v1/work-units/{unit_id}/infra-lane-links",

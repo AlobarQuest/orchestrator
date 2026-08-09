@@ -68,6 +68,8 @@ from orchestrator.api.schemas import (
     PrBindingResponse,
     PreflightCommandModel,
     PrMergeAdmissionResponse,
+    PrMergeCommandModel,
+    PrMergeResponse,
     ProposedUnitCommand,
     ReadinessResponse,
     ReclaimCommand,
@@ -217,6 +219,11 @@ from orchestrator.services.packages import (
     resolve_dependency_command,
 )
 from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
+from orchestrator.services.pr_merge import (
+    GitHubPullRequests,
+    MergeCommand,
+    land_unit_pull_request,
+)
 from orchestrator.services.pr_merge_admission import pr_merge_admission
 from orchestrator.services.reconciliation_detection import (
     ObservedTrackerItem,
@@ -660,6 +667,40 @@ def pr_merge_admission_route(
     unit's evidentiary record can read this.
     """
     return pr_merge_admission(session, unit_id, landing_source)
+
+
+@router.post("/work-units/{unit_id}/pr-merge", response_model=PrMergeResponse)
+def pr_merge_route(
+    unit_id: UUID,
+    body: PrMergeCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+) -> object:
+    """ADR-0020 Increment 4b: the factory lands its own pull request.
+
+    **Its caller is whoever drives verification, immediately afterwards.** Nothing in this
+    repository is scheduled except the landing ledger, and this is deliberately not the exception:
+    a scheduled closer is its own increment with its own decision, and the no-off-switch ruling is
+    explicitly void if one is ever proposed.
+
+    One credential resolution feeds the gateway, exactly as the workflow trigger does — so the
+    thing that acts and the thing that reports what it may do can never disagree about which
+    credentials are in play.
+    """
+    gateway = GitHubPullRequests(token_provider_for(github_app_credentials(settings)))
+    return land_unit_pull_request(
+        session,
+        MergeCommand(
+            unit_id=unit_id,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_version=body.expected_version,
+        ),
+        gateway,
+        landing_source,
+    )
 
 
 @router.post("/work-units/{unit_id}/dispatch", response_model=DispatchResponse)

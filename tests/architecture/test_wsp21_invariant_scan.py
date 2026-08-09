@@ -71,7 +71,16 @@ MERGE_ACTIONS = (
 # Keyed by exact relative path, the shape OUTBOUND_ALLOWLIST and ws32's WS42_DISPATCH_PATHS
 # already use. Every entry carries a reason, and the rot check below refuses one that no longer
 # needs the exemption.
-MERGE_EXEMPT_PATHS: set[Path] = set()
+MERGE_EXEMPT_PATHS: set[Path] = {
+    # ADR-0020's bounded exception, and the FIRST entry this door has ever carried. The module
+    # spells the REST endpoint `…/pulls/{n}/merge`, which contains the substring this guard scans
+    # for -- it is here because it genuinely lands a pull request, not because a string resembles
+    # one. Everything that makes that defensible is outside this file: the criteria were resolved
+    # from evidence the orchestrator OBSERVED, with no human adjudication; a human approved the
+    # envelope that grants the capability; and the estate says landing on that repository's
+    # default branch changes nothing already serving.
+    Path("src/orchestrator/services/pr_merge.py"),
+}
 
 
 @pytest.mark.parametrize("source", [*MERGE_SCAN_SOURCES, *SHELL_SOURCES], ids=lambda p: str(p))
@@ -182,6 +191,11 @@ OUTBOUND_ALLOWLIST = {
     # shape) would put that answer outside the transaction that records the admission decision.
     # The credential is READ-ONLY and App Brain scopes it to two read paths.
     Path("src/orchestrator/services/estate_landing.py"),
+    # ADR-0020 Increment 4b. The one genuinely MUTATING egress this repository has: it reads one
+    # pull request and asks for it to be landed, naming the head the criteria were adjudicated at
+    # so the remote refuses any other. It borrows the same App installation token the workflow
+    # trigger and the named-check observer use, and speaks to nothing else.
+    Path("src/orchestrator/services/pr_merge.py"),
     # The reconciliation runner is a SEPARATE program (ADR-0002). Polling GitHub is its entire
     # job, and it may only push what it finds back through two endpoints -- enforced in code by
     # ALLOWED_WRITE_ENDPOINTS and in tests by test_reconciliation_runner_isolation.py. It is not

@@ -97,6 +97,10 @@ MERGE_NAMING_ROUTES = {
     # Report-only. It answers whether the factory MAY land a unit's pull request; it holds no
     # credential, imports no client, and nothing it returns causes anything to happen.
     ("GET", "/api/v1/work-units/{unit_id}/pr-merge-admission"),
+    # ADR-0020 Increment 4b: the act. A SEPARATE entry from the report above even though the paths
+    # are siblings, because this set is keyed on the verb -- which is the whole reason it is, and
+    # is what stopped the acting endpoint inheriting the reporting one's excuse.
+    ("POST", "/api/v1/work-units/{unit_id}/pr-merge"),
 }
 
 
