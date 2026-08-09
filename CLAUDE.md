@@ -733,6 +733,22 @@ style of that module.
     consumer does not declare is a field it cannot use: the run survives, the feature does not
     exist. Proven to fire both directions on 2026-08-01 — adding `cadence` to
     `RunnerBriefResponse` reds the job, removing it greens it.
+  - **UPDATED 2026-08-09 (WS-P3.7 Inc 3): that job now vets TWO surfaces, and the second one is
+    not about fields at all.** Alongside the brief fields it checks that every capability name
+    `capability_vocabulary.py` declares is recognised at the pinned revision — the same red→green
+    proof, measured in CI rather than locally: PR #153's job was red for the whole batch, and the
+    identical job re-run 13 minutes after factory-runner's PR #51 landed, **with no code change
+    and no rebase here**, printed both PASSes. A check that turns green because a *different*
+    repository merged is the ordering rule made mechanical. The capability half additionally vets
+    factory-runner's `RECOMMENDED_CALLER_PIN`, which the brief half does not — because dispatch
+    fires the caller workflow in the unit's own TARGET repository, so this repo's pin is not the
+    one that will run. Its residual, stated in the module rather than papered over: **a target
+    repo that drifts off the recommendation is invisible to it**; `runner.caller` in the
+    conformance kit is what sees that, per repo. Neither is sufficient alone — the gate holds the
+    recommendation to what this repo serves, `runner.caller` holds every target repo AT the
+    recommendation. **The job's NAME is now wrong** and renaming it is a PAIRED operation: it is a
+    required status check on `main`, so a rename must move the protected context in the same
+    operation or every pull request is blocked, silently, by a context nothing reports.
   So: **merge factory-runner first, then advance the pin in `factory-runner-pilot.yml`, then serve
   the field.** That is now mechanical. And if a gate is ever bypassed, factory-runner records the
   undeclared keys in the `runner.pr.opened` evidence payload (`unknown_brief_keys`), so an escape is
@@ -2139,6 +2155,17 @@ style of that module.
     lowest-risk commits, hardest. Note `enforce_admins` does **not** affect auto-merge, which
     merges through GitHub once required checks pass either way.
 
+- **The capability vocabulary has FOUR copies, not two — and only two of them are pinned.**
+  Verified 2026-08-09 (WS-P3.7 Inc 3). The pinned pair is `src/orchestrator/capability_vocabulary.py`
+  and factory-runner's own module, both held to the byte-identical
+  `tests/fixtures/runner_envelope_contract.json`. The third is that fixture itself; the **fourth is
+  `intent-packages`' `profiles/dependency_update.py::CAPABILITIES`**, six entries, pinned to
+  nothing. It is safe because it is a *producer* rather than a validator — a name it emitted that
+  the orchestrator did not know is refused at ingress — so it fails closed, and it deliberately did
+  **not** gain `github.pr.merge`. Before widening the vocabulary, grep the whole portfolio for the
+  capability strings rather than the two repos you expect to own them; this is the same lesson the
+  BWS-UUID move taught, in a different vocabulary.
+
 - **`runner.caller` asks "can the factory send work INTO this repo?", and it is three different
   faults under one name.** It requires `.github/workflows/factory-runner-pilot.yml` calling
   factory-runner's reusable workflow at a full SHA equal to `RECOMMENDED_CALLER_PIN` (a one-line file
@@ -2235,7 +2262,13 @@ style of that module.
   exactly this mistake **inside the function written to close the same class of defect**, and two
   independent adversarial reviewers found it. Key any such gate on
   `kernel/runner_authority.py::RUNNER_ENVELOPE_FIELDS`, which is pinned to the runner's pydantic
-  model by `tests/fixtures/runner_envelope_contract.json`, never on `KNOWN_FIELDS`. Corollary:
+  model by `tests/fixtures/runner_envelope_contract.json`, never on `KNOWN_FIELDS`.
+  **UPDATED 2026-08-09: that byte-identical fixture now carries the CAPABILITY NAMES too**, not
+  just `envelope_fields` and `levels` — `RUNNER_CAPABILITIES == frozenset(golden_contract()
+  ["capabilities"])`, and the two golden ENVELOPES became subset-checked specimens rather than the
+  definition. So a vocabulary addition moves `CONTRACT_SHA256_SURFACE` and leaves
+  `CONTRACT_SHA256` and `CONTRACT_SHA256_EDIT` **alone** — the opposite of what this file used to
+  imply, and the reason a merge-granting envelope never had to become the copyable example. Corollary:
   `runner_payload(envelope)` (`normalized()` minus that key) is what the no-raw-payload fallback
   must store — it previously stored `normalized()`, i.e. an unparseable envelope by construction.
 
