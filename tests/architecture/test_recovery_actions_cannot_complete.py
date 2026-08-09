@@ -80,10 +80,44 @@ def test_no_recovery_path_grants_a_waiver() -> None:
     assert "waived" not in literals
 
 
+# ADR-0020's named exception, in this guard -- the EIGHTH place the merge prohibition lives, and
+# one that neither the ADR's inventory of four nor the workstream's revised inventory of six names.
+# It is keyed by exact route path, and an entry must NAME A MERGE AND NOTHING ELSE FORBIDDEN: a
+# path that also names a landing which changes something already serving is precisely what this
+# exception must remain too narrow to cover.
+MERGE_NAMING_ROUTES = {
+    # Report-only. It answers whether the factory MAY land a unit's pull request; it holds no
+    # credential, imports no client, and nothing it returns causes anything to happen.
+    "/api/v1/work-units/{unit_id}/pr-merge-admission",
+}
+
+
+def _routed_paths() -> set[str]:
+    paths = set(create_app().openapi()["paths"])
+    paths.update(route.path for route in web_router.routes if isinstance(route, APIRoute))
+    return paths
+
+
 def test_nothing_in_the_system_can_merge() -> None:
     assert not any("merge" in state.value for state in WorkUnitState)
 
-    paths = set(create_app().openapi()["paths"])
-    paths.update(route.path for route in web_router.routes if isinstance(route, APIRoute))
+    named = {path for path in _routed_paths() if "merge" in path}
 
-    assert not any("merge" in path for path in paths)
+    assert named <= MERGE_NAMING_ROUTES, (
+        f"these routes name a merge and are not the bounded exception ADR-0020 allows: "
+        f"{sorted(named - MERGE_NAMING_ROUTES)}. Merging was Devon's gate; a route that names one "
+        "must be added here openly, with a reason -- never by rewording the path."
+    )
+
+
+def test_the_merge_naming_exception_names_only_routes_that_need_it() -> None:
+    """The same rot check the other merge exemptions carry: an exemption nobody needs is an
+    exemption nobody is watching, and one that could cover a landing which changes something
+    already serving is wider than ADR-0020 permits."""
+    named = {path for path in _routed_paths() if "merge" in path}
+
+    assert MERGE_NAMING_ROUTES <= named, (
+        f"these exempt paths are not routes that name a merge: "
+        f"{sorted(MERGE_NAMING_ROUTES - named)}"
+    )
+    assert not [path for path in MERGE_NAMING_ROUTES if "deploy" in path]

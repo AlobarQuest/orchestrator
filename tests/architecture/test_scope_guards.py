@@ -163,6 +163,10 @@ def test_production_get_route_inventory_is_explicit() -> None:
         "/api/v1/work-units/{unit_id}/evidence-pack",
         "/api/v1/work-units/{unit_id}/evidence-pack/markdown",
         "/api/v1/work-units/{unit_id}/history",
+        # ADR-0020 Increment 4a: the composed, REPORT-ONLY answer to whether the factory may land
+        # this unit's pull request. A GET because it acts on nothing; it exists so the answer can
+        # be read against real completed units before anything obeys it.
+        "/api/v1/work-units/{unit_id}/pr-merge-admission",
         "/api/v1/work-units/{unit_id}/infra-lane-links",
         "/api/v1/work-units/{unit_id}/readiness",
         "/api/v1/work-units/{unit_id}/release-artifacts",

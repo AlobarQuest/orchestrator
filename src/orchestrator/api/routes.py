@@ -67,6 +67,7 @@ from orchestrator.api.schemas import (
     PrBindingCommand,
     PrBindingResponse,
     PreflightCommandModel,
+    PrMergeAdmissionResponse,
     ProposedUnitCommand,
     ReadinessResponse,
     ReclaimCommand,
@@ -148,7 +149,7 @@ from orchestrator.services.dispatch import (
     GitHubActionsDispatcher,
     dispatch_work_unit,
 )
-from orchestrator.services.estate_landing import HttpEstateLandingSource
+from orchestrator.services.estate_landing import EstateLandingSource, HttpEstateLandingSource
 from orchestrator.services.event_publications import (
     EventPublicationFilters,
     export_event_publications,
@@ -216,6 +217,7 @@ from orchestrator.services.packages import (
     resolve_dependency_command,
 )
 from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
+from orchestrator.services.pr_merge_admission import pr_merge_admission
 from orchestrator.services.reconciliation_detection import (
     ObservedTrackerItem,
     detect_observation_conditions,
@@ -257,6 +259,26 @@ def get_check_observer(settings: SettingsDep) -> CheckObserver:
 
 
 CheckObserverDep = Annotated[CheckObserver, Depends(get_check_observer)]
+
+
+def get_landing_source(settings: SettingsDep) -> EstateLandingSource:
+    """Build the thing that asks the estate what landing on a repository's default branch does.
+
+    A dependency rather than a call inside each route body so a test can substitute App Brain, and
+    so an unset URL or credential arrives as the empty string the source itself refuses on — never
+    as a source that silently answers. One definition, because two routes now ask the same
+    question and a second copy is a second place for that empty-string property to be forgotten.
+    """
+    return HttpEstateLandingSource(
+        base_url=settings.app_brain_url,
+        read_key=(
+            settings.app_brain_read_key.get_secret_value() if settings.app_brain_read_key else ""
+        ),
+        timeout_seconds=settings.app_brain_timeout_seconds,
+    )
+
+
+LandingSourceDep = Annotated[EstateLandingSource, Depends(get_landing_source)]
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorResponse, "description": "Authentication required or rejected"},
@@ -618,6 +640,28 @@ def release_evidence_pack_route(
     return release_evidence_pack_response(session, revision_id)
 
 
+@router.get(
+    "/work-units/{unit_id}/pr-merge-admission",
+    response_model=PrMergeAdmissionResponse,
+)
+def pr_merge_admission_route(
+    unit_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+    landing_source: LandingSourceDep,
+) -> object:
+    """ADR-0020 Increment 4a: may the factory land this unit's pull request, and if not, why?
+
+    **Report-only. Nothing here acts, and nothing that acts exists yet.** It is served so the
+    composed answer can be read against real completed units before anything obeys it.
+
+    Authentication-only, no role gate, matching the evidence-pack routes: it is a read over
+    canonical rows plus one read-only question to the estate, and every actor that can read a
+    unit's evidentiary record can read this.
+    """
+    return pr_merge_admission(session, unit_id, landing_source)
+
+
 @router.post("/work-units/{unit_id}/dispatch", response_model=DispatchResponse)
 def dispatch_route(
     unit_id: UUID,
@@ -625,6 +669,7 @@ def dispatch_route(
     actor: ActorDep,
     session: SessionDep,
     settings: SettingsDep,
+    landing_source: LandingSourceDep,
 ) -> object:
     # One resolution feeds both the admission gate and the minter, so the gate can never
     # attest to credentials the dispatcher does not actually use.
@@ -641,16 +686,6 @@ def dispatch_route(
         orchestrator_url=settings.dispatch_orchestrator_url,
     )
     dispatcher = GitHubActionsDispatcher(token_provider_for(credentials))
-    # Built here rather than inside the service so the admission path can be exercised without a
-    # network, and so an unset URL or credential arrives as the empty string the source itself
-    # refuses on — never as a source that silently answers.
-    landing_source = HttpEstateLandingSource(
-        base_url=settings.app_brain_url,
-        read_key=(
-            settings.app_brain_read_key.get_secret_value() if settings.app_brain_read_key else ""
-        ),
-        timeout_seconds=settings.app_brain_timeout_seconds,
-    )
     return dispatch_work_unit(
         session,
         DispatchCommand(
