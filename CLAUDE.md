@@ -717,7 +717,8 @@ style of that module.
     the CLI revision**: pin X → workflow at X → CLI at X. `workflow_sha`, never `workflow_ref` —
     the ref is what the caller pinned, *unresolved*, so a branch ref appears verbatim and is
     mutable. (Documented GitHub context properties, confirmed against docs 2026-08-01.)
-  - the `Runner brief compatibility` job in `quality.yml` runs
+  - the `Runner consumer compatibility` job in `quality.yml` runs (named `Runner brief
+    compatibility` until 2026-08-09, when it grew its second surface)
     `scripts/check_brief_consumer_compatibility.py`: it reads the pin from
     `factory-runner-pilot.yml`, asserts the workflow at that revision still installs itself (the
     premise, checked rather than assumed), reads `RunnerBrief` at that revision **from source via
@@ -1254,7 +1255,7 @@ style of that module.
   ("Edit upstream and `code-standards sync`") reads as though it were.
 
   This repo's `quality.yml` carries content that exists nowhere else and that a sync would silently
-  replace with the generic template: the **WS-P2.23 "Runner brief compatibility" job** (the build gate
+  replace with the generic template: the **WS-P2.23 "Runner consumer compatibility" job** (the build gate
   that makes runner/orchestrator drift unshippable — the entire deliverable of that workstream), the
   **`postgres:16-alpine` service**, **`SECURITY_STANDARDS_DIR`**, both database URLs, and
   **`uv run alembic upgrade head`**. Without those, `make check` cannot run here at all (see the
@@ -2130,7 +2131,7 @@ style of that module.
   absent**, `strict: false`, `allow_auto_merge: true`.
   - **The required check must be the JOB name, not the workflow name**, and it must be verified
     against a real open PR — a context string that does not match blocks every pull request
-    forever, silently. The six: orchestrator `Quality` + `Runner brief compatibility`;
+    forever, silently. The six: orchestrator `Quality` + `Runner consumer compatibility`;
     intent-packages `Lint, type-check, and test` + `Routing policy compatibility` + `validate`;
     infraops-mcp-server `build` + `Lint, type-check, and test`; project-standards and
     security-standards `Lint, type-check, and test` (+ `scan` for the latter); factory-runner
