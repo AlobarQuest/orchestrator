@@ -18,12 +18,14 @@ from orchestrator.api.schemas import (
     EvidencePackAuthorityResponse,
     EvidencePackAuthorityViolationResponse,
     EvidencePackClaimResponse,
+    EvidencePackCriterionRefusalResponse,
     EvidencePackDependencyResponse,
     EvidencePackEventPublicationResponse,
     EvidencePackEventResponse,
     EvidencePackEvidenceResponse,
     EvidencePackProvenanceResponse,
     EvidencePackResponse,
+    EvidencePackVerifierDecidedResponse,
     EvidencePackWorkUnitResponse,
 )
 from orchestrator.errors import DomainError
@@ -39,6 +41,10 @@ from orchestrator.persistence.models import (
     Evidence,
     WorkPackageRevision,
     WorkUnit,
+)
+from orchestrator.services.lifecycle import (
+    VerifierDecidedCompletion,
+    verifier_decided_completion,
 )
 
 
@@ -98,6 +104,9 @@ def evidence_pack_projection(session: Session, unit_id: uuid.UUID) -> dict[str, 
             for row in adjudications
             if row.supersedes_adjudication_id
         },
+        # The one derived answer on the pack: computed here so the JSON route, the markdown twin
+        # and the `/review` page all read the same result rather than three restatements of it.
+        "verifier_decided_completion": verifier_decided_completion(session, revision, unit),
         "approvals": tuple(
             session.scalars(
                 select(Approval).where(Approval.subject_id == unit.id).order_by(Approval.created_at)
@@ -150,6 +159,18 @@ def _event_publication_projection(
             "source_ref": f"orchestrator:{row.source_kind}:{row.source_id}",
         }
         for row in rows
+    )
+
+
+def _verifier_decided_response(
+    answer: VerifierDecidedCompletion,
+) -> EvidencePackVerifierDecidedResponse:
+    return EvidencePackVerifierDecidedResponse(
+        satisfied=answer.satisfied,
+        refusals=[
+            EvidencePackCriterionRefusalResponse(ac_id=refusal.ac_id, code=refusal.code)
+            for refusal in answer.refusals
+        ],
     )
 
 
@@ -226,6 +247,8 @@ def evidence_pack_response(projection: dict[str, Any]) -> EvidencePackResponse:
                 outcome=row.outcome,
                 current=row.id in current_adjudication_ids,
                 decided_by=row.decided_by,
+                decided_by_role=row.decided_by_role,
+                evidence_id=row.evidence_id,
                 rationale=row.rationale,
                 risk=row.risk,
                 follow_up=row.follow_up,
@@ -235,6 +258,9 @@ def evidence_pack_response(projection: dict[str, Any]) -> EvidencePackResponse:
             )
             for row in projection["adjudications"]
         ],
+        verifier_decided_completion=_verifier_decided_response(
+            projection["verifier_decided_completion"]
+        ),
         approvals=[
             EvidencePackApprovalResponse(
                 subject_type=row.subject_type,
@@ -384,12 +410,24 @@ def _render_evidence_section(pack: EvidencePackResponse) -> list[str]:
 def _render_adjudications_section(pack: EvidencePackResponse) -> list[str]:
     """Omits `decided_by` (approver identity) and `rationale` (free-text reasoning) -- this
     markdown is relayed into a PR comment on the target repo, which may be public. The full
-    fields remain on the JSON route."""
+    fields remain on the JSON route.
+
+    Two WS-P3.7 fields, decided rather than inherited:
+
+    * `decided_by_role` IS rendered. A role is a kind, not an identity -- "verifier" and "human"
+      name no person -- and it is the one fact a reader of a public pull request most needs in
+      order to know whether anyone actually looked at this. `unrecorded` is printed for NULL so
+      the historical rows read as unknown rather than silently as machine-decided.
+    * `evidence_id` is NOT rendered. It is an internal row identifier that means nothing outside
+      the orchestrator, so it would be noise on the comment and a database handle on a possibly
+      public page; the JSON route carries it for the consumers that can resolve it.
+    """
     lines = ["## Adjudications and waiver facts"]
     if pack.adjudications:
         for row in pack.adjudications:
             status = "current" if row.current else "superseded"
-            entry = f"- {row.ac_id}: {row.outcome} ({status})"
+            decider = row.decided_by_role or "unrecorded"
+            entry = f"- {row.ac_id}: {row.outcome} ({status}), decided by the {decider} role"
             if row.outcome == "waived":
                 expires = row.expires_at.isoformat() if row.expires_at else "never"
                 entry += (
@@ -400,6 +438,20 @@ def _render_adjudications_section(pack: EvidencePackResponse) -> list[str]:
             lines.append(entry)
     else:
         lines.append("- No adjudications recorded.")
+    lines.append("")
+    lines.extend(_render_verifier_decided_lines(pack))
+    return lines
+
+
+def _render_verifier_decided_lines(pack: EvidencePackResponse) -> list[str]:
+    """The one derived answer, rendered because it is the headline of the section above and
+    carries no identity: refusal codes name criteria, never people."""
+    answer = pack.verifier_decided_completion
+    verdict = "yes" if answer.satisfied else "no"
+    lines = [f"Every required criterion decided by the verifier from its own evaluation: {verdict}"]
+    for refusal in answer.refusals:
+        subject = refusal.ac_id or "unit"
+        lines.append(f"- {subject}: {refusal.code}")
     lines.append("")
     return lines
 

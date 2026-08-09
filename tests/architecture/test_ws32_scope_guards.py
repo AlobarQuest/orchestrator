@@ -47,6 +47,15 @@ WS53_POST_DEPLOY_PATHS = {
     # WS-P2.5 Inc 2: the per-release evidence pack COMPOSES deployment observations into a
     # read-only projection. It reads canonical rows; it never dispatches, deploys, or merges.
 }
+# ADR-0020's named exception, in this guard. The two allowlists above are FILE-scoped: a path in
+# them is excused from every forbidden sequence at once, including `deploy` and `coolify`. That is
+# far wider than a merge exception needs to be, so this one is keyed by (path, label) -- a module
+# admitted here may name the merge it performs and nothing else. It ships EMPTY, while nothing in
+# the repository may land a pull request, so that the first entry arrives into a mechanism already
+# shown to fire in both directions.
+MERGE_LABELS = frozenset({"merge_pull_request", "auto_merge"})
+MERGE_EXEMPT_PATHS: set[Path] = set()
+
 CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
 TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 
@@ -158,6 +167,8 @@ def _find_matches(term_kind: str) -> list[str]:
             label = _match_forbidden_sequence(term.tokens)
             if label is None:
                 continue
+            if path in MERGE_EXEMPT_PATHS and label in MERGE_LABELS:
+                continue
             matches.add(f"{term.path} [{term.kind}] {term.value!r} matched {label!r}")
     return sorted(matches)
 
@@ -174,6 +185,22 @@ def test_ws32_runtime_string_literals_add_no_forbidden_merge_dispatch_or_mutatio
     assert not matches, "Forbidden runtime string literals found:\n" + "\n".join(
         f"- {match}" for match in matches
     )
+
+
+def test_ws32_merge_exemption_names_only_merge_labels() -> None:
+    """The exemption may only ever excuse merge vocabulary. If a label were added here that is not
+    a merge term, a module could name a deploy or a hosted platform under a merge exception --
+    which is the "narrow enough that it cannot cover a deploying merge" clause of ADR-0020."""
+    labels = {label for label, _ in FORBIDDEN_SEQUENCES}
+
+    assert MERGE_LABELS <= labels
+    assert all("merge" in label for label in MERGE_LABELS)
+
+
+def test_ws32_merge_exemption_names_only_files_that_exist() -> None:
+    missing = [str(path) for path in MERGE_EXEMPT_PATHS if not path.exists()]
+
+    assert not missing, f"the merge exemption names files that no longer exist: {missing}"
 
 
 def test_ws32_string_scanner_covers_spaced_forbidden_phrases() -> None:
