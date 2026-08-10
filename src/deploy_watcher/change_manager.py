@@ -177,7 +177,6 @@ def _record(item: dict[str, Any]) -> ChangeRecord:
     return ChangeRecord(
         item_id=int(item["id"]),
         identity=str(item.get("identity") or ""),
-        status=str(item.get("status") or ""),
         target_repository=str(item.get("target_repository") or ""),
         pull_request_number=int(item.get("pull_request_number") or 0),
         acceptance_criteria=tuple(str(c) for c in criteria) if isinstance(criteria, list) else (),

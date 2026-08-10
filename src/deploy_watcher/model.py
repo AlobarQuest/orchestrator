@@ -20,11 +20,9 @@ class ChangeRecord:
 
     item_id: int
     identity: str
-    status: str
     target_repository: str
     pull_request_number: int
     acceptance_criteria: tuple[str, ...]
-    observed_merge_commit: str | None = None
 
 
 @dataclass(frozen=True)
