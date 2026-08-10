@@ -94,11 +94,19 @@ def basis_of(landing: Landing) -> str:
     cannot see. Anything that satisfies neither `human` nor `rule` is `unattributed`; it is never
     rounded down to the nearest basis that fits.
 
-    THE FACTORY BRANCH SITS AFTER `human`, AND THE ORDER IS THE DESIGN. Every factory pull request
-    before 2026-08-10 was opened by the runner -- so it carries the claim -- and merged by Devon,
-    and those stay `human`: who landed it is what a permission basis is about, and the trailer is
-    present either way. It sits BEFORE `unattributed` because a claim plus a machine merger is
-    strictly more than `unattributed` can say.
+    THE FACTORY BRANCH MUST SIT AFTER `auto_merge_rule`, AND THAT ORDER IS THE ONLY ONE THAT IS
+    LOAD-BEARING -- measured by mutation rather than asserted, because a first draft of this note
+    named the wrong pair. A landing the gate actually permitted has a rule to be re-evaluated
+    against, which is a stronger answer than a claim, and a landing can carry both. Moving the
+    factory branch above the rule branch reclassifies it, and a test reds.
+
+    Its position relative to `human` is NOT load-bearing: the two are mutually exclusive by
+    `is_machine`, so swapping them changes nothing and no test can tell. What actually keeps every
+    factory pull request before 2026-08-10 recorded as `human` -- they were opened by the runner,
+    so they carry the claim, and Devon merged them -- is that conjunct, not the order.
+
+    It sits before `unattributed` because a claim plus a machine merger is strictly more than
+    `unattributed` can say.
 
     IT IS KEYED ON THE CLAIM AND A MACHINE MERGER, NOT ON THE FACTORY APP'S LOGIN, and the choice
     is about which way a mistake fails. A login literal that stopped matching -- a renamed App, a

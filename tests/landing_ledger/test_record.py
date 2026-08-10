@@ -95,10 +95,16 @@ def test_the_factory_landing_its_own_pull_request_records_the_claim_it_will_be_a
 
 
 def test_a_PERSON_merging_a_factory_pull_request_is_still_a_person() -> None:
-    """The cascade order, and it is the reason no existing row reclassifies. Every factory pull
-    request before 2026-08-10 carried the same claim in its commit and was merged by Devon; a
-    basis keyed on the claim alone would rewrite all of them, and each rewrite is a conflicting
-    row on a landing where nothing actually changed."""
+    """The reason no existing row reclassifies. Every factory pull request before 2026-08-10
+    carried the same claim in its commit and was merged by Devon; a basis keyed on the claim alone
+    would rewrite all of them, and each rewrite is a conflicting row on a landing where nothing
+    actually changed.
+
+    What holds this is the `is_machine` conjunct, NOT the cascade order -- swapping the human and
+    factory branches is a measured no-op, because the two are mutually exclusive. The order that
+    IS load-bearing is rule-before-factory, which
+    `test_a_gate_permitted_landing_is_not_reclassified_by_a_claim_it_happens_to_carry` covers.
+    """
     permitted = landing_observation(factory_landing(landed_by="AlobarQuest"))["facts"][
         "permitted_by"
     ]
