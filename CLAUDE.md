@@ -2178,6 +2178,45 @@ style of that module.
   capability strings rather than the two repos you expect to own them; this is the same lesson the
   BWS-UUID move taught, in a different vocabulary.
 
+- **THE FACTORY CLOSED ITS OWN LOOP ON 2026-08-10, and the three things that run established are
+  each invisible from reading the code.** Commit `b3f1522f` reached `AlobarQuest/intent-packages`
+  `main` merged by `alobar-sds-dispatch[bot]` (type Bot), with Devon's authority approval at
+  13:55:44 the **last human act in an eleven-row history** — everything after it
+  `orchestrator-system`, `factory-runner`, `orchestrator-verifier`. AC-001 resolved from observed
+  `verifier.github.named_check` evidence, never by a person. One attempt, 9 LLM calls of 120, 40
+  seconds of coding, `uv.lock` +3 −3.
+
+  1. **`factory decompose` structurally CANNOT produce a merge-granting envelope**, for any
+     package, any repository, any version. `build_envelope` emits
+     `profiles/dependency_update.py::CAPABILITIES` verbatim — a fixed six-entry dict with no
+     `github.pr.merge` — so its envelopes refuse at `merge_capability_not_authorized`. **Every
+     ADR-0020 landing hand-authors its decomposition proposal until that profile changes**, so the
+     one profile with end-to-end tooling is the one profile that cannot close the loop. Separately
+     `_uv_discover` scans `pyproject.toml` sections only, so a **transitive** dependency has no pin
+     site and `decompose` refuses before emitting anything — which is exactly the property that
+     makes a transitive bump the safest possible subject. Everything decompose does *around* the
+     envelope stays reusable: the criterion-UUID map, the conformance scan, brain enrichment, the
+     routing rationale, the three fail-closed validations.
+  2. **A `human_review` acceptance criterion ANYWHERE on a package the factory is to land refuses
+     the landing — including one RETAINED rather than mapped to the unit.**
+     `verifier_decided_completion`'s fifth disqualifier (`decision_outside_required_criteria`)
+     disqualifies the **unit**, because ADR-0020's condition is "with no human adjudication", not
+     "none among the criteria that happened to be required". **`factory create --profile
+     dependency-update` scaffolds exactly this trap as AC-002, and every prior dependency-update
+     package in the estate carries it.** The failure is invisible until `pr-merge-admission`
+     refuses a unit that has **already completed** — i.e. after the write-once envelope and both
+     human approvals are spent, which costs a whole new package revision. Author a landing package
+     with no human-judgment criterion at all.
+  3. **Driving the `factory` flow needs TWO BWS identities.** The orchestrator bearers are in the
+     `SDS Operator` project, readable by the narrow `sds-operator` account; the Code and Infra
+     Brain keys the enrichment step needs are in the `brains` project, which that account **cannot
+     read**. The failure is a `CredentialError` naming only a secret UUID. No document said so.
+
+  Also: **the `/review` intake and decomposition pages return `[BLOCKED: …]` for several fields
+  when read through browser automation** — page text, a commit sha, an authority block — because
+  the redactor cannot tell a secret from a hex string. Anything verified through that surface must
+  be verified from the API or from git as well.
+
 - **`runner.caller` asks "can the factory send work INTO this repo?", and it is three different
   faults under one name.** It requires `.github/workflows/factory-runner-pilot.yml` calling
   factory-runner's reusable workflow at a full SHA equal to `RECOMMENDED_CALLER_PIN` (a one-line file
