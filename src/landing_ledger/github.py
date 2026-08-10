@@ -22,7 +22,14 @@ from typing import Any
 
 import httpx
 
-from landing_ledger.model import Check, Landing, PendingUpdate, RuleApplication, UpdateMetadata
+from landing_ledger.model import (
+    Check,
+    FactoryClaim,
+    Landing,
+    PendingUpdate,
+    RuleApplication,
+    UpdateMetadata,
+)
 from landing_ledger.rules import GATE_PATH
 
 API = "https://api.github.com"
@@ -34,6 +41,14 @@ UPSTREAM_AUTHOR = "dependabot[bot]"
 # text `dependabot/fetch-metadata` parses, so reading it here reads what the gate read.
 DEPENDENCY_NAME = re.compile(r"^\s*-?\s*dependency-name:\s*(\S+)\s*$", re.MULTILINE)
 UPDATE_TYPE = re.compile(r"^\s*update-type:\s*(\S+)\s*$", re.MULTILINE)
+
+# The trailers factory-runner writes into its COMMIT MESSAGE (`factory_runner/cli.py`). The pull
+# request's BODY carries the same two values plus the authority fingerprint -- and a body is
+# editable after the landing, so reading it would let an unchanged reality re-encode to different
+# facts on a later pass and conflict. The commit message cannot change. Same source, and the same
+# reasoning, as the Dependabot trailers above.
+SDS_UNIT = re.compile(r"^\s*SDS-Unit:\s*([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\s*$", re.M)
+SDS_PACKAGE_REVISION = re.compile(r"^\s*SDS-Package-Rev:\s*(\d+)\s*$", re.MULTILINE)
 
 
 class LedgerError(RuntimeError):
@@ -129,6 +144,30 @@ def update_metadata(message: str, head_ref: str | None) -> UpdateMetadata | None
     segments = (head_ref or "").split("/")
     ecosystem = segments[1] if len(segments) > 2 and segments[0] == "dependabot" else None
     return UpdateMetadata(dependency=name.group(1), ecosystem=ecosystem, update_type=kind.group(1))
+
+
+def factory_claim(message: str) -> FactoryClaim | None:
+    """The work unit a landing commit says it implements, or nothing.
+
+    READ FROM THE LANDING COMMIT ONLY -- there is no fall-back to the pull request's head. The
+    orchestrator lands with `merge_method: "squash"` (a literal in its own merge call), and a
+    squash concatenates the branch's messages into the landing commit, so the trailer is there.
+    A true merge commit would not carry it and the landing would fall to `unattributed` -- the
+    same answer this adapter gave before the basis existed, so a quiet under-report rather than a
+    wrong one. Guessing at a fall-back for a state the orchestrator's code cannot produce would
+    cost one extra request per Dependabot landing to guard nothing.
+
+    The revision is optional and the unit id is not: the unit id is what the audit resolves, and
+    a claim without one selects nothing to check.
+    """
+    unit = SDS_UNIT.search(message)
+    if unit is None:
+        return None
+    revision = SDS_PACKAGE_REVISION.search(message)
+    return FactoryClaim(
+        work_unit=unit.group(1),
+        package_revision=int(revision.group(1)) if revision else None,
+    )
 
 
 def _landed_pull(reader: GitHubReader, repository: str, sha: str) -> dict[str, Any] | None:
@@ -244,6 +283,7 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
         checks=checks,
         rule=rule,
         update=update_metadata(metadata_message, detail["head"].get("ref")),
+        claim=factory_claim(message),
     )
 
 

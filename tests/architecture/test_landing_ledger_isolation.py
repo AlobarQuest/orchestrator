@@ -70,15 +70,49 @@ def test_the_write_surface_is_the_observer_roles_whole_write_surface_and_no_more
     assert not is_allowed_write(f"{unit}/dispatch")
 
 
-def test_the_read_surface_is_the_one_path_the_audit_needs_and_no_more() -> None:
+def test_the_read_surface_is_the_paths_the_audit_needs_and_no_more() -> None:
     """The audit re-evaluates what the LEDGER recorded, so it reads -- and that changed this
-    client's contract in WS-P3.6 Increment 3 rather than drifting. Server-side, OBSERVER reads are
-    deliberately unconfined, so this bound is the only one there is."""
+    client's contract in WS-P3.6 Increment 3, and again in WS-P3.7 Increment 5, each time as a
+    decision rather than by drifting. Server-side, OBSERVER reads are deliberately unconfined, so
+    this bound is the only one there is.
+
+    THREE paths, and the two additions are ADR-0020's: a landing the factory made says a work
+    unit's criteria were met, and read from GitHub alone that is the runner's own assertion
+    re-recorded. The evidence pack answers who decided and on what evidence; the unit history
+    answers which pull request this unit actually landed. Neither answers the other's half.
+    """
+    unit = "/api/v1/work-units/0c0002c6-9869-59bc-84c6-654e6fc57d9e"
     assert is_allowed_read("/api/v1/observations")
+    assert is_allowed_read(f"{unit}/evidence-pack")
+    assert is_allowed_read(f"{unit}/history")
+
     assert not is_allowed_read("/api/v1/observations/")
     assert not is_allowed_read("/api/v1/work-units")
     assert not is_allowed_read("/api/v1/in-flight-units")
     assert not is_allowed_read("/api/v1/status-ledger")
+    # The bound is a bound: the unit paths are anchored and enumerated, so neither a sibling read
+    # on the same unit nor a prefix of an allowed one gets in on the strength of the two that do.
+    assert not is_allowed_read(f"{unit}/evidence-pack/markdown")
+    assert not is_allowed_read(f"{unit}/pr-merge-admission")
+    assert not is_allowed_read(f"{unit}/runner-brief")
+    assert not is_allowed_read(f"{unit}/readiness")
+    assert not is_allowed_read(f"{unit}/evidence")
+    assert not is_allowed_read(f"{unit}/history/")
+    assert not is_allowed_read("/api/v1/work-units/not-a-unit-id/history")
+
+
+def test_the_admission_surface_stays_out_of_reach_of_the_audit() -> None:
+    """Named separately from the list above because it is a DECISION, not an omission.
+
+    `…/pr-merge-admission` composes exactly the answer the factory audit wants, in one call. It is
+    excluded because it evaluates whether the landing may happen NOW, and re-asking it about a
+    landing that already happened turns ordinary change -- a superseded approval, a re-classified
+    repository -- into findings. The audit reads the durable record instead, which does not drift.
+    """
+    unit = "/api/v1/work-units/0c0002c6-9869-59bc-84c6-654e6fc57d9e"
+
+    assert not is_allowed_read(f"{unit}/pr-merge-admission")
+    assert not is_allowed_write(f"{unit}/pr-merge")
 
 
 def test_a_forbidden_read_never_reaches_the_transport() -> None:
@@ -97,9 +131,30 @@ def test_a_forbidden_read_never_reaches_the_transport() -> None:
 
     with pytest.raises(ForbiddenReadError):
         client.get("/api/v1/status-ledger")
+    with pytest.raises(ForbiddenReadError):
+        client.read_evidence_pack("../../status-ledger")
     assert seen == []
     assert client.get("/api/v1/observations") == []
     assert seen == ["/api/v1/observations"]
+
+
+def test_a_unit_the_orchestrator_does_not_hold_is_an_ANSWER_rather_than_an_error() -> None:
+    """The factory audit turns None into a finding about the landing and an exception into an
+    incomplete pass, so the two must not arrive as the same thing."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "work_unit_not_found"})
+
+    client = OrchestratorClient(
+        base_url="https://x",
+        credential_key_id="orchestrator-observer",
+        token="t",
+        transport=httpx.MockTransport(handler),
+    )
+    unit = "0c0002c6-9869-59bc-84c6-654e6fc57d9e"
+
+    assert client.read_evidence_pack(unit) is None
+    assert client.read_unit_history(unit) is None
 
 
 def test_a_ledger_that_is_not_a_LIST_is_refused_rather_than_iterated() -> None:

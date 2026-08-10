@@ -48,11 +48,36 @@ BASIS_RULE = "auto_merge_rule"
 BASIS_HUMAN = "human"
 # Pushed straight at the branch. There is no permission basis, and that is the finding.
 BASIS_NONE = "none"
+# The factory landing its own pull request, whose acceptance criteria were resolved from evidence
+# the orchestrator observed and where landing changes nothing already serving (ADR-0020). Devon's
+# name, and the name carries the constraint: it cannot describe a landing that deploys without
+# saying something false.
+BASIS_FACTORY = "factory-approved-no-deploy"
 # Merged by a machine with no gate run to account for it. Never fabricate a basis: say so.
 BASIS_UNATTRIBUTED = "unattributed"
 
+# Every basis `basis_of` may return. Held here so a branch added to the cascade without a name --
+# or a name added without a branch -- is a test failure rather than a value nobody can interpret.
+#
+# THIS PACKAGE IS DELIBERATELY LEFT OUTSIDE `test_cross_boundary_vocabulary`, and the reason is
+# that extending it would not have caught the defect it is being proposed for. That guard finds
+# module-level string COLLECTIONS used in a membership test; the thing that had silently duplicated
+# here was a SCALAR (`BASIS_RULE`, defined independently in `audit.py` until WS-P3.7 Increment 5),
+# which its predicate cannot see in any root. Widening the root to catch it would be a check that
+# is correct about the wrong noun -- the shape this estate keeps finding -- and the only collection
+# it would then discover is `audit.FAILING_CONCLUSIONS`, whose producer is GitHub's own API. That
+# is the guard's own documented blind spot, so its registry entry would be prose rather than a pin.
+# What the scalar needed was ONE definition, which it now has: `audit.py` imports these names, and
+# an import cannot drift. What the vocabulary needed was a total-coverage assertion against the
+# cascade, which `tests/landing_ledger/test_record.py` now carries.
+BASES = (BASIS_NONE, BASIS_RULE, BASIS_HUMAN, BASIS_FACTORY, BASIS_UNATTRIBUTED)
+
 NO_BASIS_REASON = "pushed to the branch with no pull request; nothing recorded a permission"
 UNATTRIBUTED_REASON = "landed by a machine with no gate run observed on the pull request"
+FACTORY_REASON = (
+    "landed by the factory, claiming a work unit whose criteria it says were met; the claim is "
+    "read from the landing commit and is checked against the orchestrator by the audit"
+)
 
 
 def is_machine(login: str | None) -> bool:
@@ -68,6 +93,19 @@ def basis_of(landing: Landing) -> str:
     leaves to a person, and a machine identity could land something by some route this adapter
     cannot see. Anything that satisfies neither `human` nor `rule` is `unattributed`; it is never
     rounded down to the nearest basis that fits.
+
+    THE FACTORY BRANCH SITS AFTER `human`, AND THE ORDER IS THE DESIGN. Every factory pull request
+    before 2026-08-10 was opened by the runner -- so it carries the claim -- and merged by Devon,
+    and those stay `human`: who landed it is what a permission basis is about, and the trailer is
+    present either way. It sits BEFORE `unattributed` because a claim plus a machine merger is
+    strictly more than `unattributed` can say.
+
+    IT IS KEYED ON THE CLAIM AND A MACHINE MERGER, NOT ON THE FACTORY APP'S LOGIN, and the choice
+    is about which way a mistake fails. A login literal that stopped matching -- a renamed App, a
+    second identity -- would drop the landing to `unattributed`, where the audit returns early and
+    says nothing. Keying on the claim means a landing that claims a unit it has no right to reaches
+    the audit and becomes a FINDING. Prefer the loud failure: the point of this basis is that it is
+    checked.
     """
     if landing.pull_request is None:
         return BASIS_NONE
@@ -79,6 +117,8 @@ def basis_of(landing: Landing) -> str:
         return BASIS_RULE
     if landing.landed_by is not None and not is_machine(landing.landed_by):
         return BASIS_HUMAN
+    if landing.claim is not None and is_machine(landing.landed_by):
+        return BASIS_FACTORY
     return BASIS_UNATTRIBUTED
 
 
@@ -97,6 +137,21 @@ def permitted_by(landing: Landing) -> dict[str, Any]:
     }
     if basis == BASIS_UNATTRIBUTED:
         record["reason"] = UNATTRIBUTED_REASON
+        return record
+    if basis == BASIS_FACTORY:
+        # ADR-0020 point 4 says this basis carries "the unit id, the package revision, the criteria
+        # and how each resolved". The first two are here; the last two deliberately are NOT, and
+        # this is a considered divergence from the ADR's letter rather than an omission. Recording
+        # how each criterion resolved would mean either asking the orchestrator while RECORDING --
+        # which makes the facts a function of orchestrator state, so an unchanged reality re-encodes
+        # differently on a later pass and conflicts -- or copying the runner's own account of its
+        # own compliance out of the pull request, which is the assertion this basis exists to stop
+        # re-recording. So the record carries the CLAIM, and `audit.audit_factory_landing` resolves
+        # it against the orchestrator's durable rows, where a mismatch is a finding.
+        assert landing.claim is not None
+        record["reason"] = FACTORY_REASON
+        record["work_unit"] = landing.claim.work_unit
+        record["package_revision"] = landing.claim.package_revision
         return record
     if basis == BASIS_HUMAN or landing.rule is None:
         return record

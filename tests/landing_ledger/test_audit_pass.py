@@ -29,11 +29,26 @@ from landing_ledger.github import (
 )
 from landing_ledger.orchestrator_client import LedgerWriteError
 from landing_ledger.rules import GATE_PATH
-from tests.landing_ledger.test_audit import PATCH_AND_MINOR, UNDERSCORED
+from tests.landing_ledger.test_audit import (
+    PATCH_AND_MINOR,
+    UNDERSCORED,
+    factory_landing,
+    history,
+    pack,
+)
+from tests.landing_ledger.test_audit import (
+    UNIT as FACTORY_UNIT,
+)
 from tests.landing_ledger.test_github import REPO, reader_for
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
 HEAD = "b" * 40
+
+# The 2026-08-10 factory landing, as `test_audit` shapes it from production. Reused rather than
+# restated so the pass-level test and the detector-level tests cannot drift into two landings.
+FACTORY_LANDING = factory_landing(repository=REPO)
+FACTORY_PACK = pack()
+FACTORY_HISTORY = history(repository=REPO)
 
 TRAILER = """chore(actions): bump astral-sh/setup-uv from 5 to 7
 
@@ -107,11 +122,27 @@ def _routes(
 
 
 class _Ledger:
-    def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
+    """The orchestrator as `audit_pass` sees it: the recorded landings, plus the two per-unit
+    reads the factory half of detector A needs. One credential, three read paths."""
+
+    def __init__(
+        self,
+        rows: list[dict[str, Any]] | None = None,
+        packs: dict[str, dict[str, Any]] | None = None,
+        histories: dict[str, list[dict[str, Any]]] | None = None,
+    ) -> None:
         self.rows = rows or []
+        self.packs = packs or {}
+        self.histories = histories or {}
 
     def read_landings(self, repository: str) -> list[dict[str, Any]]:
         return self.rows
+
+    def read_evidence_pack(self, work_unit_id: str) -> dict[str, Any] | None:
+        return self.packs.get(work_unit_id)
+
+    def read_unit_history(self, work_unit_id: str) -> list[dict[str, Any]] | None:
+        return self.histories.get(work_unit_id)
 
 
 class _Recorder:
@@ -189,6 +220,47 @@ def test_a_pass_files_one_row_and_finds_the_unarmed_eligible_update() -> None:
     assert [finding.kind for finding in audit.findings] == [STALL_ELIGIBLE_NOT_ARMED]
     assert len(recorder.bodies) == 1
     assert recorder.bodies[0]["facts"]["findings_found"] == 1
+
+
+class _UnreachableOrchestrator(_Ledger):
+    """It answers the ledger read and then cannot answer the unit reads -- which is the shape a
+    partial outage takes, and the one where a swallowed error would look like a clean estate."""
+
+    def read_evidence_pack(self, work_unit_id: str) -> dict[str, Any] | None:
+        raise LedgerWriteError("orchestrator is unreachable for GET: ConnectError")
+
+
+def test_an_orchestrator_that_cannot_answer_the_factory_check_makes_the_pass_INCOMPLETE() -> None:
+    """A landing recorded as factory-permitted whose claim could not be resolved is a repository
+    whose answer is missing, not one that was found clean. It reaches the incomplete exit code,
+    which outranks findings, and the heartbeat row still says so."""
+    recorder = _Recorder()
+    ledger = _UnreachableOrchestrator([{"facts": FACTORY_LANDING}])
+
+    audit, body = _run(_routes(), ledger, recorder)
+
+    assert audit.unavailable
+    assert audit.findings == ()
+    assert body["facts"]["unavailable"] is True
+    assert "[UNAVAILABLE]" in body["summary"]
+
+
+def test_a_factory_landing_the_orchestrator_confirms_is_recorded_as_audited_and_clean() -> None:
+    """The whole path, through the same client surface the launcher uses: the ledger's recorded
+    landing selects a unit, the orchestrator's own records answer for it, and the repository's
+    heartbeat carries the factory denominator so `no findings` is never bare."""
+    recorder = _Recorder()
+    ledger = _Ledger(
+        [{"facts": FACTORY_LANDING}],
+        packs={FACTORY_UNIT: FACTORY_PACK},
+        histories={FACTORY_UNIT: FACTORY_HISTORY},
+    )
+
+    audit, body = _run(_routes(), ledger, recorder)
+
+    assert [finding.kind for finding in audit.findings] == [STALL_ELIGIBLE_NOT_ARMED]
+    assert not audit.unavailable
+    assert body["facts"]["factory_landings"] == 1
 
 
 def test_github_being_unreadable_makes_the_answer_MISSING_not_clean() -> None:
