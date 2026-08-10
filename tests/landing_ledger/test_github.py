@@ -12,6 +12,7 @@ from landing_ledger.github import (
     ForbiddenMethodError,
     GitHubReader,
     LedgerError,
+    factory_claim,
     first_parent_chain,
     landing_shas,
     read_landing,
@@ -135,6 +136,74 @@ def test_a_half_written_trailer_yields_nothing_rather_than_a_derived_update_type
     partial = "chore: bump ruff\n\nupdated-dependencies:\n- dependency-name: ruff\n"
 
     assert update_metadata(partial, "dependabot/uv/ruff-0.16.1") is None
+
+
+# ---------------------------------------------------------------------------------------------
+# The factory's claim comes from the same place, and for the same reason.
+# ---------------------------------------------------------------------------------------------
+
+FACTORY_MESSAGE = """feat: implement SDS unit 0c0002c6-9869-59bc-84c6-654e6fc57d9e (#66)
+
+Factory-runner attempt 1.
+
+SDS-Unit: 0c0002c6-9869-59bc-84c6-654e6fc57d9e
+SDS-Package-Rev: 1
+
+Co-authored-by: factory-runner <factory-runner@users.noreply.github.com>
+"""
+
+
+def test_the_claim_is_read_from_the_landing_commits_own_trailers() -> None:
+    """Verbatim from intent-packages@b3f1522f, the first landing the factory made. The commit
+    message is chosen over the pull-request body, which carries the same values and can be edited
+    after the landing -- and a fact that can change is a conflicting row on every later pass."""
+    claim = factory_claim(FACTORY_MESSAGE)
+
+    assert claim is not None
+    assert claim.work_unit == "0c0002c6-9869-59bc-84c6-654e6fc57d9e"
+    assert claim.package_revision == 1
+
+
+def test_an_ordinary_commit_carries_no_claim() -> None:
+    assert factory_claim(TRAILER) is None
+    assert factory_claim("feat: implement SDS unit 0c0002c6 by hand") is None
+
+
+def test_a_trailer_that_is_not_a_unit_id_is_no_claim_rather_than_a_claim_of_nothing() -> None:
+    """The unit id is what the audit resolves. A claim carrying something that cannot name a unit
+    selects nothing to check, so it must not become a basis that promises a check."""
+    assert factory_claim("SDS-Unit: not-a-uuid\nSDS-Package-Rev: 1\n") is None
+    assert factory_claim("SDS-Unit: 0c0002c6\n") is None
+
+
+def test_the_revision_is_optional_where_the_unit_is_not() -> None:
+    claim = factory_claim("SDS-Unit: 0c0002c6-9869-59bc-84c6-654e6fc57d9e\n")
+
+    assert claim is not None
+    assert claim.package_revision is None
+
+
+def test_a_landing_commit_without_the_trailer_falls_back_to_the_pull_requests_head() -> None:
+    """What the landing commit contains is NOT the orchestrator's to decide. It sends no
+    `commit_message` with its squash, so the body is governed by the repository's own
+    `squash_merge_commit_message` setting -- a web form, not a literal in a merge call. All eight
+    repositories the ledger covers write `COMMIT_MESSAGES` today, and a first draft used that to
+    justify having no fall-back. Without one, flipping that setting makes every factory landing
+    claimless, hence `unattributed`, hence read by no detector: silent, which is the one failure
+    mode this basis exists to avoid.
+    """
+    routes = gate_routes()
+    routes[f"/repos/{REPO}/commits/e931db8d"] = {
+        "sha": "e931db8d31debfb08fd8f8410a4778f33c437fc1",
+        "commit": {"message": "feat: implement SDS unit (#50)", "committer": {"date": MERGED_AT}},
+        "files": [{"filename": "uv.lock"}],
+    }
+    routes[f"/repos/{REPO}/commits/4437bc98"] = {"commit": {"message": FACTORY_MESSAGE}}
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.claim is not None
+    assert landing.claim.work_unit == "0c0002c6-9869-59bc-84c6-654e6fc57d9e"
 
 
 # ---------------------------------------------------------------------------------------------

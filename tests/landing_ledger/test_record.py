@@ -3,8 +3,10 @@
 import json
 from datetime import UTC, datetime
 
-from landing_ledger.model import Check, Landing, RuleApplication, UpdateMetadata
+from landing_ledger.model import Check, FactoryClaim, Landing, RuleApplication, UpdateMetadata
 from landing_ledger.record import (
+    BASES,
+    BASIS_FACTORY,
     BASIS_HUMAN,
     BASIS_NONE,
     BASIS_RULE,
@@ -61,6 +63,81 @@ def push_landing(**overrides: object) -> Landing:
         "files_changed": 1,
     }
     return Landing(**{**base, **overrides})  # type: ignore[arg-type]
+
+
+UNIT = "0c0002c6-9869-59bc-84c6-654e6fc57d9e"
+
+
+def factory_landing(**overrides: object) -> Landing:
+    """The first landing the factory ever made -- intent-packages@b3f1522f, 2026-08-10."""
+    base: dict[str, object] = {
+        "commit": "b3f1522f8630a7026da7dbaa1a120971fc024f73",
+        "title": "feat: implement SDS unit 0c0002c6-9869-59bc-84c6-654e6fc57d9e (#66)",
+        "pull_request": 66,
+        "landed_by": "alobar-sds-dispatch[bot]",
+        "rule": None,
+        "update": None,
+        "claim": FactoryClaim(work_unit=UNIT, package_revision=1),
+    }
+    return gate_landing(**{**base, **overrides})
+
+
+def test_the_factory_landing_its_own_pull_request_records_the_claim_it_will_be_audited_on() -> None:
+    permitted = landing_observation(factory_landing())["facts"]["permitted_by"]
+
+    assert permitted["basis"] == BASIS_FACTORY
+    assert permitted["landed_by"] == "alobar-sds-dispatch[bot]"
+    assert permitted["work_unit"] == UNIT
+    assert permitted["package_revision"] == 1
+    assert "checked against the orchestrator" in permitted["reason"]
+    # No rule keys: the gate did not permit this and a record that said so would be false.
+    assert not {"rule_path", "rule_revision", "rule_run", "decision"} & set(permitted)
+
+
+def test_a_PERSON_merging_a_factory_pull_request_is_still_a_person() -> None:
+    """The reason no existing row reclassifies. Every factory pull request before 2026-08-10
+    carried the same claim in its commit and was merged by Devon; a basis keyed on the claim alone
+    would rewrite all of them, and each rewrite is a conflicting row on a landing where nothing
+    actually changed.
+
+    What holds this is the `is_machine` conjunct, NOT the cascade order -- swapping the human and
+    factory branches is a measured no-op, because the two are mutually exclusive. The order that
+    IS load-bearing is rule-before-factory, which
+    `test_a_gate_permitted_landing_is_not_reclassified_by_a_claim_it_happens_to_carry` covers.
+    """
+    permitted = landing_observation(factory_landing(landed_by="AlobarQuest"))["facts"][
+        "permitted_by"
+    ]
+
+    assert permitted["basis"] == BASIS_HUMAN
+    assert "work_unit" not in permitted
+
+
+def test_a_machine_merge_with_no_claim_is_still_unattributed() -> None:
+    """The basis is not a synonym for `a bot did it`. Without a claim there is nothing to audit,
+    and inventing a basis for it is what `unattributed` exists to refuse."""
+    assert basis_of(factory_landing(claim=None)) == BASIS_UNATTRIBUTED
+
+
+def test_a_gate_permitted_landing_is_not_reclassified_by_a_claim_it_happens_to_carry() -> None:
+    """`auto_merge_rule` is checked first and stays first: a landing the gate actually permitted
+    has a rule to be re-evaluated against, which is a stronger answer than a claim."""
+    assert basis_of(gate_landing(claim=FactoryClaim(work_unit=UNIT))) == BASIS_RULE
+
+
+def test_every_basis_the_cascade_can_return_is_named() -> None:
+    """The vocabulary and the cascade are two halves of one decision. A branch added without a
+    name emits a value no consumer can interpret; a name added without a branch is dead."""
+    reachable = {
+        basis_of(push_landing()),
+        basis_of(gate_landing()),
+        basis_of(human_landing()),
+        basis_of(factory_landing()),
+        basis_of(factory_landing(claim=None)),
+    }
+
+    assert reachable == set(BASES)
+    assert len(BASES) == len(set(BASES))
 
 
 def test_an_auto_merged_landing_records_the_rule_that_permitted_it() -> None:
