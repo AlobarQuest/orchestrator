@@ -217,6 +217,15 @@ OUTBOUND_ALLOWLIST = {
     # test_landing_ledger_isolation.py. Its egress is not the orchestrator's.
     Path("src/landing_ledger/github.py"),
     Path("src/landing_ledger/orchestrator_client.py"),
+    # ADR-0019 increment 2. The rollout watcher is a SEPARATE program, the same report-only shape
+    # as ADR-0002, and it does not speak to the orchestrator at all -- it reads GitHub for the
+    # workflow run a landing caused and appends one observation to the change record
+    # change-manager holds. Its GitHub half refuses any method but GET; its change-manager half
+    # may write to exactly one route and read exactly two, and reaches neither the execution
+    # lifecycle nor the decision routes. Both are enforced in code and pinned by
+    # test_deploy_watcher_isolation.py. Its egress is not the orchestrator's.
+    Path("src/deploy_watcher/change_manager.py"),
+    Path("src/deploy_watcher/github.py"),
 }
 
 

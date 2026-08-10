@@ -2468,3 +2468,57 @@ style of that module.
   human adjudication does NOT complete a unit: `AWAITING_REVIEW → COMPLETED` is its own designed
   HUMAN gate (a second `/review` click), and `/verify` refuses an `awaiting_review` unit with
   `invalid_transition … recovery: submit`.
+
+- **A workflow RUN's conclusion cannot distinguish "nothing was deployed" from "production was
+  deployed and is broken", and those two want opposite remedies.** Measured 2026-08-10 across
+  every rollout failure in `change-manager` and `brain`: all three carry `conclusion: "failure"`
+  at the run, and two of them never reached production — one because the test job failed and the
+  rollout job was `skipped`, one because the Coolify webhook call itself failed. Acting on a
+  run-level `failed` would, in those two, have made the rollback the day's only production
+  mutation. **Read JOBS and STEPS** (`/actions/runs/{id}/attempts/{n}/jobs`, which also returns
+  `steps[].conclusion`) — the attempt, not the run, because a re-run supersedes its predecessor
+  and `/runs/{id}/jobs` answers about a different attempt than the row you are writing. Note the
+  App has no `checks` permission so the Checks API 403s; this is the Actions API and needs only a
+  plain token. `services/github_checks.py` already reads jobs and documents why.
+
+- **GitHub populates `merge_commit_sha` on OPEN pull requests with a throwaway test-merge commit
+  — a real, fetchable object that passes every shape check there is.** `change-manager` PR #42
+  carries `6a7c99a94c52…` ("Merge b30708ce into ef671eeb") while unmerged, against a base that has
+  since moved, and it resolves through `GET /contents/{path}?ref=` and every other hop. **`merged`
+  / `merged_at` is the field that decides**; a reader that trusts the sha will walk a whole
+  pipeline successfully and produce a confident answer about a landing that never happened.
+
+- **GitHub Actions run ids passed 2^31 long ago** (`31426195637` is one of this estate's), so a
+  column holding one must be `BigInteger`. `Integer` is accepted silently by SQLite and raises
+  `ERROR: integer out of range` only on Postgres — increment 1's int4 finding, one column over.
+
+- **change-manager's DECISION lifecycle is open to a proposed-source change; only the EXECUTION
+  lifecycle is closed.** ADR-0019 increment 1 guarded `claim`/`outcome`/`handoff` with
+  `has_authorized_executor`; `approve`/`defer`/`wontfix`/`resolve`/`reactivate` never call it, and
+  `resolved`/`wontfix` are terminal. So a deploying-merge change CAN reach a terminal state — by
+  decision, not by execution — and increment 1 deliberately renders both buttons for an approved
+  record with no executor. **The increment 2 handoff asserted the opposite** ("no way to reach a
+  terminal state at all") and built its whole central design problem on it; all three options it
+  offered were answering a problem that does not exist. The real constraint is narrower: an
+  observation must not BE an outcome. It writes no `ChangeAttempt` and performs no transition, so
+  the executor guards need no change — nothing is loosened, so nothing can be loosened by mistake.
+
+- **A mutation control that PRESERVES FILE SIZE can be invisible to Python's bytecode cache, and
+  the harness then reports SURVIVED for a mutation the interpreter never loaded.** `if early:` →
+  `if False:` is byte-for-byte the same length, and a `.pyc` is validated on (size, mtime to the
+  second). Observed 2026-08-10: one control alternated between killed and survived across
+  otherwise identical runs, and killed reliably when run by hand seconds later. Any mutation
+  harness must set `PYTHONDONTWRITEBYTECODE=1` (or clear `__pycache__` per mutation) — without it
+  the false answers run in BOTH directions. Relatedly, the estate's "never run two pytest suites
+  concurrently" rule extends to mutation runs for a sharper reason: the mutation IS a tree edit,
+  so any concurrent reader imports a half-mutated tree.
+
+- **`_RESULT_MAP` in `security-standards/src/factory_events/adapters/change_manager.py` is keyed on
+  `event_type` and its keys are `{applied, approved, failed}` — of which exactly ONE, `approved`,
+  is an event type change-manager actually emits.** So 14 of its 15 event types reach the
+  tamper-evident factory-events chain as `result: "unknown"`, **including `attempt_failed`**: the
+  chain records that something happened and not that it failed. Pre-existing and portfolio-level;
+  do not "fix" it by adding a special case for one new event type, which hides the shape of the
+  defect. Note also that a new change-manager event type must be snake_case — `envelope.validate_event`
+  enforces `^[a-z0-9_]+\.[a-z0-9_.\-]+$` on the composed action, so a camelCase or spaced event
+  type HALTS the 03:30 adapter rather than being skipped.
