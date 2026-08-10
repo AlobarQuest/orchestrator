@@ -10,6 +10,15 @@
   one of them an ungated MCP tool — so this rule cannot be implemented as a gate and must be
   observe-and-report, the shape the landing ledger already proves in production. The decision
   stands unchanged; what changes is how it can be built.
+
+  **SCOPE SETTLED 2026-08-10 (Devon).** This rule's first implementation is **SDS-initiated
+  merges into repositories where merging to `main` IS deploying** — `change-manager` and `brain`.
+  How the orchestrator itself gets deployed is deliberately parked. ADR-0020 already gives the
+  estate an audited merge for repositories that do not auto-deploy; this picks up the ones that
+  do. Two lanes reach it — the factory's `pr-merge` and the Dependabot auto-merge gate — and
+  Devon's decision is to **teach the gate workflow to consult change-manager** rather than close
+  that lane for those repos. Plan:
+  `~/docs/software-delivery-system/2026-08-10-adr0019-implementation-plan.md`.
 - **Date:** 2026-08-08
 - **Decided by:** Devon
 - **Relates to:** ADR-0012 (change windows), ADR-0016 (native auto-merge), ADR-0009 (`reach`),
