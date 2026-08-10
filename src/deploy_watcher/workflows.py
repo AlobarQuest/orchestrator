@@ -64,6 +64,13 @@ class Rollout:
 
     path: str
     workflow_id: int
+    # The branch the workflow fires on (`on: push: branches: [...]`). Transcribed rather than
+    # assumed to be the default branch, because the question is not "did this land on the default
+    # branch" but "will the rollout run at all" -- and a pull request merged into some other base
+    # is `merged: true` with a real merge commit that no run will ever exist at. Without this the
+    # settle window turns that into `rollout_never_ran`: a fabricated instance of the headline
+    # finding, which is the class review killed twice.
+    trigger_branch: str = "main"
 
 
 ROLLOUT_WORKFLOWS: dict[str, Rollout] = {

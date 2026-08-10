@@ -27,6 +27,7 @@ PULL_REQUEST_MISSING = "pull_request_missing"
 ROLLOUT_ABSENT = "rollout_never_ran"
 ROLLOUT_STUCK = "rollout_run_never_concluded"
 ROLLOUT_NOT_SUCCESS = "rollout_did_not_succeed"
+MERGE_TARGETED_ANOTHER_BRANCH = "merge_did_not_target_the_rollout_branch"
 MERGE_DIVERGENCE = "observed_at_more_than_one_merge_commit"
 RECHECK_DIVERGENCE = "recorded_facts_no_longer_match_github"
 
@@ -136,6 +137,25 @@ def observe(
         # pull request -- so treating the sha as evidence of a landing would fabricate the
         # `rollout_never_ran` finding against a change that never merged.
         return Outcome(subject, pending="the pull request has not merged")
+
+    if merge.base_ref != rollout.trigger_branch:
+        # Merged, with a real merge commit — and no rollout will ever run at it, because the
+        # workflow fires on a branch this did not land on. Reported as what it is, and returned
+        # BEFORE the settle window can turn it into `rollout_never_ran`: that finding means "the
+        # rollout should have run and did not", and here it never should have. A record asserting
+        # that landing this deploys production is wrong about its own subject, which is worth
+        # saying out loud rather than swallowing.
+        return Outcome(
+            subject,
+            findings=(
+                Finding(
+                    MERGE_TARGETED_ANOTHER_BRANCH,
+                    subject,
+                    f"merged into {merge.base_ref!r}, and {rollout.path} fires on "
+                    f"{rollout.trigger_branch!r} — landing this did not deploy anything",
+                ),
+            ),
+        )
 
     if not reader.workflow_is_addressable(repository, rollout.path, rollout.workflow_id):
         raise Unmeasurable(

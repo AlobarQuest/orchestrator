@@ -15,6 +15,7 @@ import pytest
 
 from deploy_watcher.github import ForbiddenMethodError, GitHubReader, ReadError
 from deploy_watcher.observe import (
+    MERGE_TARGETED_ANOTHER_BRANCH,
     PULL_REQUEST_MISSING,
     ROLLOUT_ABSENT,
     ROLLOUT_NOT_SUCCESS,
@@ -145,6 +146,23 @@ class TestTheJoin:
         assert merge is not None
         assert merge.merged is False
         assert merge.merge_commit_sha is None
+
+    def test_a_merge_into_another_base_is_NOT_a_rollout_that_never_ran(self):
+        """The second half of a review fix whose first half shipped alone.
+
+        Review asked for `merged: true` AND `base.ref == the rollout branch`; only the first was
+        built, and `Merge.base_ref` was read and consumed by nothing. A pull request merged into
+        some other base is `merged: true` with a real merge commit at which no rollout run will
+        ever exist — so past the settle window it flowed straight to `rollout_never_ran`, which
+        is a fabricated instance of this program's headline finding. History has no such pull
+        request in either repository; the guard is for the one that has not happened yet.
+        """
+        other = {**merged_pull(), "base": {"ref": "preview"}}
+        outcome = observe(
+            reader_for(routes(**{f"/repos/{REPO}/pulls/46": other})), REPO, 46, now=NOW
+        )
+        assert [f.kind for f in outcome.findings] == [MERGE_TARGETED_ANOTHER_BRANCH]
+        assert outcome.rollout is None
 
     def test_a_pull_request_github_does_not_have_is_a_finding(self):
         outcome = observe(reader_for({}), REPO, 46, now=NOW)
