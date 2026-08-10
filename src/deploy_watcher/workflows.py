@@ -12,10 +12,11 @@ THERE ARE TWO RUNGS, NOT THREE, AND THE MISSING ONE IS THE INTERESTING RESULT. A
 this registry had `liveness_confirmed` between "the webhook answered" and "the merged build is
 serving", for `brain`, which polls each domain's `/api/health` for any 2xx. Adversarial review
 measured it away. Coolify's swap is a ROLLING update -- the old container serves the public
-domain until the new one is healthy -- and `brain-code`'s three retained deployments took 43, 59
-and 73 seconds. `brain`'s job sleeps 30 seconds and breaks on the first 2xx, so in every
-deployment anyone can still measure, the poll that passed was answered by the container that was
-already running. `change-manager`'s own workflow says so in a comment, which is why it stopped
+domain until the new one is healthy -- and the three `brain-code` deployments whose logs are
+still readable took 43, 59 and 73 seconds. (Three of thirty: the listing tool inlines full logs
+and truncates, so the other 27 were not examined. The mechanism does not depend on the sample.)
+`brain`'s job sleeps 30 seconds and breaks on the first 2xx, so in all three the poll that passed
+was answered by the container that was already running. `change-manager`'s own workflow says so in a comment, which is why it stopped
 doing it. A liveness poll is `trigger_only` plus "the site was not already down", so the LEVEL --
 the machine-readable rung a consumer keys on -- must not claim otherwise. What each revision
 actually checked is preserved verbatim in `attests`, which is where a difference that carries no

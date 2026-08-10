@@ -377,26 +377,49 @@ def _recheck_one(
         # already prefers the row that saw one.
         return False, False
     where = f"item {item_id} run {run_id}"
+    workflow_path = str(stored.get("workflow_path"))
+    merge_commit = str(stored.get("merge_commit_sha"))
     try:
-        job_conclusion, step_conclusion = reader.rollout_step(
+        seen = reader.rollout_step(
             repository,
             int(run_id),
             int(stored.get("run_attempt") or 1),
             str(stored.get("rollout_job") or ""),
             str(stored.get("trigger_step") or ""),
         )
-        revision = reader.blob_revision(
-            repository,
-            str(stored.get("workflow_path")),
-            str(stored.get("merge_commit_sha")),
-        )
+        revision = reader.blob_revision(repository, workflow_path, merge_commit)
+        # THE FIELD THE VERDICT IS DERIVED FROM. An earlier version compared the job and step
+        # conclusions and the workflow revision and stopped -- so a row whose `run_conclusion`
+        # was a lie re-checked clean, and the command's own docstring claimed it re-derived the
+        # assertion that matters. It is the assertion that matters.
+        runs = reader.runs_at_head(repository, workflow_path, merge_commit)
     except ReadError as error:
         _say(f"[incomplete] {where}: {error}")
         return False, True
+    if revision is None:
+        # The file is gone, or the token can no longer read it. That is a failure to measure,
+        # not a divergence -- and fabricating "recorded facts no longer match GitHub" out of a
+        # rename is the one thing a divergence detector must not do.
+        _say(f"[incomplete] {where}: {workflow_path} is unreadable at {merge_commit[:8]}")
+        return False, True
+    job_conclusion, step_conclusion = seen if seen is not None else (None, None)
+    live_run = next(
+        (
+            r
+            for r in runs
+            if r.run_id == int(run_id) and r.run_attempt == int(stored.get("run_attempt") or 1)
+        ),
+        None,
+    )
 
     differences = [
         f"{label} {was!r} -> {now!r}"
         for label, was, now in (
+            (
+                "run conclusion",
+                stored.get("run_conclusion"),
+                live_run.conclusion if live_run else None,
+            ),
             ("rollout job", stored.get("rollout_job_conclusion"), job_conclusion),
             ("trigger step", stored.get("trigger_step_conclusion"), step_conclusion),
             ("workflow revision", stored.get("workflow_revision"), revision),

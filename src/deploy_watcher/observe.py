@@ -13,7 +13,13 @@ from datetime import datetime, timedelta
 
 from deploy_watcher.github import GitHubReader, ReadError
 from deploy_watcher.model import Finding, Merge, Rollout, Run
-from deploy_watcher.workflows import ATTESTS_UNKNOWN, attestation_for, level_of, rollout_for
+from deploy_watcher.workflows import (
+    ATTESTS_UNKNOWN,
+    RolloutWorkflow,
+    attestation_for,
+    level_of,
+    rollout_for,
+)
 
 # How long after a merge a missing rollout run stops meaning "GitHub has not indexed it yet" and
 # starts meaning "it never ran". A plain int with a real default and NO off value: a reporting
@@ -27,9 +33,20 @@ PULL_REQUEST_MISSING = "pull_request_missing"
 ROLLOUT_ABSENT = "rollout_never_ran"
 ROLLOUT_STUCK = "rollout_run_never_concluded"
 ROLLOUT_NOT_SUCCESS = "rollout_did_not_succeed"
+ROLLOUT_JOB_NOT_FOUND = "rollout_job_named_by_the_registry_is_not_in_the_run"
 MERGE_TARGETED_ANOTHER_BRANCH = "merge_did_not_target_the_rollout_branch"
 MERGE_DIVERGENCE = "observed_at_more_than_one_merge_commit"
 RECHECK_DIVERGENCE = "recorded_facts_no_longer_match_github"
+
+
+class NotSettled(Exception):
+    """Not an answer yet, and not a failure to measure. Reported as `pending`, exit 0.
+
+    Distinct from `Unmeasurable` because the two have opposite meanings for a scheduled pass:
+    "come back in an hour" versus "something is broken and the answer is missing". Folding a
+    still-running sibling run into `Unmeasurable` exits 3 for that run's whole duration, under a
+    diagnosis that names the wrong problem.
+    """
 
 
 class Unmeasurable(Exception):
@@ -61,6 +78,11 @@ def _unanimous(runs: list[Run]) -> Run:
     """
     if len(runs) == 1:
         return runs[0]
+    if any(not run.concluded for run in runs):
+        # Not disagreement — one of them has not finished. Reporting `Unmeasurable` here would
+        # exit 3 for the sibling's whole duration, with a diagnosis ("they do not agree") that
+        # names the wrong problem.
+        raise NotSettled(f"{len(runs)} rollout runs at this commit and one is still running")
     conclusions = {run.conclusion for run in runs}
     if len(conclusions) != 1:
         raise Unmeasurable(
@@ -108,6 +130,27 @@ def _nothing_ran(
     )
 
 
+def _wrong_branch(subject: str, merge: Merge, workflow: RolloutWorkflow) -> Outcome:
+    """Merged, with a real merge commit — and no rollout will ever run at it.
+
+    Returned BEFORE the settle window can turn it into `rollout_never_ran`: that finding means
+    "the rollout should have run and did not", and here it never should have. A change record
+    asserting that landing this deploys production is wrong about its own subject, which is
+    worth saying out loud rather than swallowing.
+    """
+    return Outcome(
+        subject,
+        findings=(
+            Finding(
+                MERGE_TARGETED_ANOTHER_BRANCH,
+                subject,
+                f"merged into {merge.base_ref!r}, and {workflow.path} fires on "
+                f"{workflow.trigger_branch!r} — landing this did not deploy anything",
+            ),
+        ),
+    )
+
+
 def observe(
     reader: GitHubReader,
     repository: str,
@@ -139,23 +182,7 @@ def observe(
         return Outcome(subject, pending="the pull request has not merged")
 
     if merge.base_ref != workflow.trigger_branch:
-        # Merged, with a real merge commit — and no rollout will ever run at it, because the
-        # workflow fires on a branch this did not land on. Reported as what it is, and returned
-        # BEFORE the settle window can turn it into `rollout_never_ran`: that finding means "the
-        # rollout should have run and did not", and here it never should have. A record asserting
-        # that landing this deploys production is wrong about its own subject, which is worth
-        # saying out loud rather than swallowing.
-        return Outcome(
-            subject,
-            findings=(
-                Finding(
-                    MERGE_TARGETED_ANOTHER_BRANCH,
-                    subject,
-                    f"merged into {merge.base_ref!r}, and {workflow.path} fires on "
-                    f"{workflow.trigger_branch!r} — landing this did not deploy anything",
-                ),
-            ),
-        )
+        return _wrong_branch(subject, merge, workflow)
 
     if not reader.workflow_is_addressable(repository, workflow.path, workflow.workflow_id):
         raise Unmeasurable(
@@ -177,16 +204,23 @@ def observe(
             subject, merge, workflow.path, revision, attestation, early=now < settled_by
         )
 
-    run = _unanimous(runs)
+    try:
+        run = _unanimous(runs)
+    except NotSettled as not_yet:
+        return _not_settled_yet(subject, str(not_yet), early=now < settled_by)
     if not run.concluded:
-        if now < settled_by:
-            return Outcome(subject, pending=f"the rollout run is {run.status}")
-        return Outcome(
-            subject,
-            findings=(Finding(ROLLOUT_STUCK, subject, f"run {run.run_id} is still {run.status}"),),
+        return _not_settled_yet(
+            subject, f"run {run.run_id} is still {run.status}", early=now < settled_by
         )
 
     return _settled(reader, subject, merge, workflow.path, revision, attestation, run)
+
+
+def _not_settled_yet(subject: str, why: str, *, early: bool) -> Outcome:
+    """A run that has not concluded. Inside the window that is `pending`; outside it, a finding."""
+    if early:
+        return Outcome(subject, pending=why)
+    return Outcome(subject, findings=(Finding(ROLLOUT_STUCK, subject, why),))
 
 
 def _settled(
@@ -201,15 +235,32 @@ def _settled(
     """A rollout run that concluded: read the second axis and decide whether it is a finding."""
     repository = merge.repository
     transcribed = attestation_for(revision)
-    job_conclusion = step_conclusion = None
+    job_name = job_conclusion = step_conclusion = None
+    drifted: tuple[Finding, ...] = ()
     if transcribed is not None:
-        job_conclusion, step_conclusion = reader.rollout_step(
+        seen = reader.rollout_step(
             repository,
             run.run_id,
             run.run_attempt,
             transcribed.rollout_job,
             transcribed.trigger_step,
         )
+        if seen is None:
+            # The transcription names a job this run does not have. Reported, and the job name
+            # is deliberately NOT carried onto the observation: sending it would assert that the
+            # watcher looked at that job and found nothing, which the server reads as evidence.
+            drifted = (
+                Finding(
+                    ROLLOUT_JOB_NOT_FOUND,
+                    subject,
+                    f"the registry names job {transcribed.rollout_job!r} for revision "
+                    f"{revision[:8]}, and run {run.run_id} attempt {run.run_attempt} has no such "
+                    f"job — the transcription has drifted from the workflow",
+                ),
+            )
+        else:
+            job_name = transcribed.rollout_job
+            job_conclusion, step_conclusion = seen
     concurrent = reader.concurrent_rollout_run(repository, workflow_path, run)
 
     observed = Rollout(
@@ -219,16 +270,16 @@ def _settled(
         attestation=attestation,
         run=run,
         settled=True,
-        rollout_job=transcribed.rollout_job if transcribed else None,
+        rollout_job=job_name,
         rollout_job_conclusion=job_conclusion,
-        trigger_step=transcribed.trigger_step if transcribed else None,
+        trigger_step=transcribed.trigger_step if transcribed and job_name else None,
         trigger_step_conclusion=step_conclusion,
         concurrent_run_id=concurrent,
     )
 
-    findings: tuple[Finding, ...] = ()
+    findings: tuple[Finding, ...] = drifted
     if run.conclusion != "success":
-        findings = (
+        findings += (
             Finding(
                 ROLLOUT_NOT_SUCCESS,
                 subject,
@@ -251,12 +302,15 @@ def unclassified(rollout: Rollout) -> bool:
 
 __all__ = [
     "MERGE_DIVERGENCE",
+    "MERGE_TARGETED_ANOTHER_BRANCH",
     "PULL_REQUEST_MISSING",
     "RECHECK_DIVERGENCE",
     "ROLLOUT_ABSENT",
     "ROLLOUT_NOT_SUCCESS",
+    "ROLLOUT_JOB_NOT_FOUND",
     "ROLLOUT_STUCK",
     "SETTLE_SECONDS",
+    "NotSettled",
     "Outcome",
     "ReadError",
     "Unmeasurable",

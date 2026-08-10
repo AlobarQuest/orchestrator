@@ -2471,11 +2471,18 @@ style of that module.
 
 - **A workflow RUN's conclusion cannot distinguish "nothing was deployed" from "production was
   deployed and is broken", and those two want opposite remedies.** Measured 2026-08-10 across
-  every rollout failure in `change-manager` and `brain`: all three carry `conclusion: "failure"`
-  at the run, and two of them never reached production — one because the test job failed and the
-  rollout job was `skipped`, one because the Coolify webhook call itself failed. Acting on a
-  run-level `failed` would, in those two, have made the rollback the day's only production
-  mutation. **Read JOBS and STEPS** (`/actions/runs/{id}/attempts/{n}/jobs`, which also returns
+  every failing rollout ATTEMPT in `change-manager` and `brain` — **six of them across three
+  runs**, and the attempt granularity is itself the finding. **Three never reached production**:
+  two change-manager attempts (one where the test job failed and the rollout job was `skipped`,
+  one where the Coolify webhook call itself failed) and brain run `27847308046` attempt 1, where
+  `build-and-push` failed and `deploy` was skipped. Acting on a run-level `failed` would, in
+  those three, have made the rollback the day's only production mutation. **And one failing
+  rollout attempt sits inside a run whose conclusion is `success`** — brain pull request #2,
+  attempt 1 died at the trigger step and attempt 2 passed. So the run conclusion is neither
+  necessary nor sufficient for "did the rollout fail", in both directions. A first draft of this
+  bullet said "all three carry `conclusion: failure`", counting failing RUNS and calling them
+  failures; the correction came from a reviewer re-deriving the census rather than reading it.
+  **Read JOBS and STEPS** (`/actions/runs/{id}/attempts/{n}/jobs`, which also returns
   `steps[].conclusion`) — the attempt, not the run, because a re-run supersedes its predecessor
   and `/runs/{id}/jobs` answers about a different attempt than the row you are writing. Note the
   App has no `checks` permission so the Checks API 403s; this is the Actions API and needs only a
@@ -2515,8 +2522,9 @@ style of that module.
 
 - **`_RESULT_MAP` in `security-standards/src/factory_events/adapters/change_manager.py` is keyed on
   `event_type` and its keys are `{applied, approved, failed}` — of which exactly ONE, `approved`,
-  is an event type change-manager actually emits.** So 14 of its 15 event types reach the
-  tamper-evident factory-events chain as `result: "unknown"`, **including `attempt_failed`**: the
+  is an event type change-manager actually emits.** So 14 of its 15 event types on `main` — 15 of
+  16 once ADR-0019 increment 2 adds `deploy_observed` — reach the tamper-evident factory-events
+  chain as `result: "unknown"`, **including `attempt_failed`**: the
   chain records that something happened and not that it failed. Pre-existing and portfolio-level;
   do not "fix" it by adding a special case for one new event type, which hides the shape of the
   defect. Note also that a new change-manager event type must be snake_case — `envelope.validate_event`

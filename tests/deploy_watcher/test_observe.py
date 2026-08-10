@@ -18,6 +18,7 @@ from deploy_watcher.observe import (
     MERGE_TARGETED_ANOTHER_BRANCH,
     PULL_REQUEST_MISSING,
     ROLLOUT_ABSENT,
+    ROLLOUT_JOB_NOT_FOUND,
     ROLLOUT_NOT_SUCCESS,
     ROLLOUT_STUCK,
     Unmeasurable,
@@ -81,11 +82,26 @@ def jobs(job_conclusion: str = "success", step_conclusion: str = "success") -> d
     }
 
 
-def reader_for(routes: dict[str, object]) -> GitHubReader:
+def reader_for(routes: dict[str, object], *, status: int = 200) -> GitHubReader:
+    """A fake GitHub that keys on PATH **and the query parameters that carry meaning**.
+
+    An earlier version keyed on the path alone, and that made two load-bearing parameters
+    invisible to the entire suite: dropping `ref=` from `blob_revision` (which reads the
+    workflow at HEAD instead of at the merge commit — the whole pinning mechanism) and dropping
+    `head_sha=` from `runs_at_head` (which is the join between this merge and this run) both
+    left every test green. Mutation controls inherited the blindness. The required parameters
+    are part of the route key here, so omitting one 404s.
+    """
+
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path not in routes:
+        key = request.url.path
+        params = dict(request.url.params)
+        for name in ("ref", "head_sha"):
+            if name in params:
+                key = f"{key}?{name}={params[name]}"
+        if key not in routes:
             return httpx.Response(404, json=None)
-        return httpx.Response(200, json=routes[request.url.path])
+        return httpx.Response(status, json=routes[key])
 
     return GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
 
@@ -94,7 +110,12 @@ def routes(**overrides) -> dict[str, object]:
     base: dict[str, object] = {
         f"/repos/{REPO}/pulls/46": merged_pull(),
         f"/repos/{REPO}/actions/workflows/{WORKFLOW}": {"id": WORKFLOW_ID, "state": "active"},
-        f"/repos/{REPO}/contents/{WORKFLOW}": {"sha": REVISION},
+        f"/repos/{REPO}/contents/{WORKFLOW}?ref={MERGE}": {"sha": REVISION},
+        f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={MERGE}": {
+            "total_count": 1,
+            "workflow_runs": [run()],
+        },
+        # `concurrent_rollout_run` asks the same path with no head_sha.
         f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs": {
             "total_count": 1,
             "workflow_runs": [run()],
@@ -188,7 +209,7 @@ class TestRefusalsRatherThanFindings:
                 observe(reader, REPO, 46, now=NOW)
 
     def test_a_workflow_that_did_not_exist_at_the_merge_is_refused(self):
-        empty = {k: v for k, v in routes().items() if not k.endswith(f"contents/{WORKFLOW}")}
+        empty = {k: v for k, v in routes().items() if f"contents/{WORKFLOW}" not in k}
         with pytest.raises(Unmeasurable, match="did not exist"):
             observe(reader_for(empty), REPO, 46, now=NOW)
 
@@ -196,7 +217,7 @@ class TestRefusalsRatherThanFindings:
         reader = reader_for(
             routes(
                 **{
-                    f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs": {
+                    f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={MERGE}": {
                         "total_count": 2,
                         "workflow_runs": [run(), run("failure", run_id=999)],
                     }
@@ -210,7 +231,7 @@ class TestRefusalsRatherThanFindings:
         reader = reader_for(
             routes(
                 **{
-                    f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs": {
+                    f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={MERGE}": {
                         "total_count": 5,
                         "workflow_runs": [run()],
                     }
@@ -225,7 +246,7 @@ class TestSettleWindow:
     def _no_runs(self):
         return routes(
             **{
-                f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs": {
+                f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={MERGE}": {
                     "total_count": 0,
                     "workflow_runs": [],
                 }
@@ -246,7 +267,7 @@ class TestSettleWindow:
     def test_a_run_that_never_concludes_is_eventually_a_finding(self):
         stuck = routes(
             **{
-                f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs": {
+                f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={MERGE}": {
                     "total_count": 1,
                     "workflow_runs": [run(conclusion=None, status="in_progress")],
                 }
@@ -263,7 +284,7 @@ class TestSettleWindow:
         """`status` and `conclusion` are separate fields and the second is documented nullable."""
         odd = routes(
             **{
-                f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs": {
+                f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={MERGE}": {
                     "total_count": 1,
                     "workflow_runs": [run(conclusion=None, status="completed")],
                 }
@@ -279,7 +300,7 @@ class TestTheSecondAxis:
         reader = reader_for(
             routes(
                 **{
-                    f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs": {
+                    f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={MERGE}": {
                         "total_count": 1,
                         "workflow_runs": [run("failure")],
                     },
@@ -300,7 +321,7 @@ class TestTheSecondAxis:
         reader = reader_for(
             routes(
                 **{
-                    f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs": {
+                    f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={MERGE}": {
                         "total_count": 1,
                         "workflow_runs": [run(attempt=3)],
                     },
@@ -315,14 +336,18 @@ class TestTheSecondAxis:
 
     def test_an_unclassified_revision_reads_the_jobs_of_nothing(self):
         """No transcription means nobody said which job talks to production, so none is read."""
-        reader = reader_for(routes(**{f"/repos/{REPO}/contents/{WORKFLOW}": {"sha": "b" * 40}}))
+        reader = reader_for(
+            routes(**{f"/repos/{REPO}/contents/{WORKFLOW}?ref={MERGE}": {"sha": "b" * 40}})
+        )
         outcome = observe(reader, REPO, 46, now=NOW)
         assert outcome.rollout is not None
         assert outcome.rollout.attestation == ATTESTS_UNKNOWN
         assert outcome.rollout.rollout_job is None
 
     def test_an_older_revision_is_recorded_as_unverified_never_upgraded(self):
-        reader = reader_for(routes(**{f"/repos/{REPO}/contents/{WORKFLOW}": {"sha": OLD_REVISION}}))
+        reader = reader_for(
+            routes(**{f"/repos/{REPO}/contents/{WORKFLOW}?ref={MERGE}": {"sha": OLD_REVISION}})
+        )
         outcome = observe(reader, REPO, 46, now=NOW)
         assert outcome.rollout is not None
         assert outcome.rollout.attestation == ATTESTS_UNVERIFIED
@@ -353,3 +378,90 @@ class TestTheReaderOnlyEverReads:
         reader.read_merge(REPO, 46)
         reader.blob_revision(REPO, WORKFLOW, MERGE)
         assert set(seen) == {"GET"}
+
+
+class TestReviewFixes:
+    """One test per KILL from the post-implementation review. Each names what it protects."""
+
+    def test_a_301_IS_A_REFUSAL_not_an_object_to_read_merged_off(self):
+        """`follow_redirects` is False and GitHub 301s a renamed repository with a JSON body.
+
+        With `>= 400` as the bar, that body was parsed as the pull request, `merged` read as
+        absent, and the pass reported a quiet `pending` at exit 0 — every hour, forever, for a
+        merge that deployed production. `read_merge` is the one reader whose malformed answer
+        became silence rather than a refusal.
+        """
+        reader = reader_for(routes(), status=301)
+        with pytest.raises(ReadError, match="301"):
+            observe(reader, REPO, 46, now=NOW)
+
+    def test_an_object_that_is_not_the_pull_request_asked_for_is_refused(self):
+        wrong = {**merged_pull(), "number": 999}
+        reader = reader_for(routes(**{f"/repos/{REPO}/pulls/46": wrong}))
+        with pytest.raises(ReadError, match="is not that pull request"):
+            observe(reader, REPO, 46, now=NOW)
+
+    def test_registry_drift_is_a_FINDING_and_claims_no_job(self):
+        """The registry naming a job the run does not have must not read as "nothing deployed".
+
+        A skipped job IS reported, with `conclusion: "skipped"` — measured on every attempt of
+        every rollout failure in this estate's history — so the absent-job branch's real
+        population was drift, and it answered `no`: the value that says do not roll back,
+        asserted about a rollout that may have succeeded.
+        """
+        renamed = {
+            "total_count": 1,
+            "jobs": [{"name": "Build and deploy", "conclusion": "success", "steps": []}],
+        }
+        reader = reader_for(
+            routes(**{f"/repos/{REPO}/actions/runs/31426195637/attempts/1/jobs": renamed})
+        )
+        outcome = observe(reader, REPO, 46, now=NOW)
+        assert [f.kind for f in outcome.findings] == [ROLLOUT_JOB_NOT_FOUND]
+        assert outcome.rollout is not None
+        # The job name is NOT carried: sending it would assert the watcher looked at that job.
+        assert outcome.rollout.rollout_job is None
+        assert outcome.rollout.trigger_step is None
+
+    def test_a_sibling_still_running_is_pending_not_disagreement(self):
+        """Two runs at one head, one unfinished, is "come back" — not exit 3 with a false name."""
+        both = {
+            "total_count": 2,
+            "workflow_runs": [run(), run(conclusion=None, status="in_progress", run_id=999)],
+        }
+        reader = reader_for(
+            routes(**{f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={MERGE}": both})
+        )
+        soon = datetime(2026, 8, 10, 19, 55, tzinfo=UTC)
+        outcome = observe(reader, REPO, 46, now=soon)
+        assert outcome.findings == ()
+        assert outcome.pending is not None and "still running" in outcome.pending
+
+
+class TestTheQueryParametersAreLoadBEARING:
+    """Both of these survived every mutation while the fake keyed on the path alone."""
+
+    def test_the_workflow_is_read_AT_THE_MERGE_COMMIT(self):
+        """`ref=` is the entire pinned-to-the-bytes mechanism. Without it the watcher reads the
+        workflow at HEAD and attributes today's meaning to an old landing."""
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(str(request.url))
+            return httpx.Response(200, json={"sha": REVISION})
+
+        reader = GitHubReader(token="f", transport=httpx.MockTransport(handler))
+        reader.blob_revision(REPO, WORKFLOW, MERGE)
+        assert seen == [f"https://api.github.com/repos/{REPO}/contents/{WORKFLOW}?ref={MERGE}"]
+
+    def test_runs_are_asked_for_AT_THIS_HEAD(self):
+        """`head_sha=` is the join between this merge and this run."""
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(str(request.url))
+            return httpx.Response(200, json={"total_count": 0, "workflow_runs": []})
+
+        reader = GitHubReader(token="f", transport=httpx.MockTransport(handler))
+        reader.runs_at_head(REPO, WORKFLOW, MERGE)
+        assert len(seen) == 1 and f"head_sha={MERGE}" in seen[0]

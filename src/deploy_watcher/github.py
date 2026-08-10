@@ -81,7 +81,13 @@ class GitHubReader:
             ) from error
         if response.status_code == 404:
             return None
-        if response.status_code >= 400:
+        if response.status_code != 200:
+            # ANY other status, not just >= 400. `follow_redirects` is False by default, and
+            # GitHub answers 301 with a JSON body for a repository that has been renamed or
+            # transferred -- a body with no `merged` key, which `read_merge` would read as "not
+            # merged" and report as a quiet `pending`, at exit 0, every hour, forever. The one
+            # reader in this program whose malformed answer becomes silence rather than a
+            # refusal is the front door.
             raise ReadError(f"github rejected GET {path}: {response.status_code}")
         try:
             return response.json()
@@ -99,6 +105,10 @@ class GitHubReader:
             return None
         if not isinstance(body, dict):
             raise ReadError(f"pull request {repository}#{number} is not an object")
+        if body.get("number") != number:
+            # Believe an object only when it says it is the one that was asked for. Everything
+            # downstream keys on this pull request having merged.
+            raise ReadError(f"the answer to {repository}#{number} is not that pull request")
         merged = bool(body.get("merged"))
         sha = body.get("merge_commit_sha")
         base = body.get("base")
@@ -147,10 +157,18 @@ class GitHubReader:
 
     def rollout_step(
         self, repository: str, run_id: int, attempt: int, job_name: str, step_name: str
-    ) -> tuple[str | None, str | None]:
+    ) -> tuple[str | None, str | None] | None:
         """How the rollout job and its trigger step concluded on ONE attempt of a run.
 
-        `(job_conclusion, step_conclusion)`, either None when the named thing is not in the run.
+        Returns `(job_conclusion, step_conclusion)` when the named job IS in the run, and
+        **`None` when it is not** — which is registry drift, not evidence about production.
+        Collapsing the two into a bare `(None, None)` was a real defect: a skipped job is
+        reported by GitHub with `conclusion: "skipped"` (measured on all three of this estate's
+        rollout failures, on every attempt), so the only population reaching a `job is None`
+        branch was a registry that named a job the run does not have — and the caller answered
+        `no`, "nothing was deployed, do not roll back", for a rollout that may well have
+        succeeded.
+
         The specific attempt is addressed rather than the run, because a re-run supersedes its
         predecessor and asking `/runs/{id}/jobs` after one would answer about a different
         attempt than the row being written or re-checked.
@@ -188,7 +206,7 @@ class GitHubReader:
                 str(job_conclusion) if job_conclusion else None,
                 str(step_conclusion) if step_conclusion else None,
             )
-        return None, None
+        return None
 
     def concurrent_rollout_run(self, repository: str, workflow_path: str, run: Run) -> int | None:
         """The id of another rollout run that was in flight while this one was, if any.
