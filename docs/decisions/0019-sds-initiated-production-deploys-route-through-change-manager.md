@@ -1,6 +1,15 @@
 # ADR-0019 — SDS-initiated production deploys route through change-manager
 
 - **Status:** Accepted (principle). Implementation not started.
+  **THREE OF THIS DOCUMENT'S OWN PREMISES WERE MEASURED WRONG on 2026-08-10** — see
+  `~/docs/software-delivery-system/2026-08-10-adr0019-implementation-plan.md`. In short:
+  `WindowRun` is a log of runs that happened, **not** a window definition, so the change-window
+  concept does need inventing; a change record cannot attest who made it, because every `/api/*`
+  route shares one static bearer and `actor` is caller-declared free text; and **there is no
+  chokepoint through which production deploys pass** — Coolify's `/deploy` is reachable four ways,
+  one of them an ungated MCP tool — so this rule cannot be implemented as a gate and must be
+  observe-and-report, the shape the landing ledger already proves in production. The decision
+  stands unchanged; what changes is how it can be built.
 - **Date:** 2026-08-08
 - **Decided by:** Devon
 - **Relates to:** ADR-0012 (change windows), ADR-0016 (native auto-merge), ADR-0009 (`reach`),
