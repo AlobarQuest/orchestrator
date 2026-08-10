@@ -74,9 +74,14 @@ BASES = (BASIS_NONE, BASIS_RULE, BASIS_HUMAN, BASIS_FACTORY, BASIS_UNATTRIBUTED)
 
 NO_BASIS_REASON = "pushed to the branch with no pull request; nothing recorded a permission"
 UNATTRIBUTED_REASON = "landed by a machine with no gate run observed on the pull request"
+# EVERY STRING THAT REACHES `facts` IS FROZEN AT THE FIRST LANDING THAT CARRIES IT. Correcting one
+# afterwards re-encodes the row, which is an `observation_conflict` on a landing where nothing
+# actually changed -- so this says only what stays true. In particular it does NOT name where the
+# claim was read from: a first draft said "from the landing commit", and the fall-back added hours
+# later can take it from the pull request's head instead.
 FACTORY_REASON = (
-    "landed by the factory, claiming a work unit whose criteria it says were met; the claim is "
-    "read from the landing commit and is checked against the orchestrator by the audit"
+    "landed by the factory, claiming a work unit whose criteria it says were met; the claim is the "
+    "runner's own and is checked against the orchestrator by the audit"
 )
 
 
