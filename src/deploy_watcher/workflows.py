@@ -53,7 +53,7 @@ ATTESTATION_LEVELS = frozenset({ATTESTS_REVISION, ATTESTS_UNVERIFIED, ATTESTS_UN
 
 
 @dataclass(frozen=True)
-class Rollout:
+class RolloutWorkflow:
     """Which workflow is a repository's rollout, addressed two ways.
 
     By PATH because that is how a run is queried, and by ID because a path that has been renamed
@@ -73,9 +73,9 @@ class Rollout:
     trigger_branch: str = "main"
 
 
-ROLLOUT_WORKFLOWS: dict[str, Rollout] = {
-    "alobarquest/change-manager": Rollout(".github/workflows/deploy.yml", 295785634),
-    "alobarquest/brain": Rollout(".github/workflows/ci.yml", 299003284),
+ROLLOUT_WORKFLOWS: dict[str, RolloutWorkflow] = {
+    "alobarquest/change-manager": RolloutWorkflow(".github/workflows/deploy.yml", 295785634),
+    "alobarquest/brain": RolloutWorkflow(".github/workflows/ci.yml", 299003284),
 }
 
 
@@ -207,7 +207,7 @@ REGISTRY: dict[str, Attestation] = {
 }
 
 
-def rollout_for(repository: str) -> Rollout | None:
+def rollout_for(repository: str) -> RolloutWorkflow | None:
     """The workflow whose run is this repository's rollout, or None if nobody said."""
     return ROLLOUT_WORKFLOWS.get(repository.lower())
 

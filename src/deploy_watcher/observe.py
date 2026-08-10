@@ -119,8 +119,8 @@ def observe(
     """Everything observable about the rollout one pull request caused."""
     subject = f"{repository}#{pull_request_number}"
 
-    rollout = rollout_for(repository)
-    if rollout is None:
+    workflow = rollout_for(repository)
+    if workflow is None:
         # Refused rather than guessed. "The workflow that looks like a deploy" is the parser this
         # program does not have, and guessing wrong points every later hop at the wrong run.
         raise Unmeasurable(f"no rollout workflow is declared for {repository}")
@@ -138,7 +138,7 @@ def observe(
         # `rollout_never_ran` finding against a change that never merged.
         return Outcome(subject, pending="the pull request has not merged")
 
-    if merge.base_ref != rollout.trigger_branch:
+    if merge.base_ref != workflow.trigger_branch:
         # Merged, with a real merge commit — and no rollout will ever run at it, because the
         # workflow fires on a branch this did not land on. Reported as what it is, and returned
         # BEFORE the settle window can turn it into `rollout_never_ran`: that finding means "the
@@ -151,30 +151,30 @@ def observe(
                 Finding(
                     MERGE_TARGETED_ANOTHER_BRANCH,
                     subject,
-                    f"merged into {merge.base_ref!r}, and {rollout.path} fires on "
-                    f"{rollout.trigger_branch!r} — landing this did not deploy anything",
+                    f"merged into {merge.base_ref!r}, and {workflow.path} fires on "
+                    f"{workflow.trigger_branch!r} — landing this did not deploy anything",
                 ),
             ),
         )
 
-    if not reader.workflow_is_addressable(repository, rollout.path, rollout.workflow_id):
+    if not reader.workflow_is_addressable(repository, workflow.path, workflow.workflow_id):
         raise Unmeasurable(
-            f"{rollout.path} in {repository} is not the active workflow {rollout.workflow_id}"
+            f"{workflow.path} in {repository} is not the active workflow {workflow.workflow_id}"
         )
 
-    revision = reader.blob_revision(repository, rollout.path, merge.merge_commit_sha)
+    revision = reader.blob_revision(repository, workflow.path, merge.merge_commit_sha)
     if revision is None:
         raise Unmeasurable(
-            f"{rollout.path} did not exist in {repository} at {merge.merge_commit_sha[:8]}"
+            f"{workflow.path} did not exist in {repository} at {merge.merge_commit_sha[:8]}"
         )
     attestation = level_of(revision)
 
-    runs = reader.runs_at_head(repository, rollout.path, merge.merge_commit_sha)
+    runs = reader.runs_at_head(repository, workflow.path, merge.merge_commit_sha)
     settled_by = merge.merged_at + timedelta(seconds=settle_seconds)
 
     if not runs:
         return _nothing_ran(
-            subject, merge, rollout.path, revision, attestation, early=now < settled_by
+            subject, merge, workflow.path, revision, attestation, early=now < settled_by
         )
 
     run = _unanimous(runs)
@@ -186,7 +186,7 @@ def observe(
             findings=(Finding(ROLLOUT_STUCK, subject, f"run {run.run_id} is still {run.status}"),),
         )
 
-    return _settled(reader, subject, merge, rollout.path, revision, attestation, run)
+    return _settled(reader, subject, merge, workflow.path, revision, attestation, run)
 
 
 def _settled(
