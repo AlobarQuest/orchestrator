@@ -240,9 +240,14 @@ def test_an_orchestrator_that_cannot_answer_the_factory_check_makes_the_pass_INC
     audit, body = _run(_routes(), ledger, recorder)
 
     assert audit.unavailable
-    assert audit.findings == ()
     assert body["facts"]["unavailable"] is True
     assert "[UNAVAILABLE]" in body["summary"]
+    # And everything the pass measured WITHOUT asking the orchestrator survives. Letting the
+    # caller's blanket catch take the repository would discard the rule and stall findings too --
+    # findings that need no orchestrator at all -- so one unreadable landing would blank three
+    # detectors instead of one.
+    assert [finding.kind for finding in audit.findings] == [STALL_ELIGIBLE_NOT_ARMED]
+    assert audit.landings_audited == 1
 
 
 def test_a_factory_landing_the_orchestrator_confirms_is_recorded_as_audited_and_clean() -> None:

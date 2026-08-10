@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 
 from landing_ledger.audit import (
-    CAVEAT_MERGE_COMMIT_UNRECORDED,
     CAVEAT_NO_RULE_INSTALLED,
     CAVEAT_RULE_SELF_MODIFIED,
     DRIFT_CHECK_NOT_GREEN,
@@ -25,6 +24,7 @@ from landing_ledger.audit import (
     FACTORY_FINGERPRINT_MISMATCH,
     FACTORY_HUMAN_ADJUDICATION,
     FACTORY_LANDING_UNBOUND,
+    FACTORY_LANDING_UNCLAIMED,
     FACTORY_NOT_VERIFIER_DECIDED,
     FACTORY_UNIT_NOT_COMPLETED,
     FACTORY_UNIT_UNKNOWN,
@@ -214,6 +214,7 @@ def history(
     repository: str = FACTORY_REPO,
     pr_number: int = 66,
     merge_commit: str | None = MERGE_COMMIT,
+    head_sha: str = HEAD,
     fingerprint: str = FINGERPRINT,
 ) -> list[dict[str, Any]]:
     return [
@@ -225,7 +226,7 @@ def history(
                 "status": status,
                 "repository": repository,
                 "pr_number": pr_number,
-                "head_sha": HEAD,
+                "head_sha": head_sha,
                 "merge_commit_sha": merge_commit,
                 "authority_fingerprint": fingerprint,
             },
@@ -526,10 +527,14 @@ def test_a_current_adjudication_decided_by_anyone_but_the_verifier_FIRES() -> No
 
 
 def test_an_unrecorded_decider_is_refused_rather_than_read_as_consent() -> None:
-    """NULL is the historical rows' value and is never evidence that a machine decided."""
+    """NULL is the historical rows' value and is never evidence that a machine decided. It is
+    reported as `unrecorded` -- the word the evidence pack's own markdown uses for it -- so a
+    reader does not meet two spellings of one absence, and never as a bare `None`, which reads
+    like a role somebody chose."""
     findings, _ = audit_factory_landing(factory_landing(), units(pack(decided_by_role=None)))
 
     assert kinds(findings) == [FACTORY_HUMAN_ADJUDICATION]
+    assert findings[0].detail.endswith("unrecorded")
 
 
 def test_a_landing_the_named_unit_holds_no_record_of_making_FIRES() -> None:
@@ -558,24 +563,59 @@ def test_a_record_naming_a_different_merge_commit_FIRES() -> None:
     assert "cccccccccccc" in findings[0].detail
 
 
-def test_a_retry_that_found_the_pull_request_already_landed_is_a_CAVEAT_not_a_finding() -> None:
-    """`already_merged` is what a lost response records, and it carries no commit. Requiring one
-    would turn the retry path the merge record exists for into a permanent finding."""
-    findings, caveats = audit_factory_landing(
-        factory_landing(), units(unit_history=history(status="already_merged", merge_commit=None))
-    )
+def test_only_a_MERGED_record_asserts_the_orchestrator_made_this_landing() -> None:
+    """`merged` is the one status meaning "we called, the remote said merged, here is the commit".
+    Neither other status means what its name suggests, and each has TWO writers in `pr_merge.py`:
+    `already_merged` fires for the lost-response retry (our act) AND, before the call is made, for
+    a pull request somebody else had already landed -- "somebody else's act, never as ours" in its
+    own words; `refused` fires for the genuinely ambiguous outcome AND for a confirmed
+    non-landing. Neither can carry authorship, so a landing whose only record is one of them is
+    reported rather than excused.
+    """
+    for status in ("already_merged", "refused"):
+        findings, caveats = audit_factory_landing(
+            factory_landing(), units(unit_history=history(status=status, merge_commit=None))
+        )
+        assert kinds(findings) == [FACTORY_LANDING_UNCLAIMED], status
+        assert status in findings[0].detail
+        assert caveats == (), status
 
-    assert findings == ()
-    assert kinds(caveats) == [CAVEAT_MERGE_COMMIT_UNRECORDED]
+
+def test_nothing_about_a_factory_landing_is_reported_as_a_CAVEAT() -> None:
+    """A caveat drives no exit code, so it is where a doubt goes to be ignored. Every doubt about
+    an act this estate cannot undo belongs in the lane a person actually reads."""
+    for unit_history in (
+        history(),
+        history(status="already_merged", merge_commit=None),
+        history(status="refused"),
+        history(merge_commit="c" * 40),
+        history(pr_number=9),
+    ):
+        assert audit_factory_landing(factory_landing(), units(unit_history=unit_history))[1] == ()
 
 
-def test_a_refused_landing_record_does_not_bind_a_landing() -> None:
-    """A `refused` row means the factory did not land it. Something else did."""
+def test_a_record_of_a_DIFFERENT_pull_request_does_not_bind_however_it_ended() -> None:
+    """Recognising all three statuses is about what the row SAYS, never about which pull request
+    it names. All three bind only the repository and pull request actually recorded."""
+    for status in ("merged", "already_merged", "refused"):
+        findings, _ = audit_factory_landing(
+            factory_landing(), units(unit_history=history(status=status, pr_number=9))
+        )
+        assert kinds(findings) == [FACTORY_LANDING_UNBOUND], status
+
+
+def test_a_record_naming_a_different_HEAD_FIRES_even_when_it_carries_no_commit() -> None:
+    """The head the orchestrator NAMED in its call, which the remote refused anything else for.
+    Without it the binding rests on a pull-request NUMBER whenever a status carries no commit --
+    and a number says nothing about content, which is exactly the case that needed it.
+    """
     findings, _ = audit_factory_landing(
-        factory_landing(), units(unit_history=history(status="refused"))
+        factory_landing(),
+        units(unit_history=history(status="already_merged", merge_commit=None, head_sha="d" * 40)),
     )
 
-    assert kinds(findings) == [FACTORY_LANDING_UNBOUND]
+    assert set(kinds(findings)) == {FACTORY_LANDING_UNCLAIMED, FACTORY_LANDING_UNBOUND}
+    assert "dddddddddddd" in findings[-1].detail
 
 
 def test_a_landing_made_under_an_authority_the_unit_no_longer_carries_FIRES() -> None:
@@ -597,8 +637,19 @@ def test_the_factory_half_survives_a_stored_shape_it_did_not_expect() -> None:
     """Stored facts are read back from the orchestrator and are not this module's construction."""
     assert audit_factory_landing(None, NO_UNITS) == ((), ())
     assert audit_factory_landing({"permitted_by": "not a mapping"}, NO_UNITS) == ((), ())
-    facts = factory_landing(work_unit=12)
-    assert kinds(audit_factory_landing(facts, NO_UNITS)[0]) == [FACTORY_CLAIM_UNREADABLE]
+
+
+def test_a_claim_that_cannot_NAME_a_unit_is_a_finding_rather_than_an_unmeasured_repository() -> (
+    None
+):
+    """The shape is checked here and not left to the client, and the two lanes are the reason.
+    The client refuses an unreadable path with an error `audit_pass` catches as UNAVAILABLE, so a
+    single malformed stored row would report the WHOLE REPOSITORY as unmeasured -- which is the
+    fail-mode inversion of what this landing deserves.
+    """
+    for value in (12, "", "not-a-uuid", UNIT.upper(), f"{UNIT}/evidence-pack", None):
+        findings, _ = audit_factory_landing(factory_landing(work_unit=value), NO_UNITS)
+        assert kinds(findings) == [FACTORY_CLAIM_UNREADABLE], value
 
 
 # ---------------------------------------------------------------------------------------------

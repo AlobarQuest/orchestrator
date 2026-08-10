@@ -2,6 +2,7 @@
 
 import ast
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -15,6 +16,23 @@ from landing_ledger.orchestrator_client import (
     is_allowed_read,
     is_allowed_write,
 )
+
+UNIT = "0c0002c6-9869-59bc-84c6-654e6fc57d9e"
+# Both bodies read off production, not off the handler that writes one of them. `main.py`'s
+# `DomainError` handler is keyed on `code.endswith("_not_found")`, but what reaches the wire nests
+# it under `error` -- and a check written from the handler alone matches neither 404.
+ABSENT_UNIT = {"error": {"code": "work_unit_not_found", "message": "work unit does not exist"}}
+ABSENT_ROUTE = {"detail": "Not Found"}
+
+
+def _client(handler: Any) -> OrchestratorClient:
+    return OrchestratorClient(
+        base_url="https://x",
+        credential_key_id="orchestrator-observer",
+        token="t",
+        transport=httpx.MockTransport(handler),
+    )
+
 
 LEDGER = Path("src/landing_ledger")
 ORCHESTRATOR = Path("src/orchestrator")
@@ -81,7 +99,7 @@ def test_the_read_surface_is_the_paths_the_audit_needs_and_no_more() -> None:
     re-recorded. The evidence pack answers who decided and on what evidence; the unit history
     answers which pull request this unit actually landed. Neither answers the other's half.
     """
-    unit = "/api/v1/work-units/0c0002c6-9869-59bc-84c6-654e6fc57d9e"
+    unit = f"/api/v1/work-units/{UNIT}"
     assert is_allowed_read("/api/v1/observations")
     assert is_allowed_read(f"{unit}/evidence-pack")
     assert is_allowed_read(f"{unit}/history")
@@ -109,7 +127,7 @@ def test_the_admission_surface_stays_out_of_reach_of_the_audit() -> None:
     landing that already happened turns ordinary change -- a superseded approval, a re-classified
     repository -- into findings. The audit reads the durable record instead, which does not drift.
     """
-    unit = "/api/v1/work-units/0c0002c6-9869-59bc-84c6-654e6fc57d9e"
+    unit = f"/api/v1/work-units/{UNIT}"
 
     assert not is_allowed_read(f"{unit}/pr-merge-admission")
     assert not is_allowed_write(f"{unit}/pr-merge")
@@ -141,20 +159,27 @@ def test_a_forbidden_read_never_reaches_the_transport() -> None:
 def test_a_unit_the_orchestrator_does_not_hold_is_an_ANSWER_rather_than_an_error() -> None:
     """The factory audit turns None into a finding about the landing and an exception into an
     incomplete pass, so the two must not arrive as the same thing."""
+    client = _client(lambda request: httpx.Response(404, json=ABSENT_UNIT))
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404, json={"detail": "work_unit_not_found"})
+    assert client.read_evidence_pack(UNIT) is None
+    assert client.read_unit_history(UNIT) is None
 
-    client = OrchestratorClient(
-        base_url="https://x",
-        credential_key_id="orchestrator-observer",
-        token="t",
-        transport=httpx.MockTransport(handler),
-    )
-    unit = "0c0002c6-9869-59bc-84c6-654e6fc57d9e"
 
-    assert client.read_evidence_pack(unit) is None
-    assert client.read_unit_history(unit) is None
+def test_a_404_the_ORCHESTRATOR_DID_NOT_SEND_is_an_error_rather_than_an_answer() -> None:
+    """Only the orchestrator can say a unit does not exist. A wrong base URL, a proxy, or a route
+    absent from the deployed image also answers 404 -- and this estate has served a release whose
+    routes production did not carry. Reading those as "no such unit" would accuse the orchestrator
+    of losing every unit at once, in the lane that reports violations.
+    """
+    for body in (ABSENT_ROUTE, {"error": {"code": "not_authorized"}}, {}):
+        with pytest.raises(LedgerWriteError):
+            _client(lambda request, body=body: httpx.Response(404, json=body)).read_evidence_pack(
+                UNIT
+            )
+    with pytest.raises(LedgerWriteError):
+        _client(lambda request: httpx.Response(404, text="<html>nginx</html>")).read_unit_history(
+            UNIT
+        )
 
 
 def test_a_ledger_that_is_not_a_LIST_is_refused_rather_than_iterated() -> None:

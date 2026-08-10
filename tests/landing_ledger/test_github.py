@@ -183,6 +183,29 @@ def test_the_revision_is_optional_where_the_unit_is_not() -> None:
     assert claim.package_revision is None
 
 
+def test_a_landing_commit_without_the_trailer_falls_back_to_the_pull_requests_head() -> None:
+    """What the landing commit contains is NOT the orchestrator's to decide. It sends no
+    `commit_message` with its squash, so the body is governed by the repository's own
+    `squash_merge_commit_message` setting -- a web form, not a literal in a merge call. All eight
+    repositories the ledger covers write `COMMIT_MESSAGES` today, and a first draft used that to
+    justify having no fall-back. Without one, flipping that setting makes every factory landing
+    claimless, hence `unattributed`, hence read by no detector: silent, which is the one failure
+    mode this basis exists to avoid.
+    """
+    routes = gate_routes()
+    routes[f"/repos/{REPO}/commits/e931db8d"] = {
+        "sha": "e931db8d31debfb08fd8f8410a4778f33c437fc1",
+        "commit": {"message": "feat: implement SDS unit (#50)", "committer": {"date": MERGED_AT}},
+        "files": [{"filename": "uv.lock"}],
+    }
+    routes[f"/repos/{REPO}/commits/4437bc98"] = {"commit": {"message": FACTORY_MESSAGE}}
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.claim is not None
+    assert landing.claim.work_unit == "0c0002c6-9869-59bc-84c6-654e6fc57d9e"
+
+
 # ---------------------------------------------------------------------------------------------
 # Assembling one landing.
 # ---------------------------------------------------------------------------------------------

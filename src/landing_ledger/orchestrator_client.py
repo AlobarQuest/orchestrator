@@ -48,14 +48,14 @@ from typing import Any
 
 import httpx
 
+from landing_ledger.model import WORK_UNIT_ID
+
 OBSERVATIONS_ENDPOINT = "/api/v1/observations"
 
 # The two per-unit reads the ADR-0020 audit needs. A pattern rather than a literal because the
 # path carries a unit id -- anchored, and with the id shape spelled out, so that the bound stays a
 # bound: `…/{id}/anything-else` does not match, and neither does a prefix or a trailing slash.
-_UNIT_READS = re.compile(
-    r"^/api/v1/work-units/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/(evidence-pack|history)$"
-)
+_UNIT_READS = re.compile(rf"^/api/v1/work-units/{WORK_UNIT_ID}/(evidence-pack|history)$")
 
 
 class LedgerWriteError(RuntimeError):
@@ -68,6 +68,10 @@ class ForbiddenEndpointError(LedgerWriteError):
 
 class ForbiddenReadError(LedgerWriteError):
     """The ledger attempted a read outside the one path its audit needs."""
+
+
+def _raise_missing_route(path: str) -> Any:
+    raise LedgerWriteError(f"orchestrator has no route at {path}: 404")
 
 
 def is_allowed_write(path: str) -> bool:
@@ -154,6 +158,23 @@ class OrchestratorClient:
             raise LedgerWriteError(f"orchestrator answered GET {path} with a non-list body")
         return list(body)
 
+    @staticmethod
+    def _is_domain_absence(response: httpx.Response) -> bool:
+        """Did the ORCHESTRATOR say this subject does not exist, or did something else say 404?
+
+        The shape is NESTED and was read off production rather than off the handler, which is what
+        this repository's own rules require and what caught it: `main.py`'s handler is keyed on
+        `error.code.endswith("_not_found")`, but what reaches the wire is
+        `{"error": {"code": "work_unit_not_found", …}}`. FastAPI's own 404 is `{"detail": "Not
+        Found"}`, and a proxy's is not JSON at all -- neither matches, which is the point.
+        """
+        try:
+            body = response.json()
+        except ValueError:
+            return False
+        error = body.get("error") if isinstance(body, dict) else None
+        return isinstance(error, dict) and str(error.get("code", "")).endswith("_not_found")
+
     def _read(self, path: str, **params: str) -> Any:
         if not is_allowed_read(path):
             raise ForbiddenReadError(f"the ledger may not read {path}")
@@ -164,7 +185,14 @@ class OrchestratorClient:
                 f"orchestrator is unreachable for GET {path}: {type(error).__name__}"
             ) from error
         if response.status_code == 404:
-            return None
+            # A 404 is an ANSWER only when the ORCHESTRATOR says so. It answers a missing unit with
+            # its own `DomainError` body carrying `code: "work_unit_not_found"` (`main.py`), while
+            # a wrong base URL, a proxy, or a route absent from the deployed image answers the
+            # framework's bare `{"detail": "Not Found"}` -- and this estate has shipped a release
+            # whose routes production did not serve. Reading every 404 as "no such unit" would turn
+            # a misconfiguration into a finding accusing the orchestrator of losing units it holds,
+            # for every factory landing at once. The distinguishing byte is in the body, so read it.
+            return None if self._is_domain_absence(response) else _raise_missing_route(path)
         if response.status_code >= 400:
             raise LedgerWriteError(f"orchestrator rejected GET {path}: {response.status_code}")
         return response.json()

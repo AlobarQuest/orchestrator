@@ -23,9 +23,18 @@ exactly the answer wanted and is deliberately not used: it evaluates whether the
 NOW, and that legitimately diverges from whether it was permitted THEN -- a unit's version moves,
 a repository's landing classification is re-determined, an approval is superseded. An audit built
 on the live answer manufactures findings out of ordinary change, and a reporting control that
-cries wolf is one that gets ignored. What it reads instead does not drift: the unit completed, its
-adjudications name the verifier as decider, the evidence was observed, and the orchestrator's own
-account of its own act names this repository and this pull request.
+cries wolf is one that gets ignored.
+
+**Be exact about which half of what it reads is actually immutable, because two of the four things
+below are and two are recomputed.** The unit id, the merge event and the authority fingerprint are
+rows that were written once and are never rewritten. `verifier_decided_completion` is NOT a stored
+verdict: the evidence pack recomputes it per read, over stored adjudication and evidence rows but
+against constants in the RUNNING orchestrator -- so a future release that narrows which evidence
+types count as observed would flip already-audited landings to a finding. That residual is real and
+is accepted rather than papered over: it is much narrower than admission's (which consults the
+estate, the current approval and the live envelope gates on every call), and the alternative --
+re-deriving the verdict here from the adjudication rows -- cannot see which criteria the revision
+REQUIRED, so it would be a second copy of a judgment with a worse view than the original.
 
 One clause is checked TRANSITIVELY and it is worth naming rather than leaving implicit: that
 landing on the repository changes nothing already serving. That is a live classification the estate
@@ -59,7 +68,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
-from landing_ledger.model import PendingUpdate
+from landing_ledger.model import PendingUpdate, is_work_unit_id
+
+# What the orchestrator reads raise when they cannot answer. The name predates the read surface --
+# the client had only a write surface when it was written -- and is left alone rather than churned
+# through two modules and their tests for a word.
+from landing_ledger.orchestrator_client import LedgerWriteError as LedgerReadError
 from landing_ledger.record import BASIS_FACTORY, BASIS_RULE
 from landing_ledger.rules import GATE_PATH, Rule, rule_for
 
@@ -98,6 +112,7 @@ FACTORY_UNIT_NOT_COMPLETED = "factory_unit_not_completed"
 FACTORY_NOT_VERIFIER_DECIDED = "factory_not_verifier_decided"
 FACTORY_HUMAN_ADJUDICATION = "factory_human_adjudication"
 FACTORY_LANDING_UNBOUND = "factory_landing_unbound"
+FACTORY_LANDING_UNCLAIMED = "factory_landing_not_claimed_by_the_orchestrator"
 FACTORY_FINGERPRINT_MISMATCH = "factory_fingerprint_mismatch"
 
 # Detector B.
@@ -110,19 +125,38 @@ STALL_RULE_UNKNOWN = "current_rule_revision_unknown"
 # it does not drive the exit status. It is still recorded, so it cannot be lost by being quiet.
 CAVEAT_RULE_SELF_MODIFIED = "rule_pinned_after_this_landing_changed_it"
 CAVEAT_NO_RULE_INSTALLED = "no_rule_installed"
-CAVEAT_MERGE_COMMIT_UNRECORDED = "merge_commit_not_recorded_by_the_orchestrator"
+# A caveat qualifies the audit's own evidence; it is not an assertion that anything is wrong, and
+# it does not drive the exit status. NOTHING about a factory landing is reported this way, and that
+# is a decision: a caveat is where a doubt goes to be ignored, and every doubt about an irreversible
+# act this estate cannot undo deserves the lane a person actually reads.
 
 # The verifier's role as the adjudication rows spell it. ADR-0020 permits the factory to land only
 # a unit no person adjudicated, so any other decider -- including a NULL one, which is the
 # historical rows' value and is never read as consent -- disqualifies the landing.
 VERIFIER_ROLE = "verifier"
 
-# The record statuses that mean the orchestrator's landing call reached GitHub and the pull request
-# is landed. `already_merged` is here on purpose: a landing is not idempotent and a lost response
-# looks exactly like a refusal when GitHub is asked again, so the retry that finds the pull request
-# already landed records this rather than overwriting something that happened. Requiring `merged`
-# alone would turn a lost response into a finding.
-LANDED_MERGE_STATUSES = frozenset({"merged", "already_merged"})
+# What the orchestrator's own record of its own act can say. All three are RECOGNISED, because the
+# row names this repository and this pull request whatever it concluded -- but only ONE of them
+# asserts that the orchestrator made this landing, and the other two are findings.
+#
+# READ ALL FIVE WRITERS IN `pr_merge.py` BEFORE CHANGING THIS. Neither of the other two statuses
+# means what its name suggests, and a first draft of this module widened the binding on a premise
+# that two adversarial reviews falsified from opposite directions:
+#
+#  * `already_merged` has two writers. One is the lost-response retry, which IS the factory's own
+#    act reconciled after the fact. The other fires BEFORE the merge call, when the pull request
+#    was already landed -- and its own comment says it records "somebody else's act, never as
+#    ours". They are indistinguishable in the row, so the status cannot assert authorship.
+#  * `refused` has two writers as well. One is "the one genuinely ambiguous outcome", where the
+#    call failed and the reconciling read failed too, and `pr_merge.py` says in as many words that
+#    the ledger observes the landing independently and can settle it. The other is a CONFIRMED
+#    non-landing: the remote answered 200 and said it had not merged.
+#
+# So a landing whose only record is either of those is reported, never excused. Settling an
+# ambiguity is exactly what a finding does -- it puts the thing in front of a person -- while a
+# caveat drives no exit code and would settle it by making it quiet.
+MERGE_RECORD_STATUSES = frozenset({"merged", "already_merged", "refused"})
+LANDED_MERGE_STATUS = "merged"
 
 MAX_LIST = 20
 MAX_DETAIL = 240
@@ -305,7 +339,7 @@ def _merge_event(history: list[dict[str, Any]], repository: str, pull_request: A
         if not isinstance(payload, dict):
             continue
         if (
-            payload.get("status") in LANDED_MERGE_STATUSES
+            payload.get("status") in MERGE_RECORD_STATUSES
             and payload.get("repository") == repository
             and payload.get("pr_number") == pull_request
         ):
@@ -333,15 +367,21 @@ def audit_factory_landing(
     changed = _what_changed(facts)
     commit = str(changed.get("commit"))
     subject = f"{changed.get('repository')}@{commit[:12]}"
+    # The SHAPE is validated here, not only at the client. These facts are read back out of the
+    # orchestrator rather than constructed by this module, so a value that cannot name a unit must
+    # become a finding about the landing -- and the client refuses an unreadable path with an error
+    # that `audit_pass` catches as UNAVAILABLE, which would report the whole repository as
+    # unmeasured on the strength of one malformed row. Two lanes, and this picks the right one.
     unit_id = permitted.get("work_unit")
-    if not isinstance(unit_id, str) or not unit_id:
+    if not is_work_unit_id(unit_id):
         return (
             Finding(
                 FACTORY_CLAIM_UNREADABLE,
                 subject,
-                "recorded as a factory landing with no work unit named, so nothing can be checked",
+                f"recorded as a factory landing naming {unit_id!r}, which cannot name a work unit",
             ),
         ), ()
+    assert isinstance(unit_id, str)
 
     pack = units.read_evidence_pack(unit_id)
     history = units.read_unit_history(unit_id) if pack is not None else None
@@ -394,13 +434,17 @@ def _audit_unit_record(
         for row in (pack.get("adjudications") or [])
         if isinstance(row, dict) and row.get("current")
     }
-    if deciders - {VERIFIER_ROLE}:
+    others = deciders - {VERIFIER_ROLE}
+    if others:
         findings.append(
             Finding(
                 FACTORY_HUMAN_ADJUDICATION,
                 subject,
                 "a current adjudication was decided outside the verifier role: "
-                + ", ".join(sorted(str(role) for role in deciders - {VERIFIER_ROLE})),
+                # NULL is the historical rows' value and reads as `unrecorded`, never as consent --
+                # the same word the evidence pack's own markdown prints for it, so a reader does
+                # not meet two spellings of one absence.
+                + ", ".join(sorted("unrecorded" if role is None else str(role) for role in others)),
             )
         )
     return tuple(findings)
@@ -421,7 +465,6 @@ def _audit_landing_binding(
     own record of its own act is what closes it.
     """
     findings: list[Finding] = []
-    caveats: list[Finding] = []
     payload = _merge_event(history, str(changed.get("repository")), changed.get("pull_request"))
     if payload is None:
         return (
@@ -433,24 +476,39 @@ def _audit_landing_binding(
             ),
         ), ()
 
-    landed_commit = payload.get("merge_commit_sha")
-    if landed_commit is None:
-        caveats.append(
+    status = payload.get("status")
+    if status != LANDED_MERGE_STATUS:
+        findings.append(
             Finding(
-                CAVEAT_MERGE_COMMIT_UNRECORDED,
+                FACTORY_LANDING_UNCLAIMED,
                 subject,
-                "the orchestrator recorded landing this pull request without a commit, which is "
-                "what a retry that found it already landed records; the binding rests on the "
-                "repository and pull request alone",
+                f"the orchestrator's record of this pull request is {status!r}, which does not "
+                "assert that it made this landing",
             )
         )
-    elif landed_commit != commit:
+
+    # BOTH heads, and they answer different questions. `merge_commit_sha` is what the orchestrator
+    # believes it produced; `head_sha` is the head it NAMED in the call, which the remote refused
+    # anything else for. Comparing only the first leaves the binding resting on a pull-request
+    # NUMBER whenever a status carries no commit -- and a number says nothing about content.
+    landed_commit = payload.get("merge_commit_sha")
+    if landed_commit is not None and landed_commit != commit:
         findings.append(
             Finding(
                 FACTORY_LANDING_UNBOUND,
                 subject,
                 f"the orchestrator recorded landing {str(landed_commit)[:12]} for this pull "
                 "request, which is not the commit that reached the branch",
+            )
+        )
+    observed_head = changed.get("head_commit")
+    if observed_head is not None and payload.get("head_sha") != observed_head:
+        findings.append(
+            Finding(
+                FACTORY_LANDING_UNBOUND,
+                subject,
+                f"the orchestrator asked to land head {str(payload.get('head_sha'))[:12]}, which "
+                f"is not the head {str(observed_head)[:12]} that this pull request landed",
             )
         )
 
@@ -464,8 +522,7 @@ def _audit_landing_binding(
                 "carries",
             )
         )
-    return tuple(findings), tuple(caveats)
-    return tuple(findings), tuple(caveats)
+    return tuple(findings), ()
 
 
 def is_green(pending: PendingUpdate) -> bool:
@@ -540,9 +597,18 @@ def audit_repository(
     caveats: list[Finding] = []
     permitted = 0
     factory = 0
+    unreadable = False
     for facts in landings:
         landing_findings, landing_caveats = audit_landing(facts)
-        factory_findings, factory_caveats = audit_factory_landing(facts, units)
+        try:
+            factory_findings, factory_caveats = audit_factory_landing(facts, units)
+        except LedgerReadError:
+            # The orchestrator could not be asked about THIS landing. Caught here rather than left
+            # to the caller's blanket catch, which discards the rule and stall findings the same
+            # pass already computed without asking anything -- and those are the ones that need no
+            # orchestrator at all. The repository's answer is still missing, so `unavailable`
+            # carries it to the incomplete exit code; what is not lost is everything else measured.
+            unreadable, factory_findings, factory_caveats = True, (), ()
         record = _permitted_by(facts)
         basis = record.get("basis") if record is not None else None
         # Two subjects, two denominators, kept apart. Folding them would put factory landings
@@ -589,6 +655,7 @@ def audit_repository(
         pending_audited=len(pending),
         findings=tuple(findings),
         caveats=tuple(caveats),
+        unavailable=unreadable,
     )
 
 

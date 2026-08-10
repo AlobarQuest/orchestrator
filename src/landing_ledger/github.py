@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 
 from landing_ledger.model import (
+    WORK_UNIT_ID,
     Check,
     FactoryClaim,
     Landing,
@@ -47,7 +48,7 @@ UPDATE_TYPE = re.compile(r"^\s*update-type:\s*(\S+)\s*$", re.MULTILINE)
 # editable after the landing, so reading it would let an unchanged reality re-encode to different
 # facts on a later pass and conflict. The commit message cannot change. Same source, and the same
 # reasoning, as the Dependabot trailers above.
-SDS_UNIT = re.compile(r"^\s*SDS-Unit:\s*([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\s*$", re.M)
+SDS_UNIT = re.compile(rf"^\s*SDS-Unit:\s*({WORK_UNIT_ID})\s*$", re.MULTILINE)
 SDS_PACKAGE_REVISION = re.compile(r"^\s*SDS-Package-Rev:\s*(\d+)\s*$", re.MULTILINE)
 
 
@@ -149,13 +150,15 @@ def update_metadata(message: str, head_ref: str | None) -> UpdateMetadata | None
 def factory_claim(message: str) -> FactoryClaim | None:
     """The work unit a landing commit says it implements, or nothing.
 
-    READ FROM THE LANDING COMMIT ONLY -- there is no fall-back to the pull request's head. The
-    orchestrator lands with `merge_method: "squash"` (a literal in its own merge call), and a
-    squash concatenates the branch's messages into the landing commit, so the trailer is there.
-    A true merge commit would not carry it and the landing would fall to `unattributed` -- the
-    same answer this adapter gave before the basis existed, so a quiet under-report rather than a
-    wrong one. Guessing at a fall-back for a state the orchestrator's code cannot produce would
-    cost one extra request per Dependabot landing to guard nothing.
+    Read from the landing commit, falling back to the pull request's own head -- the same
+    arrangement, and the same reason, as `update_metadata` twelve lines up. A first draft had no
+    fall-back, on the grounds that the orchestrator lands with `merge_method: "squash"` and a
+    squash carries the branch's messages through. The squash BODY is not the orchestrator's to
+    decide: it sends no `commit_message`, so what the landing commit contains is governed by the
+    repository's own `squash_merge_commit_message` setting, which anyone can change in a web form.
+    All eight repositories the ledger covers are `COMMIT_MESSAGES` today, measured -- but a setting
+    is not a literal in a merge call, and the failure it would cause is silent: no trailer, no
+    claim, no basis, and a factory landing recorded as `unattributed`, which no detector reads.
 
     The revision is optional and the unit id is not: the unit id is what the audit resolves, and
     a claim without one selects nothing to check.
@@ -260,13 +263,19 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
                 run=gate["id"],
                 outcome=gate.get("conclusion") or "unknown",
             )
-    # A squash carries the trailer through verbatim, so the landing commit almost always has it.
-    # A true merge commit does not, and the authority is the pull request's own head -- which is
-    # what `fetch-metadata` read.
+    # A squash carries both sets of trailers through verbatim, so the landing commit almost always
+    # has them. A true merge commit does not, and neither does a squash in a repository configured
+    # to write a different body -- and the authority in both cases is the pull request's own head,
+    # which is what `fetch-metadata` read and where the runner wrote its own. Fetched ONCE for both,
+    # and only when something is actually missing.
+    claim = factory_claim(message)
     metadata_message = message
-    if UPDATE_TYPE.search(metadata_message) is None:
+    if claim is None or UPDATE_TYPE.search(message) is None:
         head = reader.get(f"/repos/{repository}/commits/{head_sha}")
-        metadata_message = head["commit"]["message"] if head else metadata_message
+        head_message = head["commit"]["message"] if head else ""
+        claim = claim or factory_claim(head_message)
+        if head_message and UPDATE_TYPE.search(message) is None:
+            metadata_message = head_message
     return Landing(
         repository=repository,
         base_ref=base_ref,
@@ -283,7 +292,7 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
         checks=checks,
         rule=rule,
         update=update_metadata(metadata_message, detail["head"].get("ref")),
-        claim=factory_claim(message),
+        claim=claim,
     )
 
 

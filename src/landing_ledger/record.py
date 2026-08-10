@@ -108,12 +108,19 @@ def basis_of(landing: Landing) -> str:
     It sits before `unattributed` because a claim plus a machine merger is strictly more than
     `unattributed` can say.
 
-    IT IS KEYED ON THE CLAIM AND A MACHINE MERGER, NOT ON THE FACTORY APP'S LOGIN, and the choice
-    is about which way a mistake fails. A login literal that stopped matching -- a renamed App, a
-    second identity -- would drop the landing to `unattributed`, where the audit returns early and
-    says nothing. Keying on the claim means a landing that claims a unit it has no right to reaches
-    the audit and becomes a FINDING. Prefer the loud failure: the point of this basis is that it is
-    checked.
+    IT IS KEYED ON THE CLAIM AND A MACHINE MERGER, NOT ON THE FACTORY APP'S OWN LOGIN, and the
+    choice is about which way a mistake fails. An exact-login literal that stopped matching -- a
+    renamed App, a second identity -- would drop the landing to `unattributed`, where the audit
+    returns early and says nothing. Keying on the claim means a landing that claims a unit it has
+    no right to reaches the audit and becomes a FINDING. Prefer the loud failure: the point of this
+    basis is that it is checked.
+
+    THAT REMOVES ONE LITERAL AND NOT ALL OF THEM, and the residual is stated rather than implied.
+    `is_machine` is itself a login literal -- the `[bot]` suffix -- so a machine that lands without
+    it is read as a person and recorded `human`, which asserts something false and which no
+    detector will ever look at. GitHub does answer this properly: `merged_by.type` is `Bot`, and
+    this adapter reads only the login. Closing it means carrying that field through the record,
+    which is a change to what every landing asserts and belongs with a reason to make it.
     """
     if landing.pull_request is None:
         return BASIS_NONE

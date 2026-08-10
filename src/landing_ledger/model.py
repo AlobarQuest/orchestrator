@@ -8,8 +8,21 @@ pull request for the first time (ADR-0020).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
+
+# What a work unit id looks like, defined ONCE. Three places need it and they would otherwise each
+# spell it: the commit-trailer parser that reads a claim, the audit that validates one read back
+# out of stored facts, and the client that builds the two per-unit read paths. Lowercase because
+# the orchestrator stringifies a `UUID`, which is how the trailer is written and how the API path
+# is matched -- an uppercase spelling is not a unit id this estate produces.
+WORK_UNIT_ID = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+_WORK_UNIT_ID = re.compile(f"^{WORK_UNIT_ID}$")
+
+
+def is_work_unit_id(value: object) -> bool:
+    return isinstance(value, str) and _WORK_UNIT_ID.match(value) is not None
 
 
 @dataclass(frozen=True)
