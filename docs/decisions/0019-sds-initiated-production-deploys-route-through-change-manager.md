@@ -39,18 +39,25 @@
   both repositories, 1 failed (`brain` #1, its first merge). But only 3 of the 67 were verified
   to the standard these acceptance criteria assert** — 31 `change-manager` deploys proved only
   that a webhook returned 2xx, and every `brain` deploy proved only that a domain answered.
-  **Adversarial review produced SIX kills**, the two sharpest being measurements rather than
-  arguments: a run-level conclusion cannot tell "the tests failed and nothing deployed" from
-  "production is broken" — two of the three rollout failures in estate history never reached
-  production, so acting on `failed` would have made the rollback the only mutation of the day
-  (fixed with a second axis read from jobs and steps); and `liveness_confirmed` was not a rung at
-  all, because Coolify's swap is a rolling update taking 43–73s while `brain` polls 30s in and
+  **Adversarial review produced ELEVEN kills across two stages** — six at the design, four after
+  implementation, and one from the advisor — and the two sharpest were measurements rather than
+  arguments. A run-level conclusion cannot tell "the tests failed and nothing deployed" from
+  "production is broken": of the **six failing rollout attempts** in estate history three never
+  reached production, so acting on `failed` would have made the rollback the only mutation of the
+  day (fixed with a second axis read from jobs and steps). And `liveness_confirmed` was not a rung
+  at all, because Coolify's swap is a rolling update taking 43–73s while `brain` polls 30s in and
   breaks on the first 2xx, so the container that answered was the one already running. Also
-  killed: freezing the merge commit, which was permanent unrepairable poisoning given that GitHub
-  puts a test-merge commit on OPEN pull requests (PR #42 carries one now); and treating a failure
-  during an overlapping run as real, when both repositories redeploy a floating tag with no
-  concurrency group. **This document's premise that a deploy change "has no way to reach a
-  terminal state" is wrong** — the decision lifecycle was never closed, only the execution one.
+  killed at design: freezing the merge commit, which was permanent unrepairable poisoning given
+  that GitHub puts a test-merge commit on OPEN pull requests (PR #42 carries one now); and
+  treating a failure during an overlapping run as real, when both repositories redeploy a floating
+  tag with no concurrency group. Then after implementation: a replay that swallowed changed facts
+  and re-froze a record at `unknown` — the same dead end one level down, firing on an ordinary
+  event; an absent-job branch whose only real population was registry drift, answering "nothing
+  was deployed" about a rollout that may have succeeded; a 301 that hid a merged deploying pull
+  request at exit 0 forever; and a reduction that ignored which landing its rows described.
+  **The mutation harness was itself found lying twice**, in the reassuring direction both times.
+  **This document's premise that a deploy change "has no way to reach a terminal state" is
+  wrong** — the decision lifecycle was never closed, only the execution one.
   Report: `~/docs/software-delivery-system/2026-08-10-adr0019-inc2-build-report.md`.
 
   **SCOPE SETTLED 2026-08-10 (Devon).** This rule's first implementation is **SDS-initiated
