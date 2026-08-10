@@ -2217,6 +2217,57 @@ style of that module.
   the redactor cannot tell a secret from a hex string. Anything verified through that surface must
   be verified from the API or from git as well.
 
+- **ADR-0020 IS CLOSED. The estate's first autonomous merge carries a permission basis that is
+  CHECKED rather than asserted** — `factory-approved-no-deploy`, 1 of 440 landings, recorded on
+  first observation with zero reclassification (`skipped: 0` is the number that proves it: a
+  single drifted fact would have been refused as `observation_conflict` and exited 3). Detector A
+  verifies the claim against the orchestrator's **durable record** — unit completed, criteria
+  verifier-decided from observed evidence, the merged record naming this repository, pull request,
+  merge commit and head under the fingerprint the unit still carries. It deliberately does NOT
+  re-ask `pr-merge-admission`, which is a *live* answer that legitimately drifts.
+  **THE RESIDUAL, and it is the one to know before editing anything: the check is RECOMPUTED PER
+  READ against constants in the running image, not stored.** `verifier_decided_completion` is
+  derived on every evidence-pack read, so **narrowing `OBSERVED_EVIDENCE_TYPES` in a future release
+  retroactively flips already-audited landings into findings.** That is much narrower than
+  re-asking admission and the alternative cannot see which criteria a revision required, so it is
+  the right trade — but it is a trade, and it is invisible until an old landing starts failing an
+  audit nobody changed.
+
+  Four things the build of it established, none derivable from reading the code:
+  1. **A `DomainError` reaches the wire NESTED, and a 404 check written from `main.py` matches
+     neither 404.** The handler reads `error.code.endswith("_not_found")`, which looks top-level;
+     production answers `{"error":{"code":"work_unit_not_found",…}}`, a route the deployed image
+     does not serve answers FastAPI's `{"detail":"Not Found"}`, and a proxy answers no JSON at all.
+     A client distinguishing "this subject is absent" from "something else said 404" must read
+     `body["error"]["code"]` — and must, because this estate HAS served a release whose routes
+     production did not carry, and reading every 404 as absence turns that into a finding accusing
+     the orchestrator of losing every subject at once.
+  2. **`UnitPrMerge.status` has five writers across three values, and only `merged` asserts the
+     orchestrator made the landing.** `already_merged` covers both the lost-response retry (ours,
+     reconciled) and — *before the merge call* — a pull request somebody else had landed.
+     `refused` covers both the genuinely ambiguous outcome and a confirmed non-landing. The two
+     cases are indistinguishable within a status, so **no status carries authorship**, and a
+     consumer keyed on the name alone is wrong in both directions. Two adversarial reviews
+     falsified this from opposite sides in one afternoon.
+  3. **The squash body is a REPOSITORY SETTING, not the merge call.** `pr_merge.py` sends no
+     `commit_message`, so whether the landing commit carries the branch's messages — and therefore
+     factory-runner's `SDS-Unit:` trailer — is governed by `squash_merge_commit_message`, a web
+     form. All eight ledger repositories are `COMMIT_MESSAGES` today (2026-08-10). Anything reading
+     a trailer off a landing commit needs a fall-back to the pull request head: the failure is
+     silent — no trailer, no claim, no basis, and no detector looking.
+  4. **Every string a landing observation puts in `facts` is frozen at the first row carrying it.**
+     `idempotency_key` is content-addressed over the facts while `source_reference` is not, so
+     correcting a `reason` afterwards is an `observation_conflict` on a landing where nothing
+     changed: the write is refused, `record` counts a skipped landing, and the daily pass exits 3
+     until it is settled by hand. Prose in `facts` must say only what stays true — never where a
+     value was read, never a count, never anything dated. Same discipline as
+     `wave-exit-manifest.toml`'s `note`/`proves` rule, in a different artifact.
+
+  Two smaller ones: the ledger's `is_machine` keys on the `[bot]` login suffix where GitHub answers
+  properly with `merged_by.type == "Bot"`, so a machine account without the suffix records as a
+  person; and `orchestrator-observer` IS a valid credential key id as well as a registry actor id,
+  verified against production.
+
 - **`runner.caller` asks "can the factory send work INTO this repo?", and it is three different
   faults under one name.** It requires `.github/workflows/factory-runner-pilot.yml` calling
   factory-runner's reusable workflow at a full SHA equal to `RECOMMENDED_CALLER_PIN` (a one-line file
