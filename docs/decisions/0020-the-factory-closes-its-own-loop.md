@@ -1,6 +1,10 @@
 # ADR-0020 — The factory closes its own loop
 
-- **Status:** Accepted (decision). Implementation not started.
+- **Status:** Accepted and **IMPLEMENTED** — closed 2026-08-10 (WS-P3.7, five increments).
+  Proven end to end: `intent-packages` commit `b3f1522f` merged by `alobar-sds-dispatch[bot]`
+  at 14:00:28Z, the last human act being Devon's authority approval five minutes earlier, and
+  recorded in the landing ledger as `factory-approved-no-deploy` with the claim checked
+  against the orchestrator's durable record rather than asserted.
 - **Date:** 2026-08-08
 - **Decided by:** Devon
 - **Reverses:** the merge prohibition, for a bounded class. **Relates to:** ADR-0016 (native
