@@ -2,7 +2,24 @@
 
 - **Status:** Accepted (principle). Implementation not started.
   **THREE OF THIS DOCUMENT'S OWN PREMISES WERE MEASURED WRONG on 2026-08-10** — see
-  `~/docs/software-delivery-system/2026-08-10-adr0019-implementation-plan.md`. In short:
+  `~/docs/software-delivery-system/2026-08-10-adr0019-implementation-plan.md`.
+
+  **INCREMENT 1 DONE 2026-08-10** — change-manager #46, merged `06f9268`, which deployed itself
+  (run `31426195637` success; production reports serving `06f9268b5160`). A deploying-merge change
+  can now be proposed, and is refused without acceptance criteria or a rollback plan. Production
+  item **44** records Dependabot PR #42, one of the six waiting, and is **deliberately left
+  `pending`**: approving it would assert that a human approved a deploying merge, and none has.
+  Verified against a pre-increment baseline: `GET /api/items` returns the baseline unchanged
+  (43 items, max id 43) because proposed sources are withheld when no source is named, and
+  `GET /api/items?status=approved` returns **0** — so it is invisible to the 04:00 executor.
+  **Adversarial review produced two kills**, each found independently by more than one reviewer:
+  a scan batch could adopt the deploy record by colliding on `identity` while every guard was
+  keyed on `source`; and the migration's `downgrade()` was a guaranteed foreign-key violation on
+  Postgres, green in CI because migration tests run on SQLite where foreign keys are off. Both are
+  captured as portfolio invariants. **Sequencing constraint carried into increment 2 or 3:
+  infraops' `source !== 'security'` denylist must become an allowlist BEFORE anything can approve
+  a deploy record** — approval is what puts an item into the executor's query (backlogged
+  `63380218065d`, P1). In short:
   `WindowRun` is a log of runs that happened, **not** a window definition, so the change-window
   concept does need inventing; a change record cannot attest who made it, because every `/api/*`
   route shares one static bearer and `actor` is caller-declared free text; and **there is no
