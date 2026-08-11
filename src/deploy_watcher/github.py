@@ -138,6 +138,40 @@ class GitHubReader:
         sha = body.get("sha")
         return str(sha) if is_sha(sha) else None
 
+    def open_pull_requests(self, repository: str) -> list[dict[str, Any]]:
+        """Open pull requests, projected to the four fields a caller may key on.
+
+        Projected rather than returned whole for the reason the estate learned from an MCP tool
+        that returned secrets: a response passed through untouched is a response whose every
+        future field arrives in a transcript. Four fields, named here, and nothing else escapes.
+
+        `author` is the login, and a bot is identified by `user.type == "Bot"` rather than by a
+        `[bot]` suffix on the login -- the suffix is a display convention a machine account can
+        lack, and the landing ledger already carries that mistake as a known defect.
+        """
+        body = self._get(f"/repos/{repository}/pulls", state="open", per_page=100)
+        if not isinstance(body, list):
+            return []
+        pulls: list[dict[str, Any]] = []
+        for item in body:
+            if not isinstance(item, dict):
+                continue
+            user = item.get("user")
+            user = user if isinstance(user, dict) else {}
+            base = item.get("base")
+            base = base if isinstance(base, dict) else {}
+            pulls.append(
+                {
+                    "number": item.get("number"),
+                    "title": item.get("title"),
+                    "author": user.get("login"),
+                    "is_bot": str(user.get("type", "")).lower() == "bot",
+                    "draft": bool(item.get("draft")),
+                    "base_ref": base.get("ref"),
+                }
+            )
+        return pulls
+
     def workflow_is_addressable(
         self, repository: str, workflow_path: str, workflow_id: int
     ) -> bool:
