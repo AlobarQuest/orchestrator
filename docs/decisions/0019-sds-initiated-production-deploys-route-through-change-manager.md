@@ -180,6 +180,24 @@
   it exists the producer's records sit `pending` and the factory lane refuses at
   `change_record_not_approved`. Also open: three unattended jobs still hold the full change-manager
   bearer, so the property established is *the producer cannot approve*, not *no machine can*.
+  **Stage-two review then found the shipped producer's own headline property decorative**: `propose`
+  called the transport directly, so the in-process path guard had NO production write caller — the
+  only route into it was a GET. Fixed, and hand-verified rather than trusted to the mutation harness,
+  which reported that very mutation as a no-op while a hand-check fails eleven tests (the third time
+  a harness has lied in this workstream, in the reassuring direction each time). Also fixed: the
+  producer FROZE THE PULL REQUEST TITLE into a write-once record, and Dependabot retitles in place —
+  measured, 4 of 19 recent bot pull requests — so every later pass would have 409'd forever on a
+  record permanently naming the OLD version; a dead read surface with three surviving mutations,
+  deleted; an uncaught `ReadError` that killed the whole scheduled pass; and a case-sensitive
+  rollback lookup in a module that folds case one line earlier.
+  **A false claim in the producer's own docstring is corrected rather than quietly amended**: it said
+  increment 3's factory-lane term was its consumer. It is not — that term reads the pull request
+  *factory-runner* opened, authored by a USER account, which the producer's bot filter refuses. The
+  producer serves the DEPENDABOT population, read today by increment 2's watcher. **Named and NOT
+  fixed:** acceptance criteria derive from the rollout workflow at `main` HEAD, so a single workflow
+  merge permanently conflicts every pending record at once — reproduced. That drift is semantically
+  correct, which is the argument that a write-once record is the wrong shape for a derived field, and
+  the remedy belongs to change-manager rather than to a line here.
   Report: `~/docs/software-delivery-system/2026-08-11-adr0019-inc4-build-report.md`.
 
   **SCOPE SETTLED 2026-08-10 (Devon).** This rule's first implementation is **SDS-initiated
