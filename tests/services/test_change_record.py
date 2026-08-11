@@ -164,9 +164,30 @@ def test_every_missing_setting_is_unconfigured(missing: str) -> None:
     assert handler.requests == []
 
 
-@pytest.mark.parametrize("status", [401, 404, 500, 503])
+@pytest.mark.parametrize("status", [301, 302, 307, 401, 404, 500, 503])
 def test_any_status_but_200_is_unreadable(status: int) -> None:
+    """The REDIRECTS are the ones worth naming. `httpx` does not follow them by default, and a
+    3xx can carry a JSON body -- which is how a renamed repository became a permanently invisible
+    landing one increment ago. A reader that treats "below 400" as a body parses that body and
+    reports "there is no record" about an estate it never reached."""
     answer = _source(lambda request: httpx.Response(status)).record_for(REPOSITORY, 42)
+
+    assert answer.answered is False
+    assert answer.reason == SOURCE_UNREADABLE
+
+
+def test_a_redirect_carrying_a_json_body_is_unreadable_not_empty() -> None:
+    """The discriminating form of the case above, and the one the estate has already been bitten
+    by: a 3xx with a JSON body. `httpx` does not follow redirects by default, so a reader that
+    treats "below 400" as a body PARSES the redirect -- and an empty listing in it reads as "the
+    estate holds no record for this pull request", which is a confident answer about a service
+    that was never reached. An empty-bodied redirect cannot show this: it fails at the JSON parse
+    for an unrelated reason and the mutant looks correct."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(301, content=b"[]", headers={"location": "/api/items"})
+
+    answer = _source(handler).record_for(REPOSITORY, 42)
 
     assert answer.answered is False
     assert answer.reason == SOURCE_UNREADABLE
@@ -206,6 +227,16 @@ def test_a_body_that_is_not_json_is_unreadable() -> None:
         return httpx.Response(200, content=b"<html>a proxy said something</html>")
 
     assert _source(handler).record_for(REPOSITORY, 42).reason == SOURCE_UNREADABLE
+
+
+def test_a_boolean_pull_request_number_never_matches_pull_request_one() -> None:
+    """`True` is an `int` in Python AND equals 1, so without the boolean guard a row carrying
+    `true` matches pull request 1 and hands admission somebody else's record. Asked about 1
+    specifically: against any other number the comparison fails anyway and proves nothing."""
+    answer = _source(_ok([_row(pull_request_number=True)])).record_for(REPOSITORY, 1)
+
+    assert answer.answered is True
+    assert answer.record is None
 
 
 def test_a_row_that_is_not_an_object_makes_the_whole_listing_unreadable() -> None:

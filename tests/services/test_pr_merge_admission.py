@@ -13,6 +13,7 @@ answer be read against real completed units before anything obeys it.
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 from datetime import UTC, datetime
 
@@ -22,6 +23,7 @@ from sqlalchemy.orm import Session
 
 import orchestrator.services.pr_merge_admission as admission_module
 from orchestrator.errors import DomainError
+from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.evidence_types import VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
 from orchestrator.kernel.states import ActorRole, WorkUnitState
@@ -35,6 +37,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.reach_vocabulary import LIVE_ESTATE
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import record_approval, register_approved_unit
 from orchestrator.services.pr_bindings import record_verification_read_head, upsert_pr_binding
@@ -697,6 +700,93 @@ def test_a_routed_landing_outside_the_window_is_refused(migrated_session: Sessio
 
     assert answer.satisfied is False
     assert answer.refusals == ("merge_outside_change_window",)
+
+
+def test_an_undeclared_window_refuses(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The artifact treats a row with no window as raising no objection, which is right for a
+    policy report and FAIL-OPEN for an admission term: deleting or renaming the row would admit at
+    any hour with the document still loading and nothing red. The affirmative case here is "a
+    window is declared and now is inside it", never "nothing objected"."""
+    unit = _ready_unit(migrated_session, "window-undeclared")
+    policy = load_factory_policy()
+    row = policy.rows[LIVE_ESTATE]
+    windowless = dataclasses.replace(
+        policy, rows={**policy.rows, LIVE_ESTATE: dataclasses.replace(row, change_window=None)}
+    )
+    monkeypatch.setattr(admission_module, "load_factory_policy", lambda: windowless)
+
+    answer = _answer(
+        migrated_session, unit, redeploying_source(), approved_record_source(TARGET, 7)
+    )
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("merge_change_window_not_declared",)
+
+
+def test_an_unreadable_policy_refuses(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A malformed artifact is a fault in this process, and it must be a REFUSAL rather than an
+    exception: only `DomainError` and `APIAuthenticationError` have registered handlers, so an
+    escaping raise turns this read route into a 409 that reads like a domain conflict -- and turns
+    the acting path into one too."""
+    unit = _ready_unit(migrated_session, "policy-unreadable")
+
+    def broken() -> object:
+        raise DomainError("factory_policy_invalid", "the artifact is invalid", None)
+
+    monkeypatch.setattr(admission_module, "load_factory_policy", broken)
+
+    answer = _answer(
+        migrated_session, unit, redeploying_source(), approved_record_source(TARGET, 7)
+    )
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("merge_policy_unreadable",)
+
+
+def test_the_window_answer_follows_the_injected_clock(migrated_session: Session) -> None:
+    """Both directions in one assertion, deliberately.
+
+    A single out-of-window test passes for the wrong reason whenever the real clock also happens
+    to be outside the window -- which is most of the day, so a term that ignored the injected
+    clock entirely would look correct except during the four hours it matters. Comparing the two
+    answers kills that at any real time: if the clock is not read, they are equal.
+    """
+    unit = _ready_unit(migrated_session, "clock-is-read")
+    landing, records = redeploying_source(), approved_record_source(TARGET, 7)
+
+    inside = _answer(migrated_session, unit, landing, records, FixedClock(IN_WINDOW))
+    outside = _answer(migrated_session, unit, landing, records, FixedClock(OUT_OF_WINDOW))
+
+    assert inside.satisfied is True
+    assert outside.satisfied is False
+    assert outside.refusals == ("merge_outside_change_window",)
+
+
+def test_the_routed_half_is_unmet_when_there_is_no_pull_request(
+    migrated_session: Session,
+) -> None:
+    """Asserted at the layer the guard lives on, because the composed answer cannot see it.
+
+    `_head_terms` reports `pr_binding_missing` for the same unit, so a routed half that answered
+    `met=True` here would produce an identical refusal list and an identical verdict -- the
+    property is real and every black-box control is blind to it. `satisfied` is a positive
+    conjunction, so a term that could not evaluate must never contribute a yes.
+    """
+    unit = _unit(migrated_session, "routed-half-unmet")
+    records = no_record_source()
+
+    term = admission_module._routed_terms(
+        migrated_session, TARGET, None, records, FixedClock(IN_WINDOW)
+    )
+
+    assert term.met is False
+    assert term.refusals == ()
+    assert records.asked == []
+    assert unit is not None
 
 
 def test_both_halves_are_reported_not_only_the_first(migrated_session: Session) -> None:
