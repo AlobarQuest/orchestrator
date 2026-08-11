@@ -34,6 +34,9 @@ reconciliation-runner = "reconciliation_runner.cli:app"
 tracker-projection-adapter = "tracker_projection_adapter.cli:app"
 landing-ledger = "landing_ledger.cli:app"
 deploy-watcher = "deploy_watcher.cli:app"
+# ADR-0019 increment 5a. Shipped in increment 4 with a `main()` and no entry point, so
+# nothing could invoke it but `python -m`; "the producer gets a caller" starts here.
+change-proposer = "change_proposer.cli:main"
 
 [dependency-groups]
 dev = [

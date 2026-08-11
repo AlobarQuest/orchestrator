@@ -524,5 +524,49 @@ def test_without_submit_no_writing_client_is_ever_built(monkeypatch) -> None:
         cli_module, "GitHubReader", lambda token: _Ctx(_Pulls({CM: [_pull()]}, "x" * 40))
     )
     # Scoped to one repository so the other's absence from the fake reader is not a finding.
-    assert cli_module.run(["--repository", CM]) == 0
+    #
+    # EXIT 3, not 0, and the change is the point rather than an inconvenience: this fixture's
+    # blob revision is untranscribed, so nothing can say what a green rollout there would
+    # prove. That used to be reported as an ordinary `skipped` — the same status a draft gets
+    # — and skips are not findings, so the pass exited 0 in silence. It is now `underivable`
+    # and a finding. The property this test exists for is the sentinel below.
+    assert cli_module.run(["--repository", CM]) == cli_module.EXIT_FINDINGS
+    assert built == [], "a dry run built a change-manager client"
     assert built == []
+
+
+def test_an_untranscribed_rollout_workflow_is_a_finding_not_a_skip(monkeypatch) -> None:
+    """The silent case, and the one adversarial review of increment 5 named.
+
+    When nobody has transcribed the rollout workflow's current bytes, `_consider` refuses to
+    guess what a green run there would prove — correctly. But that refusal used to be
+    reported as `skipped`, the same status a draft or a human's pull request gets, and
+    `skipped` is not a finding. So the workflow deciding what a deploy PROVES could change,
+    no record could be derived for any pull request on that repository, and the scheduled
+    pass exited 0.
+
+    A skip means "this pull request is not our business". A refusal means "it is, and nobody
+    can say what its deploy would attest". They must not share an exit code.
+    """
+    from change_proposer import cli as cli_module
+
+    monkeypatch.setenv("CHANGE_PROPOSER_GITHUB_TOKEN", "gh")
+    monkeypatch.setattr(
+        cli_module, "GitHubReader", lambda token: _Ctx(_Pulls({CM: [_pull()]}, "x" * 40))
+    )
+    assert cli_module.run(["--repository", CM]) == cli_module.EXIT_FINDINGS
+
+
+def test_a_pull_request_that_is_not_our_business_is_still_only_a_skip(monkeypatch) -> None:
+    """The control. Without it the test above passes under "every outcome is a finding",
+    which would make the exit code useless in the other direction — a draft or a human's
+    pull request is a perfectly clean pass."""
+    from change_proposer import cli as cli_module
+
+    monkeypatch.setenv("CHANGE_PROPOSER_GITHUB_TOKEN", "gh")
+    monkeypatch.setattr(
+        cli_module,
+        "GitHubReader",
+        lambda token: _Ctx(_Pulls({CM: [_pull(draft=True)]}, "x" * 40)),
+    )
+    assert cli_module.run(["--repository", CM]) == cli_module.EXIT_OK

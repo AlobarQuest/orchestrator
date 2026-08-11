@@ -83,6 +83,22 @@ EXIT_OK = 0
 EXIT_FINDINGS = 3
 EXIT_UNUSABLE = 2
 
+# `_consider` cannot honestly derive a record, so it refuses rather than guessing. ONE
+# definition, used to write the reason and to recognise it again, because the alternative is
+# a magic string in two places and the recogniser silently ceasing to match.
+REFUSAL_PREFIX = "REFUSED: "
+
+# What makes a pass a FINDING rather than a clean run.
+#
+# `underivable` is here and that is the whole point of this constant. It used to be reported
+# as an ordinary `skipped` — the same status a draft or a human's pull request gets — and
+# `skipped` is not a finding, so an untranscribed rollout workflow produced a pass that exited
+# 0 with nothing to look at. That is the silent case: the workflow deciding what a deploy
+# PROVES had changed, no record could be derived for any pull request on that repository, and
+# the scheduled job reported success. A skip means "this pull request is not our business"; a
+# refusal means "it is, and nobody can say what its deploy would attest".
+FINDING_STATUSES = frozenset({"refused", "error", "unreadable", "underivable"})
+
 
 @dataclass(frozen=True)
 class Outcome:
@@ -161,7 +177,7 @@ def _consider(
         criteria = acceptance_criteria(repository, attestation_for(revision))
         rollback = rollback_for(repository)
     except CriteriaUnavailable as error:
-        return None, f"REFUSED: {error}"
+        return None, f"{REFUSAL_PREFIX}{error}"
     return _proposal(repository, pull, criteria, rollback), "eligible"
 
 
@@ -205,7 +221,8 @@ def _consider_one(
     number = pull.get("number") or 0
     proposal, why = _consider(reader, repository, pull)
     if proposal is None:
-        return Outcome(repository, number, "skipped", why)
+        underivable = why.startswith(REFUSAL_PREFIX)
+        return Outcome(repository, number, "underivable" if underivable else "skipped", why)
     if client is None:
         return Outcome(repository, number, "would-propose", proposal["reasoning"])
     try:
@@ -277,7 +294,7 @@ def run(argv: list[str] | None = None) -> int:
     for outcome in outcomes:
         subject = f"{outcome.repository}#{outcome.number or '-'}"
         print(f"{subject}  {outcome.status:<13} {outcome.detail}")
-    findings = [o for o in outcomes if o.status in {"refused", "error", "unreadable"}]
+    findings = [o for o in outcomes if o.status in FINDING_STATUSES]
     proposed = [o for o in outcomes if o.status in {"proposed", "would-propose"}]
     print(f"\n{len(outcomes)} considered, {len(proposed)} to propose, {len(findings)} findings")
     return EXIT_FINDINGS if findings else EXIT_OK

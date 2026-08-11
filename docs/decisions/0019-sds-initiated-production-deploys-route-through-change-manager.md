@@ -200,6 +200,54 @@
   the remedy belongs to change-manager rather than to a line here.
   Report: `~/docs/software-delivery-system/2026-08-11-adr0019-inc4-build-report.md`.
 
+  **INCREMENT 5a BUILT 2026-08-11 — approval by policy. 5b SPECIFIED AND NOT SHIPPED, because
+  stage-one review exercised its authority to stop it.** change-manager PR #53 and orchestrator
+  PR #161. **A deploying-merge record is now approved by the SERVER, inside the proposal
+  transaction, when its shape conforms to a pinned versioned policy — and `approve` is refused to
+  every caller including the FULL bearer, at the route, at the GUI, and at `transitions.decide`
+  where all six callers reach it.** That is wider than increment 4's split, which made only the
+  producer unable to approve.
+  **The fork was decided against my own recommendation, and the deciding fact is one nobody had
+  named.** I proposed deriving approval on read; two reviewers disagreed with each other, so it was
+  settled on evidence. `_GRANT_TYPES = {"approved"}` in security-standards' change-manager adapter
+  means **change-manager's `approved` EVENT is the only thing this system emits that becomes an
+  `authority_grant` in the tamper-evident factory-events chain** — so a derived status would have
+  left the single authorization permitting an autonomous production deploy as the one decision
+  absent from the chain, while a trivial drift approval still entered it. Two more, each
+  independently sufficient: the listing applies `status` as a **SQL predicate on the stored
+  column**, so a derived answer selects the wrong rows in both directions (**both reviewers found
+  this independently**); and `landing_ledger/rules.py` is re-evaluable only because **the subject
+  stores the revision it was decided under**, which the derived design had dropped while citing it
+  as precedent. The approver-credential case lost on its own merits and separately — the holder
+  would be a second unattended job running the identical predicate, and `actor` on a decision is
+  caller-declared free text, which is why production item 44 says `hq-correction`.
+  **Two live defects were fixed on the way.** `web.py` called `hand_off` with **no executor guard**,
+  unlike its API twin — the button was merely hidden, and a hidden button is not a closed door. And
+  the derived fields (`acceptance_criteria`, `rollback_plan`) conflicted on re-proposal, so a single
+  rollout-workflow merge would have **permanently bricked every waiting record**: write-once row, no
+  supersede route, identity held. They now refresh with an event and re-run the policy, revoking an
+  approval whose criteria moved out from under it — which closes increment 4's named-and-unfixed
+  SEVERE-1b.
+  **Devon's rulings:** policy v1 pins **`change-manager` alone** (*"landing unattended under
+  criteria that are documented as unable to detect the failure isn't accepting that risk, it's
+  knowingly defeating it"*), **patch and minor only** — stricter than ADR-0018's cascade, because
+  that cascade's premise that the gating check IS the thing being bumped fails on a repository
+  whose rollout job never runs on a pull request — and **freshness as a versioned policy condition
+  rather than `strict: true`**. His correction to the handoff's framing is recorded: the rollout
+  watcher reads the same job conclusion, so for `brain` **there is no second net**.
+  **Why 5b did not ship.** Review found five terms missing, and the sharpest is that `strict: false`
+  means a required check can be green against a **stale head**, so a squash merge produces a tree no
+  CI has ever executed — which on these repositories *is* the deploy. As specified it would have
+  landed five `brain` pull requests whose checks ran 12–19 days ago onto a base 11 commits ahead.
+  Deeper still: **not one policy term is a function of the CHANGE** — `change_class` and `risk` are
+  literals the producer writes about every pull request it sees — so every change-specific fact must
+  be a landing term. It is also blocked regardless: landing needs an approved record, no record can
+  exist until the producer runs, and the producer needs a propose-scoped credential only Devon can
+  mint. **Exit criterion 3 was unsatisfiable as written** — all six `change_record_absent` units bind
+  merged, User-authored pull requests, and proposing records for them would manufacture a record
+  after the fact.
+  Report: `~/docs/software-delivery-system/2026-08-11-adr0019-inc5-build-report.md`.
+
   **SCOPE SETTLED 2026-08-10 (Devon).** This rule's first implementation is **SDS-initiated
   merges into repositories where merging to `main` IS deploying** — `change-manager` and `brain`.
   How the orchestrator itself gets deployed is deliberately parked. ADR-0020 already gives the
