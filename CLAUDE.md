@@ -2609,3 +2609,75 @@ style of that module.
   covered for `inert` alone — and could not be covered, because `land_unit_pull_request` took no
   clock while `admission_for` did. A refusal test there must assert the **gateway was never
   reached**: an admission answer that arrives after the act is not a gate.
+
+- **An auto-merge armed with `secrets.GITHUB_TOKEN` triggers NO `on: push` workflow — so a lane
+  whose whole value is that merging causes CI is inert when armed that way.** Measured 2026-08-11:
+  `intent-packages` #50, `infraops-mcp-server` #70 and `factory-runner` #42, all merged by
+  `github-actions[bot]` through the estate's `dependabot-auto-merge.yml`, carry **zero** `push` runs
+  on their merge commits; the control — `intent-packages` #58, merged by a human identity on the
+  same repository and workflows — carries **two**. This is documented GitHub behaviour (events
+  triggered by `GITHUB_TOKEN` do not create a new workflow run) and it killed ADR-0019 increment 4's
+  specified design: for `change-manager` and `brain`, where merging is supposed to BE deploying, an
+  auto-merged Dependabot pull request would land and `deploy.yml` would never run — `main` and
+  production diverging silently, and `brain`'s `push`-gated `build-and-push` never building the
+  per-SHA image its rollback plan names.
+  **BE PRECISE ABOUT WHAT IS MEASURED HERE, because the obvious next sentence is not.** What was
+  measured is (a) `GITHUB_TOKEN`-armed auto-merges suppress push runs, and (b) a **direct** merge by
+  a human identity fires them. **Nobody has yet measured an auto-merge ARMED with the Dispatch App
+  or a PAT actually firing push runs** — GitHub attributes the eventual merge to the arming
+  identity, so it should, but "should" is what this file exists to stop being inherited as fact.
+  **That probe is the first thing the landing-path increment must run**: a throwaway repository with
+  an `on: push` workflow, auto-merge armed by the non-`GITHUB_TOKEN` credential, confirming the push
+  run appears. Until then, prefer a **direct** merge by the App (which ADR-0020 already proves fires
+  push runs) over arming auto-merge at all. Two corollaries: the five non-deploying repositories have
+  been **skipping `main`-push CI on every auto-merged landing** since their lane opened, so `main`
+  can be red there with nothing reporting it; and the defect was invisible for exactly the reason
+  the estate already documents — the lane was proven only where a missed push run does not matter,
+  which is *validate the classifier against the population* one more time.
+
+- **Commit-status semantics for branch protection, measured rather than inferred** (disposable repo,
+  `enforce_admins: true`, 2026-08-11 — these outlive the design they were taken for). A required
+  context **never reported** blocks and the merge API answers **405**; `pending` blocks identically
+  with the message naming the context; `success` releases to `clean`; **re-posting `pending` after
+  `success` re-blocks**, so a status is genuinely revocable and auto-merge banks nothing; and a moved
+  head SHA carries **zero** statuses, so a Dependabot rebase is fail-closed by construction.
+  **The one that matters: auto-merge fires the instant the LAST required context turns green,
+  however stale the others are.** Reproduced deliberately — a pull request with an armed auto-merge
+  and a `success` posted while a second required context was still pending **merged within seconds of
+  that other context greening**, at a moment nothing re-evaluated the first. So any scheme where one
+  context encodes a time-bounded permission is fail-open unless that context is provably the last to
+  green — and *reading which contexts are required* needs `administration`, which neither
+  `GITHUB_TOKEN`'s `permissions:` vocabulary nor the Dispatch App has.
+
+- **A required status check puts the availability chain in front of EVERYONE; the orchestrator
+  landing pull requests itself puts it in front of MACHINES ONLY.** ADR-0019 increment 4 analysed and
+  rejected a required window check, and Devon asked the reasoning be kept as the standing argument
+  against proposing one again. With `enforce_admins: true` a green check would depend on GitHub's
+  scheduler, the poster workflow, the orchestrator app, its database, the policy artifact in its
+  image, and change-manager — any one down freezes both repositories to every actor, with no in-band
+  recovery, including the fix to the poster and including a `change-manager` hotfix (the third
+  self-reference instance after ADR-0015 and ADR-0016). Two triggers made that concrete rather than
+  theoretical: a 10-minute cron on two **private** repositories is ~8,640 billed Actions
+  minutes/month against 3,000 included on this plan, and **scheduled workflows are auto-disabled
+  after 60 days of repository inactivity**, at which point the last posted status persists forever.
+  **`enforce_admins` is TRUE on `change-manager` and `brain` as well as `factory-runner`** — the
+  branch-protection bullet above saying enforcement is on `factory-runner` alone is wrong, and was
+  wrong when written.
+
+- **`app.routes` does NOT contain an included router's routes in current FastAPI — it holds a single
+  `fastapi.routing._IncludedRouter`.** So the obvious completeness scan (filter `app.routes` for
+  `APIRoute`) sees only what was registered directly on the application: in change-manager that is
+  exactly ONE route, and the whole `/api` surface reads as absent. **The failure is silent and
+  flattering** — a test built that way asserts nothing while looking thorough. Enumerate from
+  `app.openapi()["paths"]`, which is flattened and authoritative and is what this repo's own scope
+  guards already use, and **cross-check any completeness claim against a set of routes known to
+  exist**, which is the only reason this was caught. (Verified 2026-08-11, ADR-0019 increment 4.)
+
+- **`httpx` raises at the CONSTRUCTOR for some malformed URLs and at REQUEST time for others, so a
+  guard on one half is not a guard.** A control character is refused by `urlparse` inside
+  `httpx.Client(base_url=…)` immediately; a doubled dot or an over-long DNS label survives to IDNA
+  encoding at `client.request`. This repository already documents the three exception families
+  (`HTTPError`, `InvalidURL`, and `ValueError` via `UnicodeError`) — this is the same family one
+  layer out, and the practical shape is that an environment-variable typo crashes an out-of-process
+  program with a traceback instead of reporting a finding. Guard **both** construction and request,
+  and write the control to span both, since which shape raises where is not guessable.

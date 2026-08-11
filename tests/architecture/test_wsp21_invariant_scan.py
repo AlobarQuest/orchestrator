@@ -235,6 +235,13 @@ OUTBOUND_ALLOWLIST = {
     # test_deploy_watcher_isolation.py. Its egress is not the orchestrator's.
     Path("src/deploy_watcher/change_manager.py"),
     Path("src/deploy_watcher/github.py"),
+    # ADR-0019 increment 4. The change PRODUCER is a SEPARATE program again, and the narrowest
+    # one yet: it reads GitHub for the open pull requests that would land on a repository where
+    # landing redeploys, and writes to exactly ONE change-manager route -- the proposal ingress.
+    # It cannot approve, claim, post an outcome, hand off, sync, or move any record's status, and
+    # that bound is enforced twice over: by the credential's scope at change-manager, and here in
+    # code before a request is built. Its egress is not the orchestrator's.
+    Path("src/change_proposer/change_manager.py"),
 }
 
 
