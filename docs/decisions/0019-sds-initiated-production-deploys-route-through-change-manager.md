@@ -141,6 +141,47 @@
   the records this term reads, so the bound becomes a KILL the moment a producer ships holding it.**
   Report: `~/docs/software-delivery-system/2026-08-10-adr0019-inc3-build-report.md`.
 
+  **INCREMENT 4 RE-SCOPED AND SHIPPED 2026-08-11 — and the re-scope is the finding.** Stage-one
+  adversarial review killed the specified design on a measurement: **an auto-merge armed with
+  `secrets.GITHUB_TOKEN`, which is what the estate's `dependabot-auto-merge.yml` uses, triggers no
+  `on: push` workflow.** Verified 3/3 (`intent-packages` #50, `infraops-mcp-server` #70,
+  `factory-runner` #42 — all merged by `github-actions[bot]`, all **zero** push runs) against a
+  clean control (`intent-packages` #58, human identity, **2** push runs on the same workflows).
+  **So for `change-manager` and `brain` the auto-merge lane does not deploy**, and this document's
+  scoping premise — *merging to `main` IS deploying* — is true of those repositories and false of
+  that lane. The specified increment would have gated an act that does not occur while creating the
+  divergence this document itself warns about; for `brain`, `build-and-push` is `push`-gated, so the
+  per-SHA image increment 1's rollback plan names would never be built. The lane was proven only in
+  the five repositories where a missed push run is invisible, because none of them deploys.
+  **Devon's decision: land these two through the ORCHESTRATOR** (which merges with the Dispatch App,
+  the identity whose merges empirically *do* fire push workflows), gated by increment 3's terms —
+  **in principle, but not in this increment; the landing path gets its own.**
+  **What shipped: task zero and the producer.** change-manager #52 splits the single `/api` bearer
+  into `read` / `propose` / `observe` scopes keyed on **(method, route template)**, closing the KILL
+  condition increment 3 escalated — the producer cannot approve the records the admission term
+  reads. orchestrator #160 adds `src/change_proposer/`, which proposes a record for every deploying
+  merge waiting to happen, with acceptance criteria **transcribed** from what each rollout workflow
+  actually attests and a refusal rather than a guess for bytes nobody classified.
+  **No required status check, no branch-protection change, no auto-merge, nothing merged into either
+  repository.** A required check was analysed and rejected, and Devon asked the reasoning be kept as
+  the standing argument: it puts a six-component availability chain in front of **everyone**
+  (`enforce_admins` is TRUE on both — this document's own portfolio invariant saying enforcement is
+  on `factory-runner` alone is wrong), with no in-band recovery and a circular dependency on
+  change-manager; orchestrator-lands puts that chain in front of **machines only**. Two concrete
+  triggers made it real: ~8,640 billed Actions minutes/month against 3,000 included, and scheduled
+  workflows auto-disabling after 60 days of repository inactivity, which freezes the last posted
+  status forever.
+  **Commit-status semantics were measured in a disposable repository and outlive the design**:
+  `pending` blocks (405), `success` releases, **re-posting `pending` after `success` re-blocks**, a
+  moved head carries zero statuses — and the fail-open was **reproduced deliberately**, a pull
+  request merging seconds after an unrelated required context greened, hours after the window closed.
+  **Still open: nothing can APPROVE these records.** Devon's ruling is that approval is *policy*,
+  which needs a concrete versioned mechanism whose permission basis names the policy revision. Until
+  it exists the producer's records sit `pending` and the factory lane refuses at
+  `change_record_not_approved`. Also open: three unattended jobs still hold the full change-manager
+  bearer, so the property established is *the producer cannot approve*, not *no machine can*.
+  Report: `~/docs/software-delivery-system/2026-08-11-adr0019-inc4-build-report.md`.
+
   **SCOPE SETTLED 2026-08-10 (Devon).** This rule's first implementation is **SDS-initiated
   merges into repositories where merging to `main` IS deploying** — `change-manager` and `brain`.
   How the orchestrator itself gets deployed is deliberately parked. ADR-0020 already gives the
