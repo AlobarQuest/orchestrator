@@ -25,8 +25,6 @@ TIMEOUT_SECONDS = 30.0
 # The whole write surface: propose one deploying-merge change. Anchored so that a prefix, a
 # trailing slash or a traversal does not match, and so `…/approve` cannot.
 _PROPOSE = "/api/deploy-changes"
-# The one read, used to report what already exists rather than to decide anything.
-_ITEMS = "/api/items"
 
 
 class ChangeManagerError(Exception):
@@ -45,8 +43,14 @@ def is_allowed_write(path: str) -> bool:
     return path == _PROPOSE
 
 
-def is_allowed_read(path: str) -> bool:
-    return path == _ITEMS
+def _detail(response: httpx.Response) -> str:
+    """change-manager's own explanation, bounded. Never the whole body, never headers."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return f"HTTP {response.status_code}"
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    return str(detail)[:300] if detail else f"HTTP {response.status_code}"
 
 
 class ChangeManagerClient:
@@ -89,9 +93,17 @@ class ChangeManagerClient:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
-        allowed = is_allowed_write(path) if method != "GET" else is_allowed_read(path)
-        if not allowed:
+    def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """The ONE way anything leaves this process, guard first.
+
+        Every caller goes through here, including `propose`. A first version had `propose` call
+        the transport directly, which left `is_allowed_write` with no production caller at all --
+        the only route into the guard was a GET, so the module's headline property was enforced on
+        a path production writes never took. Found by a mutation pass; it is this repository's own
+        "a test calling a service is not evidence the service has a caller", reproduced inside the
+        module written to embody the negative property.
+        """
+        if not is_allowed_write(path):
             raise ForbiddenEndpointError(f"the producer may not {method} {path}")
         try:
             response = self._client.request(method, path, **kwargs)
@@ -105,9 +117,24 @@ class ChangeManagerClient:
                 f"change-manager is unreachable for {method} {path}: {type(error).__name__}"
             ) from None
         if response.status_code == 409:
-            raise ProposalRefused(f"change-manager refused {method} {path}: 409")
+            # CARRY THE DETAIL. change-manager's 409 names which fields differ, and a refusal on a
+            # write-once record is permanent -- an operator who cannot see WHICH frozen fact
+            # drifted has no way to act on it.
+            raise ProposalRefused(f"change-manager refused {method} {path}: {_detail(response)}")
         if response.status_code >= 400:
-            raise ChangeManagerError(f"change-manager answered {response.status_code} for {path}")
+            hint = (
+                " -- the credential is not scoped for this route"
+                if response.status_code == 403
+                else ""
+            )
+            raise ChangeManagerError(
+                f"change-manager answered {response.status_code} for {path}{hint}: "
+                f"{_detail(response)}"
+            )
+        return response
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        response = self._send(method, path, **kwargs)
         try:
             return response.json()
         except ValueError as error:
@@ -116,39 +143,13 @@ class ChangeManagerClient:
     def propose(self, payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         """Propose one deploying-merge change.
 
-        Returns the record and whether it was NEW. change-manager answers 201 for a created record
-        and 200 for an identical proposal that already existed, so a re-run is a replay rather than
-        a duplicate -- which is what makes this program safe to schedule.
+        Returns the record and whether it was NEW. change-manager answers **201** for a created
+        record and **200** for an identical proposal that already existed, so a re-run is a replay
+        rather than a duplicate -- which is what makes this program safe to schedule.
         """
-        try:
-            response = self._client.request("POST", _PROPOSE, json=payload)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            raise ChangeManagerError(
-                f"change-manager is unreachable for POST {_PROPOSE}: {type(error).__name__}"
-            ) from None
-        if response.status_code == 409:
-            raise ProposalRefused(
-                "change-manager already holds a different record for this pull request"
-            )
-        if response.status_code >= 400:
-            detail = ""
-            if response.status_code == 403:
-                detail = " -- the credential is not propose-scoped for this route"
-            raise ChangeManagerError(
-                f"change-manager answered {response.status_code} to the proposal{detail}"
-            )
+        response = self._send("POST", _PROPOSE, json=payload)
         try:
             body = response.json()
         except ValueError as error:
             raise ChangeManagerError("the proposal response was not JSON") from error
         return body, response.status_code == 201
-
-    def existing_deploy_records(self) -> list[dict[str, Any]]:
-        """Every deploying-merge record, for reporting what is already routed.
-
-        Deliberately not used to decide whether to propose: `propose` is idempotent server-side by
-        content, and a client-side "does it exist" check would be a second, racier copy of a rule
-        the server already owns.
-        """
-        body = self._request("GET", _ITEMS, params={"source": "deploy"})
-        return [row for row in body if isinstance(row, dict)] if isinstance(body, list) else []

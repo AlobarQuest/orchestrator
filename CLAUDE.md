@@ -2620,8 +2620,16 @@ style of that module.
   specified design: for `change-manager` and `brain`, where merging is supposed to BE deploying, an
   auto-merged Dependabot pull request would land and `deploy.yml` would never run — `main` and
   production diverging silently, and `brain`'s `push`-gated `build-and-push` never building the
-  per-SHA image its rollback plan names. **Arm with the Dispatch App or a PAT, never `GITHUB_TOKEN`,
-  whenever the merge must cause a run.** Two corollaries: the five non-deploying repositories have
+  per-SHA image its rollback plan names.
+  **BE PRECISE ABOUT WHAT IS MEASURED HERE, because the obvious next sentence is not.** What was
+  measured is (a) `GITHUB_TOKEN`-armed auto-merges suppress push runs, and (b) a **direct** merge by
+  a human identity fires them. **Nobody has yet measured an auto-merge ARMED with the Dispatch App
+  or a PAT actually firing push runs** — GitHub attributes the eventual merge to the arming
+  identity, so it should, but "should" is what this file exists to stop being inherited as fact.
+  **That probe is the first thing the landing-path increment must run**: a throwaway repository with
+  an `on: push` workflow, auto-merge armed by the non-`GITHUB_TOKEN` credential, confirming the push
+  run appears. Until then, prefer a **direct** merge by the App (which ADR-0020 already proves fires
+  push runs) over arming auto-merge at all. Two corollaries: the five non-deploying repositories have
   been **skipping `main`-push CI on every auto-merged landing** since their lane opened, so `main`
   can be red there with nothing reporting it; and the defect was invisible for exactly the reason
   the estate already documents — the lane was proven only where a missed push run does not matter,

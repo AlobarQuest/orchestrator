@@ -4,9 +4,20 @@ ADR-0019 increment 4. **This program proposes and reports. It approves nothing, 
 and moves no record's status** -- and after this increment's other half it *cannot*, because the
 credential it holds is refused those routes by change-manager itself.
 
-WHAT IT IS FOR. Increment 3 taught the factory lane to require an approved change record before
-landing a pull request into a repository where landing redeploys. Nothing created those records,
-so `change_record_absent` was the only answer the term could ever give. This is the producer.
+WHAT IT IS FOR — and be precise, because a first version of this docstring was WRONG in a way that
+would have propagated. It said increment 3's factory-lane admission term was the consumer. It is
+not, today: that term reads `UnitPrBinding.pr_number`, i.e. the pull request **factory-runner**
+opened, and every one of those is authored by `AlobarQuest` — `FACTORY_PR_TOKEN` is a fine-grained
+PAT on a USER account, so GitHub reports `type: "User"` and the bot filter below refuses it.
+
+**This producer serves the DEPENDABOT population** — the pull requests ADR-0019's auto-merge lane
+concerns, and the nine currently waiting on `change-manager` and `brain`. Those records are read
+today by increment 2's rollout watcher, which observes what a landing actually caused and appends
+an observation to the record this creates.
+
+Whether increment 3's term should also be fed — and how, since a Dependabot pull request has no
+work unit and therefore no binding — is the LANDING increment's question, not this one's. Do not
+read a green pass here as "the factory lane now has records."
 
 WHY IT PROPOSES RATHER THAN AUTHORS. A rule requiring three hand-written fields is incompatible
 with anything unattended, so the acceptance criteria are read from the transcribed statement of
@@ -57,6 +68,17 @@ class BlobSource(Protocol):
     def blob_revision(self, repository: str, path: str, ref: str) -> str | None: ...
 
 
+class PullSource(BlobSource, Protocol):
+    """What the whole pass needs from GitHub: the open pull requests, and one file's bytes.
+
+    Two methods, named here, so a test can drive the pass without standing up an HTTP client — and
+    so the signature says what is actually used rather than naming a concrete reader that carries
+    nine other methods this program never calls.
+    """
+
+    def open_pull_requests(self, repository: str) -> list[dict[str, Any]]: ...
+
+
 EXIT_OK = 0
 EXIT_FINDINGS = 3
 EXIT_UNUSABLE = 2
@@ -85,13 +107,33 @@ def _in_scope() -> list[str]:
 def _proposal(
     repository: str, pull: dict[str, Any], criteria: tuple[str, ...], rollback: Any
 ) -> dict[str, Any]:
+    """The record's facts, and EVERY ONE OF THEM MUST STAY TRUE.
+
+    **The pull request's TITLE is deliberately absent, and that is the whole point of this
+    docstring.** `propose_deploy_change` compares the proposed fields against the stored ones and
+    raises a terminal 409 on any difference — there is no update path and no supersede route. So a
+    field that drifts turns every later pass into a permanent refusal for that pull request, and
+    freezes the record on the older value forever.
+
+    **Dependabot rewrites a pull request IN PLACE when a newer version appears**, changing its
+    title, which makes the title the most volatile string available and the worst possible thing to
+    interpolate. A first version of this function did exactly that; measured against a live
+    change-manager, a drifted title answered
+    `409 … asserting different target_repository, reasoning, acceptance_criteria, rollback_plan`.
+    This repository already records the rule under the landing ledger's `facts`: prose in a frozen
+    record must say only what stays true — never a title, never a count, never anything dated.
+
+    The acceptance criteria CAN still drift, when the rollout workflow's bytes change, and that
+    conflict is left in place on purpose: if what a green rollout attests has changed, the stored
+    criteria really are stale, and a refusal is the honest way for a person to find out.
+    """
     return {
         "target_repository": repository,
         "pull_request_number": pull["number"],
         "change_class": "dependency-update",
         "risk": "caution",
         "reasoning": (
-            f"{pull['title']} -- landing this on the default branch of {repository} redeploys "
+            f"landing this pull request on the default branch of {repository} redeploys "
             "production, so it is a deploying merge and carries a change record (ADR-0019)."
         ),
         "acceptance_criteria": list(criteria),
@@ -124,7 +166,7 @@ def _consider(
 
 
 def _pass(
-    reader: GitHubReader,
+    reader: PullSource,
     scope: list[str],
     client: ChangeManagerClient | None,
 ) -> list[Outcome]:
@@ -141,7 +183,16 @@ def _pass(
             outcomes.append(Outcome(repository, 0, "unreadable", str(error)))
             continue
         for pull in sorted(pulls, key=lambda p: p.get("number") or 0):
-            outcomes.append(_consider_one(reader, repository, pull, client))
+            try:
+                outcomes.append(_consider_one(reader, repository, pull, client))
+            except ReadError as error:
+                # `blob_revision` is called INSIDE the per-pull path, so a 403 rate-limit, a 502 or
+                # a timeout here used to escape `_pass` entirely and kill the scheduled run with a
+                # traceback — dropping every repository still to be considered. One unreadable pull
+                # request is a finding about that pull request, not the end of the pass.
+                outcomes.append(
+                    Outcome(repository, pull.get("number") or 0, "unreadable", str(error))
+                )
     return outcomes
 
 

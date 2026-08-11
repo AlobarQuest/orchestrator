@@ -77,6 +77,13 @@ class CriteriaUnavailable(Exception):
 
 
 def rollback_for(repository: str) -> Rollback:
+    """The plan for this repository, matched case-insensitively.
+
+    GitHub answers `AlobarQuest/change-manager` while this table is keyed lowercase, and
+    `_consider` already folds case for the workflow lookup — so a case-sensitive match here would
+    make the module tolerate GitHub's own casing for one lookup and refuse it for the other. A
+    mutation pass found the inconsistency; no control passed mixed case.
+    """
     plan = _ROLLBACKS.get(repository.lower())
     if plan is None:
         raise CriteriaUnavailable(
