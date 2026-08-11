@@ -87,8 +87,12 @@
   wrong** — the decision lifecycle was never closed, only the execution one.
   Report: `~/docs/software-delivery-system/2026-08-10-adr0019-inc2-build-report.md`.
 
-  **INCREMENT 3 BUILT 2026-08-11, NOT MERGED** — the factory lane honours the record and the
-  window. `pr-merge`'s blanket `merge_target_repository_redeploys` refusal is replaced: the
+  **INCREMENT 3 DONE 2026-08-11** — orchestrator #159, merged `84308b4f`. **It deployed nothing**,
+  as designed: only `Quality` fired, `Release image` is `workflow_dispatch`, so **production still
+  runs the previous image and does not serve these terms yet.** Merged is not deployed, and the
+  three new settings are deliberately unwritten in production, so the estate's behaviour is
+  unchanged in both directions until somebody releases and configures. The factory lane honours
+  the record and the window. `pr-merge`'s blanket `merge_target_repository_redeploys` refusal is replaced: the
   estate's `redeploys` answer no longer refuses on its own, it **routes** to eight refusal codes
   covering an approved change record for that pull request and the hours policy declares for
   changing something already serving. **Unconfigured refuses**, so the release needs no
