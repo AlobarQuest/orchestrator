@@ -19,7 +19,34 @@
   captured as portfolio invariants. **Sequencing constraint carried into increment 2 or 3:
   infraops' `source !== 'security'` denylist must become an allowlist BEFORE anything can approve
   a deploy record** — approval is what puts an item into the executor's query (backlogged
-  `63380218065d`, P1). In short:
+  `63380218065d`, P1).
+
+  **INCREMENT 2 DONE 2026-08-10** — orchestrator #158 (`fccb2a3`, deployed nothing) and
+  change-manager #47 (`23aefb69`, deploy run `31443858930` success, production moved to it). The
+  rollout watcher observes what a deploying merge caused and records it against the change record;
+  `com.devon.deploy-watcher` runs **hourly**, proven under launchd rather than only in a shell.
+  Increment 1's guards re-verified on the new build: `claim`, `outcome` and `handoff` all 409
+  `'deploy' changes have no authorized executor`, and the executor's own query still returns 0.
+
+  **The build session overrode this HQ handoff on the central design point, and was right.** The
+  handoff said to read the **run conclusion** on `main`. It reads the **specific attempt's jobs**
+  instead, because *"a run conclusion cannot distinguish 'the tests failed and nothing was
+  deployed' from 'production was deployed and is broken', and those two want opposite remedies"* —
+  and it addresses the attempt rather than the run, since a re-run supersedes its predecessor.
+  **Validated independently by the only two deploy failures this repository has ever had**
+  (2026-06-14): run `27501092950` was `test: failure` / `build-and-deploy: skipped` — nothing
+  deployed; run `27501401154` was `test: success` / `build-and-deploy: failure` — production
+  deployed and broken. Both carry run conclusion `failure`. The handoff's instruction would have
+  collapsed them into one answer. 48 of 50 deploy runs succeeded.
+
+  Three verdicts are deliberately distinct — `NotSettled` (pending, exit 0, "come back in an
+  hour"), `Unmeasurable` (exit 3, the question could not be asked) and `ReadError` — so a
+  still-running sibling never exits 3 under a diagnosis naming the wrong problem.
+
+  **Residuals, stated in the module rather than discovered later:** an observation is *asserted*
+  by the watcher and the server cannot verify it, and the server cannot tell a watcher from
+  anything else holding the shared M2M secret. Per-caller identity remains the open question, and
+  Increment 3 or 4 may not be able to keep deferring it. In short:
   `WindowRun` is a log of runs that happened, **not** a window definition, so the change-window
   concept does need inventing; a change record cannot attest who made it, because every `/api/*`
   route shares one static bearer and `actor` is caller-declared free text; and **there is no
