@@ -14,6 +14,7 @@ answer be read against real completed units before anything obeys it.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -42,14 +43,21 @@ from orchestrator.services.pr_merge_admission import (
     admission_for,
     pr_merge_admission,
 )
+from tests.services.change_record_doubles import (
+    RECORD_AMBIGUOUS,
+    ChangeRecordAnswer,
+    FakeChangeRecordSource,
+    approved_record_source,
+    no_record_source,
+)
 from tests.services.estate_doubles import (
-    LANDING_REDEPLOYS,
     LANDING_UNKNOWN,
     SOURCE_UNCONFIGURED,
     SOURCE_UNREADABLE,
     EstateAnswer,
     FakeEstateLandingSource,
     inert_source,
+    redeploying_source,
 )
 from tests.services.test_adjudications import FROM_EVALUATION, add_criterion
 from tests.services.test_package_registration import NOW, register_test_revision
@@ -185,8 +193,35 @@ def _ready_unit(session: Session, key: str, **envelope_kwargs) -> WorkUnit:
     return unit
 
 
-def _answer(session: Session, unit: WorkUnit, source=None):
-    return admission_for(session, unit, _revision(session, unit), source or inert_source())
+class FixedClock:
+    """A named instant, so behaviour that depends on the time can be exercised without it.
+
+    The window this suite reaches is declared in local hours with an explicit zone, so a fixed
+    UTC instant is converted the way production converts one -- never a naive local reading.
+    """
+
+    def __init__(self, moment: datetime) -> None:
+        self._moment = moment
+
+    def now(self, session: Session) -> datetime:
+        return self._moment
+
+
+# Inside `live_estate`'s declared 02:00-06:00 America/New_York window, and outside it. Written as
+# UTC instants because an instant is what policy is asked about.
+IN_WINDOW = datetime(2026, 8, 11, 7, 30, tzinfo=UTC)
+OUT_OF_WINDOW = datetime(2026, 8, 11, 19, 30, tzinfo=UTC)
+
+
+def _answer(session: Session, unit: WorkUnit, source=None, record_source=None, clock=None):
+    return admission_for(
+        session,
+        unit,
+        _revision(session, unit),
+        source or inert_source(),
+        record_source or no_record_source(),
+        clock or FixedClock(IN_WINDOW),
+    )
 
 
 def _open_condition(session: Session, unit: WorkUnit) -> ReconciliationCondition:
@@ -411,7 +446,7 @@ def test_a_revision_that_is_not_the_units_own_is_refused_rather_than_answered(
     assert foreign.id != unit.work_package_revision_id
 
     with pytest.raises(DomainError) as error:
-        admission_for(migrated_session, unit, foreign, inert_source())
+        admission_for(migrated_session, unit, foreign, inert_source(), no_record_source())
 
     assert error.value.code == "revision_not_for_unit"
 
@@ -555,18 +590,155 @@ def test_an_envelope_naming_no_repository_is_refused_without_asking_the_estate(
     assert source.asked == []
 
 
-def test_a_repository_that_changes_something_already_serving_is_refused(
+def test_a_repository_that_changes_something_already_serving_routes_rather_than_refusing(
     migrated_session: Session,
 ) -> None:
-    """ADR-0019's boundary, read from the estate rather than from a list of repository names."""
-    unit = _ready_unit(migrated_session, "estate-redeploys")
-    source = FakeEstateLandingSource(default=EstateAnswer(LANDING_REDEPLOYS))
+    """ADR-0019 Increment 3. `redeploys` was the refusal; now it selects the questions.
 
-    answer = _answer(migrated_session, unit, source)
+    The estate is still read from the estate rather than from a list of repository names, and it
+    is still the only thing that puts a landing on this path -- what changed is that the answer is
+    now about the CHANGE rather than about the repository.
+    """
+    unit = _ready_unit(migrated_session, "estate-redeploys")
+    source = redeploying_source()
+    records = approved_record_source(TARGET, 7)
+
+    answer = _answer(migrated_session, unit, source, records)
+
+    assert answer.satisfied is True
+    assert answer.refusals == ()
+    assert source.asked == [TARGET]
+    assert records.asked == [(TARGET, 7)]
+
+
+def test_a_routed_landing_with_no_change_record_is_refused(migrated_session: Session) -> None:
+    """The answer for the entire production population today: nothing proposes a record yet."""
+    unit = _ready_unit(migrated_session, "no-change-record")
+
+    answer = _answer(migrated_session, unit, redeploying_source(), no_record_source())
 
     assert answer.satisfied is False
-    assert answer.refusals == ("merge_target_repository_redeploys",)
-    assert source.asked == [TARGET]
+    assert answer.refusals == ("change_record_absent",)
+
+
+def test_a_change_record_nobody_approved_is_refused_distinctly_from_absent(
+    migrated_session: Session,
+) -> None:
+    """Awaiting a person is the ORDINARY steady state of a record, so collapsing it into "there is
+    no record" would be the common case rather than an edge one -- and would send somebody to
+    create a second record for a pull request that already has one."""
+    unit = _ready_unit(migrated_session, "record-pending")
+    records = approved_record_source(TARGET, 7, status="pending")
+
+    answer = _answer(migrated_session, unit, redeploying_source(), records)
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("change_record_not_approved",)
+
+
+def test_a_record_naming_another_pull_request_does_not_answer_for_this_one(
+    migrated_session: Session,
+) -> None:
+    """The join is on the pair, not on the repository. A record for a sibling pull request in the
+    same repository is not this change's record."""
+    unit = _ready_unit(migrated_session, "record-other-pr")
+    records = approved_record_source(TARGET, 999)
+
+    answer = _answer(migrated_session, unit, redeploying_source(), records)
+
+    assert answer.refusals == ("change_record_absent",)
+
+
+def test_an_unreadable_change_record_source_is_refused(migrated_session: Session) -> None:
+    """A service that is down must never be mistaken for an estate that has no objection."""
+    unit = _ready_unit(migrated_session, "record-unreadable")
+    records = FakeChangeRecordSource(default=ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE))
+
+    answer = _answer(migrated_session, unit, redeploying_source(), records)
+
+    assert answer.refusals == ("change_record_source_unreadable",)
+
+
+def test_an_unconfigured_change_record_source_is_refused_distinctly(
+    migrated_session: Session,
+) -> None:
+    """A missing setting on this deployment and a service refusing send different people
+    somewhere different, so they are two codes rather than one. Unconfigured is also the state a
+    release lands in before anybody writes an environment variable, which is why it must refuse."""
+    unit = _ready_unit(migrated_session, "record-unconfigured")
+    records = FakeChangeRecordSource(default=ChangeRecordAnswer(False, reason=SOURCE_UNCONFIGURED))
+
+    answer = _answer(migrated_session, unit, redeploying_source(), records)
+
+    assert answer.refusals == ("change_record_source_unconfigured",)
+
+
+def test_two_records_claiming_one_pull_request_are_refused_as_ambiguous(
+    migrated_session: Session,
+) -> None:
+    """A guard over a FOREIGN repository's uniqueness constraint. Ambiguity is reported as
+    ambiguity and never resolved to whichever row came first."""
+    unit = _ready_unit(migrated_session, "record-ambiguous")
+    records = FakeChangeRecordSource(default=ChangeRecordAnswer(False, reason=RECORD_AMBIGUOUS))
+
+    answer = _answer(migrated_session, unit, redeploying_source(), records)
+
+    assert answer.refusals == ("change_record_ambiguous",)
+
+
+def test_a_routed_landing_outside_the_window_is_refused(migrated_session: Session) -> None:
+    """The hours are policy's, read from the artifact, and asked about an INSTANT."""
+    unit = _ready_unit(migrated_session, "outside-window")
+    records = approved_record_source(TARGET, 7)
+
+    answer = _answer(
+        migrated_session, unit, redeploying_source(), records, FixedClock(OUT_OF_WINDOW)
+    )
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("merge_outside_change_window",)
+
+
+def test_both_halves_are_reported_not_only_the_first(migrated_session: Session) -> None:
+    """Neither half short-circuits the other: they are fixed by different people -- one routes a
+    change, the other waits for an hour -- and this surface answers a question about a unit that
+    has already finished, where the useful answer is the whole list."""
+    unit = _ready_unit(migrated_session, "both-halves")
+
+    answer = _answer(
+        migrated_session, unit, redeploying_source(), no_record_source(), FixedClock(OUT_OF_WINDOW)
+    )
+
+    assert answer.refusals == ("change_record_absent", "merge_outside_change_window")
+
+
+def test_a_routed_landing_with_no_pull_request_says_only_that(migrated_session: Session) -> None:
+    """`pr_binding_missing` is the only true statement about this unit, and a second name for one
+    fact would show an operator two refusals for one fix. Nothing is asked of change-manager,
+    because there is nothing to ask about."""
+    unit = _unit(migrated_session, "routed-no-binding")
+    _verifier_decided(migrated_session, unit)
+    _approve_authority(migrated_session, unit)
+    _complete(migrated_session, unit)
+    records = no_record_source()
+
+    answer = _answer(migrated_session, unit, redeploying_source(), records)
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("pr_binding_missing",)
+    assert records.asked == []
+
+
+def test_an_inert_repository_never_asks_about_a_change_record(migrated_session: Session) -> None:
+    """The routed questions belong to landings that change something already serving. A landing
+    the estate calls inert pays for neither the round-trip nor the window."""
+    unit = _ready_unit(migrated_session, "inert-asks-nothing")
+    records = no_record_source()
+
+    answer = _answer(migrated_session, unit, inert_source(), records)
+
+    assert answer.satisfied is True
+    assert records.asked == []
 
 
 def test_an_unassessed_repository_is_refused(migrated_session: Session) -> None:
@@ -604,14 +776,39 @@ def test_an_unconfigured_estate_source_is_refused_distinctly(migrated_session: S
 # ---------------------------------------------------------------------------------------------
 
 
+def test_no_unmet_answer_is_ever_silent(migrated_session: Session) -> None:
+    """An unsatisfied answer that lists no reason is a refusal nobody can act on.
+
+    This is the invariant that lets one term be unmet with nothing to say -- the routed half on a
+    unit with no pull request, whose only true statement `_head_terms` already reports. Asserted
+    over the composed answer rather than trusted term by term, so a future change that drops the
+    term now covering that case reddens here rather than producing a wordless no.
+    """
+    scenarios = {
+        "no-pr-routed": (redeploying_source(), no_record_source(), FixedClock(IN_WINDOW)),
+        "no-pr-inert": (inert_source(), no_record_source(), FixedClock(IN_WINDOW)),
+        "no-pr-out-of-window": (
+            redeploying_source(),
+            no_record_source(),
+            FixedClock(OUT_OF_WINDOW),
+        ),
+    }
+    for key, (landing, records, clock) in scenarios.items():
+        unit = _unit(migrated_session, f"silent-{key}")
+        _complete(migrated_session, unit)
+
+        answer = _answer(migrated_session, unit, landing, records, clock)
+
+        assert answer.satisfied is False, key
+        assert answer.refusals != (), key
+
+
 def test_every_unmet_term_is_reported_not_only_the_first(migrated_session: Session) -> None:
     """Admission reports one reason because a blocked unit needs one thing done next. This is
     asked about a unit that has already finished, where the useful answer is the whole list."""
     unit = _unit(migrated_session, "everything-wrong", envelope=_envelope(merge_level="prohibited"))
 
-    answer = _answer(
-        migrated_session, unit, FakeEstateLandingSource(default=EstateAnswer(LANDING_REDEPLOYS))
-    )
+    answer = _answer(migrated_session, unit, redeploying_source())
 
     assert answer.satisfied is False
     assert set(answer.refusals) == {
@@ -621,7 +818,6 @@ def test_every_unmet_term_is_reported_not_only_the_first(migrated_session: Sessi
         "merge_capability_not_authorized",
         "authority_approval_not_bound",
         "pr_binding_missing",
-        "merge_target_repository_redeploys",
     }
 
 
@@ -647,6 +843,6 @@ def test_the_answer_reads_one_normalized_authority_snapshot(
 
 def test_the_loader_refuses_a_unit_that_does_not_exist(migrated_session: Session) -> None:
     with pytest.raises(DomainError) as error:
-        pr_merge_admission(migrated_session, uuid.uuid4(), inert_source())
+        pr_merge_admission(migrated_session, uuid.uuid4(), inert_source(), no_record_source())
 
     assert error.value.code == "work_unit_not_found"

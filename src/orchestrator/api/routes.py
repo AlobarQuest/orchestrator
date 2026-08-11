@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Final
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -117,6 +117,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.change_record import ChangeRecordSource, HttpChangeRecordSource
 from orchestrator.services.claims import (
     authorize_retry,
     claim_unit,
@@ -286,6 +287,34 @@ def get_landing_source(settings: SettingsDep) -> EstateLandingSource:
 
 
 LandingSourceDep = Annotated[EstateLandingSource, Depends(get_landing_source)]
+
+# change-manager's own name for the pipeline that proposed changes arrive on -- the source of
+# truth is `DEPLOY_SOURCE` in AlobarQuest/change-manager `app/sources.py`, and its listing route
+# returns nothing from that pipeline unless it is named. It is resolved HERE rather than in the
+# service, alongside the base URL and the credential, because this is where this deployment's
+# cross-boundary configuration is read. It is a constant rather than a setting: an operator who
+# could change it could only ever make the question unanswerable.
+CHANGE_RECORD_PIPELINE: Final = "deploy"
+
+
+def get_change_record_source(settings: SettingsDep) -> ChangeRecordSource:
+    """Build the thing that asks the estate whether this change was routed and approved.
+
+    A dependency for the reason the estate answer's reader is one: a test can substitute
+    change-manager, and an unset URL or credential arrives as the empty string the source itself
+    refuses on -- never as a source that silently answers.
+    """
+    return HttpChangeRecordSource(
+        base_url=settings.change_record_url,
+        token=(
+            settings.change_record_token.get_secret_value() if settings.change_record_token else ""
+        ),
+        pipeline=CHANGE_RECORD_PIPELINE,
+        timeout_seconds=settings.change_record_timeout_seconds,
+    )
+
+
+ChangeRecordSourceDep = Annotated[ChangeRecordSource, Depends(get_change_record_source)]
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorResponse, "description": "Authentication required or rejected"},
@@ -656,6 +685,7 @@ def pr_merge_admission_route(
     _actor: ActorDep,
     session: SessionDep,
     landing_source: LandingSourceDep,
+    record_source: ChangeRecordSourceDep,
 ) -> object:
     """ADR-0020 Increment 4a: may the factory land this unit's pull request, and if not, why?
 
@@ -666,7 +696,7 @@ def pr_merge_admission_route(
     canonical rows plus one read-only question to the estate, and every actor that can read a
     unit's evidentiary record can read this.
     """
-    return pr_merge_admission(session, unit_id, landing_source)
+    return pr_merge_admission(session, unit_id, landing_source, record_source)
 
 
 @router.post("/work-units/{unit_id}/pr-merge", response_model=PrMergeResponse)
@@ -677,6 +707,7 @@ def pr_merge_route(
     session: SessionDep,
     settings: SettingsDep,
     landing_source: LandingSourceDep,
+    record_source: ChangeRecordSourceDep,
 ) -> object:
     """ADR-0020 Increment 4b: the factory lands its own pull request.
 
@@ -702,6 +733,7 @@ def pr_merge_route(
         ),
         GitHubPullRequests(token_provider_for(credentials)),
         landing_source,
+        record_source,
         credentials is not None,
     )
 

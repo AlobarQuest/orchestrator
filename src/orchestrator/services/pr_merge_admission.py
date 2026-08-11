@@ -51,11 +51,21 @@ from typing import Final
 
 from sqlalchemy.orm import Session
 
+from orchestrator.clock import Clock, TransactionClock
 from orchestrator.errors import DomainError
+from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import UnitPrBinding, WorkPackageRevision, WorkUnit
 from orchestrator.persistence.repositories import PackageRepository
+from orchestrator.reach_vocabulary import LIVE_ESTATE
+from orchestrator.services.change_record import (
+    RECORD_AMBIGUOUS,
+    ChangeRecordSource,
+)
+from orchestrator.services.change_record import (
+    SOURCE_UNCONFIGURED as RECORD_SOURCE_UNCONFIGURED,
+)
 from orchestrator.services.estate_landing import (
     LANDING_INERT,
     LANDING_REDEPLOYS,
@@ -131,8 +141,44 @@ PR_HEAD_MOVED_SINCE_VERIFICATION: Final = "pr_head_moved_since_verification"
 MERGE_TARGET_REPOSITORY_MISSING: Final = "merge_target_repository_missing"
 
 # App Brain records that landing on this repository's default branch changes something already
-# serving. Out of scope until ADR-0019's routing exists.
-MERGE_TARGET_REPOSITORY_REDEPLOYS: Final = "merge_target_repository_redeploys"
+# serving, so ADR-0019's routing applies and the terms below decide. Until Increment 3 that answer
+# was itself the refusal -- a repository-level no, which said nothing about the particular change.
+#
+# THIS PROCESS has no way to ask about a routed change, which is a different thing again from
+# change-manager having no record, and the two send different people somewhere different: a
+# missing setting on this deployment, or a service refusing or unreachable.
+CHANGE_RECORD_SOURCE_UNCONFIGURED: Final = "change_record_source_unconfigured"
+CHANGE_RECORD_SOURCE_UNREADABLE: Final = "change_record_source_unreadable"
+
+# More than one record claims this repository and pull request. change-manager holds a unique
+# identity per pair, so this is a guard over a FOREIGN repository's constraint rather than a cause
+# with a next step of its own -- the same posture the estate answer's reader takes toward App
+# Brain's vocabulary. It is here so that ambiguity is reported as ambiguity and never resolved to
+# whichever row came first.
+CHANGE_RECORD_AMBIGUOUS: Final = "change_record_ambiguous"
+
+# Nothing has been routed for this pull request: no record names it. This is the answer for the
+# whole production population today, because nothing yet proposes a record.
+CHANGE_RECORD_ABSENT: Final = "change_record_absent"
+
+# A record names this pull request and nobody has approved it. Distinct from absent, and the
+# distinction is the common case rather than an edge one: awaiting a person is the ordinary steady
+# state of a record, and reporting it as "there is no record" would send somebody to create a
+# second one.
+CHANGE_RECORD_NOT_APPROVED: Final = "change_record_not_approved"
+
+# Policy declares no hours for changing something already serving. Reported rather than passed
+# over: the artifact treats a row with no window as raising no objection, which is the right answer
+# for a policy report and the wrong one for an admission term, where it would admit at any hour.
+MERGE_CHANGE_WINDOW_NOT_DECLARED: Final = "merge_change_window_not_declared"
+
+# Hours are declared and this is not one of them.
+MERGE_OUTSIDE_CHANGE_WINDOW: Final = "merge_outside_change_window"
+
+# The policy artifact could not be loaded, or could not be asked about this instant. A fault in
+# this process rather than a statement about this unit, and a refusal rather than an exception:
+# only two error types have registered handlers, so raising here would turn a read into a 500.
+MERGE_POLICY_UNREADABLE: Final = "merge_policy_unreadable"
 
 # The estate has no assessment for this repository -- no record at all, or a record nobody has
 # assessed. The estate saying it has not looked is not permission.
@@ -167,6 +213,8 @@ def pr_merge_admission(
     session: Session,
     unit_id: uuid.UUID,
     landing_source: EstateLandingSource,
+    record_source: ChangeRecordSource,
+    clock: Clock | None = None,
 ) -> MergeAdmission:
     """Compose the answer for one unit. Reads only; writes nothing, and never acts."""
     unit = session.get(WorkUnit, unit_id)
@@ -175,7 +223,7 @@ def pr_merge_admission(
     revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
-    return admission_for(session, unit, revision, landing_source)
+    return admission_for(session, unit, revision, landing_source, record_source, clock)
 
 
 def admission_for(
@@ -183,6 +231,8 @@ def admission_for(
     unit: WorkUnit,
     revision: WorkPackageRevision,
     landing_source: EstateLandingSource,
+    record_source: ChangeRecordSource,
+    clock: Clock | None = None,
 ) -> MergeAdmission:
     """Every term, over a unit the caller already holds.
 
@@ -220,7 +270,9 @@ def admission_for(
 
     binding = session.get(UnitPrBinding, unit.id)
     head = _head_terms(binding, unit)
-    estate = _estate_terms(target_repository, landing_source)
+    estate = _landing_terms(
+        session, target_repository, binding, landing_source, record_source, clock
+    )
 
     refusals: list[str] = []
     if not completed:
@@ -286,13 +338,26 @@ def _head_terms(binding: UnitPrBinding | None, unit: WorkUnit) -> _Term:
     return _Term(current_attempt and unmoved, tuple(refusals))
 
 
-def _estate_terms(target_repository: str, landing_source: EstateLandingSource) -> _Term:
-    """Does landing on this repository's default branch change something already serving?
+def _landing_terms(
+    session: Session,
+    target_repository: str,
+    binding: UnitPrBinding | None,
+    landing_source: EstateLandingSource,
+    record_source: ChangeRecordSource,
+    clock: Clock | None,
+) -> _Term:
+    """Does landing on this repository's default branch change something already serving, and if
+    it does, has this particular change been routed and is it the hour for it?
 
-    Only an explicit `inert` passes. That is structural rather than enumerated: an answer this
-    build does not recognise, an absent one, and one that says the estate has not looked all fall
-    through to a refusal, so a fourth value shipped on the authoring side cannot arrive here as
-    permission.
+    Only an explicit `inert` passes outright. That is structural rather than enumerated: an answer
+    this build does not recognise, an absent one, and one that says the estate has not looked all
+    fall through to a refusal, so a fourth value shipped on the authoring side cannot arrive here
+    as permission.
+
+    `redeploys` no longer refuses on its own (ADR-0019 Increment 3). It ROUTES: the estate's answer
+    selects which further questions have to be answered, and those questions are about the change
+    rather than about the repository. A repository-level no said nothing about the particular
+    change and could never be satisfied by doing anything.
     """
     if not target_repository:
         return _Term(False, (MERGE_TARGET_REPOSITORY_MISSING,))
@@ -300,9 +365,92 @@ def _estate_terms(target_repository: str, landing_source: EstateLandingSource) -
     if answer.landing == LANDING_INERT:
         return _Term(True, ())
     if answer.landing == LANDING_REDEPLOYS:
-        return _Term(False, (MERGE_TARGET_REPOSITORY_REDEPLOYS,))
+        return _routed_terms(session, target_repository, binding, record_source, clock)
     if answer.landing is not None:
         return _Term(False, (MERGE_TARGET_ESTATE_UNKNOWN,))
     if answer.reason == SOURCE_UNCONFIGURED:
         return _Term(False, (MERGE_TARGET_ESTATE_SOURCE_UNCONFIGURED,))
     return _Term(False, (MERGE_TARGET_ESTATE_SOURCE_UNREADABLE,))
+
+
+def _routed_terms(
+    session: Session,
+    target_repository: str,
+    binding: UnitPrBinding | None,
+    record_source: ChangeRecordSource,
+    clock: Clock | None,
+) -> _Term:
+    """Both halves of ADR-0019's condition, both asked, both reported.
+
+    Neither short-circuits the other. This surface answers a question a person is asking about a
+    unit that has already finished, so the useful answer is the whole list -- and the two halves
+    are fixed by different people: one routes a change, the other waits for an hour.
+
+    **A unit with no pull request is unmet with nothing to say.** The only true statement about it
+    is that it has no pull request, which `_head_terms` already reports; a second name for one fact
+    is the redundancy this repository has rejected before. Answering `met=True` instead would be
+    the fail-open shape this module's own docstring is written against, and the invariant that no
+    unmet answer is silent is asserted over the composed answer rather than trusted here.
+    """
+    if binding is None:
+        return _Term(False, ())
+    record = _change_record_term(target_repository, binding.pr_number, record_source)
+    window = _change_window_term(session, clock)
+    return _Term(record.met and window.met, record.refusals + window.refusals)
+
+
+def _change_record_term(
+    target_repository: str, pull_request_number: int, record_source: ChangeRecordSource
+) -> _Term:
+    """Has this change been routed through the estate's record, and did somebody approve it?
+
+    The affirmative case is positive and narrow: a record was read, it names this pull request, and
+    its status is approved. Every other reading -- including one this process could not obtain --
+    refuses, so a service that is down cannot be mistaken for an estate that has no objection.
+    """
+    answer = record_source.record_for(target_repository, pull_request_number)
+    if not answer.answered:
+        if answer.reason == RECORD_SOURCE_UNCONFIGURED:
+            return _Term(False, (CHANGE_RECORD_SOURCE_UNCONFIGURED,))
+        if answer.reason == RECORD_AMBIGUOUS:
+            return _Term(False, (CHANGE_RECORD_AMBIGUOUS,))
+        return _Term(False, (CHANGE_RECORD_SOURCE_UNREADABLE,))
+    if answer.record is None:
+        return _Term(False, (CHANGE_RECORD_ABSENT,))
+    if not answer.record.approved:
+        return _Term(False, (CHANGE_RECORD_NOT_APPROVED,))
+    return _Term(True, ())
+
+
+def _change_window_term(session: Session, clock: Clock | None) -> _Term:
+    """Is this an hour in which policy raises no objection to changing something already serving?
+
+    **The reach asked about is the LANDING's, never the package's.** A package declares what its
+    work touches when it runs; the estate says what landing on the repository touches; and the
+    landing is a separate act, by a separate actor, at a separate time. Every unit that reaches
+    this term declares a reach that says a landed pull request changes nothing outside the
+    repository, which is false for exactly the repositories the estate routes here -- so reading
+    the declaration would be answering a different question with the right-looking value.
+
+    **The window is asserted to exist before it is asked about.** The artifact treats a row with no
+    window as raising no objection, which is correct for a policy report and fail-open for an
+    admission term: deleting or renaming the row would admit at any hour with the document still
+    loading and nothing red. So the affirmative case here is "a window is declared and now is
+    inside it", never "nothing objected".
+
+    `require_live_subject` is deliberately not consulted. It asserts that the grandfathering list
+    still has a subject, which is about a revision's own reach declaration; this term reads the
+    landing act's reach, which no revision declares. The other reader of a loaded policy -- the
+    route that reports what this process is enforcing -- does not consult it either.
+    """
+    try:
+        policy = load_factory_policy()
+        row = policy.rows.get(LIVE_ESTATE)
+        if row is None or row.change_window is None:
+            return _Term(False, (MERGE_CHANGE_WINDOW_NOT_DECLARED,))
+        refusal = policy.window_refusal((LIVE_ESTATE,), (clock or TransactionClock()).now(session))
+    except DomainError:
+        return _Term(False, (MERGE_POLICY_UNREADABLE,))
+    if refusal is not None:
+        return _Term(False, (MERGE_OUTSIDE_CHANGE_WINDOW,))
+    return _Term(True, ())

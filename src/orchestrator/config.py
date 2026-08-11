@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     app_brain_url: str = ""
     app_brain_read_key: SecretStr | None = None
     app_brain_timeout_seconds: float = 10.0
+    # Where the estate's change records live, and the bearer that reads them (ADR-0019). Both
+    # default to empty, and empty is a REFUSAL for every repository the estate says landing
+    # changes something already serving -- which is exactly the answer that repository already
+    # gets today, so a release carrying this needs no environment write to be safe and stays inert
+    # until one is made. The timeout is deliberately shorter than App Brain's: both are consulted
+    # inside a transaction holding a row lock on the work unit, and this is the second of the two.
+    change_record_url: str = ""
+    change_record_token: SecretStr | None = None
+    change_record_timeout_seconds: float = 5.0
     dispatch_failure_signature_threshold: int = 3
     dispatch_orchestrator_url: str = "https://sds.alobar.net"
     # How long a human approval gate may go unanswered before the dead-letter view reports it as

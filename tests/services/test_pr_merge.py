@@ -29,6 +29,7 @@ from orchestrator.services.pr_merge import (
     PullRequestState,
     land_unit_pull_request,
 )
+from tests.services.change_record_doubles import no_record_source
 from tests.services.estate_doubles import EstateAnswer, FakeEstateLandingSource, inert_source
 from tests.services.test_pr_merge_admission import (
     HEAD,
@@ -96,6 +97,7 @@ def _land(
         ),
         gateway,
         source or inert_source(),
+        no_record_source(),
     )
 
 
@@ -427,6 +429,7 @@ def test_only_the_system_actor_may_ask_for_a_landing(
             ),
             gateway,
             inert_source(),
+            no_record_source(),
         )
 
     assert error.value.code == "role_forbidden"
@@ -450,6 +453,7 @@ def test_a_stale_expected_version_refuses_before_anything_is_called(
             ),
             gateway,
             inert_source(),
+            no_record_source(),
         )
 
     assert error.value.code == "version_conflict"
@@ -468,6 +472,7 @@ def test_a_unit_that_does_not_exist_is_a_named_domain_error(migrated_session: Se
             ),
             FakeGateway(),
             inert_source(),
+            no_record_source(),
         )
 
     assert error.value.code == "work_unit_not_found"
@@ -498,6 +503,7 @@ def test_unconfigured_app_credentials_refuse_before_the_remote_is_touched(
             ),
             gateway,
             inert_source(),
+            no_record_source(),
             False,
         )
 
