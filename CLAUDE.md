@@ -2530,3 +2530,82 @@ style of that module.
   defect. Note also that a new change-manager event type must be snake_case — `envelope.validate_event`
   enforces `^[a-z0-9_]+\.[a-z0-9_.\-]+$` on the composed action, so a camelCase or spaced event
   type HALTS the 03:30 adapter rather than being skipped.
+
+- **`httpx` raises THREE unrelated exception families for a malformed URL, and the third is a
+  `ValueError`.** `except (httpx.HTTPError, httpx.InvalidURL)` looks total and is not: IDNA
+  encoding of a malformed HOST raises `UnicodeError` — a `ValueError`, neither an `HTTPError` nor
+  an `InvalidURL` — at `client.get`, before any body guard. Triggers are ordinary environment-
+  variable typos: a **doubled dot** (`https://host..example`), a **DNS label over 63 characters**,
+  a trailing dot. Both `services/change_record.py` and `services/estate_landing.py` promise in
+  their own docstrings that nothing raises, and both were wrong until 2026-08-11; the escape
+  reaches a **bare HTTP 500** from every caller, because only `DomainError` and
+  `APIAuthenticationError` have registered handlers — i.e. an admission gate that has stopped
+  deciding. The correct tuple is `(httpx.HTTPError, httpx.InvalidURL, ValueError)`.
+  **The transmissible half is how it survived.** A mutation deleting `InvalidURL` from the tuple
+  was KILLED by the control written for exactly this class — because that control used a trailing
+  *newline*, which `InvalidURL` already covers. **The mutation and its control shared one
+  incomplete model of what the library raises**, so a 22/22 mutation pass proved the code
+  implements the tests' model of `httpx` rather than `httpx`. Found by probing the real library,
+  not by reading. Generalise: **a mutation set can only question the model its tests already hold;
+  the falsifying input lives outside the tree.** Any "nothing raises" claim needs a probe against
+  the real dependency, and a URL control needs a HOST shape, not only a whitespace shape.
+
+- **A time-dependent control passes for the wrong reason most of the day.** A single
+  "outside the change window" assertion cannot kill a term that ignores its injected clock, because
+  whenever the real clock is also outside the window the mutant and the original agree — and
+  `live_estate`'s window is four hours, so the control is honest for 17% of the day. This recurred
+  *inside the fix for itself*: the mutation added to guard the acting path was pinned to the
+  out-of-window case alone and survived for the same reason one increment later. **Pin a
+  clock-dependent guard to a PAIR of cases whose answers must differ** — in-window admits,
+  out-of-window refuses — so a term that never reads the clock reddens at any real time.
+
+- **`TransactionClock.now()` does not advance: it is `transaction_timestamp()`, frozen at
+  transaction start.** Measured 2026-08-11: two reads two seconds apart in one transaction return
+  the identical instant, while `clock_timestamp()` moves. Every admission term in this repository
+  reads it, so a change window is judged at the instant the transaction OPENED — and
+  `_land_unit_pull_request` then makes up to four outbound calls (App Brain, change-manager, and
+  two GitHub calls) before it acts. The drift is seconds and the direction is the same as the
+  pipeline overrun already accepted, so it stands as a decision rather than a defect; but "is the
+  window about when the transaction started or when the act fires" is a real question and
+  `clock_timestamp()` is the other answer.
+
+- **`change_window` is OPTIONAL in `factory-policy.toml` and two of the four rows carry none, so
+  `window_refusal` answers "no objection" for a row that loses one — and the assertion that fixes
+  it belongs to the ARTIFACT, not to either caller.** `window_refusal` `continue`s past a row with
+  no window, so deleting or renaming `[reach.live_estate.change_window]` silently un-gates
+  `live_estate` work at every hour, with the document still loading and nothing red. The obvious
+  fix — assert a window inside `reach_admission.change_window_refusal` — is **wrong**: that call
+  site composes over whatever reach a package declared, and `source_repository` and
+  `external_system` deliberately have no window, so requiring one would make two-thirds of the
+  authored population unrunnable. `tests/services/test_factory_policy.py::
+  test_the_live_estate_row_declares_a_change_window` is the guard, and it covers both readers
+  because it is about the file.
+
+- **change-manager's listing route hides proposed sources from any caller that does not name one,
+  and applies `status` as a SQL filter — so `?status=approved` makes a PENDING record
+  indistinguishable from a record that does not exist.** Measured 2026-08-11:
+  `/api/items` → 43 rows, **zero** of them deploy records; `?source=deploy` → the one that exists;
+  `?source=deploy&status=pending` → **zero rows for a record that is there**; an out-of-vocabulary
+  status → zero rather than an error. Pending is the ordinary steady state of a record awaiting a
+  person, so a consumer that filters server-side reports "nothing has been routed" about the
+  common case. **Ask for the pipeline alone and branch on status client-side.** The join key is
+  `(target_repository.lower(), pull_request_number)` — `pr_url` is an older lane's field, never set
+  by the proposal route, and unvalidated. There is no lookup-by-pull-request route, and
+  `GET /api/items` is unpaginated with no `limit`.
+
+- **A client that re-checks two of three scoping dimensions and trusts the server on the third is
+  defensive about the wrong things.** `change_record.py`'s first draft verified the repository and
+  the pull request number on each row and took `source` from the query — the one dimension that
+  makes the answer about the right pipeline at all. FastAPI ignores an unknown query parameter
+  silently, so a renamed parameter would have handed admission a record from another pipeline.
+  Same family, one field over: an **ambiguity guard keyed on a fully-parsed row** is defeated by a
+  malformed twin, which the parser skips, dropping the tally below two and letting the survivor
+  through as unambiguous. **Detect ambiguity on the MATCH KEY and read the rest only from rows that
+  already matched.**
+
+- **The report surface and the ACTING surface are different tests, and only one of them changes a
+  repository.** Every case in `tests/services/test_pr_merge.py` passed an inert estate, so when
+  ADR-0019 Increment 3 added routed terms the surface that actually lands a pull request was
+  covered for `inert` alone — and could not be covered, because `land_unit_pull_request` took no
+  clock while `admission_for` did. A refusal test there must assert the **gateway was never
+  reached**: an admission answer that arrives after the act is not a gate.

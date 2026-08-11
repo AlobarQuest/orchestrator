@@ -87,6 +87,56 @@
   wrong** — the decision lifecycle was never closed, only the execution one.
   Report: `~/docs/software-delivery-system/2026-08-10-adr0019-inc2-build-report.md`.
 
+  **INCREMENT 3 BUILT 2026-08-11, NOT MERGED** — the factory lane honours the record and the
+  window. `pr-merge`'s blanket `merge_target_repository_redeploys` refusal is replaced: the
+  estate's `redeploys` answer no longer refuses on its own, it **routes** to eight refusal codes
+  covering an approved change record for that pull request and the hours policy declares for
+  changing something already serving. **Unconfigured refuses**, so the release needs no
+  environment write and is inert until one is made. Proof, since nothing could merge: the routed
+  terms run against the real change-manager, the real artifact and the real subject of each of the
+  ten production units — **all ten refusals changed**, the six with a pull request reaching
+  `change_record_absent`, with a discriminating control showing the same source answering
+  `met=True` against production's one real record and `change_record_absent` under a wrong
+  pipeline name (which is how a silently-broken lookup would look).
+
+  **THE WINDOW FORK IS DECIDED, and the premise it was posed on was false.** The handoff said
+  Increment 4's check "asks change-manager, which cannot read that artifact".
+  **`GET /api/v1/factory-policy` already exists, is already deployed, and already serves
+  `live_estate`'s window in full** — and the enforcing party is a GitHub Actions job, not
+  change-manager. So: **the orchestrator is the sole holder, the only readable form is what the
+  running process serves, nobody holds a copy, and the record does not carry the window.**
+  Increment 4 asks two parties two questions. The recommended option — the record carrying the
+  window — was a **fail-open**: it makes policy a caller-declared field at a service that cannot
+  attest callers, it would have shipped with no reader, and its cited exemplar carries a *pointer*
+  (a git blob sha) rather than the policy's content. A pinned transcription is unbuildable in the
+  direction required: the pin would be over git bytes while the bytes in force are baked into the
+  running image, and `orchestrator` is private where the exemplar's precondition is a public repo.
+
+  **`change-manager` is NOT excluded from the factory lane**, and the handoff's reason for
+  excluding it was measured false (the watcher is hourly and asynchronous; increment 2 classified
+  change-manager's own shipping merge correctly). The replacement reason — the remedy lives in the
+  system the change could break — fails four ways: the record is in a separate Postgres resource an
+  image swap does not touch; `health_check_enabled: true` means a container that cannot answer
+  never completes the swap and the old one keeps serving; enforcement reads the record *before* the
+  merge; and the rule **covers `brain` too**, since `brain` serves the App Brain answer that routes
+  a landing into this lane at all. Measured cost of excluding: **one** of the ten units would ever
+  reach the new lookup, against **six** without. **The bootstrap question this document raises
+  therefore remains open, named as open.**
+
+  **Adversarial review ran as two numbered stages and killed both of the design's central
+  decisions at stage one** — the fork and the exclusion — plus a fail-open window term, an
+  unreachable refusal code, and a proposed widening of a scope guard. Stage two could not kill the
+  implementation and found a **SEVERE** defect in the property the new module leads with:
+  `UnicodeError` is a `ValueError` and escaped a reader promising never to raise, reaching a bare
+  HTTP 500 — and **the mutation guarding that `except` was killed by a control sharing the same
+  incomplete model of what httpx raises**, so a 22/22 pass proved only that the code matched the
+  tests' model. Fixed here and in `estate_landing.py`, where the same escape existed.
+  **28/28 mutations killed** on two consecutive baseline-verified passes plus a run against the
+  committed tree; evidence retained.
+  **Named escalation for Increment 4: change-manager's single `/api` bearer can create and approve
+  the records this term reads, so the bound becomes a KILL the moment a producer ships holding it.**
+  Report: `~/docs/software-delivery-system/2026-08-10-adr0019-inc3-build-report.md`.
+
   **SCOPE SETTLED 2026-08-10 (Devon).** This rule's first implementation is **SDS-initiated
   merges into repositories where merging to `main` IS deploying** — `change-manager` and `brain`.
   How the orchestrator itself gets deployed is deliberately parked. ADR-0020 already gives the
