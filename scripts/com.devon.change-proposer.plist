@@ -14,8 +14,12 @@
 
      A REPEAT PASS IS NOT A NO-OP, which is what makes hourly worth its cost. change-manager
      answers 200 and re-evaluates: a record that has become conformant is approved, and one
-     whose rollout workflow has moved is refreshed and, if it no longer conforms, revoked. So
-     this job is how a policy bump takes effect and how a changed rollout workflow is noticed.
+     whose rollout workflow has moved is refreshed and, if it no longer conforms, revoked.
+
+     That re-evaluation is OPPORTUNISTIC and not a sweep, and the difference is worth stating
+     because the opposite reading is flattering. Narrowing the policy revokes nothing on its
+     own; a record moves only when this pass proposes its pull request again, so a pull request
+     that has closed or merged is never re-examined at all.
 
      RunAtLoad is false. A pass at login adds nothing an hourly schedule does not cover, and
      proposing is idempotent server-side, so a missed hour costs nothing.
@@ -33,6 +37,9 @@
     <array>
         <string>/bin/bash</string>
         <string>__REPO_ROOT__/scripts/run-change-proposer.sh</string>
+        <!-- The wrapper does NOT force this. A bare run is a dry run, so the one invocation that
+             writes is the scheduled one, and it says so here rather than being implied. -->
+        <string>--submit</string>
     </array>
 
     <key>StartInterval</key>

@@ -10,8 +10,16 @@
 # AND A REPEAT PASS IS NOT A NO-OP, which is what makes the cadence worth having.
 # change-manager answers 200 and re-evaluates: a record that has become conformant is
 # approved, and one whose rollout workflow has moved is refreshed and, if it no longer
-# conforms, revoked. So this job is how a policy bump takes effect and how a changed rollout
-# workflow gets noticed.
+# conforms, revoked.
+#
+# BE PRECISE ABOUT WHAT THAT DOES AND DOES NOT BUY, because an earlier version of this
+# comment said "this job is how a policy bump takes effect" and that overstates it in a way
+# that matters. Re-evaluation is OPPORTUNISTIC, not a sweep: `_apply_policy` runs only inside
+# a proposal, so narrowing the policy revokes NOTHING by itself. A record is re-evaluated only
+# if this pass proposes that specific pull request again -- which needs it still open, still
+# bot-authored, still on the trigger branch, its rollout workflow still transcribed, AND this
+# job installed AND the credential minted. A record whose pull request has since closed or
+# merged is never seen again and can never be revoked by any mechanism here.
 #
 # EXIT CODES, the whole interface a scheduled run has:
 #   0  everything was measured and nothing was found.
@@ -24,8 +32,14 @@
 # route that could move a record's status, and since increment 5a it refuses APPROVAL to
 # every credential including the full one. Approval is conformance to a pinned policy.
 #
+# BARE INVOCATION IS A DRY RUN. `--submit` is the flag that separates reporting from writing, and
+# this wrapper must not supply it for you: an operator reaching for "just look at what it would
+# do" would otherwise mint approved change records and authority-grant rows in the tamper-evident
+# chain. The scheduled job passes `--submit` explicitly, in the plist, where it is visible.
+#
 # Usage:
-#   scripts/run-change-proposer.sh [--submit]
+#   scripts/run-change-proposer.sh              # dry run: reports, writes nothing
+#   scripts/run-change-proposer.sh --submit     # proposes
 # Install as a scheduled job with:
 #   scripts/install-change-proposer-launchd.sh
 set -uo pipefail
@@ -52,7 +66,8 @@ if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
   exit 1
 fi
 
-if [ "$CHANGE_MANAGER_PROPOSE_UUID" = "REPLACE_WITH_M2M_TOKEN_PROPOSE_UUID" ]; then
+if [ "$CHANGE_MANAGER_PROPOSE_UUID" = "REPLACE_WITH_M2M_TOKEN_PROPOSE_UUID" ] \
+   && printf '%s ' "$@" | /usr/bin/grep -q -- "--submit"; then
   echo "FATAL: the propose-scoped change-manager credential has no BWS record yet." >&2
   echo "       Mint it, then set CHANGE_PROPOSER_BWS_UUID or edit this line." >&2
   echo "       Until then this job cannot run, and it fails LOUDLY rather than" >&2
@@ -68,14 +83,25 @@ _bws_value() {
     | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
 }
 
-CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_PROPOSE_UUID")"
-export CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN
+# ONLY FETCHED FOR A WRITING RUN. A dry run reports what it would propose and sends nothing, so
+# it must not need -- or touch -- the credential that could write. Fetching unconditionally would
+# make the inspection path fail on a machine that cannot read the secret, which is precisely the
+# machine on which somebody most wants to inspect before granting it one.
+case " $* " in
+  *" --submit "*) NEEDS_CREDENTIAL=1 ;;
+  *) NEEDS_CREDENTIAL=0 ;;
+esac
+
+if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
+  CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_PROPOSE_UUID")"
+  export CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN
+fi
 
 # `set -e` is deliberately not used here (the watcher's launcher does the same), so a failed
 # fetch would otherwise leave this EMPTY and fall through. The tool refuses an empty credential
 # and would exit 2 -- which is fail-closed but reports "unusable input" for what is actually a
 # credential failure. Name it here so the exit code means what this header says it means.
-if [ -z "${CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
+if [ "$NEEDS_CREDENTIAL" -eq 1 ] && [ -z "${CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
   echo "FATAL: could not read the propose-scoped change-manager credential from BWS" >&2
   exit 1
 fi
@@ -93,4 +119,4 @@ if [ -z "${CHANGE_PROPOSER_GITHUB_TOKEN:-}" ]; then
   exit 1
 fi
 
-"$REPO_ROOT/.venv/bin/change-proposer" --submit "$@"
+"$REPO_ROOT/.venv/bin/change-proposer" "$@"
