@@ -69,7 +69,6 @@ def test_a_matching_approved_record_is_returned() -> None:
     assert answer.answered is True
     assert answer.record is not None
     assert answer.record.approved is True
-    assert answer.record.identifier == 44
 
 
 def test_the_request_names_the_pipeline_and_carries_the_bearer() -> None:
@@ -144,7 +143,9 @@ def test_an_unconfigured_source_answers_without_reaching_the_network() -> None:
 
 @pytest.mark.parametrize("missing", ["token", "pipeline"])
 def test_every_missing_setting_is_unconfigured(missing: str) -> None:
-    """All three are required to ask the question, so any one of them absent is the same fault."""
+    """The token and the pipeline; the base URL has its own test above, which additionally asserts
+    that nothing reaches the network. All three are required to ask the question at all, so any one
+    of them absent is the same fault."""
     handler = _ok([_row()])
     settings: dict[str, str] = {
         "base_url": "https://change-mgr.example",
@@ -202,15 +203,32 @@ def test_a_transport_failure_is_an_answer_rather_than_a_raise() -> None:
     assert answer.reason == SOURCE_UNREADABLE
 
 
-def test_a_malformed_base_url_is_an_answer_rather_than_a_raise() -> None:
-    """`InvalidURL` is not an `HTTPError`, and a TRAILING NEWLINE on a configured URL is the
-    ordinary way an environment variable gets malformed -- `.rstrip("/")` does not remove it."""
-    source = HttpChangeRecordSource(
-        base_url="https://change-mgr.example\n", token="t", pipeline=PIPELINE
-    )
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://change-mgr.example\n",
+        "https://change-mgr..example",
+        "https://" + "a" * 64 + ".example",
+        "https://change-mgr.example.",
+        "not-a-url-at-all",
+    ],
+    ids=["trailing-newline", "doubled-dot", "over-long-label", "trailing-dot", "not-a-url"],
+)
+def test_a_malformed_base_url_is_an_answer_rather_than_a_raise(base_url: str) -> None:
+    """FIVE shapes, because one shape is how this stayed broken.
+
+    `InvalidURL` is not an `HTTPError`, and a trailing newline is the ordinary way an environment
+    variable gets malformed -- that was the whole original case, and it is covered by `InvalidURL`.
+    The HOST shapes are not: IDNA encoding raises `UnicodeError`, which is a `ValueError` and
+    neither of the other two, so it escaped the module and surfaced as a bare 500 from a route.
+    Adversarial review found it by probing; the mutation guarding this `except` was killed by a
+    control that shared the same incomplete model of what httpx raises.
+    """
+    source = HttpChangeRecordSource(base_url=base_url, token="t", pipeline=PIPELINE)
 
     answer = source.record_for(REPOSITORY, 42)
 
+    assert answer.answered is False
     assert answer.reason == SOURCE_UNREADABLE
 
 
@@ -245,6 +263,37 @@ def test_a_row_that_is_not_an_object_makes_the_whole_listing_unreadable() -> Non
     assert answer.reason == SOURCE_UNREADABLE
 
 
+def test_a_row_from_another_pipeline_is_not_a_match() -> None:
+    """The pipeline is re-checked on the ROW, not only asked of the server.
+
+    change-manager scopes the listing correctly today, and FastAPI ignores an unknown query
+    parameter silently -- so a renamed parameter, or a listing route that stopped scoping, would
+    otherwise hand admission a record belonging to a pipeline this term knows nothing about.
+    """
+    answer = _source(_ok([_row(source="drift")])).record_for(REPOSITORY, 42)
+
+    assert answer.answered is True
+    assert answer.record is None
+
+
+def test_a_malformed_duplicate_still_counts_toward_ambiguity() -> None:
+    """The guard is on the MATCH KEY, so a twin that is malformed in some other field cannot drop
+    the tally below two and hand the surviving row through as unambiguous."""
+    answer = _source(_ok([_row(), _row(status=None)])).record_for(REPOSITORY, 42)
+
+    assert answer.answered is False
+    assert answer.reason == RECORD_AMBIGUOUS
+
+
+def test_a_matching_row_whose_status_does_not_read_is_unreadable() -> None:
+    """Not `change_record_not_approved`, which would assert something about a record nobody could
+    read, and not absent, which would be a claim about the estate."""
+    answer = _source(_ok([_row(status=None)])).record_for(REPOSITORY, 42)
+
+    assert answer.answered is False
+    assert answer.reason == SOURCE_UNREADABLE
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -252,10 +301,8 @@ def test_a_row_that_is_not_an_object_makes_the_whole_listing_unreadable() -> Non
         {"target_repository": ""},
         {"pull_request_number": "42"},
         {"pull_request_number": True},
-        {"id": None},
-        {"status": None},
     ],
-    ids=["no-repo", "empty-repo", "number-as-string", "number-as-bool", "no-id", "no-status"],
+    ids=["no-repo", "empty-repo", "number-as-string", "number-as-bool"],
 )
 def test_a_row_missing_what_a_match_is_made_of_cannot_match(overrides: dict[str, object]) -> None:
     """Skipping such a row is the same answer as reading it and finding it does not match -- and

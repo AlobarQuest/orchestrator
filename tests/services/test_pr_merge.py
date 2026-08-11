@@ -13,6 +13,7 @@ reconciled against reality before it is written down as a refusal.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import Engine, select
@@ -29,8 +30,13 @@ from orchestrator.services.pr_merge import (
     PullRequestState,
     land_unit_pull_request,
 )
-from tests.services.change_record_doubles import no_record_source
-from tests.services.estate_doubles import EstateAnswer, FakeEstateLandingSource, inert_source
+from tests.services.change_record_doubles import approved_record_source, no_record_source
+from tests.services.estate_doubles import (
+    EstateAnswer,
+    FakeEstateLandingSource,
+    inert_source,
+    redeploying_source,
+)
 from tests.services.test_pr_merge_admission import (
     HEAD,
     TARGET,
@@ -84,8 +90,29 @@ class FakeGateway:
         return self._outcome
 
 
+class FixedClock:
+    """A named instant, so the acting path can be exercised outside 02:00-06:00 New York."""
+
+    def __init__(self, moment: datetime) -> None:
+        self._moment = moment
+
+    def now(self, session: Session) -> datetime:
+        return self._moment
+
+
+IN_WINDOW = datetime(2026, 8, 11, 7, 30, tzinfo=UTC)
+OUT_OF_WINDOW = datetime(2026, 8, 11, 19, 30, tzinfo=UTC)
+
+
 def _land(
-    session: Session, unit: WorkUnit, gateway: FakeGateway, *, key: str = "merge-1", source=None
+    session: Session,
+    unit: WorkUnit,
+    gateway: FakeGateway,
+    *,
+    key: str = "merge-1",
+    source=None,
+    record_source=None,
+    clock=None,
 ):
     return land_unit_pull_request(
         session,
@@ -97,7 +124,8 @@ def _land(
         ),
         gateway,
         source or inert_source(),
-        no_record_source(),
+        record_source or no_record_source(),
+        clock=clock or FixedClock(IN_WINDOW),
     )
 
 
@@ -531,3 +559,54 @@ def test_an_idempotency_key_spent_on_another_unit_is_refused_before_the_call(
     assert error.value.code == "idempotency_conflict"
     assert gateway.merges == []
     assert _no_record(migrated_session, second)
+
+
+# ---------------------------------------------------------------------------------------------
+# ADR-0019 Increment 3. The routed lane, through the surface that ACTS.
+#
+# Every other case in this file passes an inert estate, so before these two the routed paths were
+# exercised only through the report -- and the report does not merge anything. Adversarial review
+# named the gap: the surface that changes a production repository was covered for `inert` alone,
+# and Increment 4 builds on this surface.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_routed_landing_with_an_approved_record_in_window_lands(
+    migrated_session: Session,
+) -> None:
+    unit = _ready_unit(migrated_session, "routed-admit")
+    gateway = FakeGateway()
+
+    record = _land(
+        migrated_session,
+        unit,
+        gateway,
+        source=redeploying_source(),
+        record_source=approved_record_source(TARGET, 7),
+        clock=FixedClock(IN_WINDOW),
+    )
+
+    assert record.status == "merged"
+    assert gateway.merges == [(TARGET, 7, HEAD)]
+
+
+def test_a_routed_landing_outside_the_window_does_not_reach_the_remote(
+    migrated_session: Session,
+) -> None:
+    """Refused BEFORE the gateway, which is the property that matters: an admission answer that
+    arrives after the act is not a gate."""
+    unit = _ready_unit(migrated_session, "routed-refuse")
+    gateway = FakeGateway()
+
+    with pytest.raises(DomainError) as raised:
+        _land(
+            migrated_session,
+            unit,
+            gateway,
+            source=redeploying_source(),
+            record_source=approved_record_source(TARGET, 7),
+            clock=FixedClock(OUT_OF_WINDOW),
+        )
+
+    assert "merge_outside_change_window" in str(raised.value.__dict__)
+    assert gateway.merges == []

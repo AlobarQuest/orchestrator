@@ -112,7 +112,12 @@ class HttpEstateLandingSource:
         # `.rstrip("/")` does not remove, and which is the ordinary way an environment variable
         # gets malformed. Escaping here is an unhandled 500 from every caller, because only
         # `DomainError` and `APIAuthenticationError` have registered handlers.
-        except (httpx.HTTPError, httpx.InvalidURL):
+        # `ValueError` joins the tuple for the reason ADR-0019 Increment 3 found it here: IDNA
+        # encoding of a malformed HOST raises `UnicodeError`, which is a `ValueError` and neither
+        # of the other two, so a doubled dot or an over-long DNS label escaped this module and
+        # surfaced as a bare 500 from the admission path -- the one outcome its own docstring
+        # promises cannot happen.
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError):
             return EstateAnswer(None, SOURCE_UNREADABLE)
         if response.status_code != 200:
             return EstateAnswer(None, SOURCE_UNREADABLE)

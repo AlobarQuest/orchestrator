@@ -28,7 +28,7 @@ from orchestrator.factory_policy import (
     ReachPolicy,
     load_factory_policy,
 )
-from orchestrator.reach_vocabulary import REACH_VOCABULARY
+from orchestrator.reach_vocabulary import LIVE_ESTATE, REACH_VOCABULARY
 
 SOURCE_ROOT = Path("src")
 MODULE_PATH = "src/orchestrator/factory_policy.py"
@@ -408,3 +408,22 @@ def test_a_policy_is_immutable() -> None:
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         policy.version = 99  # type: ignore[misc]
+
+
+def test_the_live_estate_row_declares_a_change_window() -> None:
+    """The packaged artifact, asserted rather than assumed (ADR-0019 Increment 3).
+
+    `change_window` is OPTIONAL and two of the four rows carry none, so `window_refusal` answers
+    "no objection" for a row that declares one and then loses it. Two readers depend on this row
+    having one: `pr_merge_admission` asserts it explicitly and refuses when it is absent, and
+    `reach_admission.change_window_refusal` -- which composes over whatever reach a package
+    declared, and must NOT require a window of every member, because `source_repository` and
+    `external_system` deliberately have none -- would silently stop gating `live_estate` work.
+
+    So the assertion belongs to the ARTIFACT, not to either caller: this is the one row whose
+    window is load-bearing, and deleting or renaming it reddens here rather than un-gating a lane.
+    """
+    row = load_factory_policy().rows[LIVE_ESTATE]
+
+    assert row.change_window is not None
+    assert row.change_window.zone.key == "America/New_York"

@@ -66,6 +66,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event, UnitPrMerge, WorkPackageRevision, WorkUnit
@@ -155,6 +156,7 @@ def land_unit_pull_request(
     landing_source: EstateLandingSource,
     record_source: ChangeRecordSource,
     credentials_configured: bool = True,
+    clock: Clock | None = None,
 ) -> UnitPrMerge:
     """Own the transaction, the way every request entry point in this repository does.
 
@@ -164,7 +166,7 @@ def land_unit_pull_request(
     """
     try:
         record = _land_unit_pull_request(
-            session, command, gateway, landing_source, record_source, credentials_configured
+            session, command, gateway, landing_source, record_source, credentials_configured, clock
         )
         session.commit()
         return record
@@ -180,6 +182,7 @@ def _land_unit_pull_request(
     landing_source: EstateLandingSource,
     record_source: ChangeRecordSource,
     credentials_configured: bool,
+    clock: Clock | None,
 ) -> UnitPrMerge:
     _authorize_actor(command.actor)
     unit = session.scalar(select(WorkUnit).where(WorkUnit.id == command.unit_id).with_for_update())
@@ -228,7 +231,7 @@ def _land_unit_pull_request(
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
 
-    admission = admission_for(session, unit, revision, landing_source, record_source)
+    admission = admission_for(session, unit, revision, landing_source, record_source, clock)
     if not admission.satisfied:
         # No record: this unit was never acted on, and consuming its one row here would refuse
         # every later legitimate attempt. The reasons are already served by the read surface.

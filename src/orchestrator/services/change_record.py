@@ -61,9 +61,14 @@ _USER_AGENT: Final = "orchestrator-change-record-check/1 (+AlobarQuest/orchestra
 
 @dataclass(frozen=True)
 class ChangeRecord:
-    """One change record, projected down to what admission is entitled to decide on."""
+    """One change record, projected down to what admission is entitled to decide on.
 
-    identifier: int
+    There is deliberately no identifier here. The first draft parsed change-manager's row id,
+    REQUIRED it for a row to read at all, and then read it nowhere -- so its only reachable effect
+    was to turn a real approved record into "there is no record". An unread field is how a guard
+    ships at half strength.
+    """
+
     status: str
     target_repository: str
     pull_request_number: int
@@ -135,12 +140,16 @@ class HttpChangeRecordSource:
                         "user-agent": _USER_AGENT,
                     },
                 )
-        # `InvalidURL` is NOT an `HTTPError` -- it derives straight from `Exception` -- so catching
-        # the latter alone would leave the totality this module promises untrue. The input that
-        # reaches it is not exotic: a trailing newline on the configured base URL, which
-        # `.rstrip("/")` does not remove, and which is the ordinary way an environment variable
-        # gets malformed.
-        except (httpx.HTTPError, httpx.InvalidURL):
+        # THREE families, and the totality this module promises is only as complete as this tuple.
+        # `InvalidURL` is not an `HTTPError` -- it derives straight from `Exception` -- and
+        # `UnicodeError` (a `ValueError`) is raised by IDNA encoding of a malformed HOST before
+        # either of them can be, for a doubled dot or a DNS label over 63 characters. None of the
+        # three inputs is exotic: they are the ordinary ways a URL in an environment variable gets
+        # malformed, and `.rstrip("/")` removes none of them. Adversarial review found the third
+        # by probing rather than by reading -- the control written for this class used a trailing
+        # newline, which `InvalidURL` already covered, so the mutation guarding it was killed by a
+        # test that shared the same incomplete model of what httpx raises.
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError):
             return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
         if response.status_code != 200:
             return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
@@ -148,58 +157,73 @@ class HttpChangeRecordSource:
             body = response.json()
         except ValueError:
             return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
-        return _answer_from_body(body, github_repo, pull_request_number)
+        return _answer_from_body(body, self._pipeline, github_repo, pull_request_number)
 
 
-def _answer_from_body(body: Any, github_repo: str, pull_request_number: int) -> ChangeRecordAnswer:
+def _answer_from_body(
+    body: Any, pipeline: str, github_repo: str, pull_request_number: int
+) -> ChangeRecordAnswer:
     """The matching record in change-manager's listing, or no answer when it does not read as one.
 
-    Defensive about a shape this repository does not own. A body that is not a list, or a row whose
-    fields are missing or the wrong type, reads as NO ANSWER -- never as the nearest recognisable
+    Defensive about a shape this repository does not own. A body that is not a list, or a matching
+    row whose status does not read as one, reads as NO ANSWER -- never as the nearest recognisable
     thing, and never as "there is no record", which is a claim about the estate rather than about a
-    reading. A row that is well formed but describes some other pull request is simply not a match.
+    reading. A well-formed row describing some other pull request is simply not a match.
+
+    **Matching and reading are separated on purpose.** A row is a match on the three fields that
+    identify one: the pipeline, the repository and the number. Everything else is read only from a
+    row that already matched -- so a duplicate that is malformed in some other field still COUNTS,
+    and cannot drop the tally below two and hand the surviving row through as unambiguous. That was
+    the shape adversarial review found: the ambiguity guard defeated by the malformed twin of the
+    record it was guarding.
     """
     if not isinstance(body, list):
         return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
     wanted = github_repo.lower()
-    matches: list[ChangeRecord] = []
+    matches: list[dict[str, Any]] = []
     for row in body:
         if not isinstance(row, dict):
             return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
-        record = _record_from_row(row)
-        if record is None:
-            continue
-        if record.target_repository.lower() == wanted and (
-            record.pull_request_number == pull_request_number
-        ):
-            matches.append(record)
+        if _matches(row, pipeline, wanted, pull_request_number):
+            matches.append(row)
     if len(matches) > 1:
         return ChangeRecordAnswer(False, reason=RECORD_AMBIGUOUS)
-    return ChangeRecordAnswer(True, record=matches[0] if matches else None)
-
-
-def _record_from_row(row: dict[str, Any]) -> ChangeRecord | None:
-    """One listing row, or ``None`` when it does not carry the fields a match is made of.
-
-    A row missing a repository or a number cannot match anything, so skipping it is the same answer
-    as reading it and finding it does not match. `bool` is an `int` in Python, so a boolean pull
-    request number is rejected rather than read as 1.
-    """
-    repository = row.get("target_repository")
-    number = row.get("pull_request_number")
-    identifier = row.get("id")
-    status = row.get("status")
-    if not isinstance(repository, str) or not repository:
-        return None
-    if not isinstance(number, int) or isinstance(number, bool):
-        return None
-    if not isinstance(identifier, int) or isinstance(identifier, bool):
-        return None
+    if not matches:
+        return ChangeRecordAnswer(True)
+    status = matches[0].get("status")
     if not isinstance(status, str) or not status:
-        return None
-    return ChangeRecord(
-        identifier=identifier,
-        status=status,
-        target_repository=repository,
-        pull_request_number=number,
+        return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
+    return ChangeRecordAnswer(
+        True,
+        record=ChangeRecord(
+            status=status,
+            target_repository=github_repo,
+            pull_request_number=pull_request_number,
+        ),
+    )
+
+
+def _matches(row: dict[str, Any], pipeline: str, wanted: str, pull_request_number: int) -> bool:
+    """Whether this row is the record for that pipeline, repository and pull request.
+
+    **The pipeline is checked HERE and not only in the query**, which is the one scoping dimension
+    the first implementation took on trust. change-manager filters correctly today, and FastAPI
+    ignores an unknown query parameter silently -- so a renamed parameter, or a listing route that
+    stops scoping, would have handed admission a record belonging to a pipeline this term knows
+    nothing about. The other two dimensions were already re-checked here; this makes the set
+    complete rather than the two the server did not filter on.
+
+    The repository is compared LOWER-CASED, mirroring change-manager's own identity key, which
+    folds it. `bool` is an `int` in Python and `True == 1`, so a boolean number is rejected rather
+    than matched against pull request one.
+    """
+    number = row.get("pull_request_number")
+    repository = row.get("target_repository")
+    return (
+        row.get("source") == pipeline
+        and isinstance(repository, str)
+        and repository.lower() == wanted
+        and isinstance(number, int)
+        and not isinstance(number, bool)
+        and number == pull_request_number
     )

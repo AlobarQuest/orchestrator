@@ -57,7 +57,6 @@ def approved_record_source(
 ) -> FakeChangeRecordSource:
     """One record, for one pull request, at the given status."""
     record = ChangeRecord(
-        identifier=1,
         status=status,
         target_repository=github_repo,
         pull_request_number=pull_request_number,
