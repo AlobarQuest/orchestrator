@@ -191,6 +191,15 @@ OUTBOUND_ALLOWLIST = {
     # shape) would put that answer outside the transaction that records the admission decision.
     # The credential is READ-ONLY and App Brain scopes it to two read paths.
     Path("src/orchestrator/services/estate_landing.py"),
+    # ADR-0019 Increment 3. Admission asks change-manager one question about the pull request it
+    # would land -- has this change been routed through the estate's record, and did somebody
+    # approve it -- and writes nothing. Same justification as the two above: the answer decides an
+    # admission term, so it must be inside the transaction that records the decision, and the
+    # out-of-process alternative (ADR-0002's shape) would put it outside. It reaches exactly one
+    # listing route and holds a bearer that can read change records; the fact that the same shared
+    # secret could also approve one is change-manager's to narrow, and is recorded in ADR-0019
+    # rather than implied here.
+    Path("src/orchestrator/services/change_record.py"),
     # ADR-0020 Increment 4b. The one genuinely MUTATING egress this repository has: it reads one
     # pull request and asks for it to be landed, naming the head the criteria were adjudicated at
     # so the remote refuses any other. It borrows the same App installation token the workflow
