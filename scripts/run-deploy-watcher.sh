@@ -29,7 +29,12 @@
 set -uo pipefail
 
 # BWS UUIDs (values fetched at runtime; never stored in this repo).
-CHANGE_MANAGER_M2M_UUID="af0e4192-edc6-46ae-9e4f-b469011dbb8d"   # change-manager/M2M_TOKEN
+# The OBSERVE-scoped bearer, minted 2026-08-12. Until then this job held
+# change-manager/M2M_TOKEN -- the FULL credential -- because the observe scope increment 4
+# shipped had never been given a value, so the narrowing existed on paper and nowhere else.
+# The scope reaches the four read routes plus this job's one write; every route by which a
+# record's status could be chosen answers 403.
+CHANGE_MANAGER_M2M_UUID="3b9503da-eb7e-401d-b4a7-b4a400c07efb"   # change-manager/M2M_TOKEN_OBSERVE
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
