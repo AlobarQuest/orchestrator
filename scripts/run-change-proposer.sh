@@ -48,7 +48,7 @@ set -uo pipefail
 # The PROPOSE-scoped change-manager bearer. Deliberately NOT change-manager/M2M_TOKEN: that
 # one can reach every route, and a producer holding it would be a system asking itself for
 # permission — the property ADR-0019 increment 4 shipped task zero to establish.
-CHANGE_MANAGER_PROPOSE_UUID="${CHANGE_PROPOSER_BWS_UUID:-REPLACE_WITH_M2M_TOKEN_PROPOSE_UUID}"
+CHANGE_MANAGER_PROPOSE_UUID="${CHANGE_PROPOSER_BWS_UUID:-acccb346-4baa-43ec-a1d4-b4a400c048ee}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -63,15 +63,6 @@ if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
 fi
 if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
   echo "FATAL: BWS_ACCESS_TOKEN not found in Keychain (service Claude)" >&2
-  exit 1
-fi
-
-if [ "$CHANGE_MANAGER_PROPOSE_UUID" = "REPLACE_WITH_M2M_TOKEN_PROPOSE_UUID" ] \
-   && printf '%s ' "$@" | /usr/bin/grep -q -- "--submit"; then
-  echo "FATAL: the propose-scoped change-manager credential has no BWS record yet." >&2
-  echo "       Mint it, then set CHANGE_PROPOSER_BWS_UUID or edit this line." >&2
-  echo "       Until then this job cannot run, and it fails LOUDLY rather than" >&2
-  echo "       falling back to a credential that could approve its own proposals." >&2
   exit 1
 fi
 
