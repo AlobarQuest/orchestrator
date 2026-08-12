@@ -48,13 +48,14 @@ set -uo pipefail
 # its own work to be landed attests to its own compliance, and not a human, because a person can
 # land a pull request themselves.
 ORCHESTRATOR_SYSTEM_UUID="221a48d5-3f29-4898-b300-b4820140c880"
-# The change-manager bearer that enumerates which changes were routed. OBSERVE-scoped rather than
-# read-scoped, and the difference is stated rather than glossed: it carries one write this program
-# never makes (recording a rollout observation, which is the watcher's job). A `read` scope exists
-# in change-manager and no credential was ever minted for it; minting one is a Devon action and is
-# named in this increment's report. Note the rollout watcher holds this same secret, so a rotation
-# breaks two schedules.
-CHANGE_MANAGER_UUID="3b9503da-eb7e-401d-b4a7-b4a400c07efb"
+# The READ-scoped change-manager bearer, which enumerates which changes were routed and reads what
+# the policy requires -- and nothing else. Adversarial review found this launcher reaching for the
+# OBSERVE credential, which carries one write this program never makes (recording a rollout
+# observation, the watcher's job) and which the watcher already holds, so a rotation would have
+# broken two schedules with no signal. `change-manager/M2M_TOKEN_READ` already existed; the review
+# reported it as never minted, and it was there. Probed against production 2026-08-12: 200 on the
+# listing and on the policy, 403 on approve and on deploy-observation.
+CHANGE_MANAGER_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
