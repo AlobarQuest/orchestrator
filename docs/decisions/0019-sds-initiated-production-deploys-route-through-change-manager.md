@@ -248,6 +248,49 @@
   after the fact.
   Report: `~/docs/software-delivery-system/2026-08-11-adr0019-inc5-build-report.md`.
 
+  **INCREMENT 5b BUILT 2026-08-12 — the landing path, and the last piece of this decision.**
+  change-manager PR #54 and orchestrator PR #162, both awaiting merge; **nothing has been landed
+  and nothing deployed.** `POST /api/v1/estate-pr-merge` lands a pull request that has **no work
+  unit** into a repository where landing changes something already serving, with the Dispatch App.
+  What authorises it is a change record approved by conformance to a policy version a human
+  pinned, **re-checked against the version in force at the moment of the act** — the only
+  mechanism by which a narrowing binds an approval that already exists, since a stored record is
+  re-evaluated by nothing else once its pull request has closed. Every change-specific question is
+  a term there, against GitHub: the update bot's own identity (never `type == "Bot"`, which admits
+  every GitHub App including this estate's), a head current with its base, a permitted delta parsed
+  from the TITLE at the act, the rollout workflow still being the pinned bytes at **both** the base
+  and the head, and one landing per repository per window. `ORCHESTRATOR_ESTATE_LANDING_ENABLED`
+  defaults false and unconfigured refuses; the sibling path's no-off-switch ruling named a
+  scheduled caller as the thing that would void it, and this is that caller.
+  **THE FIRST PASS LANDS NOTHING, MEASURED AGAINST LIVE GITHUB, AND THAT IS THE POINT.** A
+  composition drill — the real producer, a real change-manager on the branch, live reads — returned
+  **10 records, 10 held, 0 admitted**: all four approved pull requests are two commits behind their
+  base *while answering `mergeable_state: clean`*, so a squash of any of them produces a tree no
+  check has executed, and on this repository that tree is what starts serving.
+  **The producer became a reconciler** and retired item 44's exact shape on its first sweep, on the
+  fact that #42 closed unmerged rather than on its absence.
+  **ADVERSARIAL REVIEW RETURNED ONE KILL, AND IT WAS ABOUT THE ARTIFACT NOBODY REVIEWS.** Two
+  defects in the launcher meant the committed LaunchAgent had never been capable of a single pass:
+  `sds-token.sh` EXPORTS and prints nothing, so command-substituting it yields the empty string
+  under launchd; and **no single BWS identity can read both credentials** — measured 2×2 with
+  controls — while the script's own comment asserted the opposite. Neither is visible from the
+  code. Fixed and proven under `env -i`. Also SEVERE: the rollout pin was read at the BASE only,
+  which a pull request editing the rollout workflow passes *by construction* — the exact state the
+  pin was added to prevent, reachable through the pin itself. And both reviewers independently
+  found that the re-approval branch treated an **absent** policy version as an old one, which would
+  have restamped a human's approval as the policy's and overwritten their name in the chain.
+  **A defect found by tracing the composition rather than either half:** policy v2 is a narrowing,
+  and `_apply_policy` had no branch for a record that still conforms under a newer version — so all
+  four waiting records would have been stranded on v1 and permanently unlandable, which is
+  increment 5a's SEVERE-1b one field over.
+  37/37 mutations killed on the final tree; eight had to be earned, including the advisory lock's
+  **call site**, whose deletion left every test green while the helper's own test passed.
+  **A measurement worth carrying beyond this increment:** on a retitled-in-place pull request,
+  Dependabot's own machine-readable `dependency-version` trailer is **stale** while the diff it
+  describes has moved on — so the title ruling is right, and ADR-0018's cascade classifies via a
+  field that can be wrong.
+  Report: `~/docs/software-delivery-system/2026-08-12-adr0019-inc5b-build-report.md`.
+
   **SCOPE SETTLED 2026-08-10 (Devon).** This rule's first implementation is **SDS-initiated
   merges into repositories where merging to `main` IS deploying** — `change-manager` and `brain`.
   How the orchestrator itself gets deployed is deliberately parked. ADR-0020 already gives the
