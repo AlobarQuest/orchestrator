@@ -114,8 +114,20 @@ def test_a_held_pull_request_names_the_condition_it_misses_and_is_a_FINDING() ->
     assert report(outcomes) == EXIT_FINDINGS
 
 
-@pytest.mark.parametrize("status", ["pending", "wontfix", "resolved", "deferred", "blocked"])
-def test_a_record_nobody_approved_is_not_asked_about(status: str) -> None:
+@pytest.mark.parametrize(
+    "status",
+    [
+        "pending",
+        "wontfix",
+        "resolved",
+        "deferred",
+        "blocked",
+        "in_progress",
+        "handed_off",
+        "failed",
+    ],
+)
+def test_only_an_APPROVED_record_is_asked_about(status: str) -> None:
     """It is not held on a condition -- it is waiting for the policy to approve its shape, which
     happens in the producer's pass. Asking would report it as a finding here and send somebody to
     the wrong place."""
@@ -196,15 +208,39 @@ def test_a_record_naming_no_subject_is_skipped_rather_than_asked_about() -> None
     assert client.asked == []
 
 
-def test_a_pull_request_the_orchestrator_has_already_acted_on_is_SETTLED_not_held() -> None:
-    """A successful landing leaves the change record approved and the pull request closed, so
-    every later pass reads the same refusal. Reporting it as held would make one landing a
-    permanent nightly finding -- a pager that never clears is a pager nobody reads."""
+@pytest.mark.parametrize(
+    "refusals",
+    [
+        ["landing_already_recorded", "landing_pull_request_not_open"],
+        # The COMMONER case, and the one a first version missed: a person merged the pull request
+        # themselves. There is no landing row, so the first refusal is absent -- and the record
+        # stays approved forever, because nothing transitions a decision on a merge.
+        ["landing_pull_request_not_open"],
+    ],
+    ids=["we-landed-it", "somebody-else-did"],
+)
+def test_a_pull_request_whose_subject_has_SETTLED_is_not_a_finding(refusals: list[str]) -> None:
+    """Neither is a condition anybody can act on, and reporting either as held makes one landing --
+    or one ordinary human merge -- a nightly page forever. A pager that never clears is a pager
+    nobody reads."""
+    client = FakeOrchestrator(
+        {(REPOSITORY, 49): {"satisfied": False, "refusals": refusals, "head_sha": HEAD}}
+    )
+
+    outcomes = _pass(FakeRecords([_row(49)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["settled"]
+    assert client.landed == []
+    assert report(outcomes) == EXIT_OK
+
+
+def test_a_genuinely_unmet_condition_is_still_a_finding() -> None:
+    """The control for the pair above. Without it, `settled` could grow to swallow everything."""
     client = FakeOrchestrator(
         {
             (REPOSITORY, 49): {
                 "satisfied": False,
-                "refusals": ["landing_already_recorded", "landing_pull_request_not_open"],
+                "refusals": ["landing_head_not_current_with_base"],
                 "head_sha": HEAD,
             }
         }
@@ -212,6 +248,5 @@ def test_a_pull_request_the_orchestrator_has_already_acted_on_is_SETTLED_not_hel
 
     outcomes = _pass(FakeRecords([_row(49)]), client, submit=True)  # type: ignore[arg-type]
 
-    assert [o.status for o in outcomes] == ["already-landed"]
-    assert client.landed == []
-    assert report(outcomes) == EXIT_OK
+    assert [o.status for o in outcomes] == ["held"]
+    assert report(outcomes) == EXIT_FINDINGS

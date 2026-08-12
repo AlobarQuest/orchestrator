@@ -546,7 +546,12 @@ class EstatePrMergeCommandModel(BaseModel):
     """
 
     idempotency_key: str = Field(min_length=1, max_length=200)
-    repository: str = Field(min_length=1)
+    # BOUNDED IN SHAPE, because it is interpolated into GitHub API paths that are called with the
+    # App installation token. An unbounded string can address paths nobody intended -- not a
+    # disclosure, since only refusal codes come back, but unbounded use of a production credential
+    # from a caller-supplied value, which is not a thing to leave to the good behaviour of the one
+    # caller that exists.
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
     pr_number: int = Field(gt=0)
     # A FULL object name, not a prefix. The service compares it for equality against the head the
     # admission answer named, and GitHub serves that in full -- so a prefix could never match, and

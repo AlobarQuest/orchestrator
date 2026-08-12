@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated, Any, Final
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -710,8 +710,8 @@ def pr_merge_admission_route(
 
 @router.get("/estate-pr-merge-admission", response_model=EstateLandingAdmissionResponse)
 def estate_landing_admission_route(
-    repository: str,
-    pr_number: int,
+    repository: Annotated[str, Query(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)],
+    pr_number: Annotated[int, Query(gt=0)],
     _actor: ActorDep,
     session: SessionDep,
     settings: SettingsDep,

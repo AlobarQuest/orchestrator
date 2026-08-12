@@ -121,6 +121,7 @@ class FakeEstateGateway:
         pull: EstatePullRequest | None = None,
         behind: int = 0,
         blob: str | None = ROLLOUT_BLOB,
+        head_blob: str | None | object = _DEFAULT,
         read_error: EstateGatewayError | None = None,
         compare_error: EstateGatewayError | None = None,
         blob_error: EstateGatewayError | None = None,
@@ -128,6 +129,10 @@ class FakeEstateGateway:
         self._pull = pull or pull_request()
         self._behind = behind
         self._blob = blob
+        # What the pinned path reads as at the pull request's OWN head, when that differs from the
+        # base -- which is the case a pull request editing the rollout workflow produces, and the
+        # only one that can tell a base-only pin from a complete one.
+        self._head_blob = blob if head_blob is _DEFAULT else head_blob
         self._read_error = read_error
         self._compare_error = compare_error
         self._blob_error = blob_error
@@ -151,4 +156,5 @@ class FakeEstateGateway:
         self.blobs.append((repository, path, ref))
         if self._blob_error is not None:
             raise self._blob_error
-        return self._blob
+        base = self._pull.base_ref
+        return self._blob if ref == base else self._head_blob  # type: ignore[return-value]

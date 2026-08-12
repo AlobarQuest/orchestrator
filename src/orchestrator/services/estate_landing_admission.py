@@ -83,6 +83,13 @@ UPDATE_BOT_LOGIN: Final = "dependabot[bot]"
 # permission this estate's App does not have, and the checks a repository publishes are not the
 # same set as the checks its branch protection requires.
 #
+# **AND ITS VALUE RESTS ON A SETTING THIS PROCESS CANNOT READ.** `clean` means "no required check
+# is failing" only while branch protection requires one; strip the required context, and `clean`
+# degrades to "no merge conflict" while every term in this cascade still passes. The App has no
+# `administration` permission, so this side can neither read that list nor pin it -- the estate has
+# measured both that these settings drift and that they are unreadable from here. It is a real
+# residual and it is named rather than implied.
+#
 # **It is stale-tolerant, so it does NOT discharge the freshness term.** A required check can be
 # green against a head that is behind its base, and this answers `clean` for exactly that case;
 # the four pull requests waiting when this was written were all `clean` and all two commits
@@ -128,10 +135,18 @@ LANDING_RECORD_HAS_LIVE_OBJECTIONS: Final = "landing_record_has_live_objections"
 # itself to a standing rule, and "somebody approved this once" is not one.
 LANDING_RECORD_NOT_POLICY_APPROVED: Final = "landing_record_not_policy_approved"
 
-# The record was approved under a version that is no longer in force. **This is the only mechanism
-# by which narrowing the policy binds an approval that already exists**: nothing re-evaluates a
-# stored record except a fresh proposal of the same pull request, which needs it still open and
-# still eligible, and which never happens again once it has closed.
+# The record was approved under a version that is no longer in force.
+#
+# BE PRECISE ABOUT WHAT THIS BUYS, because an earlier version of this comment overstated it. It is
+# the only thing that binds an existing approval AT THE ACT -- but the record's own service
+# re-approves a still-conforming record under the newer version on the producer's next pass, so
+# for a pull request that is still open the binding lasts about an hour and is then lifted without
+# anyone looking. What it genuinely covers is the window before that pass, and every record the
+# producer will never propose again: one whose pull request has closed or merged is re-evaluated
+# by nothing, and would otherwise carry a superseded approval forever.
+#
+# A NARROWING that a record no longer conforms to is a different matter and is fully bound: the
+# record's service revokes it rather than re-approving.
 LANDING_POLICY_VERSION_SUPERSEDED: Final = "landing_policy_version_superseded"
 
 # The conditions on the act did not read as any. A deployment whose record service predates them,
@@ -150,6 +165,13 @@ LANDING_PULL_REQUEST_NOT_OPEN: Final = "landing_pull_request_not_open"
 LANDING_BASE_NOT_DEFAULT_BRANCH: Final = "landing_base_not_default_branch"
 LANDING_AUTHOR_NOT_THE_UPDATE_BOT: Final = "landing_author_not_the_update_bot"
 LANDING_CHECKS_NOT_CLEAN: Final = "landing_checks_not_clean"
+
+# The remote has not finished computing mergeability. GitHub answers `unknown` while it works, and
+# reporting that as "the checks are not clean" names the wrong cause to whoever reads the report --
+# a pull request whose checks are green. Its own refusal, because its remedy is to ask again and
+# every other one's is not. Both refuse; only the name differs, which is the whole point.
+LANDING_MERGEABILITY_UNKNOWN: Final = "landing_mergeability_unknown"
+MERGEABLE_UNKNOWN: Final = "unknown"
 
 # The head is behind the base it would be squashed onto, so the tree that would land is one no
 # check has ever run against -- and on a repository where landing changes something already
@@ -518,7 +540,9 @@ def _remote_terms(
         refusals.append(LANDING_BASE_NOT_DEFAULT_BRANCH)
     if pull.author_login != UPDATE_BOT_LOGIN or not pull.author_is_bot:
         refusals.append(LANDING_AUTHOR_NOT_THE_UPDATE_BOT)
-    if pull.mergeable_state != MERGEABLE_CLEAN:
+    if pull.mergeable_state == MERGEABLE_UNKNOWN:
+        refusals.append(LANDING_MERGEABILITY_UNKNOWN)
+    elif pull.mergeable_state != MERGEABLE_CLEAN:
         refusals.append(LANDING_CHECKS_NOT_CLEAN)
 
     if conditions is None:
@@ -612,22 +636,30 @@ def _rollout_term(
     A repository with NO PIN refuses. A version that declared none is a version that predates the
     condition, and "nobody said which bytes" is not "these bytes are fine".
 
-    Read at the BASE branch's head, because that is the workflow the landing will actually fire --
-    not the one on the pull request's own branch, which a landing does not run and which a pull
-    request touching the workflow could otherwise use to describe itself.
+    **BOTH SIDES ARE READ, and a first version read only the base.** The base is what the rollout
+    runs from today, so it is the obvious one -- and it is unchanged until the instant the landing
+    happens, which is exactly the hole. A pull request whose own diff edits the rollout workflow
+    passes a base-only check by construction: base blob equals the pin, the squash lands the edit,
+    and `on: push` then fires bytes nobody transcribed, under criteria written for bytes that no
+    longer exist. That is the state this condition was added to prevent, reachable through the
+    condition itself. Reading the HEAD as well refuses it: a pull request that changes the file
+    cannot have the pinned blob at its head.
+
+    Nothing in the cascade can see a pull request's changed files -- the gateway has no method for
+    it, deliberately -- so this is the whole of the protection, and it is why the head read is not
+    an optimisation to be skipped when the base already matches.
     """
     pin = conditions.pin_for(repository)
     if pin is None:
         return _Term(False, (LANDING_ROLLOUT_UNPINNED,))
-    try:
-        observed = gateway.blob_sha(repository=repository, path=pin.path, ref=pull.base_ref)
-    except EstateGatewayError:
-        return _Term(False, (LANDING_ROLLOUT_UNREADABLE,))
-    if observed is None:
-        # The pinned path names no file on the base branch. A renamed or deleted rollout is a
-        # moved rollout, and reading it as "nothing to compare" would waive the condition exactly
-        # when it matters most.
-        return _Term(False, (LANDING_ROLLOUT_MOVED,))
-    if observed.lower() != pin.blob_sha.lower():
-        return _Term(False, (LANDING_ROLLOUT_MOVED,))
+    for ref in (pull.base_ref, pull.head_sha):
+        try:
+            observed = gateway.blob_sha(repository=repository, path=pin.path, ref=ref)
+        except EstateGatewayError:
+            return _Term(False, (LANDING_ROLLOUT_UNREADABLE,))
+        # `None` is the pinned path naming no file at that ref. A renamed or deleted rollout is a
+        # moved rollout; reading it as "nothing to compare" would waive the condition exactly when
+        # it matters most.
+        if observed is None or observed.lower() != pin.blob_sha.lower():
+            return _Term(False, (LANDING_ROLLOUT_MOVED,))
     return _Term(True, ())

@@ -434,3 +434,38 @@ def test_the_repository_lock_actually_SERIALISES_two_landings(migrated_engine: E
         _lock_repository(second, "alobarquest/brain")
         second.rollback()
         first.rollback()
+
+
+def test_the_ACTING_PATH_takes_the_repository_lock(migrated_engine: Engine) -> None:
+    """The lock's CALL SITE, not the helper. Deleting the call from `_land` left every other test
+    in this file green, because nothing else here runs two transactions at once -- this
+    repository's own "a test calling a service is not evidence the service has a caller", one
+    level in, and the concrete gap a 32-mutation pass could not see.
+
+    A second session holds the lock; `land_estate_pull_request` must then block and time out
+    rather than proceed. The CONTROL is below it: with the lock held on a DIFFERENT repository the
+    same call goes through, so this cannot pass for a landing that simply always fails.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from orchestrator.services.estate_pr_merge import _lock_repository
+
+    with Session(migrated_engine) as holder:
+        _lock_repository(holder, REPOSITORY)
+
+        gateway = ActingGateway()
+        with Session(migrated_engine) as blocked:
+            blocked.execute(text("SET LOCAL lock_timeout = '1s'"))
+            with pytest.raises(OperationalError):
+                _land(blocked, gateway)
+        assert gateway.merges == [], "the landing reached the remote while another held the lock"
+        holder.rollback()
+
+    with Session(migrated_engine) as holder:
+        _lock_repository(holder, "alobarquest/brain")
+        control = ActingGateway()
+        with Session(migrated_engine) as free:
+            free.execute(text("SET LOCAL lock_timeout = '1s'"))
+            assert _land(free, control, key="control-1").status == "merged"
+        assert len(control.merges) == 1
+        holder.rollback()

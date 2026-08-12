@@ -47,17 +47,20 @@ EXIT_FINDINGS = 3
 # setting: an operator who could change it could only ever make the call unauthenticated.
 SYSTEM_KEY_ID = "orchestrator-system"
 
-# The refusal that means the act ALREADY HAPPENED. It is not a condition anybody can act on, so
-# reporting it as held would make a successful landing a permanent nightly finding: the record
-# stays approved after the landing (nothing transitions a decision on a merge), and every later
-# pass would read the same row and the same closed pull request, forever. A pager that never
-# clears is a pager nobody reads.
-ALREADY_RECORDED = "landing_already_recorded"
+# The ONE status this pass asks about, stated as an allowlist rather than as the set to skip. A
+# denylist admits every status nobody has thought of -- `in_progress`, `handed_off`, `failed` --
+# and each would be asked about, held, and reported as a finding nobody can act on. The service
+# whose records these are warns about exactly this polarity.
+_ASK_ABOUT = frozenset({"approved"})
 
-# Statuses whose records this pass has nothing to ask about. A pull request nobody approved is not
-# held on a condition -- it is waiting for the policy to approve its shape, which happens in the
-# producer's pass, not here.
-_UNAPPROVED = frozenset({"pending", "deferred", "wontfix", "resolved", "blocked"})
+# Refusals that mean the SUBJECT IS SETTLED rather than that a condition is unmet. Neither is
+# something a person can act on, and reporting them as findings would make one landing -- or one
+# pull request a person merged themselves, which is still the ordinary case -- a nightly page
+# forever. The line is still printed; it just is not a finding.
+#
+# Whether a change record should also LEAVE `approved` once its subject has settled is an open
+# lifecycle question, named in this increment's report rather than decided here.
+_SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open"})
 
 
 class RecordSource(Protocol):
@@ -92,13 +95,8 @@ def _consider(client: OrchestratorClient, repository: str, number: int, submit: 
         return Outcome(repository, number, "unreadable", str(error))
 
     refusals = [str(r) for r in (answer.get("refusals") or [])]
-    if ALREADY_RECORDED in refusals:
-        # SETTLED, not held. The orchestrator holds a record of an act against this pull request,
-        # which is the one refusal that will never clear and that nobody should be asked to act
-        # on. Whether the change record should also leave `approved` once its rollout has been
-        # observed is an open lifecycle question, named in the increment's report rather than
-        # decided here.
-        return Outcome(repository, number, "already-landed", ", ".join(refusals))
+    if _SETTLED & set(refusals):
+        return Outcome(repository, number, "settled", ", ".join(refusals))
     if not answer.get("satisfied"):
         return Outcome(repository, number, "held", ", ".join(refusals))
 
@@ -139,7 +137,7 @@ def _pass(records: RecordSource, client: OrchestratorClient, submit: bool) -> li
         number = row.get("pull_request_number")
         if not isinstance(repository, str) or not isinstance(number, int):
             continue
-        if row.get("status") in _UNAPPROVED:
+        if row.get("status") not in _ASK_ABOUT:
             continue
         outcomes.append(_consider(client, repository, number, submit))
     return outcomes
@@ -184,8 +182,12 @@ def report(outcomes: list[Outcome]) -> int:
         print(f"{subject}  {outcome.status:<11} {outcome.detail}")
     held = [o for o in outcomes if o.status == "held"]
     landed = [o for o in outcomes if o.status == "landed"]
+    settled = [o for o in outcomes if o.status == "settled"]
     findings = [o for o in outcomes if o.status in {"held", "unreadable", "error"}]
-    print(f"\n{len(outcomes)} considered, {len(landed)} landed, {len(held)} held")
+    print(
+        f"\n{len(outcomes)} considered, {len(landed)} landed, "
+        f"{len(held)} held, {len(settled)} settled"
+    )
     return EXIT_FINDINGS if findings else EXIT_OK
 
 

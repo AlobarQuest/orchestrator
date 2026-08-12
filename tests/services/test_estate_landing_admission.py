@@ -31,6 +31,7 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_ESTATE_UNKNOWN,
     LANDING_FRESHNESS_UNREADABLE,
     LANDING_HEAD_NOT_CURRENT_WITH_BASE,
+    LANDING_MERGEABILITY_UNKNOWN,
     LANDING_NOT_ENABLED,
     LANDING_OUTSIDE_CHANGE_WINDOW,
     LANDING_PACE_EXHAUSTED,
@@ -128,18 +129,18 @@ def test_a_conformant_pull_request_in_the_window_is_admitted(migrated_session: S
     assert answer.policy_version == POLICY_VERSION
 
 
-def test_the_rollout_pin_is_read_at_the_base_branch_and_not_the_pull_request(
-    migrated_session: Session,
-) -> None:
-    """The landing fires the workflow on the BASE, so that is the copy the condition is about.
-
-    Reading it at the pull request's own head would let a pull request that edits the rollout
-    workflow describe the very rollout it is changing.
+def test_the_rollout_pin_is_read_at_the_base_AND_at_the_head(migrated_session: Session) -> None:
+    """BOTH, and an earlier version of this test asserted base-only with a docstring arguing for
+    it. The base is what the rollout runs from today and is unchanged until the landing, which is
+    exactly why reading it alone cannot see a pull request that is about to replace it.
     """
     gateway = FakeEstateGateway()
     _ask(migrated_session, gateway=gateway)
 
-    assert gateway.blobs == [(REPOSITORY, ROLLOUT_PATH, "main")]
+    assert gateway.blobs == [
+        (REPOSITORY, ROLLOUT_PATH, "main"),
+        (REPOSITORY, ROLLOUT_PATH, HEAD),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +496,49 @@ def test_a_moved_rollout_workflow_refuses(migrated_session: Session) -> None:
 
     assert not answer.satisfied
     assert LANDING_ROLLOUT_MOVED in answer.refusals
+
+
+def test_a_pull_request_THAT_EDITS_the_rollout_workflow_refuses(migrated_session: Session) -> None:
+    """The case a base-only pin cannot see, and the reason the head is read too.
+
+    The base still carries the pinned bytes -- it is unchanged until the landing -- so every term
+    passes and the squash then lands the edit, after which `on: push` fires bytes nobody
+    transcribed under criteria written for bytes that no longer exist. That is the state this
+    condition exists to prevent, reachable through the condition itself. Nothing in the cascade can
+    see a pull request's changed files, so reading the head is the whole of the protection.
+    """
+    gateway = FakeEstateGateway(blob=ROLLOUT_BLOB, head_blob="f" * 40)
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert not answer.satisfied
+    assert LANDING_ROLLOUT_MOVED in answer.refusals
+    assert gateway.blobs == [
+        (REPOSITORY, ROLLOUT_PATH, "main"),
+        (REPOSITORY, ROLLOUT_PATH, HEAD),
+    ], "the pin must be read at BOTH the base and the head"
+
+
+def test_a_pull_request_that_deletes_the_rollout_workflow_refuses(
+    migrated_session: Session,
+) -> None:
+    """The same shape one step further: the pinned path names no file at the head."""
+    gateway = FakeEstateGateway(blob=ROLLOUT_BLOB, head_blob=None)
+
+    assert LANDING_ROLLOUT_MOVED in _ask(migrated_session, gateway=gateway).refusals
+
+
+def test_mergeability_the_remote_has_not_computed_yet_is_named_apart_from_a_red_check(
+    migrated_session: Session,
+) -> None:
+    """GitHub answers `unknown` while it works. Reporting that as "the checks are not clean" names
+    the wrong cause to whoever reads the report -- and its remedy is to ask again, which no other
+    refusal's is."""
+    gateway = FakeEstateGateway(pull=pull_request(mergeable_state="unknown"))
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert not answer.satisfied
+    assert LANDING_MERGEABILITY_UNKNOWN in answer.refusals
+    assert LANDING_CHECKS_NOT_CLEAN not in answer.refusals
 
 
 def test_a_deleted_or_renamed_rollout_workflow_refuses(migrated_session: Session) -> None:
