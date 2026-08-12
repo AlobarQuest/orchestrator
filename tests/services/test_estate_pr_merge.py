@@ -469,3 +469,42 @@ def test_the_ACTING_PATH_takes_the_repository_lock(migrated_engine: Engine) -> N
             assert _land(free, control, key="control-1").status == "merged"
         assert len(control.merges) == 1
         holder.rollback()
+
+
+def test_a_failure_that_never_reached_the_remote_writes_NO_record(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """The App token is minted BEFORE the request is sent, so a mint failure means nothing left
+    this process -- and nothing that cannot have landed may be recorded.
+
+    The reconciling read would fail identically under the same outage and answer "we do not know",
+    which writes a permanent `refused` row. The row is unique per pull request with no delete
+    path, so one transient credential failure would bar an admissible pull request forever -- and
+    the caller reports that refusal as SETTLED rather than as a finding, so nobody would be told.
+    The error code carried the distinction all along and nothing read it.
+    """
+    gateway = ActingGateway(
+        merge_error=EstateGatewayError("app_token_mint:private_key_unreadable"),
+        reconcile_error=EstateGatewayError("read_status", 500),
+    )
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, gateway)
+
+    assert error.value.code == "estate_merge_refused_by_remote"
+    with Session(migrated_engine) as reader:
+        assert reader.scalars(select(EstatePrMerge)).all() == []
+
+
+def test_a_failure_AFTER_the_send_is_still_recorded_when_it_cannot_be_ruled_out(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """The CONTROL. A code that does not name the pre-send failure keeps the conservative
+    behaviour: the request may have landed, so the ambiguity is written down."""
+    gateway = ActingGateway(
+        merge_error=EstateGatewayError("merge_status", 500),
+        reconcile_error=EstateGatewayError("read_status", 500),
+    )
+
+    assert _land(migrated_session, gateway).status == "refused"
+    with Session(migrated_engine) as reader:
+        assert reader.scalar(select(EstatePrMerge)) is not None

@@ -615,3 +615,37 @@ def test_a_record_with_no_readable_identifier_refuses(migrated_session: Session)
 
     assert not answer.satisfied
     assert LANDING_RECORD_UNIDENTIFIED in answer.refusals
+
+
+def test_the_repository_is_folded_so_the_report_and_the_act_ask_one_question(
+    migrated_session: Session,
+) -> None:
+    """The acting path lowercased before calling in and the reporting route did not, which is two
+    surfaces asking the estate and the record service a DIFFERENT question about one repository.
+
+    Records carry both spellings -- production holds `AlobarQuest/change-manager` and
+    `alobarquest/change-manager` -- and the record's own identity key folds case, so the fold has
+    to happen somewhere both surfaces reach. Asserted on what the sources were ASKED, because the
+    answer alone cannot tell a folded lookup from a fake that ignores its argument.
+    """
+    landing = redeploying_source()
+    records = FakeChangeRecordSource({(REPOSITORY, PR): approved()})
+    gateway = FakeEstateGateway()
+
+    answer = estate_landing_admission(
+        migrated_session,
+        "AlobarQuest/Change-Manager",
+        PR,
+        landing,
+        records,
+        gateway,
+        enabled=True,
+        credentials_configured=True,
+        clock=FixedClock(IN_WINDOW),
+    )
+
+    assert landing.asked == [REPOSITORY]
+    assert records.asked == [(REPOSITORY, PR)]
+    assert gateway.reads == [(REPOSITORY, PR)]
+    assert answer.repository == REPOSITORY
+    assert answer.satisfied, answer.refusals

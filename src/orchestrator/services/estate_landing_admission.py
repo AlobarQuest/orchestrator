@@ -319,7 +319,14 @@ def estate_landing_admission(
     credentials_configured: bool,
     clock: Clock | None = None,
 ) -> EstateLandingAdmission:
-    """Compose the answer for one pull request. Reads only; writes nothing, and never acts."""
+    """Compose the answer for one pull request. Reads only; writes nothing, and never acts.
+
+    THE REPOSITORY IS FOLDED HERE, so the report and the act cannot normalize it differently. The
+    acting path lowercased before calling in and the reporting route did not, which is two surfaces
+    asking the estate a different question about one repository -- and the record's own identity
+    key folds case, so the fold has to happen somewhere both reach.
+    """
+    repository = repository.lower()
     now = (clock or TransactionClock()).now(session)
 
     prior = session.scalar(

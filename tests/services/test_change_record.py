@@ -448,3 +448,17 @@ def test_unreadable_conditions_are_None_and_do_not_poison_the_record(overrides: 
     assert answer.record is not None
     assert answer.record.approved
     assert answer.record.conditions is None
+
+
+def test_an_explicitly_null_qualifier_is_absent_rather_than_unreadable() -> None:
+    """`null` is not a wrong type, and the difference reaches a consumer that never reads it.
+
+    `.get(key, default)` returns `None` for an explicit null, so a record service serving
+    `"policy_objections": null` would have made the whole record unreadable -- and the FACTORY
+    lane, which only ever reads `status`, would have started refusing with a source error.
+    """
+    answer = _read([_served_row(policy_objections=None)])
+
+    assert answer.answered
+    assert answer.record is not None and answer.record.policy_objections == ()
+    assert answer.record.approved

@@ -343,7 +343,12 @@ def _qualifiers(
     version = row.get("policy_version")
     if version is not None and (not isinstance(version, int) or isinstance(version, bool)):
         return None
-    objections = row.get("policy_objections", [])
+    # `null` is ABSENT, not malformed -- and the difference matters to a consumer that never reads
+    # this field. `.get(key, default)` returns `None` for an explicit null, so a service serving
+    # `"policy_objections": null` would have made the whole record unreadable and started refusing
+    # the FACTORY lane, which only ever reads `status`. A wrong TYPE stays fatal.
+    objections = row.get("policy_objections")
+    objections = [] if objections is None else objections
     if not isinstance(objections, list) or not all(isinstance(o, str) for o in objections):
         return None
     decided_by = row.get("decided_by")

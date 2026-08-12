@@ -135,7 +135,14 @@ def _pass(records: RecordSource, client: OrchestratorClient, submit: bool) -> li
     for row in rows:
         repository = row.get("target_repository")
         number = row.get("pull_request_number")
-        if not isinstance(repository, str) or not isinstance(number, int):
+        # `bool` is an `int` and `True == 1`, so a boolean number would be asked about as pull
+        # request one. Both the record reader and the producer's sweep exclude it for this exact
+        # field; this is the third place that has to.
+        if (
+            not isinstance(repository, str)
+            or not isinstance(number, int)
+            or isinstance(number, bool)
+        ):
             continue
         if row.get("status") not in _ASK_ABOUT:
             continue

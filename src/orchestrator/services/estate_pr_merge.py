@@ -53,6 +53,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy import select, text
@@ -91,6 +92,14 @@ ESTATE_MERGE_HEAD_MOVED: Final = "estate_merge_head_moved"
 # Recorded on the one ambiguous outcome: the remote refused and the confirming read also failed,
 # so a landing cannot be ruled out.
 MERGE_REFUSED_BY_REMOTE: Final = "merge_refused_by_remote"
+
+# The prefix of every gateway code raised BEFORE anything is sent. `_headers()` mints the App
+# token first, so a mint failure means the request provably did not leave this process -- and a
+# landing that cannot have happened must never be recorded, because the row is permanent and
+# would bar the pull request forever on one transient outage. Everything else in `submit_merge`
+# happens at or after the send, where a lost response and a refusal are indistinguishable and the
+# conservative record is the right answer.
+NEVER_SENT: Final = "app_token_mint:"
 
 
 @dataclass(frozen=True)
@@ -275,6 +284,17 @@ def _act(
             commit_message=_trailers(admission),
         )
     except EstateGatewayError as error:
+        if error.code.startswith(NEVER_SENT):
+            # NOTHING WAS SENT, so nothing can have landed. The reconciling read below would fail
+            # the same way under the same outage and answer "we do not know", which would write a
+            # permanent `refused` row -- silently barring an admissible pull request forever on a
+            # transient credential failure, and reported by the caller as settled rather than as a
+            # finding. The error code already carried the distinction and nothing read it.
+            raise DomainError(
+                ESTATE_MERGE_REFUSED_BY_REMOTE,
+                f"the landing was not attempted: {error.code}",
+                "retry once the credential can be minted",
+            ) from error
         landed = _landed_after_all(gateway, admission)
         if landed is True:
             return _record(
@@ -482,8 +502,17 @@ class GitHubEstatePullRequests:
 
         Read from the remote rather than computed, so the pin cannot drift from the thing it pins
         by a hashing disagreement: this is the name the platform itself gives those bytes.
+
+        BOTH VALUES ARE ENCODED. `repository` is shape-bounded at the schema; these two are not --
+        the path comes from the served policy pin and the ref from the remote. A `#` in either
+        truncates the query, which drops the ref and reads the DEFAULT branch instead: the base
+        and the head would then answer identically, collapsing the distinction the rollout term
+        was extended to make. The path keeps its slashes, which are meaningful in it.
         """
-        body = self._get(f"{GITHUB_API_URL}/repos/{repository}/contents/{path}?ref={ref}")
+        quoted = quote(path, safe="/")
+        body = self._get(
+            f"{GITHUB_API_URL}/repos/{repository}/contents/{quoted}?ref={quote(ref, safe='')}"
+        )
         if body is None:
             return None
         if not isinstance(body, dict):
