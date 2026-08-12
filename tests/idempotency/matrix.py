@@ -143,6 +143,18 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_pr_merge.py::test_a_repeat_replays_the_record_and_never_calls_the_remote_again",
     ),
     MatrixRow(
+        "estate pr merge",
+        "/api/v1/estate-pr-merge",
+        # An ADVISORY LOCK where its unit-bound sibling uses a row lock, and the difference is
+        # forced rather than stylistic: there is no unit row to lock here, and both rules that
+        # must not be raced -- one record per pull request, one landing per repository per window
+        # -- are stated over rows that may not exist yet, which `FOR UPDATE` cannot lock. Two
+        # requests would otherwise each read the same absence and each act on it.
+        "pg_advisory_xact_lock on the repository + unique EstatePrMerge per\n"
+        "(repository, pull request)",
+        "tests/services/test_estate_pr_merge.py::test_a_repeat_replays_the_record_and_never_calls_the_remote_again",
+    ),
+    MatrixRow(
         "dispatch",
         "/api/v1/work-units/{unit_id}/dispatch",
         "unique DispatchRecord.idempotency_key + (unit, runner_attempt) guard",

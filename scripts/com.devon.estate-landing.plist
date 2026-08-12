@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the estate-landing LaunchAgent (ADR-0019 increment 5b). Install with
+     scripts/install-estate-landing-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__
+     and writes ~/Library/LaunchAgents/com.devon.estate-landing.plist.
+
+     No secrets live here: the wrapper fetches the read-scoped change-manager bearer and the
+     orchestrator's system bearer from BWS at runtime.
+
+     IN THE CHANGE WINDOW, and that is the setting worth arguing about. The producer runs hourly
+     because proposing is not acting; this pass ends in something changing a running service, and
+     policy declares the hours in which something already serving may change. The orchestrator
+     refuses outside them regardless — this schedule is so the pass HAPPENS then, not so that it
+     is permitted to. StartCalendarInterval fires at 02:15, 03:15, 04:15 and 05:15 New York;
+     launchd reads the machine's local zone, which is the zone the policy declares its hours in.
+
+     THE PASS IS BOUNDED BY THE ORCHESTRATOR, not by this schedule. One landing per repository per
+     window is an admission term, so four firings do not mean four landings — the later ones
+     report the earlier one's row and hold.
+
+     RunAtLoad is false. A pass at login would fire outside the window and be refused, which is
+     harmless and confusing; there is nothing to catch up on.
+
+     The exit code is the report. launchd discards it, so read the log — 0 clean, 1 the tool
+     failed, 3 a pull request is held on a condition somebody has to act on. A first pass that
+     lands nothing while naming why is the conditions working. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.estate-landing</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-estate-landing.sh</string>
+        <!-- The wrapper does NOT force this. A bare run reports and asks for nothing, so the one
+             invocation that can cause a landing is the scheduled one, and it says so here. -->
+        <string>--submit</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>15</integer></dict>
+        <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>15</integer></dict>
+        <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>15</integer></dict>
+        <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>15</integer></dict>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/estate-landing.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/estate-landing.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

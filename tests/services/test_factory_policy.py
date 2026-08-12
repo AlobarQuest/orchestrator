@@ -11,6 +11,7 @@ import ast
 import dataclasses
 import inspect
 import types
+from datetime import UTC, datetime
 from itertools import combinations
 from pathlib import Path
 from typing import Any
@@ -427,3 +428,62 @@ def test_the_live_estate_row_declares_a_change_window() -> None:
 
     assert row.change_window is not None
     assert row.change_window.zone.key == "America/New_York"
+
+
+# ---------------------------------------------------------------------------
+# ADR-0019 increment 5b: when did the occurrence containing this instant begin?
+# ---------------------------------------------------------------------------
+
+
+def test_the_occurrence_start_is_computed_where_the_hours_live() -> None:
+    """A rate rule needs a BOUNDARY, which `window_refusal` cannot answer -- and computing it in
+    the caller would be a second reading of the artifact's hours, which is the second copy this
+    module exists to prevent.
+
+    `live_estate` is 02:00-06:00 New York. 06:30 UTC is 02:30 EDT, so the occurrence began at
+    02:00 EDT the same day, which is 06:00 UTC.
+    """
+    policy = load_factory_policy()
+    opened = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 30, tzinfo=UTC))
+
+    assert opened == datetime(2026, 8, 11, 6, 0, tzinfo=UTC)
+
+
+def test_two_instants_in_one_occurrence_report_the_same_start() -> None:
+    """The property a rate rule rests on: 'has anything happened since this window opened?'"""
+    policy = load_factory_policy()
+    early = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 5, tzinfo=UTC))
+    late = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 9, 55, tzinfo=UTC))
+
+    assert early is not None and early == late
+
+
+def test_consecutive_nights_are_different_occurrences() -> None:
+    policy = load_factory_policy()
+    tonight = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 30, tzinfo=UTC))
+    tomorrow = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 12, 6, 30, tzinfo=UTC))
+
+    assert tonight is not None and tomorrow is not None and tonight != tomorrow
+
+
+def test_outside_the_window_there_is_no_occurrence() -> None:
+    """`None` rather than the previous start: outside the hours nothing is open, and answering
+    with a boundary would let a rate rule believe it was inside one."""
+    policy = load_factory_policy()
+
+    assert policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 19, 30, tzinfo=UTC)) is None
+
+
+def test_a_reach_with_no_declared_window_has_no_occurrence() -> None:
+    policy = load_factory_policy()
+
+    assert (
+        policy.window_opened_at("source_repository", datetime(2026, 8, 11, 6, 30, tzinfo=UTC))
+        is None
+    )
+
+
+def test_a_naive_instant_is_refused_rather_than_guessed() -> None:
+    policy = load_factory_policy()
+    with pytest.raises(DomainError):
+        policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 30))

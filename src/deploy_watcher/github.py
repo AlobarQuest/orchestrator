@@ -123,6 +123,37 @@ class GitHubReader:
             merged_at=_parse_time(body.get("merged_at")),
         )
 
+    def pull_request_disposition(self, repository: str, number: int) -> str | None:
+        """Where one pull request ended up: `open`, `merged`, or `closed_unmerged`.
+
+        ADR-0019 increment 5b. The producer needs to tell "closed without merging" from "still
+        waiting" and from "landed", because only the first means the change a record stands for
+        can never happen -- and a record retired on anything weaker would be retired on absence
+        rather than on a fact.
+
+        `None` means GitHub HAS NO SUCH PULL REQUEST, which is deliberately not a fourth
+        disposition: it is a statement about the question rather than about the subject, and the
+        caller must not read it as a reason to retire anything. A read that fails raises, for the
+        same reason.
+        """
+        body = self._get(f"/repos/{repository}/pulls/{number}")
+        if body is None:
+            return None
+        if not isinstance(body, dict):
+            raise ReadError(f"pull request {repository}#{number} is not an object")
+        if body.get("number") != number:
+            raise ReadError(f"the answer to {repository}#{number} is not that pull request")
+        if bool(body.get("merged")):
+            return "merged"
+        # `state` is `open` or `closed`; anything else is a shape this program does not know, and
+        # reading it as closed would retire a record on an unrecognised word.
+        state = body.get("state")
+        if state == "open":
+            return "open"
+        if state == "closed":
+            return "closed_unmerged"
+        raise ReadError(f"pull request {repository}#{number} reports an unreadable state")
+
     def blob_revision(self, repository: str, path: str, ref: str) -> str | None:
         """The blob sha of a file AS IT WAS at a commit. None if the file did not exist there.
 

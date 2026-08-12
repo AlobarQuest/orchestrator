@@ -33,6 +33,7 @@ the secret that reads a record can also approve one.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
@@ -60,18 +61,92 @@ _USER_AGENT: Final = "orchestrator-change-record-check/1 (+AlobarQuest/orchestra
 
 
 @dataclass(frozen=True)
-class ChangeRecord:
-    """One change record, projected down to what admission is entitled to decide on.
+class WorkflowPin:
+    """WHICH BYTES a repository's rollout must still be, as change-manager pinned them.
 
-    There is deliberately no identifier here. The first draft parsed change-manager's row id,
-    REQUIRED it for a row to read at all, and then read it nowhere -- so its only reachable effect
-    was to turn a real approved record into "there is no record". An unread field is how a guard
-    ships at half strength.
+    A pointer, never a transcription: the statement of what a green rollout attests lives with
+    the party that holds the policy, and this names the file and the blob that statement was made
+    about. Reading it here needs no copy of that judgment, which is why it is a blob sha.
+    """
+
+    path: str
+    blob_sha: str
+
+
+@dataclass(frozen=True)
+class LandingConditions:
+    """What the party holding the policy requires of the ACT, projected onto the record.
+
+    **This process holds no copy.** These values arrive with the record they qualify, so the
+    version a record was approved under and the version now in force are read together and cannot
+    disagree across two calls. change-manager also serves them standing alone, for a person; this
+    is the surface a landing reads.
+
+    `version` is what is IN FORCE, which is deliberately not the record's own `policy_version`.
+    Comparing the two is the only mechanism by which narrowing the policy binds an approval that
+    already exists -- a narrowing revokes nothing by itself, because a record is re-evaluated only
+    when something proposes it again, and a record whose pull request has closed is never proposed
+    again at all.
+    """
+
+    version: int
+    update_types: frozenset[str]
+    require_head_current_with_base: bool
+    rollout_workflows: Mapping[str, WorkflowPin]
+
+    def pin_for(self, repository: str) -> WorkflowPin | None:
+        """The pin for a repository, matched case-insensitively as its identity key is.
+
+        `None` means NO PIN WAS DECLARED, which a caller must read as a refusal rather than as a
+        waived condition -- the version that predates the field declares none for anything.
+        """
+        return self.rollout_workflows.get(repository.lower())
+
+
+@dataclass(frozen=True)
+class ChangeRecord:
+    """One change record, projected down to what a caller is entitled to decide on.
+
+    **`status` ALONE IS NOT ENOUGH, and that is what this shape exists to say.** There are two
+    kinds of approved record and they are not interchangeable inputs to a decision: one approved
+    by conformance to a pinned policy version, and one a human approved before any policy existed
+    (production item 44). A reader keyed on `status` cannot tell them apart, nor either from a
+    record still stored `approved` whose live objections are no longer empty.
+
+    So `approved` stays what it always was -- change-manager's own stored decision -- and the two
+    fields that qualify it are carried alongside rather than folded into it. Which of them a
+    consumer must require is the consumer's judgment, not this reader's: the factory lane accepts
+    either shape because a human's per-unit authority approval gates it separately, while an
+    unattended landing binds itself to the current policy version.
+
+    THE IDENTIFIER IS BACK, AND THIS TIME IT HAS A READER. An earlier draft parsed it, REQUIRED it
+    for a row to read at all, and read it nowhere -- so its only reachable effect was to turn a
+    real approved record into "there is no record". It is now written into the landing commit's
+    trailer and into the landing's own row, which is what lets the estate's ledger resolve a
+    landing back to the record that permitted it. It is optional here for the same reason it was
+    dropped: a row that does not carry a readable one is still a row, and a consumer that needs it
+    says so.
     """
 
     status: str
     target_repository: str
     pull_request_number: int
+    record_id: int | None = None
+    # The pinned policy version that approved this record, or None for a record no policy decided.
+    # None is NOT a weaker version number -- it is a different basis, and Devon's 2026-08-12 ruling
+    # names it: the basis is `policy_version` when present, else `decided_by`.
+    policy_version: int | None = None
+    # Why change-manager says the record does not currently conform, recomputed by it on every
+    # read. Explanatory there and load-bearing here: a stored `approved` whose live objections are
+    # non-empty is a record whose approval has been overtaken by the policy moving under it.
+    policy_objections: tuple[str, ...] = ()
+    decided_by: str | None = None
+    # What the policy in force requires of the act. `None` means this deployment could not read
+    # them -- a change-manager that predates them, or a shape this build does not recognise. It is
+    # deliberately NOT fatal to the record: the factory lane's term needs only the stored decision,
+    # and poisoning every record because a field is missing would refuse work that has its own
+    # per-unit human approval. The landing that DOES need them refuses when they are absent.
+    conditions: LandingConditions | None = None
 
     @property
     def approved(self) -> bool:
@@ -190,17 +265,91 @@ def _answer_from_body(
         return ChangeRecordAnswer(False, reason=RECORD_AMBIGUOUS)
     if not matches:
         return ChangeRecordAnswer(True)
-    status = matches[0].get("status")
+    row = matches[0]
+    status = row.get("status")
     if not isinstance(status, str) or not status:
         return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
+    qualifiers = _qualifiers(row)
+    if qualifiers is None:
+        return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
+    record_id, policy_version, objections, decided_by = qualifiers
     return ChangeRecordAnswer(
         True,
         record=ChangeRecord(
             status=status,
             target_repository=github_repo,
             pull_request_number=pull_request_number,
+            record_id=record_id,
+            policy_version=policy_version,
+            policy_objections=objections,
+            decided_by=decided_by,
+            conditions=_conditions(row),
         ),
     )
+
+
+def _conditions(row: dict[str, Any]) -> LandingConditions | None:
+    """The conditions the policy in force puts on the act, or None when they do not read as any.
+
+    Every unrecognised shape answers None, and the caller that needs them refuses. That is the
+    same posture the estate answer's reader takes toward App Brain: a newer authoring side naming
+    something this build predates must not be guessed at, and here it must not be waived either.
+    """
+    version = row.get("landing_policy_version")
+    served = row.get("landing_conditions")
+    if not isinstance(version, int) or isinstance(version, bool) or not isinstance(served, dict):
+        return None
+    update_types = served.get("update_types")
+    fresh = served.get("require_head_current_with_base")
+    if not isinstance(update_types, list) or not all(isinstance(t, str) for t in update_types):
+        return None
+    if not isinstance(fresh, bool):
+        return None
+    pins = served.get("rollout_workflows")
+    if not isinstance(pins, dict):
+        return None
+    parsed: dict[str, WorkflowPin] = {}
+    for repository, pin in pins.items():
+        if not isinstance(repository, str) or not isinstance(pin, dict):
+            return None
+        path, blob = pin.get("path"), pin.get("blob_sha")
+        if not isinstance(path, str) or not path or not isinstance(blob, str) or not blob:
+            return None
+        parsed[repository.lower()] = WorkflowPin(path=path, blob_sha=blob)
+    return LandingConditions(
+        version=version,
+        update_types=frozenset(update_types),
+        require_head_current_with_base=fresh,
+        rollout_workflows=parsed,
+    )
+
+
+def _qualifiers(
+    row: dict[str, Any],
+) -> tuple[int | None, int | None, tuple[str, ...], str | None] | None:
+    """The fields that qualify `status`, or None when the row does not read as one.
+
+    **A field of the wrong TYPE is no answer at all, never an absent one**, and the difference is
+    the whole reason this is separated out. `policy_version: "1"` read as `None` would present a
+    policy-approved record as a human-approved one, which is the third indistinguishable row this
+    module's own type docstring names -- so an unreadable qualifier refuses the whole record
+    rather than degrading it to the nearest recognisable shape.
+
+    `bool` is an `int` in Python, so a boolean version is rejected rather than read as 1.
+    """
+    record_id = row.get("id")
+    if record_id is not None and (not isinstance(record_id, int) or isinstance(record_id, bool)):
+        return None
+    version = row.get("policy_version")
+    if version is not None and (not isinstance(version, int) or isinstance(version, bool)):
+        return None
+    objections = row.get("policy_objections", [])
+    if not isinstance(objections, list) or not all(isinstance(o, str) for o in objections):
+        return None
+    decided_by = row.get("decided_by")
+    if decided_by is not None and not isinstance(decided_by, str):
+        return None
+    return record_id, version, tuple(objections), decided_by
 
 
 def _matches(row: dict[str, Any], pipeline: str, wanted: str, pull_request_number: int) -> bool:

@@ -28,6 +28,7 @@ from landing_ledger.model import (
     FactoryClaim,
     Landing,
     PendingUpdate,
+    PolicyPermission,
     RuleApplication,
     UpdateMetadata,
 )
@@ -50,6 +51,15 @@ UPDATE_TYPE = re.compile(r"^\s*update-type:\s*(\S+)\s*$", re.MULTILINE)
 # reasoning, as the Dependabot trailers above.
 SDS_UNIT = re.compile(rf"^\s*SDS-Unit:\s*({WORK_UNIT_ID})\s*$", re.MULTILINE)
 SDS_PACKAGE_REVISION = re.compile(r"^\s*SDS-Package-Rev:\s*(\d+)\s*$", re.MULTILINE)
+
+# ADR-0019 increment 5b. The trailers the orchestrator writes when it lands a pull request that has
+# no work unit -- a change the estate routed through its change record. Spelled here as literals
+# rather than imported from the writer, deliberately: this program imports nothing from the
+# orchestrator (its isolation test says so), and a shared constant would be an import that does
+# not exist. Both sides carry a test naming the literal, so a rename on one side is a red test
+# rather than a landing silently recorded with no basis.
+SDS_CHANGE_RECORD = re.compile(r"^\s*SDS-Change-Record:\s*(\d+)\s*$", re.MULTILINE)
+SDS_POLICY_VERSION = re.compile(r"^\s*SDS-Policy-Version:\s*(\d+)\s*$", re.MULTILINE)
 
 
 class LedgerError(RuntimeError):
@@ -173,6 +183,26 @@ def factory_claim(message: str) -> FactoryClaim | None:
     )
 
 
+def policy_permission(message: str) -> PolicyPermission | None:
+    """The change record a landing commit says permitted it, or nothing.
+
+    Read from the landing commit, falling back to the pull request's head exactly as the factory
+    claim is -- and here the fall-back is less likely to be needed, because the orchestrator sends
+    an explicit body rather than letting the repository's own setting compose one. Less likely is
+    not never: a landing performed by any other route would have whatever body that route wrote.
+
+    BOTH trailers or nothing. A half-read claim would name a record with no version to re-evaluate
+    it under, which is a basis that cannot be checked wearing the name of one that can.
+    """
+    record = SDS_CHANGE_RECORD.search(message)
+    version = SDS_POLICY_VERSION.search(message)
+    if record is None or version is None:
+        return None
+    return PolicyPermission(
+        change_record=int(record.group(1)), policy_version=int(version.group(1))
+    )
+
+
 def _landed_pull(reader: GitHubReader, repository: str, sha: str) -> dict[str, Any] | None:
     associated = reader.get(f"/repos/{repository}/commits/{sha}/pulls") or []
     for pull in associated:
@@ -269,11 +299,13 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
     # which is what `fetch-metadata` read and where the runner wrote its own. Fetched ONCE for both,
     # and only when something is actually missing.
     claim = factory_claim(message)
+    policy = policy_permission(message)
     metadata_message = message
-    if claim is None or UPDATE_TYPE.search(message) is None:
+    if claim is None or policy is None or UPDATE_TYPE.search(message) is None:
         head = reader.get(f"/repos/{repository}/commits/{head_sha}")
         head_message = head["commit"]["message"] if head else ""
         claim = claim or factory_claim(head_message)
+        policy = policy or policy_permission(head_message)
         if head_message and UPDATE_TYPE.search(message) is None:
             metadata_message = head_message
     return Landing(
@@ -293,6 +325,7 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
         rule=rule,
         update=update_metadata(metadata_message, detail["head"].get("ref")),
         claim=claim,
+        policy=policy,
     )
 
 

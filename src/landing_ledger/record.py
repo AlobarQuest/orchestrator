@@ -53,6 +53,11 @@ BASIS_NONE = "none"
 # name, and the name carries the constraint: it cannot describe a landing that deploys without
 # saying something false.
 BASIS_FACTORY = "factory-approved-no-deploy"
+# ADR-0019 increment 5b. A landing the orchestrator made into a repository where landing changes
+# something already serving, permitted by a change record the estate approved by conformance to a
+# policy version a human pinned. Named for what it rests on rather than for who performed it,
+# because the record and the version are the parts that can be looked up years later.
+BASIS_CHANGE_RECORD = "change-record-policy"
 # Merged by a machine with no gate run to account for it. Never fabricate a basis: say so.
 BASIS_UNATTRIBUTED = "unattributed"
 
@@ -70,7 +75,14 @@ BASIS_UNATTRIBUTED = "unattributed"
 # What the scalar needed was ONE definition, which it now has: `audit.py` imports these names, and
 # an import cannot drift. What the vocabulary needed was a total-coverage assertion against the
 # cascade, which `tests/landing_ledger/test_record.py` now carries.
-BASES = (BASIS_NONE, BASIS_RULE, BASIS_HUMAN, BASIS_FACTORY, BASIS_UNATTRIBUTED)
+BASES = (
+    BASIS_NONE,
+    BASIS_RULE,
+    BASIS_HUMAN,
+    BASIS_FACTORY,
+    BASIS_CHANGE_RECORD,
+    BASIS_UNATTRIBUTED,
+)
 
 NO_BASIS_REASON = "pushed to the branch with no pull request; nothing recorded a permission"
 UNATTRIBUTED_REASON = "landed by a machine with no gate run observed on the pull request"
@@ -82,6 +94,14 @@ UNATTRIBUTED_REASON = "landed by a machine with no gate run observed on the pull
 FACTORY_REASON = (
     "landed by the factory, claiming a work unit whose criteria it says were met; the claim is the "
     "runner's own and is checked against the orchestrator by the audit"
+)
+# Says only what stays true, for the reason above it: nothing dated, nothing counted, and no claim
+# that the record has been verified -- because it has not been. The honest sentence is what the
+# landing asserts plus who could check it, and the second half is deliberately future-tense-free.
+CHANGE_RECORD_REASON = (
+    "landed by the orchestrator against a change record the estate approved by conformance to a "
+    "pinned policy version; the record and the version are named so the approval can be looked up "
+    "in change-manager, and no detector re-evaluates it here"
 )
 
 
@@ -139,6 +159,8 @@ def basis_of(landing: Landing) -> str:
         return BASIS_HUMAN
     if landing.claim is not None and is_machine(landing.landed_by):
         return BASIS_FACTORY
+    if landing.policy is not None and is_machine(landing.landed_by):
+        return BASIS_CHANGE_RECORD
     return BASIS_UNATTRIBUTED
 
 
@@ -172,6 +194,12 @@ def permitted_by(landing: Landing) -> dict[str, Any]:
         record["reason"] = FACTORY_REASON
         record["work_unit"] = landing.claim.work_unit
         record["package_revision"] = landing.claim.package_revision
+        return record
+    if basis == BASIS_CHANGE_RECORD:
+        assert landing.policy is not None
+        record["reason"] = CHANGE_RECORD_REASON
+        record["change_record"] = landing.policy.change_record
+        record["policy_version"] = landing.policy.policy_version
         return record
     if basis == BASIS_HUMAN or landing.rule is None:
         return record

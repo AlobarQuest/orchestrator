@@ -91,6 +91,30 @@ class FactoryClaim:
 
 
 @dataclass(frozen=True)
+class PolicyPermission:
+    """What a landing SAYS the estate's change record and policy version were (ADR-0019 5b).
+
+    Read from the `SDS-Change-Record:` / `SDS-Policy-Version:` trailers the orchestrator writes
+    into the squash body it composes -- the same place, and for the same reason, as the factory
+    claim above: a commit message cannot be edited afterwards, so an unchanged landing always
+    encodes to the same facts.
+
+    A CLAIM, like the factory's. It names the record to ask about and asserts nothing this module
+    can verify: change-manager holds the record, and this program has no credential for it. What
+    the claim buys today is that the landing is not recorded as having no accountable basis at
+    all, which is a class no detector reads -- re-evaluating it against change-manager is named
+    open work rather than done.
+
+    Both values are required. A record number with no version cannot be re-evaluated (the policy
+    it was approved under is what makes the approval mean something), and a version with no record
+    selects nothing to check.
+    """
+
+    change_record: int
+    policy_version: int
+
+
+@dataclass(frozen=True)
 class PendingUpdate:
     """An OPEN pull request from the upstream update bot -- a landing that has not happened.
 
@@ -138,3 +162,4 @@ class Landing:
     rule: RuleApplication | None = None
     update: UpdateMetadata | None = None
     claim: FactoryClaim | None = None
+    policy: PolicyPermission | None = None
