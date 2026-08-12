@@ -248,9 +248,25 @@
   after the fact.
   Report: `~/docs/software-delivery-system/2026-08-11-adr0019-inc5-build-report.md`.
 
-  **INCREMENT 5b BUILT 2026-08-12 — the landing path, and the last piece of this decision.**
-  change-manager PR #54 and orchestrator PR #162, both awaiting merge; **nothing has been landed
-  and nothing deployed.** `POST /api/v1/estate-pr-merge` lands a pull request that has **no work
+  **INCREMENT 5b DONE 2026-08-12 — the landing path, and the last piece of this decision.**
+  change-manager #54 (`e81eb62f`, which deployed itself — rollout green through *Verify the new
+  revision is live*, production serving policy **v2** with the rollout pin) and orchestrator #162
+  (`99920d49`, **which deployed nothing**: `Release image` is `workflow_dispatch`, and
+  `sds.alobar.net/openapi.json` carries no `estate-pr-merge` route, asked rather than inferred).
+  **Nothing has been landed.** The lane stays inert until an image is released and
+  `ORCHESTRATOR_ESTATE_LANDING_ENABLED` is written — two acts in two systems, either alone
+  changing nothing.
+  **ITEM 44 IS RETIRED**, in production, by the producer's new sweep: `resolved`, on the fact that
+  #42 closed unmerged. Its chain reads *proposed → approved by `devon.watkins@gmail.com` → knocked
+  over by a probe → restored → retired by `change-proposer`*, which is the whole increment in five
+  lines. **And that chain corrects 5a**: it closed approval to every caller partly on the grounds
+  that `actor` is caller-declared free text, citing item 44's `hq-correction` — but item 44's FIRST
+  approval carries Devon's SSO email, because change-manager's GUI reads the forward-auth header.
+  The service can attest a human, and did; the free-text value is the later repair.
+  **The re-approval fix is proven live**: items 50–53 advanced v1 → v2 on the first producer pass
+  after the deploy, while item 44 held at `NULL` with the human's name intact.
+  **Stage three passed on the deployed build** — `claim`/`outcome`/`handoff` and `approve` all 409
+  to the FULL bearer. `POST /api/v1/estate-pr-merge` lands a pull request that has **no work
   unit** into a repository where landing changes something already serving, with the Dispatch App.
   What authorises it is a change record approved by conformance to a policy version a human
   pinned, **re-checked against the version in force at the moment of the act** — the only
