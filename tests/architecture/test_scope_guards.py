@@ -59,6 +59,9 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # ADR-0020: the factory lands its own pull request. SYSTEM-only, one caller (whoever
         # drives verification, immediately after), no scheduler.
         "/api/v1/work-units/{unit_id}/pr-merge",
+        # ADR-0019 Increment 5b: the orchestrator lands a pull request that has no work
+        # unit, into a repository where landing changes something already serving.
+        "/api/v1/estate-pr-merge",
         "/api/v1/work-units/{unit_id}/verify",
         "/api/v1/work-units/{unit_id}/verifier-evidence/named-check",
         "/api/v1/work-units/{unit_id}/infra-lane-links",
@@ -170,6 +173,9 @@ def test_production_get_route_inventory_is_explicit() -> None:
         # this unit's pull request. A GET because it acts on nothing; it exists so the answer can
         # be read against real completed units before anything obeys it.
         "/api/v1/work-units/{unit_id}/pr-merge-admission",
+        # ADR-0019 Increment 5b: report-only, and the surface that makes a night which
+        # lands nothing legible -- every held pull request names the condition it misses.
+        "/api/v1/estate-pr-merge-admission",
         "/api/v1/work-units/{unit_id}/infra-lane-links",
         "/api/v1/work-units/{unit_id}/readiness",
         "/api/v1/work-units/{unit_id}/release-artifacts",

@@ -42,6 +42,18 @@ class Settings(BaseSettings):
     change_record_url: str = ""
     change_record_token: SecretStr | None = None
     change_record_timeout_seconds: float = 5.0
+    # ADR-0019 increment 5b. Whether this deployment may land a pull request into a repository
+    # where landing changes something already serving.
+    #
+    # THIS SWITCH EXISTS BECAUSE ITS SIBLING'S ABSENCE WAS DECIDED, and the decision named its own
+    # expiry: a landing driven by one human-invoked caller needs no switch, and *if a scheduled
+    # caller is ever proposed, that decision is void*. This increment ships the scheduled caller.
+    # A switch against a loop is a real control where a switch against one operator is ceremony.
+    #
+    # Default false, and false is a REFUSAL rather than an absence: the release carrying this code
+    # lands nothing until somebody writes an environment variable, so merging it changes the
+    # estate's behaviour by exactly nothing.
+    estate_landing_enabled: bool = False
     dispatch_failure_signature_threshold: int = 3
     dispatch_orchestrator_url: str = "https://sds.alobar.net"
     # How long a human approval gate may go unanswered before the dead-letter view reports it as

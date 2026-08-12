@@ -101,6 +101,18 @@ MERGE_NAMING_ROUTES = {
     # are siblings, because this set is keyed on the verb -- which is the whole reason it is, and
     # is what stopped the acting endpoint inheriting the reporting one's excuse.
     ("POST", "/api/v1/work-units/{unit_id}/pr-merge"),
+    # ADR-0019 Increment 5b. Report-only, over a pull request that has no work unit: it answers
+    # whether a change routed through the estate's change record may be landed now, and every term
+    # it evaluates is a read.
+    ("GET", "/api/v1/estate-pr-merge-admission"),
+    # ADR-0019 Increment 5b: the act, and the more consequential of the two this file now excuses.
+    # The other lands into repositories the estate calls INERT, where the landed commit sits until
+    # something separately acts on it; this one lands where landing IS the change to a running
+    # service. Named separately from its report for the same reason as the pair above, and gated
+    # by an environment switch that defaults to refusing -- which the unit-bound act deliberately
+    # has none of, because that decision named a scheduled caller as the thing that would void it,
+    # and this is that caller.
+    ("POST", "/api/v1/estate-pr-merge"),
 }
 
 

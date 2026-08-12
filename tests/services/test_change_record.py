@@ -26,7 +26,9 @@ from orchestrator.services.change_record import (
     RECORD_AMBIGUOUS,
     SOURCE_UNCONFIGURED,
     SOURCE_UNREADABLE,
+    ChangeRecordAnswer,
     HttpChangeRecordSource,
+    _answer_from_body,
 )
 
 PIPELINE = "deploy"
@@ -311,3 +313,152 @@ def test_a_row_missing_what_a_match_is_made_of_cannot_match(overrides: dict[str,
 
     assert answer.answered is True
     assert answer.record is None
+
+
+# ---------------------------------------------------------------------------
+# ADR-0019 increment 5b: what QUALIFIES `status`.
+# ---------------------------------------------------------------------------
+
+
+def _served_row(**overrides: object) -> dict:
+    """One row as change-manager serves it, measured against production 2026-08-12."""
+    row: dict = {
+        "id": 52,
+        "source": "deploy",
+        "target_repository": "alobarquest/change-manager",
+        "pull_request_number": 49,
+        "status": "approved",
+        "decided_by": "deploy-policy",
+        "policy_version": 2,
+        "policy_objections": [],
+        "landing_policy_version": 2,
+        "landing_conditions": {
+            "update_types": ["semver-minor", "semver-patch"],
+            "require_head_current_with_base": True,
+            "rationale": "…",
+            "rollout_workflows": {
+                "alobarquest/change-manager": {
+                    "path": ".github/workflows/deploy.yml",
+                    "blob_sha": "a47d4b187c93971a5b5915ce87a963bd4ef35e30",
+                }
+            },
+        },
+    }
+    row.update(overrides)
+    return row
+
+
+def _read(rows: list[dict]) -> ChangeRecordAnswer:
+    return _answer_from_body(rows, "deploy", "alobarquest/change-manager", 49)
+
+
+def test_the_qualifiers_that_tell_three_approved_rows_apart_are_read() -> None:
+    record = _read([_served_row()]).record
+
+    assert record is not None
+    assert record.approved and record.record_id == 52
+    assert record.policy_version == 2 and record.policy_objections == ()
+    assert record.decided_by == "deploy-policy"
+
+
+def test_a_record_a_human_approved_carries_no_version_rather_than_a_weaker_one() -> None:
+    """Production item 44's shape. `None` is a different BASIS, not a lower number."""
+    record = _read([_served_row(policy_version=None, decided_by="hq-correction")]).record
+
+    assert record is not None and record.approved
+    assert record.policy_version is None
+
+
+def test_live_objections_are_carried_even_on_a_stored_approval() -> None:
+    record = _read([_served_row(policy_objections=["risk_not_in_policy"])]).record
+
+    assert record is not None
+    assert record.approved
+    assert record.policy_objections == ("risk_not_in_policy",)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"policy_version": "2"},
+        {"policy_version": True},
+        {"id": "52"},
+        {"policy_objections": "risk_not_in_policy"},
+        {"policy_objections": [1]},
+        {"decided_by": 7},
+    ],
+    ids=[
+        "version-string",
+        "version-bool",
+        "id-string",
+        "objections-string",
+        "objections-int",
+        "actor-int",
+    ],
+)
+def test_a_qualifier_of_the_wrong_type_is_no_answer_rather_than_an_absent_one(
+    overrides: dict,
+) -> None:
+    """`policy_version: "2"` read as None would present a policy-approved record as a
+    human-approved one -- degrading to the nearest recognisable shape, in the one field that
+    decides whether an unattended act may proceed."""
+    answer = _read([_served_row(**overrides)])
+
+    assert not answer.answered
+    assert answer.reason == SOURCE_UNREADABLE
+
+
+def test_the_landing_conditions_are_read_from_the_served_row() -> None:
+    conditions = _read([_served_row()]).record.conditions  # type: ignore[union-attr]
+
+    assert conditions is not None
+    assert conditions.version == 2
+    assert conditions.update_types == frozenset({"semver-minor", "semver-patch"})
+    assert conditions.require_head_current_with_base is True
+    pin = conditions.pin_for("AlobarQuest/change-manager")
+    assert pin is not None and pin.path == ".github/workflows/deploy.yml"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"landing_conditions": None},
+        {"landing_policy_version": None},
+        {"landing_policy_version": "2"},
+        {"landing_conditions": {"update_types": "semver-minor"}},
+        {"landing_conditions": {"update_types": [], "require_head_current_with_base": "yes"}},
+        {
+            "landing_conditions": {
+                "update_types": [],
+                "require_head_current_with_base": True,
+                "rollout_workflows": {"x": {"path": "", "blob_sha": "a"}},
+            }
+        },
+    ],
+    ids=["absent", "no-version", "version-string", "no-flag", "flag-string", "empty-path"],
+)
+def test_unreadable_conditions_are_None_and_do_not_poison_the_record(overrides: dict) -> None:
+    """Deliberately NOT fatal to the record. The factory lane's term needs only the stored
+    decision, and refusing every record because a field a newer service adds is missing would
+    refuse work that has its own per-unit human approval. The landing that needs them refuses.
+    """
+    answer = _read([_served_row(**overrides)])
+
+    assert answer.answered
+    assert answer.record is not None
+    assert answer.record.approved
+    assert answer.record.conditions is None
+
+
+def test_an_explicitly_null_qualifier_is_absent_rather_than_unreadable() -> None:
+    """`null` is not a wrong type, and the difference reaches a consumer that never reads it.
+
+    `.get(key, default)` returns `None` for an explicit null, so a record service serving
+    `"policy_objections": null` would have made the whole record unreadable -- and the FACTORY
+    lane, which only ever reads `status`, would have started refusing with a source error.
+    """
+    answer = _read([_served_row(policy_objections=None)])
+
+    assert answer.answered
+    assert answer.record is not None and answer.record.policy_objections == ()
+    assert answer.record.approved

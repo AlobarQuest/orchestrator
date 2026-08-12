@@ -80,6 +80,19 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # envelope that grants the capability; and the estate says landing on that repository's
     # default branch changes nothing already serving.
     Path("src/orchestrator/services/pr_merge.py"),
+    # ADR-0019 Increment 5b, and the SECOND entry -- deliberately its own, because what makes the
+    # first defensible does not carry over. There is no work unit here, so no criteria the
+    # orchestrator resolved from evidence and no envelope a human approved; and the estate says
+    # landing on this repository's default branch DOES change something already serving, which is
+    # the opposite of the first entry's last clause.
+    #
+    # What stands in its place is a change record approved by conformance to a policy version a
+    # human pinned, re-checked against the version in force at the moment of the act; the hours
+    # that policy declares for changing something already serving; the update bot's own identity;
+    # a head current with its base; a permitted version delta; the rollout workflow still being
+    # the bytes the record's criteria describe; one landing per repository per window; and an
+    # environment switch that defaults to refusing.
+    Path("src/orchestrator/services/estate_pr_merge.py"),
 }
 
 
@@ -205,6 +218,23 @@ OUTBOUND_ALLOWLIST = {
     # so the remote refuses any other. It borrows the same App installation token the workflow
     # trigger and the named-check observer use, and speaks to nothing else.
     Path("src/orchestrator/services/pr_merge.py"),
+    # ADR-0019 Increment 5b. The SECOND mutating egress, and the more consequential one: it lands
+    # into a repository where landing changes something already serving. Four calls -- the pull
+    # request, how far its head is behind its base, the object name of the rollout workflow at
+    # that base, and the landing itself -- of which one changes anything, and every one names the
+    # head the terms were evaluated against so the remote refuses any other. Same App installation
+    # token as the three readers above. The reads are here rather than in an out-of-process poller
+    # for the reason the readers above give: every one of them decides an admission term, and an
+    # answer obtained outside the transaction that records the decision is an answer about a
+    # moment that has passed.
+    Path("src/orchestrator/services/estate_pr_merge.py"),
+    # ADR-0019 Increment 5b. `estate_lander` is a SEPARATE program (ADR-0002's shape), and its
+    # egress is not the orchestrator's. It reads which changes the estate routed, asks the
+    # orchestrator whether each may be landed, and relays the answer -- composing nothing, because
+    # every term is evaluated inside the orchestrator in the transaction that records the act.
+    # Its whole surface is two routes, enforced in code by `is_allowed_read`/`is_allowed_write`
+    # and in tests by test_estate_lander_isolation.py.
+    Path("src/estate_lander/orchestrator_client.py"),
     # The reconciliation runner is a SEPARATE program (ADR-0002). Polling GitHub is its entire
     # job, and it may only push what it finds back through two endpoints -- enforced in code by
     # ALLOWED_WRITE_ENDPOINTS and in tests by test_reconciliation_runner_isolation.py. It is not

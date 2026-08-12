@@ -1,19 +1,25 @@
-"""The confined change-manager surface for the producer. ONE path, checked before the transport.
+"""The confined change-manager surface for the producer. THREE paths, checked before the transport.
 
-The producer proposes a deploying-merge change and can reach nothing else. That bound now exists
-on BOTH sides -- change-manager gained a `propose` scope in this same increment, so the server
-refuses `approve` with a 403 whatever this client sends -- and it is asserted here as well, on
-purpose. The server-side scope is the control; this is the statement of intent that makes a
-mistake in this program fail before a request leaves it, and that keeps the bound true in a
-development deployment where the narrow secrets are unset.
+The producer proposes a deploying-merge change, reads the records it has already made, and retires
+one whose pull request was closed without merging. It can reach nothing else. That bound exists on
+BOTH sides -- change-manager's `propose` scope refuses `approve` with a 403 whatever this client
+sends -- and it is asserted here as well, on purpose. The server-side scope is the control; this is
+the statement of intent that makes a mistake in this program fail before a request leaves it, and
+that keeps the bound true in a development deployment where the narrow secrets are unset.
 
 **The producer must never approve, and the reason is the whole increment.** Increment 3's
 admission term reads these records. A producer that could also approve one would be a system
 asking itself for permission, and the control would be decorative.
+
+**THE COUNT IN THE FIRST LINE IS A BEHAVIOURAL CLAIM.** It read "ONE path" until increment 5b,
+and this repository's own record of what goes wrong here is a scope artifact whose prose kept
+asserting a property one increment had already falsified. Both write paths take a FACT and let the
+server decide what follows; neither lets this program choose a status.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -22,9 +28,32 @@ DEFAULT_BASE_URL = "https://change-mgr.alobar.net"
 USER_AGENT = "change-proposer/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS = 30.0
 
-# The whole write surface: propose one deploying-merge change. Anchored so that a prefix, a
-# trailing slash or a traversal does not match, and so `…/approve` cannot.
+# The write surface: propose one deploying-merge change, and retire one whose pull request was
+# closed without merging. Anchored so that a prefix, a trailing slash or a traversal does not
+# match, and so `…/approve` cannot.
+#
+# THE SECOND IS NARROWER THAN IT LOOKS, and the difference is why the producer may hold it. It
+# takes an observed FACT and lets the server decide what follows, exactly as proposing does -- and
+# unlike proposing it is one-directional: its only outcome removes permission. A producer that
+# lied to it could stop a landing it was going to be able to make anyway, and could cause none.
 _PROPOSE = "/api/deploy-changes"
+_RETIRE = re.compile(r"^/api/items/[1-9][0-9]*/deploy-retirement$")
+
+# The one observation the retirement route accepts, mirrored from change-manager's own closed
+# vocabulary (`app/deploy_retirement.py`). One member, because the route's justification is that
+# its outcome cannot be chosen.
+CLOSED_UNMERGED = "pull_request_closed_unmerged"
+
+# What the listing calls the pipeline these records arrive on. change-manager withholds a proposed
+# source from any caller that does not name one, so a sweep that forgot this would read an empty
+# list and retire nothing while reporting a clean pass.
+DEPLOY_SOURCE = "deploy"
+
+# Who the retirement is attributed to. `decided_by` is a latest-writer column by decision, so a
+# retirement records this producer and the human approval it supersedes stays legible in the
+# event chain rather than in that column.
+PRODUCER_ACTOR = "change-proposer"
+_ITEMS = "/api/items"
 
 
 class ChangeManagerError(Exception):
@@ -40,7 +69,11 @@ class ProposalRefused(ChangeManagerError):
 
 
 def is_allowed_write(path: str) -> bool:
-    return path == _PROPOSE
+    return path == _PROPOSE or _RETIRE.match(path) is not None
+
+
+def is_allowed_read(path: str) -> bool:
+    return path == _ITEMS
 
 
 def _detail(response: httpx.Response) -> str:
@@ -103,7 +136,8 @@ class ChangeManagerClient:
         "a test calling a service is not evidence the service has a caller", reproduced inside the
         module written to embody the negative property.
         """
-        if not is_allowed_write(path):
+        permitted = is_allowed_read(path) if method == "GET" else is_allowed_write(path)
+        if not permitted:
             raise ForbiddenEndpointError(f"the producer may not {method} {path}")
         try:
             response = self._client.request(method, path, **kwargs)
@@ -153,3 +187,35 @@ class ChangeManagerClient:
         except ValueError as error:
             raise ChangeManagerError("the proposal response was not JSON") from error
         return body, response.status_code == 201
+
+    def records(self) -> list[dict[str, Any]]:
+        """Every change record on the deploying-merge pipeline, whatever its status.
+
+        NAMED SOURCE, NO STATUS FILTER. change-manager withholds a proposed source from a caller
+        that does not name one, so an unnamed query answers with a clean empty list -- and it
+        applies `status` as a SQL predicate, so filtering server-side would hide exactly the
+        records a sweep is looking for. Both mistakes report success having examined nothing.
+        """
+        body = self._request("GET", _ITEMS, params={"source": DEPLOY_SOURCE})
+        if not isinstance(body, list):
+            raise ChangeManagerError("the change-record listing did not answer a list")
+        return [row for row in body if isinstance(row, dict)]
+
+    def retire(self, item_id: int, *, pull_request_number: int) -> dict[str, Any]:
+        """Retire one record whose pull request was closed without merging.
+
+        The caller states the fact and the subject; the server decides the status. Idempotent by
+        design -- a record already terminal answers unchanged, because this runs on every pass.
+        """
+        body = self._request(
+            "POST",
+            f"/api/items/{item_id}/deploy-retirement",
+            json={
+                "observation": CLOSED_UNMERGED,
+                "pull_request_number": pull_request_number,
+                "actor": PRODUCER_ACTOR,
+            },
+        )
+        if not isinstance(body, dict):
+            raise ChangeManagerError("the retirement response was not an object")
+        return body

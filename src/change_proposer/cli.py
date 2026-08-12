@@ -68,6 +68,30 @@ class BlobSource(Protocol):
     def blob_revision(self, repository: str, path: str, ref: str) -> str | None: ...
 
 
+class DispositionSource(Protocol):
+    """Where a pull request ended up. The one read the retirement sweep needs.
+
+    Its own protocol rather than a method on the two above, because the sweep is a different pass
+    over a different population -- records already made rather than pull requests waiting -- and a
+    signature that named the concrete reader would carry nine methods neither pass calls.
+    """
+
+    def pull_request_disposition(self, repository: str, number: int) -> str | None: ...
+
+
+class RetirementTarget(Protocol):
+    """What the sweep needs from change-manager: the records it has made, and one retirement.
+
+    A protocol rather than the concrete client, because that is the honest signature -- and
+    because typing it as the client would make every test of the sweep stand up an HTTP transport
+    to answer a question about which records exist.
+    """
+
+    def records(self) -> list[dict[str, Any]]: ...
+
+    def retire(self, item_id: int, *, pull_request_number: int) -> dict[str, Any]: ...
+
+
 class PullSource(BlobSource, Protocol):
     """What the whole pass needs from GitHub: the open pull requests, and one file's bytes.
 
@@ -98,6 +122,16 @@ REFUSAL_PREFIX = "REFUSED: "
 # the scheduled job reported success. A skip means "this pull request is not our business"; a
 # refusal means "it is, and nobody can say what its deploy would attest".
 FINDING_STATUSES = frozenset({"refused", "error", "unreadable", "underivable"})
+
+# What the retirement sweep must observe before it retires anything, mirrored from
+# `deploy_watcher.github.pull_request_disposition`.
+CLOSED_UNMERGED_DISPOSITION = "closed_unmerged"
+
+# Statuses a record can hold that this sweep leaves alone. `resolved` and `wontfix` are terminal --
+# a record already retired, or one a human decided against -- and re-asserting either would be the
+# machine re-deciding rather than reconciling. Everything else is swept, including `approved`,
+# because an approved record for a pull request that can never land is the case this exists for.
+_TERMINAL_STATUSES = frozenset({"resolved", "wontfix"})
 
 
 @dataclass(frozen=True)
@@ -239,6 +273,80 @@ def _consider_one(
     )
 
 
+def _retire_pass(
+    reader: DispositionSource,
+    scope: list[str],
+    client: RetirementTarget | None,
+) -> list[Outcome]:
+    """Retire every record whose pull request was closed WITHOUT merging.
+
+    THE PRODUCER IS ALSO A RECONCILER, and this is the half that was missing. The pass above
+    enumerates pull requests waiting to happen; this one enumerates records already made and
+    retires the ones whose subject is gone. Production item 44 is the case that forced it: a
+    record for a pull request closed and superseded, standing approved, authorising a landing that
+    can never occur, with nothing in the estate positioned to notice.
+
+    **RETIRE ON A FACT, NEVER ON ABSENCE.** "GitHub says this pull request is closed and was not
+    merged" is a fact; "I could not read it", "GitHub has no such pull request" and "the record
+    names no pull request" are not, and each is reported rather than acted on. That distinction is
+    the whole safety of the sweep, because a retirement is a status change to somebody else's
+    record.
+
+    Scoped to the same repositories the proposing pass considers. A record for a repository this
+    program does not transcribe is one it has no business deciding anything about.
+    """
+    if client is None:
+        # A dry run reads change-manager for nothing else, and reading the records would need the
+        # credential a dry run must not touch. Reported as a skip so a bare invocation says
+        # plainly that it examined no records rather than that it found none.
+        return [Outcome("-", 0, "skipped", "retirement sweep needs --submit")]
+    try:
+        records = client.records()
+    except ChangeManagerError as error:
+        return [Outcome("-", 0, "error", str(error))]
+
+    wanted = set(scope)
+    outcomes: list[Outcome] = []
+    for record in records:
+        repository = record.get("target_repository")
+        number = record.get("pull_request_number")
+        item_id = record.get("id")
+        if not isinstance(repository, str) or repository.lower() not in wanted:
+            continue
+        if not isinstance(number, int) or isinstance(number, bool) or not isinstance(item_id, int):
+            outcomes.append(Outcome(str(repository), 0, "unreadable", "record names no subject"))
+            continue
+        if record.get("status") in _TERMINAL_STATUSES:
+            continue
+        outcomes.append(_retire_one(reader, client, repository, number, item_id))
+    return outcomes
+
+
+def _retire_one(
+    reader: DispositionSource,
+    client: RetirementTarget,
+    repository: str,
+    number: int,
+    item_id: int,
+) -> Outcome:
+    try:
+        disposition = reader.pull_request_disposition(repository, number)
+    except ReadError as error:
+        return Outcome(repository, number, "unreadable", str(error))
+    if disposition is None:
+        # A record naming a pull request GitHub does not have. Reported, never retired: the fact
+        # this sweep acts on is a closure it observed, and an absent subject is a question about
+        # the record rather than an answer about the change.
+        return Outcome(repository, number, "unreadable", "github has no such pull request")
+    if disposition != CLOSED_UNMERGED_DISPOSITION:
+        return Outcome(repository, number, "skipped", disposition)
+    try:
+        retired = client.retire(item_id, pull_request_number=number)
+    except ChangeManagerError as error:
+        return Outcome(repository, number, "error", str(error))
+    return Outcome(repository, number, "retired", f"item {item_id} status={retired.get('status')}")
+
+
 def _resolve_scope(requested: list[str] | None) -> list[str] | None:
     """The repositories to consider, or None when one was named that is out of scope."""
     scope = _in_scope()
@@ -284,6 +392,7 @@ def run(argv: list[str] | None = None) -> int:
             client = ChangeManagerClient(cm_token, base_url=cm_url or DEFAULT_BASE_URL)
         with GitHubReader(github_token) as reader:
             outcomes = _pass(reader, scope, client)
+            outcomes.extend(_retire_pass(reader, scope, client))
     except ChangeManagerError as error:
         print(str(error), file=sys.stderr)
         return EXIT_UNUSABLE
@@ -296,7 +405,11 @@ def run(argv: list[str] | None = None) -> int:
         print(f"{subject}  {outcome.status:<13} {outcome.detail}")
     findings = [o for o in outcomes if o.status in FINDING_STATUSES]
     proposed = [o for o in outcomes if o.status in {"proposed", "would-propose"}]
-    print(f"\n{len(outcomes)} considered, {len(proposed)} to propose, {len(findings)} findings")
+    retired = [o for o in outcomes if o.status == "retired"]
+    print(
+        f"\n{len(outcomes)} considered, {len(proposed)} to propose, "
+        f"{len(retired)} retired, {len(findings)} findings"
+    )
     return EXIT_FINDINGS if findings else EXIT_OK
 
 

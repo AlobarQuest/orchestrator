@@ -533,6 +533,75 @@ class PrMergeResponse(BaseModel):
     updated_at: datetime
 
 
+class EstatePrMergeCommandModel(BaseModel):
+    """Ask the orchestrator to land a pull request that has no work unit (ADR-0019 5b).
+
+    **It carries `expected_head_sha` where every other mutation carries `expected_version`**, and
+    that is a deliberate, named exception rather than an omission. The repo-wide rule exists so a
+    caller states what it read before it asks for an act; here the subject is a pull request in a
+    foreign system, which has no version of ours to state. Its head is the value that moves, and
+    naming it is the same claim: *nothing changed between the answer I read and the act I am
+    asking for*. A version field would be a field that means nothing, which is worse than an
+    exception that says why.
+    """
+
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    # BOUNDED IN SHAPE, because it is interpolated into GitHub API paths that are called with the
+    # App installation token. An unbounded string can address paths nobody intended -- not a
+    # disclosure, since only refusal codes come back, but unbounded use of a production credential
+    # from a caller-supplied value, which is not a thing to leave to the good behaviour of the one
+    # caller that exists.
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pr_number: int = Field(gt=0)
+    # A FULL object name, not a prefix. The service compares it for equality against the head the
+    # admission answer named, and GitHub serves that in full -- so a prefix could never match, and
+    # admitting one would only let a caller send something that is guaranteed to be refused.
+    expected_head_sha: str = Field(min_length=40, max_length=40)
+
+
+class EstatePrMergeResponse(BaseModel):
+    """The orchestrator's record of its own act, for a landing with no unit behind it.
+
+    `status` carries the same three values, and for the same reason: a lost response and a refusal
+    are indistinguishable at the remote and must not be indistinguishable here.
+
+    `change_record_id` and `policy_version` are the permission, written down at the moment it was
+    exercised. The standing condition behind them is re-derivable and will move.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    repository: str
+    pr_number: int
+    head_sha: str
+    status: str
+    reason_code: str | None
+    merge_commit_sha: str | None
+    github_status: int | None
+    change_record_id: int | None
+    policy_version: int | None
+    event_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EstateLandingAdmissionResponse(BaseModel):
+    """Whether this pull request may be landed, and every term that is unmet.
+
+    Every term is reported rather than the first that failed: the terms are fixed by different
+    people at different times, and an operator asking why nothing landed wants the list.
+    """
+
+    repository: str
+    pr_number: int
+    satisfied: bool
+    refusals: list[str]
+    head_sha: str | None
+    change_record_id: int | None
+    policy_version: int | None
+
+
 class InfraLaneLinkResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

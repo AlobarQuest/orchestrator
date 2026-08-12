@@ -15,6 +15,7 @@ from landing_ledger.github import (
     factory_claim,
     first_parent_chain,
     landing_shas,
+    policy_permission,
     read_landing,
     update_metadata,
 )
@@ -389,3 +390,50 @@ def test_a_github_failure_is_a_named_error_carrying_no_body() -> None:
     with pytest.raises(LedgerError) as raised:
         read_landing(reader, REPO, "main", "e931db8d")
     assert "boom" not in str(raised.value)
+
+
+# ---------------------------------------------------------------------------
+# ADR-0019 increment 5b: the change-record trailers.
+# ---------------------------------------------------------------------------
+
+
+def test_the_change_record_trailers_are_read_from_a_landing_commit() -> None:
+    permission = policy_permission(
+        "build(deps): bump alembic from 1.18.5 to 1.19.0 (#50)\n"
+        "\n"
+        "SDS-Change-Record: 52\n"
+        "SDS-Policy-Version: 2\n"
+    )
+
+    assert permission is not None
+    assert permission.change_record == 52
+    assert permission.policy_version == 2
+
+
+def test_the_spellings_match_the_only_writer_of_them() -> None:
+    """A LITERAL on each side rather than a shared constant, because this program imports nothing
+    from the orchestrator -- its isolation test says so. Naming the literal in both places is what
+    turns a rename into a red test instead of a landing silently recorded with no basis.
+
+    The writer is `orchestrator/services/estate_pr_merge.py`, and its own test asserts the same
+    two strings appear in the body it composes.
+    """
+    body = "SDS-Change-Record: 7\nSDS-Policy-Version: 3\n"
+    permission = policy_permission(body)
+
+    assert permission is not None and (permission.change_record, permission.policy_version) == (
+        7,
+        3,
+    )
+
+
+def test_half_a_claim_is_no_claim() -> None:
+    """A record with no version names something that cannot be re-evaluated; a version with no
+    record selects nothing to check."""
+    assert policy_permission("SDS-Change-Record: 52\n") is None
+    assert policy_permission("SDS-Policy-Version: 2\n") is None
+    assert policy_permission("nothing here\n") is None
+
+
+def test_a_non_numeric_trailer_is_no_claim() -> None:
+    assert policy_permission("SDS-Change-Record: fifty-two\nSDS-Policy-Version: 2\n") is None

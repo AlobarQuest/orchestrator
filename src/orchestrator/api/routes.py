@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated, Any, Final
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -39,6 +39,9 @@ from orchestrator.api.schemas import (
     DispatchCommandModel,
     DispatchResponse,
     ErrorResponse,
+    EstateLandingAdmissionResponse,
+    EstatePrMergeCommandModel,
+    EstatePrMergeResponse,
     EventPublicationExportCommand,
     EventPublicationQueueCommand,
     EventPublicationResponse,
@@ -153,6 +156,12 @@ from orchestrator.services.dispatch import (
     dispatch_work_unit,
 )
 from orchestrator.services.estate_landing import EstateLandingSource, HttpEstateLandingSource
+from orchestrator.services.estate_landing_admission import estate_landing_admission
+from orchestrator.services.estate_pr_merge import (
+    EstateMergeCommand,
+    GitHubEstatePullRequests,
+    land_estate_pull_request,
+)
 from orchestrator.services.event_publications import (
     EventPublicationFilters,
     export_event_publications,
@@ -697,6 +706,72 @@ def pr_merge_admission_route(
     unit's evidentiary record can read this.
     """
     return pr_merge_admission(session, unit_id, landing_source, record_source)
+
+
+@router.get("/estate-pr-merge-admission", response_model=EstateLandingAdmissionResponse)
+def estate_landing_admission_route(
+    repository: Annotated[str, Query(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)],
+    pr_number: Annotated[int, Query(gt=0)],
+    _actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+    record_source: ChangeRecordSourceDep,
+) -> object:
+    """ADR-0019 Increment 5b: may this pull request be landed, and if not, why?
+
+    **Report-only.** It is what makes a night that lands nothing legible: every held pull request
+    names the condition it misses, and a first pass that reports four held for freshness is the
+    condition working rather than the lane failing.
+
+    The credentials are resolved once and fed to both this answer and the act, so the gate can
+    never attest to credentials the actor does not hold.
+    """
+    credentials = github_app_credentials(settings)
+    return estate_landing_admission(
+        session,
+        repository,
+        pr_number,
+        landing_source,
+        record_source,
+        GitHubEstatePullRequests(token_provider_for(credentials)),
+        enabled=settings.estate_landing_enabled,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.post("/estate-pr-merge", response_model=EstatePrMergeResponse)
+def estate_pr_merge_route(
+    body: EstatePrMergeCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+    record_source: ChangeRecordSourceDep,
+) -> object:
+    """ADR-0019 Increment 5b: the orchestrator lands a pull request that has no work unit.
+
+    Its caller is a scheduled one, which is why this path has an off-switch where its unit-bound
+    sibling deliberately has none. Unconfigured refuses.
+    """
+    credentials = github_app_credentials(settings)
+    gateway = GitHubEstatePullRequests(token_provider_for(credentials))
+    record = land_estate_pull_request(
+        session,
+        EstateMergeCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_head_sha=body.expected_head_sha,
+        ),
+        gateway,
+        landing_source,
+        record_source,
+        enabled=settings.estate_landing_enabled,
+        credentials_configured=credentials is not None,
+    )
+    return record
 
 
 @router.post("/work-units/{unit_id}/pr-merge", response_model=PrMergeResponse)

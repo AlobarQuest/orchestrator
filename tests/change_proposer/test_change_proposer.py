@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -20,9 +21,17 @@ from change_proposer.change_manager import (
     ChangeManagerError,
     ForbiddenEndpointError,
     ProposalRefused,
+    is_allowed_read,
     is_allowed_write,
 )
-from change_proposer.cli import _consider, _in_scope, _pass, run
+from change_proposer.cli import (
+    FINDING_STATUSES,
+    _consider,
+    _in_scope,
+    _pass,
+    _retire_pass,
+    run,
+)
 from change_proposer.criteria import CriteriaUnavailable, acceptance_criteria, rollback_for
 from deploy_watcher.github import ReadError
 from deploy_watcher.workflows import ATTESTS_REVISION, ATTESTS_UNVERIFIED, Attestation
@@ -570,3 +579,195 @@ def test_a_pull_request_that_is_not_our_business_is_still_only_a_skip(monkeypatc
         lambda token: _Ctx(_Pulls({CM: [_pull(draft=True)]}, "x" * 40)),
     )
     assert cli_module.run(["--repository", CM]) == cli_module.EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# ADR-0019 increment 5b: the producer is also a RECONCILER.
+# ---------------------------------------------------------------------------
+
+
+class FakeRetireClient:
+    """Records what the sweep read and what it retired, so a test can assert on the absence."""
+
+    def __init__(self, records: list[dict[str, Any]], error: Exception | None = None) -> None:
+        self._records = records
+        self._error = error
+        self.retired: list[tuple[int, int]] = []
+
+    def records(self) -> list[dict[str, Any]]:
+        if self._error is not None:
+            raise self._error
+        return self._records
+
+    def retire(self, item_id: int, *, pull_request_number: int) -> dict[str, Any]:
+        self.retired.append((item_id, pull_request_number))
+        return {"id": item_id, "status": "resolved"}
+
+
+class FakeDispositions:
+    def __init__(self, answers: dict[tuple[str, int], str | None | Exception]) -> None:
+        self._answers = answers
+        self.asked: list[tuple[str, int]] = []
+
+    def pull_request_disposition(self, repository: str, number: int) -> str | None:
+        self.asked.append((repository, number))
+        answer = self._answers[(repository, number)]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer if answer is None else str(answer)
+
+
+def _record(number: int, *, status: str = "approved", item_id: int = 44) -> dict[str, Any]:
+    return {
+        "id": item_id,
+        "target_repository": CM,
+        "pull_request_number": number,
+        "status": status,
+    }
+
+
+def test_a_record_whose_pull_request_closed_unmerged_is_retired() -> None:
+    """Production item 44's case: a record standing approved for a change that can never happen,
+    with nothing in the estate positioned to notice."""
+    client = FakeRetireClient([_record(42)])
+    reader = FakeDispositions({(CM, 42): "closed_unmerged"})
+
+    outcomes = _retire_pass(reader, [CM], client)
+
+    assert client.retired == [(44, 42)]
+    assert [o.status for o in outcomes] == ["retired"]
+
+
+@pytest.mark.parametrize("disposition", ["open", "merged"])
+def test_a_pull_request_that_is_open_or_landed_is_left_alone(disposition: str) -> None:
+    """The control. Without it the sweep would pass for a rule that retires everything."""
+    client = FakeRetireClient([_record(49)])
+    reader = FakeDispositions({(CM, 49): disposition})
+
+    outcomes = _retire_pass(reader, [CM], client)
+
+    assert client.retired == []
+    assert [o.status for o in outcomes] == ["skipped"]
+
+
+def test_an_unreadable_pull_request_retires_nothing_and_is_a_FINDING() -> None:
+    """RETIRE ON A FACT, NEVER ON ABSENCE. "I could not read it" is not "it was closed"."""
+    client = FakeRetireClient([_record(42)])
+    reader = FakeDispositions({(CM, 42): ReadError("github is unreachable")})
+
+    outcomes = _retire_pass(reader, [CM], client)
+
+    assert client.retired == []
+    assert outcomes[0].status in FINDING_STATUSES
+
+
+def test_a_pull_request_github_does_not_have_retires_nothing() -> None:
+    """An absent subject is a question about the record, not an answer about the change."""
+    client = FakeRetireClient([_record(9999)])
+    reader = FakeDispositions({(CM, 9999): None})
+
+    outcomes = _retire_pass(reader, [CM], client)
+
+    assert client.retired == []
+    assert outcomes[0].status in FINDING_STATUSES
+
+
+@pytest.mark.parametrize("status", ["resolved", "wontfix"])
+def test_a_record_a_human_already_settled_is_not_touched(status: str) -> None:
+    """`wontfix` is a human's decision and `resolved` is already retired. Re-asserting either
+    would be the machine re-deciding rather than reconciling -- and it costs a GitHub read the
+    sweep has no reason to make."""
+    client = FakeRetireClient([_record(42, status=status)])
+    reader = FakeDispositions({})
+
+    outcomes = _retire_pass(reader, [CM], client)
+
+    assert client.retired == [] and reader.asked == [] and outcomes == []
+
+
+def test_a_record_for_a_repository_out_of_scope_is_not_swept() -> None:
+    """A repository this program does not transcribe is one it has no business deciding about."""
+    client = FakeRetireClient([{**_record(31), "target_repository": "alobarquest/somewhere-else"}])
+    reader = FakeDispositions({})
+
+    assert _retire_pass(reader, [CM], client) == []
+    assert client.retired == []
+
+
+def test_a_record_naming_no_subject_is_reported_rather_than_swept() -> None:
+    client = FakeRetireClient([{"id": 44, "target_repository": CM, "pull_request_number": None}])
+    reader = FakeDispositions({})
+
+    outcomes = _retire_pass(reader, [CM], client)
+
+    assert client.retired == []
+    assert outcomes[0].status in FINDING_STATUSES
+
+
+def test_a_dry_run_examines_no_records_and_says_so() -> None:
+    """Reading the records needs the credential a dry run must not touch. Reported as a skip so a
+    bare invocation says it examined nothing rather than that it found nothing."""
+    outcomes = _retire_pass(FakeDispositions({}), [CM], None)
+
+    assert [o.status for o in outcomes] == ["skipped"]
+    assert "--submit" in outcomes[0].detail
+
+
+def test_an_unreadable_listing_is_a_finding_rather_than_a_clean_pass() -> None:
+    client = FakeRetireClient([], error=ChangeManagerError("change-manager is unreachable"))
+
+    outcomes = _retire_pass(FakeDispositions({}), [CM], client)
+
+    assert [o.status for o in outcomes] == ["error"]
+
+
+def test_the_retirement_path_is_reachable_and_nothing_adjacent_is() -> None:
+    """The guard is anchored, so a prefix, a trailing slash, a traversal and a sibling verb on the
+    same item all fail. The producer gained a SECOND write in increment 5b; it did not gain the
+    general decision verbs."""
+    assert is_allowed_write("/api/items/44/deploy-retirement")
+    for forbidden in (
+        "/api/items/44/deploy-retirement/",
+        "/api/items/44/deploy-retirementx",
+        "/api/items/../44/deploy-retirement",
+        "/api/items/44/resolve",
+        "/api/items/44/approve",
+        "/api/items/44/wontfix",
+        "/api/items/0/deploy-retirement",
+        "/api/items/deploy-retirement",
+    ):
+        assert not is_allowed_write(forbidden), forbidden
+
+
+def test_the_read_surface_is_the_listing_and_nothing_else() -> None:
+    assert is_allowed_read("/api/items")
+    for forbidden in ("/api/items/44", "/api/events", "/api/deploy-policy", "/api/items/"):
+        assert not is_allowed_read(forbidden), forbidden
+
+
+def test_a_forbidden_retirement_never_reaches_the_transport() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(f"{request.method} {request.url.path}")
+        return httpx.Response(200, json={})
+
+    client = ChangeManagerClient("t", transport=httpx.MockTransport(handler))
+    with pytest.raises(ForbiddenEndpointError):
+        client._send("POST", "/api/items/44/resolve", json={})
+    assert seen == []
+
+
+def test_the_sweep_names_the_pipeline_on_every_listing_it_asks_for() -> None:
+    """change-manager withholds a proposed source from a caller that does not name one, so a query
+    that forgot it would read a clean empty list and report a pass having examined nothing."""
+    seen: list[httpx.URL] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return httpx.Response(200, json=[])
+
+    client = ChangeManagerClient("t", transport=httpx.MockTransport(handler))
+    client.records()
+
+    assert seen and seen[0].params.get("source") == "deploy"

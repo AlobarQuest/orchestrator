@@ -3,9 +3,17 @@
 import json
 from datetime import UTC, datetime
 
-from landing_ledger.model import Check, FactoryClaim, Landing, RuleApplication, UpdateMetadata
+from landing_ledger.model import (
+    Check,
+    FactoryClaim,
+    Landing,
+    PolicyPermission,
+    RuleApplication,
+    UpdateMetadata,
+)
 from landing_ledger.record import (
     BASES,
+    BASIS_CHANGE_RECORD,
     BASIS_FACTORY,
     BASIS_HUMAN,
     BASIS_NONE,
@@ -134,6 +142,10 @@ def test_every_basis_the_cascade_can_return_is_named() -> None:
         basis_of(human_landing()),
         basis_of(factory_landing()),
         basis_of(factory_landing(claim=None)),
+        # ADR-0019 increment 5b. The vocabulary grew, so this set had to: a member with no
+        # landing here would be a name nothing can produce, which is the half of the property
+        # that is easy to lose when a basis is added.
+        basis_of(policy_landing()),
     }
 
     assert reachable == set(BASES)
@@ -285,3 +297,85 @@ def test_a_landing_whose_own_fields_are_maximal_still_fits() -> None:
     assert permitted["checks_observed"] == 30
     assert len(permitted["checks"]) < 30
     assert body["facts"]["what_changed"]["files"] == []
+
+
+# ---------------------------------------------------------------------------
+# ADR-0019 increment 5b: a landing permitted by a change record and a policy version.
+# ---------------------------------------------------------------------------
+
+CHANGE_MANAGER = "AlobarQuest/change-manager"
+
+
+def policy_landing(**overrides: object) -> Landing:
+    """The shape the orchestrator's estate-landing path produces.
+
+    A pull request the UPDATE BOT opened, landed by the estate's App, with the two trailers the
+    orchestrator writes into the squash body -- and NO factory claim, because there is no work
+    unit, and no gate run, because neither repository where landing changes something already
+    serving has a gate workflow at all.
+    """
+    base: dict[str, object] = {
+        "repository": CHANGE_MANAGER,
+        "commit": "c" * 40,
+        "title": "build(deps): bump alembic from 1.18.5 to 1.19.0 (#50)",
+        "pull_request": 50,
+        "landed_by": "alobar-sds-dispatch[bot]",
+        "rule": None,
+        "claim": None,
+        "policy": PolicyPermission(change_record=52, policy_version=2),
+    }
+    return gate_landing(**{**base, **overrides})
+
+
+def test_a_landing_permitted_by_a_change_record_names_the_record_and_the_version() -> None:
+    """Exit criterion 5's ledger half. Without it this landing is indistinguishable from a machine
+    landing with no accountable basis, which is a class no detector reads."""
+    permitted = landing_observation(policy_landing())["facts"]["permitted_by"]
+
+    assert permitted["basis"] == BASIS_CHANGE_RECORD
+    assert permitted["change_record"] == 52
+    assert permitted["policy_version"] == 2
+    assert permitted["landed_by"] == "alobar-sds-dispatch[bot]"
+    # No rule keys and no unit: neither is true of this landing.
+    assert not {"rule_path", "rule_run", "decision", "work_unit"} & set(permitted)
+
+
+def test_the_basis_needs_a_MACHINE_as_well_as_a_claim() -> None:
+    """A person who landed a pull request carrying these trailers landed it themselves. The
+    conjunct is what stops the trailers alone reclassifying a human's act."""
+    assert basis_of(policy_landing(landed_by="AlobarQuest")) == BASIS_HUMAN
+
+
+def test_a_landing_whose_merger_github_did_not_report_is_not_given_this_basis() -> None:
+    """The machine conjunct, pinned by the only case that can tell it apart.
+
+    A human merger falls to `human` one branch earlier, so asserting on one proves nothing about
+    this conjunct -- a mutation dropping it survived that test. `landed_by: None` reaches this
+    branch: the trailers are there, and nothing observed who acted on them. A basis that names a
+    permission for an act nobody was reported to have performed is worse than saying so.
+    """
+    assert basis_of(policy_landing(landed_by=None)) == BASIS_UNATTRIBUTED
+
+
+def test_a_machine_landing_with_no_claim_of_either_kind_stays_unattributed() -> None:
+    """Never fabricate a basis. This is the class the estate records when it cannot say why."""
+    assert basis_of(policy_landing(policy=None)) == BASIS_UNATTRIBUTED
+
+
+def test_a_landing_carrying_BOTH_claims_records_the_stronger_one() -> None:
+    """A work-unit claim is re-evaluated against the orchestrator's durable rows by the audit; a
+    change-record claim is not re-evaluated here at all. The ordering says which is checked.
+    """
+    both = policy_landing(claim=FactoryClaim(work_unit=UNIT, package_revision=1))
+
+    assert basis_of(both) == BASIS_FACTORY
+
+
+def test_the_reason_says_only_what_stays_true() -> None:
+    """Every string a landing puts in `facts` is frozen at the first observation of it, so a
+    correction afterwards is a conflict on a landing where nothing changed."""
+    reason = landing_observation(policy_landing())["facts"]["permitted_by"]["reason"]
+
+    assert "no detector re-evaluates it here" in reason
+    for forbidden in ("2026", "today", "verified", "checked against"):
+        assert forbidden not in reason
