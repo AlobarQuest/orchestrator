@@ -346,6 +346,17 @@ def test_the_basis_needs_a_MACHINE_as_well_as_a_claim() -> None:
     assert basis_of(policy_landing(landed_by="AlobarQuest")) == BASIS_HUMAN
 
 
+def test_a_landing_whose_merger_github_did_not_report_is_not_given_this_basis() -> None:
+    """The machine conjunct, pinned by the only case that can tell it apart.
+
+    A human merger falls to `human` one branch earlier, so asserting on one proves nothing about
+    this conjunct -- a mutation dropping it survived that test. `landed_by: None` reaches this
+    branch: the trailers are there, and nothing observed who acted on them. A basis that names a
+    permission for an act nobody was reported to have performed is worse than saying so.
+    """
+    assert basis_of(policy_landing(landed_by=None)) == BASIS_UNATTRIBUTED
+
+
 def test_a_machine_landing_with_no_claim_of_either_kind_stays_unattributed() -> None:
     """Never fabricate a basis. This is the class the estate records when it cannot say why."""
     assert basis_of(policy_landing(policy=None)) == BASIS_UNATTRIBUTED

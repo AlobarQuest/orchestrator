@@ -18,7 +18,7 @@ and on these repositories that tree is what starts serving.
 
 EXIT CODES: 0 clean, 1 tool failure, 2 unusable input, 3 findings. A HELD pull request is a
 finding -- somebody has to decide whether to act on the condition it names -- while a landing and
-a pull request with no record are not.
+a pull request the orchestrator has already acted on, are not.
 """
 
 from __future__ import annotations
@@ -46,6 +46,13 @@ EXIT_FINDINGS = 3
 # The credential key id the orchestrator resolves the bearer against. A constant rather than a
 # setting: an operator who could change it could only ever make the call unauthenticated.
 SYSTEM_KEY_ID = "orchestrator-system"
+
+# The refusal that means the act ALREADY HAPPENED. It is not a condition anybody can act on, so
+# reporting it as held would make a successful landing a permanent nightly finding: the record
+# stays approved after the landing (nothing transitions a decision on a merge), and every later
+# pass would read the same row and the same closed pull request, forever. A pager that never
+# clears is a pager nobody reads.
+ALREADY_RECORDED = "landing_already_recorded"
 
 # Statuses whose records this pass has nothing to ask about. A pull request nobody approved is not
 # held on a condition -- it is waiting for the policy to approve its shape, which happens in the
@@ -84,9 +91,16 @@ def _consider(client: OrchestratorClient, repository: str, number: int, submit: 
     except OrchestratorError as error:
         return Outcome(repository, number, "unreadable", str(error))
 
-    refusals = answer.get("refusals") or []
+    refusals = [str(r) for r in (answer.get("refusals") or [])]
+    if ALREADY_RECORDED in refusals:
+        # SETTLED, not held. The orchestrator holds a record of an act against this pull request,
+        # which is the one refusal that will never clear and that nobody should be asked to act
+        # on. Whether the change record should also leave `approved` once its rollout has been
+        # observed is an open lifecycle question, named in the increment's report rather than
+        # decided here.
+        return Outcome(repository, number, "already-landed", ", ".join(refusals))
     if not answer.get("satisfied"):
-        return Outcome(repository, number, "held", ", ".join(str(r) for r in refusals))
+        return Outcome(repository, number, "held", ", ".join(refusals))
 
     head = answer.get("head_sha")
     if not isinstance(head, str) or not head:

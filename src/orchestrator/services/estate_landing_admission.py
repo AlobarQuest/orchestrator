@@ -111,6 +111,13 @@ LANDING_RECORD_AMBIGUOUS: Final = "landing_record_ambiguous"
 LANDING_RECORD_ABSENT: Final = "landing_record_absent"
 LANDING_RECORD_NOT_APPROVED: Final = "landing_record_not_approved"
 
+# The record carries no readable identifier, so the landing could not NAME the permission it acted
+# on. The act writes that identifier into the squash body, where the estate's ledger reads it back
+# to classify the landing -- so without one the landing records as having no accountable basis at
+# all, which is the class the ledger keeps and no detector reads. Refused here rather than
+# discovered there: a landing whose basis cannot be written down is one that should not happen.
+LANDING_RECORD_UNIDENTIFIED: Final = "landing_record_unidentified"
+
 # Stored `approved`, and the policy now says it does not conform. The record's own service
 # recomputes its objections on every read, so a stored decision the policy has since overtaken is
 # visible -- and this term is why reading `status` alone is not enough.
@@ -386,42 +393,50 @@ def _record_term(
     """
     answer = record_source.record_for(repository, pr_number)
     if not answer.answered:
-        if answer.reason == RECORD_SOURCE_UNCONFIGURED:
-            return _RecordTerms(
-                _Term(False, (LANDING_RECORD_SOURCE_UNCONFIGURED,)), None, None, None
-            )
-        if answer.reason == RECORD_AMBIGUOUS:
-            return _RecordTerms(_Term(False, (LANDING_RECORD_AMBIGUOUS,)), None, None, None)
-        return _RecordTerms(_Term(False, (LANDING_RECORD_SOURCE_UNREADABLE,)), None, None, None)
+        return _RecordTerms(_Term(False, (_unread_reason(answer.reason),)), None, None, None)
     record = answer.record
     if record is None:
         return _RecordTerms(_Term(False, (LANDING_RECORD_ABSENT,)), None, None, None)
 
-    refusals: list[str] = []
-    if not record.approved:
-        refusals.append(LANDING_RECORD_NOT_APPROVED)
-    if record.policy_objections:
-        refusals.append(LANDING_RECORD_HAS_LIVE_OBJECTIONS)
-    if record.policy_version is None:
-        refusals.append(LANDING_RECORD_NOT_POLICY_APPROVED)
-    if record.conditions is None:
-        refusals.append(LANDING_CONDITIONS_UNREADABLE)
-    elif record.policy_version is not None and record.policy_version != record.conditions.version:
-        refusals.append(LANDING_POLICY_VERSION_SUPERSEDED)
-
-    met = (
-        record.approved
-        and not record.policy_objections
-        and record.policy_version is not None
-        and record.conditions is not None
-        and record.policy_version == record.conditions.version
+    # Each clause is a fact about the record and its own refusal, evaluated together so the answer
+    # names every one that is unmet rather than the first. `met` is the conjunction of the same
+    # clauses -- a positive answer, never "the list came back empty".
+    clauses = (
+        (record.approved, LANDING_RECORD_NOT_APPROVED),
+        (record.record_id is not None, LANDING_RECORD_UNIDENTIFIED),
+        (not record.policy_objections, LANDING_RECORD_HAS_LIVE_OBJECTIONS),
+        (record.policy_version is not None, LANDING_RECORD_NOT_POLICY_APPROVED),
+        (record.conditions is not None, LANDING_CONDITIONS_UNREADABLE),
+        # Reported only when both halves are readable: with no version or no conditions there is
+        # nothing to compare, and a second name for one absent fact is redundancy this repository
+        # has rejected before.
+        (
+            record.conditions is None
+            or record.policy_version is None
+            or record.policy_version == record.conditions.version,
+            LANDING_POLICY_VERSION_SUPERSEDED,
+        ),
     )
+    refusals = tuple(refusal for held, refusal in clauses if not held)
     return _RecordTerms(
-        _Term(met, tuple(refusals)),
+        _Term(all(held for held, _ in clauses), refusals),
         record.record_id,
         record.policy_version,
         record.conditions,
     )
+
+
+def _unread_reason(reason: str | None) -> str:
+    """Why the record service gave no answer. Three causes, three different people.
+
+    An unconfigured deployment is a missing setting here; ambiguity is a foreign constraint this
+    process may not resolve; anything else is a service refusing or unreachable.
+    """
+    if reason == RECORD_SOURCE_UNCONFIGURED:
+        return LANDING_RECORD_SOURCE_UNCONFIGURED
+    if reason == RECORD_AMBIGUOUS:
+        return LANDING_RECORD_AMBIGUOUS
+    return LANDING_RECORD_SOURCE_UNREADABLE
 
 
 def _window_term(now) -> _Term:

@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -403,3 +403,34 @@ def test_a_pull_request_found_already_landed_is_recorded_as_somebody_elses_act(
     # not one this lane may land, and recording somebody else's act as ours would be worse.
     assert "landing_pull_request_not_open" in str(error.value)
     assert gateway.merges == []
+
+
+def test_the_repository_lock_actually_SERIALISES_two_landings(migrated_engine: Engine) -> None:
+    """The advisory lock, exercised rather than asserted.
+
+    It exists because the two rules that must not be raced -- one record per pull request, one
+    landing per repository per window -- are both stated over rows that MAY NOT EXIST YET, which
+    `FOR UPDATE` cannot lock. Two requests would otherwise each read the same absence and each
+    act on it, and the pace rule would be a rule about the common case.
+
+    A mutation deleting the lock survives every other test in this file, because nothing else
+    here runs two transactions at once. This runs two: the second asks for the same lock with a
+    one-second timeout and must be refused while the first holds it.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from orchestrator.services.estate_pr_merge import _lock_repository
+
+    with Session(migrated_engine) as first, Session(migrated_engine) as second:
+        _lock_repository(first, REPOSITORY)
+        second.execute(text("SET LOCAL lock_timeout = '1s'"))
+        with pytest.raises(OperationalError):
+            _lock_repository(second, REPOSITORY)
+        second.rollback()
+
+        # THE CONTROL. Without it this passes for a lock that blocks everything, including the
+        # landings into other repositories it is supposed to leave alone.
+        second.execute(text("SET LOCAL lock_timeout = '1s'"))
+        _lock_repository(second, "alobarquest/brain")
+        second.rollback()
+        first.rollback()

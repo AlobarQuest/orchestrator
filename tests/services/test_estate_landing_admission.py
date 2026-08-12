@@ -42,6 +42,7 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_RECORD_NOT_APPROVED,
     LANDING_RECORD_NOT_POLICY_APPROVED,
     LANDING_RECORD_SOURCE_UNREADABLE,
+    LANDING_RECORD_UNIDENTIFIED,
     LANDING_ROLLOUT_MOVED,
     LANDING_ROLLOUT_UNPINNED,
     LANDING_ROLLOUT_UNREADABLE,
@@ -387,6 +388,19 @@ def test_a_head_behind_its_base_refuses_even_when_the_remote_calls_it_clean(
     assert LANDING_CHECKS_NOT_CLEAN not in answer.refusals
 
 
+@pytest.mark.parametrize(("behind", "admitted"), [(0, True), (1, False), (2, False)])
+def test_one_commit_behind_is_behind(
+    migrated_session: Session, behind: int, admitted: bool
+) -> None:
+    """The boundary, pinned. A test that only ever measured two commits behind cannot tell this
+    term from one that tolerates a single commit -- and a single commit is the ordinary state of
+    every sibling pull request the moment one of them lands."""
+    answer = _ask(migrated_session, gateway=FakeEstateGateway(behind=behind))
+
+    assert answer.satisfied is admitted
+    assert (LANDING_HEAD_NOT_CURRENT_WITH_BASE in answer.refusals) is not admitted
+
+
 def test_an_unreadable_comparison_refuses_rather_than_assuming_current(
     migrated_session: Session,
 ) -> None:
@@ -545,3 +559,15 @@ def test_no_unmet_answer_is_silent(migrated_session: Session) -> None:
         answer = _ask(migrated_session, **case)  # type: ignore[arg-type]
         assert not answer.satisfied, case
         assert answer.refusals, case
+
+
+def test_a_record_with_no_readable_identifier_refuses(migrated_session: Session) -> None:
+    """The landing writes the record's identifier into the squash body, where the estate's ledger
+    reads it back to classify the landing. Without one it would write a placeholder the ledger's
+    parse matches nothing in, and the landing would record as having no accountable basis at all
+    -- the class nothing reads. Refused here rather than discovered there.
+    """
+    answer = _ask(migrated_session, record=approved(record_id=None))
+
+    assert not answer.satisfied
+    assert LANDING_RECORD_UNIDENTIFIED in answer.refusals

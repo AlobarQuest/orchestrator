@@ -194,3 +194,24 @@ def test_a_record_naming_no_subject_is_skipped_rather_than_asked_about() -> None
 
     assert _pass(FakeRecords(rows), client, submit=True) == []  # type: ignore[arg-type]
     assert client.asked == []
+
+
+def test_a_pull_request_the_orchestrator_has_already_acted_on_is_SETTLED_not_held() -> None:
+    """A successful landing leaves the change record approved and the pull request closed, so
+    every later pass reads the same refusal. Reporting it as held would make one landing a
+    permanent nightly finding -- a pager that never clears is a pager nobody reads."""
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 49): {
+                "satisfied": False,
+                "refusals": ["landing_already_recorded", "landing_pull_request_not_open"],
+                "head_sha": HEAD,
+            }
+        }
+    )
+
+    outcomes = _pass(FakeRecords([_row(49)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["already-landed"]
+    assert client.landed == []
+    assert report(outcomes) == EXIT_OK

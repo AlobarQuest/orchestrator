@@ -548,7 +548,10 @@ class EstatePrMergeCommandModel(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=200)
     repository: str = Field(min_length=1)
     pr_number: int = Field(gt=0)
-    expected_head_sha: str = Field(min_length=7)
+    # A FULL object name, not a prefix. The service compares it for equality against the head the
+    # admission answer named, and GitHub serves that in full -- so a prefix could never match, and
+    # admitting one would only let a caller send something that is guaranteed to be refused.
+    expected_head_sha: str = Field(min_length=40, max_length=40)
 
 
 class EstatePrMergeResponse(BaseModel):

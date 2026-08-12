@@ -58,7 +58,7 @@ def approved(
     status: str = "approved",
     policy_version: int | None = POLICY_VERSION,
     objections: tuple[str, ...] = (),
-    record_id: int = 52,
+    record_id: int | None = 52,
     landing_conditions: LandingConditions | None | object = _DEFAULT,
 ) -> ChangeRecordAnswer:
     """A record as change-manager serves one.

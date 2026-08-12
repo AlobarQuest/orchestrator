@@ -487,3 +487,35 @@ def test_a_naive_instant_is_refused_rather_than_guessed() -> None:
     policy = load_factory_policy()
     with pytest.raises(DomainError):
         policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 30))
+
+
+WRAPPING = (
+    VALID
+    + f"""
+[reach.live_estate.change_window]
+rationale = "overnight"
+{DECIDED}
+timezone = "UTC"
+start = "22:00"
+end = "06:00"
+"""
+)
+
+
+def test_a_window_that_wraps_midnight_opened_the_PREVIOUS_local_day(tmp_path: Path) -> None:
+    """The branch the shipped artifact cannot exercise, because its one window does not wrap.
+
+    A nightly window is the shape that naturally does -- the `ChangeWindow` docstring says so --
+    and 00:30 under a 22:00-06:00 window belongs to the occurrence that began at 22:00 YESTERDAY.
+    Computing it from today's date would make every night after midnight a fresh occurrence, so a
+    rate rule keyed on it would permit twice what it says.
+    """
+    policy = load_factory_policy(write(tmp_path, WRAPPING))
+
+    before = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 23, 30, tzinfo=UTC))
+    after = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 12, 0, 30, tzinfo=UTC))
+
+    assert before == datetime(2026, 8, 11, 22, 0, tzinfo=UTC)
+    assert after == before, (
+        "an instant after midnight belongs to the occurrence that opened before it"
+    )
