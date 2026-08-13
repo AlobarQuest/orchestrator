@@ -11,7 +11,16 @@ from typing import Any
 
 import pytest
 
-from estate_lander.cli import EXIT_FINDINGS, EXIT_OK, Outcome, _key, _pass, report
+from estate_lander.cli import (
+    _NOT_A_FINDING,
+    _REPORTED,
+    EXIT_FINDINGS,
+    EXIT_OK,
+    Outcome,
+    _key,
+    _pass,
+    report,
+)
 from estate_lander.orchestrator_client import LandingRefused, OrchestratorError
 
 REPOSITORY = "alobarquest/change-manager"
@@ -250,3 +259,183 @@ def test_a_genuinely_unmet_condition_is_still_a_finding() -> None:
 
     assert [o.status for o in outcomes] == ["held"]
     assert report(outcomes) == EXIT_FINDINGS
+
+
+def test_SETTLED_is_read_with_INTERSECTION_and_ahead_of_every_other_classification() -> None:
+    """Production's own refusal set for a pull request somebody had already landed (2026-08-13).
+
+    Two properties in one row, neither of which the pair above can see because both of their
+    fixtures happen to be entirely settled refusals. The subset rule the deliberate categories use
+    would call this `held` on `mergeability_unknown`; a classification tested before `_SETTLED`
+    would too. The pull request is gone, so none of those three says anything.
+    """
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 50): {
+                "satisfied": False,
+                "refusals": [
+                    "landing_already_recorded",
+                    "landing_pace_exhausted",
+                    "landing_pull_request_not_open",
+                    "landing_mergeability_unknown",
+                    "landing_head_not_current_with_base",
+                ],
+                "head_sha": HEAD,
+            }
+        }
+    )
+
+    outcomes = _pass(FakeRecords([_row(50)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["settled"]
+    assert report(outcomes) == EXIT_OK
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    ["landing_pace_exhausted", "landing_outside_change_window"],
+)
+def test_a_DELIBERATE_refusal_alone_is_not_a_finding(refusal: str) -> None:
+    """The daily pace being spent, or the clock being outside the declared hours, is the system
+    working as designed. Reporting either makes the one control watching autonomous landings
+    permanently red, and a permanently red signal is one nobody reads."""
+    client = FakeOrchestrator(
+        {(REPOSITORY, 49): {"satisfied": False, "refusals": [refusal], "head_sha": HEAD}}
+    )
+
+    outcomes = _pass(FakeRecords([_row(49)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["deliberate"]
+    assert client.landed == []
+    assert report(outcomes) == EXIT_OK
+
+
+def test_an_EXCEPTION_alone_is_not_a_finding_and_is_NOT_called_deliberate() -> None:
+    """A requirement-range bump states no single delta, so no update-type rule applies to it --
+    ADR-0018 decided that and left it. It never clears and it waits on a person, which is a
+    different thing from a refusal that clears tonight, and the status has to say which."""
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 48): {
+                "satisfied": False,
+                "refusals": ["landing_update_type_unparseable"],
+                "head_sha": HEAD,
+            }
+        }
+    )
+
+    outcomes = _pass(FakeRecords([_row(48)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["exception"]
+    assert report(outcomes) == EXIT_OK
+
+
+def test_an_EXCEPTION_beside_a_DELIBERATE_refusal_is_reported_as_the_EXCEPTION() -> None:
+    """Production's `#48` (2026-08-13). The pace resets tonight and the record still cannot land,
+    so the exception is the durable fact and is what the line must say."""
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 48): {
+                "satisfied": False,
+                "refusals": ["landing_pace_exhausted", "landing_update_type_unparseable"],
+                "head_sha": HEAD,
+            }
+        }
+    )
+
+    outcomes = _pass(FakeRecords([_row(48)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["exception"]
+    assert report(outcomes) == EXIT_OK
+
+
+def test_a_DELIBERATE_refusal_does_NOT_silence_a_real_condition_beside_it() -> None:
+    """THE discriminating control, and it needs both rows in ONE pass: a single case cannot tell a
+    subset rule from an intersection rule. `landing_pace_exhausted` co-occurs on every held pull
+    request once the day's landing is spent, so an intersection rule silences `#51`'s failing
+    checks -- and, that night, essentially everything.
+
+    Both rows are production's own, measured 2026-08-13.
+    """
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 49): {
+                "satisfied": False,
+                "refusals": ["landing_pace_exhausted"],
+                "head_sha": HEAD,
+            },
+            (REPOSITORY, 51): {
+                "satisfied": False,
+                "refusals": [
+                    "landing_pace_exhausted",
+                    "landing_checks_not_clean",
+                    "landing_head_not_current_with_base",
+                ],
+                "head_sha": HEAD,
+            },
+        }
+    )
+    rows = [_row(49, item_id=51), _row(51, item_id=53)]
+
+    outcomes = _pass(FakeRecords(rows), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["deliberate", "held"]
+    assert report(outcomes) == EXIT_FINDINGS
+
+
+def test_an_UNCLASSIFIED_refusal_alone_is_a_finding() -> None:
+    """The polarity. Only the three codes Devon ruled on are classified; every one of the others,
+    present and future, must leave the line a finding on its own -- a code co-occurring with a
+    known condition would be reported either way and so discriminates nothing."""
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 49): {
+                "satisfied": False,
+                "refusals": ["landing_estate_unknown"],
+                "head_sha": HEAD,
+            }
+        }
+    )
+
+    outcomes = _pass(FakeRecords([_row(49)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["held"]
+    assert report(outcomes) == EXIT_FINDINGS
+
+
+def test_an_unsatisfied_answer_that_names_NO_refusal_is_a_finding() -> None:
+    """The subset test alone reads an empty set as "every refusal is deliberate". An answer that
+    refuses while saying nothing is the orchestrator failing to say why, which is precisely what a
+    person should be told about."""
+    client = FakeOrchestrator(
+        {(REPOSITORY, 49): {"satisfied": False, "refusals": [], "head_sha": HEAD}}
+    )
+
+    outcomes = _pass(FakeRecords([_row(49)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["held"]
+    assert report(outcomes) == EXIT_FINDINGS
+
+
+def test_a_status_nobody_classified_is_a_finding() -> None:
+    """The polarity of `_NOT_A_FINDING`, one column over from the refusal codes. It is stated as
+    the set to EXCLUDE, so a status a later increment adds and forgets to classify is reported
+    rather than silently dropped from the exit code."""
+    assert report([Outcome(REPOSITORY, 49, "invented", "")]) == EXIT_FINDINGS
+
+
+def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered() -> None:
+    """A literal pin, not one derived from `_REPORTED` -- a fixture built by iterating it would
+    shrink with it and assert nothing. Three of these (`would-land`, `unreadable`, `error`) were
+    absent from the summary before, so a dry run reported "1 considered" and then four zeros."""
+    assert set(_REPORTED) == {
+        "landed",
+        "would-land",
+        "held",
+        "deliberate",
+        "exception",
+        "settled",
+        "unreadable",
+        "error",
+    }
+    assert _NOT_A_FINDING < set(_REPORTED)
