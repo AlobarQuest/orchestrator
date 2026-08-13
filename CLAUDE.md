@@ -2681,3 +2681,66 @@ style of that module.
   layer out, and the practical shape is that an environment-variable typo crashes an out-of-process
   program with a traceback instead of reporting a finding. Guard **both** construction and request,
   and write the control to span both, since which shape raises where is not guessable.
+
+- **A `source_reference` that is NOT content-addressed is right for an IMMUTABLE subject and wedges
+  a producer permanently for a re-runnable one.** `services/observations.py` refuses a second
+  observation at the same `(source_system, source_reference)` with different facts —
+  `observation_conflict`, no supersession model, no delete route — so the producer's every
+  subsequent pass fails. The landing ledger deliberately does not content-address its reference and
+  is correct: a commit on a branch is immutable, so a changed fact means something is wrong and
+  raising is the point. **A ROLLOUT IS NOT IMMUTABLE.** It is re-run (six failing rollout attempts
+  across three runs in `change-manager`/`brain` alone), and what a green run *attests* moves too the
+  day somebody transcribes a workflow revision nobody had classified. ADR-0022's first draft copied
+  the ledger's rule; the first re-run would have exited 3 on every hourly pass **forever** while the
+  successful attempt was never attributed — the permanently-red control that ADR rebuilt inside its
+  own second half. The fix is change-manager's `observation_key`, one repository over: identify the
+  ATTEMPT and carry the fact digest, so a re-run appends and an unchanged pass replays. This is the
+  estate's *copying a derivation pin transfers the MECHANISM, not the PROPERTY* rule in a third
+  artifact — **ask what the reference must make unique, not what the exemplar hashed** — and it was
+  found by two reviewers, one of whom measured it against a migrated database rather than reading it.
+  Two smaller facts from the same surface: `record_observation` **RETURNS** its `DomainError`s
+  rather than raising them, so a test reaching for `.id` fails with an `AttributeError` naming an
+  attribute instead of naming the conflict (narrow with `isinstance` first); and `_fact_identity`
+  covers `status`, `severity`, `observed_at`, `summary` and `facts`, so all five are part of what
+  must not move.
+
+- **Adding a source file under `src/` adds THREE parametrized cases to
+  `tests/architecture/test_wsp21_invariant_scan.py`, not two** — `test_no_tracked_source_carries_a_secret`,
+  `test_nothing_in_the_repo_calls_a_merge_method` and `test_nothing_in_the_repo_merges_a_pull_request`.
+  The existing bullet above says two; measured 2026-08-13, two new `src/deploy_watcher/` modules
+  added exactly six. The reconciliation method it prescribes (diff node ids between `main` and the
+  branch) is right and is what produced this correction.
+
+- **`scripts/sds-token.sh` RESPECTS an already-set `BWS_ACCESS_TOKEN`, so a launcher that needs TWO
+  BWS identities must not source it alongside a `${BWS_ACCESS_TOKEN:-…}` default.** One ambient
+  value then becomes BOTH identities and **no value of it works**: exported broad, the narrow
+  project's fetch is denied; exported narrow, the broad project's is. Under launchd nothing is
+  exported and it works, so the failure appears only in the shell an operator debugs the job from —
+  and it names BWS rather than the cause. Read each Keychain item **directly**
+  (`BWS_ACCESS_TOKEN_VPS_BACKUP` broad, `BWS_ACCESS_TOKEN_SDS` narrow) and give each override a
+  distinct variable name, as `run-estate-landing.sh` does with `BWS_ACCESS_TOKEN_BROAD`. Found by
+  two reviewers independently; proven with a pre-fix control that fails in both directions.
+  Related and pre-existing across these launchers: the exit-code fold `for rc in 1 3 2` lets any
+  code outside `{0,1,2,3}` — `127` for a missing binary — fall through to `exit 0`.
+
+- **The scheduled local jobs read the MAIN TREE's working copy, so MERGING CHANGES NOTHING ON THIS
+  MACHINE.** `com.devon.deploy-watcher` (and its siblings) invoke
+  `~/Projects/orchestrator/scripts/run-*.sh`, whose `REPO_ROOT` resolves off `BASH_SOURCE`, and the
+  program is `$REPO_ROOT/.venv/bin/<name>`. The step that is easy to forget is `git pull` in the
+  main tree; **no `uv sync` is needed for a new module**, because the editable install is a bare
+  `.pth` path append. The failure of forgetting is silent in the worst direction: the old launcher
+  sets no new environment variable, the old CLI requires none, and the job keeps exiting 0 while
+  the thing you shipped never runs.
+
+- **The deploy-change-record population is DEPENDABOT BY CONSTRUCTION, so anything keyed on a
+  change record can never see factory work.** `src/change_proposer/` is the only writer of
+  `source=deploy` records and refuses `if not pull.get("is_bot")` (derived from
+  `user.type == "bot"`); factory-runner opens pull requests with `FACTORY_PR_TOKEN`, a fine-grained
+  PAT on the AlobarQuest **user** account, so GitHub reports `type: "User"`. Two consequences that
+  are not obvious from either side alone: ADR-0022's unit-scoped observation can never fire, because
+  the watcher only looks at rollouts that have a record; and **the factory lane into
+  `change-manager` is blocked at `change_record_absent` for the same reason**. ADR-0022 and its
+  handoff both name a different remaining condition ("a factory unit lands into a repository that
+  deploys") and that condition is not sufficient. Backlogged P1 `6a98cb85fbae`. Confirmed against
+  the one real landing: `2ba9f7f2`'s message carries `SDS-Change-Record:` and `SDS-Policy-Version:`
+  and **no `SDS-Unit:`**.
