@@ -257,14 +257,21 @@ OUTBOUND_ALLOWLIST = {
     Path("src/landing_ledger/github.py"),
     Path("src/landing_ledger/orchestrator_client.py"),
     # ADR-0019 increment 2. The rollout watcher is a SEPARATE program, the same report-only shape
-    # as ADR-0002, and it does not speak to the orchestrator at all -- it reads GitHub for the
-    # workflow run a landing caused and appends one observation to the change record
-    # change-manager holds. Its GitHub half refuses any method but GET; its change-manager half
-    # may write to exactly one route and read exactly two, and reaches neither the execution
-    # lifecycle nor the decision routes. Both are enforced in code and pinned by
-    # test_deploy_watcher_isolation.py. Its egress is not the orchestrator's.
+    # as ADR-0002 -- it reads GitHub for the workflow run a landing caused and appends one
+    # observation to the change record change-manager holds. Its GitHub half refuses any method
+    # but GET; its change-manager half may write to exactly one route and read exactly two, and
+    # reaches neither the execution lifecycle nor the decision routes.
+    # ADR-0022 ADDED A THIRD EGRESS FILE, and with it the orchestrator itself -- which this entry
+    # used to say the watcher did not speak to at all. A rollout it observes may belong to a WORK
+    # UNIT, and the traceability chain's observation hop is unit-scoped, so the watcher is the one
+    # producer positioned to fill it. That half writes to exactly one endpoint (the OBSERVER role's
+    # whole write surface) and reads exactly one path (the unit history that CONFIRMS the claim a
+    # commit trailer makes). All three are enforced in code and pinned by
+    # test_deploy_watcher_isolation.py. Its egress is not the orchestrator's -- it is a client of
+    # it, from outside the process, holding a credential that can do nothing else.
     Path("src/deploy_watcher/change_manager.py"),
     Path("src/deploy_watcher/github.py"),
+    Path("src/deploy_watcher/orchestrator.py"),
     # ADR-0019 increment 4. The change PRODUCER is a SEPARATE program again, and the narrowest
     # one yet: it reads GitHub for the open pull requests that would land on a repository where
     # landing redeploys, and writes to exactly ONE change-manager route -- the proposal ingress.

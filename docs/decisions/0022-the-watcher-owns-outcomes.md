@@ -6,6 +6,53 @@
 - **Relates to:** ADR-0019 (increment 2 built the watcher), ADR-0020, ADR-0021, and Phase-3
   exit criterion 1
 
+  **INCREMENT 1 DONE 2026-08-13** — change-manager #55 (`9ee5b433`, which deployed itself; rollout
+  green through *Verify the new revision is live*, production confirmed serving it) and
+  orchestrator #163. **Production record 52 settled on the first watcher pass after the deploy**,
+  by a REPLAY that wrote no observation row: `approved → resolved`, actor `rollout-observation`,
+  *"landed and its rollout was observed to succeed with production reporting the merged commit;
+  settled against that observation rather than by any caller's decision."* Its chain now reads
+  proposed → approved by policy → re-approved under v2 → rollout observed → settled. The executor
+  is still refused, replayed against the deployed build with the FULL bearer: `claim`, `outcome`
+  and `handoff` all 409 *"no authorized executor"*, `approve` 409 *"approved by policy conformance,
+  not by a caller"*, and its own `?status=approved` query returns 0 deploy rows.
+
+  **THIS DOCUMENT'S URGENCY CLAIM WAS WRONG, and it was wrong in the direction that matters.**
+  It says the estate-landing agent "would have reported *something could not be measured* on every
+  run from that night onward" because record 52 stayed `approved`. Measured from the agent's own
+  first launchd log, before any code was written: record 52 was already classified **`settled`**
+  (`estate_lander/cli.py`'s `_SETTLED` catches `landing_already_recorded` and
+  `landing_pull_request_not_open`) and contributed no finding. The exit 3 comes from three OTHER
+  pull requests held on real conditions. Confirmed live after the deploy: record 52 has left the
+  report entirely — *3 considered, 0 settled* where it was *4 considered, 1 settled* — and the exit
+  code is **unchanged at 3**. Settling it was right for this document's own lifecycle argument, and
+  for no urgency reason. What would move that exit code is a decision about whether a pull request
+  held on `landing_pace_exhausted` or `landing_outside_change_window` is a finding at all.
+
+  **THE SECOND HALF CANNOT FIRE, and the remaining condition this document names is not the real
+  one.** It says the criterion closes when a factory landing goes into a repository that deploys.
+  It does not: the watcher only sees rollouts that have a deploy change record, the sole producer
+  of those records refuses non-bot pull requests, and factory-runner opens pull requests with a
+  **User** account. So no factory landing can have a record for the watcher to look at — which is
+  also why the factory lane into `change-manager` is itself blocked at `change_record_absent`.
+  Devon's ruling: ship the capability with the limit named, and open the producer gap as work
+  (backlog P1 `6a98cb85fbae`). **Phase-3 exit criterion 1 is NOT claimed closed.**
+
+  **Adversarial review returned four kills across three reviewers, two of them found
+  independently by more than one.** The sharpest was measured against a migrated database rather
+  than argued: the unit-scoped observation copied the landing ledger's non-content-addressed
+  `source_reference`, which is right for a commit on a branch and wrong for a rollout — the first
+  re-run would have raised `observation_conflict`, with no supersession route, wedging the hourly
+  pass at exit 3 **permanently** while the successful attempt was never attributed to the unit.
+  The estate's own rule about copying a pin (*transfers the MECHANISM, not the PROPERTY*),
+  rediscovered in a third artifact. Also killed: the launcher's two BWS identities collapsed into
+  one whenever `BWS_ACCESS_TOKEN` was already exported, and **no** value of it worked; and this
+  document's safety argument for letting an `observe` credential move a status rested on
+  `deploy_watcher recheck` re-deriving the settled-on facts, while `workflow_attestation` — the
+  field the strong-form clause tests, caller-supplied and unvalidated — was absent from what that
+  command compared. 42/42 mutations killed across both repositories on the final trees.
+  Report: `~/docs/software-delivery-system/2026-08-13-watcher-closes-the-loop-build-report.md`.
+
 ## Decision
 
 **The rollout watcher owns outcomes.** Two consequences, decided together because they are the

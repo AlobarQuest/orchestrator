@@ -2,8 +2,14 @@
 
 Same shape as `test_landing_ledger_isolation.py`, and for the same reason: hosting an
 out-of-process program here is a packaging choice, and the moment it can import the orchestrator
-it stops being one. The lane it serves — Dependabot auto-merge into a repository where landing
-deploys — has no orchestrator involvement at all.
+it stops being one.
+
+**ADR-0022 MADE IT A CLIENT OF THE ORCHESTRATOR, and this docstring used to say the lane had "no
+orchestrator involvement at all".** That is now false and is corrected rather than deleted: a
+rollout the watcher observes may belong to a work unit, and the traceability chain's observation
+hop is unit-scoped. What has NOT changed is the property this module exists for — the watcher
+still imports nothing from `orchestrator.*`, still speaks HTTP from outside the process, and its
+orchestrator surface is one write and one read, both bounded here.
 """
 
 from __future__ import annotations
@@ -19,6 +25,18 @@ from deploy_watcher.change_manager import (
     ForbiddenEndpointError,
     is_allowed_read,
     is_allowed_write,
+)
+from deploy_watcher.orchestrator import (
+    ForbiddenEndpointError as OrchestratorForbiddenError,
+)
+from deploy_watcher.orchestrator import (
+    OrchestratorClient,
+)
+from deploy_watcher.orchestrator import (
+    is_allowed_read as orchestrator_read,
+)
+from deploy_watcher.orchestrator import (
+    is_allowed_write as orchestrator_write,
 )
 
 WATCHER = Path("src/deploy_watcher")
@@ -109,6 +127,55 @@ def test_the_read_surface_is_the_two_paths_the_pass_needs() -> None:
     assert is_allowed_read("/api/items/44/deploy-observations")
     for forbidden in ("/api/items/", "/api/items/44", "/api/events", "/api/window-runs"):
         assert not is_allowed_read(forbidden), forbidden
+
+
+def test_the_orchestrator_write_surface_is_one_endpoint() -> None:
+    """The OBSERVER role's whole write surface, repeated in code so a second write is
+    structurally unreachable rather than merely unwritten."""
+    assert orchestrator_write("/api/v1/observations")
+    for forbidden in (
+        "/api/v1/observations/",
+        "/api/v1/work-units/1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f/dispatch",
+        "/api/v1/work-units/1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f/commands/ready",
+        "/api/v1/work-units/1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f/verify",
+        "/api/v1/estate-pr-merge",
+        "/api/v1/package-intakes",
+    ):
+        assert not orchestrator_write(forbidden), forbidden
+
+
+def test_the_orchestrator_read_surface_is_the_binding_and_nothing_else() -> None:
+    """One path, and it is the one that CONFIRMS a commit trailer's claim.
+
+    Everything else about a unit — its evidence pack, its brief, its admission answer — is
+    somebody else's question. `…/pr-merge-admission` in particular is a LIVE answer that
+    legitimately drifts, so re-asking it later manufactures findings out of ordinary change.
+    """
+    unit = "1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f"
+    assert orchestrator_read(f"/api/v1/work-units/{unit}/history")
+    for forbidden in (
+        f"/api/v1/work-units/{unit}/history/",
+        f"/api/v1/work-units/{unit}/evidence-pack",
+        f"/api/v1/work-units/{unit}/pr-merge-admission",
+        f"/api/v1/work-units/{unit}/runner-brief",
+        "/api/v1/work-units/../1/history",
+        "/api/v1/observations",
+        "/api/v1/status-ledger",
+    ):
+        assert not orchestrator_read(forbidden), forbidden
+
+
+def test_a_forbidden_orchestrator_read_never_reaches_the_transport() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(f"{request.method} {request.url.path}")
+        return httpx.Response(200, json=[])
+
+    with OrchestratorClient("t", transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(OrchestratorForbiddenError):
+            client.unit_history("not-a-unit-id")
+    assert seen == []
 
 
 def _seen_client() -> tuple[ChangeManagerClient, list[str]]:

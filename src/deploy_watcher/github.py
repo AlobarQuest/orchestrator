@@ -154,6 +154,40 @@ class GitHubReader:
             return "closed_unmerged"
         raise ReadError(f"pull request {repository}#{number} reports an unreadable state")
 
+    def commit_message(self, repository: str, sha: str) -> str | None:
+        """The message of one commit. `None` means the commit carries no message text.
+
+        Read for the trailers a landing carries (ADR-0022): factory-runner writes `SDS-Unit:` into
+        its commit MESSAGE, and a squash carries the branch's messages through into the landing
+        commit. That is the CLAIM -- an assertion by the thing whose compliance is in question --
+        so it selects which work unit to ask the orchestrator about and is evidence of nothing on
+        its own. `deploy_watcher/units.py` carries the verification.
+
+        Whether the trailer survives at all is a repository SETTING rather than a property of the
+        merge: `squash_merge_commit_message` governs whether the landing commit carries the
+        branch's messages, and every ledger repository is `COMMIT_MESSAGES` today. A setting change
+        makes the claim absent, which is why an absent claim is the ordinary answer downstream and
+        never a finding.
+
+        **A 404 RAISES HERE, where its two siblings above return None, and the asymmetry is the
+        point.** They are asked about a pull request NUMBER a change record supplied, so "GitHub
+        has no such pull request" is a real answer about a subject that may not exist. This is
+        asked about a merge commit GitHub ITSELF named one hop earlier, when it said that pull
+        request had merged -- so an absent commit is a question that could not be answered, and
+        collapsing it into "no trailer" would skip the unit observation forever while the pass
+        reported success.
+        """
+        body = self._get(f"/repos/{repository}/commits/{sha}")
+        if body is None:
+            raise ReadError(f"github has no commit {repository}@{sha[:8]}")
+        if not isinstance(body, dict):
+            raise ReadError(f"commit {repository}@{sha[:8]} is not an object")
+        commit = body.get("commit")
+        if not isinstance(commit, dict):
+            raise ReadError(f"commit {repository}@{sha[:8]} carries no commit object")
+        message = commit.get("message")
+        return str(message) if isinstance(message, str) else None
+
     def blob_revision(self, repository: str, path: str, ref: str) -> str | None:
         """The blob sha of a file AS IT WAS at a commit. None if the file did not exist there.
 

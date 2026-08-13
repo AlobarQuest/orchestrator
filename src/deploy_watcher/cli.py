@@ -40,6 +40,23 @@ from deploy_watcher.observe import (
     Unmeasurable,
     observe,
 )
+from deploy_watcher.orchestrator import (
+    DEFAULT_BASE_URL as ORCHESTRATOR_URL,
+)
+from deploy_watcher.orchestrator import (
+    OrchestratorClient,
+    OrchestratorError,
+)
+from deploy_watcher.units import (
+    UNIT_CLAIM_UNBOUND,
+    UNIT_CLAIM_UNKNOWN,
+    UnitLanding,
+    binds,
+    claimed_unit,
+    is_work_unit_id,
+    unit_observation,
+)
+from deploy_watcher.workflows import level_of
 
 EXIT_OK = 0
 EXIT_BROKEN = 1
@@ -48,8 +65,23 @@ EXIT_INCOMPLETE = 3
 
 GITHUB_TOKEN_VAR = "DEPLOY_WATCHER_GITHUB_TOKEN"
 CHANGE_MANAGER_TOKEN_VAR = "DEPLOY_WATCHER_CHANGE_MANAGER_TOKEN"
+# ADR-0022. REQUIRED, exactly like the other two, and that is the correction rather than an
+# oversight: an optional credential whose absence silently skips the unit-scoped observation is a
+# scope that exists with no value, which this estate shipped twice in one increment and which does
+# not fail -- it falls back to doing nothing while the pass reports success.
+ORCHESTRATOR_TOKEN_VAR = "DEPLOY_WATCHER_ORCHESTRATOR_TOKEN"
 
 DEFAULT_ACTOR = "deploy-watcher"
+
+# A change record that is closed while its latest observed rollout did not succeed. Nothing
+# un-settles a record -- reopening is a decision and this program records outcomes -- so the
+# contradiction is REPORTED, and this is the report. Reachable when a re-run fails after a
+# settlement, and when a human closed a record whose rollout then went wrong.
+SETTLED_ROLLOUT_NOT_SUCCESS = "a_closed_record_whose_latest_rollout_did_not_succeed"
+
+# The statuses that mean the record is closed. Mirrored from `app/deploy_settlement._TERMINAL` in
+# change-manager, which is the party that owns them.
+TERMINAL_STATUSES = frozenset({"resolved", "wontfix"})
 
 app = typer.Typer(
     add_completion=False, help="Observe the rollout a deploying merge caused. Reports; never acts."
@@ -115,6 +147,7 @@ def _body(record: ChangeRecord, rollout: Rollout, *, now: datetime, actor: str) 
 @app.command()
 def watch(
     change_manager_url: str = typer.Option("https://change-mgr.alobar.net"),
+    orchestrator_url: str = typer.Option(ORCHESTRATOR_URL),
     actor: str = typer.Option(DEFAULT_ACTOR),
     settle_seconds: int = typer.Option(SETTLE_SECONDS),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -125,6 +158,7 @@ def watch(
     # skipped it would exercise nothing and report a confident "0 to watch". Reading is safe --
     # the client's path allowlist is what keeps a read from becoming a write.
     cm_token = _require(CHANGE_MANAGER_TOKEN_VAR)
+    orchestrator_token = _require(ORCHESTRATOR_TOKEN_VAR)
 
     now = datetime.now(UTC)
     found = incomplete = False
@@ -132,6 +166,7 @@ def watch(
     with (
         GitHubReader(github_token) as reader,
         ChangeManagerClient(cm_token, base_url=change_manager_url) as changes,
+        OrchestratorClient(orchestrator_token, base_url=orchestrator_url) as units,
     ):
         try:
             # The source is NAMED. `GET /api/items` withholds proposed sources when it is not,
@@ -148,6 +183,7 @@ def watch(
             item_found, item_incomplete = _watch_one(
                 reader,
                 changes,
+                units,
                 record,
                 now=now,
                 actor=actor,
@@ -163,6 +199,7 @@ def watch(
 def _watch_one(
     reader: GitHubReader,
     changes: ChangeManagerClient,
+    units: OrchestratorClient,
     record: ChangeRecord,
     *,
     now: datetime,
@@ -212,31 +249,141 @@ def _watch_one(
     except ChangeManagerError as error:
         _say(f"[incomplete] {where}: {error}")
         return found, True
+    item_status = str(recorded.get("item_status") or "")
     _say(
         f"  [recorded] {where}: verdict={recorded.get('verdict')} "
         f"production_reached={recorded.get('production_reached')} "
-        f"attests={recorded.get('workflow_attestation')}"
+        f"attests={recorded.get('workflow_attestation')} record={item_status or '?'}"
     )
+
+    unit_found, unit_incomplete = _observe_unit(reader, units, record, outcome.rollout, recorded)
+    found = found or unit_found
+    incomplete = unit_incomplete
 
     try:
         page = changes.observations(record.item_id)
     except ChangeManagerError as error:
         _say(f"[incomplete] {where}: {error}")
         return found, True
-    # The server records a second merge commit rather than refusing it, deliberately: refusing
-    # would freeze whichever arrived first and make the true verdict unrecordable forever. So
-    # the divergence has to be REPORTED by somebody, and this is that somebody.
+    finding = _ledger_finding(where, item_status, page)
+    if finding is not None:
+        _report(finding)
+        return True, incomplete
+    return found, incomplete
+
+
+def _ledger_finding(where: str, item_status: str, page: dict[str, Any]) -> Finding | None:
+    """What the change's observation history says that only a reader can act on.
+
+    Two of them, and the second is ADR-0022's. The FIRST: the server records a second merge commit
+    rather than refusing it, deliberately -- refusing would freeze whichever arrived first and make
+    the true verdict unrecordable forever -- so the divergence has to be reported by somebody, and
+    this is that somebody.
+
+    The SECOND: a CLOSED record whose latest rollout did not succeed. change-manager settles a
+    record on a confirmed rollout and never un-settles it, because reopening is a DECISION and
+    neither party makes those -- so a re-run that fails afterwards, or a person who closed a record
+    whose rollout then went wrong, has to reach a person some other way. Keyed on the server's own
+    reduction rather than on re-deriving what a settlement would have decided: a second copy of
+    that rule is drift this estate has paid for.
+    """
     commits = page.get("merge_commits_observed") or []
     if len(commits) > 1:
+        return Finding(
+            MERGE_DIVERGENCE,
+            where,
+            f"observations exist at {len(commits)} merge commits: {', '.join(commits)}",
+        )
+    current = page.get("current")
+    if (
+        item_status in TERMINAL_STATUSES
+        and isinstance(current, dict)
+        and current.get("verdict") != "success"
+    ):
+        return Finding(
+            SETTLED_ROLLOUT_NOT_SUCCESS,
+            where,
+            f"the record is {item_status} and its latest observed rollout "
+            f"(run {current.get('run_id')} attempt {current.get('run_attempt')}) concluded "
+            f"{current.get('verdict')}",
+        )
+    return None
+
+
+def _observe_unit(
+    reader: GitHubReader,
+    units: OrchestratorClient,
+    record: ChangeRecord,
+    rollout: Rollout,
+    recorded: dict[str, Any],
+) -> tuple[bool, bool]:
+    """Record a UNIT-SCOPED observation of this rollout, when a work unit genuinely owns it.
+
+    ADR-0022's second half. Returns `(found, incomplete)`; both False is the ordinary answer,
+    because almost every landing this watcher sees is an update the bot opened and no unit exists.
+
+    Every step can decline and only one of them is a finding. No claim in the commit means no unit
+    and nothing to say. A claim the orchestrator cannot confirm -- a unit it does not hold, or one
+    whose own record does not bind this pull request and this commit to it -- IS a finding: the
+    trailer is written by the party whose compliance the observation would describe, so a claim the
+    durable record disagrees with is a fact about the estate. A read that fails is incomplete
+    rather than either.
+    """
+    where = f"item {record.item_id}"
+    commit = rollout.merge.merge_commit_sha
+    if commit is None:  # pragma: no cover - a rollout is only recorded for a merged pull request
+        return False, False
+    try:
+        claim = claimed_unit(reader.commit_message(record.target_repository, commit))
+    except ReadError as error:
+        _say(f"[incomplete] {where}: {error}")
+        return False, True
+    if claim is None or not is_work_unit_id(claim):
+        return False, False
+
+    try:
+        history = units.unit_history(claim)
+    except OrchestratorError as error:
+        _say(f"[incomplete] {where}: {error}")
+        return False, True
+    if history is None:
+        _report(Finding(UNIT_CLAIM_UNKNOWN, where, f"{commit[:12]} names work unit {claim}"))
+        return True, False
+    if not binds(
+        history,
+        repository=record.target_repository,
+        pull_request_number=record.pull_request_number,
+        merge_commit_sha=commit,
+    ):
         _report(
             Finding(
-                MERGE_DIVERGENCE,
+                UNIT_CLAIM_UNBOUND,
                 where,
-                f"observations exist at {len(commits)} merge commits: {', '.join(commits)}",
+                f"{commit[:12]} names work unit {claim}, whose history holds no record of the "
+                f"orchestrator landing this pull request as that commit",
             )
         )
         return True, False
-    return found, False
+
+    landing = UnitLanding(
+        work_unit_id=claim,
+        repository=record.target_repository,
+        pull_request_number=record.pull_request_number,
+        merge_commit_sha=commit,
+    )
+    body = unit_observation(
+        landing,
+        rollout,
+        verdict=str(recorded.get("verdict")),
+        production_reached=str(recorded.get("production_reached")),
+    )
+    try:
+        units.record_observation(body)
+    except OrchestratorError as error:
+        _say(f"[incomplete] {where}: {error}")
+        return False, True
+    _say(f"  [unit]     {where}: observed the rollout against work unit {claim}")
+    return False, False
 
 
 @app.command()
@@ -423,6 +570,14 @@ def _recheck_one(
             ("rollout job", stored.get("rollout_job_conclusion"), job_conclusion),
             ("trigger step", stored.get("trigger_step_conclusion"), step_conclusion),
             ("workflow revision", stored.get("workflow_revision"), revision),
+            # ADR-0022. THE FIELD A SETTLEMENT RESTS ON, and it was absent from this list while
+            # `deploy_settlement.py` and `app/scopes.py` both justified an `observe` credential
+            # moving a status on the grounds that this command re-derives it. It is a pure function
+            # of the revision, which is already re-derived one line up, so the claim was one line
+            # from being true and was not. `workflow_attestation` is caller-supplied and unlocks
+            # two of the settlement's three clauses -- it is also what `production_reached_for`
+            # reads as `classified`.
+            ("workflow attestation", stored.get("workflow_attestation"), level_of(revision)),
         )
         if was != now
     ]
