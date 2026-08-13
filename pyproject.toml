@@ -45,7 +45,7 @@ estate-landing = "estate_lander.cli:main"
 dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.6",
-  "ruff==0.15.20",
+  "ruff==0.16.2",
   "pyright==1.1.411",
   "httpx2>=2.9.1",
 ]
