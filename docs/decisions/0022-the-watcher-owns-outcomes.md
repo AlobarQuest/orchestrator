@@ -64,6 +64,38 @@ exactly why the 2026-08-13 landing left the hop empty. So the watcher, observing
 landing's rollout, is the one producer that can honestly emit a unit-scoped observation: it is
 already there, already authenticated, and already knows the unit.
 
+## Correction, 2026-08-13 — the second half cannot fire, and the blocker is structural
+
+Adversarial review of the implementing increment found the limit stated above is **incomplete, in
+the direction that matters**. This ADR said the unit-scoped observation awaits a factory landing
+into a repository that deploys. That reads as sequencing. It is not:
+
+- the watcher only observes rollouts that have a **deploy change record**;
+- the only producer of those records refuses any non-bot author
+  (`src/change_proposer/cli.py:202`, keyed on account **type**, deliberately);
+- factory-runner opens pull requests with a PAT on a **user** account, so GitHub reports
+  `type: "User"` — measured on `intent-packages#66`, the one factory landing.
+
+So no factory pull request can receive a deploy record, and the observation can never fire **no
+matter which repository the factory lands into**.
+
+**The same gap blocks something this ADR was not about:** the ADR-0020 factory lane into
+`change-manager` dies at `change_record_absent` for exactly this reason — ADR-0019 increment 3
+declined to exclude `change-manager` from the factory lane, and the lane is nonetheless closed.
+Nobody had identified that.
+
+**The filter is not simply wrong.** It exists so a human-opened pull request does not get an
+auto-proposed record, which is sound. A factory pull request is neither human nor Dependabot, so
+the open question is *which authors a deploy record may be proposed for, and on what positive fact
+they are recognised* — not a filter to loosen. Backlogged P1 `34fbb845bc92` against
+`change-manager`.
+
+**The capability ships anyway, with the blocker named and dated.** The estate's rule against
+shipping an ingress with no caller exists so a gap is *named* rather than silent; a P1 naming the
+exact blocker is that naming. Holding the code instead would leave a branch rotting against a fast
+main and leave the gap undocumented — and it would not have found the ADR-0020 consequence, which
+only surfaced because someone tried to build on it.
+
 ## Boundaries
 
 - **The watcher still reports and does not act.** Closing a record on an observed fact is
