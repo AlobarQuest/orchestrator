@@ -1929,8 +1929,24 @@ style of that module.
   co-occurs on every held pull request once the budget is spent). Deliberate refusals need SUBSET
   semantics — not a finding only when EVERY refusal is deliberate. Note the ruling does **not** turn
   the control green: `#48` remains held forever on `landing_update_type_unparseable`, the ADR-0018
-  requirement-range gap that was decided and deliberately left, so a permanently-red item survives
-  one level down and is a separate open decision.
+  requirement-range gap that was decided and deliberately left. **Devon closed that second question
+  the same day with a SECOND, different ruling: a record that cannot land under CURRENT POLICY is an
+  EXCEPTION, not a finding** — *"while WE can learn from it, it's not a finding that we would expect
+  the system to ever auto-correct."* Keep the two as separate named categories rather than one
+  suppression set: a deliberate refusal WILL clear at the next window, an exception NEVER will and
+  waits on a person, and collapsing them says "quiet" about both while losing which is which.
+
+  **What `pace_exhausted` actually is, since it reads like a failure and is not: one landing per
+  repository per occurrence of the change window.** Record 52 landing `#50` at 05:17 consumed
+  `change-manager`'s landing for that night, so every sibling pull request reported it for the rest
+  of the window and none of them was in any way wrong. It resets when the window reopens.
+
+  **And `landing_update_type_unparseable` is not a parser defect** — `update_type_of`'s own
+  docstring says a requirement-range or grouped bump is *"correctly unlandable by this lane: neither
+  states a single delta that any rule about update types could be applied to."* `#48`
+  (`update uvicorn[standard] requirement from >=0.51.0 to >=0.52.1`) is `mergeable=clean` and simply
+  unclassifiable; a human merges it. Before calling such a refusal a bug, read the function that
+  emits it — this one documents its own intent.
 
 - **Copying a derivation pin transfers the MECHANISM, not the PROPERTY — and the difference is
   whether the pinned artifact has one decomposition or many.** WS-P2.39 built an exit manifest
