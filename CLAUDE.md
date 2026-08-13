@@ -2776,6 +2776,16 @@ style of that module.
   deploys") and that condition is not sufficient. Backlogged P1 `6a98cb85fbae`. Confirmed against
   the one real landing: `2ba9f7f2`'s message carries `SDS-Change-Record:` and `SDS-Policy-Version:`
   and **no `SDS-Unit:`**.
+  **The P1's open question — on what POSITIVE fact a factory pull request could be recognised — is
+  answered, measured 2026-08-13 at source rather than guessed.** factory-runner stamps **two**
+  machine-readable marks on every pull request it opens, both unconditional: the TITLE is
+  `f"SDS {brief.work_unit.id}: {brief.work_unit.title}"` (`src/factory_runner/cli.py:911`), and the
+  BODY opens `## Factory Runner Evidence` with a `Work unit:` line (`pr_body.py:24`) followed by
+  package, package hash, source commit and authority fingerprint. Verified on all three factory pull
+  requests in `intent-packages` — `#58`, `#62`, `#66`. So recognising one needs **no** change to
+  factory-runner and no loosening of the bot filter: the positive assertion the P1 asks for is
+  already being made. Opening as the Dispatch App remains the option that makes the *identity* true
+  rather than the *marking* true, and it is the one that touches `FACTORY_PR_TOKEN`.
 
 - **The estate-landing agent's exit 3 does NOT mean a record went unsettled — a closed pull request
   is classified `settled` and contributes no finding.** `_SETTLED`
@@ -2806,9 +2816,13 @@ style of that module.
   is the first of **five**, not six — `infraops-mcp-server` has no ruff dependency at all, no pin and
   no lockfile entry, so nothing can bump it and it could never have gone red. `intent-packages` reads
   0 because its 2026-08-07 remediation to
-  0.16.1 already reformatted seven files — the record does not say they were documentation, and on
-  this evidence they were, so the estate has already rewritten one repo's docs this way without
-  deciding to. The affected population is ADRs and historical plan documents, i.e. **the record**,
+  0.16.1 already reformatted seven files. **Measured 2026-08-13, no longer an inference: that was
+  `intent-packages#62`, titled `SDS ca1a9ddd…: Reformat embedded code blocks for ruff 0.16`,
+  +371/-160, and every file was a Markdown plan or spec under `docs/superpowers/`.** The estate had
+  already rewritten one repo's historical documents this way **through the factory**, with an
+  authority envelope and two human approvals — the package author knew they were embedded code
+  blocks, the title says so, so it was a choice that was simply never surfaced as a portfolio
+  decision. Devon's ruling reverses it going forward and deliberately does not revert it. The affected population is ADRs and historical plan documents, i.e. **the record**,
   which is why this is a decision and not a fix. The remedy is `[tool.ruff] extend-exclude =
   ["*.md"]`, proven both directions against a clean clone: `--check` drops to 0, and a deliberately
   misformatted `.py` is still caught (a remedy that silenced everything would look identical
