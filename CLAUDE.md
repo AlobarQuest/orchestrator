@@ -2744,3 +2744,18 @@ style of that module.
   deploys") and that condition is not sufficient. Backlogged P1 `6a98cb85fbae`. Confirmed against
   the one real landing: `2ba9f7f2`'s message carries `SDS-Change-Record:` and `SDS-Policy-Version:`
   and **no `SDS-Unit:`**.
+
+- **The estate-landing agent's exit 3 does NOT mean a record went unsettled — a closed pull request
+  is classified `settled` and contributes no finding.** `_SETTLED`
+  (`src/estate_lander/cli.py`) is `{landing_already_recorded, landing_pull_request_not_open}`, and
+  the classifier tests it BEFORE `satisfied`, so a record whose pull request is gone exits the
+  report rather than becoming an unknown. Measured 2026-08-13 from the agent's own first launchd
+  run: *4 considered, 0 landed, 3 held, 1 settled* — the settled one was record 52, and the exit 3
+  came from `#48`, `#49` and `#51` held on `landing_pace_exhausted`,
+  `landing_update_type_unparseable` and `landing_checks_not_clean`. Settling record 52 was correct
+  for ADR-0022's lifecycle argument and moved the exit code not at all (*3 considered, 0 settled*,
+  still exit 3). **HQ asserted the opposite in both the ADR-0022 body and the increment handoff,
+  from reasoning rather than from the log**, and a build session measured it before writing code.
+  What would move that exit code is a DECISION — whether a pull request held on
+  `landing_pace_exhausted` or `landing_outside_change_window` is a finding at all — not a fix. Read
+  the per-pull-request lines before attributing an exit code to any one record.

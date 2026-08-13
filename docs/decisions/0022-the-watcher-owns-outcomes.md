@@ -38,6 +38,15 @@
   Devon's ruling: ship the capability with the limit named, and open the producer gap as work
   (backlog P1 `6a98cb85fbae`). **Phase-3 exit criterion 1 is NOT claimed closed.**
 
+  **Whoever picks that P1 up: the bot filter is not simply wrong.** It exists so a human-opened
+  pull request does not get an auto-proposed record, which is sound, and it is keyed on account
+  **type** deliberately rather than on a `[bot]` login suffix. A factory pull request is neither
+  human nor Dependabot. So the question is *which authors a deploy record may be proposed for, and
+  on what positive fact they are recognised* — a work-unit reference in the body, a label, or
+  opening as the Dispatch App — not a filter to loosen. The Dispatch App option is the only one
+  that makes the identity **true** rather than making the filter looser, and it is also the one
+  that touches `FACTORY_PR_TOKEN`, which has broken twice.
+
   **Adversarial review returned four kills across three reviewers, two of them found
   independently by more than one.** The sharpest was measured against a migrated database rather
   than argued: the unit-scoped observation copied the landing ledger's non-content-addressed
@@ -81,6 +90,11 @@ for the same purpose**, and the weaker of the two doing the ruling. The producer
 
 ## The defect that forced the first half
 
+> **Superseded — read the increment-1 annotation at the top of this file.** The urgency this
+> section asserts was measured to be false: record 52 was already classified `settled` by the
+> estate-landing agent and contributed no finding. The closure below was still right, for this
+> document's lifecycle argument and not for any urgency reason.
+
 Record 52 landed `change-manager#50` — merged `2ba9f7f2`, deploy green, production serving it —
 and **stayed `approved`**. So the estate-landing agent kept considering a closed pull request,
 whose terms answered `landing_mergeability_unknown` and `landing_head_not_current_with_base`, and
@@ -110,38 +124,6 @@ close as a byproduct of anything"; it was right.
 exactly why the 2026-08-13 landing left the hop empty. So the watcher, observing a *factory*
 landing's rollout, is the one producer that can honestly emit a unit-scoped observation: it is
 already there, already authenticated, and already knows the unit.
-
-## Correction, 2026-08-13 — the second half cannot fire, and the blocker is structural
-
-Adversarial review of the implementing increment found the limit stated above is **incomplete, in
-the direction that matters**. This ADR said the unit-scoped observation awaits a factory landing
-into a repository that deploys. That reads as sequencing. It is not:
-
-- the watcher only observes rollouts that have a **deploy change record**;
-- the only producer of those records refuses any non-bot author
-  (`src/change_proposer/cli.py:202`, keyed on account **type**, deliberately);
-- factory-runner opens pull requests with a PAT on a **user** account, so GitHub reports
-  `type: "User"` — measured on `intent-packages#66`, the one factory landing.
-
-So no factory pull request can receive a deploy record, and the observation can never fire **no
-matter which repository the factory lands into**.
-
-**The same gap blocks something this ADR was not about:** the ADR-0020 factory lane into
-`change-manager` dies at `change_record_absent` for exactly this reason — ADR-0019 increment 3
-declined to exclude `change-manager` from the factory lane, and the lane is nonetheless closed.
-Nobody had identified that.
-
-**The filter is not simply wrong.** It exists so a human-opened pull request does not get an
-auto-proposed record, which is sound. A factory pull request is neither human nor Dependabot, so
-the open question is *which authors a deploy record may be proposed for, and on what positive fact
-they are recognised* — not a filter to loosen. Backlogged P1 `34fbb845bc92` against
-`change-manager`.
-
-**The capability ships anyway, with the blocker named and dated.** The estate's rule against
-shipping an ingress with no caller exists so a gap is *named* rather than silent; a P1 naming the
-exact blocker is that naming. Holding the code instead would leave a branch rotting against a fast
-main and leave the gap undocumented — and it would not have found the ADR-0020 consequence, which
-only surfaced because someone tried to build on it.
 
 ## Boundaries
 
