@@ -18,7 +18,10 @@ and on these repositories that tree is what starts serving.
 
 EXIT CODES: 0 clean, 1 tool failure, 2 unusable input, 3 findings. A HELD pull request is a
 finding -- somebody has to decide whether to act on the condition it names -- while a landing and
-a pull request the orchestrator has already acted on, are not.
+a pull request the orchestrator has already acted on, are not. Nor are the two kinds of refusal
+below, which the report still prints and which drive no exit code: a DELIBERATE refusal, which is
+the system working and clears itself, and an EXCEPTION, which current policy can never clear and
+which waits on a person.
 """
 
 from __future__ import annotations
@@ -62,6 +65,40 @@ _ASK_ABOUT = frozenset({"approved"})
 # lifecycle question, named in this increment's report rather than decided here.
 _SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open"})
 
+# Refusals that are the system REFUSING ON PURPOSE: the daily pace for this repository is spent, or
+# the clock is outside the hours policy declares for changing something already serving. Neither
+# names a condition anybody can act on, and each clears itself when the window next opens.
+_DELIBERATE = frozenset({"landing_pace_exhausted", "landing_outside_change_window"})
+
+# Refusals that CURRENT POLICY can never clear. A requirement-range or grouped bump states no single
+# delta, so no rule about update types applies to it -- decided in ADR-0018 and deliberately left,
+# which is what makes it an exception rather than a defect. It waits on a person, forever, and no
+# pass of this program will ever change that.
+#
+# KEPT SEPARATE FROM `_DELIBERATE` ON PURPOSE, though today they have the same effect on the exit
+# code. WHICH ONE a line is IS the information: one will clear tonight and one will not, and a
+# single set would say "quiet" about both while losing which is which.
+_EXCEPTION = frozenset({"landing_update_type_unparseable"})
+
+# Statuses that are not findings, stated as the set to EXCLUDE so a status nobody has thought of
+# fails toward being reported. Same polarity argument as `_ASK_ABOUT`, one column over.
+_NOT_A_FINDING = frozenset({"landed", "would-land", "settled", "deliberate", "exception"})
+
+# Every status a pass can produce, in report order, so the summary's counts sum to what was
+# considered. A summary whose parts do not add up leaves the reader to infer the remainder, and the
+# remainder is where the findings are -- `unreadable`, `error` and (on a dry run) `would-land` were
+# all absent from it before.
+_REPORTED = (
+    "landed",
+    "would-land",
+    "held",
+    "deliberate",
+    "exception",
+    "settled",
+    "unreadable",
+    "error",
+)
+
 
 class RecordSource(Protocol):
     """The one read this pass needs from the change service: which changes were routed."""
@@ -88,6 +125,33 @@ def _key(repository: str, number: int, head_sha: str) -> str:
     return f"estate-landing:{repository}:{number}:{head_sha[:12]}"
 
 
+def _held_status(refusals: list[str]) -> str:
+    """SUBSET, never intersection -- and that is the whole of this function.
+
+    `_SETTLED` above is tested with intersection, correctly: a settled subject's other refusals are
+    meaningless because the pull request is gone. **A deliberate refusal says nothing about the
+    other conditions.** `landing_pace_exhausted` co-occurs on every held pull request once the day's
+    landing is spent, so an intersection rule here would silence a pull request whose checks are
+    failing because a deliberate refusal happened to sit beside the real one -- i.e. essentially
+    everything, every night after the first landing.
+
+    So a held pull request stops being a finding only when EVERY refusal is one nobody can act on.
+    An unclassified code -- present or future -- leaves the line a finding, which is the polarity
+    the file argues for elsewhere: a denylist would silence every code nobody has thought of.
+
+    NO refusals at all is a FINDING, not a vacuous pass. An answer that is unsatisfied while naming
+    nothing is the orchestrator failing to say why, which is exactly the thing worth reporting; the
+    subset test alone would call it deliberate.
+
+    An exception outranks a deliberate refusal when both are present, because the exception is the
+    durable fact: the pace resets tonight and the record still cannot land.
+    """
+    unexplained = set(refusals) - _DELIBERATE - _EXCEPTION
+    if unexplained or not refusals:
+        return "held"
+    return "exception" if _EXCEPTION & set(refusals) else "deliberate"
+
+
 def _consider(client: OrchestratorClient, repository: str, number: int, submit: bool) -> Outcome:
     try:
         answer = client.admission(repository, number)
@@ -98,7 +162,7 @@ def _consider(client: OrchestratorClient, repository: str, number: int, submit: 
     if _SETTLED & set(refusals):
         return Outcome(repository, number, "settled", ", ".join(refusals))
     if not answer.get("satisfied"):
-        return Outcome(repository, number, "held", ", ".join(refusals))
+        return Outcome(repository, number, _held_status(refusals), ", ".join(refusals))
 
     head = answer.get("head_sha")
     if not isinstance(head, str) or not head:
@@ -187,13 +251,11 @@ def report(outcomes: list[Outcome]) -> int:
     for outcome in outcomes:
         subject = f"{outcome.repository}#{outcome.number}"
         print(f"{subject}  {outcome.status:<11} {outcome.detail}")
-    held = [o for o in outcomes if o.status == "held"]
-    landed = [o for o in outcomes if o.status == "landed"]
-    settled = [o for o in outcomes if o.status == "settled"]
-    findings = [o for o in outcomes if o.status in {"held", "unreadable", "error"}]
+    counted = {status: sum(o.status == status for o in outcomes) for status in _REPORTED}
+    findings = [o for o in outcomes if o.status not in _NOT_A_FINDING]
     print(
-        f"\n{len(outcomes)} considered, {len(landed)} landed, "
-        f"{len(held)} held, {len(settled)} settled"
+        f"\n{len(outcomes)} considered, "
+        + ", ".join(f"{counted[status]} {status}" for status in _REPORTED)
     )
     return EXIT_FINDINGS if findings else EXIT_OK
 
