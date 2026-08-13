@@ -2794,11 +2794,18 @@ style of that module.
 
 - **Ruff 0.16 formats Python code blocks inside MARKDOWN, and 0.15 did not — so a ruff bump reds
   `make check` on documentation, not on code.** Measured 2026-08-13 across the seven factory repos
-  with `uvx ruff@0.16.2 format --check .`: **58 files would be reformatted and 57 are `.md`** —
-  `orchestrator` 31, `security-standards` 16, `change-manager` 4, `infraops-mcp-server` 4 (the only
-  repo with a genuine `.py`), `project-standards` 2, `factory-runner` 1. Every repo pinned at
-  `0.15.20` is green today and goes red the moment Dependabot bumps it; `change-manager#51` is the
-  first of six, not an incident. `intent-packages` reads 0 because its 2026-08-07 remediation to
+  with `uvx ruff@0.16.2 format --check .`: **50 files would be reformatted and 49 are `.md`** —
+  `orchestrator` 31, `security-standards` 8, `change-manager` 4, `infraops-mcp-server` 4 (the only
+  repo with a genuine `.py`), `project-standards` 2, `factory-runner` 1. **CORRECTED 2026-08-13
+  during the fix: this bullet first said 58/57 and `security-standards` 16.** Eight of that repo's
+  sixteen live in `.worktrees/deploy-policy-actor/`, an untracked stale worktree carrying its OWN
+  `pyproject.toml` — so ruff resolves config from it and never sees the repo-root exclusion, and CI,
+  which checks out a fresh tree, never sees any of it. **Measure this class of thing on a clean
+  clone (`git archive HEAD`), not a working tree**, or you are counting scaffolding. Every repo
+  pinned at `0.15.20` is green today and goes red the moment Dependabot bumps it; `change-manager#51`
+  is the first of **five**, not six — `infraops-mcp-server` has no ruff dependency at all, no pin and
+  no lockfile entry, so nothing can bump it and it could never have gone red. `intent-packages` reads
+  0 because its 2026-08-07 remediation to
   0.16.1 already reformatted seven files — the record does not say they were documentation, and on
   this evidence they were, so the estate has already rewritten one repo's docs this way without
   deciding to. The affected population is ADRs and historical plan documents, i.e. **the record**,
@@ -2806,8 +2813,23 @@ style of that module.
   ["*.md"]`, proven both directions against a clean clone: `--check` drops to 0, and a deliberately
   misformatted `.py` is still caught (a remedy that silenced everything would look identical
   without that control). `pyproject.toml` is **not** vendored by `code-standards`, so this cannot be
-  pushed centrally — it is one edit per repo. Spec:
-  `~/docs/software-delivery-system/2026-08-13-ruff-016-markdown-spec.md`.
+  pushed centrally — it is one edit per repo, **including for every repo onboarded after this date**.
+  **CLOSED 2026-08-13: shipped to all seven factory repos plus `code-standards` itself, and recorded
+  as code-standards ADR-0009** (`docs/decisions/0009-ruff-format-excludes-markdown.md`), which
+  constrains ADR-0003 — that settled *which* formatter, not *which file types*. End-to-end proof:
+  `change-manager#51` was red on `4 files would be reformatted, 86 files already formatted`, and
+  after the exclusion landed and Dependabot rebased it, both its runs pass at **job** level.
+  Two things the fix established that reading the config cannot tell you. (1) **A repo's `make check`
+  can make this whole class of finding unreachable** — `infraops-mcp-server` has **no
+  `pyproject.toml` at all** (it is declared `languages = ["ts", "shell"]`) and every ruff line in its
+  Makefile is gated on `[ -f pyproject.toml ]`, so ruff never runs there. Creating one to hold
+  `[tool.ruff]` **switches that gate on**, and `ruff check .` reports **20 errors** on its one
+  never-linted script — turning a one-line hygiene change into a red gate. Use a root `ruff.toml`
+  (bare top-level key, no table header) in any repo with no `pyproject.toml`. (2) **`ruff.toml`
+  SUPERSEDES a `pyproject.toml` `[tool.ruff]` table entirely rather than merging with it**, so a repo
+  that later gains one must fold the settings together or the pyproject's are silently ignored.
+  Spec: `~/docs/software-delivery-system/2026-08-13-ruff-016-markdown-spec.md`; build report:
+  `…/2026-08-13-ruff-markdown-exclude-build-report.md`.
 
 - **Ruff CHANGED ITS `format --check` WORDING between 0.15 and 0.16, so a grep-based probe returns a
   silent false NEGATIVE across every repo.** 0.16 prints `unformatted: File would be reformatted`
