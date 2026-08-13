@@ -2791,3 +2791,31 @@ style of that module.
   What would move that exit code is a DECISION — whether a pull request held on
   `landing_pace_exhausted` or `landing_outside_change_window` is a finding at all — not a fix. Read
   the per-pull-request lines before attributing an exit code to any one record.
+
+- **Ruff 0.16 formats Python code blocks inside MARKDOWN, and 0.15 did not — so a ruff bump reds
+  `make check` on documentation, not on code.** Measured 2026-08-13 across the seven factory repos
+  with `uvx ruff@0.16.2 format --check .`: **58 files would be reformatted and 57 are `.md`** —
+  `orchestrator` 31, `security-standards` 16, `change-manager` 4, `infraops-mcp-server` 4 (the only
+  repo with a genuine `.py`), `project-standards` 2, `factory-runner` 1. Every repo pinned at
+  `0.15.20` is green today and goes red the moment Dependabot bumps it; `change-manager#51` is the
+  first of six, not an incident. `intent-packages` reads 0 because its 2026-08-07 remediation to
+  0.16.1 already reformatted seven files — the record does not say they were documentation, and on
+  this evidence they were, so the estate has already rewritten one repo's docs this way without
+  deciding to. The affected population is ADRs and historical plan documents, i.e. **the record**,
+  which is why this is a decision and not a fix. The remedy is `[tool.ruff] extend-exclude =
+  ["*.md"]`, proven both directions against a clean clone: `--check` drops to 0, and a deliberately
+  misformatted `.py` is still caught (a remedy that silenced everything would look identical
+  without that control). `pyproject.toml` is **not** vendored by `code-standards`, so this cannot be
+  pushed centrally — it is one edit per repo. Spec:
+  `~/docs/software-delivery-system/2026-08-13-ruff-016-markdown-spec.md`.
+
+- **Ruff CHANGED ITS `format --check` WORDING between 0.15 and 0.16, so a grep-based probe returns a
+  silent false NEGATIVE across every repo.** 0.16 prints `unformatted: File would be reformatted`
+  with the path on a following `--> path:line:col` line; 0.15 printed `Would reformat: <path>`. A
+  sweep grepping the old wording reported **0 for all six repos** — clean, everywhere, and wrong.
+  It was caught only by running the same command form against the one repo already **known** to
+  fail, which is the estate's own *a probe must discriminate* rule paying for itself inside a
+  five-minute measurement. Strip ANSI codes (`sed 's/\x1b\[[0-9;]*m//g'`) and match
+  `^unformatted:`. Generalise past ruff: **when a tool's version is the variable under test, its
+  OUTPUT FORMAT is part of what changed** — never carry a parse across the version boundary you are
+  measuring.
