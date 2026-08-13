@@ -2855,3 +2855,26 @@ style of that module.
   `^unformatted:`. Generalise past ruff: **when a tool's version is the variable under test, its
   OUTPUT FORMAT is part of what changed** — never carry a parse across the version boundary you are
   measuring.
+
+- **The Dependabot auto-merge lane is deployed to 5 of 17 repositories, and the 35 pull requests
+  stuck outside it are a COVERAGE gap, not a cascade defect — the census proves the cascade
+  correct.** Measured 2026-08-13: 44 open pull requests estate-wide (41 Dependabot, 3
+  `upstream-sync`). The five repositories carrying `dependabot-auto-merge.yml`
+  (`intent-packages`, `security-standards`, `project-standards`, `infraops-mcp-server`,
+  `factory-runner`) hold **6** open Dependabot pull requests between them and **every one is a
+  major-version or requirement-range bump** — zod 3→4, eslint 9→10, typescript 5→7, checkout 4→7,
+  setup-uv 5→7, a setuptools range. **Zero patch or minor bumps are stuck anywhere the lane
+  exists.** So ADR-0018's cascade is doing exactly its job unattended, and the open queue is
+  explained entirely by which repositories never got the workflow — `orchestrator` itself is the
+  largest at 10 open with no lane, as are `change-manager` and `code-standards`.
+  **But the lane CANNOT be vendored uniformly, and the reason is already measured elsewhere in this
+  file: an auto-merge armed with `GITHUB_TOKEN` fires no `on: push` workflow.** Asked of App Brain
+  the same day, landing is **inert** for `orchestrator` and `claude-octopus`, **redeploys** for
+  `change-manager`, `brain` (four applications from one repository), `community-atlas`, `Contacts`
+  and `agent-sites`, and **unknown / `no_app_record`** for `code-standards`, `rtk` and
+  `n8n-as-code`. Native auto-merge is safe only in the inert set; every `redeploys` repository would
+  land without deploying and diverge `main` from production silently. That the five laned
+  repositories are all inert is why nobody has hit it. Deploying repositories belong on the ADR-0019
+  landing lane instead, which is a policy decision (policy v1 names one repository deliberately) plus
+  a change-proposer scope widening — `community-atlas`, `Contacts` and `agent-sites` have no change
+  records at all. Plan: `~/docs/software-delivery-system/2026-08-13-toil-surface-onboarding-plan.md`.
