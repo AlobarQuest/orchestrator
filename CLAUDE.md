@@ -1916,6 +1916,22 @@ style of that module.
   binary verdict over a population, ask whether some members can never satisfy it for reasons that
   are facts about the world rather than defects.**
 
+  **FOURTH instance, 2026-08-13, on a different axis: DELIBERATELY REFUSED is distinct from COULD
+  NOT BE MEASURED.** The estate-landing agent classified a pull request held on
+  `landing_pace_exhausted` (the daily budget spent) or `landing_outside_change_window` (the clock)
+  as a finding, driving exit 3 — so the one control watching autonomous landings reported *"something
+  could not be measured"* about three things it had measured perfectly well and refused on purpose.
+  Devon's ruling: **a deliberate refusal is not a finding.** The mechanism already existed for the
+  adjacent case (`_SETTLED`), which is the tell — when a control needs a second suppression set, ask
+  whether the first one's SEMANTICS transfer. Here they do not: `_SETTLED` is tested with
+  INTERSECTION, correct because a settled subject's other refusals are meaningless, and copying that
+  shape for deliberate refusals silences every co-occurring real condition (`pace_exhausted`
+  co-occurs on every held pull request once the budget is spent). Deliberate refusals need SUBSET
+  semantics — not a finding only when EVERY refusal is deliberate. Note the ruling does **not** turn
+  the control green: `#48` remains held forever on `landing_update_type_unparseable`, the ADR-0018
+  requirement-range gap that was decided and deliberately left, so a permanently-red item survives
+  one level down and is a separate open decision.
+
 - **Copying a derivation pin transfers the MECHANISM, not the PROPERTY — and the difference is
   whether the pinned artifact has one decomposition or many.** WS-P2.39 built an exit manifest
   pinned to the program plan's prose exit bar, copying the three existing pins (the envelope
