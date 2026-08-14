@@ -21,7 +21,10 @@ finding -- somebody has to decide whether to act on the condition it names -- wh
 a pull request the orchestrator has already acted on, are not. Nor are the two kinds of refusal
 below, which the report still prints and which drive no exit code: a DELIBERATE refusal, which is
 the system working and clears itself, and an EXCEPTION, which current policy can never clear and
-which waits on a person.
+which waits on a person. **And nor, CONDITIONALLY, is a pull request being behind its base when an
+exception sits beside it** -- there and only there, being behind is this program's own deliberate
+declining rather than a condition; see `_FRESHNESS`. Every refusal is printed either way, so the
+line always says what was missed.
 
 **THERE ARE TWO ACTS, and the second one is new in ADR-0019 Increment 6.** After the landing pass,
 the program asks the orchestrator to bring up to date any branch whose ONLY remaining obstacle is
