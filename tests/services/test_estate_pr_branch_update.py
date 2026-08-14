@@ -24,7 +24,8 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -657,3 +658,36 @@ def test_a_key_spent_on_a_DIFFERENT_REPOSITORY_is_refused(migrated_session: Sess
 
     assert raised.value.code == "idempotency_conflict"
     assert gateway.branch_updates == []
+
+
+def test_the_repository_lock_is_actually_TAKEN_and_actually_WAITS(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """THE KEY IS THE RACE, NOT THE BRANCH -- and this pins that the lock is held rather than that
+    the statement was typed.
+
+    The platform refuses a head that moved, so the branch guards itself. Nothing guards the
+    idempotency key: two concurrent requests carrying one key would both read no spent event, both
+    call the remote, and the loser's commit would violate the unique index as an unhandled 500 over
+    an act that happened twice.
+
+    Driven with a real second connection holding the same advisory lock, and a `lock_timeout` on
+    this one, so a passing run means this transaction genuinely WAITED on the other. A test that
+    only asserted the statement was issued would pass against a lock taken on the wrong key.
+
+    Note this is the first test in this repository to assert any of its four advisory locks is
+    taken -- the others are documented in the idempotency matrix and pinned by nothing.
+    """
+    with Session(migrated_engine) as holder:
+        holder.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+            {"key": f"estate_pr_branch_update:{REPOSITORY}"},
+        )
+        migrated_session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+        gateway = _behind()
+
+        with pytest.raises(OperationalError):
+            _update(migrated_session, gateway=gateway)
+
+        assert gateway.branch_updates == [], "it must not act while another holder has the lock"
+        holder.rollback()
