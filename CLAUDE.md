@@ -1959,7 +1959,15 @@ style of that module.
   ruling: **a refusal the system produced by deliberately declining to act carries no information a
   reader could act on.** Freshness is therefore suppressed WHEN AND ONLY WHEN an exception is
   present — never generally, or `{head_not_current_with_base, checks_not_clean}` would go quiet,
-  which is a real condition and must stay a finding. Note the shape, because it will recur: **each
+  which is a real condition and must stay a finding.
+  **KEY IT ON THE EXCEPTION, NOT ON THE LANE'S DECLINING — those read as the same rule and are
+  not.** The build session sharpened this and it is the load-bearing distinction: the lane declines
+  to freshen **anything it cannot clear**, including `landing_checks_not_clean`, so a rule keyed on
+  *"we chose not to freshen it"* silences a failing check. **The discriminator is DURABILITY: red
+  checks can go green, an exception never clears.** HQ's handoff gave the weaker formulation.
+  Shipped 2026-08-14 as `#168`; measured live against production on the same two subjects minutes
+  apart — `#48` reads `held` on `main` and `exception` on the branch, and the agent exits **3**
+  and **0** respectively. The nightly control is green. Note the shape, because it will recur: **each
   fix in this family has generated the next category**, and each time the fail-open is the
   over-general version of the correct rule.
 
@@ -2951,3 +2959,15 @@ style of that module.
   that response is safe — worth knowing before extending any health endpoint the platform polls.
   Note `brain` has **no `deploy.yml`**: the deploy job lives in `ci.yml`, which is also the path any
   `WorkflowPin` must name.
+
+- **A mutation control's ATTRIBUTION is itself a claim, and it can be wrong while the mutation set
+  still passes.** WS freshness-beside-an-exception, 2026-08-14: HQ's handoff named
+  `{behind, checks_not_clean}` as the row that must red under "suppress freshness unconditionally".
+  Measured, that row gives the **same answer with or without an unconditional subtraction** — it
+  catches only the early-return form and misses both "add it to the suppressed set" forms the same
+  handoff described. The row that actually carries the load is `{pace, behind}`, which the
+  specification never mentioned, and it kills **five of ten** mutants. So three of the four
+  fail-open forms were attributed to a control that cannot see them. **Compute which control kills
+  which mutant as arithmetic before writing code, then confirm against the harness's own
+  attributions** — a green mutation set says every mutant died, never that the control you *believe*
+  killed it did. Same family as *a mutation set can only question the model its tests already hold*.
