@@ -413,6 +413,86 @@ def test_a_DELIBERATE_refusal_does_NOT_silence_a_real_condition_beside_it() -> N
     assert report(outcomes) == EXIT_FINDINGS
 
 
+_BEHIND = "landing_head_not_current_with_base"
+_UNPARSEABLE = "landing_update_type_unparseable"
+_CHECKS = "landing_checks_not_clean"
+_PACE = "landing_pace_exhausted"
+
+
+@pytest.mark.parametrize(
+    ("refusals", "verdict"),
+    [
+        ([_BEHIND], "held"),
+        ([_BEHIND, _UNPARSEABLE], "exception"),
+        ([_PACE, _BEHIND, _UNPARSEABLE], "exception"),
+        ([_BEHIND, _CHECKS], "held"),
+        ([_PACE, _BEHIND], "held"),
+        ([_BEHIND, _UNPARSEABLE, _CHECKS], "held"),
+        ([_CHECKS, _UNPARSEABLE], "held"),
+    ],
+)
+def test_being_behind_is_SUPPRESSED_BESIDE_AN_EXCEPTION_and_is_a_finding_everywhere_else(
+    refusals: list[str], verdict: str
+) -> None:
+    """Devon's THIRD refusal ruling, 2026-08-14, and it needs the whole table.
+
+    A single positive case cannot tell this rule from "being behind is always suppressed", so the
+    rows that carry the load are the negative ones, and WHICH row catches WHICH mistake was measured
+    rather than assumed -- the two obvious fail-open forms are killed by different rows:
+
+    * subtracting freshness with the condition dropped is invisible to `{behind, checks}` and is
+      caught only by `{behind}` alone and `{pace, behind}`;
+    * returning early on freshness being present is caught by `{behind, checks}` as well.
+
+    `{pace, behind}` is the most valuable single row -- it kills both of those and the
+    key-on-a-deliberate-refusal mistake too -- and it appears in no version of this rule's
+    specification. `{checks, unparseable}` catches suppressing the wrong code, and nothing else
+    does. `{pace}` alone stays `deliberate` and is covered by
+    `test_a_DELIBERATE_refusal_alone_is_not_a_finding`.
+
+    Every row is reachable: production composes `landing_outside_change_window` beside freshness on
+    every subject outside the window, and `#48` carries the three-member exception row.
+    """
+    client = FakeOrchestrator(
+        {(REPOSITORY, 48): {"satisfied": False, "refusals": refusals, "head_sha": HEAD}}
+    )
+
+    outcomes = _pass(_subjects(FakeRecords([_row(48)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == [verdict]
+
+
+def test_an_EXCEPTION_silences_being_behind_WITHOUT_silencing_a_failing_check_beside_it() -> None:
+    """THE DISCRIMINATING CONTROL, and it needs both rows in ONE pass, like its sibling above.
+
+    Were freshness suppressed generally, both of these would be non-findings and the pass would
+    exit clean -- so the exit code, not just the statuses, is what this asserts. The first row is
+    `#48`'s live shape, which the lane deliberately never freshens; the second is a pull request
+    whose checks are failing and which happens also to be behind, which is a real condition and
+    must reach a person.
+    """
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 48): {
+                "satisfied": False,
+                "refusals": [_BEHIND, _UNPARSEABLE],
+                "head_sha": HEAD,
+            },
+            (REPOSITORY, 51): {
+                "satisfied": False,
+                "refusals": [_BEHIND, _CHECKS],
+                "head_sha": HEAD,
+            },
+        }
+    )
+    rows = [_row(48, item_id=51), _row(51, item_id=53)]
+
+    outcomes = _pass(_subjects(FakeRecords(rows)), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["exception", "held"]
+    assert report(outcomes) == EXIT_FINDINGS
+
+
 def test_an_UNCLASSIFIED_refusal_alone_is_a_finding() -> None:
     """The polarity. Only the three codes Devon ruled on are classified; every one of the others,
     present and future, must leave the line a finding on its own -- a code co-occurring with a

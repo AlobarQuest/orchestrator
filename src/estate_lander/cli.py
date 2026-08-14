@@ -88,6 +88,22 @@ _DELIBERATE = frozenset({"landing_pace_exhausted", "landing_outside_change_windo
 # single set would say "quiet" about both while losing which is which.
 _EXCEPTION = frozenset({"landing_update_type_unparseable"})
 
+# The refusal that says only THIS BRANCH IS BEHIND ITS BASE. It belongs to NEITHER set above, and
+# a set could not express its treatment anyway: alone it is a FINDING -- transient, and the
+# branch-update pass clears it on a later run -- while beside an exception it is not. Membership is
+# a property of the code; this is a property of the company it keeps.
+#
+# WHY THE CONDITION IS "AN EXCEPTION IS PRESENT" RATHER THAN "THIS LANE DECLINED TO FRESHEN IT".
+# Those two read as the same rule and are not, and the difference is the whole of it. The lane
+# declines to freshen anything carrying a refusal it cannot clear, which INCLUDES
+# `landing_checks_not_clean` -- so keying on the declining would silence a pull request whose checks
+# are failing, and that is a real condition a person can act on. What separates them is DURABILITY:
+# red checks can go green, after which being behind matters again and the lane will act on it; an
+# exception never clears, so such a branch is behind precisely because this program has decided,
+# permanently, not to touch it. A refusal the system produced by deliberately declining to act
+# carries no information a reader could act on. (Devon's third refusal ruling, 2026-08-14.)
+_FRESHNESS = "landing_head_not_current_with_base"
+
 # ADR-0019 Increment 6. Refusals the BRANCH-UPDATE act raises that say only *the answer moved
 # between the read and the request*, which the next pass re-decides on its own.
 #
@@ -188,11 +204,20 @@ def _held_status(refusals: list[str]) -> str:
 
     An exception outranks a deliberate refusal when both are present, because the exception is the
     durable fact: the pace resets tonight and the record still cannot land.
+
+    FRESHNESS IS SUPPRESSED WHEN, AND ONLY WHEN, AN EXCEPTION IS PRESENT -- see `_FRESHNESS` for why
+    the condition is the exception and not the declining. Conditional, never unconditional: an
+    unconditional subtraction would make a branch that is merely behind read as quiet, and an
+    unconditional early return would do that AND silence `{behind, checks_not_clean}`. Both are the
+    over-general version of this rule, which is the shape every fix in this family has taken.
     """
-    unexplained = set(refusals) - _DELIBERATE - _EXCEPTION
+    present = set(refusals)
+    unexplained = present - _DELIBERATE - _EXCEPTION
+    if _EXCEPTION & present:
+        unexplained -= {_FRESHNESS}
     if unexplained or not refusals:
         return "held"
-    return "exception" if _EXCEPTION & set(refusals) else "deliberate"
+    return "exception" if _EXCEPTION & present else "deliberate"
 
 
 def _consider(client: OrchestratorClient, repository: str, number: int, submit: bool) -> Outcome:
