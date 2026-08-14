@@ -1562,7 +1562,21 @@ style of that module.
   which tree they are in* — a worktree alone fixes the Stop hook and leaves the real hazard intact.
   `conftest` reads that variable from the environment, so no code change is needed. (An
   `orchestrator_test_task6` database already existed, so somebody improvised this once without it
-  becoming convention.) Note the Agent tool's `isolation: "worktree"` covers subagents a session
+  becoming convention.)
+  **TEARDOWN HAS A DEFINED POINT IN TIME, and it is the END OF THE SESSION, after the report is
+  written** (Devon, 2026-08-14, after a morning in which three merged worktrees, five test databases
+  and one stray file had accumulated). It is three steps and all three matter:
+  **(1) Check the MAIN tree, not only your worktree.** `git -C <main tree> status --porcelain` must
+  show nothing you created. The cwd-reset trap puts writes there while the session works correctly
+  in its worktree, and the diff-scoped Stop hook lints untracked files at the *session's* cwd — so a
+  fragment left behind blocks **whoever stops next**, not its author. On 2026-08-14 one such file
+  blocked two sessions on work neither had written.
+  **(2) Remove the worktree and drop the test database** — `git worktree remove … --force` +
+  `dropdb`. **(3) Leave the branch and the pull request**; HQ merges, so the branch must survive.
+  **The objection to answer, because a session will raise it: "leave it up in case CI sends me
+  back."** Recreating is fully scripted and takes about three minutes, HQ owns the merge and
+  therefore owns any CI failure, and a genuine second attempt wants a fresh tree from current `main`
+  anyway. Standing by is the exception and needs to be asked for, not assumed. Note the Agent tool's `isolation: "worktree"` covers subagents a session
   spawns and does nothing for a session opened in a terminal, which is the case that was hurting.
 
 - **A claim is NOT released when a unit COMPLETES — only on failure and cancellation — so
