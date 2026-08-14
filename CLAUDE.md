@@ -1950,6 +1950,19 @@ style of that module.
   suppression set: a deliberate refusal WILL clear at the next window, an exception NEVER will and
   waits on a person, and collapsing them says "quiet" about both while losing which is which.
 
+  **THIRD RULING, 2026-08-14, and it exists because the SECOND fix created it: freshness beside an
+  exception is itself non-finding.** Once the lane brings up to date the branches it stales, it
+  deliberately declines to freshen a pull request that can never land — so a permanent exception
+  permanently acquires `landing_head_not_current_with_base` as well, and under the two-category rule
+  that resurrects it as a finding forever. `change-manager#48` is the live case: the increment's own
+  correctness reproduces the permanently-red control the first ruling was made to prevent. Devon's
+  ruling: **a refusal the system produced by deliberately declining to act carries no information a
+  reader could act on.** Freshness is therefore suppressed WHEN AND ONLY WHEN an exception is
+  present — never generally, or `{head_not_current_with_base, checks_not_clean}` would go quiet,
+  which is a real condition and must stay a finding. Note the shape, because it will recur: **each
+  fix in this family has generated the next category**, and each time the fail-open is the
+  over-general version of the correct rule.
+
   **What `pace_exhausted` actually is, since it reads like a failure and is not: one landing per
   repository per occurrence of the change window.** Record 52 landing `#50` at 05:17 consumed
   `change-manager`'s landing for that night, so every sibling pull request reported it for the rest
