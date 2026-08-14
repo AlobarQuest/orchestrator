@@ -600,6 +600,49 @@ class EstateLandingAdmissionResponse(BaseModel):
     head_sha: str | None
     change_record_id: int | None
     policy_version: int | None
+    # ADR-0019 Increment 6. DECLARED HERE OR IT DOES NOT EXIST ON THE WIRE: a response model drops
+    # every key the service returns and the model does not name, silently and with no error, so a
+    # field added to the service alone would pass every service-level assertion and reach no
+    # caller. This estate has already shipped that exact defect once, on the runner brief.
+    branch_update_qualifies: bool
+
+
+class EstateBranchUpdateCommandModel(BaseModel):
+    """Ask the orchestrator to bring a pull request's head up to date with its base (ADR-0019 6).
+
+    **It names `expected_head_sha` for exactly the reason its sibling above does**, and the two
+    exceptions to the repo-wide `expected_version` rule are one judgment rather than two: both
+    subjects are pull requests in a foreign system, which have no version of ours to state, and
+    for both the head is the value that moves.
+
+    The idempotency key is load-bearing here and not decoration, which is worth saying because a
+    key on an act that keeps no record of its own would be. It is content-addressed over the head
+    by its caller, and a successful update CHANGES the head -- so a key can only ever bar a repeat
+    of this same request against this same head, and never the next legitimate update after the
+    base moves again.
+    """
+
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    # Bounded in shape for the reason its sibling states: it is interpolated into API paths called
+    # with the App installation token, and unbounded use of a production credential from a
+    # caller-supplied value is not a thing to leave to the good behaviour of one caller.
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pr_number: int = Field(gt=0)
+    expected_head_sha: str = Field(min_length=40, max_length=40)
+
+
+class EstateBranchUpdateResponse(BaseModel):
+    """What was brought up to date, and the head it was brought up to date from.
+
+    There is no id, no status and no row, because the act is repeatable by design: what is kept is
+    an event. The head named here is the one the platform was told to expect, which is what makes
+    the answer checkable against the pull request afterwards -- and it is the OLD head, since the
+    platform performs the work after answering and never names the resulting one.
+    """
+
+    repository: str
+    pr_number: int
+    head_sha: str
 
 
 class InfraLaneLinkResponse(BaseModel):

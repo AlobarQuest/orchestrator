@@ -17,8 +17,10 @@ from estate_lander.cli import (
     EXIT_FINDINGS,
     EXIT_OK,
     Outcome,
+    _branch_updates,
     _key,
     _pass,
+    _update_key,
     report,
 )
 from estate_lander.orchestrator_client import LandingRefused, OrchestratorError
@@ -44,12 +46,17 @@ class FakeOrchestrator:
         *,
         land_error: Exception | None = None,
         admission_error: Exception | None = None,
+        update_error: Exception | None = None,
     ) -> None:
         self._answers = answers or {}
         self._land_error = land_error
         self._admission_error = admission_error
+        self._update_error = update_error
         self.asked: list[tuple[str, int]] = []
         self.landed: list[tuple[str, int, str, str]] = []
+        # ADR-0019 Increment 6. The list a refusal test asserts is EMPTY: an implementation that
+        # asked and then reported the refusal would satisfy a status assertion and fail this.
+        self.updated: list[tuple[str, int, str, str]] = []
 
     def admission(self, repository: str, pr_number: int) -> dict[str, Any]:
         self.asked.append((repository, pr_number))
@@ -65,6 +72,12 @@ class FakeOrchestrator:
         if self._land_error is not None:
             raise self._land_error
         return {"status": "merged"}
+
+    def update_branch(self, repository, pr_number, *, head_sha, idempotency_key):
+        self.updated.append((repository, pr_number, head_sha, idempotency_key))
+        if self._update_error is not None:
+            raise self._update_error
+        return {"repository": repository, "pr_number": pr_number, "head_sha": head_sha}
 
 
 def _row(number: int, *, status: str = "approved", item_id: int = 50) -> dict[str, Any]:
@@ -437,5 +450,152 @@ def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered
         "settled",
         "unreadable",
         "error",
+        # ADR-0019 Increment 6, the branch-update pass. Both are printed and neither is a finding:
+        # bringing a branch up to date is the lane clearing a condition the lane itself caused.
+        "updated",
+        "would-update",
     }
     assert _NOT_A_FINDING < set(_REPORTED)
+
+
+# ------------------------------------------------------------------------------------------------
+# ADR-0019 Increment 6: the branch-update pass.
+#
+# The rule itself lives in the orchestrator and is tested there. What is tested HERE is that this
+# program relays it: it asks, it acts only on what it was told, and it prints a line either way.
+# ------------------------------------------------------------------------------------------------
+
+
+def _qualifies() -> dict[str, Any]:
+    """Held on freshness plus the day's pace -- the shape a landing creates for every sibling."""
+    return {
+        "satisfied": False,
+        "refusals": ["landing_pace_exhausted", "landing_head_not_current_with_base"],
+        "head_sha": HEAD,
+        "branch_update_qualifies": True,
+    }
+
+
+def _does_not_qualify() -> dict[str, Any]:
+    """`#48`'s shape: behind its base AND a requirement-range bump nothing can ever classify."""
+    return {
+        "satisfied": False,
+        "refusals": [
+            "landing_pace_exhausted",
+            "landing_head_not_current_with_base",
+            "landing_update_type_unparseable",
+        ],
+        "head_sha": HEAD,
+        "branch_update_qualifies": False,
+    }
+
+
+def test_a_dry_run_reports_what_it_would_update_and_asks_for_nothing() -> None:
+    """The whole reason the answer carries the verdict: a dry run can say what a live pass would
+    do without touching a branch. A program that had to POST to find out could not have one."""
+    client = FakeOrchestrator({(REPOSITORY, 49): _qualifies()})
+
+    outcomes = _branch_updates(FakeRecords([_row(49)]), client, submit=False)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["would-update"]
+    assert client.updated == []
+
+
+def test_a_branch_the_orchestrator_says_qualifies_is_brought_up_to_date() -> None:
+    client = FakeOrchestrator({(REPOSITORY, 49): _qualifies()})
+
+    outcomes = _branch_updates(FakeRecords([_row(49)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["updated"]
+    assert client.updated == [(REPOSITORY, 49, HEAD, _update_key(REPOSITORY, 49, HEAD))]
+
+
+def test_a_branch_that_does_not_qualify_is_NOT_ASKED_ABOUT_and_gets_no_line() -> None:
+    """THE STANDING LIVE CONTROL in this program's own terms. `#48` can never land, so a build
+    spent on it buys nothing; and it gets no second line because the landing pass has already
+    printed one naming every condition it misses."""
+    client = FakeOrchestrator({(REPOSITORY, 48): _does_not_qualify()})
+
+    outcomes = _branch_updates(FakeRecords([_row(48)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert outcomes == []
+    assert client.updated == []
+
+
+def test_the_MATCHED_PAIR_is_separated_in_ONE_pass() -> None:
+    """Both live pull requests together, which is the case a single positive test cannot cover: it
+    could not tell this rule apart from "update everything that is behind"."""
+    client = FakeOrchestrator(
+        {(REPOSITORY, 48): _does_not_qualify(), (REPOSITORY, 49): _qualifies()}
+    )
+    records = FakeRecords([_row(48, item_id=48), _row(49, item_id=49)])
+
+    outcomes = _branch_updates(records, client, submit=True)  # type: ignore[arg-type]
+
+    assert [(o.number, o.status) for o in outcomes] == [(49, "updated")]
+    assert [number for _, number, _, _ in client.updated] == [49]
+
+
+def test_the_key_is_content_addressed_over_the_head_so_a_rerun_is_a_replay() -> None:
+    """And so a LATER update, after the base moves again, is a genuinely different key -- which is
+    what stops one night's landing barring this branch forever."""
+    assert _update_key(REPOSITORY, 49, HEAD) == _update_key(REPOSITORY, 49, HEAD)
+    assert _update_key(REPOSITORY, 49, HEAD) != _update_key(REPOSITORY, 49, "d" * 40)
+    assert _update_key(REPOSITORY, 49, HEAD) != _key(REPOSITORY, 49, HEAD)
+
+
+def test_an_orchestrator_refusal_is_reported_rather_than_retried() -> None:
+    """The answer and the act are separate transactions, so the orchestrator may compose a
+    different answer when asked to act. That is a line in the report, not a loop."""
+    client = FakeOrchestrator(
+        {(REPOSITORY, 49): _qualifies()}, update_error=LandingRefused("no longer qualifies")
+    )
+
+    outcomes = _branch_updates(FakeRecords([_row(49)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["held"]
+
+
+def test_an_unreadable_answer_updates_nothing() -> None:
+    client = FakeOrchestrator(admission_error=OrchestratorError("unreachable"))
+
+    outcomes = _branch_updates(FakeRecords([_row(49)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["unreadable"]
+    assert client.updated == []
+
+
+def test_an_answer_with_no_verdict_at_all_updates_nothing() -> None:
+    """An orchestrator too old to carry the field. Absence must read as "no", never as "yes"."""
+    client = FakeOrchestrator(
+        {(REPOSITORY, 49): {"satisfied": False, "refusals": ["x"], "head_sha": HEAD}}
+    )
+
+    outcomes = _branch_updates(FakeRecords([_row(49)]), client, submit=True)  # type: ignore[arg-type]
+
+    assert outcomes == []
+    assert client.updated == []
+
+
+def test_a_record_nobody_routed_is_not_asked_about_by_either_pass() -> None:
+    """Both passes read the same subject filter, so they cannot disagree about which pull requests
+    this program is for."""
+    client = FakeOrchestrator({(REPOSITORY, 49): _qualifies()})
+
+    outcomes = _branch_updates(FakeRecords([_row(49, status="pending")]), client, submit=True)  # type: ignore[arg-type]
+
+    assert outcomes == []
+    assert client.asked == []
+
+
+def test_neither_update_status_is_a_finding() -> None:
+    """An update happening is the lane clearing a condition it caused -- the system working."""
+    assert (
+        report(
+            [
+                Outcome(REPOSITORY, 49, "updated", ""),
+                Outcome(REPOSITORY, 49, "would-update", ""),
+            ]
+        )
+        == EXIT_OK
+    )

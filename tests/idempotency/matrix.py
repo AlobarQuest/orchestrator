@@ -155,6 +155,20 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_estate_pr_merge.py::test_a_repeat_replays_the_record_and_never_calls_the_remote_again",
     ),
     MatrixRow(
+        "estate pr branch update",
+        "/api/v1/estate-pr-branch-update",
+        # NO LOCK AND NO ROW OF ITS OWN, and both differences from the landing above are forced by
+        # what the act is. There is no rule here about how many may happen -- the act is repeatable
+        # by design, because whenever the base moves again it is right to do again -- so there is
+        # nothing to serialise, and the branch itself is guarded by the platform, which refuses a
+        # head that moved under the caller. What makes a key SAFE on an act like this is that it
+        # names the head: a successful update changes the head, so a spent key can only ever bar a
+        # repeat of the same request against the same head, never the next legitimate update.
+        "unique Event per idempotency_key, content-addressed over the head +\n"
+        "expected_head_sha checked against the head the answer named",
+        "tests/services/test_estate_pr_branch_update.py::test_a_repeat_replays_the_event_and_never_calls_the_remote_again",
+    ),
+    MatrixRow(
         "dispatch",
         "/api/v1/work-units/{unit_id}/dispatch",
         "unique DispatchRecord.idempotency_key + (unit, runner_attempt) guard",
