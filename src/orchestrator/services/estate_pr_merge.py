@@ -436,7 +436,7 @@ def _record(
 
 
 class GitHubEstatePullRequests:
-    """The real gateway. Four calls, and only one of them changes anything.
+    """The real gateway. Five calls, and two of them change anything.
 
     Holds a token PROVIDER rather than a token, because an installation token expires within the
     hour and a long-lived process would otherwise carry a dead one. Nothing here logs, formats or
@@ -557,6 +557,34 @@ class GitHubEstatePullRequests:
             commit_sha=commit if isinstance(commit, str) else None,
             status_code=response.status_code,
         )
+
+    def update_branch(self, *, repository: str, number: int, expected_head_sha: str) -> None:
+        """Bring the base branch's commits into this pull request's head. ADR-0019 Increment 6.
+
+        **THE SUCCESS CODE IS 202, NOT 200**, and copying the sibling call above would therefore
+        report every success as a refusal. The platform accepts the request and performs the work
+        afterwards; the body names a message and a URL and does NOT name the resulting head, which
+        is why nothing here returns one and why this side must not re-read to confirm -- a read
+        taken immediately can still answer with the old head and would read as a failure.
+
+        `expected_head_sha` is the whole of the concurrency control, exactly as `sha` is for the
+        landing: the remote answers 422 when the head has moved since it was read, rather than
+        acting on a branch this side never evaluated. Sent always, never defaulted -- omitting it
+        makes the platform substitute whatever the head is now, which is the one behaviour it is
+        here to prevent.
+        """
+        url = f"{GITHUB_API_URL}/repos/{repository}/pulls/{number}/update-branch"
+        try:
+            response = httpx.put(
+                url,
+                headers=self._headers(),
+                json={"expected_head_sha": expected_head_sha},
+                timeout=self._timeout,
+            )
+        except (httpx.RequestError, httpx.InvalidURL, ValueError) as error:
+            raise EstateGatewayError(f"request_error:{error.__class__.__name__}") from error
+        if response.status_code != 202:
+            raise EstateGatewayError("branch_update_status", response.status_code)
 
 
 def _pull_from_body(body: dict[str, Any], number: int) -> EstatePullRequest:
