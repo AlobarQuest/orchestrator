@@ -638,11 +638,17 @@ class EstateBranchUpdateResponse(BaseModel):
     an event. The head named here is the one the platform was told to expect, which is what makes
     the answer checkable against the pull request afterwards -- and it is the OLD head, since the
     platform performs the work after answering and never names the resulting one.
+
+    `replayed` is the one field that is not decoration. Because the key is content-addressed over
+    the head and a success moves the head, a replay means the branch did NOT move -- so it is the
+    signal that the platform accepted the work and did not do it, which without this field would
+    print as a success on every pass forever.
     """
 
     repository: str
     pr_number: int
     head_sha: str
+    replayed: bool
 
 
 class InfraLaneLinkResponse(BaseModel):

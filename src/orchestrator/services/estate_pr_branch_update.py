@@ -40,13 +40,18 @@ The event's subject is the pull request itself, named by a `uuid5` over its URL,
 no row of ours to point at and inventing one would be inventing the permanence this act must not
 have. That construction is used elsewhere in this repository for the same reason.
 
-## No lock, unlike the landing
+## It serialises on the repository, and the reason is NOT the one the branch suggests
 
-The landing serialises on the repository because the two rules it must not race -- one row per
-pull request, one landing per repository per window -- are stated over rows that may not exist
-yet. Neither rule is about this act. What must not be raced here is the branch, and the platform
-itself holds that: the head this side read is named in the request, and a head that moved under it
-is refused there rather than acted on. A lost race costs one refused call.
+A first version of this module argued that no lock was needed: what must not be raced is the
+branch, and the platform holds that itself, since the head is named in the request and a head that
+moved is refused there. **That is true of the branch and false of the KEY**, which is the race that
+matters. Two concurrent requests carrying one idempotency key both read no spent event, both act,
+and the loser's commit violates the unique index -- an `IntegrityError`, which has no registered
+handler and so reaches the caller as a bare HTTP 500 over an act that in fact happened twice.
+
+So it takes the same advisory lock its sibling does, for a different reason and over a row that
+may not exist yet, which is what a row lock cannot cover. It is released with the transaction
+whichever way that ends.
 """
 
 from __future__ import annotations
@@ -55,7 +60,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Final, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import Clock
@@ -95,6 +100,16 @@ class BranchUpdateOutcome:
     repository: str
     pr_number: int
     head_sha: str
+    # WAS THIS ANSWERED FROM A SPENT KEY RATHER THAN ACTED ON? Reported because of what a replay
+    # here actually means. The caller's key is content-addressed over the head, and a successful
+    # update CHANGES the head -- so a second request carrying the same key is a request about a
+    # branch that did not move. The platform answers 202 and does the work afterwards, so the one
+    # realistic way to reach this path is that it accepted and did not deliver.
+    #
+    # Left unreported, that failure describes itself as success FOREVER: still behind, still
+    # qualifying, same head, same key, replayed, printed as "updated", and never a finding. The
+    # flag is what lets the caller say "asked before, still behind" instead.
+    replayed: bool
 
 
 class EstateBranchUpdateGateway(EstateReadGateway, Protocol):
@@ -171,6 +186,14 @@ def _update(
     _authorize_actor(command.actor)
     repository = command.repository.lower()
 
+    # BEFORE the spent-key lookup, or the lookup and the write straddle the window two concurrent
+    # requests would both pass through. The subject is a row that may not exist yet, which is
+    # exactly what a row lock cannot hold.
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"estate_pr_branch_update:{repository}"},
+    )
+
     spent = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))
     if spent is not None:
         return _replay(command, spent)
@@ -229,6 +252,7 @@ def _update(
         repository=admission.repository,
         pr_number=admission.pr_number,
         head_sha=head_sha,
+        replayed=False,
     )
 
 
@@ -265,6 +289,7 @@ def _replay(command: EstateBranchUpdateCommand, spent: Event) -> BranchUpdateOut
         repository=str(payload.get("repository")),
         pr_number=command.pr_number,
         head_sha=str(payload.get("head_sha")),
+        replayed=True,
     )
 
 

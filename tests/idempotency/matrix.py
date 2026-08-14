@@ -157,15 +157,20 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
     MatrixRow(
         "estate pr branch update",
         "/api/v1/estate-pr-branch-update",
-        # NO LOCK AND NO ROW OF ITS OWN, and both differences from the landing above are forced by
-        # what the act is. There is no rule here about how many may happen -- the act is repeatable
-        # by design, because whenever the base moves again it is right to do again -- so there is
-        # nothing to serialise, and the branch itself is guarded by the platform, which refuses a
-        # head that moved under the caller. What makes a key SAFE on an act like this is that it
-        # names the head: a successful update changes the head, so a spent key can only ever bar a
-        # repeat of the same request against the same head, never the next legitimate update.
-        "unique Event per idempotency_key, content-addressed over the head +\n"
-        "expected_head_sha checked against the head the answer named",
+        # NO ROW OF ITS OWN, unlike the landing above, and that difference is forced by what the
+        # act is: it is repeatable by design, because whenever the base moves again it is right to
+        # do again, so a row unique per pull request would bar the next legitimate update. What
+        # makes a KEY safe here is that it names the head -- a successful update changes the head,
+        # so a spent key can only ever bar a repeat of the same request against the same head.
+        #
+        # It DOES take the advisory lock, for a different reason than its sibling. The branch is
+        # guarded by the platform, which refuses a head that moved under the caller; the KEY is
+        # not. Two concurrent requests carrying one key would both read no spent event, both act,
+        # and the loser's commit would violate the unique index as an unhandled 500 over an act
+        # that happened twice.
+        "pg_advisory_xact_lock on the repository + unique Event per\n"
+        "idempotency_key, content-addressed over the head + expected_head_sha\n"
+        "checked against the head the answer named",
         "tests/services/test_estate_pr_branch_update.py::test_a_repeat_replays_the_event_and_never_calls_the_remote_again",
     ),
     MatrixRow(

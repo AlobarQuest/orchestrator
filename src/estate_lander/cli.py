@@ -88,6 +88,23 @@ _DELIBERATE = frozenset({"landing_pace_exhausted", "landing_outside_change_windo
 # single set would say "quiet" about both while losing which is which.
 _EXCEPTION = frozenset({"landing_update_type_unparseable"})
 
+# ADR-0019 Increment 6. Refusals the BRANCH-UPDATE act raises that say only *the answer moved
+# between the read and the request*, which the next pass re-decides on its own.
+#
+# The answer and the act are separate transactions by design: the orchestrator recomposes every
+# term inside the one that acts, and it reads the platform again while doing so. So a head the
+# update bot rebased in that window, or a mergeability the platform had not finished computing,
+# both arrive here -- and neither is a condition anybody can act on. `landing_mergeability_unknown`
+# in particular is ordinary rather than exotic: the platform answers `unknown` while it works.
+#
+# Reporting these as findings would rebuild the class Devon's ruling closed one commit ago -- a
+# deliberate, self-clearing refusal reported as something that could not be measured. Every OTHER
+# refusal stays a finding, including one this program cannot parse a code from, so the polarity is
+# the one this file argues for everywhere.
+_UPDATE_SELF_CLEARING = frozenset(
+    {"estate_branch_update_head_moved", "estate_branch_update_not_qualified"}
+)
+
 # Statuses that are not findings, stated as the set to EXCLUDE so a status nobody has thought of
 # fails toward being reported. Same polarity argument as `_ASK_ABOUT`, one column over.
 #
@@ -245,15 +262,15 @@ def _subjects(records: RecordSource) -> list[tuple[str, int]]:
     return subjects
 
 
-def _pass(records: RecordSource, client: OrchestratorClient, submit: bool) -> list[Outcome]:
+def _pass(
+    subjects: list[tuple[str, int]], client: OrchestratorClient, submit: bool
+) -> list[Outcome]:
     """Ask about every routed change."""
-    return [
-        _consider(client, repository, number, submit) for repository, number in _subjects(records)
-    ]
+    return [_consider(client, repository, number, submit) for repository, number in subjects]
 
 
 def _branch_updates(
-    records: RecordSource, client: OrchestratorClient, submit: bool
+    subjects: list[tuple[str, int]], client: OrchestratorClient, submit: bool
 ) -> list[Outcome]:
     """Bring up to date the branches whose only remaining obstacle is that they are behind.
 
@@ -274,7 +291,7 @@ def _branch_updates(
     the landing pass has already printed one naming every condition it misses.
     """
     outcomes: list[Outcome] = []
-    for repository, number in _subjects(records):
+    for repository, number in subjects:
         try:
             answer = client.admission(repository, number)
         except OrchestratorError as error:
@@ -292,18 +309,32 @@ def _branch_updates(
             outcomes.append(Outcome(repository, number, "would-update", f"head {head[:12]}"))
             continue
         try:
-            client.update_branch(
+            answered = client.update_branch(
                 repository,
                 number,
                 head_sha=head,
                 idempotency_key=_update_key(repository, number, head),
             )
         except LandingRefused as error:
-            outcomes.append(Outcome(repository, number, "held", str(error)))
+            status = "deliberate" if error.code in _UPDATE_SELF_CLEARING else "held"
+            outcomes.append(Outcome(repository, number, status, str(error)))
         except OrchestratorError as error:
             outcomes.append(Outcome(repository, number, "error", str(error)))
         else:
-            outcomes.append(Outcome(repository, number, "updated", f"was behind at {head[:12]}"))
+            if answered.get("replayed"):
+                # ASKED BEFORE, AT THIS SAME HEAD, AND THE BRANCH HAS NOT MOVED. The key is
+                # content-addressed over the head and a success moves it, so this is the platform
+                # having accepted the work and not delivered it. Reporting it as an update would
+                # describe that as success on every pass, forever.
+                outcomes.append(
+                    Outcome(
+                        repository, number, "held", f"asked before at {head[:12]}, still behind"
+                    )
+                )
+            else:
+                outcomes.append(
+                    Outcome(repository, number, "updated", f"was behind at {head[:12]}")
+                )
     return outcomes
 
 
@@ -332,8 +363,12 @@ def run(argv: list[str] | None = None) -> int:
             ChangeManagerClient(cm_token, base_url=cm_url or CM_DEFAULT_BASE_URL) as records,
             OrchestratorClient(token, SYSTEM_KEY_ID, base_url=url or DEFAULT_BASE_URL) as client,
         ):
-            outcomes = _pass(records, client, args.submit)
-            outcomes.extend(_branch_updates(records, client, args.submit))
+            # READ ONCE, used by both passes. Reading again between them would put a second
+            # network call inside the `try`, where its failure discards `outcomes` entirely and
+            # returns a bare tool error -- losing the report of a landing that already happened.
+            subjects = _subjects(records)
+            outcomes = _pass(subjects, client, args.submit)
+            outcomes.extend(_branch_updates(subjects, client, args.submit))
     except (ChangeManagerError, OrchestratorError) as error:
         print(str(error), file=sys.stderr)
         return EXIT_TOOL_FAILURE
@@ -344,7 +379,7 @@ def run(argv: list[str] | None = None) -> int:
 def report(outcomes: list[Outcome]) -> int:
     for outcome in outcomes:
         subject = f"{outcome.repository}#{outcome.number}"
-        print(f"{subject}  {outcome.status:<11} {outcome.detail}")
+        print(f"{subject}  {outcome.status:<12} {outcome.detail}")
     counted = {status: sum(o.status == status for o in outcomes) for status in _REPORTED}
     findings = [o for o in outcomes if o.status not in _NOT_A_FINDING]
     print(

@@ -42,7 +42,18 @@ class ForbiddenEndpointError(OrchestratorError):
 
 
 class LandingRefused(OrchestratorError):
-    """The orchestrator refused to land it. A finding about the pull request, not a broken tool."""
+    """The orchestrator refused. A fact about the subject, not a broken tool.
+
+    It CARRIES THE REFUSAL CODE as well as the message, because not every refusal means the same
+    thing to a reader. Some name a condition somebody must act on; others say only that the answer
+    moved between the read and the request, which the next pass re-decides on its own. Classifying
+    those apart needs the code -- a `DomainError` reaches the wire nested under `error`, and the
+    message is prose that will be reworded.
+    """
+
+    def __init__(self, message: str, code: str = "") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def is_allowed_read(path: str) -> bool:
@@ -71,6 +82,25 @@ def _detail(response: httpx.Response) -> str:
         if payload.get("detail"):
             return str(payload["detail"])[:400]
     return f"HTTP {response.status_code}"
+
+
+def _code(response: httpx.Response) -> str:
+    """The refusal's own code, read from where a `DomainError` actually puts it.
+
+    NESTED under `error`, never top-level -- a check written from the handler's shape matches
+    neither that nor the framework's own `detail`, and this estate has already recorded that trap.
+    An unreadable body yields the empty string, which no classifier recognises, so an answer this
+    program cannot parse stays a finding.
+    """
+    try:
+        payload = response.json()
+    except ValueError:
+        return ""
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict) and isinstance(error.get("code"), str):
+            return error["code"]
+    return ""
 
 
 class OrchestratorClient:
@@ -126,7 +156,7 @@ class OrchestratorClient:
                 f"the orchestrator is unreachable for {method} {path}: {type(error).__name__}"
             ) from None
         if response.status_code == 409:
-            raise LandingRefused(_detail(response))
+            raise LandingRefused(_detail(response), _code(response))
         if response.status_code >= 400:
             hint = " -- the credential is not the system one" if response.status_code == 403 else ""
             raise OrchestratorError(

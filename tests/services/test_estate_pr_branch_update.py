@@ -421,6 +421,11 @@ def test_a_repeat_replays_the_event_and_never_calls_the_remote_again(
         first.pr_number,
         first.head_sha,
     )
+    # AND IT SAYS SO. A replay here means the head did not move, which -- because the platform
+    # answers 202 and does the work afterwards -- is the shape of it having accepted and not
+    # delivered. Unflagged, the caller prints that as a success on every pass forever.
+    assert first.replayed is False
+    assert second.replayed is True
 
 
 def test_a_key_spent_on_a_DIFFERENT_subject_is_refused_rather_than_replayed(
