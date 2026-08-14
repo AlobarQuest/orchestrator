@@ -2903,3 +2903,16 @@ style of that module.
   `landing_update_type_unparseable` can never land whatever is done to its branch, so updating it is
   pure CI waste that reads as progress. `change-manager#48` (a requirement-range bump, permanently
   unclassifiable) is the standing live control: it must never be touched.
+
+- **All four brain applications pull the SAME moving `:latest` tag, so one app pinned elsewhere
+  would hang every deploy for the full verification deadline.** Established 2026-08-14 while giving
+  `brain`'s rollout a revision check. `ci.yml`'s `build-and-push` pushes `${IMAGE_NAME}:latest` and
+  `:${{ github.sha }}`, and the `deploy` job fires four Coolify webhooks — `infra`, `open`, `app`,
+  `code` — against that one image, **skipping any whose `COOLIFY_APP_UUID_*` secret is empty**. So a
+  revision poll must require confirmation only from the apps a run actually triggered: a skipped app
+  keeps its old image and can never report the new revision, and requiring all four unconditionally
+  turns a deliberate configuration into a 600-second hang. Separately, **Coolify's own health check
+  is enabled on all four against `/api/health` with no response-text match**, so adding a field to
+  that response is safe — worth knowing before extending any health endpoint the platform polls.
+  Note `brain` has **no `deploy.yml`**: the deploy job lives in `ci.yml`, which is also the path any
+  `WorkflowPin` must name.
