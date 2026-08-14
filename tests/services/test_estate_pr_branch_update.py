@@ -212,6 +212,39 @@ def test_the_deliberate_refusals_are_exactly_the_landers_own() -> None:
     assert DELIBERATE_REFUSALS == _DELIBERATE
 
 
+def test_the_freshness_refusal_the_lander_classifies_on_is_exactly_the_one_composed_here() -> None:
+    """The same two-package problem one string over, and this one is INVISIBLE to the scanner.
+
+    `test_cross_boundary_vocabulary` finds vocabularies by AST-scanning for module-level string
+    COLLECTIONS of two or more members, so a lone string shared across a boundary is exactly the
+    shape it cannot see. The lander suppresses on this code by name; the orchestrator composes it.
+    Rename it on either side with nothing holding them together and the lander silently stops
+    recognising the condition it exists to classify -- reporting `#48` as a finding forever, which
+    is the state this increment was written to end.
+    """
+    from estate_lander.cli import _FRESHNESS
+
+    assert LANDING_HEAD_NOT_CURRENT_WITH_BASE == _FRESHNESS
+
+
+def test_the_exception_the_lander_suppresses_beside_is_exactly_the_one_composed_here() -> None:
+    """The CONDITION of the suppression, which this increment made load-bearing twice over.
+
+    `_EXCEPTION` already decided a line's status; it now also decides whether being behind is
+    reported at all. A one-member frozenset is below the two-member threshold the AST scanner
+    matches on, and the scanner only walks `src/orchestrator/` besides, so this agreement was held
+    together by nothing.
+
+    Rename the code on the orchestrator side and the lander stops classifying `#48` as an exception
+    AND stops suppressing its freshness refusal -- returning it to a permanent nightly finding,
+    which is precisely the state this increment exists to end. Set equality rather than membership:
+    a member ADDED to `_EXCEPTION` and pinned to nothing is the same hole one element over.
+    """
+    from estate_lander.cli import _EXCEPTION
+
+    assert _EXCEPTION == frozenset({LANDING_UPDATE_TYPE_UNPARSEABLE})
+
+
 # --------------------------------------------------------------------------------------------
 # The act.
 # --------------------------------------------------------------------------------------------
