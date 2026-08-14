@@ -2958,7 +2958,16 @@ style of that module.
   is enabled on all four against `/api/health` with no response-text match**, so adding a field to
   that response is safe — worth knowing before extending any health endpoint the platform polls.
   Note `brain` has **no `deploy.yml`**: the deploy job lives in `ci.yml`, which is also the path any
-  `WorkflowPin` must name.
+  `WorkflowPin` must name (blob `c5c08871…` on `main` as of 2026-08-14).
+  **SHIPPED 2026-08-14 (`#47`, merge `1d9e7d38`), and the run PROVES the per-app check was not
+  fussiness.** The four brains swapped at **different times** — `infra-brain` reported the merged
+  revision at 19:13:06 while `open`, `app` and `code` were still answering
+  `<no revision reported>`; `open-brain` followed at 19:13:22. A poll that checked one brain and
+  generalised would have passed at 19:13:06 with three of four still serving the previous image.
+  That is the failure the design was written against, observed on its first live run. The whole
+  swap took about 50 seconds from webhook to four `[OK]`s, against a 600-second deadline.
+  Independently probed afterwards: all four report
+  `{"status":"ok","revision":"1d9e7d38…"}` where the pre-merge baseline was `{"status":"ok"}` alone.
 
 - **A mutation control's ATTRIBUTION is itself a claim, and it can be wrong while the mutation set
   still passes.** WS freshness-beside-an-exception, 2026-08-14: HQ's handoff named
