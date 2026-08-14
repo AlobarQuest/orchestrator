@@ -2905,8 +2905,16 @@ style of that module.
   2026-08-12 19:02 and Dependabot acted at 2026-08-13 09:20 — **14 hours** — rebasing onto main as
   it was then, which the next landing staled again; `dependabot.yml` there is `interval: weekly`,
   so unrequested it can wait a week. By contrast `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch`
-  took `#49` from `behind_by=3` to `behind_by=0` in seconds (head `487d6767` → `34a2fe1c`,
-  `ahead_by` 1 → 2 as the merge commit lands, checks re-running). It needs `contents: write`, which
+  took `#49` from `behind_by=3` to `behind_by=0` within about twelve seconds (head `487d6767` →
+  `34a2fe1c`, `ahead_by` 1 → 2 as the merge commit lands, checks re-running).
+  **BUT THE CONTRACT IS 202 ACCEPTED, NOT 200, AND THAT DISTINCTION IS LOAD-BEARING.** The endpoint
+  accepts the request and performs the work afterwards; a client copying the sibling merge call's
+  `!= 200` check reads **every success as a refusal** — silently, in the direction where the lane
+  simply stops working while reporting that the remote declined. Nothing may re-read to confirm
+  either, because the work is not done when the call returns. HQ wrote "seconds, synchronous" into
+  the handoff by generalising a single probe observation into a claim about the contract; a build
+  session caught it, and it was the one handoff error that would have shipped a broken lane. **An
+  observed latency is not an API contract.** It needs `contents: write`, which
   the Dispatch App holds, and depends on nothing honouring a comment — note `@dependabot rebase`
   additionally assumes Dependabot obeys a **GitHub App**, which is unproven.
   Pass `expected_head_sha`: it is optimistic concurrency and refuses rather than clobbering a
