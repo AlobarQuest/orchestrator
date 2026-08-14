@@ -2878,3 +2878,28 @@ style of that module.
   landing lane instead, which is a policy decision (policy v1 names one repository deliberately) plus
   a change-proposer scope widening — `community-atlas`, `Contacts` and `agent-sites` have no change
   records at all. Plan: `~/docs/software-delivery-system/2026-08-13-toil-surface-onboarding-plan.md`.
+
+- **A landing stales every sibling pull request, and `update-branch` clears it synchronously where
+  `@dependabot rebase` takes ~14 hours.** `_freshness_term`
+  (`services/estate_landing_admission.py`) calls `commits_behind_base` and refuses on `behind > 0`
+  — correct, because checks are deliberately not up-to-date-gated estate-wide, so a squash of a
+  behind head produces a tree nothing executed, and on a deploying repository that tree is what
+  starts serving. But the lane therefore CREATES the condition it refuses on: `change-manager#51`
+  landed 02:15 on 2026-08-14 and the three remaining windows that night could only re-report the
+  same two staled siblings; `#49` had already sat **29 hours** behind.
+  **Measured 2026-08-14, both mechanisms.** `@dependabot rebase` was posted on `#49` at
+  2026-08-12 19:02 and Dependabot acted at 2026-08-13 09:20 — **14 hours** — rebasing onto main as
+  it was then, which the next landing staled again; `dependabot.yml` there is `interval: weekly`,
+  so unrequested it can wait a week. By contrast `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch`
+  took `#49` from `behind_by=3` to `behind_by=0` in seconds (head `487d6767` → `34a2fe1c`,
+  `ahead_by` 1 → 2 as the merge commit lands, checks re-running). It needs `contents: write`, which
+  the Dispatch App holds, and depends on nothing honouring a comment — note `@dependabot rebase`
+  additionally assumes Dependabot obeys a **GitHub App**, which is unproven.
+  Pass `expected_head_sha`: it is optimistic concurrency and refuses rather than clobbering a
+  rebase that landed in between.
+  **The rule for WHICH pull requests to update is the whole design: only one whose sole remaining
+  obstacle is freshness**, i.e. every other refusal is one that clears on its own (the *deliberate*
+  category). A pull request also carrying `landing_checks_not_clean` or
+  `landing_update_type_unparseable` can never land whatever is done to its branch, so updating it is
+  pure CI waste that reads as progress. `change-manager#48` (a requirement-range bump, permanently
+  unclassifiable) is the standing live control: it must never be touched.
