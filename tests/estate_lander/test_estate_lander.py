@@ -22,6 +22,7 @@ from estate_lander.cli import (
     _pass,
     _update_key,
     report,
+    run,
 )
 from estate_lander.orchestrator_client import LandingRefused, OrchestratorError
 
@@ -599,3 +600,56 @@ def test_neither_update_status_is_a_finding() -> None:
         )
         == EXIT_OK
     )
+
+
+def test_the_landing_pass_runs_BEFORE_the_branch_update_pass(monkeypatch) -> None:
+    """THE ORDERING IS A DESIGN DECISION AND IT IS LOAD-BEARING, so it is pinned rather than
+    described.
+
+    A landing moves the base, so it is the act that puts every sibling behind. Going the other way
+    round would bring a branch up to date and then immediately stale it again by landing something
+    else -- spending a real build on a tree that is out of date before it finishes, which is the
+    exact waste this whole increment exists to avoid.
+
+    Driven through `run()`, because the order lives there and nowhere else: a test that called the
+    two passes itself would be asserting what the test does.
+    """
+    sequence: list[str] = []
+
+    class SequencedOrchestrator(FakeOrchestrator):
+        def land(self, *args, **kwargs):
+            sequence.append("land")
+            return super().land(*args, **kwargs)
+
+        def update_branch(self, *args, **kwargs):
+            sequence.append("update")
+            return super().update_branch(*args, **kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    class SequencedRecords(FakeRecords):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    # 51 lands; 49 is behind and qualifies. Both in one pass, which is the only arrangement in
+    # which the order is observable at all.
+    client = SequencedOrchestrator(
+        {(REPOSITORY, 51): _admissible(), (REPOSITORY, 49): _qualifies()}
+    )
+    records = SequencedRecords([_row(49, item_id=49), _row(51, item_id=51)])
+
+    monkeypatch.setenv("ESTATE_LANDING_CHANGE_MANAGER_TOKEN", "cm")
+    monkeypatch.setenv("ESTATE_LANDING_ORCHESTRATOR_TOKEN", "orch")
+    monkeypatch.setattr("estate_lander.cli.ChangeManagerClient", lambda *a, **k: records)
+    monkeypatch.setattr("estate_lander.cli.OrchestratorClient", lambda *a, **k: client)
+
+    run(["--submit"])
+
+    assert sequence == ["land", "update"]

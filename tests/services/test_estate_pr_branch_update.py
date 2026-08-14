@@ -19,8 +19,10 @@ under the exact defect it would be written to catch.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
@@ -28,6 +30,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event
+from orchestrator.services import estate_pr_merge
 from orchestrator.services.estate_landing_admission import (
     DELIBERATE_REFUSALS,
     LANDING_CHECKS_NOT_CLEAN,
@@ -47,6 +50,7 @@ from orchestrator.services.estate_pr_branch_update import (
     EstateBranchUpdateCommand,
     update_estate_pull_request_branch,
 )
+from orchestrator.services.estate_pr_merge import GitHubEstatePullRequests
 from orchestrator.services.lifecycle import ActorContext
 from tests.services.change_record_doubles import FakeChangeRecordSource
 from tests.services.estate_doubles import inert_source, redeploying_source
@@ -486,3 +490,165 @@ def _landed_tonight():
         policy_version=2,
         idempotency_key="a-landing-tonight",
     )
+
+
+def test_the_served_answer_DECLARES_the_verdict_the_caller_reads() -> None:
+    """A `response_model` silently DROPS every key the service returns and the model does not
+    name, with no error anywhere -- so "the service computes it" is never evidence "the caller
+    receives it". This estate has already shipped that exact defect once, on the runner brief,
+    where every service-level assertion passed and the wire carried nothing.
+
+    Asserted as SET EQUALITY over the whole answer rather than as a membership check for this
+    increment's one field, because the failure is not specific to this field: any future addition
+    to the composed answer has the same silent hole, and a membership check would not see it.
+    """
+    from orchestrator.api.schemas import EstateLandingAdmissionResponse
+    from orchestrator.services.estate_landing_admission import EstateLandingAdmission
+
+    assert set(EstateLandingAdmissionResponse.model_fields) == set(
+        EstateLandingAdmission.__dataclass_fields__
+    )
+
+
+# --------------------------------------------------------------------------------------------
+# The REAL gateway. Everything above runs against a double, so nothing above can see what is
+# actually sent or which status is actually believed -- and the status is the one fact about this
+# call that is easy to get wrong by copying the landing call beside it.
+# --------------------------------------------------------------------------------------------
+
+
+class _Sent:
+    """Stands in for the module-level `httpx.put`, recording what left the process."""
+
+    def __init__(self, status: int) -> None:
+        self.status = status
+        self.calls: list[tuple[str, dict]] = []
+
+    def __call__(self, url, *, headers, json, timeout):
+        self.calls.append((url, json))
+        return httpx.Response(self.status, json={"message": "Updating pull request branch"})
+
+
+def _gateway(monkeypatch, sent: _Sent) -> GitHubEstatePullRequests:
+    monkeypatch.setattr(estate_pr_merge.httpx, "put", sent)
+    return GitHubEstatePullRequests(lambda: "a-token")
+
+
+def test_the_platform_answers_202_AND_THAT_IS_SUCCESS(monkeypatch) -> None:
+    """**202, NOT 200**, and it is the whole reason this call could not be copied from the landing
+    beside it. The platform accepts the request and performs the work afterwards, so a `!= 200`
+    check reads every success as a refusal -- silently, and in the direction where the lane simply
+    stops working while reporting that the remote declined.
+    """
+    sent = _Sent(202)
+
+    _gateway(monkeypatch, sent).update_branch(
+        repository=REPOSITORY, number=PR, expected_head_sha=HEAD
+    )
+
+    assert len(sent.calls) == 1
+
+
+def test_a_200_is_NOT_believed(monkeypatch) -> None:
+    """The pair to the case above. Pinned in both directions, so a check widened to accept any 2xx
+    -- which would look more permissive and more robust -- is caught as the loss of information it
+    is."""
+    with pytest.raises(EstateGatewayError):
+        _gateway(monkeypatch, _Sent(200)).update_branch(
+            repository=REPOSITORY, number=PR, expected_head_sha=HEAD
+        )
+
+
+def test_the_request_NAMES_the_head_and_addresses_the_right_pull_request(monkeypatch) -> None:
+    """`expected_head_sha` is the whole of the concurrency control: omit it and the platform
+    substitutes whatever the head is now, which is precisely what it is here to prevent."""
+    sent = _Sent(202)
+
+    _gateway(monkeypatch, sent).update_branch(
+        repository=REPOSITORY, number=PR, expected_head_sha=HEAD
+    )
+
+    url, body = sent.calls[0]
+    assert url.endswith(f"/repos/{REPOSITORY}/pulls/{PR}/update-branch")
+    assert body == {"expected_head_sha": HEAD}
+
+
+def test_a_refusal_from_the_platform_carries_its_status_and_never_the_token(monkeypatch) -> None:
+    with pytest.raises(EstateGatewayError) as raised:
+        _gateway(monkeypatch, _Sent(422)).update_branch(
+            repository=REPOSITORY, number=PR, expected_head_sha=HEAD
+        )
+
+    assert raised.value.status_code == 422
+    assert "a-token" not in str(raised.value)
+
+
+def test_an_unreachable_platform_is_a_gateway_error_and_never_an_escape(monkeypatch) -> None:
+    """A bare exception out of here reaches an unhandled HTTP 500: only `DomainError` and the
+    authentication error have registered handlers."""
+
+    def explode(url, *, headers, json, timeout):
+        raise httpx.ConnectError("no route")
+
+    monkeypatch.setattr(estate_pr_merge.httpx, "put", explode)
+
+    with pytest.raises(EstateGatewayError) as raised:
+        GitHubEstatePullRequests(lambda: "a-token").update_branch(
+            repository=REPOSITORY, number=PR, expected_head_sha=HEAD
+        )
+
+    assert raised.value.code.startswith("request_error:")
+
+
+# --------------------------------------------------------------------------------------------
+# `events.idempotency_key` is unique across the WHOLE table rather than per act, so "spent on a
+# different subject" has three shapes and every one of them reaches this replay path.
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_key_spent_by_a_DIFFERENT_KIND_OF_ACT_is_refused(migrated_session: Session) -> None:
+    """Answering from it would report a branch as brought up to date on the strength of an event
+    about something else entirely."""
+    migrated_session.add(
+        Event(
+            actor_id="orchestrator-system",
+            action="something.else",
+            subject_type="work_unit",
+            subject_id=uuid.uuid4(),
+            payload={"repository": REPOSITORY, "pr_number": PR, "head_sha": HEAD},
+            correlation_id=uuid.uuid4(),
+            idempotency_key="shared-across-acts",
+        )
+    )
+    migrated_session.flush()
+    gateway = _behind()
+
+    with pytest.raises(DomainError) as raised:
+        _update(migrated_session, gateway=gateway, key="shared-across-acts")
+
+    assert raised.value.code == "idempotency_conflict"
+    assert gateway.branch_updates == []
+
+
+def test_a_key_spent_on_a_DIFFERENT_REPOSITORY_is_refused(migrated_session: Session) -> None:
+    """Same pull request number, different repository -- the shape an operator produces by copying
+    a request and editing one field."""
+    migrated_session.add(
+        Event(
+            actor_id="orchestrator-system",
+            action=BRANCH_UPDATE_ACTION,
+            subject_type=BRANCH_UPDATE_SUBJECT,
+            subject_id=uuid.uuid4(),
+            payload={"repository": "alobarquest/brain", "pr_number": PR, "head_sha": HEAD},
+            correlation_id=uuid.uuid4(),
+            idempotency_key="shared-across-repositories",
+        )
+    )
+    migrated_session.flush()
+    gateway = _behind()
+
+    with pytest.raises(DomainError) as raised:
+        _update(migrated_session, gateway=gateway, key="shared-across-repositories")
+
+    assert raised.value.code == "idempotency_conflict"
+    assert gateway.branch_updates == []
