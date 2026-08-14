@@ -691,3 +691,21 @@ def test_the_repository_lock_is_actually_TAKEN_and_actually_WAITS(
 
         assert gateway.branch_updates == [], "it must not act while another holder has the lock"
         holder.rollback()
+
+
+def test_the_self_clearing_codes_are_exactly_the_ones_this_service_raises() -> None:
+    """THE SECOND cross-boundary vocabulary this increment created, pinned like the first.
+
+    The lander decides whether a POST-time refusal is a finding by matching the code against its
+    own copy of these two. Rename one here and the classification silently stops matching, so a
+    self-clearing refusal starts reporting as a finding every night -- the drift fails toward
+    noise rather than toward a hole, which is the safe direction and still not one anybody would
+    notice from either side alone.
+
+    `estate_branch_update_refused_by_remote` is deliberately NOT a member: the platform declining
+    can mean a real merge conflict, which no later pass clears on its own.
+    """
+    from estate_lander.cli import _UPDATE_SELF_CLEARING
+
+    assert _UPDATE_SELF_CLEARING == {BRANCH_UPDATE_HEAD_MOVED, BRANCH_UPDATE_NOT_QUALIFIED}
+    assert BRANCH_UPDATE_REFUSED_BY_REMOTE not in _UPDATE_SELF_CLEARING
