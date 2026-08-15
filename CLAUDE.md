@@ -3107,3 +3107,33 @@ style of that module.
   Two consequences for onboarding a repository to the cascade: a queue does not drain by itself at
   the rate the arming suggests, and **the number of eligible pull requests that land unattended in a
   day is one**, not N.
+
+- **A `schedule:` trigger added INSIDE a `code-standards:managed` block is deleted by the next
+  `code-standards sync`, with nothing reporting it — and four of the six lane repositories were in
+  a state where that would have happened.** Found 2026-08-15 while adding a daily `main`
+  verification run, by a question the handoff never asked. Measured on `main` before the change:
+  `security-standards` and `infraops-mcp-server` carried `code-standards:managed` markers wrapping
+  the whole of `quality.yml`, so a trigger inside would be silently reverted; `intent-packages` and
+  `project-standards` classified **adoptable**, a state `sync` writes markers into, reaching the
+  same end by a slower route. `orchestrator` and `factory-runner` were already locally owned. The
+  fix was ADR-0008's documented escape hatch — remove both marker lines, record in a header why and
+  how to restore them — verified with the tool's own classifier (four would-write → all six local).
+  **The shared template cannot carry the trigger instead**, because the cron minute is staggered per
+  repository and most repositories vendoring that file are not in the lane it exists for.
+  **Same run surfaced a pre-existing defect: `infraops-mcp-server` classifies STALE**, because
+  Dependabot bumped four actions to v7 *inside* its managed block — so a `sync` there would have
+  reverted all four. Named, not fixed.
+  Generalise: **before adding anything to a vendored file, ask what re-vendoring does to it.** The
+  failure is silent in the direction that matters — the trigger disappears and the check simply
+  stops running, which is the permanently-quiet twin of a permanently-red control.
+
+- **The daily `main` verification runs at 10:23–11:03 UTC, staggered one repository per 8 minutes,
+  and the minute is chosen so an overnight landing is checked the same morning.** 10:39 UTC is
+  06:39 EDT — just after the 02:00–06:00 window in which this estate lands changes unattended. Cost
+  measured rather than estimated: **~28 billable minutes/day, ~850/month against 3000 included**,
+  of which `orchestrator` is **89%** (its `Quality` ran 29 minutes on the very pull request that
+  added this, above every previously sampled run). `infraops-mcp-server` and `factory-runner` are
+  public and free. **A `schedule:` cron cannot be proven before merging**, because it only fires
+  from the default branch — the confirming check is
+  `gh run list --workflow=quality.yml --event=schedule` the following morning, and a first run
+  arriving ~26 minutes late is GitHub's scheduler rather than a broken cron.
