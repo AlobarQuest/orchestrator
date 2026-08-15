@@ -3035,3 +3035,20 @@ style of that module.
   Consequence for sequencing: a deploy-policy version admitting a repository is **inert without the
   matching transcription**, because the criteria a record must conform to are derived from it. The
   two land together; either order is safe.
+
+- **`docker` is excluded from the Dependabot auto-merge cascade (ADR-0023), and the reason is that
+  DOCKER TAGS ARE NOT SEMVER.** Dependabot maps a tag's digits onto semver positions mechanically,
+  so `python:3.12-slim → 3.14-slim` reports `version-update:semver-minor` — and ADR-0018's cascade
+  arms on minor "in every ecosystem". That would auto-merge a language-version replacement that
+  removes standard-library modules. The second ground fails too: the cascade permits github_actions
+  *majors* because the gate exercises them, and for a base image it does not. **Measured, and
+  correcting a first reading of mine that said nothing gates a Dockerfile change: `quality.yml` runs
+  on `pull_request` and DOES `docker build` the real Dockerfile, so `uv sync --frozen` would fail on
+  a dependency with no wheel for the new interpreter.** What it never does is RUN the image — no
+  container is started and the suite executes on `setup-python` 3.12 — so a package that installs
+  cleanly and fails at import on a removed module passes everything.
+  **`orchestrator` is the ONLY repository declaring the `docker` ecosystem**, and none of the five
+  carrying the cascade declares it, so the exclusion is a no-op until the lane is vendored to
+  `orchestrator`. The workflow is not vendored by `code-standards` — one edit per repository, which
+  is the clause a future onboarding will forget. Running the image in CI is what would earn the
+  permission back and is deliberately not a prerequisite.
