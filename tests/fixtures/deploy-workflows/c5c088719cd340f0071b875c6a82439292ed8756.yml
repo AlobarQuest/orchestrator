@@ -1,0 +1,223 @@
+# Required repo Actions secrets:
+#   COOLIFY_WEBHOOK_URL       — base URL for the Coolify deploy webhook
+#   COOLIFY_API_TOKEN         — Coolify API bearer token
+#   COOLIFY_APP_UUID_INFRA    — Coolify app UUID for infra-brain
+#   COOLIFY_APP_UUID_OPEN     — Coolify app UUID for open-brain
+#   COOLIFY_APP_UUID_APP      — Coolify app UUID for app-brain
+#   COOLIFY_APP_UUID_CODE     — Coolify app UUID for code-brain (set after the
+#                               code-brain Coolify app exists; until then the
+#                               deploy/health steps skip it gracefully)
+#
+# These secrets are provisioned at cutover (Task 17). The build-and-push and
+# deploy jobs are guarded to main-push only, so this workflow is safe to merge
+# on a PR before secrets exist. A brain whose UUID secret is empty is skipped by
+# both the deploy step and the revision check below, so adding a new brain never
+# breaks the others' pipeline before its infra is provisioned.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# One run per ref at a time. Two merges landing inside Coolify's swap window would
+# otherwise both deploy the same moving `:latest` tag and the earlier run would wait
+# out its full deadline for a revision that had already been replaced — a red job
+# reporting a rollout that in fact succeeded, just not with its own commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ghcr.io/alobarquest/brain
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -x -q
+
+  build-and-push:
+    needs: test
+    # PRs run tests only — build and deploy only on a real merge to main.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          # Carried into the image's environment and reported by /api/health, so the
+          # deploy job below can tell the new container from the one it replaced.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy brain apps
+        env:
+          WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          API_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          UUID_INFRA: ${{ secrets.COOLIFY_APP_UUID_INFRA }}
+          UUID_OPEN: ${{ secrets.COOLIFY_APP_UUID_OPEN }}
+          UUID_APP: ${{ secrets.COOLIFY_APP_UUID_APP }}
+          UUID_CODE: ${{ secrets.COOLIFY_APP_UUID_CODE }}
+        run: |
+          for entry in "infra:${UUID_INFRA}" "open:${UUID_OPEN}" "app:${UUID_APP}" "code:${UUID_CODE}"; do
+            name="${entry%%:*}"
+            uuid="${entry##*:}"
+            if [ -z "${uuid}" ]; then
+              echo "Skipping ${name}-brain — no COOLIFY_APP_UUID_${name} secret configured yet."
+              continue
+            fi
+            echo "Triggering deploy for ${name}-brain (uuid=${uuid})..."
+            curl -f -X GET "${WEBHOOK_URL}?uuid=${uuid}&force=false" \
+              -H "Authorization: Bearer ${API_TOKEN}"
+          done
+
+      # The step above succeeds the moment Coolify ACCEPTS each webhook — it says nothing
+      # about whether a build finished, a container started, or the app came back.
+      # Polling for `status == "ok"` does not fix that either: Coolify's redeploy is a
+      # ROLLING update, so the OLD container answers the public domain throughout the
+      # swap and a liveness poll returns 200 the whole time, whether or not the new image
+      # ever ran. Measured on run 31317272047 (2026-08-09): all four brains reported
+      # "healthy on attempt 1" thirty seconds after the webhooks, answered by the
+      # containers that were already running.
+      #
+      # So the check is on the REVISION: it waits until every brain THIS run deployed
+      # reports the commit just built. One image serves all four, so all four report the
+      # same revision — each is still checked, because a per-app webhook can fail while
+      # its siblings succeed, and that is the failure this step exists to catch. A brain
+      # with no UUID secret was never triggered, keeps its old image and would never
+      # report the new revision, so it is excluded rather than waited on.
+      - name: Verify every deployed brain is serving the new revision
+        env:
+          EXPECTED: ${{ github.sha }}
+          # A knob only so the timeout can be demonstrated in seconds instead of ten
+          # minutes: a poll never seen to fail proves nothing. Production value is 600.
+          DEADLINE_SECONDS: 600
+          UUID_INFRA: ${{ secrets.COOLIFY_APP_UUID_INFRA }}
+          UUID_OPEN: ${{ secrets.COOLIFY_APP_UUID_OPEN }}
+          UUID_APP: ${{ secrets.COOLIFY_APP_UUID_APP }}
+          UUID_CODE: ${{ secrets.COOLIFY_APP_UUID_CODE }}
+        run: |
+          set -euo pipefail
+
+          # An empty expectation would match every unreadable response and pass
+          # instantly — the poll-that-compares-nothing this step exists not to be.
+          if [ -z "${EXPECTED}" ]; then
+            echo "[FAIL] no expected revision was supplied; refusing to report success."
+            exit 1
+          fi
+
+          pending=""
+          for entry in "infra:${UUID_INFRA}" "open:${UUID_OPEN}" "app:${UUID_APP}" "code:${UUID_CODE}"; do
+            name="${entry%%:*}"
+            uuid="${entry##*:}"
+            if [ -z "${uuid}" ]; then
+              echo "Skipping ${name}-brain — not deployed by this pipeline."
+              continue
+            fi
+            pending="${pending}${name} "
+          done
+          # The one path through this step that could not fail. A main push that
+          # deploys nothing is how main and production diverge silently, which is the
+          # whole failure this step exists to catch — so an empty subject list is a
+          # missing-secrets alarm, not a quiet success.
+          if [ -z "${pending}" ]; then
+            echo "[FAIL] no COOLIFY_APP_UUID_* secret is set, so this push deployed"
+            echo "       nothing and production is not serving ${EXPECTED}."
+            exit 1
+          fi
+
+          echo "Waiting for ${EXPECTED} on: ${pending}"
+          deadline=$(( SECONDS + DEADLINE_SECONDS ))
+          while true; do
+            waiting=""
+            for name in ${pending}; do
+              # No -f: /api/health answers 503 when the database is unreachable, and
+              # that body still names the revision. Discarding it would label a brain
+              # that HAS swapped to the new image `<unreachable>` and send whoever
+              # reads this to the Coolify log for a deployment that worked.
+              body=$(curl -s --max-time 10 "https://${name}-brain.devonwatkins.com/api/health" || true)
+              fields=$(printf '%s' "${body}" | python3 -c \
+                'import json,sys; d=json.load(sys.stdin); print(d.get("revision","") + "|" + d.get("status",""))' \
+                2>/dev/null || true)
+              seen="${fields%%|*}"
+              state="${fields#*|}"
+              # Both terms, because either alone passes something it should not: the
+              # revision alone accepts a degraded brain, the status alone accepts the
+              # container this deployment was supposed to replace.
+              if [ "${seen}" = "${EXPECTED}" ] && [ "${state}" = "ok" ]; then
+                echo "  [OK] ${name}-brain is serving ${EXPECTED}"
+              else
+                # Four distinct answers, because they send whoever reads this log to
+                # four different places.
+                if [ -z "${body}" ]; then
+                  label="<no answer>"                    # down, DNS, TLS
+                elif [ -z "${fields}" ]; then
+                  label="<not a health response>"        # something else answered
+                elif [ -z "${seen}" ]; then
+                  label="<no revision reported>"         # ours, image predates this
+                elif [ "${state}" != "ok" ]; then
+                  label="${seen} but ${state}"           # ours, new image, unhealthy
+                else
+                  label="${seen}"                        # ours, a different build
+                fi
+                echo "  ${name}-brain is serving '${label}', waiting for ${EXPECTED}..."
+                waiting="${waiting}${name} "
+              fi
+            done
+            pending="${waiting}"
+            if [ -z "${pending}" ]; then
+              break
+            fi
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "[FAIL] after ${DEADLINE_SECONDS}s these brains are not serving ${EXPECTED}: ${pending}"
+              echo "       Read the last line printed for each above: it says whether the"
+              echo "       brain never answered, is still on the previous build, or is on"
+              echo "       this build but unhealthy. Only the first two are Coolify's."
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "[OK] every brain deployed by this run is serving ${EXPECTED}"
