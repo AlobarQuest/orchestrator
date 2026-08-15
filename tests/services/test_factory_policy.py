@@ -11,6 +11,7 @@ import ast
 import dataclasses
 import inspect
 import types
+from datetime import UTC, datetime
 from itertools import combinations
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,7 @@ from orchestrator.factory_policy import (
     ReachPolicy,
     load_factory_policy,
 )
-from orchestrator.reach_vocabulary import REACH_VOCABULARY
+from orchestrator.reach_vocabulary import LIVE_ESTATE, REACH_VOCABULARY
 
 SOURCE_ROOT = Path("src")
 MODULE_PATH = "src/orchestrator/factory_policy.py"
@@ -408,3 +409,113 @@ def test_a_policy_is_immutable() -> None:
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         policy.version = 99  # type: ignore[misc]
+
+
+def test_the_live_estate_row_declares_a_change_window() -> None:
+    """The packaged artifact, asserted rather than assumed (ADR-0019 Increment 3).
+
+    `change_window` is OPTIONAL and two of the four rows carry none, so `window_refusal` answers
+    "no objection" for a row that declares one and then loses it. Two readers depend on this row
+    having one: `pr_merge_admission` asserts it explicitly and refuses when it is absent, and
+    `reach_admission.change_window_refusal` -- which composes over whatever reach a package
+    declared, and must NOT require a window of every member, because `source_repository` and
+    `external_system` deliberately have none -- would silently stop gating `live_estate` work.
+
+    So the assertion belongs to the ARTIFACT, not to either caller: this is the one row whose
+    window is load-bearing, and deleting or renaming it reddens here rather than un-gating a lane.
+    """
+    row = load_factory_policy().rows[LIVE_ESTATE]
+
+    assert row.change_window is not None
+    assert row.change_window.zone.key == "America/New_York"
+
+
+# ---------------------------------------------------------------------------
+# ADR-0019 increment 5b: when did the occurrence containing this instant begin?
+# ---------------------------------------------------------------------------
+
+
+def test_the_occurrence_start_is_computed_where_the_hours_live() -> None:
+    """A rate rule needs a BOUNDARY, which `window_refusal` cannot answer -- and computing it in
+    the caller would be a second reading of the artifact's hours, which is the second copy this
+    module exists to prevent.
+
+    `live_estate` is 02:00-06:00 New York. 06:30 UTC is 02:30 EDT, so the occurrence began at
+    02:00 EDT the same day, which is 06:00 UTC.
+    """
+    policy = load_factory_policy()
+    opened = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 30, tzinfo=UTC))
+
+    assert opened == datetime(2026, 8, 11, 6, 0, tzinfo=UTC)
+
+
+def test_two_instants_in_one_occurrence_report_the_same_start() -> None:
+    """The property a rate rule rests on: 'has anything happened since this window opened?'"""
+    policy = load_factory_policy()
+    early = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 5, tzinfo=UTC))
+    late = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 9, 55, tzinfo=UTC))
+
+    assert early is not None and early == late
+
+
+def test_consecutive_nights_are_different_occurrences() -> None:
+    policy = load_factory_policy()
+    tonight = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 30, tzinfo=UTC))
+    tomorrow = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 12, 6, 30, tzinfo=UTC))
+
+    assert tonight is not None and tomorrow is not None and tonight != tomorrow
+
+
+def test_outside_the_window_there_is_no_occurrence() -> None:
+    """`None` rather than the previous start: outside the hours nothing is open, and answering
+    with a boundary would let a rate rule believe it was inside one."""
+    policy = load_factory_policy()
+
+    assert policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 19, 30, tzinfo=UTC)) is None
+
+
+def test_a_reach_with_no_declared_window_has_no_occurrence() -> None:
+    policy = load_factory_policy()
+
+    assert (
+        policy.window_opened_at("source_repository", datetime(2026, 8, 11, 6, 30, tzinfo=UTC))
+        is None
+    )
+
+
+def test_a_naive_instant_is_refused_rather_than_guessed() -> None:
+    policy = load_factory_policy()
+    with pytest.raises(DomainError):
+        policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 30))
+
+
+WRAPPING = (
+    VALID
+    + f"""
+[reach.live_estate.change_window]
+rationale = "overnight"
+{DECIDED}
+timezone = "UTC"
+start = "22:00"
+end = "06:00"
+"""
+)
+
+
+def test_a_window_that_wraps_midnight_opened_the_PREVIOUS_local_day(tmp_path: Path) -> None:
+    """The branch the shipped artifact cannot exercise, because its one window does not wrap.
+
+    A nightly window is the shape that naturally does -- the `ChangeWindow` docstring says so --
+    and 00:30 under a 22:00-06:00 window belongs to the occurrence that began at 22:00 YESTERDAY.
+    Computing it from today's date would make every night after midnight a fresh occurrence, so a
+    rate rule keyed on it would permit twice what it says.
+    """
+    policy = load_factory_policy(write(tmp_path, WRAPPING))
+
+    before = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 23, 30, tzinfo=UTC))
+    after = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 12, 0, 30, tzinfo=UTC))
+
+    assert before == datetime(2026, 8, 11, 22, 0, tzinfo=UTC)
+    assert after == before, (
+        "an instant after midnight belongs to the occurrence that opened before it"
+    )

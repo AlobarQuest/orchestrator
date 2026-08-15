@@ -22,7 +22,16 @@ from typing import Any
 
 import httpx
 
-from landing_ledger.model import Check, Landing, PendingUpdate, RuleApplication, UpdateMetadata
+from landing_ledger.model import (
+    WORK_UNIT_ID,
+    Check,
+    FactoryClaim,
+    Landing,
+    PendingUpdate,
+    PolicyPermission,
+    RuleApplication,
+    UpdateMetadata,
+)
 from landing_ledger.rules import GATE_PATH
 
 API = "https://api.github.com"
@@ -34,6 +43,23 @@ UPSTREAM_AUTHOR = "dependabot[bot]"
 # text `dependabot/fetch-metadata` parses, so reading it here reads what the gate read.
 DEPENDENCY_NAME = re.compile(r"^\s*-?\s*dependency-name:\s*(\S+)\s*$", re.MULTILINE)
 UPDATE_TYPE = re.compile(r"^\s*update-type:\s*(\S+)\s*$", re.MULTILINE)
+
+# The trailers factory-runner writes into its COMMIT MESSAGE (`factory_runner/cli.py`). The pull
+# request's BODY carries the same two values plus the authority fingerprint -- and a body is
+# editable after the landing, so reading it would let an unchanged reality re-encode to different
+# facts on a later pass and conflict. The commit message cannot change. Same source, and the same
+# reasoning, as the Dependabot trailers above.
+SDS_UNIT = re.compile(rf"^\s*SDS-Unit:\s*({WORK_UNIT_ID})\s*$", re.MULTILINE)
+SDS_PACKAGE_REVISION = re.compile(r"^\s*SDS-Package-Rev:\s*(\d+)\s*$", re.MULTILINE)
+
+# ADR-0019 increment 5b. The trailers the orchestrator writes when it lands a pull request that has
+# no work unit -- a change the estate routed through its change record. Spelled here as literals
+# rather than imported from the writer, deliberately: this program imports nothing from the
+# orchestrator (its isolation test says so), and a shared constant would be an import that does
+# not exist. Both sides carry a test naming the literal, so a rename on one side is a red test
+# rather than a landing silently recorded with no basis.
+SDS_CHANGE_RECORD = re.compile(r"^\s*SDS-Change-Record:\s*(\d+)\s*$", re.MULTILINE)
+SDS_POLICY_VERSION = re.compile(r"^\s*SDS-Policy-Version:\s*(\d+)\s*$", re.MULTILINE)
 
 
 class LedgerError(RuntimeError):
@@ -131,6 +157,52 @@ def update_metadata(message: str, head_ref: str | None) -> UpdateMetadata | None
     return UpdateMetadata(dependency=name.group(1), ecosystem=ecosystem, update_type=kind.group(1))
 
 
+def factory_claim(message: str) -> FactoryClaim | None:
+    """The work unit a landing commit says it implements, or nothing.
+
+    Read from the landing commit, falling back to the pull request's own head -- the same
+    arrangement, and the same reason, as `update_metadata` twelve lines up. A first draft had no
+    fall-back, on the grounds that the orchestrator lands with `merge_method: "squash"` and a
+    squash carries the branch's messages through. The squash BODY is not the orchestrator's to
+    decide: it sends no `commit_message`, so what the landing commit contains is governed by the
+    repository's own `squash_merge_commit_message` setting, which anyone can change in a web form.
+    All eight repositories the ledger covers are `COMMIT_MESSAGES` today, measured -- but a setting
+    is not a literal in a merge call, and the failure it would cause is silent: no trailer, no
+    claim, no basis, and a factory landing recorded as `unattributed`, which no detector reads.
+
+    The revision is optional and the unit id is not: the unit id is what the audit resolves, and
+    a claim without one selects nothing to check.
+    """
+    unit = SDS_UNIT.search(message)
+    if unit is None:
+        return None
+    revision = SDS_PACKAGE_REVISION.search(message)
+    return FactoryClaim(
+        work_unit=unit.group(1),
+        package_revision=int(revision.group(1)) if revision else None,
+    )
+
+
+def policy_permission(message: str) -> PolicyPermission | None:
+    """The change record a landing commit says permitted it, or nothing.
+
+    Read from the landing commit, falling back to the pull request's head exactly as the factory
+    claim is -- and here the fall-back is less likely to be needed, because the orchestrator sends
+    an explicit body rather than letting the repository's own setting compose one. Less likely is
+    not never: a landing performed by any other route would have whatever body that route wrote.
+
+    BOTH trailers or nothing. A half-read claim would name a record with no version to re-evaluate
+    it under, which is a basis that cannot be checked wearing the name of one that can.
+    """
+    record = SDS_CHANGE_RECORD.search(message)
+    version = SDS_POLICY_VERSION.search(message)
+    if record is None or version is None:
+        return None
+    return PolicyPermission(
+        change_record=int(record.group(1)), policy_version=int(version.group(1))
+    )
+
+
 def _landed_pull(reader: GitHubReader, repository: str, sha: str) -> dict[str, Any] | None:
     associated = reader.get(f"/repos/{repository}/commits/{sha}/pulls") or []
     for pull in associated:
@@ -221,13 +293,21 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
                 run=gate["id"],
                 outcome=gate.get("conclusion") or "unknown",
             )
-    # A squash carries the trailer through verbatim, so the landing commit almost always has it.
-    # A true merge commit does not, and the authority is the pull request's own head -- which is
-    # what `fetch-metadata` read.
+    # A squash carries both sets of trailers through verbatim, so the landing commit almost always
+    # has them. A true merge commit does not, and neither does a squash in a repository configured
+    # to write a different body -- and the authority in both cases is the pull request's own head,
+    # which is what `fetch-metadata` read and where the runner wrote its own. Fetched ONCE for both,
+    # and only when something is actually missing.
+    claim = factory_claim(message)
+    policy = policy_permission(message)
     metadata_message = message
-    if UPDATE_TYPE.search(metadata_message) is None:
+    if claim is None or policy is None or UPDATE_TYPE.search(message) is None:
         head = reader.get(f"/repos/{repository}/commits/{head_sha}")
-        metadata_message = head["commit"]["message"] if head else metadata_message
+        head_message = head["commit"]["message"] if head else ""
+        claim = claim or factory_claim(head_message)
+        policy = policy or policy_permission(head_message)
+        if head_message and UPDATE_TYPE.search(message) is None:
+            metadata_message = head_message
     return Landing(
         repository=repository,
         base_ref=base_ref,
@@ -244,6 +324,8 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
         checks=checks,
         rule=rule,
         update=update_metadata(metadata_message, detail["head"].get("ref")),
+        claim=claim,
+        policy=policy,
     )
 
 
@@ -291,9 +373,13 @@ def default_branch(reader: GitHubReader, repository: str) -> str:
 def current_rule_revision(reader: GitHubReader, repository: str, base_ref: str) -> str | None:
     """The blob sha of the gate at the branch tip, or None when the repository has no gate.
 
-    None is a real answer, not an error: three repositories in this estate deliberately have no
-    gate, and one of them cannot have one -- its own architecture guards forbid the command the
-    gate runs.
+    None is a real answer, not an error: two repositories in this estate deliberately have no
+    gate, both of them ones where landing redeploys something already serving, so they belong on
+    the routed lane instead.
+
+    Until 2026-08-15 this said THREE, and that the third could not have a gate at all -- its own
+    architecture guards forbade the command the gate runs. That repository was this one, and the
+    guards now carry a named exemption for the lane rather than a prohibition on it.
     """
     blob = reader.get(f"/repos/{repository}/contents/{GATE_PATH}", ref=base_ref)
     return blob.get("sha") if isinstance(blob, dict) else None

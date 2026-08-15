@@ -131,6 +131,49 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_deployment_observations.py::test_replay_is_idempotent_and_conflict_rejects_changed_facts",
     ),
     MatrixRow(
+        "pr merge",
+        "/api/v1/work-units/{unit_id}/pr-merge",
+        # No advisory lock and no idempotency-key replay: the guard is the UNIT ROW LOCK plus a
+        # unique record per unit. A landing is not idempotent and its failure is asymmetric -- a
+        # lost response answers 405 on retry, exactly like a refusal -- so the question "did we
+        # already do this?" is answered from our own record BEFORE the call, never by asking the
+        # remote after it. A second request with a different key replays the same record rather
+        # than acting again, which is why the key is not what makes this safe.
+        "unique UnitPrMerge per work unit + WorkUnit row lock (with_for_update), NO advisory lock",
+        "tests/services/test_pr_merge.py::test_a_repeat_replays_the_record_and_never_calls_the_remote_again",
+    ),
+    MatrixRow(
+        "estate pr merge",
+        "/api/v1/estate-pr-merge",
+        # An ADVISORY LOCK where its unit-bound sibling uses a row lock, and the difference is
+        # forced rather than stylistic: there is no unit row to lock here, and both rules that
+        # must not be raced -- one record per pull request, one landing per repository per window
+        # -- are stated over rows that may not exist yet, which `FOR UPDATE` cannot lock. Two
+        # requests would otherwise each read the same absence and each act on it.
+        "pg_advisory_xact_lock on the repository + unique EstatePrMerge per\n"
+        "(repository, pull request)",
+        "tests/services/test_estate_pr_merge.py::test_a_repeat_replays_the_record_and_never_calls_the_remote_again",
+    ),
+    MatrixRow(
+        "estate pr branch update",
+        "/api/v1/estate-pr-branch-update",
+        # NO ROW OF ITS OWN, unlike the landing above, and that difference is forced by what the
+        # act is: it is repeatable by design, because whenever the base moves again it is right to
+        # do again, so a row unique per pull request would bar the next legitimate update. What
+        # makes a KEY safe here is that it names the head -- a successful update changes the head,
+        # so a spent key can only ever bar a repeat of the same request against the same head.
+        #
+        # It DOES take the advisory lock, for a different reason than its sibling. The branch is
+        # guarded by the platform, which refuses a head that moved under the caller; the KEY is
+        # not. Two concurrent requests carrying one key would both read no spent event, both act,
+        # and the loser's commit would violate the unique index as an unhandled 500 over an act
+        # that happened twice.
+        "pg_advisory_xact_lock on the repository + unique Event per\n"
+        "idempotency_key, content-addressed over the head + expected_head_sha\n"
+        "checked against the head the answer named",
+        "tests/services/test_estate_pr_branch_update.py::test_a_repeat_replays_the_event_and_never_calls_the_remote_again",
+    ),
+    MatrixRow(
         "dispatch",
         "/api/v1/work-units/{unit_id}/dispatch",
         "unique DispatchRecord.idempotency_key + (unit, runner_attempt) guard",

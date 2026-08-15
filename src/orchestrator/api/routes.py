@@ -4,10 +4,10 @@ from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Final
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -39,6 +39,11 @@ from orchestrator.api.schemas import (
     DispatchCommandModel,
     DispatchResponse,
     ErrorResponse,
+    EstateBranchUpdateCommandModel,
+    EstateBranchUpdateResponse,
+    EstateLandingAdmissionResponse,
+    EstatePrMergeCommandModel,
+    EstatePrMergeResponse,
     EventPublicationExportCommand,
     EventPublicationQueueCommand,
     EventPublicationResponse,
@@ -67,6 +72,9 @@ from orchestrator.api.schemas import (
     PrBindingCommand,
     PrBindingResponse,
     PreflightCommandModel,
+    PrMergeAdmissionResponse,
+    PrMergeCommandModel,
+    PrMergeResponse,
     ProposedUnitCommand,
     ReadinessResponse,
     ReclaimCommand,
@@ -114,6 +122,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.change_record import ChangeRecordSource, HttpChangeRecordSource
 from orchestrator.services.claims import (
     authorize_retry,
     claim_unit,
@@ -148,7 +157,17 @@ from orchestrator.services.dispatch import (
     GitHubActionsDispatcher,
     dispatch_work_unit,
 )
-from orchestrator.services.estate_landing import HttpEstateLandingSource
+from orchestrator.services.estate_landing import EstateLandingSource, HttpEstateLandingSource
+from orchestrator.services.estate_landing_admission import estate_landing_admission
+from orchestrator.services.estate_pr_branch_update import (
+    EstateBranchUpdateCommand,
+    update_estate_pull_request_branch,
+)
+from orchestrator.services.estate_pr_merge import (
+    EstateMergeCommand,
+    GitHubEstatePullRequests,
+    land_estate_pull_request,
+)
 from orchestrator.services.event_publications import (
     EventPublicationFilters,
     export_event_publications,
@@ -216,6 +235,12 @@ from orchestrator.services.packages import (
     resolve_dependency_command,
 )
 from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
+from orchestrator.services.pr_merge import (
+    GitHubPullRequests,
+    MergeCommand,
+    land_unit_pull_request,
+)
+from orchestrator.services.pr_merge_admission import pr_merge_admission
 from orchestrator.services.reconciliation_detection import (
     ObservedTrackerItem,
     detect_observation_conditions,
@@ -257,6 +282,54 @@ def get_check_observer(settings: SettingsDep) -> CheckObserver:
 
 
 CheckObserverDep = Annotated[CheckObserver, Depends(get_check_observer)]
+
+
+def get_landing_source(settings: SettingsDep) -> EstateLandingSource:
+    """Build the thing that asks the estate what landing on a repository's default branch does.
+
+    A dependency rather than a call inside each route body so a test can substitute App Brain, and
+    so an unset URL or credential arrives as the empty string the source itself refuses on — never
+    as a source that silently answers. One definition, because two routes now ask the same
+    question and a second copy is a second place for that empty-string property to be forgotten.
+    """
+    return HttpEstateLandingSource(
+        base_url=settings.app_brain_url,
+        read_key=(
+            settings.app_brain_read_key.get_secret_value() if settings.app_brain_read_key else ""
+        ),
+        timeout_seconds=settings.app_brain_timeout_seconds,
+    )
+
+
+LandingSourceDep = Annotated[EstateLandingSource, Depends(get_landing_source)]
+
+# change-manager's own name for the pipeline that proposed changes arrive on -- the source of
+# truth is `DEPLOY_SOURCE` in AlobarQuest/change-manager `app/sources.py`, and its listing route
+# returns nothing from that pipeline unless it is named. It is resolved HERE rather than in the
+# service, alongside the base URL and the credential, because this is where this deployment's
+# cross-boundary configuration is read. It is a constant rather than a setting: an operator who
+# could change it could only ever make the question unanswerable.
+CHANGE_RECORD_PIPELINE: Final = "deploy"
+
+
+def get_change_record_source(settings: SettingsDep) -> ChangeRecordSource:
+    """Build the thing that asks the estate whether this change was routed and approved.
+
+    A dependency for the reason the estate answer's reader is one: a test can substitute
+    change-manager, and an unset URL or credential arrives as the empty string the source itself
+    refuses on -- never as a source that silently answers.
+    """
+    return HttpChangeRecordSource(
+        base_url=settings.change_record_url,
+        token=(
+            settings.change_record_token.get_secret_value() if settings.change_record_token else ""
+        ),
+        pipeline=CHANGE_RECORD_PIPELINE,
+        timeout_seconds=settings.change_record_timeout_seconds,
+    )
+
+
+ChangeRecordSourceDep = Annotated[ChangeRecordSource, Depends(get_change_record_source)]
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorResponse, "description": "Authentication required or rejected"},
@@ -618,6 +691,168 @@ def release_evidence_pack_route(
     return release_evidence_pack_response(session, revision_id)
 
 
+@router.get(
+    "/work-units/{unit_id}/pr-merge-admission",
+    response_model=PrMergeAdmissionResponse,
+)
+def pr_merge_admission_route(
+    unit_id: UUID,
+    _actor: ActorDep,
+    session: SessionDep,
+    landing_source: LandingSourceDep,
+    record_source: ChangeRecordSourceDep,
+) -> object:
+    """ADR-0020 Increment 4a: may the factory land this unit's pull request, and if not, why?
+
+    **Report-only. Nothing here acts, and nothing that acts exists yet.** It is served so the
+    composed answer can be read against real completed units before anything obeys it.
+
+    Authentication-only, no role gate, matching the evidence-pack routes: it is a read over
+    canonical rows plus one read-only question to the estate, and every actor that can read a
+    unit's evidentiary record can read this.
+    """
+    return pr_merge_admission(session, unit_id, landing_source, record_source)
+
+
+@router.get("/estate-pr-merge-admission", response_model=EstateLandingAdmissionResponse)
+def estate_landing_admission_route(
+    repository: Annotated[str, Query(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)],
+    pr_number: Annotated[int, Query(gt=0)],
+    _actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+    record_source: ChangeRecordSourceDep,
+) -> object:
+    """ADR-0019 Increment 5b: may this pull request be landed, and if not, why?
+
+    **Report-only.** It is what makes a night that lands nothing legible: every held pull request
+    names the condition it misses, and a first pass that reports four held for freshness is the
+    condition working rather than the lane failing.
+
+    The credentials are resolved once and fed to both this answer and the act, so the gate can
+    never attest to credentials the actor does not hold.
+    """
+    credentials = github_app_credentials(settings)
+    return estate_landing_admission(
+        session,
+        repository,
+        pr_number,
+        landing_source,
+        record_source,
+        GitHubEstatePullRequests(token_provider_for(credentials)),
+        enabled=settings.estate_landing_enabled,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.post("/estate-pr-merge", response_model=EstatePrMergeResponse)
+def estate_pr_merge_route(
+    body: EstatePrMergeCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+    record_source: ChangeRecordSourceDep,
+) -> object:
+    """ADR-0019 Increment 5b: the orchestrator lands a pull request that has no work unit.
+
+    Its caller is a scheduled one, which is why this path has an off-switch where its unit-bound
+    sibling deliberately has none. Unconfigured refuses.
+    """
+    credentials = github_app_credentials(settings)
+    gateway = GitHubEstatePullRequests(token_provider_for(credentials))
+    record = land_estate_pull_request(
+        session,
+        EstateMergeCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_head_sha=body.expected_head_sha,
+        ),
+        gateway,
+        landing_source,
+        record_source,
+        enabled=settings.estate_landing_enabled,
+        credentials_configured=credentials is not None,
+    )
+    return record
+
+
+@router.post("/estate-pr-branch-update", response_model=EstateBranchUpdateResponse)
+def estate_pr_branch_update_route(
+    body: EstateBranchUpdateCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+    record_source: ChangeRecordSourceDep,
+) -> object:
+    """ADR-0019 Increment 6: the lane brings up to date a branch it has itself put behind.
+
+    The same off-switch and the same credentials as the landing, resolved the same way and read
+    off the same composed answer -- so a deployment that may not land may not touch a branch
+    either, by the term that already says so rather than by a second one.
+    """
+    credentials = github_app_credentials(settings)
+    gateway = GitHubEstatePullRequests(token_provider_for(credentials))
+    return update_estate_pull_request_branch(
+        session,
+        EstateBranchUpdateCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_head_sha=body.expected_head_sha,
+        ),
+        gateway,
+        landing_source,
+        record_source,
+        enabled=settings.estate_landing_enabled,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.post("/work-units/{unit_id}/pr-merge", response_model=PrMergeResponse)
+def pr_merge_route(
+    unit_id: UUID,
+    body: PrMergeCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+    record_source: ChangeRecordSourceDep,
+) -> object:
+    """ADR-0020 Increment 4b: the factory lands its own pull request.
+
+    **Its caller is whoever drives verification, immediately afterwards.** Nothing in this
+    repository is scheduled except the landing ledger, and this is deliberately not the exception:
+    a scheduled closer is its own increment with its own decision, and the no-off-switch ruling is
+    explicitly void if one is ever proposed.
+
+    One credential resolution feeds the gateway, exactly as the workflow trigger does — so the
+    thing that acts and the thing that reports what it may do can never disagree about which
+    credentials are in play.
+    """
+    # One resolution feeds both the gate and the actor, so the gate can never attest to
+    # credentials the gateway does not actually hold — the rule the workflow trigger states.
+    credentials = github_app_credentials(settings)
+    return land_unit_pull_request(
+        session,
+        MergeCommand(
+            unit_id=unit_id,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_version=body.expected_version,
+        ),
+        GitHubPullRequests(token_provider_for(credentials)),
+        landing_source,
+        record_source,
+        credentials is not None,
+    )
+
+
 @router.post("/work-units/{unit_id}/dispatch", response_model=DispatchResponse)
 def dispatch_route(
     unit_id: UUID,
@@ -625,6 +860,7 @@ def dispatch_route(
     actor: ActorDep,
     session: SessionDep,
     settings: SettingsDep,
+    landing_source: LandingSourceDep,
 ) -> object:
     # One resolution feeds both the admission gate and the minter, so the gate can never
     # attest to credentials the dispatcher does not actually use.
@@ -641,16 +877,6 @@ def dispatch_route(
         orchestrator_url=settings.dispatch_orchestrator_url,
     )
     dispatcher = GitHubActionsDispatcher(token_provider_for(credentials))
-    # Built here rather than inside the service so the admission path can be exercised without a
-    # network, and so an unset URL or credential arrives as the empty string the source itself
-    # refuses on — never as a source that silently answers.
-    landing_source = HttpEstateLandingSource(
-        base_url=settings.app_brain_url,
-        read_key=(
-            settings.app_brain_read_key.get_secret_value() if settings.app_brain_read_key else ""
-        ),
-        timeout_seconds=settings.app_brain_timeout_seconds,
-    )
     return dispatch_work_unit(
         session,
         DispatchCommand(

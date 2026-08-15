@@ -4,7 +4,7 @@ WS-4.2 (this repo's dispatch adapter) and WS-4.1 (`AlobarQuest/factory-runner`) 
 built and unit-tested against their *own* fixtures, and those fixtures disagreed: the
 orchestrator's admission gate wanted `required_capability="repository_write"` in the
 envelope, while the runner's `validate_authority` hard-rejects any capability outside its
-six-term vocabulary. Nothing ever validated one envelope against both ends, so the seam
+own vocabulary. Nothing ever validated one envelope against both ends, so the seam
 had never executed.
 
 This module pins the shared envelope. `tests/fixtures/runner_authority_envelope.json` is
@@ -61,10 +61,10 @@ from tests.services.test_decomposition import package_ac_ids
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
 
 # The orchestrator's shipped capability vocabulary is the single orchestrator-side source of
-# truth for the runner six. It must be DERIVED from this byte-pinned envelope, not a second
-# hand-maintained copy -- `test_capability_vocabulary_is_derived_from_the_golden_envelope`
-# asserts exactly that, so a divergence (here or in the module) is loud. factory-runner mirrors
-# the same six in its own `capability_vocabulary` and raises AuthorityError on anything outside
+# truth for the runner set. It must be DERIVED from the byte-pinned contract fixture, not a
+# second hand-maintained copy -- `test_capability_vocabulary_is_derived_from_the_pinned_contract`
+# asserts exactly that, so a divergence (there or in the module) is loud. factory-runner mirrors
+# the same names in its own `capability_vocabulary` and raises AuthorityError on anything outside
 # them, so an orchestrator envelope that strays can never be executed.
 RUNNER_SUPPORTED_CAPABILITIES = RUNNER_CAPABILITIES
 
@@ -81,10 +81,17 @@ CONTRACT_SHA256_EDIT = "90b73de69bdd9d5ee88be38b0a0ac2eeff1e4bb467ec72062cd1b70f
 # bytes are satisfied by a one-term level set -- a runner that had dropped "prohibited" would
 # keep them green. The level vocabulary therefore gets its own byte-identical file, from which
 # both repositories derive their shipped set.
+#
+# WS-P3.7 moved the capability NAMES here for the same reason one level further out. This file
+# is the DECLARATION; the two envelopes above are SPECIMENS of dispatched work, and a name the
+# factory has never dispatched has no honest place in a record of what it did. Deriving the
+# vocabulary from a specimen forced one in, and the known-good authority pattern -- whose
+# totality rule refuses any envelope carrying a capability it did not describe -- reddened
+# twelve tests saying so. Each envelope is now asserted to be a SUBSET of the declaration.
 FIXTURE_CONTRACT = (
     Path(__file__).resolve().parents[1] / "fixtures" / "runner_envelope_contract.json"
 )
-CONTRACT_SHA256_SURFACE = "c518e3a26a1e0d109ece3ccccaca0bc2fc7a069e26cba470e1f940742a55a1c0"
+CONTRACT_SHA256_SURFACE = "74fe8042d2fc7b907ba6239758e28343071729234080d93e31114004c72a3867"
 
 TARGET_REPOSITORY = "AlobarQuest/change-manager"
 CHANGE_CLASS = "dependency-update"
@@ -301,16 +308,33 @@ def test_capability_levels_are_derived_from_the_pinned_level_contract() -> None:
     assert RUNNER_CAPABILITY_LEVELS == frozenset(golden_levels())
 
 
-def test_capability_vocabulary_is_derived_from_the_golden_envelope() -> None:
-    """The shipped runner vocabulary IS the envelope's capability set -- not a second copy.
+def test_capability_vocabulary_is_derived_from_the_pinned_contract() -> None:
+    """The shipped runner vocabulary IS the pinned declaration -- not a second copy.
 
     A hash pin proves the fixture file is unchanged; it says nothing about whether production
     code consumes it. This asserts the derivation instead: the module orchestrator ingress reads
-    equals the capability keys of the byte-pinned cross-repo envelope. Hardcoding the module's
-    runner set and adding a term reds this (the WS-P2.16 negative control), where flipping a
-    fixture byte would only red the hash test -- which proves nothing about use.
+    equals the names of the byte-pinned cross-repo contract. Hardcoding the module's runner set
+    and adding a term reds this (the WS-P2.16 negative control), where flipping a fixture byte
+    would only red the hash test -- which proves nothing about use.
+
+    It stays a module literal rather than a read of the fixture because `tests/` is not in the
+    image: production ingress reads the module, and a vocabulary that loaded a fixture would
+    work in the suite and be absent in the container.
     """
-    assert RUNNER_CAPABILITIES == frozenset(golden_envelope()["capabilities"])
+    assert RUNNER_CAPABILITIES == frozenset(golden_contract()["capabilities"])
+
+
+def test_each_golden_envelope_names_only_declared_capabilities() -> None:
+    """A specimen is a SUBSET of the vocabulary, never equal to it.
+
+    Equality was what forced a capability the factory has never dispatched into a fixture whose
+    value is that it records what the factory dispatched -- and the known-good authority pattern,
+    which refuses any envelope carrying a capability it did not describe, reddened on it.
+    Subset keeps both envelopes honest and still catches the thing that matters: a real envelope
+    naming something the runner would refuse.
+    """
+    assert frozenset(golden_envelope()["capabilities"]) <= RUNNER_CAPABILITIES
+    assert frozenset(golden_edit_envelope()["capabilities"]) <= RUNNER_CAPABILITIES
 
 
 def test_golden_envelope_satisfies_the_runner_vocabulary() -> None:
@@ -337,7 +361,7 @@ def test_edit_envelope_satisfies_the_runner_vocabulary() -> None:
     `mutation_commands` is honestly absent rather than present-and-empty."""
     envelope = golden_edit_envelope()
 
-    assert frozenset(envelope["capabilities"]) == RUNNER_CAPABILITIES
+    assert frozenset(envelope["capabilities"]) <= RUNNER_CAPABILITIES
     assert set(envelope["capabilities"].values()) <= RUNNER_SUPPORTED_LEVELS
     assert envelope["change_class"] == EDIT_CHANGE_CLASS
     assert set(envelope["constraints"]) == {

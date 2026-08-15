@@ -13,6 +13,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
+from orchestrator.api.schemas import (
+    EvidencePackAdjudicationResponse,
+    EvidencePackCriterionRefusalResponse,
+    EvidencePackResponse,
+    EvidencePackVerifierDecidedResponse,
+)
 from orchestrator.persistence.models import Adjudication, Approval, Evidence, WorkUnit
 from tests.api.test_lifecycle_api import HUMAN, WORKER
 from tests.api.test_status_ledger_api import _register_ready_unit
@@ -117,6 +123,87 @@ def test_evidence_pack_route_returns_the_structured_pack(
     )
     assert body["events"], "the lifecycle transitions must be visible in the pack"
     assert body["event_publications"] == []
+
+
+def test_the_served_pack_carries_the_deciding_role_and_the_evidence_it_cites(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """WS-P3.7. Asserted on the SERVED BODY, never on the service dict: a `response_model` drops
+    every key the model does not declare, silently and without an error, so "the service returns
+    it" has never been evidence "the consumer receives it" (WS-P2.1, WS-P2.12)."""
+    unit_id, _lease = _built_and_evidenced_unit(db_client, migrated_engine, "evidence-pack-role")
+
+    body = db_client.get(f"/api/v1/work-units/{unit_id}/evidence-pack", headers=WORKER).json()
+
+    waiver = next(row for row in body["adjudications"] if row["outcome"] == "waived")
+    assert waiver["decided_by_role"] == "human"
+    # `failed_evidence_id` is the waiver field and answers a different question; `evidence_id` is
+    # the evidence the decision was recorded against, and was projected nowhere until now.
+    assert "evidence_id" in waiver
+
+
+def test_the_served_pack_answers_whether_the_verifier_decided_every_criterion(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """The condition ADR-0020 rests on, readable off-process with ordinary credentials -- no
+    `/history` parsing and no opaque event payload. This unit's one criterion was WAIVED by a
+    human, so the answer is no, for three separately-named reasons."""
+    unit_id, _lease = _built_and_evidenced_unit(db_client, migrated_engine, "evidence-pack-vdc")
+
+    body = db_client.get(f"/api/v1/work-units/{unit_id}/evidence-pack", headers=WORKER).json()
+
+    answer = body["verifier_decided_completion"]
+    assert answer["satisfied"] is False
+    assert {refusal["code"] for refusal in answer["refusals"]} == {
+        # ADR-0020's first clause: a waived criterion rests on evidence that FAILED, which is
+        # nothing the orchestrator observed and passed.
+        "criterion_evidence_not_observed",
+        "criterion_waived",
+        "outcome_does_not_settle_criterion",
+        "decider_was_not_the_verifier",
+    }
+    assert {refusal["ac_id"] for refusal in answer["refusals"]} == {"ac-1"}
+
+
+def test_the_pack_models_declare_exactly_the_fields_the_route_serves() -> None:
+    """A literal pin, not a derived one. `response_model` fails by SILENT OMISSION, so the field
+    set has to be asserted somewhere that cannot shrink along with the code -- a set built from the
+    model itself would agree with the model however wrong the model became."""
+    assert set(EvidencePackResponse.model_fields) == {
+        "work_unit",
+        "provenance",
+        "authority",
+        "dependencies",
+        "claims",
+        "evidence",
+        "adjudications",
+        "verifier_decided_completion",
+        "approvals",
+        "event_publications",
+        "events",
+    }
+    assert set(EvidencePackAdjudicationResponse.model_fields) == {
+        "id",
+        "ac_id",
+        "outcome",
+        "current",
+        "decided_by",
+        "decided_by_role",
+        "evidence_id",
+        "rationale",
+        "risk",
+        "follow_up",
+        "scope",
+        "expires_at",
+        "failed_evidence_id",
+    }
+    assert set(EvidencePackVerifierDecidedResponse.model_fields) == {
+        "satisfied",
+        "decided_by_verifier",
+        "evidence_observed",
+        "refusals",
+    }
+    assert set(EvidencePackCriterionRefusalResponse.model_fields) == {"ac_id", "code"}
 
 
 def test_evidence_pack_route_is_readable_by_the_worker_credential(

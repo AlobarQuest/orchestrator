@@ -523,6 +523,10 @@ def _record_one_adjudication(
         outcome=outcome,
         evidence_id=evidence_id,
         decided_by=actor.actor_id,
+        # The actor's KIND, taken from the same authenticated context `decided_by` comes from.
+        # Nothing is derived: `_authorize_outcome` has already refused every role that may not
+        # record this outcome, so the value written is the role that was actually authorized.
+        decided_by_role=actor.role.value,
         decided_at=now,
         rationale=rationale,
         failed_evidence_id=failed_evidence_id,
