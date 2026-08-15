@@ -15,9 +15,10 @@ measured it away. Coolify's swap is a ROLLING update -- the old container serves
 domain until the new one is healthy -- and the three `brain-code` deployments whose logs are
 still readable took 43, 59 and 73 seconds. (Three of thirty: the listing tool inlines full logs
 and truncates, so the other 27 were not examined. The mechanism does not depend on the sample.)
-`brain`'s job sleeps 30 seconds and breaks on the first 2xx, so in all three the poll that passed
+`brain`'s job slept 30 seconds and broke on the first 2xx, so in all three the poll that passed
 was answered by the container that was already running. `change-manager`'s own workflow says so in
-a comment, which is why it stopped doing it. A liveness poll is `trigger_only` plus "the site was
+a comment, which is why it stopped doing it; `brain` stopped on 2026-08-14, and `c5c0887` below is
+the revision where it did. A liveness poll is `trigger_only` plus "the site was
 not already down", so the LEVEL --
 the machine-readable rung a consumer keys on -- must not claim otherwise. What each revision
 actually checked is preserved verbatim in `attests`, which is where a difference that carries no
@@ -196,6 +197,31 @@ _BRAIN_FOUR = Attestation(
     trigger_step="Deploy brain apps",
 )
 
+# `1d9e7d3`, 2026-08-14 (PR #47) -- the liveness poll is replaced by a REVISION poll, against an
+# image built with GIT_SHA=${{ github.sha }} and a `/api/health` that reports it. This is the
+# improvement `change-manager` made to its own workflow on 2026-08-07, and the condition deploy
+# policy v1 named for `brain` joining the unattended landing lane.
+#
+# THE LITERAL IS TRANSCRIBED, NOT CORRECTED, and here that rule decides the wording. All four
+# applications are configured today and all four reported the new revision on this workflow's
+# first live run -- but the bytes still skip an application whose UUID secret is unset, in the
+# rollout loop and in the verification loop alike, so "all four" is a fact about secrets no pin
+# over bytes can resolve. What the bytes DO now refuse, which `6cad4cf9` did not, is an empty
+# subject list: a run that triggered nothing fails instead of passing having deployed nothing.
+# So the honest reading is "every application it triggered, and never none".
+_BRAIN_VERIFIES_REVISION = Attestation(
+    revision="c5c088719cd340f0071b875c6a82439292ed8756",
+    level=ATTESTS_REVISION,
+    attests=(
+        "every brain application this rollout triggered answered /api/health reporting the "
+        "merged commit as its revision and a status of ok, within 600 seconds; an application "
+        "whose Coolify UUID secret is unset is neither triggered nor checked, and a rollout "
+        "that triggered none fails rather than passing empty"
+    ),
+    rollout_job="deploy",
+    trigger_step="Deploy brain apps",
+)
+
 REGISTRY: dict[str, Attestation] = {
     attestation.revision: attestation
     for attestation in (
@@ -205,6 +231,7 @@ REGISTRY: dict[str, Attestation] = {
         _BRAIN_THREE,
         _BRAIN_THREE_NO_COMPOSE,
         _BRAIN_FOUR,
+        _BRAIN_VERIFIES_REVISION,
     )
 }
 
