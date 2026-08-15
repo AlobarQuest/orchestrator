@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from orchestrator.kernel.states import WAIVER_RISK_CLASSES
+from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorRole
 
 
 class Base(DeclarativeBase):
@@ -92,6 +92,20 @@ OBSERVATION_TYPES = (
     "metric",
     "alert",
     "inventory",
+    # A commit reached a repository's default branch, however it got there. The ROUTE it took
+    # -- auto-merged, merged by a person, pushed at the branch -- is `permitted_by` on the
+    # facts, not a second observation type. Deliberately not `github_pr`, which already means
+    # "a fact about a pull request bound to a work unit" in the reconciliation lane
+    # (`reconciliation_runner/facts.py`, `services/reconciliation_detection.py`); the two
+    # never collide today only because their subject_reference namespaces are disjoint, which
+    # is a coincidence to rely on rather than a design.
+    "landing",
+    # One repository's answer from one pass of the landing audit (WS-P3.6 Increment 3): were the
+    # landings the rule permitted actually within it, and is anything eligible and green sitting
+    # unlanded. A separate type from `landing` because it is a JUDGMENT about records rather than
+    # a record, and a row is written every pass whether or not anything was found -- so its
+    # ABSENCE is the signal that the audit stopped running.
+    "landing_audit",
 )
 OBSERVATION_STATUSES = (
     "passed",
@@ -453,6 +467,15 @@ class Adjudication(UUIDPrimaryKey, Base):
             + ")",
             name="ck_adjudications_risk_class",
         ),
+        # WS-P3.7. NULL is every row written before the column existed, and it must read as
+        # *unknown* rather than as *not human* -- the historical population is not clean, so no
+        # boundary drawn through it is sound (ADR-0014). Not back-filled, deliberately.
+        CheckConstraint(
+            "decided_by_role IS NULL OR decided_by_role IN ("
+            + ", ".join(f"'{role.value}'" for role in ActorRole)
+            + ")",
+            name="ck_adjudications_decided_by_role",
+        ),
     )
 
     work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
@@ -463,6 +486,11 @@ class Adjudication(UUIDPrimaryKey, Base):
     outcome: Mapped[str] = mapped_column(String)
     evidence_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("evidence.id"))
     decided_by: Mapped[str] = mapped_column(String)
+    # The KIND of actor that decided, recorded at the moment of the decision. `decided_by` is a
+    # free-text identity string with no naming contract, so classifying it after the fact is a
+    # heuristic keyed on spelling; this is a fact. Written once, by the single construction site
+    # in `services/evidence.py`, from the authenticated actor's own role.
+    decided_by_role: Mapped[str | None] = mapped_column(String)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     rationale: Mapped[str] = mapped_column(Text)
     failed_evidence_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("evidence.id"))
@@ -1208,6 +1236,122 @@ class UnitPrBinding(Base):
     binding_attempt: Mapped[int | None] = mapped_column(Integer)
     verification_read_head_sha: Mapped[str | None] = mapped_column(String)
     verification_read_attempt: Mapped[int | None] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# What the record of a landing can say. Three, because the middle one is the whole reason the
+# record exists: a landing whose response was lost looks identical to a refusal when you ask
+# GitHub again, so a retry that finds the pull request already landed must be able to say so
+# rather than write `refused` over something that happened.
+PR_MERGE_STATUSES = ("merged", "already_merged", "refused")
+
+
+class UnitPrMerge(UUIDPrimaryKey, Base):
+    """The orchestrator's own record that it asked GitHub to land a unit's pull request.
+
+    **One row per unit, ever, and the uniqueness is the point.** A landing is not idempotent and
+    its failure is asymmetric: if the call succeeds and the response is lost, asking again returns
+    405, which is shaped exactly like a refusal. So "did we already do this?" cannot be answered by
+    asking GitHub after the fact — it is answered here, before the call.
+
+    **A row is written only when the factory ACTED.** An admission refusal writes nothing: it is
+    already reportable from the read surface, and recording it here would consume the unit's one
+    row and refuse every later legitimate attempt. So the presence of a row means the call was
+    made, which is exactly what a repeat needs to detect.
+
+    This is deliberately NOT the ledger's record of the landing. The ledger observes GitHub
+    independently and attributes what it finds; this is the orchestrator's account of its own act,
+    and the two agreeing is what makes the account auditable rather than self-certified.
+    """
+
+    __tablename__ = "unit_pr_merge"
+    __table_args__ = (
+        UniqueConstraint("work_unit_id", name="uq_unit_pr_merge_work_unit"),
+        UniqueConstraint("idempotency_key", name="uq_unit_pr_merge_idempotency"),
+        CheckConstraint(
+            "status IN ({})".format(", ".join(f"'{status}'" for status in PR_MERGE_STATUSES)),
+            name="ck_unit_pr_merge_status",
+        ),
+        CheckConstraint("pr_number > 0", name="ck_unit_pr_merge_positive_pr_number"),
+        CheckConstraint(
+            "repository <> '' AND head_sha <> '' AND idempotency_key <> ''",
+            name="ck_unit_pr_merge_required_text",
+        ),
+    )
+
+    work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
+    repository: Mapped[str] = mapped_column(String)
+    pr_number: Mapped[int] = mapped_column(Integer)
+    # The head the criteria were adjudicated at — the ARMED head, which is also what the call
+    # named, so the remote refused anything else.
+    head_sha: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)
+    reason_code: Mapped[str | None] = mapped_column(String)
+    merge_commit_sha: Mapped[str | None] = mapped_column(String)
+    github_status: Mapped[int | None] = mapped_column(Integer)
+    event_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("events.id"))
+    idempotency_key: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EstatePrMerge(UUIDPrimaryKey, Base):
+    """The orchestrator's own record that it asked GitHub to land a pull request that has no unit.
+
+    ADR-0019 Increment 5b. Sibling to `unit_pr_merge`, and separate rather than shared because the
+    two are authorised by different things and one of them has no work unit at all: that table's
+    unit id is not nullable, and making it so would turn "which landing is this?" into a question
+    every reader has to ask.
+
+    **One row per (repository, pull request), ever.** The uniqueness carries the same weight it
+    does for a unit's landing: a landing is not idempotent and its failure is asymmetric, so
+    "did we already do this?" is answered here before the call rather than by asking GitHub after
+    it, where a lost success and a refusal answer alike.
+
+    **A row is written only when the orchestrator ACTED.** A refusal writes nothing -- the reasons
+    are already served by the read surface, and consuming the pull request's one row would bar
+    every later legitimate attempt on a condition that clears by itself.
+
+    `change_record_id` and `policy_version` are the PERMISSION, written down at the moment it was
+    exercised. The standing condition behind them is re-derivable and will move; the instant at
+    which it authorised an irreversible act cannot be recovered later from anything else.
+    """
+
+    __tablename__ = "estate_pr_merge"
+    __table_args__ = (
+        UniqueConstraint("repository", "pr_number", name="uq_estate_pr_merge_subject"),
+        UniqueConstraint("idempotency_key", name="uq_estate_pr_merge_idempotency"),
+        CheckConstraint(
+            "status IN ({})".format(", ".join(f"'{status}'" for status in PR_MERGE_STATUSES)),
+            name="ck_estate_pr_merge_status",
+        ),
+        CheckConstraint("pr_number > 0", name="ck_estate_pr_merge_positive_pr_number"),
+        CheckConstraint(
+            "repository <> '' AND head_sha <> '' AND idempotency_key <> ''",
+            name="ck_estate_pr_merge_required_text",
+        ),
+    )
+
+    # Lower-cased at every write, because GitHub names are case-insensitive and the uniqueness
+    # above is what stops a second landing. Two spellings of one repository would be two rows.
+    repository: Mapped[str] = mapped_column(String)
+    pr_number: Mapped[int] = mapped_column(Integer)
+    # The head the terms were evaluated against, and what the call NAMED, so the remote refused
+    # anything else -- which closes the window between deciding and acting without this side
+    # having had to observe a push.
+    head_sha: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)
+    reason_code: Mapped[str | None] = mapped_column(String)
+    merge_commit_sha: Mapped[str | None] = mapped_column(String)
+    github_status: Mapped[int | None] = mapped_column(Integer)
+    # The record that permitted this, in the estate's change service. An integer belonging to a
+    # FOREIGN system, so deliberately no foreign key: this database cannot enforce it and a
+    # constraint that cannot be enforced is a claim rather than a guarantee.
+    change_record_id: Mapped[int | None] = mapped_column(Integer)
+    policy_version: Mapped[int | None] = mapped_column(Integer)
+    event_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("events.id"))
+    idempotency_key: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

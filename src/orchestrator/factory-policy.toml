@@ -1,0 +1,306 @@
+# factory-policy.toml — the SOLE SOURCE of the four policies WS-P2.18 replaces:
+# the authority known-good pattern, the change window, the per-key lease, and
+# self-update. One versioned document, keyed on REACH (ADR-0009): what a
+# package's work touches when it runs.
+#
+# WHY THIS IS A SEPARATE FILE FROM routing-policy.toml (ADR-0010). That file
+# lives in AlobarQuest/intent-packages, is read by `factory decompose` there,
+# and keys on `change_class` to choose a MODEL. This one lives here, is read by
+# the orchestrator at request time, and keys on `reach` to decide whether work
+# may run at all. The two keys are disjoint, so there is nothing the two files
+# must agree about — and folding this into that one would have manufactured
+# exactly that obligation, across a repository boundary, with nothing checking
+# it. What is inherited is the FORM: one versioned document, per-row provenance,
+# an explicit editing contract, and no implicit default.
+#
+# THE READING RULE. This document can only ever REFUSE. No value in this schema
+# permits anything. An empty answer means "this policy raises no objection",
+# which is not the same as "go ahead": permission is the conjunction of every
+# admission check, and the hard off-switch (ORCHESTRATOR_DISPATCH_ENABLED) is
+# one of those checks. Nothing written here can widen what that switch allows,
+# because there is no way to write a permission at all.
+#
+# NO IMPLICIT DEFAULT, AND TOTAL COVERAGE. Every member of the reach vocabulary
+# (src/orchestrator/reach_vocabulary.py) has exactly one row here, and a row for
+# a member that vocabulary does not know is an error. A new reach member with no
+# row does not fall back to something permissive: this file stops loading, and a
+# document that does not load permits nothing. That follows routing-policy.toml,
+# where a change-class absent from the table is a hard error rather than a
+# default.
+#
+# EDITING CONTRACT. Every change is a versioned edit to THIS FILE — update the
+# row, its `rationale`, and its `decided` date. Never an inline override
+# anywhere else. `version` is the SCHEMA version, not an edit counter: bump it
+# only when the shape changes, and only in the same commit that teaches the
+# loader the new version and ships the code that reads the new field. The loader
+# accepts exactly the versions it knows; one it does not know is a named, loud
+# failure, never a best-effort read.
+#
+# WHAT IS DELIBERATELY NOT HERE YET. Beyond `known_good` below, the rows carry
+# only their provenance. Each remaining policy lands its own field in the
+# increment that ships the code reading it, as an additive schema-version bump.
+# A field with no consumer is a second copy of a value that still lives
+# somewhere else, and this repository has paid four times over for two copies of
+# one value.
+#
+# KNOWN-GOOD PATTERNS ARE STILL REFUSALS (schema 2, ADR-0011). A `known_good`
+# entry grants nothing. Every envelope draws the `authority_envelope_novel`
+# objection — a human must approve it — and a pattern only WITHHOLDS that
+# objection from an envelope it recognises completely. So the human requirement
+# is the default and recognition is the exception, and a pattern that does not
+# load, a reach nobody declared, and a field no pattern accounts for all resolve
+# the same way: to asking. Patterns are DECIDED here, never learned from what
+# was approved before.
+#
+# GRANDFATHERING IS A LIST THAT EMPTIES ITSELF (schema 3). From this version on,
+# a package that declares no reach cannot be admitted at all. Revisions approved
+# before the field existed would be bricked by that, so `[grandfathered]` names
+# them — by REVISION ID, one at a time, never by a date and never by "reach is
+# absent". Both alternatives are permanent holes: a date still absolves a
+# package authored before it and broken down after it, and keying on absence
+# absolves every future package that forgets. A revision not on this list cannot
+# be grandfathered whenever it was made, which is a boundary tomorrow's package
+# cannot satisfy.
+#
+# AND IT IS REQUIRED TO DIE. Every listed revision is a subject only while it can
+# still produce work needing admission — it has not been broken down yet, or one
+# of its units is still moving. When none of them can, this table has no subject
+# left and the document REFUSES TO LOAD until it is deleted. A document that does
+# not load permits nothing, so the failure is fail-closed and loud, and the fix is
+# deleting these four lines. That is deliberate: this repository already paid for
+# a rule that was switched off and reported nothing for a whole workstream, and a
+# rule that expires itself beats a rule plus a note to remove it.
+#
+# A CHANGE WINDOW IS WRITTEN AS A BOUNDARY, NOT AS A GRANT (schema 4). A
+# `change_window` names the hours in which policy raises no objection to work of
+# that reach STARTING; outside them the answer is `outside_change_window`. The
+# information is the same either way and the polarity is the guarantee — "work may
+# run between these hours" is a permission, and there is no way to write one here.
+# A row with no window is not a window of zero length and not a default: it is this
+# policy having no objection on those grounds, which is why two of the four rows
+# below carry none. A window that fails to parse is the opposite — the whole
+# document stops loading, and a document that does not load permits nothing.
+#
+# THE WINDOW GOVERNS ADMISSION, NEVER EXECUTION. It is consulted when work is
+# about to be sent and at no other moment. Work already running is never
+# interrupted by a window closing over it: the worker calls this orchestrator back
+# at the END of its run, so cutting it off there would strand the unit with its
+# attempt spent rather than stop it cleanly.
+#
+# WINDOWS COMPOSE BY INTERSECTION, so choose them accordingly. Work that reaches
+# two places must be inside BOTH of their windows, exactly as it must clear both of
+# their other objections. Two rows whose hours do not overlap therefore make any
+# package reaching both of them unrunnable — not restrained, unrunnable — so a
+# window is added here only after asking which rows it will occur alongside. The
+# two declared below are deliberately identical for that reason.
+#
+# TIME IS LOCAL AND THE ZONE IS EXPLICIT. A window is about a person's day, and a
+# day is a local thing; a naive reading would be wrong on a server, which runs in
+# UTC, and wrong twice a year everywhere else. `start` after `end` wraps midnight.
+# On the day an hour occurs twice, a window covering it is open across both
+# occurrences; on the day an hour does not occur, a window covering only that hour
+# is open for no time at all. Both follow from converting an instant into this zone
+# rather than reading a clock, and neither needs a special case.
+#
+# CHANGING A WINDOW COSTS A RELEASE, AND A RELEASE RESTARTS THIS PROCESS. Noticing
+# an edit is free — this file is re-read on every consultation and never cached —
+# but getting new bytes onto a running process is not. So a window is set once and
+# left, and it is edited only when no run is live: the workflow concluded, the unit
+# out of `executing`, cost actuals recorded.
+#
+# A LEASE IS A REFUSAL TO REASSIGN, AND IT CAN ONLY EVER GET LONGER (schema 5,
+# ADR-0013). A `lease` names how long this orchestrator refuses to hand a unit of
+# that reach to a second claimant. It is a number rather than a code, and it is
+# still a refusal in the only sense that matters: every value writable here
+# LENGTHENS the period in which reassignment is refused. The loader rejects
+# anything at or below the default the build already grants, so there is no way to
+# write a shorter hold, and anything above the ceiling the build owns, so there is
+# no way to write one long enough to switch reassignment off.
+#
+# THE DEFAULT IS THE UNWRITTEN ROW, AND IT IS WHAT UNDESCRIBED WORK GETS. A row
+# with no `lease` is not a row with no lease: the kernel's default applies, and it
+# is also what a unit whose reach nobody declared receives. So the number here is
+# never "how long may this run", only "how much longer than usual must this one
+# be left alone".
+#
+# LEASES COMPOSE BY MAXIMUM, which is the same direction everything else in this
+# document composes in: adding a reach member can only lengthen the answer, exactly
+# as it can only lengthen the list of objections. That is the opposite arrangement
+# from the change window and for the same reason — the safe direction. Shortening
+# a hold is what hands a live worker's unit to somebody else, and a worker whose
+# lease lapses mid-run cannot even record its evidence, because the orchestrator
+# refuses the write. Lengthening one costs a wait before a genuinely dead attempt
+# can be reclaimed, and nothing reclaims automatically, so that cost is paid by an
+# operator who chooses to pay it.
+#
+# AND IT IS NOT STALL CONTROL. Nothing here notices a worker that has hung; a lapse
+# only makes the unit reclaimable by somebody who asks. The lease was never
+# bounding that and tuning it does not begin to. The hole is real and it is
+# WS-P2.19's.
+
+version = 5
+
+[grandfathered]
+rationale = """
+The one approved revision that predates `reach` and has not been broken down
+yet, so it is the only record that can still produce a work unit which the new
+admission term would refuse for a declaration nobody could have written. The
+other twenty are already spent — every unit they produced is terminal, and a
+settled unit is never admitted again — so they need no exemption and get none.
+Backfilling was rejected instead: editing an approved package.yaml invalidates
+the lineage approval hashed over it, so conforming the old population would cost
+twenty-four fresh human approvals to satisfy a rule that will never be applied
+to it. Follow-up minting is deliberately NOT covered here; it supplies reach or
+refuses, so this list never has to grow to cover the revisions that mint.
+"""
+decided = "2026-08-01"
+revisions = ["f921c842-52b0-46f1-8568-caf5429d2d6b"]
+
+[reach.source_repository]
+rationale = """
+Two thirds of the authored population reaches only here. Writes land in a git
+repository and nothing outside it changes until something separately acts on the
+result, so work of this reach is inert on arrival — the least a policy needs to
+restrain, and the reach where suppressing a ceremonial human gate is worth the
+most.
+
+NO LEASE DECLARED, deliberately. This is the only reach whose work has been
+observed end to end here — a dependency bump ran from prepare to submit in under a
+minute — and it is the one where a second claimant arriving early costs a duplicate
+pull request rather than damage. The default hold is already an order of magnitude
+longer than the work; lengthening it would buy nothing and would be a number chosen
+to look decided.
+"""
+decided = "2026-08-01"
+
+[[reach.source_repository.known_good]]
+name = "uv dependency pin bump into a named repository"
+rationale = """
+The one shape of work this factory has taken end to end, and the shape R2 names:
+a pin moves, a lockfile follows, a pull request opens, and the target
+repository's own named check decides whether it was right. Nothing outside that
+repository changes, the whole change is one revert away, and a person reading
+the envelope learns only which version string moved — which is ceremony, not
+review. Recognised narrowly on purpose: only uv tooling (pip's mutator is a
+sed expression and npm's is an install, and neither has run here yet), only the
+repository below, only a conformance claim that is green and waives nothing, and
+only budgets at or under the profile's own defaults. Widening any of those is an
+edit to this file, decided once, and never inferred from what was approved
+before.
+"""
+decided = "2026-08-01"
+change_class = "dependency-update"
+capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "orchestrator.claim" = "allowed", "orchestrator.evidence.write" = "allowed", "repo.edit" = "allowed", "repo.read" = "allowed" }
+max_attempts = 3
+max_llm_calls = 4
+conformance_status = "green"
+target_repositories = ["AlobarQuest/change-manager"]
+# `uv add` edits the manifest and `uv lock` resolves the tree; `uv lock --check`
+# is the verifier and shares the second prefix. `uv run` is deliberately absent:
+# it is a way to run any program at all, and the delivery profile that emits
+# these lists already forbids the one verifier that used it.
+command_prefixes = ["uv add", "uv lock"]
+
+[reach.live_estate]
+rationale = """
+Something already serving is changed, so the effect is immediate and is felt by
+whatever depends on it. This is the reach a change window exists for, and it
+includes the orchestrator itself — self-update is governed here plus a second
+dimension, never by a member of its own.
+"""
+decided = "2026-08-01"
+
+[reach.live_estate.lease]
+rationale = """
+An estate change waits on things this estate runs but does not hurry: an image
+build, a container swap, a health check settling, a restart. Those are minutes of
+wall clock during which the worker is doing nothing a lease can see, and a hold
+that lapses under a run like that does not merely allow a second claimant — the
+worker cannot record its own evidence afterwards, because the orchestrator refuses
+a write from an attempt whose lease is gone. Thirty minutes is chosen against the
+slowest such sequence anybody has watched here rather than against a target, and it
+buys nothing except that the first attempt is still allowed to finish.
+"""
+decided = "2026-08-02"
+minutes = 30
+
+[reach.live_estate.change_window]
+rationale = """
+Something already serving is changed, and the change is felt the moment it lands,
+so the hours it may start in are the hours in which nobody is relying on the thing
+being changed. The night is that answer for this estate, and it is also the answer
+for the orchestrator changing itself: a restart is invisible at 03:00 and is an
+outage at 15:00. Identical to the operator-machine window on purpose — these two
+rows are the pair most likely to be declared together, and windows compose by
+intersection, so hours that did not overlap would make such work unrunnable rather
+than restrained.
+"""
+decided = "2026-08-01"
+timezone = "America/New_York"
+start = "02:00"
+end = "06:00"
+
+[reach.external_system]
+rationale = """
+State changes in a system of record this estate does not run and cannot put back
+on its own. The least reversible reach in the vocabulary, and the one where a
+wrong answer costs the most to unwind, so it earns the most restraint.
+
+NO WINDOW, and the reason is worth writing down because the absence looks like an
+oversight. A window moves WHEN work runs; it does nothing about how hard the work
+is to undo. Restraint here is a person having read the envelope, which is what
+this row gets: no known-good pattern is declared under it, so every envelope of
+this reach draws the human objection. And a window would have had to be one of two
+wrong things. The same night hours as the rows below would be ceremony, since
+nothing about an external system of record cares what time it is here. Office
+hours — "run it while somebody can notice" — reads better and is worse: they do
+not overlap the night window, and windows compose by intersection, so a package
+rotating a credential in an external console AND writing it to the operator's
+machine would have become permanently unrunnable. That shape is named in the reach
+vocabulary as a real example, not a hypothetical one.
+"""
+decided = "2026-08-01"
+
+[reach.external_system.lease]
+rationale = """
+The longest hold in the vocabulary, for the two reasons this row is already the
+most restrained. Its wall clock belongs to somebody else — a console, a registrar,
+a tracker answers when it answers — so an attempt here can be idle for a stretch
+that says nothing about whether it is alive. And it is the reach where two
+claimants acting at once cannot be undone by this estate at all, which is the exact
+outcome a hold that lapses too early produces. An hour is not an estimate of how
+long such work takes; it is how long this orchestrator will decline to make that
+outcome possible.
+"""
+decided = "2026-08-02"
+minutes = 60
+
+[reach.operator_machine]
+rationale = """
+Distinct from every other member because the cost of running at a bad moment is
+paid by a person rather than by a system: a laptop busy at the wrong hour is an
+interruption, not an incident. This is the case a change window was wanted for
+in the first place.
+
+NO LEASE DECLARED, and the reason is that this row's work is repository-shaped.
+What actually lands on the operator's machine is an edit to a checkout — his agent
+configuration is itself a git repository — so it runs at the same speed as the row
+above and needs the same slack. A window is what this reach earns; a longer hold is
+not, and declaring one to keep the two restraints symmetrical would be symmetry
+standing in for a reason.
+"""
+decided = "2026-08-01"
+
+[reach.operator_machine.change_window]
+rationale = """
+The original constraint, in one line: if the operator is on the phone with a
+client, the machine may not be rebooted underneath him. That is a statement about
+his day, which is why the hours are local and the zone is written down rather than
+assumed. Chosen wide enough to be useful and narrow enough that nothing inside it
+can collide with a working day — a person asleep is the only reliable signal that
+an interruption costs nothing. Set once and left; changing it costs a release.
+"""
+decided = "2026-08-01"
+timezone = "America/New_York"
+start = "02:00"
+end = "06:00"

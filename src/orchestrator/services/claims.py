@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.context import context_fingerprint
-from orchestrator.kernel.leases import LEASE_DURATION, hash_lease_token
+from orchestrator.kernel.leases import hash_lease_token
 from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
@@ -25,12 +25,19 @@ from orchestrator.persistence.models import (
 from orchestrator.services.budget import is_over_budget
 from orchestrator.services.claim_release import release_claim
 from orchestrator.services.context import PreflightCommand, require_claim_context
+from orchestrator.services.lease_policy import claim_lease
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import evaluate_readiness
 
 # PostgreSQL two-key advisory locks share one database-wide namespace. 0x57435243 is the
 # dedicated "WCRC" namespace for work-claim recovery commands.
 EXPIRED_CLAIM_RECOVERY_LOCK_NAMESPACE = 0x57435243
+
+# The states in which a unit still holds the claim it was granted. One definition, because the
+# three functions below and the stall report (`services.execution_stall`) all have to agree about
+# what "still held" means, and a report keyed on a narrower set than the write path enforces is
+# a vocabulary divergence in the place where it would be silent.
+CLAIM_HOLDING_STATES = frozenset({WorkUnitState.CLAIMED, WorkUnitState.EXECUTING})
 
 
 @dataclass(frozen=True)
@@ -103,7 +110,7 @@ def claim_unit(
             idempotency_key=idempotency_key,
             context_snapshot_id=context_snapshot.id if context_snapshot is not None else None,
             acquired_at=now,
-            lease_expires_at=now + LEASE_DURATION,
+            lease_expires_at=now + claim_lease(session, unit),
         )
         session.add(claim)
         session.flush()
@@ -166,10 +173,12 @@ def renew_claim(
         now = TransactionClock().now(session)
         if claim.released_at is not None or claim.lease_expires_at <= now:
             raise DomainError("lease_expired", "claim lease has expired", "reclaim")
-        if WorkUnitState(unit.state) not in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}:
+        if WorkUnitState(unit.state) not in CLAIM_HOLDING_STATES:
             raise DomainError("claim_not_active", "work unit has no active claim", None)
         claim.renewed_at = now
-        claim.lease_expires_at = now + LEASE_DURATION
+        # The same source as the two grant sites. A renewal that reset the hold to the kernel
+        # default would silently undo a considered one on every extension.
+        claim.lease_expires_at = now + claim_lease(session, unit)
         if idempotency_key is not None:
             session.add(
                 Event(
@@ -570,7 +579,7 @@ def _validate_reclaim_roles(actor: ActorContext, next_owner: ActorContext) -> No
 def _validate_expired_active_claim(unit: WorkUnit, claim: Claim, now: datetime) -> None:
     if claim.released_at is not None or claim.lease_expires_at > now:
         raise DomainError("lease_not_expired", "claim lease has not expired", None)
-    if WorkUnitState(unit.state) not in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}:
+    if WorkUnitState(unit.state) not in CLAIM_HOLDING_STATES:
         raise DomainError("claim_not_active", "work unit has no active claim", None)
 
 
@@ -831,7 +840,9 @@ def _acquire_reclaimed_claim(
         idempotency_key=idempotency_key,
         context_snapshot_id=context_snapshot.id if context_snapshot is not None else None,
         acquired_at=now,
-        lease_expires_at=now + LEASE_DURATION,
+        # THE path this must not be forgotten on: reclaim never calls `claim_unit`, so a duration
+        # read only there would be ignored on precisely the case a lapsed lease leads to.
+        lease_expires_at=now + claim_lease(session, unit),
     )
     session.add(claim)
     session.flush()
@@ -1031,7 +1042,7 @@ def validate_active_claim(
     if (
         claim.released_at is not None
         or claim.lease_expires_at <= now
-        or WorkUnitState(unit.state) not in {WorkUnitState.CLAIMED, WorkUnitState.EXECUTING}
+        or WorkUnitState(unit.state) not in CLAIM_HOLDING_STATES
     ):
         raise DomainError("claim_not_active", "work unit has no active claim", None)
     return claim

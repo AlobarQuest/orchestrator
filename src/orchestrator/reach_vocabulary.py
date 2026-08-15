@@ -30,6 +30,17 @@ from typing import Any, Final
 
 from orchestrator.errors import DomainError
 
+# Named because two consumers ask specifically about this member: the change window keys on it,
+# and the WS-P2.28 estate check asks whether a declaration that OMITS it is contradicted by what
+# App Brain records about the target repository.
+#
+# The string is repeated in the dict below rather than used as the key, and that is deliberate:
+# `tests/architecture/test_cross_boundary_vocabulary.py` recognises a vocabulary by finding a
+# collection of string LITERALS, and a dict keyed by names is invisible to it. Naming the member
+# here must not cost the registry its view of the vocabulary the member belongs to, so the two are
+# pinned to each other by test instead.
+LIVE_ESTATE: Final = "live_estate"
+
 # The four places work lands, each with the sentence a human reads at the gate. The description
 # is part of the vocabulary, not decoration: this field exists to answer "what does this touch"
 # for a person, and a bare token like ``live_estate`` answers it only for a scheduler.
@@ -95,12 +106,23 @@ def reach_from_snapshot(snapshot: object) -> tuple[str, ...] | None:
     Reads defensively rather than trusting the stored shape. Intake validates every declaration
     it admits, but revisions registered before this field existed carry no key at all, and the
     snapshot is data from another repository whose shape nothing else in this repo enforces.
+
+    ALL OR NOTHING. A declaration containing any member this build does not recognise reads as
+    UNDECLARED, not as the recognisable part of itself. Filtering the unknown member out would be
+    the permissive reading twice over: it silently narrows what the author said the work touches,
+    and it hands every consumer a declaration that looks complete. The likeliest way to meet one
+    is a newer authoring side naming a reach this build predates -- exactly the case where
+    dropping it turns "touches somewhere I have never heard of" into "touches only a repository".
     """
     values = snapshot.get(_SNAPSHOT_KEY) if isinstance(snapshot, dict) else None
-    if not isinstance(values, list):
+    if not isinstance(values, list) or not values:
         return None
-    members = tuple(member for member in values if member in REACH_VOCABULARY)
-    return members or None
+    # `isinstance` first, and not merely for tidiness: an unhashable member (a nested list or
+    # object) makes the membership test raise TypeError, and only DomainError has a handler -- so
+    # the shape this function exists to absorb would have surfaced as an unhandled 500.
+    if any(not isinstance(member, str) or member not in REACH_VOCABULARY for member in values):
+        return None
+    return tuple(sorted(set(values)))
 
 
 def carry_reach(snapshot: dict[str, Any], value: tuple[str, ...] | None) -> dict[str, Any]:

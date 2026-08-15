@@ -1,5 +1,5 @@
 # LOCALLY OWNED (no code-standards managed block, deliberately). This workflow is
-# this repo's own: the WS-P2.23 "Runner brief compatibility" job, a postgres:16
+# this repo's own: the WS-P2.23 "Runner consumer compatibility" job, a postgres:16
 # service, SECURITY_STANDARDS_DIR, both database URLs and `alembic upgrade head`.
 # None of it exists in the shared template and `make check` cannot run here
 # without it. `code-standards sync` writes nothing here and reports it every run
@@ -35,8 +35,8 @@ jobs:
   # answer it on the pull request that adds the field, not on a later release. It needs no
   # database and no dependency install, so it also reports in seconds rather than behind
   # the full gate. A red here is unambiguous: merge the consumer first.
-  brief-compatibility:
-    name: Runner brief compatibility
+  consumer-compatibility:
+    name: Runner consumer compatibility
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -65,6 +65,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python scripts/check_brief_consumer_compatibility.py
+
+      # The same question about the other cross-repo vocabulary (WS-P3.7). It lives in THIS
+      # job rather than its own so that the required status check already protecting the
+      # brief answer protects this one too: a new job would report but not block until
+      # branch protection was edited to require it, and a gate that does not block is a
+      # report. The job NAME is therefore left alone -- it is the protected context string,
+      # and renaming it silently blocks every pull request forever. Reading the name as
+      # covering both surfaces is the cost; renaming it and the protection rule together is
+      # a follow-up, not something to do halfway.
+      #
+      # Invoked as a MODULE, unlike its sibling above, so that it can import the pin reader,
+      # the fetcher and the premise assertion from it. Two readers of one pin could vet two
+      # different revisions.
+      - name: Check declared capabilities against the pinned consumer
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .venv/bin/python -m scripts.check_capability_consumer_compatibility
 
   quality:
     name: Quality

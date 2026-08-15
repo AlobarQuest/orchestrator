@@ -57,6 +57,22 @@ class AuthorityEnvelope:
         }
 
 
+def runner_payload(envelope: AuthorityEnvelope) -> dict[str, Any]:
+    """`normalized()` minus the key the runner's model forbids.
+
+    `normalized()` emits `unknown_fields` on purpose -- without it, re-normalizing a stored
+    envelope would report the key as itself unknown and every fingerprint would drift on re-read.
+    But the runner's `AuthorityEnvelope` is `extra="forbid"` and does not declare it, so the
+    normalized form is not a payload any runner can parse. Anything stored through this helper
+    has already been refused by `runner_envelope_field_violation` if its unknown-field set is
+    non-empty, so dropping an empty list here loses no record.
+
+    Does NOT affect the fingerprint: `authority_fingerprint` reads the envelope, never the
+    stored payload.
+    """
+    return {name: item for name, item in envelope.normalized().items() if name != "unknown_fields"}
+
+
 def normalize_authority(value: Mapping[str, Any]) -> AuthorityEnvelope:
     capabilities_value = value.get("capabilities", {})
     budgets_value = value.get("budgets", {})
@@ -150,10 +166,17 @@ def _optional_change_class(value: Mapping[str, Any]) -> tuple[str | None, bool]:
     is stored verbatim as some units' envelope — round-trips without inventing unknown
     fields. A malformed value is reported as an unknown field.
 
-    NOTE (WS-P2.15): nothing reads `unknown_fields`. It used to feed `is_expansion()`, which
-    had no production caller and is now deleted. So an unknown field is RECORDED, not acted
-    on — this docstring previously claimed "every admission gate treats it as fail-closed",
-    which was already false. Before adding such a gate, see
+    NOTE (WS-P2.34): `unknown_fields` IS read, by two consumers, and this note used to say
+    nothing read it — true when WS-P2.15 deleted `is_expansion()`, false since WS-P2.18 Inc 3
+    gave `factory_policy._recognises` a clause on it. It is now also the whole basis of
+    `runner_envelope_field_violation`, which refuses such an envelope at both unit-ingress
+    paths: the runner's model is `extra="forbid"`, so a field this build does not understand
+    is a parse failure there, and a field outside `KNOWN_FIELDS` contributes only its NAME to
+    the fingerprint, so an approval of it attests to nothing about its value.
+
+    Units the orchestrator MINTS for itself are constructed directly and never traverse those
+    gates, which is why two historical release-verification units still carry a recorded
+    unknown field. Before adding a gate that reaches them, see
     tests/architecture/test_authority_write_once.py.
     """
     raw = value.get("change_class")

@@ -1,7 +1,7 @@
 # ADR-0005 — Production-drill disposition (remediation item 0.3)
 
 **Date:** 2026-07-27
-**Status:** Accepted 2026-07-27 by Devon — **disposition A** (the recommendation: run the five drills against production with drill-scoped resources). Execution waits for PR #82 to merge (Devon is holding the merge until WS-P2.7 Inc-2 completes) and then happens in a dedicated, explicitly authorized session per the prerequisites below.
+**Status:** Accepted 2026-07-27 by Devon — **disposition A** (run the five drills against production with drill-scoped resources). **EXECUTED 2026-07-27: 5/5 PASS, none waived. Remediation 0.3 closed; exit criteria #5 and #7 MET.** See Outcome below.
 **Numbering note:** 0004 is reserved for WS-P2.7 Inc-2's inbound-reconciliation decision, authored on its own branch.
 
 ## Context
@@ -89,3 +89,53 @@ The run's evidence (per-drill transcript, unit IDs, image digest, migration head
 lands as a dated evidence file in `~/docs/software-delivery-system/`, the scorecard cells for #5
 and #7 are updated to MET with that citation, and the reconciliation block in
 `2026-07-12-remediation-order.md` marks 0.3 closed.
+
+## Outcome (2026-07-27)
+
+Executed in a dedicated session. **All five drills PASS against live `sds.alobar.net`; none
+waived.** Evidence and Devon's HUMAN closeout:
+`~/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md`. The per-drill
+production variants required by prerequisite 3 are `docs/operations/production-drill-adaptations.md`.
+
+Every prerequisite was met before any mutation, and no stop condition fired: artifact identity
+proven (digest `sha256:2fc54631…`, migration head `0019_wsp27_tracker_recon`), attestation PASSED
+before and after, backup verified restorable (snapshot `bd11ed0f`, `restore-drill.sh` PASS),
+dispatch disabled throughout. All six units the run created — five drill units plus the minted
+post-deploy unit — reached a terminal state through public surfaces; `in-flight-units` returned to
+exactly its pre-run contents.
+
+**No private SQL touched production.** The lease-expiry step, the one local shortcut the ADR
+called out, was discharged by waiting the real fifteen minutes.
+
+### What the run proved that the local drills could not
+
+Three defects in the *drills' own fidelity*, none of which a green local suite could have revealed:
+
+1. `seed_unit`'s seeding **routes** are unreachable in production — `POST /api/v1/revisions` and
+   `/revisions/{id}/work-units` require a HUMAN actor but sit on the M2M-only router, so no actor
+   can reach them. The drills had been seeding through a door production does not have. (The
+   service functions behind those routes remain load-bearing via intake and decomposition.)
+2. Release-artifact binding validates `package_revision_hash` against the approved revision; the
+   local drill's synthetic hash passes only because its seeded revision matches by construction.
+3. `docker kill` does not auto-restart under `unless-stopped` — the daemon records it as a manual
+   stop, so a crash drill must pair the kill with an explicit start.
+
+### Recorded limitations
+
+Three assertions were **degraded rather than dropped**, each named in the evidence file: dispatch
+row counts (no API — asserted on the response), the global work-unit count (asserted
+differentially against the baseline), and drill 3's raw `observed_state`/`stored_state` comparison
+(traceability exposes `condition_type`/`open`/`detail`, not the state JSON).
+
+Devon authorised **disposition A2** — automation drove every gate under his supervision, on the
+basis that the human-approval rules are production-usage guardrails rather than development
+guardrails. The run therefore attests the production *technical* human path (Authentik, proxy
+marker, CSRF, human-actor acceptance) and all recovery behaviour, but **not** that a human
+exercised judgement at each gate. Neither exit criterion claims the latter, so this does not
+weaken #5 or #7 — it is recorded rather than glossed.
+
+### Standing consequence
+
+The quarterly cadence in `docs/operations/recovery-drills.md` remains the routine check and stays
+local. This ADR does not make a production run recurring; a future production run would need its
+own drill package and its own authorised session.

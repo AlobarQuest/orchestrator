@@ -340,9 +340,14 @@ def _adjudicate(
     ac_id: str,
     evidence_id: str,
 ) -> None:
+    # The HUMAN gate, not the verifier's credential (WS-P2.32). `AC-001` declares
+    # `automated_test`, whose floor is deterministic-permitted, and the smoke evidence carries no
+    # machine-readable payload -- so the verifier defers and hands the unit to `awaiting_review`,
+    # which is exactly clause (b) of `human_may_adjudicate`. The old form used the verifier bearer
+    # to type a rationale, which is now refused: a verifier decides only what it has evaluated.
     response = db_client.post(
         f"/api/v1/work-units/{unit_id}/adjudications",
-        headers=VERIFIER,
+        headers=HUMAN,
         json={
             "idempotency_key": "ws33-smoke-adjudication",
             "expected_version": 15,

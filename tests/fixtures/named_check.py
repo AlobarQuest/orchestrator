@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
@@ -17,9 +18,18 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.evidence import append_evidence
+from orchestrator.services.github_checks import (
+    CheckObservation,
+    CheckObservationError,
+    CheckObserver,
+    ObservedJob,
+)
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 from orchestrator.services.packages import register_approved_unit, register_revision
-from orchestrator.services.verifier_evidence import NamedCheckAssertion, NamedCheckEvidenceCommand
+from orchestrator.services.verifier_evidence import (
+    NamedCheckEvidenceCommand,
+    record_named_check_evidence,
+)
 
 NOW = datetime(2026, 7, 8, tzinfo=UTC)
 HUMAN = ActorContext("human-1", ActorRole.HUMAN)
@@ -33,7 +43,9 @@ TARGET_REPOSITORY = "AlobarQuest/change-manager"
 HEAD_SHA = "0123456789abcdef0123456789abcdef01234567"
 PR_NUMBER = 26
 PR_URL = f"https://github.com/{TARGET_REPOSITORY}/pull/{PR_NUMBER}"
-RUN_URL = f"https://github.com/{TARGET_REPOSITORY}/actions/runs/123456789"
+RUN_ID = "123456789"
+RUN_URL = f"https://github.com/{TARGET_REPOSITORY}/actions/runs/{RUN_ID}"
+CHECK_NAME = "Quality"
 AUTOMATED_CHECK_AUTHORITY = AuthorityEnvelope(
     capabilities={"repo.edit": "allowed"},
     budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
@@ -208,8 +220,8 @@ def named_check_command(
     unit: WorkUnit,
     dispatch: DispatchRecord,
     *,
-    conclusion: str = "success",
-    assertions: tuple[NamedCheckAssertion, ...] | None = None,
+    expected_conclusion: str = "success",
+    check_name: str = CHECK_NAME,
     idempotency_key: str | None = None,
 ) -> NamedCheckEvidenceCommand:
     return NamedCheckEvidenceCommand(
@@ -221,23 +233,66 @@ def named_check_command(
         pr_number=PR_NUMBER,
         pr_url=PR_URL,
         head_sha=HEAD_SHA,
-        check_name="Quality",
-        conclusion=conclusion,
-        run_id="123456789",
-        run_url=RUN_URL,
-        assertions=(
-            assertions
-            if assertions is not None
-            else (
-                NamedCheckAssertion("dispatch_target", TARGET_REPOSITORY, TARGET_REPOSITORY),
-                NamedCheckAssertion("head_sha", HEAD_SHA, HEAD_SHA),
-                NamedCheckAssertion("check_name", "Quality", "Quality"),
-                NamedCheckAssertion("ruff", "passed", "passed"),
-                NamedCheckAssertion("pyright_error_count", 0, 0),
-                NamedCheckAssertion("tests_passed", 105, 105),
-            )
-        ),
+        check_name=check_name,
+        expected_conclusion=expected_conclusion,
         actor=VERIFIER,
         expected_version=unit.version,
         idempotency_key=idempotency_key or f"named-check-{unit.unit_key}",
     )
+
+
+class StubCheckObserver:
+    """A GitHub that says exactly what a test tells it to.
+
+    Deliberately NOT a `CheckObservation` factory with defaults baked into the service: what the
+    observer returns is the whole subject of these tests, so every case states it.
+    """
+
+    def __init__(
+        self,
+        *,
+        conclusion: str = "success",
+        jobs: tuple[ObservedJob, ...] | None = None,
+        error: CheckObservationError | None = None,
+    ) -> None:
+        self.conclusion = conclusion
+        self.jobs = jobs
+        self.error = error
+        self.calls: list[dict[str, str]] = []
+
+    def observe(
+        self,
+        *,
+        repository: str,
+        head_sha: str,
+        check_name: str,
+    ) -> CheckObservation:
+        self.calls.append(
+            {"repository": repository, "head_sha": head_sha, "check_name": check_name}
+        )
+        if self.error is not None:
+            raise self.error
+        return CheckObservation(
+            check_name=check_name,
+            conclusion=self.conclusion,
+            jobs=self.jobs if self.jobs is not None else (observed_job(self.conclusion),),
+        )
+
+
+def observed_job(conclusion: str = "success", *, run_id: str = RUN_ID) -> ObservedJob:
+    return ObservedJob(
+        run_id=run_id,
+        run_url=f"https://github.com/{TARGET_REPOSITORY}/actions/runs/{run_id}",
+        job_id=f"9{run_id}",
+        job_url=f"https://github.com/{TARGET_REPOSITORY}/actions/runs/{run_id}/job/9{run_id}",
+        conclusion=conclusion,
+    )
+
+
+def record_named_check(
+    session: Session,
+    command: NamedCheckEvidenceCommand,
+    observer: CheckObserver | None = None,
+) -> Evidence | DomainError:
+    """Ingest against a GitHub that reports `success` unless a test says otherwise."""
+    return record_named_check_evidence(session, command, observer or StubCheckObserver())

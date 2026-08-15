@@ -1,0 +1,158 @@
+{
+  "measured_at": "2026-08-05T16:38:30.995844+00:00",
+  "verdict": "attested",
+  "exit_code": 0,
+  "manifest": "/Users/devon/Projects/orchestrator/.worktrees/wsp239/docs/operations/wave-exit-manifest.toml",
+  "manifest_sha256": "b58174eabd8f675cdf5b0afb97488fc346384d5235b6c9c0a2c7851feadb54ea",
+  "authoritative_source": "/Users/devon/docs/software-delivery-system/2026-07-09-program-phase2-post-mvp-plan.md",
+  "authoritative_source_readable": true,
+  "openapi_url": "https://sds.alobar.net/openapi.json",
+  "pin_only": false,
+  "bars": [
+    {
+      "wave": 3,
+      "anchor": "**Wave 3 exit:**",
+      "body": "≥5 repositories onboarded through the kit; three software profiles + one non-software profile proven; the routing policy file is the only place model selection lives; two consecutive real workflows complete without improvisation (the C exit bar).",
+      "body_sha256": "9a4e78498fef50e1da345378c7c4c11603db6f441288cb3739e0ec1ee4293f25",
+      "closeout": "~/docs/software-delivery-system/2026-08-04-wave3-closeout.md",
+      "pin": "verified",
+      "pin_reason": null,
+      "clauses": [
+        {
+          "number": 1,
+          "text": "≥5 repositories onboarded through the kit",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "the kit itself is run across all eight candidates and the admission-clean count is read from its JSON",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "repositories-onboarded",
+                  "5",
+                  "brain",
+                  "change-manager",
+                  "orchestrator",
+                  "infraops-mcp-server",
+                  "intent-packages",
+                  "security-standards",
+                  "factory-runner",
+                  "project-standards"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 6 of 8 repositories are admission-clean (bar: >=5)\n{\n  \"admission_passed\": [\n    \"brain\",\n    \"change-manager\",\n    \"infraops-mcp-server\",\n    \"intent-packages\",\n    \"orchestrator\",\n    \"security-standards\"\n  ],\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"per_repository\": {\n    \"brain\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    },\n    \"change-manager\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    },\n    \"factory-runner\": {\n      \"admission_passed\": false,\n      \"not_passing\": [\n        \"code.onboarded\",\n        \"profile.declared\",\n        \"runner.caller\"\n      ]\n    },\n    \"infraops-mcp-server\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    },\n    \"intent-packages\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    },\n    \"orchestrator\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    },\n    \"project-standards\": {\n      \"admission_passed\": false,\n      \"not_passing\": [\n        \"profile.declared\",\n        \"runner.caller\"\n      ]\n    },\n    \"security-standards\": {\n      \"admission_passed\": true,\n      \"not_passing\": []\n    }\n  }\n}\n",
+                "stderr": "",
+                "duration_seconds": 61.439
+              }
+            }
+          ]
+        },
+        {
+          "number": 2,
+          "text": "three software profiles + one non-software profile proven",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "each cited unit is completed in production under the change class it is cited for; keyed on unit id because unit_key is not unique",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "profiles-are-proven",
+                  "7a81c2c2:dependency-update",
+                  "327920cd:maintenance-remediation",
+                  "a1493627:software-delivery",
+                  "cdc2ef5a:non-software-operational"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 4/4 cited profiles carried a real unit through to completion\n{\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"per_profile\": {\n    \"327920cd:maintenance-remediation\": {\n      \"change_class\": \"maintenance-remediation\",\n      \"proven\": true,\n      \"state\": \"completed\",\n      \"unit_key\": \"caller-pin\"\n    },\n    \"7a81c2c2:dependency-update\": {\n      \"change_class\": \"dependency-update\",\n      \"proven\": true,\n      \"state\": \"completed\",\n      \"unit_key\": \"orchestrator-ac-001\"\n    },\n    \"a1493627:software-delivery\": {\n      \"change_class\": \"software-delivery\",\n      \"proven\": true,\n      \"state\": \"completed\",\n      \"unit_key\": \"ac-001-tag-matching-guards\"\n    },\n    \"cdc2ef5a:non-software-operational\": {\n      \"change_class\": \"non-software-operational\",\n      \"proven\": true,\n      \"state\": \"completed\",\n      \"unit_key\": \"rotation-execute\"\n    }\n  }\n}\n",
+                "stderr": "",
+                "duration_seconds": 1.241
+              }
+            }
+          ]
+        },
+        {
+          "number": 3,
+          "text": "the routing policy file is the only place model selection lives",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "WS-P2.38's derivation pin is executed and resolves both sides; the literal still exists in the runner's workflow, so what is established is that an edit diverging from the policy is refused at a gate",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "routing-policy-is-the-only-source"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS routing pin exit 0\n{\n  \"exit_code\": 0,\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"stdout\": \"policy: routing-policy.toml [[surface]] 'runner-implementation' -> claude-sonnet-5\\nrunner: AlobarQuest/factory-runner@0e047df5 .github/workflows/factory-runner.yml -> claude-sonnet-5\\n\\nPASS: the policy and the pinned runner agree on 'claude-sonnet-5'.\"\n}\n",
+                "stderr": "",
+                "duration_seconds": 0.509
+              }
+            }
+          ]
+        },
+        {
+          "number": 4,
+          "text": "two consecutive real workflows complete without improvisation (the C exit bar).",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "both units completed and no runner-claimed unit ran between them",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "workflows-were-consecutive",
+                  "0c9203bb",
+                  "7a81c2c2"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS change-manager-ac-001 then orchestrator-ac-001: states ['completed', 'completed'], 0 runner-claimed unit(s) between them\n{\n  \"between\": [],\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"note\": \"'without improvisation' is a windowed SLO counter and is not readable per unit; that half is carried by the retained reconciliation record\",\n  \"units\": [\n    {\n      \"last_event_at\": \"2026-08-02T17:37:13.080725Z\",\n      \"state\": \"completed\",\n      \"unit_id\": \"0c9203bb-7661-52a2-ba57-98be95ac6fe6\",\n      \"unit_key\": \"change-manager-ac-001\"\n    },\n    {\n      \"last_event_at\": \"2026-08-03T00:02:44.844020Z\",\n      \"state\": \"completed\",\n      \"unit_id\": \"7a81c2c2-0835-5bba-a308-36e868719b62\",\n      \"unit_key\": \"orchestrator-ac-001\"\n    }\n  ]\n}\n",
+                "stderr": "",
+                "duration_seconds": 0.619
+              }
+            },
+            {
+              "kind": "retained_evidence",
+              "basis": "retained",
+              "result": "pass",
+              "detail": "the no-improvisation half is retained and unaltered; the improvisation counter is windowed and not readable per unit",
+              "evidence": {
+                "path": "/Users/devon/docs/software-delivery-system/2026-08-03-wave3-exit-reconciliation.md",
+                "sha256": "2fd4ad600cd33c33e2aa702385214c015cad34b7830f61b8675980cc33bd6590",
+                "declared_sha256": "2fd4ad600cd33c33e2aa702385214c015cad34b7830f61b8675980cc33bd6590"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

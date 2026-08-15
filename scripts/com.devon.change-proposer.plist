@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the change-proposer LaunchAgent (ADR-0019 increment 5a). Install with
+     scripts/install-change-proposer-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__
+     and writes ~/Library/LaunchAgents/com.devon.change-proposer.plist.
+
+     No secrets live here: the wrapper fetches the PROPOSE-scoped change-manager bearer from
+     BWS at runtime and takes the GitHub credential from the environment or from `gh`.
+
+     EVERY HOUR, and NOT confined to the change window, which is the setting worth arguing
+     about. Proposing is not acting: a record that exists before the window opens is the whole
+     point of having one, and landing is window-gated on the other side. Confining this to
+     02:00-06:00 would mean a pull request opened at 09:00 has no record for seventeen hours,
+     buying nothing.
+
+     A REPEAT PASS IS NOT A NO-OP, which is what makes hourly worth its cost. change-manager
+     answers 200 and re-evaluates: a record that has become conformant is approved, and one
+     whose rollout workflow has moved is refreshed and, if it no longer conforms, revoked.
+
+     That re-evaluation is OPPORTUNISTIC and not a sweep, and the difference is worth stating
+     because the opposite reading is flattering. Narrowing the policy revokes nothing on its
+     own; a record moves only when this pass proposes its pull request again, so a pull request
+     that has closed or merged is never re-examined at all.
+
+     RunAtLoad is false. A pass at login adds nothing an hourly schedule does not cover, and
+     proposing is idempotent server-side, so a missed hour costs nothing.
+
+     The exit code is the report. launchd discards it, so read the log -- 0 clean, 1 the tool
+     failed, 3 something was found (including a rollout workflow nobody has transcribed, which
+     is the case that used to be reported as an ordinary skip and exit 0). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.change-proposer</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-change-proposer.sh</string>
+        <!-- The wrapper does NOT force this. A bare run is a dry run, so the one invocation that
+             writes is the scheduled one, and it says so here rather than being implied. -->
+        <string>--submit</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/change-proposer.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/change-proposer.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

@@ -35,6 +35,12 @@ class ReadinessFacts:
     decomposition_approved: bool
     authority_approved: bool
     dependencies: tuple[DependencyReadiness, ...]
+    # Whether policy recognised this unit's envelope as a declared known-good pattern, so no human
+    # approval is required of it (WS-P2.18, ADR-0011). A SEPARATE fact from `authority_approved`
+    # and never folded into it: nobody approved this unit, and readiness must not report that
+    # somebody did. Defaults to the state in which the requirement stands, so a caller that has
+    # not been taught about policy asks for the approval, as every caller did before it existed.
+    authority_recognised_by_policy: bool = False
 
 
 def evaluate_readiness_facts(facts: ReadinessFacts) -> ReadinessDecision:
@@ -70,7 +76,7 @@ def _authorization_reasons(facts: ReadinessFacts) -> tuple[ReadinessReason, ...]
                 "work-unit decomposition is not approved",
             )
         )
-    if not facts.authority_approved:
+    if not (facts.authority_approved or facts.authority_recognised_by_policy):
         reasons.append(
             ReadinessReason(
                 "authority_not_approved",

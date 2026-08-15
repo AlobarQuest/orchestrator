@@ -19,23 +19,79 @@ The request uses the standard command envelope:
 Only actors with the `verifier` role may run the command. Workers can submit
 evidence, but they cannot verify their own work or record adjudications.
 
+## The verify command is the verifier's only way to adjudicate
+
+A verifier adjudication may only arise from the verifier's own evaluation of
+evidence. `POST /api/v1/work-units/{unit_id}/adjudications` refuses a verifier
+actor with `verifier_evaluation_required` (recovery: `verify`) — the role is not
+the problem, the route is. The verifier's authority is that it *reads* evidence:
+`verify_work_unit` derives each outcome from the evidence chain through
+`evaluate_criterion` and records what it read. An adjudication typed by hand under
+the verifier credential carries prose in place of that derivation, is attributed
+forever to the credential rather than to the person, and settles a criterion
+without any of the guarantees the named-check observation exists to provide.
+
+**If the verifier cannot resolve a criterion, that is what `awaiting_review` is
+for.** The verifier defers, the unit lands in `awaiting_review`, and a *human*
+decides it through `/review` — clause (b) of `human_may_adjudicate`. Use that. It
+records who actually made the judgment.
+
+One shape has no actor at all, deliberately: a required `ac_id` listed in a
+revision's enforcement snapshot with no `package_acceptance_criteria` row behind
+it. `human_may_adjudicate` refuses an absent criterion, and `load_required_criteria`
+refuses to verify such a revision. Only the WS-3.1 bootstrap registration lane
+(`POST /api/v1/revisions`, unreachable in production) can create that shape;
+intake-born units always carry criterion rows.
+
 For an `automated_check` criterion, the verifier uses this sequence:
 
 1. Wait for the named CI check to reach a terminal conclusion on the submitted head.
-2. Independently inspect the bounded repository, pull request, head, check, run, and
-   expected-versus-observed assertion facts.
-3. Record those facts with
+2. Name the check and state the conclusion it is expected to have reached, with
    `POST /api/v1/work-units/{unit_id}/verifier-evidence/named-check`.
-4. Invoke `POST /api/v1/work-units/{unit_id}/verify` with a fresh idempotency key.
+3. Invoke `POST /api/v1/work-units/{unit_id}/verify` with a fresh idempotency key.
 
 The named-check evidence request uses the standard command envelope plus the package revision,
-mapped AC, dispatch, canonical pull-request identity, check identity, run identity, conclusion,
-and one to 32 bounded scalar assertions. Only a verifier may call this route. The service resolves
-the evidence attempt from the locked work unit and supersedes the current evidence head.
+mapped AC, dispatch, canonical pull-request identity, `check_name`, and `expected_conclusion`.
+Only a verifier may call this route. The service resolves the evidence attempt from the locked
+work unit and supersedes the current evidence head.
 
-The orchestrator does not call GitHub from either verifier route. The independent verifier
-observes CI and submits bounded facts. The current armed `verification_read_head_sha` for the
-unit's current claim attempt is authoritative; stale or mismatched heads fail closed.
+**The caller states a claim; the orchestrator reads the answer (WS-P2.20).** There is no field
+for what the check concluded, for the run that produced it, or for any observed value. At
+ingestion the orchestrator asks GitHub how the named job concluded on the *armed* head, using the
+same App installation that triggers runs, and records that under `observation`. Before this the
+caller supplied both an `expected` and an `observed` value for every assertion and the criterion
+resolved on their equality — which the caller made true by typing it.
+
+The App installation carries `actions: write` and no `checks` permission, so the observation
+reads GitHub Actions **workflow jobs**, not the Checks API. A check run published by an
+application other than GitHub Actions is therefore invisible and cannot be evidenced this way.
+
+`check_name` must be the **job** name, which is what appears as a check on the pull request —
+not the workflow name. In this repository the two happen to coincide (`Quality`); in
+`change-manager` the workflow is `Quality` and the job is `Lint, type-check, and test`. Naming
+the workflow yields `named_check_not_found`.
+
+A name that resolves to several jobs on one head — the ordinary result of a workflow running on
+both a branch push and its pull request — resolves only if **every** match reports the same
+conclusion. All matches are recorded, newest first.
+
+Four conditions refuse ingestion outright, recording no evidence at all:
+
+| code | meaning | HTTP |
+| --- | --- | --- |
+| `named_check_observation_unavailable` | GitHub could not be asked | 503 |
+| `named_check_not_found` | no job of that name on the armed head | 404 |
+| `named_check_not_concluded` | the named check has not finished | 409 |
+| `named_check_ambiguous` | matches that do not agree | 409 |
+
+Recording nothing is the fail-closed outcome, not a gap: `automated_check` with no verifier
+evidence evaluates `judgment_required`, so the criterion falls to a human rather than to the
+caller's word.
+
+The current armed `verification_read_head_sha` for the unit's current claim attempt is
+authoritative; stale or mismatched heads fail closed. The observation is an addition to that
+revalidation, not a replacement for it — `/verify` still re-checks the stored evidence against
+the current dispatch, attempt, repository, pull request and armed head.
 
 `DispatchRecord.runner_attempt` and `WorkUnit.attempt_count` are independent counters. The first
 is an ordinal in the dispatch-decision ledger, where skipped decisions consume a value; the second

@@ -8,16 +8,12 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.evidence_types import (
     NAMED_CHECK_MAX_AC_ID_LENGTH,
-    NAMED_CHECK_MAX_ASSERTION_NAME_LENGTH,
-    NAMED_CHECK_MAX_ASSERTION_VALUE_LENGTH,
-    NAMED_CHECK_MAX_ASSERTIONS,
     NAMED_CHECK_MAX_CHECK_NAME_LENGTH,
     NAMED_CHECK_MAX_HEAD_SHA_LENGTH,
     NAMED_CHECK_MAX_IDEMPOTENCY_KEY_LENGTH,
-    NAMED_CHECK_MAX_INTEGER_ABS,
     NAMED_CHECK_MAX_REFERENCE_LENGTH,
     NAMED_CHECK_MAX_REPOSITORY_LENGTH,
-    NAMED_CHECK_MAX_RUN_ID_LENGTH,
+    NAMED_CHECK_OBSERVATION_SOURCE,
     VERIFIER_NAMED_CHECK_EVIDENCE_TYPE,
 )
 from orchestrator.kernel.states import ActorRole, WorkUnitState
@@ -34,10 +30,14 @@ from orchestrator.services.evidence import (
     append_verifier_evidence,
     lock_evidence_idempotency_key,
 )
+from orchestrator.services.github_checks import (
+    CheckObservation,
+    CheckObservationError,
+    CheckObserver,
+)
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.verifier_criteria import load_required_criteria
 
-Scalar = str | int | bool
 SUPPORTED_CONCLUSIONS = frozenset(
     {
         "success",
@@ -51,16 +51,47 @@ SUPPORTED_CONCLUSIONS = frozenset(
 )
 MAX_ACTOR_ID_LENGTH = 200
 
-
-@dataclass(frozen=True)
-class NamedCheckAssertion:
-    name: str
-    expected: Scalar
-    observed: Scalar
+# Why the orchestrator would not record an observation. Every one of these leaves NO evidence
+# row, which is the fail-closed outcome: `automated_check` with no verifier evidence evaluates
+# to `judgment_required`, so the criterion falls to the human floor WS-P2.17 already built
+# rather than to the caller's word.
+# not-a-vocabulary: refusal wording keyed by this module's own observer codes; nothing outside
+# the observer produces these keys and nothing outside this module reads them.
+OBSERVATION_REFUSALS = {
+    "unavailable": (
+        "named_check_observation_unavailable",
+        "GitHub could not be asked how the named check concluded",
+        "retry once GitHub is reachable",
+    ),
+    "not_found": (
+        "named_check_not_found",
+        "no job of that name has run on the armed head",
+        "name a job the workflow actually defines",
+    ),
+    "not_concluded": (
+        "named_check_not_concluded",
+        "the named check has not finished",
+        "record the evidence once the check concludes",
+    ),
+    "ambiguous": (
+        "named_check_ambiguous",
+        "the name resolves to jobs that do not agree",
+        "make the check name resolve to one answer on this head",
+    ),
+}
 
 
 @dataclass(frozen=True)
 class NamedCheckEvidenceCommand:
+    """What the caller may say about a named check.
+
+    `check_name` and `expected_conclusion` are its CLAIMS — which check to look at, and what it
+    believes that check said. Everything else is a restatement of canonical state that
+    `_validate_bindings` refuses on mismatch. There is deliberately no field for what the check
+    actually concluded: that arrives from GitHub, and letting a caller supply it is the defect
+    this command shape exists to remove.
+    """
+
     unit_id: uuid.UUID
     work_package_revision_id: uuid.UUID
     ac_id: str
@@ -70,10 +101,7 @@ class NamedCheckEvidenceCommand:
     pr_url: str
     head_sha: str
     check_name: str
-    conclusion: str
-    run_id: str
-    run_url: str
-    assertions: tuple[NamedCheckAssertion, ...]
+    expected_conclusion: str
     actor: ActorContext
     expected_version: int
     idempotency_key: str
@@ -82,22 +110,37 @@ class NamedCheckEvidenceCommand:
 def record_named_check_evidence(
     session: Session,
     command: NamedCheckEvidenceCommand,
+    observer: CheckObserver,
 ) -> Evidence | DomainError:
     try:
-        normalized, payload = _normalize_command(command)
+        normalized, claim = _normalize_command(command)
         if normalized.actor.role is not ActorRole.VERIFIER:
             raise DomainError(
                 "role_forbidden", "only verifiers may record named-check evidence", None
             )
         lock_evidence_idempotency_key(session, normalized.idempotency_key)
-        replay = _replay(session, normalized, payload)
+        # Ahead of the observation, deliberately. A replay must return what was recorded, not
+        # ask GitHub again: a check re-run between the two calls would otherwise turn a replay
+        # into a conflict over a value the caller never supplied.
+        replay = _replay(session, normalized, claim)
         if replay is not None:
             session.commit()
             return replay
         unit = _load_subject(session, normalized)
         _load_criterion(session, unit, normalized)
         repository = _target_repository(unit)
-        _validate_bindings(session, unit, normalized, repository)
+        binding = _validate_bindings(session, unit, normalized, repository)
+        # The armed head, not the caller's — the two are equal or `_validate_bindings` has
+        # already refused, and reading canon keeps it that way if that check ever moves.
+        #
+        # This calls GitHub while holding the unit and binding row locks, which is deliberate:
+        # observing BEFORE the lock would mean observing a head that the locked state might no
+        # longer agree with, and the point of the observation is that it is about the armed head.
+        # The hold is bounded by the observer's own timeout times the number of runs on the head
+        # (typically one or two), and a unit sitting in `submitted`/`verifying` has no competing
+        # writer — its worker has finished and its claim is not being reclaimed.
+        observation = _observe(observer, repository, binding.head_sha, normalized.check_name)
+        payload = _payload(claim, observation)
         return append_verifier_evidence(
             session,
             work_package_revision_id=normalized.work_package_revision_id,
@@ -105,9 +148,9 @@ def record_named_check_evidence(
             ac_id=normalized.ac_id,
             actor=normalized.actor,
             evidence_type=VERIFIER_NAMED_CHECK_EVIDENCE_TYPE,
-            stable_ref=normalized.run_url,
+            stable_ref=observation.jobs[0].run_url,
             payload=payload,
-            source_revision=normalized.head_sha,
+            source_revision=binding.head_sha,
             idempotency_key=normalized.idempotency_key,
             expected_version=normalized.expected_version,
             attempt=unit.attempt_count,
@@ -115,6 +158,58 @@ def record_named_check_evidence(
     except DomainError as error:
         session.rollback()
         return error
+
+
+def _observe(
+    observer: CheckObserver,
+    repository: str,
+    head_sha: str,
+    check_name: str,
+) -> CheckObservation:
+    try:
+        return observer.observe(
+            repository=repository,
+            head_sha=head_sha,
+            check_name=check_name,
+        )
+    except CheckObservationError as error:
+        code, message, recovery = OBSERVATION_REFUSALS.get(
+            error.code,
+            OBSERVATION_REFUSALS["unavailable"],
+        )
+        raise DomainError(code, message, recovery) from error
+
+
+def _payload(claim: dict[str, object], observation: CheckObservation) -> dict[str, object]:
+    """The caller's claim, then what GitHub said — with the two kept visibly apart.
+
+    `conclusion`, `run_id` and `run_url` stay at the top level because the evaluator, the
+    evidence `stable_ref` and every stored payload already read them there; only where they come
+    from has changed. The citation is the newest match; `observation.jobs` carries every one, so
+    a payload can never imply there was a single job when there were several.
+    """
+    newest = observation.jobs[0]
+    return {
+        **claim,
+        "conclusion": observation.conclusion,
+        "run_id": newest.run_id,
+        "run_url": newest.run_url,
+        "observation": {
+            "source": NAMED_CHECK_OBSERVATION_SOURCE,
+            "check_name": observation.check_name,
+            "conclusion": observation.conclusion,
+            "jobs": [
+                {
+                    "run_id": job.run_id,
+                    "run_url": job.run_url,
+                    "job_id": job.job_id,
+                    "job_url": job.job_url,
+                    "conclusion": job.conclusion,
+                }
+                for job in observation.jobs
+            ],
+        },
+    }
 
 
 def _load_subject(session: Session, command: NamedCheckEvidenceCommand) -> WorkUnit:
@@ -198,7 +293,7 @@ def _validate_bindings(
     unit: WorkUnit,
     command: NamedCheckEvidenceCommand,
     repository: str,
-) -> None:
+) -> UnitPrBinding:
     dispatch = session.get(DispatchRecord, command.dispatch_id)
     # Skipped dispatch decisions consume runner ordinals without creating claim attempts.
     # The exact dispatch row and the PR binding prove those independent parts of the chain.
@@ -230,6 +325,7 @@ def _validate_bindings(
             "named check does not match the canonical pull-request binding",
             None,
         )
+    return binding
 
 
 def _normalize_command(
@@ -256,29 +352,11 @@ def _normalize_command(
         or not _bounded_text(command.pr_url, NAMED_CHECK_MAX_REFERENCE_LENGTH)
         or not _bounded_text(command.head_sha, NAMED_CHECK_MAX_HEAD_SHA_LENGTH, minimum=7)
         or not _bounded_text(command.check_name, NAMED_CHECK_MAX_CHECK_NAME_LENGTH)
-        or not _bounded_text(command.run_id, NAMED_CHECK_MAX_RUN_ID_LENGTH)
-        or not _bounded_text(command.run_url, NAMED_CHECK_MAX_REFERENCE_LENGTH)
         or not _bounded_text(command.idempotency_key, NAMED_CHECK_MAX_IDEMPOTENCY_KEY_LENGTH)
-        or not isinstance(command.conclusion, str)
-        or command.conclusion.strip().lower() not in SUPPORTED_CONCLUSIONS
-        or not isinstance(command.assertions, tuple)
-        or not 0 < len(command.assertions) <= NAMED_CHECK_MAX_ASSERTIONS
+        or not isinstance(command.expected_conclusion, str)
+        or command.expected_conclusion.strip().lower() not in SUPPORTED_CONCLUSIONS
     ):
         raise _invalid()
-    names: set[str] = set()
-    assertions: list[NamedCheckAssertion] = []
-    for assertion in command.assertions:
-        name = assertion.name.strip() if isinstance(assertion, NamedCheckAssertion) else ""
-        if (
-            not isinstance(assertion, NamedCheckAssertion)
-            or not _bounded_text(name, NAMED_CHECK_MAX_ASSERTION_NAME_LENGTH)
-            or name in names
-            or not _valid_scalar(assertion.expected)
-            or not _valid_scalar(assertion.observed)
-        ):
-            raise _invalid()
-        names.add(name)
-        assertions.append(replace(assertion, name=name))
     normalized = replace(
         command,
         ac_id=command.ac_id.strip(),
@@ -286,39 +364,32 @@ def _normalize_command(
         pr_url=command.pr_url.strip(),
         head_sha=command.head_sha.strip(),
         check_name=command.check_name.strip(),
-        conclusion=command.conclusion.strip().lower(),
-        run_id=command.run_id.strip(),
-        run_url=command.run_url.strip(),
+        expected_conclusion=command.expected_conclusion.strip().lower(),
         idempotency_key=command.idempotency_key.strip(),
-        assertions=tuple(assertions),
     )
-    payload: dict[str, object] = {
+    claim: dict[str, object] = {
         "dispatch_id": str(normalized.dispatch_id),
         "repository": normalized.repository,
         "pr_number": normalized.pr_number,
         "pr_url": normalized.pr_url,
         "head_sha": normalized.head_sha,
         "check_name": normalized.check_name,
-        "conclusion": normalized.conclusion,
-        "run_id": normalized.run_id,
-        "run_url": normalized.run_url,
-        "assertions": [
-            {
-                "name": assertion.name,
-                "expected": assertion.expected,
-                "observed": assertion.observed,
-            }
-            for assertion in normalized.assertions
-        ],
+        "expected_conclusion": normalized.expected_conclusion,
     }
-    return normalized, payload
+    return normalized, claim
 
 
 def _replay(
     session: Session,
     command: NamedCheckEvidenceCommand,
-    payload: dict[str, object],
+    claim: dict[str, object],
 ) -> Evidence | None:
+    """Is this key a replay of the same CLAIM?
+
+    Sameness is judged on what the caller supplied, never on the observed half of the stored
+    payload — the observation is not an input, and a check re-run between two identical calls
+    must not turn the second into `idempotency_conflict`.
+    """
     row = session.scalar(
         select(Evidence).where(Evidence.idempotency_key == command.idempotency_key)
     )
@@ -332,19 +403,22 @@ def _replay(
         "attempt": row.attempt if row is not None else None,
         "evidence_type": VERIFIER_NAMED_CHECK_EVIDENCE_TYPE,
         "expected_version": command.expected_version,
-        "payload": payload,
         "source_revision": command.head_sha,
-        "stable_ref": command.run_url,
         "context_snapshot_id": None,
         "work_package_revision_id": str(command.work_package_revision_id),
         "work_unit_id": str(command.unit_id),
     }
+    recorded = event.payload.get("command") if event is not None else None
+    recorded_payload = recorded.get("payload") if isinstance(recorded, dict) else None
     if (
         row is None
         or event is None
         or event.action != "evidence.recorded"
         or event.subject_id != row.id
-        or event.payload.get("command") != expected_command
+        or not isinstance(recorded, dict)
+        or not isinstance(recorded_payload, dict)
+        or {key: recorded_payload.get(key) for key in claim} != claim
+        or {key: recorded.get(key) for key in expected_command} != expected_command
     ):
         raise DomainError(
             "idempotency_conflict",
@@ -356,16 +430,6 @@ def _replay(
 
 def _bounded_text(value: object, limit: int, *, minimum: int = 1) -> bool:
     return isinstance(value, str) and minimum <= len(value.strip()) <= limit
-
-
-def _valid_scalar(value: object) -> bool:
-    if isinstance(value, str):
-        return bool(value.strip()) and len(value) <= NAMED_CHECK_MAX_ASSERTION_VALUE_LENGTH
-    return isinstance(value, bool) or (
-        isinstance(value, int)
-        and not isinstance(value, bool)
-        and abs(value) <= NAMED_CHECK_MAX_INTEGER_ABS
-    )
 
 
 def _invalid() -> DomainError:

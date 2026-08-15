@@ -1,15 +1,17 @@
 import re
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import Adjudication, Approval, EventPublication, Evidence
+from orchestrator.services.budget import BREACH_ACTION
 from orchestrator.services.evidence_pack import (
     evidence_pack_projection,
     evidence_pack_response,
     render_evidence_pack_markdown,
 )
-from tests.services.test_slo_report import _build_unit
+from tests.services.test_slo_report import _add_event, _build_unit
 
 
 def test_projection_assembles_core_facts(migrated_session: Session) -> None:
@@ -42,6 +44,7 @@ def test_projection_assembles_core_facts(migrated_session: Session) -> None:
         "current_evidence_ids",
         "adjudications",
         "current_adjudication_ids",
+        "verifier_decided_completion",
         "approvals",
         "events",
         "event_publications",
@@ -175,6 +178,86 @@ def test_render_markdown_redacts_approver_identity_and_rationale(
     assert approval.reason == "confidential business justification"
 
 
+def test_render_markdown_carries_the_deciding_role_but_not_the_evidence_row_id(
+    migrated_session: Session,
+) -> None:
+    """WS-P3.7's two markdown decisions, made rather than inherited from the redaction rule above.
+
+    A ROLE is a kind, not an identity -- "human" names no person -- and it is the fact a reader of
+    a possibly-public pull request most needs, so it is rendered. An `evidence_id` is an internal
+    row identifier that resolves to nothing outside the orchestrator, so it stays on the JSON path.
+    """
+    _revision, unit = _build_unit(migrated_session, "evidence-pack-role-markdown")
+    evidence = Evidence(
+        work_package_revision_id=unit.work_package_revision_id,
+        work_unit_id=unit.id,
+        ac_id="ac-1",
+        attempt=1,
+        evidence_type="test",
+        stable_ref="artifact://result",
+        source_revision="abc123",
+        recorded_by="worker",
+        event_id=uuid.uuid4(),
+        idempotency_key="evidence-pack-role-markdown-evidence",
+    )
+    migrated_session.add(evidence)
+    migrated_session.flush()
+    migrated_session.add(
+        Adjudication(
+            work_package_revision_id=unit.work_package_revision_id,
+            work_unit_id=unit.id,
+            ac_id="ac-1",
+            outcome="passed",
+            decided_by="devon",
+            decided_by_role="human",
+            evidence_id=evidence.id,
+            rationale="reviewed",
+            event_id=uuid.uuid4(),
+        )
+    )
+    migrated_session.commit()
+
+    pack = evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
+    markdown = render_evidence_pack_markdown(pack)
+
+    assert "decided by the human role" in markdown
+    assert str(evidence.id) not in markdown
+    assert (
+        "Every required criterion decided by the verifier from its own evaluation: no" in markdown
+    )
+    assert "ac-1: decider_was_not_the_verifier" in markdown
+
+    decision = next(row for row in pack.adjudications if row.ac_id == "ac-1")
+    assert decision.evidence_id == evidence.id
+
+
+def test_render_markdown_reports_an_unrecorded_decider_as_unrecorded(
+    migrated_session: Session,
+) -> None:
+    """A historical row carries NULL, and the comment must say so rather than leave a blank that
+    reads as machine-decided."""
+    _revision, unit = _build_unit(migrated_session, "evidence-pack-role-null")
+    migrated_session.add(
+        Adjudication(
+            work_package_revision_id=unit.work_package_revision_id,
+            work_unit_id=unit.id,
+            ac_id="ac-1",
+            outcome="passed",
+            decided_by="whoever",
+            rationale="recorded before the column existed",
+            event_id=uuid.uuid4(),
+        )
+    )
+    migrated_session.commit()
+
+    markdown = render_evidence_pack_markdown(
+        evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
+    )
+
+    assert "decided by the unrecorded role" in markdown
+    assert "ac-1: decider_kind_unrecorded" in markdown
+
+
 def test_render_markdown_keeps_payload_out_of_a_row_that_has_a_reference(
     migrated_session: Session,
 ) -> None:
@@ -292,3 +375,41 @@ def test_render_markdown_escapes_pipe_and_newline_in_table_cells(
             assert "\n" not in row
             unescaped_pipe_count = len(re.findall(r"(?<!\\)\|", row))
             assert unescaped_pipe_count == 6, row
+
+
+def test_render_markdown_surfaces_a_recorded_budget_breach(migrated_session: Session) -> None:
+    """The pack is where a human and a possibly-public PR comment learn a unit overran.
+
+    The breach reaches the pack through the event-history section's `reason`, which is why the
+    emitter writes `reason: budget_exceeded` rather than only the two counts.
+    """
+    _revision, unit = _build_unit(migrated_session, "evidence-pack-budget-breach")
+    _add_event(
+        migrated_session,
+        unit.id,
+        action=BREACH_ACTION,
+        to_state=None,
+        occurred_at=datetime(2026, 7, 3, tzinfo=UTC),
+        reason="budget_exceeded",
+    )
+    migrated_session.commit()
+
+    markdown = render_evidence_pack_markdown(
+        evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
+    )
+
+    assert BREACH_ACTION in markdown
+    assert "Reason: budget_exceeded" in markdown
+
+
+def test_render_markdown_omits_a_breach_when_none_was_recorded(migrated_session: Session) -> None:
+    """Control for the test above: the section renders for every unit, so a substring assertion
+    that never fails would look identical."""
+    _revision, unit = _build_unit(migrated_session, "evidence-pack-no-breach")
+    migrated_session.commit()
+
+    markdown = render_evidence_pack_markdown(
+        evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
+    )
+
+    assert BREACH_ACTION not in markdown

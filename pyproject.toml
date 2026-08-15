@@ -7,7 +7,7 @@ name = "orchestrator"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-  "alembic>=1.13",
+  "alembic>=1.19.0",
   "fastapi>=0.141.1",
   "httpx>=0.27",
   "jinja2>=3.1",
@@ -19,7 +19,12 @@ dependencies = [
   "python-multipart>=0.0.9",
   "pyyaml>=6.0",
   "sqlalchemy>=2.0",
-  "typer>=0.27.0",
+  # The zone database `zoneinfo` reads, declared rather than inherited. The policy artifact's
+  # change windows name IANA zones, so a runtime without one cannot load the artifact -- and a
+  # document that does not load permits nothing, which is fail-closed and also a halt. The runtime
+  # base image ships a system zone database today; this makes that true of any image.
+  "tzdata>=2025.1",
+  "typer>=0.27.1",
   "uvicorn[standard]>=0.52.0",
 ]
 
@@ -27,14 +32,22 @@ dependencies = [
 orchestrator = "orchestrator.cli:app"
 reconciliation-runner = "reconciliation_runner.cli:app"
 tracker-projection-adapter = "tracker_projection_adapter.cli:app"
+landing-ledger = "landing_ledger.cli:app"
+deploy-watcher = "deploy_watcher.cli:app"
+# ADR-0019 increment 5a. Shipped in increment 4 with a `main()` and no entry point, so
+# nothing could invoke it but `python -m`; "the producer gets a caller" starts here.
+change-proposer = "change_proposer.cli:main"
+# ADR-0019 increment 5b. The caller that asks the orchestrator to land what the estate has
+# routed and approved. It composes nothing: every term lives inside the orchestrator.
+estate-landing = "estate_lander.cli:main"
 
 [dependency-groups]
 dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.6",
-  "ruff==0.15.20",
+  "ruff==0.16.2",
   "pyright==1.1.411",
-  "httpx2>=2.7.0",
+  "httpx2>=2.9.1",
 ]
 
 [tool.pytest.ini_options]
@@ -42,6 +55,10 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+# ruff 0.16 formats Python code blocks inside Markdown; 0.15 did not. The affected
+# files here are ADRs and historical plan documents — the record, not code — so the
+# formatter is excluded from them rather than allowed to rewrite them.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C90"]

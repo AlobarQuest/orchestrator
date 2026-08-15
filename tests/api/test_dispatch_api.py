@@ -15,6 +15,7 @@ from orchestrator.main import create_app
 from orchestrator.services.github_app import GitHubAppTokenError, reset_token_providers
 from tests.api.test_lifecycle_api import AUTHORITY as BASE_AUTHORITY
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM
+from tests.services.estate_doubles import FakeEstateLandingSource, inert_source
 
 TARGET_REPOSITORY = "AlobarQuest/orchestrator"
 # Dispatch routes per-unit, so a dispatchable unit must declare its target repository.
@@ -48,6 +49,10 @@ class FakeGitHubActionsDispatcher:
         }
 
 
+def FakeEstateLandingSourceFactory(**_: object) -> FakeEstateLandingSource:
+    return inert_source()
+
+
 @pytest.fixture
 def dispatch_client(
     auth_config: AuthConfig,
@@ -58,6 +63,10 @@ def dispatch_client(
     CAPTURED_TOKEN_PROVIDERS.clear()
     reset_token_providers()
     monkeypatch.setattr(routes, "GitHubActionsDispatcher", FakeGitHubActionsDispatcher)
+    # WS-P2.28: admission asks the estate whether landing on the target repository changes
+    # anything already serving. Configured AND faked here for the same reason the workflow
+    # client is: an unconfigured source refuses, which is the point of it.
+    monkeypatch.setattr(routes, "HttpEstateLandingSource", FakeEstateLandingSourceFactory)
     app = create_app(auth_config)
 
     def database_session() -> Iterator[Session]:
@@ -74,6 +83,8 @@ def dispatch_client(
             github_app_id="123456",
             github_app_installation_id="78901234",
             github_app_private_key_b64=SecretStr("cGVt"),
+            app_brain_url="https://app-brain.example",
+            app_brain_read_key=SecretStr("read-only-value"),
         )
 
     app.dependency_overrides[get_session] = database_session
@@ -100,7 +111,7 @@ def register_ready_unit(db_client: TestClient, *, key: str = "dispatch-api") -> 
             "approved_by": "devon",
             "approved_at": datetime(2026, 7, 8, tzinfo=UTC).isoformat(),
             "approval_event_id": str(uuid.uuid4()),
-            "enforcement_snapshot": {},
+            "enforcement_snapshot": {"reach": ["source_repository"]},
             "authority": AUTHORITY,
             "registry_version": 1,
         },

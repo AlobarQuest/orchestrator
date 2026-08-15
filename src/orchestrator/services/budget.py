@@ -1,8 +1,10 @@
-"""Per-unit LLM-call budget predicates (WS-P2.4 Increment 2).
+"""Per-unit LLM-call budget vocabulary and predicates (WS-P2.4 Increment 2, WS-P2.31).
 
-Pure, read-only: sum the unit's actual llm_calls from attempt.cost_recorded events and
-compare to the declared max_llm_calls ceiling. Never writes WorkUnit.authority -- the ceiling
-is read through normalize_authority, a pure frozen-dataclass projection.
+The predicates here are pure and read-only: sum the unit's actual llm_calls from
+attempt.cost_recorded events and compare to the declared max_llm_calls ceiling. Never writes
+WorkUnit.authority -- the ceiling is read through normalize_authority, a pure frozen-dataclass
+projection. `BREACH_ACTION` names a row this module does not write; it lives here so the
+emitter and the reader cannot drift apart over the spelling.
 """
 
 import uuid
@@ -14,6 +16,12 @@ from orchestrator.kernel.authority import normalize_authority
 from orchestrator.persistence.models import Event, WorkUnit
 
 _COST_ACTION = "attempt.cost_recorded"
+
+# The event that records an overrun the moment it becomes known. `is_over_budget` decides
+# whether a unit may be granted ANOTHER attempt, so an attempt that blows the ceiling and then
+# finishes is never asked the question -- see `orchestrator.services.cost_actuals` for the
+# emitter and `orchestrator.services.slo_report` for the reader.
+BREACH_ACTION = "attempt.budget_breached"
 
 
 def cumulative_llm_calls(session: Session, unit_id: uuid.UUID) -> int:

@@ -46,6 +46,10 @@ reach into something it does not own.
 If a drill dies mid-run, its `EXIT` trap still removes the container. `--keep` suppresses teardown
 so you can inspect the scratch database after a failure.
 
+**These safety properties describe the scripts in this directory, which are local-only.** They ran
+once against production, deliberately and under a different set of rules — see the 2026-07-27
+production run below.
+
 ## Why the drills drive the public API
 
 Every state change in a drill goes through the same HTTP surface an operator or a runner uses. A
@@ -73,3 +77,38 @@ docker exec -it drill-pg-<pid> psql -U postgres -d orchestrator_drill
 ```
 
 The drill's log (server output included) is in the temp directory it printed on startup.
+
+## The 2026-07-27 production run
+
+These drills were built local-only, and that was the gap: exit criterion #5 was marked MET in July
+2026 on local evidence alone, which is what remediation item 0.3 was written to correct. Under
+**ADR-0005 disposition A** all five were run once against live `sds.alobar.net` in a dedicated,
+authorised session. **5/5 PASS, none waived.**
+
+- Evidence + HUMAN closeout: `~/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md`
+- Per-drill production variants: [`production-drill-adaptations.md`](production-drill-adaptations.md)
+- Decision and outcome: [`../decisions/0005-production-drill-disposition.md`](../decisions/0005-production-drill-disposition.md)
+
+**The local suite remains the quarterly check.** That run was not a new cadence: a future
+production run needs its own drill package, its own authorised session, and its own evidence.
+
+### What the production run found about these scripts
+
+Three things the local harness cannot exercise, and which a green `run-drills.sh` will never tell
+you. They matter here because they are defects in the *drills' fidelity*, not in the orchestrator:
+
+1. **`seed_unit` seeds through a path production does not have.** `POST /api/v1/revisions` and
+   `/revisions/{id}/work-units` require a HUMAN actor but sit on production's M2M-only Traefik
+   router, so no actor can reach them — a browser is stripped of identity and a bearer token is
+   rejected as non-human. Production units are born through intake → decomposition → `/review`
+   approval instead. (The service functions behind those routes are not dead; they are reached
+   constantly through the intake and decomposition paths.)
+2. **Drill 4's release binding passes a synthetic `package_revision_hash`.** Production rejects
+   that (`release_artifact_package_hash_mismatch`); the local drill only succeeds because its
+   seeded revision matches by construction.
+3. **`docker kill` does not auto-restart a container under `unless-stopped`** — the daemon records
+   it as a manual stop. A crash drill against a real deployment must pair the kill with an explicit
+   start, or the service simply stays down.
+
+If these scripts are ever reworked, (1) is the one worth fixing at the source: a drill that seeds
+through a route production cannot serve is testing a system nobody runs.
