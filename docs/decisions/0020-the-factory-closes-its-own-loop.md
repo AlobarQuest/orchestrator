@@ -1,6 +1,10 @@
 # ADR-0020 — The factory closes its own loop
 
-- **Status:** Accepted (decision). Implementation not started.
+- **Status:** Accepted and **IMPLEMENTED** — closed 2026-08-10 (WS-P3.7, five increments).
+  Proven end to end: `intent-packages` commit `b3f1522f` merged by `alobar-sds-dispatch[bot]`
+  at 14:00:28Z, the last human act being Devon's authority approval five minutes earlier, and
+  recorded in the landing ledger as `factory-approved-no-deploy` with the claim checked
+  against the orchestrator's durable record rather than asserted.
 - **Date:** 2026-08-08
 - **Decided by:** Devon
 - **Reverses:** the merge prohibition, for a bounded class. **Relates to:** ADR-0016 (native
@@ -17,6 +21,23 @@ basis, Devon's name for it:
 
 The name carries the constraint. It cannot be applied to a merge that deploys without saying
 something false, which is the property a basis name should have.
+
+## The program exit criterion this reversed, restated 2026-08-11
+
+The Phase-2 program's exit criterion #8 read **"No automated merge path exists"** and was HELD
+throughout. This ADR reversed it deliberately, for a bounded class — so after the factory merged
+its own pull request on 2026-08-10 the criterion was neither met nor failing; it had stopped
+describing what the estate intends.
+
+Devon restated it 2026-08-11:
+
+> **No UNAUTHORISED merge path exists: every automated merge names the basis that permitted it,
+> and a landing with no basis is a reported finding.**
+
+That is the property the landing ledger enforces and can prove, where the original could only be
+held by absence. It is now **MET**, and the guards forbidding an unauthorised path were
+strengthened rather than loosened in the same workstream — WS-P3.7 Increment 1 closed the one real
+hole and shipped its exemption mechanism empty.
 
 ## Why this is a reversal, and why it is not a small one
 

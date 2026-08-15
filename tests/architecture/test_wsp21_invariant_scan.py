@@ -71,7 +71,29 @@ MERGE_ACTIONS = (
 # Keyed by exact relative path, the shape OUTBOUND_ALLOWLIST and ws32's WS42_DISPATCH_PATHS
 # already use. Every entry carries a reason, and the rot check below refuses one that no longer
 # needs the exemption.
-MERGE_EXEMPT_PATHS: set[Path] = set()
+MERGE_EXEMPT_PATHS: set[Path] = {
+    # ADR-0020's bounded exception, and the FIRST entry this door has ever carried. The module
+    # spells the REST endpoint `…/pulls/{n}/merge`, which contains the substring this guard scans
+    # for -- it is here because it genuinely lands a pull request, not because a string resembles
+    # one. Everything that makes that defensible is outside this file: the criteria were resolved
+    # from evidence the orchestrator OBSERVED, with no human adjudication; a human approved the
+    # envelope that grants the capability; and the estate says landing on that repository's
+    # default branch changes nothing already serving.
+    Path("src/orchestrator/services/pr_merge.py"),
+    # ADR-0019 Increment 5b, and the SECOND entry -- deliberately its own, because what makes the
+    # first defensible does not carry over. There is no work unit here, so no criteria the
+    # orchestrator resolved from evidence and no envelope a human approved; and the estate says
+    # landing on this repository's default branch DOES change something already serving, which is
+    # the opposite of the first entry's last clause.
+    #
+    # What stands in its place is a change record approved by conformance to a policy version a
+    # human pinned, re-checked against the version in force at the moment of the act; the hours
+    # that policy declares for changing something already serving; the update bot's own identity;
+    # a head current with its base; a permitted version delta; the rollout workflow still being
+    # the bytes the record's criteria describe; one landing per repository per window; and an
+    # environment switch that defaults to refusing.
+    Path("src/orchestrator/services/estate_pr_merge.py"),
+}
 
 
 @pytest.mark.parametrize("source", [*MERGE_SCAN_SOURCES, *SHELL_SOURCES], ids=lambda p: str(p))
@@ -182,6 +204,37 @@ OUTBOUND_ALLOWLIST = {
     # shape) would put that answer outside the transaction that records the admission decision.
     # The credential is READ-ONLY and App Brain scopes it to two read paths.
     Path("src/orchestrator/services/estate_landing.py"),
+    # ADR-0019 Increment 3. Admission asks change-manager one question about the pull request it
+    # would land -- has this change been routed through the estate's record, and did somebody
+    # approve it -- and writes nothing. Same justification as the two above: the answer decides an
+    # admission term, so it must be inside the transaction that records the decision, and the
+    # out-of-process alternative (ADR-0002's shape) would put it outside. It reaches exactly one
+    # listing route and holds a bearer that can read change records; the fact that the same shared
+    # secret could also approve one is change-manager's to narrow, and is recorded in ADR-0019
+    # rather than implied here.
+    Path("src/orchestrator/services/change_record.py"),
+    # ADR-0020 Increment 4b. The one genuinely MUTATING egress this repository has: it reads one
+    # pull request and asks for it to be landed, naming the head the criteria were adjudicated at
+    # so the remote refuses any other. It borrows the same App installation token the workflow
+    # trigger and the named-check observer use, and speaks to nothing else.
+    Path("src/orchestrator/services/pr_merge.py"),
+    # ADR-0019 Increment 5b. The SECOND mutating egress, and the more consequential one: it lands
+    # into a repository where landing changes something already serving. Four calls -- the pull
+    # request, how far its head is behind its base, the object name of the rollout workflow at
+    # that base, and the landing itself -- of which one changes anything, and every one names the
+    # head the terms were evaluated against so the remote refuses any other. Same App installation
+    # token as the three readers above. The reads are here rather than in an out-of-process poller
+    # for the reason the readers above give: every one of them decides an admission term, and an
+    # answer obtained outside the transaction that records the decision is an answer about a
+    # moment that has passed.
+    Path("src/orchestrator/services/estate_pr_merge.py"),
+    # ADR-0019 Increment 5b. `estate_lander` is a SEPARATE program (ADR-0002's shape), and its
+    # egress is not the orchestrator's. It reads which changes the estate routed, asks the
+    # orchestrator whether each may be landed, and relays the answer -- composing nothing, because
+    # every term is evaluated inside the orchestrator in the transaction that records the act.
+    # Its whole surface is two routes, enforced in code by `is_allowed_read`/`is_allowed_write`
+    # and in tests by test_estate_lander_isolation.py.
+    Path("src/estate_lander/orchestrator_client.py"),
     # The reconciliation runner is a SEPARATE program (ADR-0002). Polling GitHub is its entire
     # job, and it may only push what it finds back through two endpoints -- enforced in code by
     # ALLOWED_WRITE_ENDPOINTS and in tests by test_reconciliation_runner_isolation.py. It is not
@@ -203,6 +256,29 @@ OUTBOUND_ALLOWLIST = {
     # test_landing_ledger_isolation.py. Its egress is not the orchestrator's.
     Path("src/landing_ledger/github.py"),
     Path("src/landing_ledger/orchestrator_client.py"),
+    # ADR-0019 increment 2. The rollout watcher is a SEPARATE program, the same report-only shape
+    # as ADR-0002 -- it reads GitHub for the workflow run a landing caused and appends one
+    # observation to the change record change-manager holds. Its GitHub half refuses any method
+    # but GET; its change-manager half may write to exactly one route and read exactly two, and
+    # reaches neither the execution lifecycle nor the decision routes.
+    # ADR-0022 ADDED A THIRD EGRESS FILE, and with it the orchestrator itself -- which this entry
+    # used to say the watcher did not speak to at all. A rollout it observes may belong to a WORK
+    # UNIT, and the traceability chain's observation hop is unit-scoped, so the watcher is the one
+    # producer positioned to fill it. That half writes to exactly one endpoint (the OBSERVER role's
+    # whole write surface) and reads exactly one path (the unit history that CONFIRMS the claim a
+    # commit trailer makes). All three are enforced in code and pinned by
+    # test_deploy_watcher_isolation.py. Its egress is not the orchestrator's -- it is a client of
+    # it, from outside the process, holding a credential that can do nothing else.
+    Path("src/deploy_watcher/change_manager.py"),
+    Path("src/deploy_watcher/github.py"),
+    Path("src/deploy_watcher/orchestrator.py"),
+    # ADR-0019 increment 4. The change PRODUCER is a SEPARATE program again, and the narrowest
+    # one yet: it reads GitHub for the open pull requests that would land on a repository where
+    # landing redeploys, and writes to exactly ONE change-manager route -- the proposal ingress.
+    # It cannot approve, claim, post an outcome, hand off, sync, or move any record's status, and
+    # that bound is enforced twice over: by the credential's scope at change-manager, and here in
+    # code before a request is built. Its egress is not the orchestrator's.
+    Path("src/change_proposer/change_manager.py"),
 }
 
 

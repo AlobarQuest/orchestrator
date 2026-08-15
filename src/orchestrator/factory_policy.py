@@ -87,7 +87,7 @@ import shlex
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Final
 from uuid import UUID
@@ -357,6 +357,41 @@ class FactoryPolicy:
             if not _window_open(row.change_window, now):
                 return OUTSIDE_CHANGE_WINDOW
         return None
+
+    def window_opened_at(self, member: str, now: datetime) -> datetime | None:
+        """When the window occurrence containing ``now`` began, or None if it is not open.
+
+        The one question a rate rule needs and :meth:`window_refusal` cannot answer: "has anything
+        already happened in THIS occurrence?" is a question about a boundary, not about a boolean.
+        Computing it in the caller would mean a second reading of the artifact's hours, which is
+        the second copy this module exists to prevent -- so it is here, where the hours already
+        are, and it answers in UTC because that is what a stored timestamp is compared against.
+
+        Wrapping windows (a start after an end) are the ordinary nightly shape, so the occurrence
+        of a window open at 02:30 began at 02:00 today, while one open at 00:30 under a 22:00-06:00
+        window began at 22:00 YESTERDAY. Both are computed from the local date, because a window is
+        declared in local time and a day is a local thing.
+        """
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise _not_an_instant()
+        row = self.rows.get(member)
+        if row is None or row.change_window is None:
+            return None
+        window = row.change_window
+        if not _window_open(window, now):
+            return None
+        local = now.astimezone(window.zone)
+        opened = local.replace(
+            hour=window.start.hour,
+            minute=window.start.minute,
+            second=0,
+            microsecond=0,
+        )
+        if opened > local:
+            # The occurrence began on the previous local day, which is the case a wrapping window
+            # is in for every instant after midnight.
+            opened -= timedelta(days=1)
+        return opened.astimezone(UTC)
 
     def lease_for(self, reach: Sequence[str] | None) -> timedelta:
         """How long this policy refuses to reassign work of this reach to a second claimant.
