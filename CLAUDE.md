@@ -3088,3 +3088,22 @@ style of that module.
   fix is therefore to arm with something other than `GITHUB_TOKEN`, and the open question is only
   *which* credential — a PAT (simpler, already present in six repositories, broader) or the App
   (the estate's machine actor, needs an App id and private key per repository).
+
+- **In a batch of armed Dependabot pull requests, THE FIRST MERGE DISARMS THE REST, and nothing
+  re-arms them.** Measured 2026-08-15 in `orchestrator`: four github_actions majors were armed at
+  17:44 (all four gate runs `success`); `#5` merged at 17:59:48Z; and at **18:06:02Z** the timeline
+  of `#4` records `auto_merge_disabled by github-actions[bot]`, the same for `#73` and `#112`. Six
+  minutes after the first landing, the other three were clean, mergeable, green — and **unarmed**,
+  with no further gate run, because auto-merge is disabled when a pull request transiently becomes
+  unmergeable and is never re-enabled. They sit permitted-green-unarmed indefinitely, which is
+  exactly the condition the landing ledger's audit reports as a finding.
+  **This is the SAME defect the landing lane already has a fix for, in the other lane.** There, a
+  landing stales its siblings and `update-branch` brings them up to date (WS `#167`); here, a
+  landing *disarms* its siblings and nothing re-arms them. The self-healing that exists is
+  Dependabot's own rebase, which fires a `pull_request` event and re-runs the gate — but that is on
+  Dependabot's schedule, `weekly` in most of these repositories, so a batch drains one item per
+  Dependabot cycle rather than one per merge. HQ cleared the three by merging them **by hand**,
+  which also fires the push CI the cascade suppresses.
+  Two consequences for onboarding a repository to the cascade: a queue does not drain by itself at
+  the rate the arming suggests, and **the number of eligible pull requests that land unattended in a
+  day is one**, not N.
