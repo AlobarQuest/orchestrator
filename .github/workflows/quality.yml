@@ -41,7 +41,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -105,7 +105,7 @@ jobs:
       SECURITY_STANDARDS_DIR: ${{ github.workspace }}/tests/fixtures/security-standards
       TEST_DATABASE_URL: postgresql+psycopg://postgres@127.0.0.1:5432/orchestrator_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5

@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout orchestrator
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
 
@@ -45,7 +45,7 @@ jobs:
           PY
 
       - name: Checkout security-standards @ pin
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: AlobarQuest/security-standards
           ref: ${{ steps.pin.outputs.revision }}
