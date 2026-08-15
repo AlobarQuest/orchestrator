@@ -14,3 +14,7 @@ build/
 
 # factory-runner local-heavy workspace: carries the claim lease token; never commit it.
 .sds-local-heavy/
+
+# Build-session environment: worktree-local paths and a per-session test database.
+# Machine-specific by construction, and never a runtime configuration.
+.envrc.local

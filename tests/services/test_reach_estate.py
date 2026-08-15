@@ -392,6 +392,27 @@ def test_a_transport_failure_reads_as_no_answer_rather_than_raising() -> None:
     assert client.landing_for(ORCHESTRATOR) == EstateAnswer(None, SOURCE_UNREADABLE)
 
 
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        pytest.param("https://app-brain.example\n", id="trailing-newline"),
+        pytest.param("https://app-brain.example\t", id="trailing-tab"),
+        pytest.param("https://app-brain.example\x7f", id="trailing-control-character"),
+    ],
+)
+def test_a_malformed_base_url_reads_as_no_answer_rather_than_raising(base_url: str) -> None:
+    """`httpx.InvalidURL` is NOT an `httpx.HTTPError`, so catching the latter alone left this
+    module's promised totality untrue -- and the input is the ordinary one: a trailing newline on
+    an environment variable, which `.rstrip("/")` does not remove. Escaping is a bare 500."""
+    client = HttpEstateLandingSource(
+        base_url=base_url,
+        read_key="k",
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"landing": "inert"})),
+    )
+
+    assert client.landing_for(ORCHESTRATOR) == EstateAnswer(None, SOURCE_UNREADABLE)
+
+
 @pytest.mark.parametrize(("base_url", "read_key"), [("", "k"), ("https://x", ""), ("", "")])
 def test_an_unconfigured_source_answers_without_reaching_the_network(
     base_url: str, read_key: str

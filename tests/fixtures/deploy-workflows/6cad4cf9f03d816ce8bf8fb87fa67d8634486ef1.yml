@@ -1,0 +1,135 @@
+# Required repo Actions secrets:
+#   COOLIFY_WEBHOOK_URL       — base URL for the Coolify deploy webhook
+#   COOLIFY_API_TOKEN         — Coolify API bearer token
+#   COOLIFY_APP_UUID_INFRA    — Coolify app UUID for infra-brain
+#   COOLIFY_APP_UUID_OPEN     — Coolify app UUID for open-brain
+#   COOLIFY_APP_UUID_APP      — Coolify app UUID for app-brain
+#   COOLIFY_APP_UUID_CODE     — Coolify app UUID for code-brain (set after the
+#                               code-brain Coolify app exists; until then the
+#                               deploy/health steps skip it gracefully)
+#
+# These secrets are provisioned at cutover (Task 17). The build-and-push and
+# deploy jobs are guarded to main-push only, so this workflow is safe to merge
+# on a PR before secrets exist. A brain whose UUID secret is empty is skipped in
+# both the deploy and health-check steps, so adding a new brain never breaks the
+# others' pipeline before its infra is provisioned.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  IMAGE_NAME: ghcr.io/alobarquest/brain
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -x -q
+
+  build-and-push:
+    needs: test
+    # PRs run tests only — build and deploy only on a real merge to main.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy brain apps
+        env:
+          WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          API_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          UUID_INFRA: ${{ secrets.COOLIFY_APP_UUID_INFRA }}
+          UUID_OPEN: ${{ secrets.COOLIFY_APP_UUID_OPEN }}
+          UUID_APP: ${{ secrets.COOLIFY_APP_UUID_APP }}
+          UUID_CODE: ${{ secrets.COOLIFY_APP_UUID_CODE }}
+        run: |
+          for entry in "infra:${UUID_INFRA}" "open:${UUID_OPEN}" "app:${UUID_APP}" "code:${UUID_CODE}"; do
+            name="${entry%%:*}"
+            uuid="${entry##*:}"
+            if [ -z "${uuid}" ]; then
+              echo "Skipping ${name}-brain — no COOLIFY_APP_UUID_${name} secret configured yet."
+              continue
+            fi
+            echo "Triggering deploy for ${name}-brain (uuid=${uuid})..."
+            curl -f -X GET "${WEBHOOK_URL}?uuid=${uuid}&force=false" \
+              -H "Authorization: Bearer ${API_TOKEN}"
+          done
+
+      - name: Health-check brain apps
+        env:
+          UUID_INFRA: ${{ secrets.COOLIFY_APP_UUID_INFRA }}
+          UUID_OPEN: ${{ secrets.COOLIFY_APP_UUID_OPEN }}
+          UUID_APP: ${{ secrets.COOLIFY_APP_UUID_APP }}
+          UUID_CODE: ${{ secrets.COOLIFY_APP_UUID_CODE }}
+        run: |
+          echo "Waiting 30s for deployments to start..."
+          sleep 30
+          for entry in "infra:${UUID_INFRA}" "open:${UUID_OPEN}" "app:${UUID_APP}" "code:${UUID_CODE}"; do
+            name="${entry%%:*}"
+            uuid="${entry##*:}"
+            if [ -z "${uuid}" ]; then
+              echo "Skipping ${name}-brain health check — not deployed by this pipeline."
+              continue
+            fi
+            domain="${name}-brain.devonwatkins.com"
+            echo "Polling https://${domain}/api/health ..."
+            for i in 1 2 3 4 5; do
+              if curl -sf "https://${domain}/api/health" > /dev/null 2>&1; then
+                echo "  [OK] ${name}-brain healthy on attempt ${i}"
+                break
+              fi
+              if [ "${i}" -eq 5 ]; then
+                echo "  [FAIL] ${name}-brain did not become healthy after 5 attempts"
+                exit 1
+              fi
+              echo "  Attempt ${i} failed, waiting 15s..."
+              sleep 15
+            done
+          done

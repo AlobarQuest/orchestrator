@@ -38,6 +38,10 @@ class Rule:
     the point of naming one: an Actions major changes how CI runs, and the check that gates it is
     the thing being bumped.
 
+    `excluded_ecosystems` is not a third arm but a precondition on all of them, and it is the
+    only field that can REFUSE what another field permits. It records the leading
+    `package-ecosystem != '...'` a revision may carry (ADR-0023).
+
     `requires_upstream_author` is the job-level condition (`pull_request.user.login ==
     'dependabot[bot]'`). The ledger does not record the pull request's author, so the honest
     proxy is the `updated-dependencies` trailer -- the same text the gate's own metadata step
@@ -48,6 +52,7 @@ class Rule:
     update_types: frozenset[str]
     ecosystems: frozenset[str] = field(default_factory=frozenset)
     major_ecosystems: frozenset[str] = field(default_factory=frozenset)
+    excluded_ecosystems: frozenset[str] = field(default_factory=frozenset)
     requires_upstream_author: bool = True
 
     def permits(self, update_type: str | None, ecosystem: str | None) -> bool:
@@ -59,6 +64,12 @@ class Rule:
         `e849b3a8` the gate asks a major only, so `major_ecosystems` records that. Collapsing
         them would make the registry describe a rule no revision implemented.
         """
+        # Q0, from 72391c0f -- does the cascade's reasoning reach this ecosystem at all? An
+        # ABSENT ecosystem is not excluded here, faithfully: the workflow compares a missing
+        # output against a literal and proceeds, and such an update is refused at Q1 anyway
+        # unless it declares an intent.
+        if ecosystem in self.excluded_ecosystems:
+            return False
         # Q1 -- is the declared intent sufficient on its own?
         if update_type in self.update_types:
             return True
@@ -122,6 +133,20 @@ _CASCADE_NEWER_METADATA = Rule(
     major_ecosystems=frozenset({"github_actions"}),
 )
 
+# ADR-0023, and the first revision whose predicate is not a widening of the one before it. The
+# cascade minus the one ecosystem its reasoning does not reach: docker tags are not semver, so a
+# language replacement arrives wearing a minor digit, and nothing RUNS the built image, so the
+# "the gate exercises it" ground fails too. Differs from _CASCADE in exactly the docker column.
+#
+# It exists because the lane was vendored to orchestrator, the only repository declaring that
+# ecosystem -- the five that already carried the gate are untouched and stay on _CASCADE.
+_CASCADE_WITHOUT_DOCKER = Rule(
+    revision="72391c0f7343477193b5c896680a083500c45227",
+    update_types=frozenset({SEMVER_PATCH, SEMVER_MINOR}),
+    major_ecosystems=frozenset({"github_actions"}),
+    excluded_ecosystems=frozenset({"docker"}),
+)
+
 REGISTRY: dict[str, Rule] = {
     rule.revision: rule
     for rule in (
@@ -131,6 +156,7 @@ REGISTRY: dict[str, Rule] = {
         _UNDERSCORED_ACTIONS_NEWER_METADATA,
         _CASCADE,
         _CASCADE_NEWER_METADATA,
+        _CASCADE_WITHOUT_DOCKER,
     )
 }
 

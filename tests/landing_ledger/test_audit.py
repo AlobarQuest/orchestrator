@@ -9,6 +9,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
+
 from landing_ledger.audit import (
     CAVEAT_NO_RULE_INSTALLED,
     CAVEAT_RULE_SELF_MODIFIED,
@@ -18,11 +20,20 @@ from landing_ledger.audit import (
     DRIFT_RULE_DID_NOT_SUCCEED,
     DRIFT_RULE_MISSING,
     DRIFT_RULE_UNKNOWN,
+    FACTORY_CLAIM_UNREADABLE,
+    FACTORY_FINGERPRINT_MISMATCH,
+    FACTORY_HUMAN_ADJUDICATION,
+    FACTORY_LANDING_UNBOUND,
+    FACTORY_LANDING_UNCLAIMED,
+    FACTORY_NOT_VERIFIER_DECIDED,
+    FACTORY_UNIT_NOT_COMPLETED,
+    FACTORY_UNIT_UNKNOWN,
     MAX_LIST,
     STALL_ARMED_NOT_LANDED,
     STALL_ELIGIBLE_NOT_ARMED,
     STALL_METADATA_UNREADABLE,
     STALL_RULE_UNKNOWN,
+    audit_factory_landing,
     audit_landing,
     audit_observation,
     audit_pending,
@@ -30,6 +41,8 @@ from landing_ledger.audit import (
     is_green,
 )
 from landing_ledger.model import Check, PendingUpdate, UpdateMetadata
+from landing_ledger.orchestrator_client import LedgerWriteError
+from landing_ledger.record import BASIS_FACTORY
 from landing_ledger.rules import GATE_PATH, REGISTRY
 
 REPO = "AlobarQuest/factory-runner"
@@ -89,6 +102,145 @@ def landing(
 
 def kinds(findings: Any) -> list[str]:
     return [finding.kind for finding in findings]
+
+
+# ---------------------------------------------------------------------------------------------
+# The factory half of detector A. Every fixture below is shaped like the FIRST landing the factory
+# ever made -- `AlobarQuest/intent-packages` #66, 2026-08-10 -- whose evidence pack and unit
+# history were read from production while this was written.
+# ---------------------------------------------------------------------------------------------
+
+FACTORY_REPO = "AlobarQuest/intent-packages"
+UNIT = "0c0002c6-9869-59bc-84c6-654e6fc57d9e"
+FINGERPRINT = "40f1b2eaee9e5af976292664182ec977ab1c01578e33e155f92c192d5195c3d1"
+MERGE_COMMIT = "b3f1522f8630a7026da7dbaa1a120971fc024f73"
+HEAD = "0632151f54360676da1fd72b1f0a3c90a10668d5"
+
+
+class FakeUnits:
+    """The orchestrator as the factory detector sees it: two reads, and 404 answers None."""
+
+    def __init__(
+        self,
+        packs: dict[str, dict[str, Any]] | None = None,
+        histories: dict[str, list[dict[str, Any]]] | None = None,
+    ) -> None:
+        self.packs = packs or {}
+        self.histories = histories or {}
+
+    def read_evidence_pack(self, work_unit_id: str) -> dict[str, Any] | None:
+        return self.packs.get(work_unit_id)
+
+    def read_unit_history(self, work_unit_id: str) -> list[dict[str, Any]] | None:
+        return self.histories.get(work_unit_id)
+
+
+class UnreachableUnits:
+    """An orchestrator that could not be asked. It RAISES, and the difference is the whole point:
+    a unit that does not exist is a finding, and a question nobody managed to ask is not."""
+
+    def read_evidence_pack(self, work_unit_id: str) -> dict[str, Any] | None:
+        raise LedgerWriteError("orchestrator is unreachable for GET: ConnectError")
+
+    def read_unit_history(self, work_unit_id: str) -> list[dict[str, Any]] | None:
+        raise LedgerWriteError("orchestrator is unreachable for GET: ConnectError")
+
+
+NO_UNITS = FakeUnits()
+
+
+def factory_landing(
+    *,
+    work_unit: Any = UNIT,
+    repository: str = FACTORY_REPO,
+    commit: str = MERGE_COMMIT,
+    pull_request: int = 66,
+) -> dict[str, Any]:
+    permitted: dict[str, Any] = {
+        "basis": BASIS_FACTORY,
+        "landed_by": "alobar-sds-dispatch[bot]",
+        "checks_observed": 3,
+        "checks": [{"name": "validate", "conclusion": "success", "run": 1}],
+        "reason": "landed by the factory",
+        "package_revision": 1,
+    }
+    if work_unit is not None:
+        permitted["work_unit"] = work_unit
+    return {
+        "what_changed": {
+            "repository": repository,
+            "base_ref": "main",
+            "commit": commit,
+            "head_commit": HEAD,
+            "pull_request": pull_request,
+            "files": ["uv.lock"],
+            "files_changed": 1,
+        },
+        "permitted_by": permitted,
+    }
+
+
+def pack(
+    *,
+    state: str = "completed",
+    decided_by_verifier: bool = True,
+    evidence_observed: bool = True,
+    refusals: list[dict[str, Any]] | None = None,
+    decided_by_role: str | None = "verifier",
+    fingerprint: str = FINGERPRINT,
+) -> dict[str, Any]:
+    return {
+        "work_unit": {"id": UNIT, "state": state, "authority_fingerprint": fingerprint},
+        "verifier_decided_completion": {
+            "satisfied": decided_by_verifier and evidence_observed,
+            "decided_by_verifier": decided_by_verifier,
+            "evidence_observed": evidence_observed,
+            "refusals": refusals or [],
+        },
+        "adjudications": [
+            {
+                "ac_id": "AC-001",
+                "outcome": "passed",
+                "current": True,
+                "decided_by_role": decided_by_role,
+            }
+        ],
+    }
+
+
+def history(
+    *,
+    status: str = "merged",
+    repository: str = FACTORY_REPO,
+    pr_number: int = 66,
+    merge_commit: str | None = MERGE_COMMIT,
+    head_sha: str = HEAD,
+    fingerprint: str = FINGERPRINT,
+) -> list[dict[str, Any]]:
+    return [
+        {"action": "work_unit.transitioned", "actor_id": "factory-runner", "payload": {}},
+        {
+            "action": f"pr_merge.{status}",
+            "actor_id": "orchestrator-system",
+            "payload": {
+                "status": status,
+                "repository": repository,
+                "pr_number": pr_number,
+                "head_sha": head_sha,
+                "merge_commit_sha": merge_commit,
+                "authority_fingerprint": fingerprint,
+            },
+        },
+    ]
+
+
+def units(
+    unit_pack: dict[str, Any] | None = None, unit_history: list[dict[str, Any]] | None = None
+) -> FakeUnits:
+    return FakeUnits(
+        {UNIT: unit_pack if unit_pack is not None else pack()},
+        {UNIT: unit_history if unit_history is not None else history()},
+    )
 
 
 # ---------------------------------------------------------------------------------------------
@@ -298,8 +450,228 @@ def test_a_head_with_nothing_concluded_is_not_green() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
+# Detector A, factory half -- ADR-0020.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_the_landing_the_factory_actually_made_is_not_a_finding() -> None:
+    """The real 2026-08-10 landing, as production holds it. If this ever fires, the estate's one
+    autonomous merge has stopped reconciling with the orchestrator's own record of making it."""
+    assert audit_factory_landing(factory_landing(), units()) == ((), ())
+
+
+def test_a_landing_on_any_other_basis_is_not_this_detectors_subject() -> None:
+    for basis in ("auto_merge_rule", "human", "none", "unattributed"):
+        facts = factory_landing()
+        facts["permitted_by"]["basis"] = basis
+        assert audit_factory_landing(facts, NO_UNITS) == ((), ())
+
+
+def test_a_factory_landing_naming_a_unit_the_orchestrator_does_not_hold_FIRES() -> None:
+    """The claim is read from a commit the runner wrote. A unit that does not exist is the
+    cheapest possible way for that claim to be false, and it must not read as a lookup failure."""
+    findings, _ = audit_factory_landing(factory_landing(), NO_UNITS)
+
+    assert kinds(findings) == [FACTORY_UNIT_UNKNOWN]
+    assert UNIT in findings[0].detail
+
+
+def test_a_factory_landing_naming_no_unit_at_all_FIRES() -> None:
+    findings, _ = audit_factory_landing(factory_landing(work_unit=None), NO_UNITS)
+
+    assert kinds(findings) == [FACTORY_CLAIM_UNREADABLE]
+
+
+def test_a_unit_that_is_not_completed_FIRES() -> None:
+    findings, _ = audit_factory_landing(factory_landing(), units(pack(state="executing")))
+
+    assert kinds(findings) == [FACTORY_UNIT_NOT_COMPLETED]
+
+
+def test_a_unit_the_verifier_did_not_decide_FIRES_and_carries_the_reason() -> None:
+    """ADR-0020's whole condition: the factory may close the loop exactly when it never had to
+    ask. A criterion a person decided is one it asked about."""
+    findings, _ = audit_factory_landing(
+        factory_landing(),
+        units(
+            pack(
+                decided_by_verifier=False,
+                refusals=[{"ac_id": "AC-002", "code": "decision_outside_required_criteria"}],
+            )
+        ),
+    )
+
+    assert kinds(findings) == [FACTORY_NOT_VERIFIER_DECIDED]
+    assert "decision_outside_required_criteria" in findings[0].detail
+
+
+def test_a_unit_whose_evidence_was_attested_rather_than_observed_FIRES() -> None:
+    """The second clause is separate from the first and is checked separately: a criterion the
+    verifier decided off evidence the WORKER attested to is decided by the verifier and rests on
+    the runner's own word."""
+    findings, _ = audit_factory_landing(factory_landing(), units(pack(evidence_observed=False)))
+
+    assert kinds(findings) == [FACTORY_NOT_VERIFIER_DECIDED]
+
+
+def test_a_current_adjudication_decided_by_anyone_but_the_verifier_FIRES() -> None:
+    """The independent reading. It walks the primary rows rather than re-reading the composed
+    answer above, so a composed answer that is wrong about something visible is still caught."""
+    findings, _ = audit_factory_landing(
+        factory_landing(),
+        units(pack(decided_by_verifier=True, decided_by_role="human")),
+    )
+
+    assert kinds(findings) == [FACTORY_HUMAN_ADJUDICATION]
+    assert "human" in findings[0].detail
+
+
+def test_an_unrecorded_decider_is_refused_rather_than_read_as_consent() -> None:
+    """NULL is the historical rows' value and is never evidence that a machine decided. It is
+    reported as `unrecorded` -- the word the evidence pack's own markdown uses for it -- so a
+    reader does not meet two spellings of one absence, and never as a bare `None`, which reads
+    like a role somebody chose."""
+    findings, _ = audit_factory_landing(factory_landing(), units(pack(decided_by_role=None)))
+
+    assert kinds(findings) == [FACTORY_HUMAN_ADJUDICATION]
+    assert findings[0].detail.endswith("unrecorded")
+
+
+def test_a_landing_the_named_unit_holds_no_record_of_making_FIRES() -> None:
+    """The binding, and the finding that matters most: without it the claim selects any completed,
+    verifier-decided unit in the estate and the audit reports on that one instead."""
+    findings, _ = audit_factory_landing(factory_landing(), units(unit_history=history(pr_number=9)))
+
+    assert kinds(findings) == [FACTORY_LANDING_UNBOUND]
+    assert "66" in findings[0].detail
+
+
+def test_a_record_of_landing_the_same_pull_request_in_another_repository_does_not_bind() -> None:
+    findings, _ = audit_factory_landing(
+        factory_landing(), units(unit_history=history(repository="AlobarQuest/orchestrator"))
+    )
+
+    assert kinds(findings) == [FACTORY_LANDING_UNBOUND]
+
+
+def test_a_record_naming_a_different_merge_commit_FIRES() -> None:
+    findings, _ = audit_factory_landing(
+        factory_landing(), units(unit_history=history(merge_commit="c" * 40))
+    )
+
+    assert kinds(findings) == [FACTORY_LANDING_UNBOUND]
+    assert "cccccccccccc" in findings[0].detail
+
+
+def test_only_a_MERGED_record_asserts_the_orchestrator_made_this_landing() -> None:
+    """`merged` is the one status meaning "we called, the remote said merged, here is the commit".
+    Neither other status means what its name suggests, and each has TWO writers in `pr_merge.py`:
+    `already_merged` fires for the lost-response retry (our act) AND, before the call is made, for
+    a pull request somebody else had already landed -- "somebody else's act, never as ours" in its
+    own words; `refused` fires for the genuinely ambiguous outcome AND for a confirmed
+    non-landing. Neither can carry authorship, so a landing whose only record is one of them is
+    reported rather than excused.
+    """
+    for status in ("already_merged", "refused"):
+        findings, caveats = audit_factory_landing(
+            factory_landing(), units(unit_history=history(status=status, merge_commit=None))
+        )
+        assert kinds(findings) == [FACTORY_LANDING_UNCLAIMED], status
+        assert status in findings[0].detail
+        assert caveats == (), status
+
+
+def test_nothing_about_a_factory_landing_is_reported_as_a_CAVEAT() -> None:
+    """A caveat drives no exit code, so it is where a doubt goes to be ignored. Every doubt about
+    an act this estate cannot undo belongs in the lane a person actually reads."""
+    for unit_history in (
+        history(),
+        history(status="already_merged", merge_commit=None),
+        history(status="refused"),
+        history(merge_commit="c" * 40),
+        history(pr_number=9),
+    ):
+        assert audit_factory_landing(factory_landing(), units(unit_history=unit_history))[1] == ()
+
+
+def test_a_record_of_a_DIFFERENT_pull_request_does_not_bind_however_it_ended() -> None:
+    """Recognising all three statuses is about what the row SAYS, never about which pull request
+    it names. All three bind only the repository and pull request actually recorded."""
+    for status in ("merged", "already_merged", "refused"):
+        findings, _ = audit_factory_landing(
+            factory_landing(), units(unit_history=history(status=status, pr_number=9))
+        )
+        assert kinds(findings) == [FACTORY_LANDING_UNBOUND], status
+
+
+def test_a_record_naming_a_different_HEAD_FIRES_even_when_it_carries_no_commit() -> None:
+    """The head the orchestrator NAMED in its call, which the remote refused anything else for.
+    Without it the binding rests on a pull-request NUMBER whenever a status carries no commit --
+    and a number says nothing about content, which is exactly the case that needed it.
+    """
+    findings, _ = audit_factory_landing(
+        factory_landing(),
+        units(unit_history=history(status="already_merged", merge_commit=None, head_sha="d" * 40)),
+    )
+
+    assert set(kinds(findings)) == {FACTORY_LANDING_UNCLAIMED, FACTORY_LANDING_UNBOUND}
+    assert "dddddddddddd" in findings[-1].detail
+
+
+def test_a_landing_made_under_an_authority_the_unit_no_longer_carries_FIRES() -> None:
+    findings, _ = audit_factory_landing(
+        factory_landing(), units(unit_history=history(fingerprint="f" * 64))
+    )
+
+    assert kinds(findings) == [FACTORY_FINGERPRINT_MISMATCH]
+
+
+def test_an_orchestrator_that_could_not_be_asked_is_NOT_reported_as_a_finding() -> None:
+    """It raises through, so the caller reaches the incomplete exit code. Swallowing it here would
+    report a landing as audited on the strength of a question nobody managed to ask."""
+    with pytest.raises(LedgerWriteError):
+        audit_factory_landing(factory_landing(), UnreachableUnits())
+
+
+def test_the_factory_half_survives_a_stored_shape_it_did_not_expect() -> None:
+    """Stored facts are read back from the orchestrator and are not this module's construction."""
+    assert audit_factory_landing(None, NO_UNITS) == ((), ())
+    assert audit_factory_landing({"permitted_by": "not a mapping"}, NO_UNITS) == ((), ())
+
+
+def test_a_claim_that_cannot_NAME_a_unit_is_a_finding_rather_than_an_unmeasured_repository() -> (
+    None
+):
+    """The shape is checked here and not left to the client, and the two lanes are the reason.
+    The client refuses an unreadable path with an error `audit_pass` catches as UNAVAILABLE, so a
+    single malformed stored row would report the WHOLE REPOSITORY as unmeasured -- which is the
+    fail-mode inversion of what this landing deserves.
+    """
+    for value in (12, "", "not-a-uuid", UNIT.upper(), f"{UNIT}/evidence-pack", None):
+        findings, _ = audit_factory_landing(factory_landing(work_unit=value), NO_UNITS)
+        assert kinds(findings) == [FACTORY_CLAIM_UNREADABLE], value
+
+
+# ---------------------------------------------------------------------------------------------
 # One repository, both detectors, and the two repository-level answers.
 # ---------------------------------------------------------------------------------------------
+
+
+def test_a_factory_landing_is_counted_under_its_own_denominator() -> None:
+    """Two subjects, two denominators. Folding factory landings into `rule_permitted_landings`
+    would put them behind a key whose name says something else."""
+    audit = audit_repository(
+        repository=FACTORY_REPO,
+        landings=[factory_landing(), landing()],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        units=units(),
+        now=NOW,
+    )
+
+    assert audit.findings == ()
+    assert (audit.permitted_landings, audit.factory_landings) == (1, 1)
+    assert "1 factory landing(s)" in audit_observation(audit, "20260810T120000Z", NOW)["summary"]
 
 
 def test_a_repository_with_an_untranscribed_installed_rule_FIRES_once_for_the_repository() -> None:
@@ -310,6 +682,7 @@ def test_a_repository_with_an_untranscribed_installed_rule_FIRES_once_for_the_re
         landings=[],
         pending=(pending(),),
         rule_revision="e" * 40,
+        units=NO_UNITS,
         now=NOW,
     )
 
@@ -327,6 +700,7 @@ def test_a_repository_with_no_rule_installed_is_a_caveat_with_its_numbers() -> N
         landings=[],
         pending=(pending(), pending(number=2, conclusions=("failure",))),
         rule_revision=None,
+        units=NO_UNITS,
         now=NOW,
     )
 
@@ -341,6 +715,7 @@ def test_the_denominators_are_carried_so_nothing_found_is_never_bare() -> None:
         landings=[landing(), landing(basis="human"), landing(basis="none")],
         pending=(pending(armed=True, concluded_at=NOW - timedelta(seconds=1)),),
         rule_revision=UNDERSCORED,
+        units=NO_UNITS,
         now=NOW,
     )
 
@@ -355,6 +730,7 @@ def test_a_finding_raises_the_severity_the_row_is_filed_under() -> None:
         landings=[landing(revision=PATCH_AND_MINOR, update_type=MAJOR)],
         pending=(),
         rule_revision=UNDERSCORED,
+        units=NO_UNITS,
         now=NOW,
     )
 
@@ -371,7 +747,12 @@ def test_the_heartbeat_row_is_written_even_when_nothing_was_found() -> None:
     running. That is the failure this whole increment exists to catch, so the row is the pass's
     own evidence that it ran and the findings are its content."""
     audit = audit_repository(
-        repository=REPO, landings=[landing()], pending=(), rule_revision=UNDERSCORED, now=NOW
+        repository=REPO,
+        landings=[landing()],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
     )
 
     body = audit_observation(audit, "20260808T120000Z", NOW)
@@ -384,7 +765,12 @@ def test_the_heartbeat_row_is_written_even_when_nothing_was_found() -> None:
 
 def test_one_pass_answering_its_own_id_twice_the_same_way_replays() -> None:
     audit = audit_repository(
-        repository=REPO, landings=[landing()], pending=(), rule_revision=UNDERSCORED, now=NOW
+        repository=REPO,
+        landings=[landing()],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
     )
 
     first = audit_observation(audit, "20260808T120000Z", NOW)
@@ -397,13 +783,19 @@ def test_one_pass_answering_its_own_id_DIFFERENTLY_is_loud_rather_than_a_second_
     """Same source reference, different facts, which is the orchestrator's conflict branch. A
     moment cannot have two answers, and the ledger's rule is that facts which drift are loud."""
     clean = audit_repository(
-        repository=REPO, landings=[landing()], pending=(), rule_revision=UNDERSCORED, now=NOW
+        repository=REPO,
+        landings=[landing()],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
     )
     drifted = audit_repository(
         repository=REPO,
         landings=[landing(revision=PATCH_AND_MINOR, update_type=MAJOR)],
         pending=(),
         rule_revision=UNDERSCORED,
+        units=NO_UNITS,
         now=NOW,
     )
 
@@ -431,6 +823,7 @@ def test_a_flood_of_findings_is_trimmed_to_fit_with_its_true_count_beside_it() -
         ],
         pending=(),
         rule_revision=UNDERSCORED,
+        units=NO_UNITS,
         now=NOW,
     )
 
@@ -452,6 +845,7 @@ def test_caveats_are_dropped_before_findings_when_the_record_will_not_fit() -> N
         ],
         pending=(),
         rule_revision=UNDERSCORED,
+        units=NO_UNITS,
         now=NOW,
     )
 
