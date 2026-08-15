@@ -1967,7 +1967,9 @@ style of that module.
   checks can go green, an exception never clears.** HQ's handoff gave the weaker formulation.
   Shipped 2026-08-14 as `#168`; measured live against production on the same two subjects minutes
   apart — `#48` reads `held` on `main` and `exception` on the branch, and the agent exits **3**
-  and **0** respectively. The nightly control is green. Note the shape, because it will recur: **each
+  and **0** respectively. The nightly control is green. **Confirmed in production overnight
+  2026-08-15: the scheduled 02:15 run reported `#48` as `exception` and the job exited 0** — the
+  first time that control has been green in a real run rather than in a differential. Note the shape, because it will recur: **each
   fix in this family has generated the next category**, and each time the fail-open is the
   over-general version of the correct rule.
 
@@ -2980,3 +2982,17 @@ style of that module.
   which mutant as arithmetic before writing code, then confirm against the harness's own
   attributions** — a green mutation set says every mutant died, never that the control you *believe*
   killed it did. Same family as *a mutation set can only question the model its tests already hold*.
+
+- **THE LANDING LANE HAS DRAINED `change-manager`'s LANDABLE QUEUE — three consecutive autonomous
+  deploying landings, every one production-confirmed and self-settled.** Records 51, 52 and 53:
+  `#50` merge `2ba9f7f2` (2026-08-13), `#51` merge `7fa3f829` (2026-08-14), `#49` merge `90306306`
+  (2026-08-15 06:15:14Z) — each merged by `app/alobar-sds-dispatch` inside the window, each followed
+  by production `/api/health` reporting that exact commit, each settled by the watcher with
+  `attests=revision_confirmed` and no human acting. What remains open in that repository is `#48`
+  alone, the permanent requirement-range exception. **A caveat worth carrying, because the counters
+  say so: the freshness-update rule shipped in `#167` has fired ZERO times in production**
+  (`0 updated, 0 would-update` on every run). `#49` was current because HQ had run `update-branch`
+  by hand while probing the mechanism, and `#48` is correctly excluded as an exception — so the rule
+  is live, correct on the subjects it has seen, and **unexercised on a real qualifying subject**. Its
+  first true test is the next landing that stales a sibling which can still land, which on current
+  queues means after the policy admits a second repository.
