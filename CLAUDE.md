@@ -3015,3 +3015,23 @@ style of that module.
   fourth self-reference in the programme after ADR-0015, ADR-0016 and the change-manager hotfix
   case; unlike a required-status-check scheme, this one has an in-band recovery, because the lane
   refusing does not prevent a human merging the fix.
+
+- **A rollout workflow is a TRANSCRIBED artifact in another repository — changing it stales a
+  cross-repo transcription and silently halts the producer that reads it.** `brain`'s `ci.yml` is
+  transcribed in the orchestrator's `src/deploy_watcher/workflows.py` (`RolloutWorkflow` keyed by
+  blob id, plus a verbatim copy of the step body), and `change_proposer` DERIVES a record's
+  acceptance criteria from that transcription. Merging `brain#47` on 2026-08-14 moved the blob
+  `6cad4cf9` → `c5c08871`, so from that hour every hourly pass refused all five `brain` pull
+  requests: *"the rollout workflow revision for alobarquest/brain is not transcribed, so what a
+  green run would prove is unknown; refusing to guess"* — 5 findings, exit 3, for a day, unnoticed.
+  It fails closed and it says exactly what is wrong, which is the only reason this was cheap.
+  **HQ merged that pull request having CAPTURED THE NEW BLOB SHA for the policy pin minutes
+  earlier** — i.e. observed the blob had moved and did not ask what else consumed the old value.
+  The estate already records this lesson for BWS UUIDs (*grep the whole portfolio for the UUID, not
+  the repos you expect to own it*); it is the same rule in a different vocabulary. **When a pinned
+  or transcribed artifact moves, grep every repository for the OLD value before merging**, and read
+  the producer's log afterwards — the estate-landing and deploy-watcher logs were both green that
+  morning while the proposer had been refusing for a day.
+  Consequence for sequencing: a deploy-policy version admitting a repository is **inert without the
+  matching transcription**, because the criteria a record must conform to are derived from it. The
+  two land together; either order is safe.
