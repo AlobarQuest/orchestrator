@@ -17,6 +17,7 @@ from orchestrator.services.follow_ups import (
     SKIP_NO_COMPLETED_UNIT,
     SKIP_NOT_REQUIRED,
     SKIP_NOT_YET_DUE,
+    SKIP_REACH_UNDECLARED,
     SKIP_UNITS_IN_FLIGHT,
     SKIP_UNSETTLED_FAILED_UNIT,
     RevisionFacts,
@@ -93,11 +94,17 @@ SETTLED = NOW - timedelta(days=40)
 REQUIRED = {"required": True, "revisit_when": "Later.", "signals": [], "owner": None}
 
 
-def facts(*units: UnitFacts, follow_up=REQUIRED, revision_id=None) -> RevisionFacts:
+def facts(
+    *units: UnitFacts, follow_up=REQUIRED, revision_id=None, reach=("source_repository",)
+) -> RevisionFacts:
+    # Reach is DECLARED by default because a package authored today declares it (WS-P2.18
+    # Increment 4): minting refuses without one, so a helper that omitted it would turn every
+    # due-ness test below into a test of that refusal. Pass `reach=None` for the undeclared case.
     return RevisionFacts(
         revision_id=revision_id or uuid.uuid4(),
         follow_up=follow_up,
         units=units,
+        reach=reach,
     )
 
 
@@ -162,6 +169,36 @@ def test_a_revision_with_no_declaration_is_skipped() -> None:
     decision = evaluate_due(facts(completed(), follow_up=None), now=NOW, due_after_days=30)
 
     assert decision.skip_reason == SKIP_NOT_REQUIRED
+
+
+def test_a_revision_whose_package_declared_no_reach_refuses_to_mint() -> None:
+    """WS-P2.18 Increment 4. Minting SUPPLIES reach; it never inherits an unknown one.
+
+    A minted unit hangs off the same revision, so the revision's declaration IS the minted unit's
+    reach -- there is no second place to put one. Admitting it on "nobody said what this touches"
+    would reopen through the back door the gap the admission term just closed, and would reopen it
+    for every revision that has ever settled.
+    """
+    decision = evaluate_due(facts(completed(), reach=None), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason == SKIP_REACH_UNDECLARED
+
+
+def test_the_same_revision_with_a_declared_reach_is_due_the_control() -> None:
+    # The control: everything else about these two revisions is identical, so the refusal above is
+    # the missing declaration and nothing else.
+    decision = evaluate_due(facts(completed()), now=NOW, due_after_days=30)
+
+    assert decision.skip_reason is None
+
+
+def test_an_undeclared_reach_refuses_before_the_window_is_even_considered() -> None:
+    # Reported the moment it is asked rather than when it comes due: "this can never mint until
+    # reach is supplied" is a different operator action from "come back in a fortnight", and the
+    # first is the true one.
+    inside_the_window = evaluate_due(facts(completed(NOW), reach=None), now=NOW, due_after_days=30)
+
+    assert inside_the_window.skip_reason == SKIP_REACH_UNDECLARED
 
 
 def test_a_revision_with_work_still_moving_is_skipped() -> None:
@@ -276,7 +313,12 @@ DECLARATION = {
 
 
 def _settled_revision(
-    session, key: str, declaration, *, snapshot_title: str | None = None
+    session,
+    key: str,
+    declaration,
+    *,
+    snapshot_title: str | None = None,
+    reach: tuple[str, ...] | None = ("source_repository",),
 ) -> WorkPackageRevision:
     # `work_package_revisions` is append-only (a trigger rejects UPDATE), so the declaration must
     # be supplied at construction -- via `register_revision`'s `follow_up` parameter -- rather than
@@ -286,6 +328,8 @@ def _settled_revision(
     # resolve to the identical revision row and conflict the moment their `follow_up` values
     # differ. Registering directly, keyed on `key`, keeps the three fixtures independent.
     snapshot: dict[str, object] = {"acceptance_criteria": ["ac-1"]}
+    if reach is not None:
+        snapshot["reach"] = list(reach)
     if snapshot_title is not None:
         snapshot["title"] = snapshot_title
     revision = register_revision(

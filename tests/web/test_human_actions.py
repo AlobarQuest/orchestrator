@@ -127,8 +127,16 @@ def _dependency_update_authority() -> dict[str, object]:
             "standards_touched": ["project-standards"],
             "accepted_standards": ["security-standards"],
         },
-        "future_authority_marker": "fingerprinted by name",
     }
+
+
+def _authority_with_an_unknown_field() -> dict[str, object]:
+    """The same envelope plus a field the runner's model does not declare.
+
+    Kept as a distinct fixture since WS-P2.34: an unknown field is no longer approvable, so an
+    envelope carrying one cannot also be the fixture for the approval-succeeds path.
+    """
+    return {**_dependency_update_authority(), "future_authority_marker": "fingerprinted by name"}
 
 
 def test_authority_approval_records_the_unit_fingerprint(
@@ -158,7 +166,6 @@ def test_authority_approval_records_the_unit_fingerprint(
         "accepted_standards: [&#39;security-standards&#39;]",
         "target_repository:",
         "AlobarQuest/change-manager",
-        "future_authority_marker",
         expected_fingerprint,
     ):
         assert value in page.text
@@ -583,3 +590,45 @@ def test_retry_form_applies_canonical_budget_and_ready_effect(
         assert unit is not None
         assert unit.state == WorkUnitState.READY
         assert unit.max_attempts == old_max + 1
+
+
+def test_unknown_envelope_field_hides_and_rejects_authority_approval(
+    db_client: TestClient, migrated_engine: Engine, review_unit: WorkUnit
+) -> None:
+    """WS-P2.34 shape 3 at the human gate, which is where it matters most.
+
+    A field outside the runner's declared set contributes only its NAME to the fingerprint, so
+    approving this envelope would attest to a value nobody checked — and the runner would refuse
+    the whole thing before validating it. The page renders the field (it renders what is stored)
+    and withholds the form; the POST is refused even if the form is reconstructed by hand.
+    """
+    authority = _authority_with_an_unknown_field()
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, review_unit.id)
+        assert unit is not None
+        unit.authority = authority
+        unit.authority_fingerprint = authority_fingerprint(normalize_authority(authority))
+        session.commit()
+        expected_version = unit.version
+
+    page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+
+    assert "future_authority_marker" in page.text
+    assert "authority_unknown_fields" in page.text
+    assert "authority-approval" not in page.text
+
+    response = db_client.post(
+        f"/review/units/{review_unit.id}/authority-approval",
+        headers=HUMAN,
+        data={
+            "csrf_token": "forged",
+            "idempotency_key": "unknown-field-approval",
+            "expected_version": str(expected_version),
+            "reason": "Approve an envelope no runner can parse.",
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code >= 400
+    assert response.json()["error"]["code"] == "authority_unknown_fields"

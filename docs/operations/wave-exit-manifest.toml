@@ -1,0 +1,332 @@
+# The Phase-2 wave exit bars, clause by clause, pinned to the plan that defines them.
+#
+# WHY THIS FILE IS SHAPED LIKE THIS. The programme's most persistent failure is reasoning from a
+# summary of a rule instead of the rule: criteria #5, #6 and #7 were each marked MET on evidence
+# that did not support them, and Wave 3's four-clause bar was tracked as three for two days. A
+# manifest holding a *paraphrase* of each bar would be the fifth summary. So each bar carries a
+# VERBATIM MIRROR of the plan's sentence (`body`), and the clause list must reconstruct that
+# mirror exactly, character for character:
+#
+#     clause[0].text + clause[0].annotation
+#       + clause[1].separator + clause[1].text + clause[1].annotation + …   ==   body
+#
+# A clause dropped here makes the reconstruction short; a clause added or reworded in the plan
+# makes `body` disagree with the source. Either is a hard failure, and neither can be reached by
+# editing this file alone. `scripts/attest_wave_exit.py` checks both, and refuses to report any
+# clause result while the pin is broken.
+#
+# RECONSTRUCTION IS EXACT BUT NOT UNIQUE, and the non-unique dimension is exactly the
+# hide-a-clause dimension. Adversarial review found three routes by which a clause vanished from
+# the count while the bar stayed byte-identical -- absorbed into a neighbour's `annotation`, into
+# an override `separator`, or into a single clause under a `clause_separator` that never occurs
+# in the bar at all. All three are now refused at load, and two further declarations close the
+# gap for good:
+#   * `clause_count` -- stated per bar and asserted. It is the number this whole file exists to
+#     protect ("four, not three"), so changing it must be a visible edit rather than an emergent
+#     property of how the clauses happen to be written.
+#   * `annotation_separator_count` -- an annotation may carry the separator (Wave 1's closure
+#     note genuinely does), but it must declare how many times. Every occurrence of the separator
+#     in the bar is then accounted for as either a clause boundary or a declared annotation
+#     occurrence; an unaccounted one is a boundary nothing is measuring.
+#
+# `text` is the NORMATIVE half -- the rule a check must demonstrate. `annotation` is the status
+# commentary the plan carries inline (`**(✅ 5 drills)**`, closure notes). Both are verbatim; the
+# split exists so a check aims at the rule rather than at a sentence that also records who closed
+# it.
+#
+# The pin covers the bar's PARAGRAPH, not its line: appending a sentence underneath a bar is the
+# ordinary way a plan grows, and a line-scoped pin cannot see it.
+#
+# THE MIRROR IS NOT A CONVENIENCE. The authoritative plan lives in `~/docs`, which is neither this
+# repository nor reachable from CI, so the pin has two layers: clauses-reconstruct-the-mirror runs
+# everywhere, and mirror-equals-the-plan runs wherever the plan is readable. When it is not, the
+# tool reports that layer `unavailable` and the run is INCONCLUSIVE -- never quietly passing.
+#
+# EDITING. Change a bar only when the plan changed, and in the same commit restate `body`,
+# `body_sha256` and whichever clauses moved. Never adjust a clause to make a check pass: the
+# clause is the rule, and a check that cannot demonstrate it should say `unavailable`.
+#
+# Checks: `command` (argv; exit 0 met, 1 not met, anything in `unavailable_exit_codes` or matching
+# `unavailable_pattern` unmeasurable), `retained_evidence` (a named artifact still hashing to what
+# was recorded), `routes_served` (production serves these paths). `basis` records whether a check
+# re-measures the fact now (`live`) or establishes that the historical record of it is intact
+# (`retained`) -- some clauses are about events that happened once and cannot be re-run.
+#
+# `proves` IS THE SENTENCE THE RETAINED RECORD ASSERTS WAS DEMONSTRATED. It is written into the
+# record verbatim on pass, so it is not a comment: an overclaiming `proves` is the same defect
+# this file exists to eliminate, one level down. Write what the code establishes, name a
+# necessary condition as necessary, and where a named part of a clause is reached by no probe,
+# declare it with the `unmeasured` probe so the clause reports `unavailable` instead of passing
+# on the narrower property.
+
+schema_version = 1
+authoritative_source = "~/docs/software-delivery-system/2026-07-09-program-phase2-post-mvp-plan.md"
+
+# ============================================================================================
+# Wave 1 — DEPENDABLE
+# ============================================================================================
+
+[[bar]]
+wave = 1
+anchor = "**Wave 1 exit:**"
+clause_count = 5
+clause_separator = "; "
+closeout = "~/docs/software-delivery-system/2026-07-25-wave1-close-wave2-start-closeout-evidence.md"
+body = "crash/retry/reconciliation drills pass and are scripted **(✅ 5 drills)**; the SLO report runs **(✅ WS-P2.2, deployed 2026-07-24)**; no unit completes with an unadjudicated AC; a budget-capped unit demonstrably halts at its cap; **every declared lifecycle guard is provably wired to a call path, and no reporting obligation can be silently skipped** — **the mechanism exists (✅ WS-P2.15) and is now closed: ✅ WS-P2.16 binds every PR-producing unit to its PR (deployed 2026-07-23). Remaining Wave-1 exit items: ~~no-unadjudicated-AC completion (WS-P2.3)~~ ✅ 2026-07-24, ~~budget cap (WS-P2.4)~~ ✅ 2026-07-25 — none remain; Wave 1 closed 2026-07-25.**"
+body_sha256 = "23db51c6be63d2d8ba9d4dacfc0d4285dc8380e825c847296641a013f5bfa6cd"
+
+[[bar.clause]]
+number = 1
+text = "crash/retry/reconciliation drills pass and are scripted"
+annotation = " **(✅ 5 drills)**"
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "drills-are-scripted"]
+unavailable_exit_codes = [7]
+proves = "five drill scripts exist and run-drills.sh's own glob reaches every one"
+[[bar.clause.check]]
+kind = "retained_evidence"
+basis = "retained"
+path = "~/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md"
+sha256 = "dc733b091d80df26ed26af9936afe5fe924933ebb52d119f321c5d0b458c91ff"
+proves = "the 5/5 production drill run of 2026-07-27 is retained and unaltered"
+
+[[bar.clause]]
+number = 2
+text = "the SLO report runs"
+annotation = " **(✅ WS-P2.2, deployed 2026-07-24)**"
+[[bar.clause.check]]
+kind = "routes_served"
+basis = "live"
+routes = ["/api/v1/slo-report"]
+proves = "production serves the report route"
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "slo-report-runs"]
+unavailable_exit_codes = [7]
+proves = "the report computes real numbers against production now, not merely that it is served"
+
+[[bar.clause]]
+number = 3
+text = "no unit completes with an unadjudicated AC"
+note = """`unavailable` HERE IS A SCOPE PROPERTY OF THIS TOOL, NOT A GAP IN WAVE 1. Proving the sufficient form over the REAL population needs the required-criterion set per unit, and the evidence pack projects `adjudications` and `evidence` and no criteria list, so the comparison cannot be made from outside the database. The clause's enforcement was closed by WS-P2.3 and its evidence lives in the suite and in the source, which this production-anchored tool deliberately does not read -- so that closure is asserted by the Wave-1 closeout, not by anything here. What production CAN answer is measured (the first check, a necessary condition); what it cannot is declared (the second). Do not read this as an unmet criterion, and do not invent a read surface to close it. Note the second check does NOT start working by itself if a release ever serves the criteria set: it reports `unavailable` in both branches by design, changing only its message, because promoting itself on the mere presence of a `criteri`-ish key would flip this clause green while nothing had ever compared the required set against the adjudicated one. Someone has to implement the comparison and delete that probe."""
+# The sufficient form of this clause is not measurable from outside the database: the evidence
+# pack serves adjudications and no REQUIRED-criteria list, so the comparison cannot be made. The
+# second check reports that rather than hiding it, which makes the clause `unavailable` on
+# purpose. Do not remove it to make the wave read green -- the whole point is that an unmeasured
+# clause says so.
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "completed-units-carry-adjudications"]
+unavailable_exit_codes = [7]
+proves = "a necessary condition: every completed unit carries a current adjudication with an outcome"
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "required-criteria-are-readable"]
+unavailable_exit_codes = [7]
+proves = "whether the required-criteria set can be read at all; while it cannot, completeness over the real population is unmeasured"
+
+[[bar.clause]]
+number = 4
+text = "a budget-capped unit demonstrably halts at its cap"
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "budget-breach-is-instrumented"]
+unavailable_exit_codes = [7]
+proves = "the breach counter is a real metric; deliberately not that a breach occurred recently, since that number is windowed and a zero would mean quiet, not broken"
+[[bar.clause.check]]
+kind = "retained_evidence"
+basis = "retained"
+path = "~/docs/software-delivery-system/2026-07-25-wave1-close-wave2-start-closeout-evidence.md"
+sha256 = "99cf494b79ceff7953353165c0843f6e80b93efb0d02d28253b8051eb864723c"
+proves = "the WS-P2.4 Increment 2 demonstration of a unit halting at its cap is retained and unaltered"
+
+[[bar.clause]]
+number = 5
+text = "**every declared lifecycle guard is provably wired to a call path, and no reporting obligation can be silently skipped**"
+annotation_separator_count = 1
+annotation = " — **the mechanism exists (✅ WS-P2.15) and is now closed: ✅ WS-P2.16 binds every PR-producing unit to its PR (deployed 2026-07-23). Remaining Wave-1 exit items: ~~no-unadjudicated-AC completion (WS-P2.3)~~ ✅ 2026-07-24, ~~budget cap (WS-P2.4)~~ ✅ 2026-07-25 — none remain; Wave 1 closed 2026-07-25.**"
+note = """`unavailable` HERE IS A SCOPE PROPERTY OF THIS TOOL, NOT A GAP IN WAVE 1, and it applies to the SECOND CONJUNCT ONLY. The first ("every declared lifecycle guard is provably wired to a call path") is measured live by executing the guard that enforces it. The second ("no reporting obligation can be silently skipped") was closed by WS-P2.15, which deleted `age_out_human_gates` and gave its replacement a plain `int` threshold with no off value -- but that is a property of the SOURCE, and nothing production serves distinguishes an obligation that reported nothing from one that could not report at all. So the conjunct is declared unmeasured rather than inferred from the wiring guard, which answers wiring only. Do not read this as an unmet criterion, and do not close it by widening what the first check claims."""
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "lifecycle-guards-are-wired"]
+unavailable_exit_codes = [7]
+proves = "the FIRST conjunct only: the reachability guard this clause names is executed, not merely cited"
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "unmeasured", "the clause's second conjunct -- that no reporting obligation can be silently skipped -- is not demonstrated by the reachability guard, which answers wiring only. WS-P2.15 closed it by making a nullable threshold a plain int with no off value; nothing here re-establishes that, so the clause is not fully measured."]
+unavailable_exit_codes = [7]
+proves = "nothing -- it declares the half of this clause that no probe reaches"
+
+# ============================================================================================
+# Wave 2 — LEGIBLE
+# ============================================================================================
+
+[[bar]]
+wave = 2
+anchor = "**Wave 2 exit:**"
+clause_count = 4
+clause_separator = "; "
+closeout = "~/docs/software-delivery-system/2026-07-28-wave2-closeout-and-wsp28-deploy-evidence.md"
+body = "a merged PR carries its Evidence Pack; the traceability query answers the C question-list end-to-end for a real release; the pilot queue is orchestrator-canonical with the tracker as pure projection (Inc 1 established this model + closed the D8 interim documentarily; Inc 2's inbound path completes the two-way discipline). **Precondition (✅ MET 2026-07-23): WS-P2.16 has landed and is deployed, so every PR-producing unit is bound to its PR and the chain has no silent hole at its first joint.**"
+body_sha256 = "e16d4a2dd3db7db6f936777cee8546ba13b844a50a5a8403a728f3bfd8821a8a"
+
+[[bar.clause]]
+number = 1
+text = "a merged PR carries its Evidence Pack"
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "evidence-pack-reached-a-merged-pr", "AlobarQuest/change-manager", "AlobarQuest/intent-packages", "AlobarQuest/orchestrator", "AlobarQuest/brain"]
+unavailable_exit_codes = [7]
+timeout_seconds = 600
+proves = "at least one Evidence Pack marker comment exists in the target repositories, counted by REST enumeration (never `gh search`, which is blind to comments here and reports zero either way). Merged-ness is NOT established by this check -- comment enumeration cannot see it."
+[[bar.clause.check]]
+kind = "retained_evidence"
+basis = "retained"
+path = "~/docs/software-delivery-system/2026-07-29-gap4-closeout-evidence.md"
+sha256 = "ee73bc0980e5cf7f5ae550a60d2483a88636a3cef48c12c72952c7ba31b951a5"
+proves = "the merged half: GAP-4's record that change-manager PR #34 carried the marker and was merged (3d47088) is retained and unaltered"
+
+[[bar.clause]]
+number = 2
+text = "the traceability query answers the C question-list end-to-end for a real release"
+note = """THE RULING (Devon, 2026-08-05), recorded so a future session inherits a decision rather than re-litigating the phrase. "End-to-end for a real release" means the RELEASE's chain, assembled across its units -- not one unit's chain spanning every hop. Requiring a single chain would require the system to violate its own design: `record_release_artifact` refuses until a unit is COMPLETED, so a release binding necessarily lands on a later unit than the one that opened the pull request, and no unit can ever carry both. The hop list is the plan's own enumeration of the C question-list from exit criterion #6: intent -> unit -> PR -> commit -> artifact -> deployment -> observation, "including the observation tail (reconciliation conditions + observations)". A ruling that makes a clause measurable is not a ruling that it passes; the run's own result below is the authority on whether it does. THE SECOND RULING (Devon, 2026-08-06), on a question WS-P2.40's adversarial review raised and left open: `conditions` is the reconciliation-divergence hop, so requiring it non-empty made this clause satisfiable only by a release that went wrong. A hop that can only be populated by something going wrong is NOT required of a healthy release -- the chain must be ABLE to carry conditions, and their absence on a clean release is the correct answer rather than a missing hop. Deleting the hop from the list would have been the loosening this tool exists to refuse, so the hop stays required of every release and may instead resolve INAPPLICABLE. That is earned, never declared: nothing in this manifest can excuse a hop, and the probe grants it only where it has READ that the release's chain set covers every unit the release holds and that the conditions join is demonstrably still carrying conditions somewhere in production. A release whose chain set omits a divergence-bearing unit is refused, and so is a release that resolves to no chain at all. The same treatment is deliberately NOT extended to `observations`: nothing currently produces a unit-scoped observation, which is a gap in the system rather than a condition of the world, and marking it inapplicable would convert an absence into a shrug."""
+[[bar.clause.check]]
+kind = "routes_served"
+basis = "live"
+routes = ["/api/v1/traceability"]
+proves = "production serves the query"
+# The per-unit census is KEPT. It is honest about what one chain resolves, it is what surfaced
+# the discontinuity in the first place, and the release-level check below is additional rather
+# than a replacement. Its required hops are declared HERE, not chosen inside the probe, because
+# which hops make a chain "end-to-end" is a judgment and hiding it in code would be the
+# summarising move. Measured 2026-08-05: no single production chain spans every hop -- a
+# PR-producing unit's chain carries `pr` and no release binding, and the deploy-verification
+# units that carry the binding never had a PR -- so `pr`, `conditions` and `observations` are
+# deliberately not required of ONE chain, and the probe reports the full hop census every run.
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "traceability-answers-for-a-real-release", "intent", "unit", "commit", "artifact", "deployment"]
+unavailable_exit_codes = [7]
+proves = "a production-anchored chain resolves intent -> unit -> commit -> artifact -> deployment, and the full hop census is reported rather than passed over"
+# The clause itself, under the ruling above. The revisions are declared here rather than
+# discovered, because which revisions are REAL releases is a judgment: the estate also holds the
+# drill-fixture revision `92b95cd9`, whose composed chain DOES answer all eight hops -- on an
+# artifact digest of `sha256:aaaaaaaaaaaaa`. These two are the genuine production releases, each
+# carrying a release-artifact binding and a deployment observation:
+#   538e4228 — WS-P2.8, image `24d5e2d-wsp28-amd64`, implementation PR #89
+#   705bdc8c — phase5-production-closeout, implementation PR #22
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "release-chain-answers-every-hop", "538e4228-7da2-46d4-9b66-31df7fe93747", "705bdc8c-60e3-4d1c-b7fe-246030e9434f"]
+unavailable_exit_codes = [7]
+timeout_seconds = 600
+proves = "at least one declared release's chain, composed across its units, answers every hop of the C question-list -- counting a hop the probe MEASURED to be inapplicable as answered, and recording which hops those were and the reading that established each. The per-release hop census is recorded either way. It does NOT establish that a declared revision is a genuine production release rather than a fixture -- that is the manifest's declaration above, and the probe checks only that the revision shipped at all."
+
+[[bar.clause]]
+number = 3
+text = "the pilot queue is orchestrator-canonical with the tracker as pure projection"
+annotation_separator_count = 1
+annotation = " (Inc 1 established this model + closed the D8 interim documentarily; Inc 2's inbound path completes the two-way discipline)."
+[[bar.clause.check]]
+kind = "routes_served"
+basis = "live"
+routes = ["/api/v1/tracker-bindings", "/api/v1/work-units/{unit_id}/tracker-binding", "/api/v1/reconciliation/tracker-detect"]
+proves = "the canonical-side projection surfaces are served"
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "tracker-is-a-projection"]
+unavailable_exit_codes = [7]
+timeout_seconds = 900
+proves = "two necessary conditions: canonical-side bindings exist, and the adapter's isolation suite passes so it imports nothing from the orchestrator. Neither establishes write-direction, so 'orchestrator-canonical' is evidenced, not proven."
+
+[[bar.clause]]
+number = 4
+separator = " "
+text = "**Precondition (✅ MET 2026-07-23): WS-P2.16 has landed and is deployed, so every PR-producing unit is bound to its PR and the chain has no silent hole at its first joint.**"
+note = "Counted as a clause because the plan states it inside the exit paragraph and the programme's own 'four of four' needs four members. Treating it as decoration would be the summarising move this file exists to prevent."
+[[bar.clause.check]]
+kind = "routes_served"
+basis = "live"
+routes = ["/api/v1/work-units/{unit_id}/pr-binding"]
+proves = "the binding route is deployed -- the WS-P2.1 failure was a route that existed in main and not in production"
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "every-pr-producing-unit-is-bound"]
+unavailable_exit_codes = [7]
+timeout_seconds = 900
+proves = "a NECESSARY condition for the precondition's head, that WS-P2.16 has landed and is deployed: the route is served and PR-capable units have completed through the submit guard. It does NOT establish the trailing 'every PR-producing unit is bound' over the whole population -- the binding table has no GET, and most completed units predate the guard's 2026-07-23 deploy."
+
+# ============================================================================================
+# Wave 3 — ADOPTABLE
+# ============================================================================================
+
+[[bar]]
+wave = 3
+anchor = "**Wave 3 exit:**"
+clause_count = 4
+clause_separator = "; "
+closeout = "~/docs/software-delivery-system/2026-08-04-wave3-closeout.md"
+body = "≥5 repositories onboarded through the kit; three software profiles + one non-software profile proven; the routing policy file is the only place model selection lives; two consecutive real workflows complete without improvisation (the C exit bar)."
+body_sha256 = "9a4e78498fef50e1da345378c7c4c11603db6f441288cb3739e0ec1ee4293f25"
+
+[[bar.clause]]
+number = 1
+text = "≥5 repositories onboarded through the kit"
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "repositories-onboarded", "5", "brain", "change-manager", "orchestrator", "infraops-mcp-server", "intent-packages", "security-standards", "factory-runner", "project-standards"]
+unavailable_exit_codes = [7]
+timeout_seconds = 1800
+proves = "the kit itself is run across all eight candidates and the admission-clean count is read from its JSON"
+
+[[bar.clause]]
+number = 2
+text = "three software profiles + one non-software profile proven"
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "profiles-are-proven", "7a81c2c2:dependency-update", "327920cd:maintenance-remediation", "a1493627:software-delivery", "cdc2ef5a:non-software-operational"]
+unavailable_exit_codes = [7]
+timeout_seconds = 600
+proves = "each cited unit is completed in production under the change class it is cited for; keyed on unit id because unit_key is not unique"
+
+[[bar.clause]]
+number = 3
+text = "the routing policy file is the only place model selection lives"
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "routing-policy-is-the-only-source"]
+unavailable_exit_codes = [7]
+timeout_seconds = 600
+proves = "WS-P2.38's derivation pin is executed and resolves both sides; the literal still exists in the runner's workflow, so what is established is that an edit diverging from the policy is refused at a gate"
+
+[[bar.clause]]
+number = 4
+text = "two consecutive real workflows complete without improvisation (the C exit bar)."
+[[bar.clause.check]]
+kind = "command"
+basis = "live"
+argv = ["python3", "scripts/exit_probe.py", "workflows-were-consecutive", "0c9203bb", "7a81c2c2"]
+unavailable_exit_codes = [7]
+proves = "both units completed and no runner-claimed unit ran between them"
+[[bar.clause.check]]
+kind = "retained_evidence"
+basis = "retained"
+path = "~/docs/software-delivery-system/2026-08-03-wave3-exit-reconciliation.md"
+sha256 = "2fd4ad600cd33c33e2aa702385214c015cad34b7830f61b8675980cc33bd6590"
+proves = "the no-improvisation half is retained and unaltered; the improvisation counter is windowed and not readable per unit"

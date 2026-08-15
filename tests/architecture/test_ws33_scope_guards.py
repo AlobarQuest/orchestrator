@@ -33,6 +33,21 @@ AUTOMATIC_MERGE_SEQUENCES: tuple[tuple[str, ...], ...] = (
     ("merges",),
 )
 
+# ADR-0016/0018/0023: the native auto-merge lane, vendored here 2026-08-15. It arms GitHub's own
+# auto-merge -- GitHub does the landing, once the required checks pass -- so it necessarily
+# spells the two sequences below, and the exemption is taken openly rather than by reaching for
+# a spelling this scanner does not know. It is still scanned for the other four, which are what
+# "this file landed something itself" would look like.
+#
+# Its twin is NATIVE_AUTO_MERGE_EXEMPT in tests/architecture/test_no_automatic_merge.py, which
+# scans this same directory with a different vocabulary and its own separate allowlist. Neither
+# used to name the other, and an addition that updates one leaves the other red.
+NATIVE_AUTO_MERGE_WORKFLOW = "dependabot-auto-merge.yml"
+NATIVE_AUTO_MERGE_SEQUENCES: tuple[tuple[str, ...], ...] = (
+    ("gh", "pr", "merge"),
+    ("auto", "merge"),
+)
+
 
 @dataclass(frozen=True)
 class SourceMatch:
@@ -103,10 +118,13 @@ def _python_automatic_merge_matches(path: Path) -> list[SourceMatch]:
 
 
 def _text_automatic_merge_matches(path: Path) -> list[SourceMatch]:
-    sequence = _automatic_merge_sequence(_tokens(path.read_text(encoding="utf-8")))
-    if sequence is None:
-        return []
-    return [SourceMatch(path, " ".join(sequence))]
+    exempt = NATIVE_AUTO_MERGE_SEQUENCES if path.name == NATIVE_AUTO_MERGE_WORKFLOW else ()
+    tokens = _tokens(path.read_text(encoding="utf-8"))
+    return [
+        SourceMatch(path, " ".join(sequence))
+        for sequence in AUTOMATIC_MERGE_SEQUENCES
+        if sequence not in exempt and _contains_sequence(tokens, sequence)
+    ]
 
 
 def _closed_fixture(tmp_path: Path) -> Path:
@@ -144,9 +162,11 @@ def test_no_workflow_dispatch_or_factory_runner_dispatch_code_exists() -> None:
     # runner involvement) — both are deliberate human-triggered exceptions to this guard.
     # attest-exit-criteria.yml is a third and weakest exception: read-only (one unauthenticated
     # GET of production's public OpenAPI document), carrying workflow_dispatch only so the
-    # scorecard guard can be re-run on demand after a production image swap.
+    # scorecard guard can be re-run on demand after a production image swap. attest-wave-exit.yml
+    # (WS-P2.39) is a fourth of exactly that kind: same read, same reason, for the wave exit bars.
     manual_dispatch_workflows = {
         "attest-exit-criteria.yml",
+        "attest-wave-exit.yml",
         "factory-runner-pilot.yml",
         "release-image.yml",
     }
@@ -210,6 +230,26 @@ def test_no_automatic_merge_path_exists() -> None:
     assert not matches, "Forbidden automatic merge path found:\n" + "\n".join(
         f"- {match.path}: {match.value}" for match in matches
     )
+
+
+def test_the_native_auto_merge_exemption_is_load_bearing_and_scoped(tmp_path: Path) -> None:
+    """Both halves. An exemption that has stopped being needed is drift; one keyed too widely
+    stops guarding a file nobody meant to exempt -- so the same bytes under another name must
+    still match."""
+    gate = WORKFLOW_ROOT / NATIVE_AUTO_MERGE_WORKFLOW
+    tokens = _tokens(gate.read_text(encoding="utf-8"))
+    matched = tuple(
+        sequence for sequence in AUTOMATIC_MERGE_SEQUENCES if _contains_sequence(tokens, sequence)
+    )
+    renamed = tmp_path / "some-other-workflow.yml"
+    renamed.write_bytes(gate.read_bytes())
+
+    assert matched == NATIVE_AUTO_MERGE_SEQUENCES
+    assert _text_automatic_merge_matches(gate) == []
+    assert [match.value for match in _text_automatic_merge_matches(renamed)] == [
+        "gh pr merge",
+        "auto merge",
+    ]
 
 
 def test_automatic_merge_scanner_catches_split_command_arguments() -> None:

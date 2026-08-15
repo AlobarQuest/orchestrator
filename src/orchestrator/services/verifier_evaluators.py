@@ -2,15 +2,13 @@ import uuid
 from typing import Any, Literal
 
 from orchestrator.kernel.evidence_types import (
-    NAMED_CHECK_MAX_ASSERTION_NAME_LENGTH,
-    NAMED_CHECK_MAX_ASSERTION_VALUE_LENGTH,
-    NAMED_CHECK_MAX_ASSERTIONS,
     NAMED_CHECK_MAX_CHECK_NAME_LENGTH,
     NAMED_CHECK_MAX_HEAD_SHA_LENGTH,
-    NAMED_CHECK_MAX_INTEGER_ABS,
+    NAMED_CHECK_MAX_OBSERVED_JOBS,
     NAMED_CHECK_MAX_REFERENCE_LENGTH,
     NAMED_CHECK_MAX_REPOSITORY_LENGTH,
     NAMED_CHECK_MAX_RUN_ID_LENGTH,
+    NAMED_CHECK_OBSERVATION_SOURCE,
     VERIFIER_NAMED_CHECK_EVIDENCE_TYPE,
 )
 from orchestrator.kernel.states import WorkUnitState
@@ -186,6 +184,7 @@ def _named_check_result(evidence: Evidence) -> tuple[EvaluationStatus, str, str]
     run_url = _bounded_text(payload.get("run_url"), NAMED_CHECK_MAX_REFERENCE_LENGTH)
     dispatch_id = _uuid_text(payload.get("dispatch_id"))
     conclusion = _string_value(payload.get("conclusion"))
+    expected_conclusion = _string_value(payload.get("expected_conclusion"))
     if (
         repository is None
         or not isinstance(pr_number, int)
@@ -197,39 +196,63 @@ def _named_check_result(evidence: Evidence) -> tuple[EvaluationStatus, str, str]
         or run_id is None
         or run_url is None
         or dispatch_id is None
+        or conclusion is None
+        or expected_conclusion is None
         or evidence.stable_ref != run_url
         or evidence.source_revision != head_sha
     ):
         return ("failed_closed", "failed", "named-check identity is malformed")
-    assertions = payload.get("assertions")
-    if (
-        not isinstance(assertions, list)
-        or not assertions
-        or len(assertions) > NAMED_CHECK_MAX_ASSERTIONS
-    ):
-        return ("failed_closed", "failed", "named-check assertions are missing")
-    names: set[str] = set()
-    for assertion in assertions:
-        if not isinstance(assertion, dict):
-            return ("failed_closed", "failed", "named-check assertions are malformed")
-        name = _bounded_text(assertion.get("name"), NAMED_CHECK_MAX_ASSERTION_NAME_LENGTH)
-        expected = assertion.get("expected")
-        observed = assertion.get("observed")
-        if (
-            name is None
-            or name in names
-            or not _scalar(expected)
-            or not _scalar(observed)
-            or type(expected) is not type(observed)
-            or expected != observed
-        ):
-            return ("failed_closed", "failed", "named-check assertion mismatch")
-        names.add(name)
+    if not _observation_agrees(payload.get("observation"), check_name, conclusion):
+        # No observation, or one that does not stand behind the conclusion the payload states.
+        # A payload assembled by anything other than the ingestion service lands here.
+        return ("failed_closed", "failed", "named-check conclusion was not observed")
+    if conclusion != expected_conclusion:
+        # The whole point of the workstream: what GitHub said outranks what the caller claimed,
+        # and a divergence between the two is loud rather than silently resolved either way.
+        return (
+            "failed_closed",
+            "failed",
+            f"named check concluded {conclusion}; the caller claimed {expected_conclusion}",
+        )
     if conclusion == "success":
-        return ("passed", "passed", "named check and assertions passed")
+        return ("passed", "passed", "the named check was observed to conclude success")
     if conclusion in CHECK_FAIL_CONCLUSIONS:
         return ("failed", "failed", f"named check conclusion is {conclusion}")
     return ("failed_closed", "failed", "named check conclusion does not pass")
+
+
+def _observation_agrees(observation: Any, check_name: str, conclusion: str) -> bool:
+    """Does the recorded observation actually say what the payload's conclusion claims?
+
+    Every job the name resolved to is carried, and each must report the same conclusion — the
+    ingestion service refuses a name whose matches disagree, so a stored payload where they do
+    is one that did not come from an observation.
+    """
+    if not isinstance(observation, dict):
+        return False
+    jobs = observation.get("jobs")
+    if (
+        observation.get("source") != NAMED_CHECK_OBSERVATION_SOURCE
+        or observation.get("check_name") != check_name
+        or _string_value(observation.get("conclusion")) != conclusion
+        or not isinstance(jobs, list)
+        or not jobs
+        or len(jobs) > NAMED_CHECK_MAX_OBSERVED_JOBS
+    ):
+        return False
+    return all(_observed_job_agrees(job, conclusion) for job in jobs)
+
+
+def _observed_job_agrees(job: Any, conclusion: str) -> bool:
+    if not isinstance(job, dict):
+        return False
+    return (
+        _bounded_text(job.get("run_id"), NAMED_CHECK_MAX_RUN_ID_LENGTH) is not None
+        and _bounded_text(job.get("run_url"), NAMED_CHECK_MAX_REFERENCE_LENGTH) is not None
+        and _bounded_text(job.get("job_id"), NAMED_CHECK_MAX_RUN_ID_LENGTH) is not None
+        and _bounded_text(job.get("job_url"), NAMED_CHECK_MAX_REFERENCE_LENGTH) is not None
+        and _string_value(job.get("conclusion")) == conclusion
+    )
 
 
 def _status_result(payload: dict[str, Any]) -> tuple[EvaluationStatus, str, str]:
@@ -427,13 +450,3 @@ def _uuid_text(value: object) -> str | None:
         return str(uuid.UUID(value))
     except ValueError:
         return None
-
-
-def _scalar(value: object) -> bool:
-    if isinstance(value, str):
-        return bool(value.strip()) and len(value) <= NAMED_CHECK_MAX_ASSERTION_VALUE_LENGTH
-    return isinstance(value, bool) or (
-        isinstance(value, int)
-        and not isinstance(value, bool)
-        and abs(value) <= NAMED_CHECK_MAX_INTEGER_ABS
-    )

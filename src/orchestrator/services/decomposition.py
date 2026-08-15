@@ -13,10 +13,11 @@ from orchestrator.kernel.authority import (
     AuthorityEnvelope,
     authority_fingerprint,
     normalize_authority,
+    runner_payload,
 )
 from orchestrator.kernel.enrichment import validate_enrichment
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
-from orchestrator.kernel.runner_authority import dependency_update_authority_violation
+from orchestrator.kernel.runner_authority import runner_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
@@ -38,6 +39,15 @@ from orchestrator.services.packages import (
 
 _PROPOSAL_ACTION = "decomposition.proposed"
 _PACKAGE_CLI_SOURCE = "package_cli"
+# Every role EXCEPT OBSERVER. This set was authored when it held every member of `ActorRole`,
+# so it read as "the role does not matter here" -- and that reading is what makes it the one
+# gate in this codebase a new role could join by accident rather than by decision (WS-P3.6).
+#
+# OBSERVER is excluded on purpose: submitting a breakdown proposal authors work units, and
+# authorship is not observation. An observe-and-report producer that could propose units could
+# introduce work into the estate on the strength of something it merely saw.
+#
+# Keep this an enumeration. Never rewrite it as "all known roles" or as a negation of one role.
 _ALLOWED_ROLES = frozenset(
     {
         ActorRole.WORKER,
@@ -508,7 +518,7 @@ def _validated_units(
 def _validate_unit_constraints(unit: ProposedUnit) -> dict[str, Any]:
     payload = _authority_payload(unit)
     envelope = normalize_authority(payload)
-    validate_unit_capabilities(unit.required_capability, envelope.capabilities.keys())
+    validate_unit_capabilities(unit.required_capability, envelope.capabilities)
     constraints = payload.get("constraints", {})
     if not isinstance(constraints, Mapping):
         raise DomainError(
@@ -522,13 +532,23 @@ def _validate_unit_constraints(unit: ProposedUnit) -> dict[str, Any]:
             "constraints.work_unit_id is assigned by the orchestrator at proposal time",
             "omit constraints.work_unit_id from the proposed authority envelope",
         )
+    # change_class is load-bearing in the runner's command validation (WS-P2.33), and
+    # normalize_authority reads a malformed value as absent — which would waive the
+    # dependency-update mutation requirement here while the runner refuses the raw payload.
+    change_class = payload.get("change_class")
+    if change_class is not None and (not isinstance(change_class, str) or not change_class.strip()):
+        raise DomainError(
+            "authority_change_class_invalid",
+            "authority change_class must be a non-empty string when present",
+            "declare change_class as a non-empty string, or omit it",
+        )
     # normalized() emits an explicit conformance=None for envelopes that omit it, so an
     # absent claim and a null claim are the same thing: nothing to validate, and dispatch
     # will fail closed on conformance_missing.
     conformance = payload.get("conformance")
     if conformance is not None:
         _validate_unit_conformance(conformance)
-    violation = dependency_update_authority_violation(envelope)
+    violation = runner_authority_violation(envelope, payload)
     if violation is not None:
         raise DomainError(violation.code, violation.message, violation.remediation)
     return payload
@@ -802,7 +822,7 @@ def _dependency_identity(dependency: ProposedDependency) -> dict[str, Any]:
 def _authority_payload(unit: ProposedUnit) -> dict[str, Any]:
     payload = unit.authority_payload
     if payload is None:
-        return unit.authority.normalized()
+        return runner_payload(unit.authority)
     return {key: payload[key] for key in sorted(payload)}
 
 

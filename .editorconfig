@@ -1,3 +1,4 @@
+# code-standards:managed:start — everything down to :end is replaced by `code-standards sync`.
 # code-standards vendored .editorconfig. Edit upstream and `code-standards sync`.
 #
 # Editor-level defaults applied BEFORE the linters run (indentation, charset,
@@ -26,3 +27,4 @@ indent_style = tab
 # Markdown uses trailing whitespace for hard line breaks; don't strip it.
 [*.md]
 trim_trailing_whitespace = false
+# code-standards:managed:end — content OUTSIDE these markers is yours and is preserved. Delete both markers to own the whole file: sync then writes nothing here and says so every run.

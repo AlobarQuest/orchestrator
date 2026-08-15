@@ -93,6 +93,16 @@ VOCABULARY_REGISTRY: dict[str, str] = {
     f"{_VE}:FAIL_VALUES": "runner/gate status-string vocabulary (evidence payloads)",
     # The commands/{command} API vocabulary the worker and CLI send.
     "api/routes.py:COMMAND_TARGETS": "commands/{command} API vocabulary (worker/CLI)",
+    # The capability LEVEL vocabulary the runner validates every envelope entry against
+    # (factory_runner/authority.py SUPPORTED_LEVELS). Derived on both sides from the
+    # byte-identical tests/fixtures/runner_capability_levels.json (WS-P2.34); the golden
+    # envelopes cannot pin it, since every capability in them is declared "allowed".
+    "kernel/runner_authority.py:RUNNER_CAPABILITY_LEVELS": (
+        "factory-runner SUPPORTED_LEVELS; pinned by runner_envelope_contract.json"
+    ),
+    "kernel/runner_authority.py:RUNNER_ENVELOPE_FIELDS": (
+        "factory-runner AuthorityEnvelope model fields; pinned by runner_envelope_contract.json"
+    ),
     # Authority profiles minted in the security-standards registry bundle.
     "kernel/context.py:AUTHORITY_PROFILE_RANK": "authority profiles (registry bundle)",
     # AC ids the verifier generates for post-deploy units. Single source in lifecycle (the
@@ -108,6 +118,14 @@ VOCABULARY_REGISTRY: dict[str, str] = {
     ),
     "services/follow_ups.py:FOLLOW_UP_FIELDS": (
         "intent-packages schema.py TOP_SCHEMA['follow_up'] MapSpec field names"
+    ),
+    # What a package's work touches (WS-P2.18, ADR-0009). Produced by the intent-package author's
+    # top-level `reach` list; consumed here at intake and at the human gate. This module is the
+    # ONLY enumeration -- intent-packages accepts the key and checks its shape without listing
+    # members -- so the other side is a shape contract, not a second copy to keep in sync.
+    "reach_vocabulary.py:REACH_VOCABULARY": (
+        "intent-packages package.yaml `reach`; membership owned solely by this module, "
+        "shape-checked on the authoring side"
     ),
 }
 

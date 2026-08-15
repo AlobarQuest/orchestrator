@@ -12,6 +12,7 @@ from orchestrator.kernel.authority import AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event, PackageAcceptanceCriterion, WorkPackageRevision
 from orchestrator.persistence.repositories import PackageRepository
+from orchestrator.reach_vocabulary import carry_reach, validate_reach
 from orchestrator.services.follow_ups import validate_follow_up
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import register_revision
@@ -90,6 +91,7 @@ def register_package_intake(
             None,
         )
     follow_up = validate_follow_up(command.follow_up)
+    reach = validate_reach(command.enforcement_snapshot.get("reach"))
     acceptance_criteria = _validated_acceptance_criteria(command.acceptance_criteria)
     PackageRepository(session).lock_package_intake(command.package_id)
     replay = _intake_replay(session, command, actor)
@@ -97,10 +99,13 @@ def register_package_intake(
         return replay
 
     enriched_snapshot = _normalize_json(
-        {
-            **command.enforcement_snapshot,
-            "acceptance_criteria": [criterion.ac_id for criterion in acceptance_criteria],
-        }
+        carry_reach(
+            {
+                **command.enforcement_snapshot,
+                "acceptance_criteria": [criterion.ac_id for criterion in acceptance_criteria],
+            },
+            reach,
+        )
     )
     try:
         revision = register_revision(

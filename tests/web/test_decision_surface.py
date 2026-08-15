@@ -38,7 +38,9 @@ def _decision_section(page: str) -> str:
     return match.group(0)
 
 
-def _intake_revision(migrated_engine: Engine) -> WorkPackageRevision:
+def _intake_revision(
+    migrated_engine: Engine, *, reach: list[str] | None = None
+) -> WorkPackageRevision:
     suffix = uuid.uuid4().hex
     with Session(migrated_engine) as session:
         revision = register_package_intake(
@@ -54,6 +56,7 @@ def _intake_revision(migrated_engine: Engine) -> WorkPackageRevision:
                     "scope": {"in": ["projection"]},
                     "dependencies": [],
                     "applicable_standards": ["STD-1"],
+                    **({"reach": reach} if reach is not None else {}),
                 },
             ),
             human_actor(),
@@ -138,3 +141,26 @@ def test_the_intake_surface_names_what_the_cli_verified_and_what_the_server_did_
     assert "cli_verified_local_package_hash" in page.text
     assert "cli_verified_approval_lineage" in page.text
     assert "did not re-verify" in page.text
+
+
+def test_a_declared_reach_reaches_the_gate_a_human_actually_reads(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """WS-P2.18. The field is decided once because the scheduler and the human read the same one.
+
+    Asserted inside the decision surface, not page-wide: the intake page already prints the whole
+    enforcement snapshot, so a page-wide assertion passes with reach rendered nowhere a human
+    looks.
+    """
+    revision = _intake_revision(migrated_engine, reach=["live_estate", "operator_machine"])
+
+    page = db_client.get(f"/review/intakes/{revision.id}", headers=HUMAN)
+
+    assert page.status_code == 200
+    surface = _decision_section(page.text)
+    assert "hosted application" in surface
+    assert "keychain" in surface
+    # And the affects row specifically stops being an unknown -- the reversibility row is
+    # legitimately still one for this package, so a surface-wide "Not known" check would not
+    # discriminate.
+    assert "Not known.</strong> The package has not been broken into work units" not in surface

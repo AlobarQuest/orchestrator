@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the rollout-watcher LaunchAgent (ADR-0019 increment 2). Install with
+     scripts/install-deploy-watcher-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
+     writes ~/Library/LaunchAgents/com.devon.deploy-watcher.plist.
+
+     No secrets live here: the wrapper fetches the change-manager M2M bearer from BWS at runtime
+     and takes the GitHub credential from the environment or from `gh`.
+
+     EVERY HOUR, not once a day, and that is the one setting worth arguing about. A failed
+     production rollout is the subject; the acceptance criteria give it ten minutes and the
+     record's remedy is a rollback. A watcher that notices at 07:30 tomorrow is a log entry, not
+     a control. Hourly is still cheap -- one pass reads a handful of GitHub objects per open
+     deploying-merge change, and re-observing a settled run replays rather than appending.
+
+     RunAtLoad is false. A pass at login adds nothing an hourly schedule does not already cover,
+     and the machine being closed overnight costs nothing: observations are keyed on the run
+     attempt, so the first pass after waking records exactly what the missed ones would have.
+
+     The exit code is the report. launchd discards it, so read the log -- 0 clean, 1 the tool
+     failed, 2 something was found, 3 something could not be measured. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.deploy-watcher</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-deploy-watcher.sh</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/deploy-watcher.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/deploy-watcher.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

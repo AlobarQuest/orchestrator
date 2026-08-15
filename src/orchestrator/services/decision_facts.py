@@ -20,6 +20,7 @@ from typing import Any
 
 from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
+from orchestrator.reach_vocabulary import reach_from_snapshot, reach_statement
 
 # What a change of each class costs to undo. Editorial prose, keyed by the `change_class` an
 # authority envelope declares; a class with no entry resolves to the explicit unknown rather than
@@ -90,7 +91,7 @@ def decision_facts_for_unit(
     envelope = normalize_authority(unit.authority)
     return {
         "does": _fact(_DOES_LABEL, True, unit.outcome),
-        "affects": _affects_from_envelope(envelope),
+        "affects": _affects(_declared_reach(revision), _affects_from_envelope(envelope)),
         "reversibility": _reversibility(envelope.change_class, _declared_rollback_plan(revision)),
     }
 
@@ -98,18 +99,45 @@ def decision_facts_for_unit(
 def decision_facts_for_revision(revision: WorkPackageRevision) -> dict[str, dict[str, Any]]:
     """The three facts for a package revision at intake.
 
-    "What it affects" is genuinely unanswerable here and says so: the package-level authority
-    block is a capability declaration (`allowed`/`requires_approval`/`prohibited`), and the
-    target repository is chosen per unit when the package is broken up.
+    The envelope's half of "what it affects" is genuinely unanswerable here and says so: the
+    package-level authority block is a capability declaration
+    (`allowed`/`requires_approval`/`prohibited`), and the target repository is chosen per unit
+    when the package is broken up. The DECLARED half is answerable, and this is the gate it
+    matters most at -- the reach a package author declared is known before a single unit exists.
     """
     outcome = _package_outcome(revision)
     return {
         "does": _fact(_DOES_LABEL, outcome is not None, outcome or _UNKNOWN_OUTCOME),
-        "affects": _fact(_AFFECTS_LABEL, False, _UNKNOWN_AFFECTS_AT_INTAKE),
+        "affects": _affects(
+            _declared_reach(revision),
+            _fact(_AFFECTS_LABEL, False, _UNKNOWN_AFFECTS_AT_INTAKE),
+        ),
         # No change class exists here -- the package-level authority block is a capability
         # declaration, not an envelope -- so intake is answerable only from the declared plan.
         "reversibility": _reversibility(None, _declared_rollback_plan(revision)),
     }
+
+
+def _affects(reach: str | None, from_envelope: dict[str, Any]) -> dict[str, Any]:
+    """The declared reach first, then whatever the envelope says, as one fact.
+
+    The two are answers to the same question at different resolutions, and neither replaces the
+    other. Reach is a closed classification the author committed to and policy can be keyed on;
+    the envelope's half is the specifics, read back in the author's own words. Leading with the
+    classification is deliberate: it is the sentence that survives being skimmed.
+
+    Reach alone makes this fact KNOWN. At intake that is the whole change -- the envelope half is
+    an explicit unknown there, and a package that declared its reach has answered the question
+    even though no unit exists yet.
+    """
+    if reach is None:
+        return from_envelope
+    detail = f"{reach}. {from_envelope['detail']}" if from_envelope["known"] else f"{reach}."
+    return _fact(_AFFECTS_LABEL, True, detail)
+
+
+def _declared_reach(revision: WorkPackageRevision) -> str | None:
+    return reach_statement(reach_from_snapshot(revision.enforcement_snapshot))
 
 
 def _declared_rollback_plan(revision: WorkPackageRevision) -> str | None:
@@ -147,9 +175,11 @@ def _affects_from_envelope(envelope: AuthorityEnvelope) -> dict[str, Any]:
     """Everything the envelope declares about what this work touches, in its own terms.
 
     The two repository-shaped keys keep their prominence, and while the envelope is repository-
-    shaped at all, the missing half of that pair is still stated as the negative it is: a unit
-    that names a repository but authorizes no mutating command is repository work with nothing to
-    change, which is worth saying.
+    shaped at all, the missing half of that pair is still stated. Which negative it is depends on
+    repo.edit: with edit authority granted, an absent mutation_commands is the edit-shaped norm —
+    the coding agent produces the diff, and saying "nothing to change" would tell the approving
+    human the opposite of what the unit does (WS-P2.33). Without edit authority it really is
+    repository work with nothing to change, which is worth saying.
 
     But an envelope is an open map. For `non-software-operational` work -- the class where blast
     radius matters most -- the answer arrives under other names entirely (`credential`,
@@ -172,11 +202,12 @@ def _affects_from_envelope(envelope: AuthorityEnvelope) -> dict[str, Any]:
             if isinstance(target, str) and target
             else "No target repository is named in the authority envelope"
         )
-        parts.append(
-            "runs " + ", ".join(str(command) for command in commands)
-            if isinstance(commands, list) and commands
-            else "no mutating command is authorized"
-        )
+        if isinstance(commands, list) and commands:
+            parts.append("runs " + ", ".join(str(command) for command in commands))
+        elif envelope.level_for("repo.edit") == "allowed":
+            parts.append("mutates by direct edits; no command mutates")
+        else:
+            parts.append("no mutating command is authorized")
     parts.extend(
         statement
         for name, value in constraints.items()

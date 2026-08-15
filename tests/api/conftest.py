@@ -53,6 +53,18 @@ def auth_config() -> AuthConfig:
                     "runtime": "verifier",
                     "authority_profile": "verifier-v1",
                 },
+                # WS-P3.6: mirrors the real `orchestrator-observer` registry actor. Present here
+                # so an OBSERVER request authenticates through the production chain -- bearer ->
+                # authenticate_m2m (which returns WORKER for every machine credential) -> the
+                # m2m_roles promotion below. A test that constructed the ActorContext directly
+                # would never exercise that promotion, which is where the role actually comes from.
+                {
+                    "agent_id": "observer",
+                    "version": 1,
+                    "status": "active",
+                    "runtime": "node-executor",
+                    "authority_profile": "observer-v1",
+                },
             ],
         }
     )
@@ -71,6 +83,10 @@ def auth_config() -> AuthConfig:
                 agent_id="verifier",
                 token_hash=hashlib.sha256(b"verifier-token").hexdigest(),
             ),
+            "observer-key": M2MCredential(
+                agent_id="observer",
+                token_hash=hashlib.sha256(b"observer-token").hexdigest(),
+            ),
         },
         trusted_proxy_ips=frozenset({"testclient"}),
         proxy_marker_header="X-Alobar-Proxy",
@@ -80,6 +96,7 @@ def auth_config() -> AuthConfig:
         m2m_roles={
             "system-key": ActorRole.SYSTEM,
             "verifier-key": ActorRole.VERIFIER,
+            "observer-key": ActorRole.OBSERVER,
         },
         csrf_secret=b"test-only-csrf-secret-with-32-bytes",
     )

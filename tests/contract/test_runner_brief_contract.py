@@ -4,7 +4,7 @@ A key added here that factory-runner does not declare is a key no worker can rea
 Until 2026-08-01 it was worse than that -- `RunnerBrief` was `extra="forbid"`, so it
 raised at parse time and killed every run at claim, which is what happened for a full
 day from 2026-07-30. WS-P2.23 made the runner tolerate and report undeclared keys, and
-moved the refusal to where it belongs: the `Runner brief compatibility` job fails the
+moved the refusal to where it belongs: the `Runner consumer compatibility` job fails the
 pull request that adds a field the pinned runner does not declare. This file is the
 other half -- it pins the key SET the two repos agree on.
 

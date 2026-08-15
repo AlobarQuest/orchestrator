@@ -1,0 +1,22 @@
+{
+  "capabilities": [
+    "command.run",
+    "github.pr.create",
+    "github.pr.merge",
+    "orchestrator.claim",
+    "orchestrator.evidence.write",
+    "repo.edit",
+    "repo.read"
+  ],
+  "envelope_fields": [
+    "budgets",
+    "capabilities",
+    "change_class",
+    "conformance",
+    "constraints"
+  ],
+  "levels": [
+    "allowed",
+    "prohibited"
+  ]
+}

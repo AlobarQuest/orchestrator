@@ -70,6 +70,9 @@ def test_status_ledger_projects_runtime_state_without_writes(
         rationale="needs follow-up",
         idempotency_key="adjudication-main",
         evidence_id=evidence.id,
+        # As `verify_work_unit` records it. The ledger projection is the subject here; who decided
+        # is incidental, so it goes through the door production uses (WS-P2.32).
+        from_verifier_evaluation=True,
     )
     assert not isinstance(adjudication, Exception)
     failure = transition_unit(

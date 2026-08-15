@@ -3,38 +3,59 @@ authority envelope may name.
 
 A work unit's ``required_capability`` and every key in its ``authority.capabilities`` must be one
 of these strings. The runner (the worker repo named in the contract test) enforces the SAME
-six-term runner vocabulary in its own ``capability_vocabulary`` module, from which its supported
+runner vocabulary in its own ``capability_vocabulary`` module, from which its supported
 set is derived, and both sides are pinned to the byte-identical
-``tests/fixtures/runner_authority_envelope.json``. The contract test
+``tests/fixtures/runner_envelope_contract.json``. The contract test
 ``test_runner_envelope_contract`` asserts ``RUNNER_CAPABILITIES`` here is *derived from* that
-golden envelope rather than being a
+declaration rather than being a
 second, independently hand-maintained copy -- a hash pin would prove the file matches without
 proving anyone consumes it, which is the exact unread-permission defect WS-P2.16 exists to close.
+The two golden ENVELOPE fixtures are specimens of dispatched work and are asserted to be subsets
+of this set; until WS-P3.7 the vocabulary was derived from one of them, which meant a name the
+factory had never dispatched had to be written into a record of what it did.
 
 The orchestrator's accepted set is a strict SUPERSET of the runner's: it adds the capabilities for
 work no runner performs -- its own WS-5.1 post-hoc release-observation verification units, and the
-non-software operational units of WS-P2.13. Enforcing the runner's six-term set at orchestrator
+non-software operational units of WS-P2.13. Enforcing the runner's set at orchestrator
 ingress would make the orchestrator reject both its own generated units and every unit of a
 delivery profile that has no repository at all.
+
+Adding a name here is a CROSS-REPO act with a fixed order, because the runner's envelope model
+forbids unrecognised capabilities outright: it must be merged there and pinned by every caller
+before this module may say it, or every dispatch of a unit carrying the new name dies at envelope
+parse. ``scripts/check_capability_consumer_compatibility.py`` refuses the pull request that gets
+that order wrong; it was prose until WS-P3.7.
 
 This module is a plain Python module rather than a data file so it ships by construction -- inside
 the wheel and the image -- with no packaging metadata to forget. A fixture under ``tests/`` is NOT
 in the image (Dockerfile copies ``src`` only); production ingress reads THIS module.
 """
 
-from collections.abc import Iterable
+from collections.abc import Mapping
 from typing import Final
 
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
+from orchestrator.kernel.runner_authority import runner_capability_level_violation
 
-# The runner-executable capabilities, in the order the golden envelope sorts them. Byte-pinned
-# across repos through the authority envelope fixture; the contract test asserts
-# ``RUNNER_CAPABILITIES == frozenset(golden_envelope()["capabilities"])`` so a divergence here or in
-# the envelope is loud, and hardcoding a term reds the derivation.
+# The runner-executable capabilities, sorted. Byte-pinned across repos through the contract
+# fixture; the contract test asserts
+# ``RUNNER_CAPABILITIES == frozenset(golden_contract()["capabilities"])`` so a divergence here or
+# in the declaration is loud, and hardcoding a term reds the derivation.
 CAPABILITY_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
     "runner": (
         "command.run",
         "github.pr.create",
+        # ADR-0020, WS-P3.7 Increment 3. The name exists so that landing a pull request can be an
+        # authority term a human approves per unit, in the envelope, the way every other
+        # capability is -- rather than an ambient property of the factory. Increment 3 shipped it
+        # reading nothing; Increment 4a's merge-admission answer now reads it as one term of a
+        # report. Nothing yet DERIVES A PERMISSION from it -- no code in either repository acts on
+        # the strength of it, and no envelope has ever carried it.
+        #
+        # An envelope that does carry it matches no known-good authority pattern -- totality --
+        # so it falls to the human authority gate, which is where ADR-0020 puts the decision.
+        "github.pr.merge",
         "orchestrator.claim",
         "orchestrator.evidence.write",
         "repo.edit",
@@ -79,18 +100,22 @@ ORCHESTRATOR_CAPABILITIES: Final[frozenset[str]] = (
 )
 
 
-def validate_unit_capabilities(required_capability: str, capabilities: Iterable[str]) -> None:
-    """Reject any unit capability outside the orchestrator's accepted set with a named error.
+def validate_unit_capabilities(required_capability: str, capabilities: Mapping[str, str]) -> None:
+    """Reject any unit capability, or capability level, the orchestrator does not accept.
 
-    Applies to UNIT fields only -- ``required_capability`` and ``authority.capabilities`` keys.
+    Applies to UNIT fields only -- ``required_capability`` and ``authority.capabilities``.
     Never to the package/revision ``authority`` (which legitimately speaks the registry
     vocabulary), and never inside ``normalize_authority`` or the kernel (post-deploy units are
     constructed directly and would self-reject). Enforced at both unit-ingress paths
     (``register_approved_unit`` and the decomposition proposal gate).
 
-    The prior failure mode was a SILENT one: ``level_for`` returns ``"prohibited"`` for an unknown
-    capability, so dispatch already fails closed as ``capability_not_authorized`` -- but late, and
-    without pointing at the offending key. This turns that into a named error at the gate.
+    Both failure modes were SILENT before they were named here, and in opposite directions. An
+    unknown NAME already failed closed at dispatch -- ``level_for`` returns ``"prohibited"`` for
+    a capability it does not know, so admission refused it as ``capability_not_authorized``, late
+    and without pointing at the offending key. An unknown LEVEL failed OPEN: ``level_for``
+    compares against ``"allowed"``, so a mistyped level on a capability the work does not need
+    reads as a prohibition and admission is happy -- while the runner, which validates every
+    level it is handed, refuses the whole envelope.
     """
     for capability in (required_capability, *capabilities):
         if capability not in ORCHESTRATOR_CAPABILITIES:
@@ -99,3 +124,12 @@ def validate_unit_capabilities(required_capability: str, capabilities: Iterable[
                 f"unit capability {capability!r} is not a recognised orchestrator capability",
                 "declare one of: " + ", ".join(sorted(ORCHESTRATOR_CAPABILITIES)),
             )
+    # The level rule itself lives in the kernel, beside the other things the runner refuses, and
+    # is applied again at approval and admission for envelopes authored before it existed. One
+    # definition, three call sites -- a second copy here is exactly the divergence this
+    # workstream exists to close.
+    violation = runner_capability_level_violation(
+        AuthorityEnvelope(capabilities=dict(capabilities), budgets=AuthorityBudgets(None, None))
+    )
+    if violation is not None:
+        raise DomainError(violation.code, violation.message, violation.remediation)

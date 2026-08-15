@@ -1,6 +1,16 @@
+# LOCALLY OWNED (no code-standards managed block, deliberately). This repo tracks
+# github-actions and docker as well as its Python deps; the generated config
+# declares one ecosystem and omits github-actions by design. `code-standards
+# sync` writes nothing here and reports it every run (ADR-0008).
+#
+# The Python ecosystem MUST be `uv`, not `pip`: this repo locks with uv.lock, and
+# only the `uv` ecosystem updates it. Under `pip`, Dependabot edited pyproject.toml
+# alone, leaving uv.lock stale, so `uv sync --frozen` failed and every Python PR it
+# opened was unmergeable from birth (#46, #61, #74 — three bumps of the same ruff
+# pin, none landed).
 version: 2
 updates:
-  - package-ecosystem: pip
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly

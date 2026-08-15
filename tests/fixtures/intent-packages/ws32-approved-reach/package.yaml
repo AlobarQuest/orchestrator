@@ -1,0 +1,87 @@
+schema_version: 1
+package_id: ws32-approved-reach
+title: "Approved fixture declaring reach"
+revision: 1
+status: approved
+created_by: test
+owner: devon
+created_at: "2026-07-05T00:00:00Z"
+supersedes: null
+reach: ["live_estate", "source_repository"]
+profile: software-delivery
+profile_fields:
+  repo: AlobarQuest/example
+  branch: codex/example
+  deploy_target: null
+  required_checks: ["Quality"]
+  rollback_plan: "Revert the branch."
+outcome:
+  what: "A test change works."
+  why: "Fixture."
+  beneficiary: "Tests."
+  success_signal: "Tests pass."
+scope:
+  included: ["Implement fixture."]
+  excluded: []
+  non_goals: []
+  assumptions: []
+  open_questions: []
+sources:
+  - location: "test"
+    authority_level: authoritative
+    required_version: null
+    trust: trusted_instruction
+    sensitivity: internal
+constraints:
+  time_budget: null
+  technology: null
+  policy_legal: null
+  privacy_security: null
+  compatibility: null
+  quality_accessibility: null
+  operational: null
+  other: []
+acceptance:
+  - id: AC-001
+    condition: "The change is tested."
+    evidence_type: automated_test
+    evidence: "gate: focused tests pass"
+    approver: policy
+authority:
+  allowed: [repository_read, repository_write, test_execution]
+  requires_approval: [merge_to_main]
+  prohibited: [infra_mutation]
+  budgets:
+    max_attempts: 3
+    max_llm_calls: null
+deliverables:
+  artifacts: ["code"]
+  destination: "repo"
+  recipient: devon
+  definition_of_done: "Tests pass."
+  operator_responsibilities: ["Review."]
+dependencies:
+  predecessor_packages: []
+  external_decisions: []
+  required_people_systems: ["Devon"]
+  required_capabilities: [repository_read, repository_write, test_execution]
+  blocking_conditions: []
+risk:
+  failure_modes: ["Fixture fails."]
+  max_impact: "Test failure."
+  stop_conditions: ["Tests fail."]
+  rollback: "Revert."
+  escalation_target: devon
+verification:
+  independent_review: ["Review."]
+  non_mechanical: []
+follow_up:
+  required: false
+  revisit_when: null
+  signals: []
+  owner: null
+applicable_standards:
+  project: "1.0"
+  code: "1.0"
+  security: "1.0"
+

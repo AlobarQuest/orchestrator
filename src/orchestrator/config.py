@@ -24,6 +24,36 @@ class Settings(BaseSettings):
     github_app_id: str | None = None
     github_app_installation_id: str | None = None
     github_app_private_key_b64: SecretStr | None = None
+    # WS-P2.28. Where the estate's record of what a landing on a default branch changes is read
+    # from, and the READ-ONLY credential that reads it -- App Brain scopes that credential to two
+    # read paths and refuses it everywhere else, so it cannot write to the estate's knowledge.
+    # Both default to empty, and empty is a REFUSAL at admission rather than a permission: an
+    # unconfigured deployment must not be able to conclude that nothing already serving changes.
+    # Setting them is therefore a prerequisite of enabling routing, not an optional extra.
+    app_brain_url: str = ""
+    app_brain_read_key: SecretStr | None = None
+    app_brain_timeout_seconds: float = 10.0
+    # Where the estate's change records live, and the bearer that reads them (ADR-0019). Both
+    # default to empty, and empty is a REFUSAL for every repository the estate says landing
+    # changes something already serving -- which is exactly the answer that repository already
+    # gets today, so a release carrying this needs no environment write to be safe and stays inert
+    # until one is made. The timeout is deliberately shorter than App Brain's: both are consulted
+    # inside a transaction holding a row lock on the work unit, and this is the second of the two.
+    change_record_url: str = ""
+    change_record_token: SecretStr | None = None
+    change_record_timeout_seconds: float = 5.0
+    # ADR-0019 increment 5b. Whether this deployment may land a pull request into a repository
+    # where landing changes something already serving.
+    #
+    # THIS SWITCH EXISTS BECAUSE ITS SIBLING'S ABSENCE WAS DECIDED, and the decision named its own
+    # expiry: a landing driven by one human-invoked caller needs no switch, and *if a scheduled
+    # caller is ever proposed, that decision is void*. This increment ships the scheduled caller.
+    # A switch against a loop is a real control where a switch against one operator is ceremony.
+    #
+    # Default false, and false is a REFUSAL rather than an absence: the release carrying this code
+    # lands nothing until somebody writes an environment variable, so merging it changes the
+    # estate's behaviour by exactly nothing.
+    estate_landing_enabled: bool = False
     dispatch_failure_signature_threshold: int = 3
     dispatch_orchestrator_url: str = "https://sds.alobar.net"
     # How long a human approval gate may go unanswered before the dead-letter view reports it as
@@ -61,6 +91,22 @@ class Settings(BaseSettings):
     # settles", which is maximally on and is what the production demonstration uses so it needs
     # no waiting.
     follow_up_due_after_days: int = Field(default=30, ge=0, le=365)
+    # How long after a claim's hold has ended before the review queue reports the unit as stalled.
+    # This is a MARGIN on top of the lease, never a duration of its own: the lease already says how
+    # long this unit's work may take, per what its package says that work reaches, so the only
+    # question left is how long after that we stop expecting the worker back. Keying it on the
+    # lease is what stops a second, disagreeing copy of "how long may this take" coming into
+    # existence next to the one that already answers it.
+    # A plain int with NO "off" value and BOUNDED at both ends, following
+    # dead_letter_stalled_approval_seconds and follow_up_due_after_days. The cap is what makes
+    # "cannot be switched off" true of the values an operator can actually set: the longest hold
+    # this build will ever grant is two hours (kernel.leases.LEASE_CEILING), so a day is already
+    # twelve times the largest thing this is a margin on, and anything past that silences the
+    # report as completely as a None ever did. The floor is not the risk -- 0 reports at the lapse
+    # itself, which is maximally on, and is what the tests use so they need no sleep.
+    execution_stall_grace_seconds: int = Field(
+        default=900, ge=0, le=86_400
+    )  # 15 minutes; capped at a day
 
 
 @lru_cache

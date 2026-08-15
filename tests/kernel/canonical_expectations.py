@@ -22,6 +22,7 @@ EXPECTED_ACTOR_ROLE_VALUES = {
     "WORKER": "worker",
     "VERIFIER": "verifier",
     "HUMAN": "human",
+    "OBSERVER": "observer",
 }
 
 SYSTEM = frozenset({ActorRole.SYSTEM})

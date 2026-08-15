@@ -1,10 +1,33 @@
+# LOCALLY OWNED (no code-standards managed block, deliberately). This workflow is
+# this repo's own: the WS-P2.23 "Runner consumer compatibility" job, a postgres:16
+# service, SECURITY_STANDARDS_DIR, both database URLs and `alembic upgrade head`.
+# None of it exists in the shared template and `make check` cannot run here
+# without it. `code-standards sync` writes nothing here and reports it every run
+# (ADR-0008); before that mechanism existed, a literal sync would have deleted a
+# shipped CI gate.
 name: Quality
 
+# `push` is main-only ON PURPOSE. With `branches: ["**"]` on both events, every commit on
+# a branch with an open PR ran this workflow TWICE -- once per event, same SHA, same name.
+# That doubled a ~13-minute billed job on a private repo, and it is also the cause of the
+# two indistinguishable `Quality` runs on one SHA: the named-check evidence mechanism
+# records a check by NAME, so it could not tell the pair apart. One run per commit is a
+# correctness property here, not only a cost saving.
+#
+# Consequence, accepted: a branch pushed with no open PR gets no CI. Signal arrives when the
+# PR is opened, which is when it is read. `main` is still verified on every push, so a merge
+# is never unverified.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
-    branches: ["**"]
+
+# A superseded run has nothing to say. Cancel in-progress runs for a PR branch when a new
+# commit lands -- but NEVER on `main`, where each commit's result is a record of that commit
+# and cancelling one would leave a merged SHA with no verdict.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # Separate from Quality on purpose. It answers a different question -- can the consumer
@@ -12,8 +35,8 @@ jobs:
   # answer it on the pull request that adds the field, not on a later release. It needs no
   # database and no dependency install, so it also reports in seconds rather than behind
   # the full gate. A red here is unambiguous: merge the consumer first.
-  brief-compatibility:
-    name: Runner brief compatibility
+  consumer-compatibility:
+    name: Runner consumer compatibility
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,6 +52,8 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: "0.5.31"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       # The locked environment, not an ad-hoc pin: a second declaration of the YAML
       # parser's version is a second vocabulary, and this repo has been bitten by those.
@@ -40,6 +65,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python scripts/check_brief_consumer_compatibility.py
+
+      # The same question about the other cross-repo vocabulary (WS-P3.7). It lives in THIS
+      # job rather than its own so that the required status check already protecting the
+      # brief answer protects this one too: a new job would report but not block until
+      # branch protection was edited to require it, and a gate that does not block is a
+      # report. The job NAME is therefore left alone -- it is the protected context string,
+      # and renaming it silently blocks every pull request forever. Reading the name as
+      # covering both surfaces is the cost; renaming it and the protection rule together is
+      # a follow-up, not something to do halfway.
+      #
+      # Invoked as a MODULE, unlike its sibling above, so that it can import the pin reader,
+      # the fetcher and the premise assertion from it. Two readers of one pin could vet two
+      # different revisions.
+      - name: Check declared capabilities against the pinned consumer
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .venv/bin/python -m scripts.check_capability_consumer_compatibility
 
   quality:
     name: Quality
@@ -74,6 +116,8 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           version: "0.5.31"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - name: Install locked dependencies
         run: uv sync --frozen

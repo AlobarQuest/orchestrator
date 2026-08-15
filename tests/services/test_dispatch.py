@@ -10,9 +10,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import orchestrator.services.dispatch as dispatch_module
-from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
+from orchestrator.factory_policy import load_factory_policy
+from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.persistence.models import DispatchRecord, Event
+from orchestrator.persistence.models import (
+    Approval,
+    DispatchRecord,
+    Event,
+    WorkPackageRevision,
+    WorkUnit,
+)
+from orchestrator.services.authority_gate import human_authority_gate
 from orchestrator.services.dispatch import (
     DispatchCommand,
     DispatchSettings,
@@ -30,6 +38,8 @@ from orchestrator.services.packages import (
     register_approved_unit,
     register_revision,
 )
+from tests.services.estate_doubles import inert_source
+from tests.services.test_authority_known_good import uv_bump
 
 PILOT_REPOSITORY = "AlobarQuest/orchestrator"
 GREEN_CONFORMANCE: dict[str, object] = {
@@ -98,10 +108,19 @@ def ready_unit(
     conformance: dict[str, object] | object = MISSING,
     target_repository: str | None = PILOT_REPOSITORY,
     enforcement_snapshot: dict[str, object] | None = None,
+    reach: list[str] | None = None,
 ):
     # Revisions are append-only at the database level, so a test that needs a different
     # enforcement snapshot must register it, not mutate it afterwards.
-    enforcement_snapshot = {} if enforcement_snapshot is None else enforcement_snapshot
+    #
+    # Reach is DECLARED here by default because a package authored today declares it (WS-P2.18
+    # Increment 4): an undeclared one is refused at admission, so a harness that omitted it would
+    # make every test below a test of that refusal. Pass `reach=[]` for the units that are meant
+    # to be undeclared.
+    enforcement_snapshot = {} if enforcement_snapshot is None else dict(enforcement_snapshot)
+    declared = ["source_repository"] if reach is None else reach
+    if declared:
+        enforcement_snapshot["reach"] = declared
     revision = register_revision(
         session,
         package_id=f"pkg-{key}",
@@ -174,6 +193,38 @@ def test_dispatch_fails_closed_when_global_switch_disabled(migrated_session: Ses
         dispatch_command(unit.id),
         settings(enabled=False),
         github,
+        inert_source(),
+    )
+
+    assert record.status == "skipped"
+    assert record.reason_code == "dispatch_disabled"
+    assert github.calls == []
+
+
+def test_the_off_switch_outranks_the_most_permissive_policy_expressible(
+    migrated_session: Session,
+) -> None:
+    """WS-P2.18 R4, end to end: the artifact objects to nothing, and nothing is admitted anyway.
+
+    Both halves matter. Without the first the claim is vacuous -- an artifact that refused
+    everything would satisfy "nothing is admitted" while proving nothing about precedence. The
+    shipped artifact IS the most permissive one expressible: there is no permission in its schema,
+    so raising no objection for every reach is as far as it can go.
+    """
+    policy = load_factory_policy()
+    for member in sorted(policy.rows):
+        assert policy.refusals_for((member,)) == ()
+    assert policy.refusals_for(tuple(sorted(policy.rows))) == ()
+
+    unit = ready_unit(migrated_session, key="policy-cannot-outrank-the-switch")
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(enabled=False),
+        github,
+        inert_source(),
     )
 
     assert record.status == "skipped"
@@ -187,7 +238,6 @@ def test_dispatch_skips_legacy_invalid_dependency_update_authority(
     unit = ready_unit(migrated_session, key="legacy-invalid-authority")
     unit.authority = {
         "capabilities": {
-            "repository_write": "allowed",
             "repo.edit": "allowed",
             "command.run": "allowed",
         },
@@ -207,10 +257,58 @@ def test_dispatch_skips_legacy_invalid_dependency_update_authority(
         dispatch_command(unit.id),
         settings(allowed_change_classes=frozenset({"dependency-update"})),
         github,
+        inert_source(),
     )
 
     assert record.status == "skipped"
     assert record.reason_code == "authority_mutation_commands_invalid"
+    assert github.calls == []
+
+
+def test_dispatch_blocks_a_legacy_capability_outside_the_runner_vocabulary(
+    migrated_session: Session,
+) -> None:
+    """WS-P2.34 shape 2, on the shape that actually exists in the ledger.
+
+    `repository_write` is the pre-WS-6.4 capability name. The runner validates every entry of
+    the map regardless of level, so this envelope dies at `validate_authority` however good its
+    command lists are -- and the test this one was split from proved the point by carrying BOTH
+    defects, reporting only the command one. The vocabulary fault is the more fundamental of the
+    two: fixing the command lists on this envelope would leave it just as undispatchable.
+
+    BLOCKED, not skipped: a unit that reached READY with an envelope no runner can parse needs a
+    new package revision, which is a person's decision, and only blocked reasons reach the
+    surfaces a person reads.
+    """
+    unit = ready_unit(migrated_session, key="legacy-capability-name")
+    unit.authority = {
+        "capabilities": {
+            "repository_write": "allowed",
+            "repo.edit": "allowed",
+            "command.run": "allowed",
+        },
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "target_repository": PILOT_REPOSITORY,
+            "allowed_commands": ["uv sync --locked", "uv lock --upgrade"],
+            "mutation_commands": ["uv lock --upgrade"],
+        },
+        "conformance": GREEN_CONFORMANCE,
+    }
+    migrated_session.flush()
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(allowed_change_classes=frozenset({"dependency-update"})),
+        github,
+        inert_source(),
+    )
+
+    assert record.status == "blocked"
+    assert record.reason_code == "capability_outside_runner_vocabulary"
     assert github.calls == []
 
 
@@ -229,7 +327,9 @@ def test_dispatch_uses_one_normalized_authority_snapshot(
 
     monkeypatch.setattr(dispatch_module, "normalize_authority", track_normalization)
 
-    record = dispatch_work_unit(migrated_session, dispatch_command(unit.id), settings(), github)
+    record = dispatch_work_unit(
+        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+    )
 
     assert record.status == "dispatched"
     assert len(calls) == 1
@@ -240,8 +340,8 @@ def test_dispatch_sends_ws41_workflow_dispatch_once(migrated_session: Session) -
     github = FakeGitHubDispatcher([])
     command = dispatch_command(unit.id)
 
-    first = dispatch_work_unit(migrated_session, command, settings(), github)
-    replay = dispatch_work_unit(migrated_session, command, settings(), github)
+    first = dispatch_work_unit(migrated_session, command, settings(), github, inert_source())
+    replay = dispatch_work_unit(migrated_session, command, settings(), github, inert_source())
 
     assert replay.id == first.id
     assert first.status == "dispatched"
@@ -264,6 +364,7 @@ def test_dispatch_blocks_unknown_conformance_without_calling_github(
         dispatch_command(unit.id),
         settings(),
         github,
+        inert_source(),
     )
 
     assert record.status == "blocked"
@@ -283,7 +384,9 @@ def test_dispatch_requires_green_or_accepted_conformance(migrated_session: Sessi
     )
     github = FakeGitHubDispatcher([])
 
-    record = dispatch_work_unit(migrated_session, dispatch_command(unit.id), settings(), github)
+    record = dispatch_work_unit(
+        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+    )
 
     assert record.status == "blocked"
     assert record.reason_code == "conformance_not_green"
@@ -304,7 +407,9 @@ def test_dispatch_allows_explicitly_accepted_touched_standards(
     )
     github = FakeGitHubDispatcher([])
 
-    record = dispatch_work_unit(migrated_session, dispatch_command(unit.id), settings(), github)
+    record = dispatch_work_unit(
+        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+    )
 
     assert record.status == "dispatched"
     assert len(github.calls) == 1
@@ -318,13 +423,25 @@ def test_dispatch_circuit_breaker_blocks_repeated_failure_signature(
     github = FakeGitHubDispatcher([], failure=failure)
 
     first = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id, attempt=1), settings(), github
+        migrated_session,
+        dispatch_command(unit.id, attempt=1),
+        settings(),
+        github,
+        inert_source(),
     )
     second = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id, attempt=2), settings(), github
+        migrated_session,
+        dispatch_command(unit.id, attempt=2),
+        settings(),
+        github,
+        inert_source(),
     )
     third = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id, attempt=3), settings(), github
+        migrated_session,
+        dispatch_command(unit.id, attempt=3),
+        settings(),
+        github,
+        inert_source(),
     )
 
     assert first.status == "failed"
@@ -342,6 +459,7 @@ def test_dispatch_records_canonical_event(migrated_session: Session) -> None:
         dispatch_command(unit.id),
         settings(),
         FakeGitHubDispatcher([]),
+        inert_source(),
     )
 
     event = migrated_session.scalar(select(Event).where(Event.id == record.event_id))
@@ -360,6 +478,7 @@ def test_dispatch_routes_to_the_units_own_target_repository(migrated_session: Se
         dispatch_command(unit.id),
         settings(allowed_target_repositories=frozenset({"AlobarQuest/brain"})),
         github,
+        inert_source(),
     )
 
     assert record.status == "dispatched"
@@ -388,12 +507,14 @@ def test_fanout_units_route_to_their_own_repositories_in_one_process(
         dispatch_command(brain.id),
         settings(allowed_target_repositories=allowed),
         github,
+        inert_source(),
     )
     second = dispatch_work_unit(
         migrated_session,
         dispatch_command(standards.id),
         settings(allowed_target_repositories=allowed),
         github,
+        inert_source(),
     )
 
     assert first.target_repository == "AlobarQuest/brain"
@@ -410,7 +531,9 @@ def test_dispatch_blocks_when_unit_declares_no_target_repository(
     unit = ready_unit(migrated_session, key="no-target", target_repository=None)
     github = FakeGitHubDispatcher([])
 
-    record = dispatch_work_unit(migrated_session, dispatch_command(unit.id), settings(), github)
+    record = dispatch_work_unit(
+        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+    )
 
     assert record.status == "blocked"
     assert record.reason_code == "target_repository_missing"
@@ -423,7 +546,9 @@ def test_dispatch_blocks_when_target_repository_is_not_allowlisted(
     unit = ready_unit(migrated_session, key="off-list", target_repository="AlobarQuest/private")
     github = FakeGitHubDispatcher([])
 
-    record = dispatch_work_unit(migrated_session, dispatch_command(unit.id), settings(), github)
+    record = dispatch_work_unit(
+        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+    )
 
     assert record.status == "blocked"
     assert record.reason_code == "target_repository_not_allowed"
@@ -440,6 +565,7 @@ def test_dispatch_allowlist_is_empty_by_default(migrated_session: Session) -> No
         dispatch_command(unit.id),
         settings(allowed_target_repositories=frozenset()),
         github,
+        inert_source(),
     )
 
     assert record.status == "blocked"
@@ -460,12 +586,14 @@ def test_dispatch_replay_is_idempotent_against_the_per_unit_repository(
         dispatch_command(unit.id),
         settings(allowed_target_repositories=allowed),
         github,
+        inert_source(),
     )
     replay = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
         settings(allowed_target_repositories=allowed),
         github,
+        inert_source(),
     )
 
     assert replay.id == first.id
@@ -486,6 +614,7 @@ def test_dispatch_fails_closed_when_github_app_credentials_are_missing(
         dispatch_command(unit.id),
         settings(github_app_configured=False),
         github,
+        inert_source(),
     )
 
     assert record.status == "blocked"
@@ -505,6 +634,7 @@ def test_dispatch_disabled_short_circuits_before_the_credentials_check(
         dispatch_command(unit.id),
         settings(enabled=False, github_app_configured=False),
         github,
+        inert_source(),
     )
 
     assert record.status == "skipped"
@@ -552,6 +682,7 @@ def test_a_mint_failure_is_recorded_as_a_dispatch_failure_and_never_calls_github
         dispatch_command(unit.id),
         settings(),
         GitHubActionsDispatcher(explode),
+        inert_source(),
     )
 
     assert record.status == "failed"
@@ -631,3 +762,358 @@ def test_signature_failure_count_is_scoped_to_the_unit_and_signature(
     migrated_session.commit()
 
     assert signature_failure_count(migrated_session, unit.id, signature) == 2
+
+
+# ---------------------------------------------------------------------------------------------
+# WS-P2.18 Increment 3: the human-authority requirement is conditional on policy (ADR-0011)
+# ---------------------------------------------------------------------------------------------
+
+
+def recognised_unit(
+    session: Session,
+    *,
+    key: str,
+    reach: list[str] | None = None,
+    **constraints: Any,
+):
+    """A READY unit that NOBODY approved, carrying the envelope the uv profile emits today.
+
+    Deliberately skips `record_approval`: the whole question below is what happens to a unit with
+    no human approval bound to it, and a helper that quietly recorded one would answer it wrongly
+    in the direction that looks like success.
+    """
+    unit_id = uuid.uuid4()
+    payload = uv_bump(unit_id, **constraints)
+    revision = register_revision(
+        session,
+        package_id=f"pkg-{key}",
+        source_repository="AlobarQuest/orchestrator",
+        revision=1,
+        content_hash=f"sha256:{key}",
+        source_path="intent.md",
+        source_commit="abc123",
+        approved_by=HUMAN.actor_id,
+        approved_at=NOW,
+        approval_event_id=str(uuid.uuid4()),
+        enforcement_snapshot={} if reach is None else {"reach": reach},
+        authority=AUTHORITY,
+        registry_version=1,
+        actor_id=HUMAN.actor_id,
+        actor_role=HUMAN.role,
+    )
+    unit = register_approved_unit(
+        session,
+        revision_id=revision.id,
+        unit_key=key,
+        title="Bump a pin",
+        outcome="Runner opens a PR",
+        required_capability="repo.edit",
+        authority=normalize_authority(payload),
+        authority_payload=payload,
+        unit_id=unit_id,
+        max_attempts=3,
+        approved_by=HUMAN.actor_id,
+        approved_at=NOW,
+        actor_id=HUMAN.actor_id,
+        actor_role=HUMAN.role,
+    )
+    transition_unit(
+        session,
+        TransitionCommand(
+            unit_id=unit.id,
+            target=WorkUnitState.READY,
+            actor=SYSTEM,
+            expected_version=1,
+            idempotency_key=f"{key}-ready",
+        ),
+    )
+    return unit
+
+
+def recognising_settings(**overrides: object) -> DispatchSettings:
+    return settings(
+        allowed_change_classes=frozenset({"dependency-update"}),
+        allowed_target_repositories=frozenset({"AlobarQuest/change-manager"}),
+        **overrides,
+    )
+
+
+def gate_events(session: Session, unit_id: uuid.UUID) -> list[Event]:
+    return list(
+        session.scalars(
+            select(Event).where(
+                Event.subject_id == unit_id,
+                Event.action == "authority.human_gate_not_required",
+            )
+        )
+    )
+
+
+def test_a_unit_nobody_approved_is_admitted_when_policy_recognises_its_envelope(
+    migrated_session: Session,
+) -> None:
+    unit = recognised_unit(migrated_session, key="recognised", reach=["source_repository"])
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        recognising_settings(),
+        github,
+        inert_source(),
+    )
+
+    assert unit.authority_approval_id is None
+    assert (record.status, record.reason_code) == ("dispatched", None)
+    assert len(github.calls) == 1
+
+
+def test_the_same_unit_is_refused_when_no_pattern_recognises_its_envelope(
+    migrated_session: Session,
+) -> None:
+    """The control for the test above, differing in ONE field of the envelope.
+
+    `uv sync --locked` is a command the shipped pattern does not declare -- and it is the command
+    the one envelope this factory has actually dispatched carried, so this is the historical shape
+    being flagged rather than an invented one.
+    """
+    unit = recognised_unit(
+        migrated_session,
+        key="novel",
+        reach=["source_repository"],
+        allowed_commands=["uv add --dev 'ruff>=0.15.21'", "uv sync --locked"],
+        mutation_commands=["uv add --dev 'ruff>=0.15.21'"],
+    )
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        recognising_settings(),
+        github,
+        inert_source(),
+    )
+
+    assert (record.status, record.reason_code) == ("blocked", "authority_approval_missing")
+    assert github.calls == []
+
+
+def test_a_unit_whose_package_declared_no_reach_is_refused_and_still_needs_a_human(
+    migrated_session: Session,
+) -> None:
+    """Increment 4 moved this: the refusal now comes EARLIER, and the old one still stands.
+
+    Until Increment 4 an undeclared reach cost a unit only its policy suppression -- it was blocked
+    on `authority_approval_missing`, which a person could clear by approving. It is now refused at
+    admission on the declaration itself, which nobody can clear by approving, because a person
+    cannot attest to a blast radius the package never stated.
+
+    Both halves are asserted because the second is what stops the exemption from widening. The gate
+    is consulted before the term that blocks, so its answer is real and not merely unreached: it
+    refuses on the same missing declaration, and no suppression was recorded.
+    """
+    unit = recognised_unit(migrated_session, key="no-reach", reach=None)
+    revision = migrated_session.get(WorkPackageRevision, unit.work_package_revision_id)
+    assert revision is not None
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        recognising_settings(),
+        github,
+        inert_source(),
+    )
+
+    assert (record.status, record.reason_code) == ("blocked", "reach_undeclared")
+    assert human_authority_gate(unit, revision).refusals == ("reach_undeclared",)
+    assert gate_events(migrated_session, unit.id) == []
+    assert github.calls == []
+
+
+def test_a_lifted_gate_never_writes_an_approval_row(migrated_session: Session) -> None:
+    """§3.1, and the one constraint here that cannot be walked back later.
+
+    There is no standing human credential (ADR-0006) and the graduation ledger reasons over this
+    evidence, so a machine-written "human" approval would corrupt the record this whole ladder is
+    supposed to climb. Asserted directly on the table, not inferred from behaviour.
+    """
+    unit = recognised_unit(migrated_session, key="no-approval-row", reach=["source_repository"])
+
+    dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        recognising_settings(),
+        FakeGitHubDispatcher([]),
+        inert_source(),
+    )
+    migrated_session.commit()
+
+    with Session(migrated_session.get_bind()) as reader:
+        approvals = list(reader.scalars(select(Approval).where(Approval.subject_id == unit.id)))
+        assert approvals == []
+        stored = reader.get(WorkUnit, unit.id)
+        assert stored is not None
+        assert stored.authority_approval_id is None
+
+
+def test_a_lifted_gate_leaves_a_record_that_is_not_an_approval(
+    migrated_session: Session,
+) -> None:
+    """§3.2. Increment 6 reads this, and it must never be confusable with a person's decision."""
+    unit = recognised_unit(migrated_session, key="suppression-record", reach=["source_repository"])
+
+    dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        recognising_settings(),
+        FakeGitHubDispatcher([]),
+        inert_source(),
+    )
+    migrated_session.commit()
+
+    with Session(migrated_session.get_bind()) as reader:
+        events = gate_events(reader, unit.id)
+        assert len(events) == 1
+        payload = events[0].payload
+        assert payload["recognised_by"] == ["uv dependency pin bump into a named repository"]
+        assert payload["policy_version"] == load_factory_policy().version
+        assert payload["policy_source"] == "factory-policy.toml"
+        stored = reader.get(WorkUnit, unit.id)
+        assert stored is not None
+        assert payload["authority_fingerprint"] == stored.authority_fingerprint
+        # Attributed to the system actor that read the artifact, and saying the requirement did
+        # not apply -- never that somebody agreed to anything.
+        assert events[0].actor_id == SYSTEM.actor_id
+        assert "approv" not in events[0].action
+
+
+def test_a_unit_a_human_did_approve_records_no_suppression(migrated_session: Session) -> None:
+    # The record cites the patterns where they were USED. A unit carrying an approval passed the
+    # term on that approval, so citing policy for it would record a suppression that never
+    # happened -- and Increment 6 would count it.
+    unit = ready_unit(migrated_session, key="human-approved")
+
+    dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        FakeGitHubDispatcher([]),
+        inert_source(),
+    )
+
+    assert unit.authority_approval_id is not None
+    assert gate_events(migrated_session, unit.id) == []
+
+
+def test_the_off_switch_outranks_a_recognising_pattern(migrated_session: Session) -> None:
+    """R4, on the path Increment 3 opened. Both halves, so the claim is not vacuous.
+
+    The first half is that policy DOES recognise this envelope -- proven by dispatching the same
+    unit with the switch on. Without it, "nothing was admitted" would be satisfied by a unit no
+    pattern recognised in the first place.
+    """
+    unit = recognised_unit(migrated_session, key="switch-outranks", reach=["source_repository"])
+    github = FakeGitHubDispatcher([])
+
+    blocked = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id, attempt=1),
+        recognising_settings(enabled=False),
+        github,
+        inert_source(),
+    )
+    admitted = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id, attempt=2),
+        recognising_settings(enabled=True),
+        github,
+        inert_source(),
+    )
+
+    assert (blocked.status, blocked.reason_code) == ("skipped", "dispatch_disabled")
+    assert (admitted.status, admitted.reason_code) == ("dispatched", None)
+    assert len(github.calls) == 1
+    # The switch is the FIRST term, so the authority term was never reached and nothing claims it
+    # was: one dispatch, one suppression record.
+    assert len(gate_events(migrated_session, unit.id)) == 1
+
+
+def test_dispatch_blocks_a_capability_level_the_runner_refuses(
+    migrated_session: Session,
+) -> None:
+    """WS-P2.34 shape 1, at the LAST gate rather than at authoring time.
+
+    Ingress refuses this now, but a unit's envelope is write-once and there is no supersede
+    route for an approved breakdown — so every envelope authored before the ingress rule
+    existed keeps what it was authored with, and that legacy population is exactly the one
+    that produced the defect. `requires_approval` on a capability the work does not even need
+    is invisible to every other term: `level_for` compares against "allowed", so it reads as a
+    prohibition and admission is satisfied while the runner refuses the whole envelope.
+    """
+    unit = ready_unit(migrated_session, key="legacy-bad-level")
+    unit.authority = {
+        "capabilities": {
+            "repo.edit": "allowed",
+            "command.run": "allowed",
+            "repo.read": "requires_approval",
+        },
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "target_repository": PILOT_REPOSITORY,
+            "allowed_commands": ["uv sync --locked", "uv lock --upgrade"],
+            "mutation_commands": ["uv lock --upgrade"],
+        },
+        "conformance": GREEN_CONFORMANCE,
+    }
+    migrated_session.flush()
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(allowed_change_classes=frozenset({"dependency-update"})),
+        github,
+        inert_source(),
+    )
+
+    assert record.reason_code == "unknown_capability_level"
+    assert github.calls == []
+
+
+def test_dispatch_blocks_an_envelope_field_the_runner_forbids(
+    migrated_session: Session,
+) -> None:
+    """WS-P2.34 shape 3 at the last gate, on the shape an operator copy-pastes.
+
+    A stored envelope carrying `unknown_fields` — what `normalized()` emits and what the
+    `/review` page renders — has an EMPTY unknown-field set, so a gate keyed on that set waves
+    it through. The runner's model refuses it before validating anything.
+    """
+    unit = ready_unit(migrated_session, key="legacy-normalized-copy")
+    unit.authority = {
+        "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "target_repository": PILOT_REPOSITORY,
+            "allowed_commands": ["uv sync --locked", "uv lock --upgrade"],
+            "mutation_commands": ["uv lock --upgrade"],
+        },
+        "conformance": GREEN_CONFORMANCE,
+        "unknown_fields": [],
+    }
+    migrated_session.flush()
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(allowed_change_classes=frozenset({"dependency-update"})),
+        github,
+        inert_source(),
+    )
+
+    assert record.reason_code == "authority_unknown_fields"
+    assert github.calls == []

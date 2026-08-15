@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
-from orchestrator.kernel.runner_authority import dependency_update_authority_violation
+from orchestrator.kernel.runner_authority import runner_command_authority_violation
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
@@ -168,7 +168,7 @@ def test_proposal_rejects_invalid_dependency_update_authority_before_persistence
         "change_class": "dependency-update",
         "constraints": {"allowed_commands": ["uv sync --locked"]},
     }
-    violation = dependency_update_authority_violation(normalize_authority(invalid_payload))
+    violation = runner_command_authority_violation(normalize_authority(invalid_payload))
     assert violation is not None
 
     with pytest.raises(DomainError) as error:
@@ -1094,7 +1094,7 @@ def test_dependency_update_authority_rejects_non_executable_contract(
         }
     )
 
-    violation = dependency_update_authority_violation(envelope)
+    violation = runner_command_authority_violation(envelope)
 
     assert violation is not None
     assert violation.code == code
@@ -1141,7 +1141,7 @@ def test_dependency_update_authority_rejects_invalid_command_entries(
         }
     )
 
-    violation = dependency_update_authority_violation(envelope)
+    violation = runner_command_authority_violation(envelope)
 
     assert violation is not None
     assert violation.code == code
@@ -1156,7 +1156,7 @@ def test_dependency_update_authority_requires_command_run() -> None:
         }
     )
 
-    violation = dependency_update_authority_violation(envelope)
+    violation = runner_command_authority_violation(envelope)
 
     assert violation is not None
     assert violation.code == "authority_command_run_required"
@@ -1170,6 +1170,7 @@ def test_dependency_update_authority_ignores_out_of_scope_envelopes(
     change_class: str,
     repo_edit_level: str,
 ) -> None:
+    """Without command.run there is nothing for the command contract to bind."""
     envelope = normalize_authority(
         {
             "change_class": change_class,
@@ -1178,7 +1179,59 @@ def test_dependency_update_authority_ignores_out_of_scope_envelopes(
         }
     )
 
-    assert dependency_update_authority_violation(envelope) is None
+    assert runner_command_authority_violation(envelope) is None
+
+
+def test_command_authority_requires_allowed_commands_for_every_change_class() -> None:
+    """WS-P2.33: command.run without allowed_commands dies at the runner whatever
+    the change class, so admission refuses it for every class, not only
+    dependency-update."""
+    envelope = normalize_authority(
+        {
+            "change_class": "maintenance-remediation",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": {},
+        }
+    )
+
+    violation = runner_command_authority_violation(envelope)
+
+    assert violation is not None
+    assert violation.code == "authority_allowed_commands_invalid"
+
+
+def test_edit_shaped_envelope_needs_no_mutation_commands() -> None:
+    """WS-P2.33: the coding agent produces the diff; the honest envelope omits
+    mutation_commands and admission accepts the omission."""
+    envelope = normalize_authority(
+        {
+            "change_class": "maintenance-remediation",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": {"allowed_commands": ["uv sync", "make check"]},
+        }
+    )
+
+    assert runner_command_authority_violation(envelope) is None
+
+
+def test_explicit_empty_mutation_commands_is_refused_for_any_class() -> None:
+    """Absence says "no command mutates"; present-and-empty is malformed, whatever
+    the change class — mirrored by the runner's own validation."""
+    envelope = normalize_authority(
+        {
+            "change_class": "maintenance-remediation",
+            "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+            "constraints": {
+                "allowed_commands": ["uv sync", "make check"],
+                "mutation_commands": [],
+            },
+        }
+    )
+
+    violation = runner_command_authority_violation(envelope)
+
+    assert violation is not None
+    assert violation.code == "authority_mutation_commands_invalid"
 
 
 def test_dependency_update_authority_accepts_ordered_valid_command_lists() -> None:
@@ -1193,7 +1246,7 @@ def test_dependency_update_authority_accepts_ordered_valid_command_lists() -> No
         }
     )
 
-    assert dependency_update_authority_violation(envelope) is None
+    assert runner_command_authority_violation(envelope) is None
 
 
 def _fanout_units() -> tuple[ProposedUnit, ...]:
@@ -1320,6 +1373,50 @@ def test_proposal_rejects_author_supplied_work_unit_id(migrated_session: Session
         )
 
     assert error.value.code == "authority_work_unit_id_forbidden"
+
+
+def test_proposal_rejects_malformed_change_class(migrated_session: Session) -> None:
+    """change_class is load-bearing in the runner's command validation (WS-P2.33), and
+    normalize_authority reads a malformed value as absent — which would waive the
+    dependency-update mutation requirement here while the runner refuses the raw payload."""
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    payload = {
+        "capabilities": {"repo.edit": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {"target_repository": "AlobarQuest/brain"},
+        "change_class": 5,
+    }
+
+    with pytest.raises(DomainError) as error:
+        submit_decomposition_proposal(
+            migrated_session,
+            proposal_command(
+                revision.id,
+                ac_ids,
+                dependencies=(),
+                proposed_units=(
+                    ProposedUnit(
+                        unit_key="unit-1",
+                        title="Bump dependency",
+                        outcome="Dependency updated.",
+                        required_capability="repo.edit",
+                        authority=normalize_authority(payload),
+                        authority_payload=payload,
+                    ),
+                    ProposedUnit(
+                        unit_key="unit-2",
+                        title="Implement tests",
+                        outcome="Covered by tests.",
+                        required_capability="repo.edit",
+                        authority=AUTHORITY,
+                    ),
+                ),
+            ),
+            worker_actor(),
+        )
+
+    assert error.value.code == "authority_change_class_invalid"
 
 
 def test_proposal_rejects_malformed_conformance(migrated_session: Session) -> None:

@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import replace
 from threading import Event as ThreadEvent
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import Engine, event, func, select, text
@@ -19,29 +19,34 @@ from orchestrator.persistence.models import (
     UnitPrBinding,
 )
 from orchestrator.services.evidence import append_evidence, append_verifier_evidence
+from orchestrator.services.github_checks import CheckObservationError
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from orchestrator.services.verifier_evaluators import evaluate_criterion
-from orchestrator.services.verifier_evidence import (
-    NamedCheckAssertion,
-    NamedCheckEvidenceCommand,
-    Scalar,
-    record_named_check_evidence,
-)
+from orchestrator.services.verifier_evidence import NamedCheckEvidenceCommand
 from tests.fixtures.named_check import (
     AUTOMATED_CHECK_AUTHORITY,
+    CHECK_NAME,
     HEAD_SHA,
     PR_NUMBER,
     TARGET_REPOSITORY,
     VERIFIER,
     WORKER,
+    StubCheckObserver,
     bind_dispatched_pull_request,
     mapped_submitted_unit,
     named_check_command,
+    observed_job,
+    record_named_check,
     record_worker_evidence,
 )
 
 SYSTEM = ActorContext("system-1", ActorRole.SYSTEM)
+
+
+def payload_of(evidence: Evidence) -> dict[str, Any]:
+    assert evidence.payload is not None
+    return evidence.payload
 
 
 def automated_check_unit(session: Session, key: str):
@@ -144,7 +149,7 @@ def test_non_verifier_cannot_record_named_check_evidence(
 ) -> None:
     unit, dispatch = automated_check_unit(migrated_session, f"forbidden-{actor.role}")
 
-    result = record_named_check_evidence(
+    result = record_named_check(
         migrated_session,
         replace(named_check_command(unit, dispatch), actor=actor),
     )
@@ -158,8 +163,8 @@ def test_non_verifier_cannot_record_named_check_evidence(
     [
         ("pr_number", True),
         ("pr_number", "26"),
-        ("assertions", (NamedCheckAssertion("tests_passed", 105, 10**100),)),
-        ("assertions", ()),
+        ("expected_conclusion", None),
+        ("expected_conclusion", ""),
     ],
 )
 def test_named_check_malformed_values_return_domain_error(
@@ -169,7 +174,7 @@ def test_named_check_malformed_values_return_domain_error(
 ) -> None:
     unit, dispatch = automated_check_unit(migrated_session, f"malformed-{field}-{replacement!s}")
 
-    result = record_named_check_evidence(
+    result = record_named_check(
         migrated_session,
         replace(named_check_command(unit, dispatch), **{field: replacement}),
     )
@@ -188,16 +193,9 @@ def test_named_check_malformed_values_return_domain_error(
         ("repository", None),
         ("head_sha", b"abc1234"),
         ("check_name", []),
-        ("run_id", ""),
-        ("run_url", " "),
         ("expected_version", True),
         ("idempotency_key", 3),
-        ("assertions", [NamedCheckAssertion("tests_passed", 105, 105)]),
-        ("assertions", ({"name": "tests_passed", "expected": 105, "observed": 105},)),
-        (
-            "assertions",
-            (NamedCheckAssertion("tests_passed", cast(Scalar, 1.5), cast(Scalar, 1.5)),),
-        ),
+        ("expected_conclusion", 1),
     ],
 )
 def test_named_check_direct_service_rejects_malformed_field_types(
@@ -207,7 +205,7 @@ def test_named_check_direct_service_rejects_malformed_field_types(
 ) -> None:
     unit, dispatch = automated_check_unit(migrated_session, f"malformed-direct-{field}")
 
-    result = record_named_check_evidence(
+    result = record_named_check(
         migrated_session,
         replace(named_check_command(unit, dispatch), **{field: replacement}),
     )
@@ -220,7 +218,7 @@ def test_named_check_direct_service_rejects_malformed_command_object(
     migrated_session: Session,
 ) -> None:
     malformed = cast(NamedCheckEvidenceCommand, object())
-    result = record_named_check_evidence(migrated_session, malformed)
+    result = record_named_check(migrated_session, malformed)
 
     assert isinstance(result, DomainError)
     assert result.code == "named_check_invalid"
@@ -235,7 +233,7 @@ def test_named_check_direct_service_rejects_malformed_actor(
         migrated_session, f"malformed-actor-{type(actor).__name__}"
     )
 
-    result = record_named_check_evidence(
+    result = record_named_check(
         migrated_session,
         replace(named_check_command(unit, dispatch), actor=actor),
     )
@@ -248,15 +246,9 @@ def test_named_check_direct_service_rejects_malformed_actor(
     ("field", "replacement"),
     [
         ("check_name", ""),
-        ("run_id", ""),
-        ("conclusion", "queued"),
-        (
-            "assertions",
-            (
-                NamedCheckAssertion("duplicate", 1, 1),
-                NamedCheckAssertion("duplicate", 1, 1),
-            ),
-        ),
+        ("check_name", " " * 4),
+        ("expected_conclusion", "queued"),
+        ("expected_conclusion", "SUCCEEDED"),
     ],
 )
 def test_named_check_rejects_invalid_bounded_payload(
@@ -266,7 +258,7 @@ def test_named_check_rejects_invalid_bounded_payload(
 ) -> None:
     unit, dispatch = automated_check_unit(migrated_session, f"invalid-payload-{field}")
 
-    result = record_named_check_evidence(
+    result = record_named_check(
         migrated_session,
         replace(named_check_command(unit, dispatch), **{field: replacement}),
     )
@@ -295,7 +287,7 @@ def test_named_check_rejects_canonical_binding_mismatch(
     if field == "dispatch_id":
         replacement = unit.id
 
-    result = record_named_check_evidence(
+    result = record_named_check(
         migrated_session,
         replace(command, **{field: replacement}),
     )
@@ -315,7 +307,7 @@ def test_named_check_rejects_missing_dispatch(migrated_session: Session) -> None
     migrated_session.delete(dispatch)
     migrated_session.commit()
 
-    result = record_named_check_evidence(migrated_session, named_check_command(unit, dispatch))
+    result = record_named_check(migrated_session, named_check_command(unit, dispatch))
 
     assert isinstance(result, DomainError)
     assert result.code == "named_check_binding_mismatch"
@@ -328,7 +320,7 @@ def test_named_check_rejects_missing_pr_binding(migrated_session: Session) -> No
     migrated_session.delete(binding)
     migrated_session.commit()
 
-    result = record_named_check_evidence(migrated_session, named_check_command(unit, dispatch))
+    result = record_named_check(migrated_session, named_check_command(unit, dispatch))
 
     assert isinstance(result, DomainError)
     assert result.code == "named_check_binding_mismatch"
@@ -357,7 +349,7 @@ def test_named_check_accepts_dispatch_ordinal_after_skipped_probe(
     )
     migrated_session.commit()
 
-    evidence = record_named_check_evidence(migrated_session, named_check_command(unit, dispatch))
+    evidence = record_named_check(migrated_session, named_check_command(unit, dispatch))
     assert isinstance(evidence, Evidence)
 
     result = verify_work_unit(
@@ -388,7 +380,7 @@ def test_named_check_rejects_stale_armed_binding(
     setattr(binding, field, replacement)
     migrated_session.commit()
 
-    result = record_named_check_evidence(migrated_session, named_check_command(unit, dispatch))
+    result = record_named_check(migrated_session, named_check_command(unit, dispatch))
 
     assert isinstance(result, DomainError)
     assert result.code == "named_check_binding_mismatch"
@@ -407,7 +399,7 @@ def test_named_check_rejects_unit_without_positive_dispatched_attempt(
     assert unit.attempt_count == 0
     fake_dispatch = DispatchRecord(id=unit.id)
 
-    result = record_named_check_evidence(
+    result = record_named_check(
         migrated_session,
         named_check_command(unit, fake_dispatch),
     )
@@ -422,9 +414,10 @@ def test_named_check_non_success_conclusion_cannot_pass(
     conclusion: str,
 ) -> None:
     unit, dispatch = automated_check_unit(migrated_session, f"conclusion-{conclusion}")
-    evidence = record_named_check_evidence(
+    evidence = record_named_check(
         migrated_session,
-        named_check_command(unit, dispatch, conclusion=conclusion),
+        named_check_command(unit, dispatch, expected_conclusion=conclusion),
+        StubCheckObserver(conclusion=conclusion),
     )
     assert isinstance(evidence, Evidence)
 
@@ -445,9 +438,10 @@ def test_named_check_non_success_conclusion_cannot_pass(
 
 def test_named_check_explicit_failure_is_failed(migrated_session: Session) -> None:
     unit, dispatch = automated_check_unit(migrated_session, "explicit-failure")
-    evidence = record_named_check_evidence(
+    evidence = record_named_check(
         migrated_session,
-        named_check_command(unit, dispatch, conclusion="failure"),
+        named_check_command(unit, dispatch, expected_conclusion="failure"),
+        StubCheckObserver(conclusion="failure"),
     )
     assert isinstance(evidence, Evidence)
 
@@ -466,17 +460,27 @@ def test_named_check_explicit_failure_is_failed(migrated_session: Session) -> No
     assert result.evaluations[0].outcome == "failed"
 
 
-def test_named_check_assertion_mismatch_fails_closed(migrated_session: Session) -> None:
-    unit, dispatch = automated_check_unit(migrated_session, "assertion-mismatch")
-    evidence = record_named_check_evidence(
+@pytest.mark.parametrize("observed", ["failure", "cancelled", "timed_out", "action_required"])
+def test_a_claim_of_success_cannot_pass_when_github_says_otherwise(
+    migrated_session: Session,
+    observed: str,
+) -> None:
+    """WS-P2.20's headline. The caller claims the best case; GitHub reports the worst.
+
+    Before this workstream the caller supplied both halves and the criterion resolved `passed`
+    on its own arithmetic. Now the claim is the only thing it supplies, and the answer is the
+    observation's.
+    """
+    unit, dispatch = automated_check_unit(migrated_session, f"false-claim-{observed}")
+
+    evidence = record_named_check(
         migrated_session,
-        named_check_command(
-            unit,
-            dispatch,
-            assertions=(NamedCheckAssertion("tests_passed", 105, 104),),
-        ),
+        named_check_command(unit, dispatch, expected_conclusion="success"),
+        StubCheckObserver(conclusion=observed),
     )
     assert isinstance(evidence, Evidence)
+    assert payload_of(evidence)["conclusion"] == observed
+    assert payload_of(evidence)["expected_conclusion"] == "success"
 
     result = verify_work_unit(
         migrated_session,
@@ -484,21 +488,212 @@ def test_named_check_assertion_mismatch_fails_closed(migrated_session: Session) 
             unit_id=unit.id,
             actor=VERIFIER,
             expected_version=unit.version,
-            idempotency_key="verify-assertion-mismatch",
+            idempotency_key=f"verify-false-claim-{observed}",
         ),
     )
 
     assert result.result == "revision_required"
     assert result.evaluations[0].status == "failed_closed"
     assert result.evaluations[0].outcome == "failed"
+    assert result.evaluations[0].reason == (
+        f"named check concluded {observed}; the caller claimed success"
+    )
+
+
+def test_the_observed_conclusion_is_never_the_one_the_caller_named(
+    migrated_session: Session,
+) -> None:
+    """The claim reaches the record as a claim and nothing else.
+
+    A regression that let `expected_conclusion` leak into the observed half would leave every
+    other test in this file green, because they all agree with the observer.
+    """
+    unit, dispatch = automated_check_unit(migrated_session, "claim-is-not-the-answer")
+    observer = StubCheckObserver(conclusion="failure")
+
+    evidence = record_named_check(
+        migrated_session,
+        named_check_command(unit, dispatch, expected_conclusion="success"),
+        observer,
+    )
+
+    assert isinstance(evidence, Evidence)
+    observation = payload_of(evidence)["observation"]
+    assert observation["conclusion"] == "failure"
+    assert [job["conclusion"] for job in observation["jobs"]] == ["failure"]
+    # And it asked about the canonical head, not some head the caller could have named.
+    assert observer.calls == [
+        {"repository": TARGET_REPOSITORY, "head_sha": HEAD_SHA, "check_name": CHECK_NAME}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("unavailable", "named_check_observation_unavailable"),
+        ("not_found", "named_check_not_found"),
+        ("not_concluded", "named_check_not_concluded"),
+        ("ambiguous", "named_check_ambiguous"),
+    ],
+)
+def test_a_refused_observation_records_no_evidence_at_all(
+    migrated_session: Session,
+    code: str,
+    expected: str,
+) -> None:
+    """Fail closed means fail EMPTY: the criterion then has no verifier evidence to resolve on.
+
+    `automated_check` with no named-check evidence evaluates `judgment_required`, so a GitHub
+    the orchestrator could not read routes the criterion to a human rather than to the caller.
+    """
+    unit, dispatch = automated_check_unit(migrated_session, f"refusal-{code}")
+
+    result = record_named_check(
+        migrated_session,
+        named_check_command(unit, dispatch),
+        StubCheckObserver(error=CheckObservationError(code, "detail")),
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == expected
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(Evidence)
+            .where(Evidence.evidence_type == VERIFIER_NAMED_CHECK_EVIDENCE_TYPE)
+        )
+        == 0
+    )
+    criterion = migrated_session.scalar(
+        select(PackageAcceptanceCriterion).where(
+            PackageAcceptanceCriterion.work_package_revision_id == unit.work_package_revision_id
+        )
+    )
+    assert criterion is not None
+    assert evaluate_criterion(criterion, None)[0] == "judgment_required"
+
+
+def test_an_unrecognised_observer_code_still_refuses(migrated_session: Session) -> None:
+    """A code this module does not know is a refusal, not a fall-through to the caller's word."""
+    unit, dispatch = automated_check_unit(migrated_session, "refusal-unknown-code")
+
+    result = record_named_check(
+        migrated_session,
+        named_check_command(unit, dispatch),
+        StubCheckObserver(error=CheckObservationError("something_new", "detail")),
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "named_check_observation_unavailable"
+
+
+def test_every_job_the_name_resolved_to_is_recorded(migrated_session: Session) -> None:
+    """Two identically-named jobs on one head — the ordinary push-plus-pull-request case.
+
+    Unanimous, so it resolves; and both are cited, newest first, so the record cannot imply
+    there was one job when there were two.
+    """
+    unit, dispatch = automated_check_unit(migrated_session, "two-agreeing-jobs")
+    older = observed_job("success", run_id="100")
+    newer = observed_job("success", run_id="200")
+
+    evidence = record_named_check(
+        migrated_session,
+        named_check_command(unit, dispatch),
+        StubCheckObserver(jobs=(newer, older)),
+    )
+
+    assert isinstance(evidence, Evidence)
+    observation = payload_of(evidence)["observation"]
+    assert [job["run_id"] for job in observation["jobs"]] == ["200", "100"]
+    assert payload_of(evidence)["run_id"] == "200"
+    assert evidence.stable_ref == newer.run_url
+
+    result = verify_work_unit(
+        migrated_session,
+        VerifyCommand(
+            unit_id=unit.id,
+            actor=VERIFIER,
+            expected_version=unit.version,
+            idempotency_key="verify-two-agreeing-jobs",
+        ),
+    )
+    assert result.evaluations[0].status == "passed"
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "drop_observation",
+        "foreign_source",
+        "other_check_name",
+        "no_jobs",
+        "too_many_jobs",
+        "job_disagrees",
+        "observation_disagrees",
+        "job_unidentified",
+    ],
+)
+def test_a_payload_the_observer_would_not_have_written_cannot_pass(
+    migrated_session: Session,
+    corruption: str,
+) -> None:
+    """The evaluator does not take the payload's own `conclusion` on trust.
+
+    Ingestion refuses a name whose matches disagree, so a stored payload where they do is one
+    that did not come from an observation — a hand-written row, or a shape some later writer
+    assembled. Each case here is a payload the observer could not have produced, and none of
+    them may resolve the criterion.
+    """
+    unit, dispatch = automated_check_unit(migrated_session, f"corrupt-{corruption}")
+    evidence = record_named_check(migrated_session, named_check_command(unit, dispatch))
+    assert isinstance(evidence, Evidence)
+    criterion = migrated_session.scalar(
+        select(PackageAcceptanceCriterion).where(
+            PackageAcceptanceCriterion.work_package_revision_id == unit.work_package_revision_id
+        )
+    )
+    assert criterion is not None
+    assert evaluate_criterion(criterion, evidence)[0] == "passed"
+
+    # In memory only: `evidence` is append-only in the database, and the subject here is what
+    # the evaluator does with a payload, not whether one can be written.
+    payload: dict[str, Any] = dict(payload_of(evidence))
+    observation: dict[str, Any] = dict(payload["observation"])
+    job: dict[str, Any] = dict(observation["jobs"][0])
+    if corruption == "drop_observation":
+        payload.pop("observation")
+    else:
+        if corruption == "foreign_source":
+            observation["source"] = "operator.typed"
+        if corruption == "other_check_name":
+            observation["check_name"] = "Something Else"
+        if corruption == "no_jobs":
+            observation["jobs"] = []
+        if corruption == "too_many_jobs":
+            observation["jobs"] = [job] * 33
+        if corruption == "job_disagrees":
+            observation["jobs"] = [{**job, "conclusion": "failure"}]
+        if corruption == "observation_disagrees":
+            observation["conclusion"] = "failure"
+        if corruption == "job_unidentified":
+            observation["jobs"] = [{**job, "job_url": ""}]
+        payload["observation"] = observation
+    evidence.payload = payload
+
+    status, outcome, rationale = evaluate_criterion(criterion, evidence)
+
+    assert status == "failed_closed"
+    assert outcome == "failed"
+    assert rationale == "named-check conclusion was not observed"
 
 
 def test_named_check_replay_does_not_duplicate_evidence(migrated_session: Session) -> None:
     unit, dispatch = automated_check_unit(migrated_session, "named-check-replay")
     command = named_check_command(unit, dispatch)
 
-    first = record_named_check_evidence(migrated_session, command)
-    replay = record_named_check_evidence(migrated_session, command)
+    first = record_named_check(migrated_session, command)
+    replay = record_named_check(migrated_session, command)
 
     assert isinstance(first, Evidence)
     assert isinstance(replay, Evidence)
@@ -516,10 +711,10 @@ def test_named_check_conflicting_idempotency_key_reuse_is_rejected(
 ) -> None:
     unit, dispatch = automated_check_unit(migrated_session, "named-check-conflict")
     command = named_check_command(unit, dispatch)
-    first = record_named_check_evidence(migrated_session, command)
+    first = record_named_check(migrated_session, command)
     assert isinstance(first, Evidence)
 
-    conflict = record_named_check_evidence(
+    conflict = record_named_check(
         migrated_session,
         replace(command, check_name="Different"),
     )
@@ -533,7 +728,7 @@ def test_named_check_replay_survives_lifecycle_and_version_advancement(
 ) -> None:
     unit, dispatch = automated_check_unit(migrated_session, "named-check-advanced-replay")
     command = named_check_command(unit, dispatch)
-    first = record_named_check_evidence(migrated_session, command)
+    first = record_named_check(migrated_session, command)
     assert isinstance(first, Evidence)
     verification = verify_work_unit(
         migrated_session,
@@ -546,7 +741,7 @@ def test_named_check_replay_survives_lifecycle_and_version_advancement(
     )
     assert verification.result == "completed"
 
-    replay = record_named_check_evidence(migrated_session, command)
+    replay = record_named_check(migrated_session, command)
 
     assert isinstance(replay, Evidence)
     assert replay.id == first.id
@@ -578,7 +773,7 @@ def test_named_check_locks_pr_binding_until_evidence_commit(migrated_engine: Eng
     def record() -> Evidence | DomainError:
         with Session(migrated_engine, expire_on_commit=False) as session:
             session.execute(text("SET LOCAL statement_timeout = '5s'"))
-            return record_named_check_evidence(session, command)
+            return record_named_check(session, command)
 
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -645,7 +840,7 @@ def test_concurrent_same_key_named_check_delivery_replays_after_split_read_windo
     def record() -> Evidence | DomainError:
         with Session(migrated_engine, expire_on_commit=False) as session:
             session.execute(text("SET LOCAL statement_timeout = '5s'"))
-            return record_named_check_evidence(session, command)
+            return record_named_check(session, command)
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -680,23 +875,7 @@ def test_concurrent_same_key_named_check_delivery_replays_after_split_read_windo
         {"head_sha": "f" * 65},
         {"check_name": "x" * 201},
         {"run_id": "x" * 101},
-        {"assertions": []},
-        {
-            "assertions": [
-                {"name": f"assertion-{index}", "expected": index, "observed": index}
-                for index in range(33)
-            ]
-        },
-        {"assertions": [{"name": "x" * 101, "expected": 1, "observed": 1}]},
-        {"assertions": [{"name": "value", "expected": "x" * 1025, "observed": "x" * 1025}]},
-        {"assertions": [{"name": "value", "expected": 2**63, "observed": 2**63}]},
-        {"assertions": [{"name": "value", "expected": True, "observed": 1}]},
-        {
-            "assertions": [
-                {"name": "duplicate", "expected": 1, "observed": 1},
-                {"name": "duplicate", "expected": 1, "observed": 1},
-            ]
-        },
+        {"expected_conclusion": None},
     ],
 )
 def test_named_check_evaluator_revalidates_all_payload_bounds(
@@ -704,7 +883,7 @@ def test_named_check_evaluator_revalidates_all_payload_bounds(
     payload_change: dict[str, object],
 ) -> None:
     unit, dispatch = automated_check_unit(migrated_session, "evaluator-bounds")
-    evidence = record_named_check_evidence(migrated_session, named_check_command(unit, dispatch))
+    evidence = record_named_check(migrated_session, named_check_command(unit, dispatch))
     assert isinstance(evidence, Evidence)
     criterion = migrated_session.scalar(
         select(PackageAcceptanceCriterion).where(

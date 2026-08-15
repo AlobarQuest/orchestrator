@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -14,6 +14,7 @@ from orchestrator.kernel.authority import (
     AuthorityEnvelope,
     authority_fingerprint,
     normalize_authority,
+    runner_payload,
 )
 from orchestrator.kernel.context import context_fingerprint
 from orchestrator.kernel.enrichment import validate_enrichment
@@ -24,7 +25,10 @@ from orchestrator.kernel.readiness import (
     ReadinessFacts,
     evaluate_readiness_facts,
 )
-from orchestrator.kernel.runner_authority import dependency_update_authority_violation
+from orchestrator.kernel.runner_authority import (
+    runner_authority_violation,
+    runner_envelope_field_violation,
+)
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
@@ -32,11 +36,14 @@ from orchestrator.persistence.models import (
     DecompositionProposalUnit,
     Dependency,
     Event,
+    PackageAcceptanceCriterion,
     WorkPackage,
     WorkPackageRevision,
     WorkUnit,
 )
 from orchestrator.persistence.repositories import PackageRepository
+from orchestrator.services.authority_gate import human_authority_gate
+from orchestrator.services.verifier_evaluators import SUPPORTED_CRITERION_EVIDENCE_TYPES
 
 
 @dataclass(frozen=True)
@@ -74,7 +81,11 @@ def record_approval(
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
     if subject_type == "authority":
-        violation = dependency_update_authority_violation(normalize_authority(unit.authority))
+        # Every envelope rule the runner enforces, not just the command one: an approval is what
+        # a human attests, and attesting to an envelope the runner cannot parse is the failure
+        # this whole family produces. Checked against the STORED payload, which is what is
+        # served, and never rewritten to comply.
+        violation = runner_authority_violation(normalize_authority(unit.authority), unit.authority)
         if violation is not None:
             raise DomainError(violation.code, violation.message, violation.remediation)
     existing = session.scalar(select(Approval).where(Approval.idempotency_key == idempotency_key))
@@ -180,12 +191,14 @@ def register_revision(
     verification_mode: str | None = None,
     verification_limitations: Mapping[str, Any] | list[Any] | None = None,
     follow_up: Mapping[str, Any] | None = None,
+    acceptance_criteria: Sequence[Mapping[str, Any]] | None = None,
     actor_id: str,
     actor_role: ActorRole,
     idempotency_key: str | None = None,
     expected_version: int | None = None,
 ) -> WorkPackageRevision:
     _require_human(actor_id, actor_role)
+    _validate_declared_criteria(acceptance_criteria, enforcement_snapshot)
     if expected_version not in {None, 0}:
         raise DomainError(
             "version_conflict",
@@ -261,9 +274,11 @@ def register_revision(
         session, idempotency_key, "revision.registered", command, WorkPackageRevision
     )
     if replay is not None:
+        _require_criteria_already_match(session, replay.id, acceptance_criteria)
         return replay
     if existing is not None:
         if all(getattr(existing, field) == value for field, value in candidate.items()):
+            _require_criteria_already_match(session, existing.id, acceptance_criteria)
             _record_registration(session, existing.id, actor_id, idempotency_key, command)
             return existing
         raise _revision_conflict()
@@ -277,8 +292,140 @@ def register_revision(
     )
     session.add(registered)
     session.flush()
+    # Written only on FIRST registration, and deliberately absent from `candidate`/`command`. A
+    # replay or an identical re-registration returns above without reaching here, so the rows this
+    # revision was born with are the rows it keeps -- there is no restatement path, and none is
+    # wanted: `package_acceptance_criteria` for an intake-born revision is owned by
+    # `package_intake._sync_acceptance_criteria`, and two writers of one table with different
+    # update semantics is how a vocabulary drifts.
+    for criterion in acceptance_criteria or ():
+        session.add(
+            PackageAcceptanceCriterion(
+                work_package_revision_id=registered.id,
+                ac_id=criterion["ac_id"],
+                condition=criterion["condition"],
+                evidence_type=criterion["evidence_type"],
+                evidence=criterion["evidence"],
+                approver=criterion["approver"],
+            )
+        )
+    session.flush()
     _record_registration(session, registered.id, actor_id, idempotency_key, command)
     return registered
+
+
+_CRITERION_FIELDS = ("ac_id", "condition", "evidence_type", "evidence", "approver")
+
+
+def _require_criteria_already_match(
+    session: Session,
+    revision_id: uuid.UUID,
+    acceptance_criteria: Sequence[Mapping[str, Any]] | None,
+) -> None:
+    """A revision's criteria are written once, at birth -- so a later declaration must AGREE.
+
+    A replay or an identical re-registration returns the existing revision without reaching the
+    write below, which is right: `package_acceptance_criteria` is otherwise owned by
+    `package_intake._sync_acceptance_criteria`, and two writers of one table with different update
+    semantics is how a vocabulary drifts. But returning success while quietly discarding what the
+    caller declared is the wrong way to say so -- the caller believes the criteria are recorded and
+    finds out at verify time, from an error naming neither this call nor the missing ids. An
+    idempotent retry still succeeds; only a divergent restatement is refused.
+    """
+    if acceptance_criteria is None:
+        return
+    recorded = {
+        row.ac_id: row
+        for row in session.scalars(
+            select(PackageAcceptanceCriterion).where(
+                PackageAcceptanceCriterion.work_package_revision_id == revision_id
+            )
+        )
+    }
+    same = len(recorded) == len(acceptance_criteria) and all(
+        (row := recorded.get(criterion["ac_id"])) is not None
+        and all(getattr(row, field) == criterion[field] for field in _CRITERION_FIELDS)
+        for criterion in acceptance_criteria
+    )
+    if not same:
+        raise DomainError(
+            "acceptance_criterion_invalid",
+            "this revision's acceptance criteria are already recorded and differ",
+            "register a new revision",
+        )
+
+
+def _validate_declared_criteria(
+    acceptance_criteria: Sequence[Mapping[str, Any]] | None,
+    enforcement_snapshot: Mapping[str, Any],
+) -> None:
+    """Reject every value the table's own constraints would, before any row is written.
+
+    `package_acceptance_criteria` carries a CHECK that all five text columns are non-empty and a
+    UNIQUE on (revision, ac_id). Leaving either to fire is an unhandled `IntegrityError`, which
+    this application surfaces as a bare HTTP 500 -- only `DomainError` and
+    `APIAuthenticationError` have handlers.
+
+    The remaining rules are this lane's own, and all three exist to stop it recreating the shape it
+    was added to eliminate -- a required `ac_id` that no actor can decide:
+
+    * the declared set must EQUAL the required set. A subset is worse than declaring nothing: the
+      revision then looks equipped, `load_required_criteria` refuses the whole of it as incomplete,
+      and the refusal surfaces at verify time naming neither the missing id nor this registration.
+    * `evidence_type` must be in the supported vocabulary, exactly as
+      `package_intake._validate_acceptance_criteria` requires of the other writer of this table. An
+      unknown type floors to `human` and is indistinguishable from a typo, so a criterion the
+      verifier can never resolve would be accepted in silence.
+    * a criterion may be declared at most once, which the UNIQUE would otherwise enforce as a 500.
+    """
+    if acceptance_criteria is None:
+        return
+    declared = enforcement_snapshot.get("acceptance_criteria")
+    # Membership, not `set(...)`: the snapshot is `dict[str, Any]` straight off the wire, and an
+    # unhashable member makes `set()` raise `TypeError` -- which has no handler, so it is a bare
+    # HTTP 500 rather than a validation error.
+    required = (
+        tuple(item for item in declared if isinstance(item, str))
+        if isinstance(declared, list)
+        else ()
+    )
+    seen: set[str] = set()
+    for criterion in acceptance_criteria:
+        for field in _CRITERION_FIELDS:
+            value = criterion.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise DomainError(
+                    "acceptance_criterion_invalid",
+                    f"acceptance criterion {field} must be non-empty text",
+                    None,
+                )
+        ac_id = criterion["ac_id"]
+        if ac_id in seen:
+            raise DomainError(
+                "acceptance_criterion_invalid",
+                "an acceptance criterion may be declared at most once",
+                None,
+            )
+        if ac_id not in required:
+            raise DomainError(
+                "acceptance_criterion_invalid",
+                "an acceptance criterion must describe a required acceptance criterion id",
+                None,
+            )
+        if criterion["evidence_type"].strip().lower() not in SUPPORTED_CRITERION_EVIDENCE_TYPES:
+            raise DomainError(
+                "unknown_evidence_type",
+                f"acceptance criterion {ac_id} declares an unknown "
+                f"evidence_type {criterion['evidence_type']!r}",
+                "declare one of the supported criterion evidence types",
+            )
+        seen.add(ac_id)
+    if seen != set(required):
+        raise DomainError(
+            "acceptance_criterion_invalid",
+            "declaring acceptance criteria means declaring every required one",
+            None,
+        )
 
 
 def register_approved_unit(
@@ -305,7 +452,18 @@ def register_approved_unit(
     expected_version: int | None = None,
 ) -> WorkUnit:
     _require_human(actor_id, actor_role)
-    validate_unit_capabilities(required_capability, authority.capabilities.keys())
+    validate_unit_capabilities(required_capability, authority.capabilities)
+    # Checked against the dict that will be STORED -- the exact bytes the brief serves the
+    # runner -- because that is where an undeclared top-level key becomes fatal. The fallback
+    # is the same projection the write below uses, so check and write cannot disagree.
+    field_violation = runner_envelope_field_violation(
+        authority,
+        authority_payload if authority_payload is not None else runner_payload(authority),
+    )
+    if field_violation is not None:
+        raise DomainError(
+            field_violation.code, field_violation.message, field_violation.remediation
+        )
     if expected_version not in {None, 0}:
         raise DomainError(
             "version_conflict",
@@ -338,7 +496,7 @@ def register_approved_unit(
         "outcome": outcome,
         "required_capability": required_capability,
         "authority": _normalize_json(
-            authority_payload if authority_payload is not None else authority.normalized()
+            authority_payload if authority_payload is not None else runner_payload(authority)
         ),
         "max_attempts": max_attempts,
         "approved_by": approved_by,
@@ -368,7 +526,7 @@ def register_approved_unit(
         "outcome": outcome,
         "required_capability": required_capability,
         "authority": _normalize_json(
-            authority_payload if authority_payload is not None else authority.normalized()
+            authority_payload if authority_payload is not None else runner_payload(authority)
         ),
         "authority_fingerprint": authority_fingerprint(authority),
         "max_attempts": max_attempts,
@@ -779,6 +937,7 @@ def evaluate_readiness(
                 unit.decomposition_approved_by and unit.decomposition_approved_at
             ),
             authority_approved=repository.exact_authority_approval(unit) is not None,
+            authority_recognised_by_policy=not human_authority_gate(unit, revision).refusals,
             dependencies=dependencies,
         )
     )

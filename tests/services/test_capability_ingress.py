@@ -1,7 +1,8 @@
 """WS-P2.16 U1 -- capability-vocabulary enforcement at orchestrator unit ingress.
 
 A work unit's ``required_capability`` and every key in its ``authority.capabilities`` must name a
-capability the orchestrator recognises (the runner six plus ``post_deploy_verification``). The
+capability the orchestrator recognises (the runner vocabulary plus the orchestrator-only terms
+``post_deploy_verification`` and ``operational_action``). The
 registry vocabulary (``repository_write``) is a package-level vocabulary; a UNIT carrying it is
 test-only drift and must be rejected with a NAMED error at the gate, where a human can fix it --
 not left to fail closed and silently as ``capability_not_authorized`` at dispatch.
@@ -45,10 +46,14 @@ def _register_unit(session: Session, *, required_capability: str, capabilities: 
 
 
 def _proposed_unit(*, required_capability: str, capabilities: dict[str, str]) -> ProposedUnit:
-    payload = {
+    payload: dict[str, object] = {
         "capabilities": capabilities,
         "budgets": {"max_attempts": 3, "max_llm_calls": 4},
     }
+    if capabilities.get("command.run") == "allowed":
+        # command.run authority requires a declared command allowlist for every
+        # change class (WS-P2.33); these cases are about the capability VOCABULARY.
+        payload["constraints"] = {"allowed_commands": ["make check"]}
     return ProposedUnit(
         unit_key="proposed-ingress",
         title="Proposed ingress unit",
