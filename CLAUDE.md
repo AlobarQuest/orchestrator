@@ -3038,8 +3038,13 @@ style of that module.
 
 - **`docker` is excluded from the Dependabot auto-merge cascade (ADR-0023), and the reason is that
   DOCKER TAGS ARE NOT SEMVER.** Dependabot maps a tag's digits onto semver positions mechanically,
-  so `python:3.12-slim → 3.14-slim` reports `version-update:semver-minor` — and ADR-0018's cascade
-  arms on minor "in every ecosystem". That would auto-merge a language-version replacement that
+  so a parseable tag like `postgres:16.2 → 16.4` reports `semver-patch` and `python:3.12 → 3.14`
+  reports `semver-minor` — and ADR-0018's cascade arms on both "in every ecosystem".
+  **CORRECTED 2026-08-15: `orchestrator#3` (`python:3.12-slim → 3.14-slim`) emits NO update-type at
+  all** — `3.14-slim` does not parse as semver — so it is refused under the old condition too and
+  **cannot be the acceptance test**, though HQ wrote it as one into the handoff, ADR-0023 and this
+  file. Measured by running synthetic tags through GitHub's own expression engine. The decision is
+  unaffected; the worked example was. That would auto-merge a language-version replacement that
   removes standard-library modules. The second ground fails too: the cascade permits github_actions
   *majors* because the gate exercises them, and for a base image it does not. **Measured, and
   correcting a first reading of mine that said nothing gates a Dockerfile change: `quality.yml` runs

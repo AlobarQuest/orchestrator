@@ -34,6 +34,30 @@ nothing **runs** the image: no container is started, and the suite executes on `
 **3.12**, never on the interpreter the image ships. A dependency that installs cleanly and fails at
 import on a removed module passes every gate.
 
+## Correction, 2026-08-15 — the worked example is wrong; the decision is not
+
+This ADR states that Dependabot reports `orchestrator#3`
+(`python:3.12-slim → 3.14-slim`) as `version-update:semver-minor`. **It does not. It emits no
+update-type at all**, because `3.14-slim` does not parse as semver — a two-component version with a
+suffix. Measured by the Tier A build session, which ran synthetic tags through GitHub's own
+expression engine rather than reasoning about them; the same error is in the Tier A handoff and in
+`CLAUDE.md`.
+
+Two consequences, and only one of them matters.
+
+**The decision stands, and is arguably strengthened.** The argument is that docker tags are not
+semver, so a digit position is not a compatibility promise. `#3` demonstrates that more sharply than
+the original claim did: the tag is not even *parseable*, so the ecosystem's versions are not semver
+in a still more basic sense. Tags that DO parse — `postgres:16.2 → 16.4` as patch, `python:3.12 →
+3.14` without a suffix as minor — are the real subjects of this exclusion, and they arm under the
+old condition.
+
+**But `#3` cannot be the acceptance test.** ADR-0018's cascade already refuses an absent
+update-type (its Q1 closes exactly that combination), so `#3` is refused under both the old and the
+new condition and its refusal proves nothing about this change. A reader checking this ADR against
+the live queue would find the example does not demonstrate the rule — which is how a correct
+decision acquires a reputation for being unfounded.
+
 ## What this costs, measured
 
 Almost nothing. **`orchestrator` is the only repository declaring the `docker` ecosystem** (`uv`,
