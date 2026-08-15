@@ -3057,3 +3057,24 @@ style of that module.
   `orchestrator`. The workflow is not vendored by `code-standards` — one edit per repository, which
   is the clause a future onboarding will forget. Running the image in CI is what would earn the
   permission back and is deliberately not a prerequisite.
+
+- **Vendoring the auto-merge cascade to `orchestrator` MADE ITS `main`-PUSH CI STOP RUNNING on every
+  auto-merged landing, and HQ's own acceptance criterion for that increment was therefore
+  unsatisfiable.** The cascade arms with `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}`
+  (`dependabot-auto-merge.yml`) and `quality.yml` triggers on `push: branches: [main]` — and a
+  `GITHUB_TOKEN`-armed auto-merge fires **no** `on: push` workflow. Measured 2026-08-15 as a clean
+  differential in one repository: the last push-triggered `Quality` on `main` is `080f23c6`, the
+  Tier A merge **a human performed**, while the three commits the cascade merged minutes later
+  (`484cf201` typer, `f1a1219e` alembic, `20973236` ruff 0.15.20→0.16.2) have **no `Quality` run at
+  all**. The handoff asked the build session to *"watch main afterwards and say whether it stayed
+  green"*; there was nothing to watch.
+  The estate had already recorded this for the five original lane repositories — *"main can be red
+  there with nothing reporting it"* — and it was not carried forward when the lane was extended to
+  the repository with the largest suite, the one every build session branches from. **`main` was
+  verified by running `make check` by hand: 3504 passed, 1 skipped.** That is the only check those
+  three bumps have ever had together.
+  **The named probe that would close this has still never been run**: whether an auto-merge ARMED by
+  the Dispatch App (rather than `GITHUB_TOKEN`) fires push runs. The App's *direct* merges do
+  (ADR-0020, measured); arming is a different act and is unproven. It is one throwaway repository
+  with an `on: push` workflow, and it decides whether the fix is estate-wide (change the arming
+  token) or per-repo (`workflow_dispatch` plus a scheduled `main` check).
