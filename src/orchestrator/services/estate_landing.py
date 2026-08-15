@@ -106,7 +106,18 @@ class HttpEstateLandingSource:
                     params={"github_repo": github_repo},
                     headers={"x-brain-key": self._read_key, "user-agent": _USER_AGENT},
                 )
-        except httpx.HTTPError:
+        # `InvalidURL` is NOT an `HTTPError` -- it derives straight from `Exception` -- so catching
+        # the latter alone left the totality this module's docstring promises untrue. The input
+        # that reaches it is not exotic: a TRAILING NEWLINE on the configured base URL, which
+        # `.rstrip("/")` does not remove, and which is the ordinary way an environment variable
+        # gets malformed. Escaping here is an unhandled 500 from every caller, because only
+        # `DomainError` and `APIAuthenticationError` have registered handlers.
+        # `ValueError` joins the tuple for the reason ADR-0019 Increment 3 found it here: IDNA
+        # encoding of a malformed HOST raises `UnicodeError`, which is a `ValueError` and neither
+        # of the other two, so a doubled dot or an over-long DNS label escaped this module and
+        # surfaced as a bare 500 from the admission path -- the one outcome its own docstring
+        # promises cannot happen.
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError):
             return EstateAnswer(None, SOURCE_UNREADABLE)
         if response.status_code != 200:
             return EstateAnswer(None, SOURCE_UNREADABLE)

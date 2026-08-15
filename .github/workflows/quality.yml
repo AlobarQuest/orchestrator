@@ -1,5 +1,5 @@
 # LOCALLY OWNED (no code-standards managed block, deliberately). This workflow is
-# this repo's own: the WS-P2.23 "Runner brief compatibility" job, a postgres:16
+# this repo's own: the WS-P2.23 "Runner consumer compatibility" job, a postgres:16
 # service, SECURITY_STANDARDS_DIR, both database URLs and `alembic upgrade head`.
 # None of it exists in the shared template and `make check` cannot run here
 # without it. `code-standards sync` writes nothing here and reports it every run
@@ -35,8 +35,8 @@ jobs:
   # answer it on the pull request that adds the field, not on a later release. It needs no
   # database and no dependency install, so it also reports in seconds rather than behind
   # the full gate. A red here is unambiguous: merge the consumer first.
-  brief-compatibility:
-    name: Runner brief compatibility
+  consumer-compatibility:
+    name: Runner consumer compatibility
     runs-on: ubuntu-latest
     permissions:
       contents: read

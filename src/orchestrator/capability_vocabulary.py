@@ -48,9 +48,10 @@ CAPABILITY_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
         "github.pr.create",
         # ADR-0020, WS-P3.7 Increment 3. The name exists so that landing a pull request can be an
         # authority term a human approves per unit, in the envelope, the way every other
-        # capability is -- rather than an ambient property of the factory. NOTHING reads it yet:
-        # no code in either repository derives a permission from it, and no envelope has ever
-        # carried it. Making the name sayable is the whole of this increment.
+        # capability is -- rather than an ambient property of the factory. Increment 3 shipped it
+        # reading nothing; Increment 4a's merge-admission answer now reads it as one term of a
+        # report. Nothing yet DERIVES A PERMISSION from it -- no code in either repository acts on
+        # the strength of it, and no envelope has ever carried it.
         #
         # An envelope that does carry it matches no known-good authority pattern -- totality --
         # so it falls to the human authority gate, which is where ADR-0020 puts the decision.

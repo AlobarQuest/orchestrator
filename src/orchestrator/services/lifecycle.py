@@ -12,6 +12,7 @@ from orchestrator.clock import Clock, TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.context import context_fingerprint
+from orchestrator.kernel.evidence_types import OBSERVED_EVIDENCE_TYPES
 from orchestrator.kernel.leases import hash_lease_token
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import (
@@ -27,6 +28,7 @@ from orchestrator.persistence.models import (
     DecompositionProposalAcMapping,
     DeploymentObservation,
     Event,
+    Evidence,
     PackageAcceptanceCriterion,
     UnitPrBinding,
     WorkPackageRevision,
@@ -598,7 +600,22 @@ class CriterionDecisionRefusal:
 
 @dataclass(frozen=True)
 class VerifierDecidedCompletion:
+    """ADR-0020's safety condition, as two clauses that are reported separately.
+
+    The decision is one sentence -- *"resolved deterministically from OBSERVED evidence, with no
+    human adjudication"* -- and it has two halves that fail for different reasons and are fixed by
+    different people. `decided_by_verifier` is the second half; `evidence_observed` is the first.
+    Both are positive conjunctions over the required criteria, computed independently, and
+    `satisfied` is their AND rather than an emptiness test over `refusals`.
+
+    Kept apart because a criterion can carry observed evidence and still have been decided by a
+    human, and can be verifier-decided off evidence the worker attested to. Collapsing them would
+    report one defect for two situations.
+    """
+
     satisfied: bool
+    decided_by_verifier: bool
+    evidence_observed: bool
     refusals: tuple[CriterionDecisionRefusal, ...]
 
 
@@ -643,6 +660,8 @@ def verifier_decided_completion(
     if not required:
         return VerifierDecidedCompletion(
             satisfied=False,
+            decided_by_verifier=False,
+            evidence_observed=False,
             refusals=(CriterionDecisionRefusal(None, "required_criteria_undeclared"),),
         )
 
@@ -657,36 +676,64 @@ def verifier_decided_completion(
                 CriterionDecisionRefusal(adjudication.ac_id, "decision_outside_required_criteria")
             )
 
+    observed = _observed_evidence_ids(session, unit)
     verdicts = tuple(
-        _criterion_decision_verdict(ac_id, tuple(grouped[ac_id])) for ac_id in required
+        _criterion_decision_verdict(ac_id, tuple(grouped[ac_id]), observed) for ac_id in required
     )
-    # `qualifies` is each criterion's own positive answer, never "no refusal was raised". An
+    # Each clause is each criterion's own positive answer, never "no refusal was raised". An
     # answer whose affirmative case is an empty objection list is the fail-open shape this
-    # repository keeps finding, and it is the reason the two fields are computed separately.
+    # repository keeps finding, and it is the reason these fields are computed separately.
     # Safe as an emptiness test only because `outside` is filled by the SAME pass that fills
     # `grouped`: a query returning nothing leaves every criterion refusing `no_current_adjudication`
     # rather than leaving this term quietly true.
     nobody_decided_anything_else = not outside
+    decided_by_verifier = (
+        all(verdict.decided_by_verifier for verdict in verdicts) and nobody_decided_anything_else
+    )
+    evidence_observed = all(verdict.evidence_observed for verdict in verdicts)
     return VerifierDecidedCompletion(
-        satisfied=all(verdict.qualifies for verdict in verdicts) and nobody_decided_anything_else,
+        satisfied=decided_by_verifier and evidence_observed,
+        decided_by_verifier=decided_by_verifier,
+        evidence_observed=evidence_observed,
         refusals=tuple(refusal for verdict in verdicts for refusal in verdict.refusals)
         + tuple(outside),
     )
 
 
+def _observed_evidence_ids(session: Session, unit: WorkUnit) -> frozenset[uuid.UUID]:
+    """Which of this unit's evidence rows the orchestrator OBSERVED, rather than was told about.
+
+    Resolved by id rather than by re-reading each adjudication's row, so one query answers the
+    whole unit. Membership is set algebra against the named producer set -- an evidence type this
+    build does not recognise is simply not observed, which is the direction that refuses.
+    """
+    return frozenset(
+        session.scalars(
+            select(Evidence.id).where(
+                Evidence.work_unit_id == unit.id,
+                Evidence.evidence_type.in_(OBSERVED_EVIDENCE_TYPES),
+            )
+        )
+    )
+
+
 @dataclass(frozen=True)
 class _CriterionVerdict:
-    qualifies: bool
+    decided_by_verifier: bool
+    evidence_observed: bool
     refusals: tuple[CriterionDecisionRefusal, ...]
 
 
 def _criterion_decision_verdict(
-    ac_id: str, adjudications: tuple[Adjudication, ...]
+    ac_id: str,
+    adjudications: tuple[Adjudication, ...],
+    observed_evidence_ids: frozenset[uuid.UUID],
 ) -> _CriterionVerdict:
     terminal = _current_terminal(adjudications)
     if terminal is None:
         return _CriterionVerdict(
-            qualifies=False,
+            decided_by_verifier=False,
+            evidence_observed=False,
             refusals=(CriterionDecisionRefusal(ac_id, "no_current_adjudication"),),
         )
     settles = terminal.outcome in SATISFYING_OUTCOMES
@@ -694,7 +741,11 @@ def _criterion_decision_verdict(
     # outcome that is HUMAN by construction -- two reasons to refuse, the second of which does not
     # depend on a schema column that can be NULL.
     waived = terminal.outcome == "waived"
-    decided_by_verifier = terminal.decided_by_role == ActorRole.VERIFIER.value
+    verifier_decided = terminal.decided_by_role == ActorRole.VERIFIER.value
+    # WHAT the decision rested on, as distinct from WHO made it. `verify_work_unit` cites the
+    # evidence row it resolved from, so an adjudication naming no evidence rested on none this
+    # side can point at, and one naming a row the worker recorded rested on an attestation.
+    observed = terminal.evidence_id is not None and terminal.evidence_id in observed_evidence_ids
     refusals: list[CriterionDecisionRefusal] = []
     if waived:
         refusals.append(CriterionDecisionRefusal(ac_id, "criterion_waived"))
@@ -702,10 +753,13 @@ def _criterion_decision_verdict(
         refusals.append(CriterionDecisionRefusal(ac_id, "outcome_does_not_settle_criterion"))
     if terminal.decided_by_role is None:
         refusals.append(CriterionDecisionRefusal(ac_id, "decider_kind_unrecorded"))
-    elif not decided_by_verifier:
+    elif not verifier_decided:
         refusals.append(CriterionDecisionRefusal(ac_id, "decider_was_not_the_verifier"))
+    if not observed:
+        refusals.append(CriterionDecisionRefusal(ac_id, "criterion_evidence_not_observed"))
     return _CriterionVerdict(
-        qualifies=settles and not waived and decided_by_verifier,
+        decided_by_verifier=settles and not waived and verifier_decided,
+        evidence_observed=observed,
         refusals=tuple(refusals),
     )
 

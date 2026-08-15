@@ -50,6 +50,26 @@ def test_every_api_success_response_has_an_explicit_schema() -> None:
             assert success["content"]["application/json"]["schema"]
 
 
+# The rule this invariant enforces is that a mutation states WHAT THE CALLER READ before asking
+# for an act. `expected_version` is how every subject in this database says that -- and one route
+# has a subject in a foreign system, which has no version of ours. Its head is the value that
+# moves, so it names that instead: the same claim over the same window, in the only vocabulary the
+# subject has.
+#
+# Keyed by path AND by the field that replaces it, so an exception cannot be widened into "this
+# route states nothing". Bounded to its exact size below, because a set that could quietly grow is
+# the failure this repository has already recorded twice in guards of this shape.
+EXPECTED_VALUE_EXCEPTIONS = {
+    "/api/v1/estate-pr-merge": "expected_head_sha",
+    # ADR-0019 Increment 6. A SECOND entry, and it is the SAME judgment rather than a new one:
+    # the subject is again a pull request in a foreign system, which has no version of ours, and
+    # again its head is the value that moves. Both routes act on a head a caller read, and both
+    # name it. The exception has not been widened -- what it covers is still "a subject with no
+    # version of ours", and both members are the same subject type.
+    "/api/v1/estate-pr-branch-update": "expected_head_sha",
+}
+
+
 def test_every_api_mutation_requires_idempotency_key_and_expected_version() -> None:
     document = TestClient(app).get("/openapi.json").json()
 
@@ -59,7 +79,31 @@ def test_every_api_mutation_requires_idempotency_key_and_expected_version() -> N
         schema = operations["post"]["requestBody"]["content"]["application/json"]["schema"]
         name = schema["$ref"].rsplit("/", 1)[-1]
         required = set(document["components"]["schemas"][name]["required"])
-        assert {"idempotency_key", "expected_version"} <= required, path
+        expected = EXPECTED_VALUE_EXCEPTIONS.get(path, "expected_version")
+        assert {"idempotency_key", expected} <= required, path
+
+
+def test_the_expected_value_exception_is_exactly_two_routes_wide() -> None:
+    """The exception states a judgment, so it needs its own cross-check.
+
+    Emptying it would leave the test above green while protecting less, and adding an entry
+    without a reason is how "every mutation states what it read" becomes "most do". Each named
+    route must exist, and must genuinely lack a version of ours to state.
+
+    IT IS TWO ROUTES SINCE ADR-0019 Increment 6, and the count is in the name so that growing it
+    is an edit somebody has to make on purpose. Both members are the same judgment about the same
+    kind of subject -- a pull request in a foreign system -- so what the exception covers has not
+    widened. A third entry naming a subject that DOES have a version of ours would be the failure
+    this test exists to make visible, and it would still have to be written by hand.
+    """
+    document = TestClient(app).get("/openapi.json").json()
+
+    assert EXPECTED_VALUE_EXCEPTIONS == {
+        "/api/v1/estate-pr-merge": "expected_head_sha",
+        "/api/v1/estate-pr-branch-update": "expected_head_sha",
+    }
+    for path in EXPECTED_VALUE_EXCEPTIONS:
+        assert path in document["paths"], f"the exception names a route that does not exist: {path}"
 
 
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}

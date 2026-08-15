@@ -139,6 +139,10 @@ class LedgerReader(Protocol):
 
     def read_landings(self, repository: str) -> list[dict[str, Any]]: ...
 
+    def read_evidence_pack(self, work_unit_id: str) -> dict[str, Any] | None: ...
+
+    def read_unit_history(self, work_unit_id: str) -> list[dict[str, Any]] | None: ...
+
 
 class _NullWriter:
     """A dry-run writer: any use is a bug, so it fails loudly rather than looking successful."""
@@ -175,6 +179,7 @@ def audit_pass(
             landings=[row.get("facts") for row in ledger.read_landings(repository)],
             pending=read_pending_updates(reader, repository, base_ref),
             rule_revision=current_rule_revision(reader, repository, base_ref),
+            units=ledger,
             now=now,
             settle_seconds=settle_seconds,
         )
@@ -184,6 +189,7 @@ def audit_pass(
             rule_revision=None,
             landings_audited=0,
             permitted_landings=0,
+            factory_landings=0,
             pending_audited=0,
             unavailable=True,
         )
