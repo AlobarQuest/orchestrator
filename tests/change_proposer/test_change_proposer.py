@@ -34,7 +34,12 @@ from change_proposer.cli import (
 )
 from change_proposer.criteria import CriteriaUnavailable, acceptance_criteria, rollback_for
 from deploy_watcher.github import ReadError
-from deploy_watcher.workflows import ATTESTS_REVISION, ATTESTS_UNVERIFIED, Attestation
+from deploy_watcher.workflows import (
+    ATTESTS_REVISION,
+    ATTESTS_UNVERIFIED,
+    Attestation,
+    attestation_for,
+)
 
 PROPOSER = Path("src/change_proposer")
 ORCHESTRATOR = Path("src/orchestrator")
@@ -172,6 +177,36 @@ def test_brain_rolls_back_to_an_image_never_a_commit() -> None:
     one."""
     assert rollback_for("alobarquest/brain").target == "image"
     assert any("revert" in step for step in rollback_for("alobarquest/brain").steps)
+
+
+def test_brains_derived_criteria_are_the_pair_change_managers_deploy_policy_must_carry() -> None:
+    """THE CROSS-REPO PAIR, spelled out, because nothing mechanical joins the two sides.
+
+    `change-manager`'s `deploy_policy.objections` byte-compares a record's stored criteria against
+    the tuple its current version pins, and a record's stored criteria are what this function
+    derived. So these two strings are the same judgment held in two repositories on purpose --
+    that second copy is what makes a rollout-workflow change stop unattended landing until a human
+    ratifies it. The failure mode if they drift is silent and total: every `brain` record objects
+    `acceptance_criteria_not_ratified` forever, and nothing anywhere says which side moved.
+
+    Literals rather than a derivation, for the reason the registry's own count test gives: a
+    derived assertion would let the string change and stay green, which is exactly the direction
+    that breaks the other repository. Change this and change deploy policy v3 in the same breath.
+
+    Note there are TWO criteria and no third: the NOTE line is appended only below
+    `ATTESTS_REVISION`, and `c5c0887` is at it.
+    """
+    criteria = acceptance_criteria(
+        "alobarquest/brain", attestation_for("c5c088719cd340f0071b875c6a82439292ed8756")
+    )
+    assert criteria == (
+        "the rollout runs for this merge on alobarquest/brain, and its production step "
+        "concludes success (job 'deploy', step 'Deploy brain apps')",
+        "every brain application this rollout triggered answered /api/health reporting the "
+        "merged commit as its revision and a status of ok, within 600 seconds; an application "
+        "whose Coolify UUID secret is unset is neither triggered nor checked, and a rollout "
+        "that triggered none fails rather than passing empty",
+    )
 
 
 def test_every_in_scope_repository_has_both_halves() -> None:

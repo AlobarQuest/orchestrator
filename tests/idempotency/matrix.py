@@ -155,6 +155,25 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_estate_pr_merge.py::test_a_repeat_replays_the_record_and_never_calls_the_remote_again",
     ),
     MatrixRow(
+        "estate pr branch update",
+        "/api/v1/estate-pr-branch-update",
+        # NO ROW OF ITS OWN, unlike the landing above, and that difference is forced by what the
+        # act is: it is repeatable by design, because whenever the base moves again it is right to
+        # do again, so a row unique per pull request would bar the next legitimate update. What
+        # makes a KEY safe here is that it names the head -- a successful update changes the head,
+        # so a spent key can only ever bar a repeat of the same request against the same head.
+        #
+        # It DOES take the advisory lock, for a different reason than its sibling. The branch is
+        # guarded by the platform, which refuses a head that moved under the caller; the KEY is
+        # not. Two concurrent requests carrying one key would both read no spent event, both act,
+        # and the loser's commit would violate the unique index as an unhandled 500 over an act
+        # that happened twice.
+        "pg_advisory_xact_lock on the repository + unique Event per\n"
+        "idempotency_key, content-addressed over the head + expected_head_sha\n"
+        "checked against the head the answer named",
+        "tests/services/test_estate_pr_branch_update.py::test_a_repeat_replays_the_event_and_never_calls_the_remote_again",
+    ),
+    MatrixRow(
         "dispatch",
         "/api/v1/work-units/{unit_id}/dispatch",
         "unique DispatchRecord.idempotency_key + (unit, runner_attempt) guard",

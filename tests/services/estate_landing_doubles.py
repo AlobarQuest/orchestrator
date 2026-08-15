@@ -125,6 +125,7 @@ class FakeEstateGateway:
         read_error: EstateGatewayError | None = None,
         compare_error: EstateGatewayError | None = None,
         blob_error: EstateGatewayError | None = None,
+        update_error: EstateGatewayError | None = None,
     ) -> None:
         self._pull = pull or pull_request()
         self._behind = behind
@@ -136,9 +137,15 @@ class FakeEstateGateway:
         self._read_error = read_error
         self._compare_error = compare_error
         self._blob_error = blob_error
+        self._update_error = update_error
         self.reads: list[tuple[str, int]] = []
         self.compares: list[tuple[str, str, str]] = []
         self.blobs: list[tuple[str, str, str]] = []
+        # ADR-0019 Increment 6. THE ONE LIST THAT MATTERS FOR A REFUSAL TEST: every assertion that
+        # this lane declined to touch a branch is an assertion that this stayed empty. A test that
+        # only checks the raised error would pass against an implementation that acted first and
+        # complained afterwards.
+        self.branch_updates: list[tuple[str, int, str]] = []
 
     def read_pull_request(self, *, repository: str, number: int) -> EstatePullRequest:
         self.reads.append((repository, number))
@@ -158,3 +165,8 @@ class FakeEstateGateway:
             raise self._blob_error
         base = self._pull.base_ref
         return self._blob if ref == base else self._head_blob  # type: ignore[return-value]
+
+    def update_branch(self, *, repository: str, number: int, expected_head_sha: str) -> None:
+        self.branch_updates.append((repository, number, expected_head_sha))
+        if self._update_error is not None:
+            raise self._update_error

@@ -202,6 +202,16 @@ LANDING_PACE_EXHAUSTED: Final = "landing_pace_exhausted"
 # request and there is no delete path, so a second act is never attempted.
 LANDING_ALREADY_RECORDED: Final = "landing_already_recorded"
 
+# Refusals the system raises ON PURPOSE, each of which clears itself when the window next opens.
+# Neither names a condition anybody can act on: the day's pace for this repository is spent, or the
+# clock is outside the hours policy declares for changing something already serving.
+#
+# MIRRORED in the lander's own `_DELIBERATE`, which cannot import this module -- that program is
+# isolated from `orchestrator.*` on purpose. The two are pinned equal by a test that imports both,
+# because this estate's standing lesson is that wherever two vocabularies must agree they do not,
+# until something checks.
+DELIBERATE_REFUSALS: Final = frozenset({LANDING_PACE_EXHAUSTED, LANDING_OUTSIDE_CHANGE_WINDOW})
+
 # `bump <name> from <a> to <b>`, anchored at the end so a grouped bump -- whose title carries
 # trailing text naming the group -- refuses rather than being classified on whichever dependency
 # happens to be named. A requirement range (`from >=0.51.0 to >=0.52.1`) does not match at all,
@@ -259,6 +269,37 @@ class EstateLandingAdmission:
     head_sha: str | None
     change_record_id: int | None
     policy_version: int | None
+    # A SECOND, much smaller permission composed from the same terms: not "may this land" but "may
+    # the lane bring this branch up to date with its base". Served on the read surface so a dry run
+    # can report what a live pass would do without anything acting -- the acting path recomposes
+    # this from scratch and never trusts a caller's copy of it.
+    branch_update_qualifies: bool
+
+
+def qualifies_for_branch_update(refusals: tuple[str, ...]) -> bool:
+    """May the lane bring this pull request's head up to date with its base?
+
+    **ONLY WHEN FRESHNESS IS THE SOLE REMAINING OBSTACLE**, and that rule is the whole design
+    rather than a precaution. The lane creates this condition itself: a landing moves the base, so
+    every sibling pull request in that repository becomes behind it, and the freshness term then
+    refuses them all. Nothing else resolves it -- measured, one pull request sat 29 hours behind
+    while three windows passed over it.
+
+    So the lane clears what the lane staled. What it must NOT do is bring up to date a pull request
+    that could not land anyway: a requirement-range bump states no single version delta and can
+    never be classified, a red check is not made green by a fresher base. Each would spend a real
+    build on a branch whose answer does not change, and a build running is indistinguishable from
+    progress to whoever reads the report.
+
+    The remainder is tested against a CATEGORY and never against a count. A pull request refused on
+    freshness alone qualifies; so does one also refused because the day's pace is spent or the hour
+    is outside the window, because each of those clears itself and neither says anything about the
+    branch. Any other refusal -- present or future, named or not yet invented -- disqualifies,
+    which is the polarity this lane argues for everywhere else: an unclassified code must fail
+    toward refusing rather than toward acting.
+    """
+    remainder = set(refusals) - {LANDING_HEAD_NOT_CURRENT_WITH_BASE} - DELIBERATE_REFUSALS
+    return LANDING_HEAD_NOT_CURRENT_WITH_BASE in refusals and not remainder
 
 
 @dataclass(frozen=True)
@@ -376,6 +417,7 @@ def estate_landing_admission(
         head_sha=remote.head_sha,
         change_record_id=record.record_id,
         policy_version=record.policy_version,
+        branch_update_qualifies=qualifies_for_branch_update(tuple(refusals)),
     )
 
 

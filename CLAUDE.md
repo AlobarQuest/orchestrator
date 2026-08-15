@@ -1562,7 +1562,21 @@ style of that module.
   which tree they are in* — a worktree alone fixes the Stop hook and leaves the real hazard intact.
   `conftest` reads that variable from the environment, so no code change is needed. (An
   `orchestrator_test_task6` database already existed, so somebody improvised this once without it
-  becoming convention.) Note the Agent tool's `isolation: "worktree"` covers subagents a session
+  becoming convention.)
+  **TEARDOWN HAS A DEFINED POINT IN TIME, and it is the END OF THE SESSION, after the report is
+  written** (Devon, 2026-08-14, after a morning in which three merged worktrees, five test databases
+  and one stray file had accumulated). It is three steps and all three matter:
+  **(1) Check the MAIN tree, not only your worktree.** `git -C <main tree> status --porcelain` must
+  show nothing you created. The cwd-reset trap puts writes there while the session works correctly
+  in its worktree, and the diff-scoped Stop hook lints untracked files at the *session's* cwd — so a
+  fragment left behind blocks **whoever stops next**, not its author. On 2026-08-14 one such file
+  blocked two sessions on work neither had written.
+  **(2) Remove the worktree and drop the test database** — `git worktree remove … --force` +
+  `dropdb`. **(3) Leave the branch and the pull request**; HQ merges, so the branch must survive.
+  **The objection to answer, because a session will raise it: "leave it up in case CI sends me
+  back."** Recreating is fully scripted and takes about three minutes, HQ owns the merge and
+  therefore owns any CI failure, and a genuine second attempt wants a fresh tree from current `main`
+  anyway. Standing by is the exception and needs to be asked for, not assumed. Note the Agent tool's `isolation: "worktree"` covers subagents a session
   spawns and does nothing for a session opened in a terminal, which is the case that was hurting.
 
 - **A claim is NOT released when a unit COMPLETES — only on failure and cancellation — so
@@ -1935,6 +1949,29 @@ style of that module.
   the system to ever auto-correct."* Keep the two as separate named categories rather than one
   suppression set: a deliberate refusal WILL clear at the next window, an exception NEVER will and
   waits on a person, and collapsing them says "quiet" about both while losing which is which.
+
+  **THIRD RULING, 2026-08-14, and it exists because the SECOND fix created it: freshness beside an
+  exception is itself non-finding.** Once the lane brings up to date the branches it stales, it
+  deliberately declines to freshen a pull request that can never land — so a permanent exception
+  permanently acquires `landing_head_not_current_with_base` as well, and under the two-category rule
+  that resurrects it as a finding forever. `change-manager#48` is the live case: the increment's own
+  correctness reproduces the permanently-red control the first ruling was made to prevent. Devon's
+  ruling: **a refusal the system produced by deliberately declining to act carries no information a
+  reader could act on.** Freshness is therefore suppressed WHEN AND ONLY WHEN an exception is
+  present — never generally, or `{head_not_current_with_base, checks_not_clean}` would go quiet,
+  which is a real condition and must stay a finding.
+  **KEY IT ON THE EXCEPTION, NOT ON THE LANE'S DECLINING — those read as the same rule and are
+  not.** The build session sharpened this and it is the load-bearing distinction: the lane declines
+  to freshen **anything it cannot clear**, including `landing_checks_not_clean`, so a rule keyed on
+  *"we chose not to freshen it"* silences a failing check. **The discriminator is DURABILITY: red
+  checks can go green, an exception never clears.** HQ's handoff gave the weaker formulation.
+  Shipped 2026-08-14 as `#168`; measured live against production on the same two subjects minutes
+  apart — `#48` reads `held` on `main` and `exception` on the branch, and the agent exits **3**
+  and **0** respectively. The nightly control is green. **Confirmed in production overnight
+  2026-08-15: the scheduled 02:15 run reported `#48` as `exception` and the job exited 0** — the
+  first time that control has been green in a real run rather than in a differential. Note the shape, because it will recur: **each
+  fix in this family has generated the next category**, and each time the fail-open is the
+  over-general version of the correct rule.
 
   **What `pace_exhausted` actually is, since it reads like a failure and is not: one landing per
   repository per occurrence of the change window.** Record 52 landing `#50` at 05:17 consumed
@@ -2776,6 +2813,16 @@ style of that module.
   deploys") and that condition is not sufficient. Backlogged P1 `6a98cb85fbae`. Confirmed against
   the one real landing: `2ba9f7f2`'s message carries `SDS-Change-Record:` and `SDS-Policy-Version:`
   and **no `SDS-Unit:`**.
+  **The P1's open question — on what POSITIVE fact a factory pull request could be recognised — is
+  answered, measured 2026-08-13 at source rather than guessed.** factory-runner stamps **two**
+  machine-readable marks on every pull request it opens, both unconditional: the TITLE is
+  `f"SDS {brief.work_unit.id}: {brief.work_unit.title}"` (`src/factory_runner/cli.py:911`), and the
+  BODY opens `## Factory Runner Evidence` with a `Work unit:` line (`pr_body.py:24`) followed by
+  package, package hash, source commit and authority fingerprint. Verified on all three factory pull
+  requests in `intent-packages` — `#58`, `#62`, `#66`. So recognising one needs **no** change to
+  factory-runner and no loosening of the bot filter: the positive assertion the P1 asks for is
+  already being made. Opening as the Dispatch App remains the option that makes the *identity* true
+  rather than the *marking* true, and it is the one that touches `FACTORY_PR_TOKEN`.
 
 - **The estate-landing agent's exit 3 does NOT mean a record went unsettled — a closed pull request
   is classified `settled` and contributes no finding.** `_SETTLED`
@@ -2806,9 +2853,13 @@ style of that module.
   is the first of **five**, not six — `infraops-mcp-server` has no ruff dependency at all, no pin and
   no lockfile entry, so nothing can bump it and it could never have gone red. `intent-packages` reads
   0 because its 2026-08-07 remediation to
-  0.16.1 already reformatted seven files — the record does not say they were documentation, and on
-  this evidence they were, so the estate has already rewritten one repo's docs this way without
-  deciding to. The affected population is ADRs and historical plan documents, i.e. **the record**,
+  0.16.1 already reformatted seven files. **Measured 2026-08-13, no longer an inference: that was
+  `intent-packages#62`, titled `SDS ca1a9ddd…: Reformat embedded code blocks for ruff 0.16`,
+  +371/-160, and every file was a Markdown plan or spec under `docs/superpowers/`.** The estate had
+  already rewritten one repo's historical documents this way **through the factory**, with an
+  authority envelope and two human approvals — the package author knew they were embedded code
+  blocks, the title says so, so it was a choice that was simply never surfaced as a portfolio
+  decision. Devon's ruling reverses it going forward and deliberately does not revert it. The affected population is ADRs and historical plan documents, i.e. **the record**,
   which is why this is a decision and not a fix. The remedy is `[tool.ruff] extend-exclude =
   ["*.md"]`, proven both directions against a clean clone: `--check` drops to 0, and a deliberately
   misformatted `.py` is still caught (a remedy that silenced everything would look identical
@@ -2841,3 +2892,168 @@ style of that module.
   `^unformatted:`. Generalise past ruff: **when a tool's version is the variable under test, its
   OUTPUT FORMAT is part of what changed** — never carry a parse across the version boundary you are
   measuring.
+
+- **The Dependabot auto-merge lane is deployed to 5 of 17 repositories, and the 35 pull requests
+  stuck outside it are a COVERAGE gap, not a cascade defect — the census proves the cascade
+  correct.** Measured 2026-08-13: 44 open pull requests estate-wide (41 Dependabot, 3
+  `upstream-sync`). The five repositories carrying `dependabot-auto-merge.yml`
+  (`intent-packages`, `security-standards`, `project-standards`, `infraops-mcp-server`,
+  `factory-runner`) hold **6** open Dependabot pull requests between them and **every one is a
+  major-version or requirement-range bump** — zod 3→4, eslint 9→10, typescript 5→7, checkout 4→7,
+  setup-uv 5→7, a setuptools range. **Zero patch or minor bumps are stuck anywhere the lane
+  exists.** So ADR-0018's cascade is doing exactly its job unattended, and the open queue is
+  explained entirely by which repositories never got the workflow — `orchestrator` itself is the
+  largest at 10 open with no lane, as are `change-manager` and `code-standards`.
+  **But the lane CANNOT be vendored uniformly, and the reason is already measured elsewhere in this
+  file: an auto-merge armed with `GITHUB_TOKEN` fires no `on: push` workflow.** Asked of App Brain
+  the same day, landing is **inert** for `orchestrator` and `claude-octopus`, **redeploys** for
+  `change-manager`, `brain` (four applications from one repository), `community-atlas`, `Contacts`
+  and `agent-sites`, and **unknown / `no_app_record`** for `code-standards`, `rtk` and
+  `n8n-as-code`. Native auto-merge is safe only in the inert set; every `redeploys` repository would
+  land without deploying and diverge `main` from production silently. That the five laned
+  repositories are all inert is why nobody has hit it. Deploying repositories belong on the ADR-0019
+  landing lane instead, which is a policy decision (policy v1 names one repository deliberately) plus
+  a change-proposer scope widening — `community-atlas`, `Contacts` and `agent-sites` have no change
+  records at all. Plan: `~/docs/software-delivery-system/2026-08-13-toil-surface-onboarding-plan.md`.
+
+- **A landing stales every sibling pull request, and `update-branch` clears it synchronously where
+  `@dependabot rebase` takes ~14 hours.** `_freshness_term`
+  (`services/estate_landing_admission.py`) calls `commits_behind_base` and refuses on `behind > 0`
+  — correct, because checks are deliberately not up-to-date-gated estate-wide, so a squash of a
+  behind head produces a tree nothing executed, and on a deploying repository that tree is what
+  starts serving. But the lane therefore CREATES the condition it refuses on: `change-manager#51`
+  landed 02:15 on 2026-08-14 and the three remaining windows that night could only re-report the
+  same two staled siblings; `#49` had already sat **29 hours** behind.
+  **Measured 2026-08-14, both mechanisms.** `@dependabot rebase` was posted on `#49` at
+  2026-08-12 19:02 and Dependabot acted at 2026-08-13 09:20 — **14 hours** — rebasing onto main as
+  it was then, which the next landing staled again; `dependabot.yml` there is `interval: weekly`,
+  so unrequested it can wait a week. By contrast `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch`
+  took `#49` from `behind_by=3` to `behind_by=0` within about twelve seconds (head `487d6767` →
+  `34a2fe1c`, `ahead_by` 1 → 2 as the merge commit lands, checks re-running).
+  **BUT THE CONTRACT IS 202 ACCEPTED, NOT 200, AND THAT DISTINCTION IS LOAD-BEARING.** The endpoint
+  accepts the request and performs the work afterwards; a client copying the sibling merge call's
+  `!= 200` check reads **every success as a refusal** — silently, in the direction where the lane
+  simply stops working while reporting that the remote declined. Nothing may re-read to confirm
+  either, because the work is not done when the call returns. HQ wrote "seconds, synchronous" into
+  the handoff by generalising a single probe observation into a claim about the contract; a build
+  session caught it, and it was the one handoff error that would have shipped a broken lane. **An
+  observed latency is not an API contract.** It needs `contents: write`, which
+  the Dispatch App holds, and depends on nothing honouring a comment — note `@dependabot rebase`
+  additionally assumes Dependabot obeys a **GitHub App**, which is unproven.
+  Pass `expected_head_sha`: it is optimistic concurrency and refuses rather than clobbering a
+  rebase that landed in between.
+  **The rule for WHICH pull requests to update is the whole design: only one whose sole remaining
+  obstacle is freshness**, i.e. every other refusal is one that clears on its own (the *deliberate*
+  category). A pull request also carrying `landing_checks_not_clean` or
+  `landing_update_type_unparseable` can never land whatever is done to its branch, so updating it is
+  pure CI waste that reads as progress. `change-manager#48` (a requirement-range bump, permanently
+  unclassifiable) is the standing live control: it must never be touched.
+
+- **All four brain applications pull the SAME moving `:latest` tag, so one app pinned elsewhere
+  would hang every deploy for the full verification deadline.** Established 2026-08-14 while giving
+  `brain`'s rollout a revision check. `ci.yml`'s `build-and-push` pushes `${IMAGE_NAME}:latest` and
+  `:${{ github.sha }}`, and the `deploy` job fires four Coolify webhooks — `infra`, `open`, `app`,
+  `code` — against that one image, **skipping any whose `COOLIFY_APP_UUID_*` secret is empty**. So a
+  revision poll must require confirmation only from the apps a run actually triggered: a skipped app
+  keeps its old image and can never report the new revision, and requiring all four unconditionally
+  turns a deliberate configuration into a 600-second hang. Separately, **Coolify's own health check
+  is enabled on all four against `/api/health` with no response-text match**, so adding a field to
+  that response is safe — worth knowing before extending any health endpoint the platform polls.
+  Note `brain` has **no `deploy.yml`**: the deploy job lives in `ci.yml`, which is also the path any
+  `WorkflowPin` must name (blob `c5c08871…` on `main` as of 2026-08-14).
+  **SHIPPED 2026-08-14 (`#47`, merge `1d9e7d38`), and the run PROVES the per-app check was not
+  fussiness.** The four brains swapped at **different times** — `infra-brain` reported the merged
+  revision at 19:13:06 while `open`, `app` and `code` were still answering
+  `<no revision reported>`; `open-brain` followed at 19:13:22. A poll that checked one brain and
+  generalised would have passed at 19:13:06 with three of four still serving the previous image.
+  That is the failure the design was written against, observed on its first live run. The whole
+  swap took about 50 seconds from webhook to four `[OK]`s, against a 600-second deadline.
+  Independently probed afterwards: all four report
+  `{"status":"ok","revision":"1d9e7d38…"}` where the pre-merge baseline was `{"status":"ok"}` alone.
+
+- **A mutation control's ATTRIBUTION is itself a claim, and it can be wrong while the mutation set
+  still passes.** WS freshness-beside-an-exception, 2026-08-14: HQ's handoff named
+  `{behind, checks_not_clean}` as the row that must red under "suppress freshness unconditionally".
+  Measured, that row gives the **same answer with or without an unconditional subtraction** — it
+  catches only the early-return form and misses both "add it to the suppressed set" forms the same
+  handoff described. The row that actually carries the load is `{pace, behind}`, which the
+  specification never mentioned, and it kills **five of ten** mutants. So three of the four
+  fail-open forms were attributed to a control that cannot see them. **Compute which control kills
+  which mutant as arithmetic before writing code, then confirm against the harness's own
+  attributions** — a green mutation set says every mutant died, never that the control you *believe*
+  killed it did. Same family as *a mutation set can only question the model its tests already hold*.
+
+- **THE LANDING LANE HAS DRAINED `change-manager`'s LANDABLE QUEUE — three consecutive autonomous
+  deploying landings, every one production-confirmed and self-settled.** Records 51, 52 and 53:
+  `#50` merge `2ba9f7f2` (2026-08-13), `#51` merge `7fa3f829` (2026-08-14), `#49` merge `90306306`
+  (2026-08-15 06:15:14Z) — each merged by `app/alobar-sds-dispatch` inside the window, each followed
+  by production `/api/health` reporting that exact commit, each settled by the watcher with
+  `attests=revision_confirmed` and no human acting. What remains open in that repository is `#48`
+  alone, the permanent requirement-range exception. **A caveat worth carrying, because the counters
+  say so: the freshness-update rule shipped in `#167` has fired ZERO times in production**
+  (`0 updated, 0 would-update` on every run). `#49` was current because HQ had run `update-branch`
+  by hand while probing the mechanism, and `#48` is correctly excluded as an exception — so the rule
+  is live, correct on the subjects it has seen, and **unexercised on a real qualifying subject**. Its
+  first true test is the next landing that stales a sibling which can still land, which on current
+  queues means after the policy admits a second repository.
+
+- **Landing into `brain` deploys the service the landing lane CONSULTS — and the self-reference is
+  safe, measured, in one direction only.** `estate_landing_admission.py` asks the estate what
+  landing on a repository's default branch does (`landing_estate_source_unconfigured` /
+  `_unreadable` / `landing_estate_unknown`), and that source is **App Brain**, one of the four
+  applications a `brain` landing redeploys. Three facts make it survivable, and the third is the one
+  to keep. (1) The admission read happens **before** the merge, so the deciding answer comes from
+  the running container. (2) Coolify's swap is rolling, so App Brain answers throughout —
+  **measured on `brain#47`**: `app-brain` reported `<no revision reported>` at 19:12:35 and 19:12:51,
+  i.e. the old container serving, before reporting the new revision. The lane reads App Brain's
+  *answer about landing behaviour*, which no deploy changes, not its revision. (3) It **fails
+  closed**: an unreadable estate source refuses, and that refusal is in neither the deliberate nor
+  the exception set, so it is a **finding** and the nightly control goes red.
+  **The consequence to know: a `brain` deploy that left App Brain down would halt the landing lane
+  for EVERY repository, not just `brain`** — the estate term is evaluated per subject and would fail
+  for all of them. Nothing lands wrongly, and the control reports it the same night. This is the
+  fourth self-reference in the programme after ADR-0015, ADR-0016 and the change-manager hotfix
+  case; unlike a required-status-check scheme, this one has an in-band recovery, because the lane
+  refusing does not prevent a human merging the fix.
+
+- **A rollout workflow is a TRANSCRIBED artifact in another repository — changing it stales a
+  cross-repo transcription and silently halts the producer that reads it.** `brain`'s `ci.yml` is
+  transcribed in the orchestrator's `src/deploy_watcher/workflows.py` (`RolloutWorkflow` keyed by
+  blob id, plus a verbatim copy of the step body), and `change_proposer` DERIVES a record's
+  acceptance criteria from that transcription. Merging `brain#47` on 2026-08-14 moved the blob
+  `6cad4cf9` → `c5c08871`, so from that hour every hourly pass refused all five `brain` pull
+  requests: *"the rollout workflow revision for alobarquest/brain is not transcribed, so what a
+  green run would prove is unknown; refusing to guess"* — 5 findings, exit 3, for a day, unnoticed.
+  It fails closed and it says exactly what is wrong, which is the only reason this was cheap.
+  **HQ merged that pull request having CAPTURED THE NEW BLOB SHA for the policy pin minutes
+  earlier** — i.e. observed the blob had moved and did not ask what else consumed the old value.
+  The estate already records this lesson for BWS UUIDs (*grep the whole portfolio for the UUID, not
+  the repos you expect to own it*); it is the same rule in a different vocabulary. **When a pinned
+  or transcribed artifact moves, grep every repository for the OLD value before merging**, and read
+  the producer's log afterwards — the estate-landing and deploy-watcher logs were both green that
+  morning while the proposer had been refusing for a day.
+  Consequence for sequencing: a deploy-policy version admitting a repository is **inert without the
+  matching transcription**, because the criteria a record must conform to are derived from it. The
+  two land together; either order is safe.
+
+- **`docker` is excluded from the Dependabot auto-merge cascade (ADR-0023), and the reason is that
+  DOCKER TAGS ARE NOT SEMVER.** Dependabot maps a tag's digits onto semver positions mechanically,
+  so a parseable tag like `postgres:16.2 → 16.4` reports `semver-patch` and `python:3.12 → 3.14`
+  reports `semver-minor` — and ADR-0018's cascade arms on both "in every ecosystem".
+  **CORRECTED 2026-08-15: `orchestrator#3` (`python:3.12-slim → 3.14-slim`) emits NO update-type at
+  all** — `3.14-slim` does not parse as semver — so it is refused under the old condition too and
+  **cannot be the acceptance test**, though HQ wrote it as one into the handoff, ADR-0023 and this
+  file. Measured by running synthetic tags through GitHub's own expression engine. The decision is
+  unaffected; the worked example was. That would auto-merge a language-version replacement that
+  removes standard-library modules. The second ground fails too: the cascade permits github_actions
+  *majors* because the gate exercises them, and for a base image it does not. **Measured, and
+  correcting a first reading of mine that said nothing gates a Dockerfile change: `quality.yml` runs
+  on `pull_request` and DOES `docker build` the real Dockerfile, so `uv sync --frozen` would fail on
+  a dependency with no wheel for the new interpreter.** What it never does is RUN the image — no
+  container is started and the suite executes on `setup-python` 3.12 — so a package that installs
+  cleanly and fails at import on a removed module passes everything.
+  **`orchestrator` is the ONLY repository declaring the `docker` ecosystem**, and none of the five
+  carrying the cascade declares it, so the exclusion is a no-op until the lane is vendored to
+  `orchestrator`. The workflow is not vendored by `code-standards` — one edit per repository, which
+  is the clause a future onboarding will forget. Running the image in CI is what would earn the
+  permission back and is deliberately not a prerequisite.

@@ -39,6 +39,8 @@ from orchestrator.api.schemas import (
     DispatchCommandModel,
     DispatchResponse,
     ErrorResponse,
+    EstateBranchUpdateCommandModel,
+    EstateBranchUpdateResponse,
     EstateLandingAdmissionResponse,
     EstatePrMergeCommandModel,
     EstatePrMergeResponse,
@@ -157,6 +159,10 @@ from orchestrator.services.dispatch import (
 )
 from orchestrator.services.estate_landing import EstateLandingSource, HttpEstateLandingSource
 from orchestrator.services.estate_landing_admission import estate_landing_admission
+from orchestrator.services.estate_pr_branch_update import (
+    EstateBranchUpdateCommand,
+    update_estate_pull_request_branch,
+)
 from orchestrator.services.estate_pr_merge import (
     EstateMergeCommand,
     GitHubEstatePullRequests,
@@ -772,6 +778,40 @@ def estate_pr_merge_route(
         credentials_configured=credentials is not None,
     )
     return record
+
+
+@router.post("/estate-pr-branch-update", response_model=EstateBranchUpdateResponse)
+def estate_pr_branch_update_route(
+    body: EstateBranchUpdateCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+    record_source: ChangeRecordSourceDep,
+) -> object:
+    """ADR-0019 Increment 6: the lane brings up to date a branch it has itself put behind.
+
+    The same off-switch and the same credentials as the landing, resolved the same way and read
+    off the same composed answer -- so a deployment that may not land may not touch a branch
+    either, by the term that already says so rather than by a second one.
+    """
+    credentials = github_app_credentials(settings)
+    gateway = GitHubEstatePullRequests(token_provider_for(credentials))
+    return update_estate_pull_request_branch(
+        session,
+        EstateBranchUpdateCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_head_sha=body.expected_head_sha,
+        ),
+        gateway,
+        landing_source,
+        record_source,
+        enabled=settings.estate_landing_enabled,
+        credentials_configured=credentials is not None,
+    )
 
 
 @router.post("/work-units/{unit_id}/pr-merge", response_model=PrMergeResponse)

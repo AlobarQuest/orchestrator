@@ -14,7 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from landing_ledger.rules import REGISTRY, SEMVER_MINOR, SEMVER_PATCH, Rule, rule_for
+from landing_ledger.rules import (
+    GATE_PATH,
+    REGISTRY,
+    SEMVER_MINOR,
+    SEMVER_PATCH,
+    Rule,
+    rule_for,
+)
 
 FIXTURES = Path("tests/fixtures/auto-merge-rules")
 
@@ -37,6 +44,28 @@ def test_the_fixtures_and_the_registry_name_the_same_revisions() -> None:
     """Both directions. A fixture nobody transcribed is as useless as a transcription nobody
     pinned -- and the second is the one that would let an entry describe a file that changed."""
     assert {path.stem for path in FIXTURES.glob("*.yml")} == set(REGISTRY)
+
+
+def test_this_repositorys_own_gate_is_transcribed() -> None:
+    """The pairing made mechanical rather than requested.
+
+    Every test above compares a FIXTURE to its own filename, which cannot notice the live gate
+    being edited: nothing in the suite reads `.github/workflows/` at all, so a byte changed there
+    leaves the registry describing a file that no longer exists and says so only in production,
+    as `current_rule_revision_unknown`, per repository, for every open update.
+
+    It became checkable only when the lane was vendored here -- while the gate lived solely in
+    other repositories there was no local file to hash. A repository with no gate is a normal
+    state (two of the eight the ledger covers), so its absence is not a failure.
+    """
+    gate = Path(GATE_PATH)
+    if not gate.exists():
+        pytest.skip(f"{GATE_PATH} is not installed in this repository")
+
+    assert _blob_sha(gate.read_bytes()) in REGISTRY, (
+        f"{GATE_PATH} has been edited without transcribing the new revision in "
+        "src/landing_ledger/rules.py. The audit fails closed on a revision it does not know."
+    )
 
 
 def test_an_unrecognised_revision_is_refused_rather_than_assumed_harmless() -> None:
@@ -124,6 +153,38 @@ def test_the_cascade_permits_a_major_only_in_the_ecosystem_that_exercises_it() -
     # The one cell that differs: no declared intent, in github_actions.
     assert previous.permits(None, "github_actions") is True
     assert cascade.permits(None, "github_actions") is False
+
+
+def test_the_docker_exclusion_changes_exactly_the_docker_column() -> None:
+    """ADR-0023, and the first revision that REFUSES something its predecessor permitted.
+
+    Asserted as a differential over the whole grid rather than on the docker cells alone: a
+    field that can refuse is the one shape in this registry able to narrow a rule by accident,
+    and the way that would show is somewhere other than the column it was written for.
+    """
+    excluded = rule_for("72391c0f7343477193b5c896680a083500c45227")
+    cascade = rule_for("e849b3a8411fabeff1dedd138e6e3e3a2f535319")
+    assert excluded is not None and cascade is not None
+
+    for update_type in (SEMVER_PATCH, SEMVER_MINOR, SEMVER_MAJOR, None):
+        for ecosystem in ("uv", "npm_and_yarn", "github_actions", None):
+            assert excluded.permits(update_type, ecosystem) == cascade.permits(
+                update_type, ecosystem
+            ), f"{update_type} / {ecosystem} must not have changed"
+
+    # The column that did change. Patch and minor armed under the cascade and no longer do;
+    # a major was already refused there and still is, so the exclusion is not what stops it.
+    assert cascade.permits(SEMVER_PATCH, "docker") is True
+    assert cascade.permits(SEMVER_MINOR, "docker") is True
+    assert excluded.permits(SEMVER_PATCH, "docker") is False
+    assert excluded.permits(SEMVER_MINOR, "docker") is False
+    assert excluded.permits(SEMVER_MAJOR, "docker") is False
+    # orchestrator#3 (`python` 3.12-slim -> 3.14-slim) is THIS case, not a minor: `3.14-slim`
+    # does not parse as semver, so Dependabot declares no intent at all and the pull request is
+    # refused at Q1 with or without the exclusion. ADR-0023's own account of its live subject
+    # says `semver-minor`; the trailer on the pull request says nothing. Measured 2026-08-15.
+    assert excluded.permits(None, "docker") is False
+    assert cascade.permits(None, "docker") is False
 
 
 def test_a_major_outside_that_ecosystem_is_still_refused_by_the_cascade() -> None:
