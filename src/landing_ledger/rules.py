@@ -64,7 +64,7 @@ class Rule:
         `e849b3a8` the gate asks a major only, so `major_ecosystems` records that. Collapsing
         them would make the registry describe a rule no revision implemented.
         """
-        # Q0, from 3bff4dec -- does the cascade's reasoning reach this ecosystem at all? An
+        # Q0, from 72391c0f -- does the cascade's reasoning reach this ecosystem at all? An
         # ABSENT ecosystem is not excluded here, faithfully: the workflow compares a missing
         # output against a literal and proceeds, and such an update is refused at Q1 anyway
         # unless it declares an intent.
@@ -141,7 +141,7 @@ _CASCADE_NEWER_METADATA = Rule(
 # It exists because the lane was vendored to orchestrator, the only repository declaring that
 # ecosystem -- the five that already carried the gate are untouched and stay on _CASCADE.
 _CASCADE_WITHOUT_DOCKER = Rule(
-    revision="3bff4dec2db984836da744f22de70f6dc5e8c37e",
+    revision="72391c0f7343477193b5c896680a083500c45227",
     update_types=frozenset({SEMVER_PATCH, SEMVER_MINOR}),
     major_ecosystems=frozenset({"github_actions"}),
     excluded_ecosystems=frozenset({"docker"}),

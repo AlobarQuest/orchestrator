@@ -14,7 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from landing_ledger.rules import REGISTRY, SEMVER_MINOR, SEMVER_PATCH, Rule, rule_for
+from landing_ledger.rules import (
+    GATE_PATH,
+    REGISTRY,
+    SEMVER_MINOR,
+    SEMVER_PATCH,
+    Rule,
+    rule_for,
+)
 
 FIXTURES = Path("tests/fixtures/auto-merge-rules")
 
@@ -37,6 +44,28 @@ def test_the_fixtures_and_the_registry_name_the_same_revisions() -> None:
     """Both directions. A fixture nobody transcribed is as useless as a transcription nobody
     pinned -- and the second is the one that would let an entry describe a file that changed."""
     assert {path.stem for path in FIXTURES.glob("*.yml")} == set(REGISTRY)
+
+
+def test_this_repositorys_own_gate_is_transcribed() -> None:
+    """The pairing made mechanical rather than requested.
+
+    Every test above compares a FIXTURE to its own filename, which cannot notice the live gate
+    being edited: nothing in the suite reads `.github/workflows/` at all, so a byte changed there
+    leaves the registry describing a file that no longer exists and says so only in production,
+    as `current_rule_revision_unknown`, per repository, for every open update.
+
+    It became checkable only when the lane was vendored here -- while the gate lived solely in
+    other repositories there was no local file to hash. A repository with no gate is a normal
+    state (two of the eight the ledger covers), so its absence is not a failure.
+    """
+    gate = Path(GATE_PATH)
+    if not gate.exists():
+        pytest.skip(f"{GATE_PATH} is not installed in this repository")
+
+    assert _blob_sha(gate.read_bytes()) in REGISTRY, (
+        f"{GATE_PATH} has been edited without transcribing the new revision in "
+        "src/landing_ledger/rules.py. The audit fails closed on a revision it does not know."
+    )
 
 
 def test_an_unrecognised_revision_is_refused_rather_than_assumed_harmless() -> None:
@@ -133,7 +162,7 @@ def test_the_docker_exclusion_changes_exactly_the_docker_column() -> None:
     field that can refuse is the one shape in this registry able to narrow a rule by accident,
     and the way that would show is somewhere other than the column it was written for.
     """
-    excluded = rule_for("3bff4dec2db984836da744f22de70f6dc5e8c37e")
+    excluded = rule_for("72391c0f7343477193b5c896680a083500c45227")
     cascade = rule_for("e849b3a8411fabeff1dedd138e6e3e3a2f535319")
     assert excluded is not None and cascade is not None
 

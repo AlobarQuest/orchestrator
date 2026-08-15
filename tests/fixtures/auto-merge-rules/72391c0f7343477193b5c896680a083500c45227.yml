@@ -12,8 +12,10 @@ name: Dependabot auto-merge
 # EDITING THIS FILE IS A PAIRED OPERATION. `src/landing_ledger/rules.py` transcribes each revision
 # of this gate by hand, keyed by its GIT BLOB SHA, and fails closed on a sha it does not know —
 # so a byte changed here without a matching entry there stops the audit classifying any update in
-# this repository. `tests/landing_ledger/test_rules.py` recomputes the sha from a byte-identical
-# fixture, so the pair cannot silently come apart; it will simply refuse to pass.
+# this repository, and says so only in production. `tests/landing_ledger/test_rules.py` asserts
+# that THIS file's current blob is transcribed, which is what makes the pairing mechanical rather
+# than a request; until the lane was vendored here that check was impossible, because the file
+# being described lived only in other repositories.
 #
 # Properties this file deliberately has:
 #   * It ENABLES GitHub's auto-merge rather than landing anything itself. GitHub then enforces
@@ -52,14 +54,35 @@ name: Dependabot auto-merge
 #     as redundant on the strength of `#3` refusing without it.
 #   * The Actions premise above is NOT universally true in this repository, which is the one place
 #     the five siblings' copy would be a lie here. They record having verified that every Actions
-#     dependency of theirs is used by a job running on `pull_request`; the estate's one known
-#     counterexample is `docker/setup-buildx-action`, and it lives HERE — used only by
-#     `release-image.yml`, which no pull request runs. A major bump of it therefore arms at Q2 on
-#     a premise that is false for it: the gate does not exercise it. Accepted, and bounded — that
-#     workflow is human-triggered, so a bad version fails loudly the next time a person asks for a
-#     release image, with no unattended consequence in between. Narrowing Q2 to the actions a pull
+#     dependency of theirs is used by a job running on `pull_request`. Four of this repository's
+#     five workflows are human-triggered and no pull request runs any of them.
+#
+#     The exposure is PER USE SITE, not per dependency, and stating it the narrow way understates
+#     what is being accepted: a Dependabot Actions bump rewrites EVERY workflow using that action.
+#     So `docker/setup-buildx-action` (used only by `release-image.yml`) is the clearest case, but
+#     `actions/checkout` and `actions/setup-python` are the larger one — both are permitted majors
+#     that also rewrite `release-image.yml`, `attest-exit-criteria.yml` and `attest-wave-exit.yml`.
+#     Each arms at Q2 on a premise true only of the `quality.yml` half of what it edits.
+#
+#     Accepted, and bounded: those workflows run only when a person asks, so a bad version fails
+#     loudly at that moment with nothing unattended in between. Narrowing Q2 to the actions a pull
 #     request actually runs is a decision nobody has taken; it is named here so that it is a known
 #     residual rather than a discovery.
+#   * A second accepted residual, measured across three repositories on 2026-08-11: an auto-merge
+#     armed with `secrets.GITHUB_TOKEN` triggers NO `on: push` workflow. `quality.yml` here runs on
+#     `push: branches: [main]`, so every landing this lane produces SKIPS the main-branch run, and
+#     `main` can go red with nothing reporting it — `quality.yml`'s own header says main is
+#     verified on every push, and that sentence is false for these landings. It is harmless in the
+#     direction that usually matters, because landing on this repository changes nothing already
+#     serving; the release image is a separate, human-triggered build. Verifying `main` after a
+#     batch lands means running the gate against it deliberately.
+#   * VENDORING THIS FILE ARMS NOTHING THAT IS ALREADY OPEN. `on: pull_request` fires on opened,
+#     synchronize and reopened, so a pull request that exists when this lands gets no event and no
+#     evaluation, however plainly the rule permits it. The backlog is exactly what a repository
+#     joining the lane has, so this is the normal case rather than an edge one — and the landing
+#     ledger's Detector B reports a permitted, green, unarmed update as a FINDING with no settle
+#     window, so the queue must be given a synchronize event (`PUT /pulls/{n}/update-branch`) in
+#     the same operation that installs the gate.
 #   * An update with NO declared intent is refused, and says so rather than merely failing to
 #     match. Dependabot omits `update-type` for requirement-range bumps and for tags it cannot
 #     parse as semver, so the absence covers several unlike situations and asserts nothing about

@@ -44,7 +44,7 @@ NATIVE_AUTO_MERGE_EXEMPT = frozenset({"gh pr merge"})
 
 
 def _violations(path: Path, exempt: frozenset[str]) -> list[str]:
-    text = path.read_text().lower()
+    text = path.read_text(encoding="utf-8").lower()
     return [value for value in FORBIDDEN if value not in exempt and value in text]
 
 
@@ -70,3 +70,20 @@ def test_the_native_auto_merge_exemption_is_load_bearing_and_scoped() -> None:
     assert _violations(gate, frozenset()) == ["gh pr merge"]
     assert _violations(gate, _exemptions_for(gate.name)) == []
     assert _violations(gate, _exemptions_for("quality.yml")) == ["gh pr merge"]
+
+
+def test_the_exempted_command_only_ever_arms() -> None:
+    """The exemption's whole justification, asserted rather than described.
+
+    `gh pr merge --auto` asks GitHub to land the pull request once the required checks pass;
+    GitHub enforces the waiting, so this workflow cannot get it wrong. `gh pr merge --squash`
+    with no `--auto` lands it immediately and is the thing every guard here exists to refuse --
+    and the exemption above cannot tell the two apart, because they differ by a flag and not by
+    any string either scanner knows.
+    """
+    text = (WORKFLOW_ROOT / NATIVE_AUTO_MERGE_WORKFLOW).read_text(encoding="utf-8")
+    commands = [line.strip() for line in text.splitlines() if "gh pr merge" in line]
+
+    assert commands, "the exempted workflow no longer runs the command it is exempted for"
+    for command in commands:
+        assert "--auto" in command, f"{command!r} lands a pull request rather than arming one"
