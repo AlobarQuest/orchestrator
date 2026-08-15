@@ -1,0 +1,106 @@
+name: Dependabot auto-merge
+
+# The native lane (ADR-0016, docs/decisions/0016-…): routine dependency updates land without the
+# factory, whose differentiated value is fixing the ones that FAIL.
+#
+# Vendored here 2026-08-15, long after the five repositories that carry it, and it is NOT a
+# verbatim copy of theirs. Three paragraphs below say something different because the facts here
+# are different: this is the only repository declaring the `docker` ecosystem, and the only one
+# whose Actions dependencies are not all exercised by the gate. Read them rather than diffing
+# against a sibling and treating the difference as drift.
+#
+# EDITING THIS FILE IS A PAIRED OPERATION. `src/landing_ledger/rules.py` transcribes each revision
+# of this gate by hand, keyed by its GIT BLOB SHA, and fails closed on a sha it does not know —
+# so a byte changed here without a matching entry there stops the audit classifying any update in
+# this repository. `tests/landing_ledger/test_rules.py` recomputes the sha from a byte-identical
+# fixture, so the pair cannot silently come apart; it will simply refuse to pass.
+#
+# Properties this file deliberately has:
+#   * It ENABLES GitHub's auto-merge rather than landing anything itself. GitHub then enforces
+#     "wait for the required checks" — this workflow never inspects CI and so cannot get that
+#     wrong. Note auto-merge with NO required status check acts immediately, so branch protection
+#     is a precondition rather than a nicety: this repository requires `Quality` and `Runner
+#     consumer compatibility`, read back from the protection API against a real open pull request
+#     on 2026-08-15, before this file existed.
+#   * It is a CASCADE, and the condition below is written to read as one. Q1: is the declared
+#     intent sufficient on its own? Patch and minor are. Q2, asked only when Q1 says no: the
+#     intent is `major`, which we do not accept on its own — is there another reason this one is
+#     safe? For GitHub Actions there is, and it is not the category itself: the required check
+#     that gates the pull request IS the thing being bumped, so passing it means the new version
+#     has been exercised exactly as it will be used. A package major has no such property — it
+#     changes what ships and can pass every check then break at runtime — so it still falls
+#     through to a human. See ADR-0018 and STANDARDS.md, "One question per predicate".
+#   * Q0, asked before either of them and true only here: does the cascade's reasoning apply to
+#     this ecosystem at all? For `docker` it does not, at any update type (ADR-0023). Both of
+#     ADR-0018's grounds fail on a base image. The first — that patch and minor are
+#     backward-compatible by contract — holds only where the version number is a compatibility
+#     promise, and DOCKER TAGS ARE NOT SEMVER: `python:3.14` is a language version that happens to
+#     occupy the minor digit, and 3.12 → 3.14 removes standard-library modules. The second — that
+#     the gate exercises it — fails because nothing RUNS the image: `quality.yml` does build the
+#     real Dockerfile on every pull request, so a dependency with no wheel for the new interpreter
+#     would fail `uv sync --frozen`, but no container is started and the suite executes on
+#     `setup-python` 3.12. A package that installs cleanly and fails at import on a removed module
+#     passes every gate we have. Running the image in CI is what would earn the permission back.
+#
+#     Measured 2026-08-15, and it corrects ADR-0023's own account of its live subject: `#3`
+#     (`python` 3.12-slim → 3.14-slim) carries NO `update-type` in its `updated-dependencies`
+#     trailer at all, because `3.14-slim` does not parse as semver — not the `semver-minor` that
+#     ADR is written around. So `#3` is refused at Q1 for want of a declared intent, and Q0 is not
+#     what stops it. Q0 binds on a docker tag that DOES parse, which is the ordinary case for a
+#     pinned service image: `postgres:16.1 → 16.2` reports `semver-patch` and would otherwise arm
+#     at Q1 with nobody having decided that. The clause is not decoration and must not be deleted
+#     as redundant on the strength of `#3` refusing without it.
+#   * The Actions premise above is NOT universally true in this repository, which is the one place
+#     the five siblings' copy would be a lie here. They record having verified that every Actions
+#     dependency of theirs is used by a job running on `pull_request`; the estate's one known
+#     counterexample is `docker/setup-buildx-action`, and it lives HERE — used only by
+#     `release-image.yml`, which no pull request runs. A major bump of it therefore arms at Q2 on
+#     a premise that is false for it: the gate does not exercise it. Accepted, and bounded — that
+#     workflow is human-triggered, so a bad version fails loudly the next time a person asks for a
+#     release image, with no unattended consequence in between. Narrowing Q2 to the actions a pull
+#     request actually runs is a decision nobody has taken; it is named here so that it is a known
+#     residual rather than a discovery.
+#   * An update with NO declared intent is refused, and says so rather than merely failing to
+#     match. Dependabot omits `update-type` for requirement-range bumps and for tags it cannot
+#     parse as semver, so the absence covers several unlike situations and asserts nothing about
+#     any of them. Three of this repository's ten open updates are in that state, measured
+#     2026-08-15: two requirement-range bumps and the base image.
+#   * The literal below is `github_actions` with an UNDERSCORE, and that is not a typo.
+#     fetch-metadata's own action.yml documents this output as "the `package-ecosystem`
+#     configuration that was used by dependabot", which is wrong about its own output:
+#     `update_metadata.ts` sets `packageEcosystem: chunks[1]`, i.e. the second segment of the
+#     BRANCH NAME (`dependabot/github_actions/...`), which is Dependabot's normalized identifier.
+#     dependabot.yml spells it `github-actions` with a hyphen; the output does not. A mismatch
+#     fails closed: nothing arms, silently, which is how the first attempt at this shipped
+#     elsewhere and cleared nothing. `docker` is spelled the same either way, so Q0 cannot fail in
+#     that direction — but it was checked rather than assumed, against the branch names of the
+#     real pull requests.
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Dependabot auto-merge
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read the update's metadata
+        id: meta
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge when the intent suffices, or a major is exercised by the gate
+        if: |
+          steps.meta.outputs.package-ecosystem != 'docker' &&
+          (steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+           steps.meta.outputs.update-type == 'version-update:semver-minor' ||
+           (steps.meta.outputs.update-type == 'version-update:semver-major' &&
+            steps.meta.outputs.package-ecosystem == 'github_actions'))
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
