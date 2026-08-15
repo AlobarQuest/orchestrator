@@ -2996,3 +2996,22 @@ style of that module.
   is live, correct on the subjects it has seen, and **unexercised on a real qualifying subject**. Its
   first true test is the next landing that stales a sibling which can still land, which on current
   queues means after the policy admits a second repository.
+
+- **Landing into `brain` deploys the service the landing lane CONSULTS — and the self-reference is
+  safe, measured, in one direction only.** `estate_landing_admission.py` asks the estate what
+  landing on a repository's default branch does (`landing_estate_source_unconfigured` /
+  `_unreadable` / `landing_estate_unknown`), and that source is **App Brain**, one of the four
+  applications a `brain` landing redeploys. Three facts make it survivable, and the third is the one
+  to keep. (1) The admission read happens **before** the merge, so the deciding answer comes from
+  the running container. (2) Coolify's swap is rolling, so App Brain answers throughout —
+  **measured on `brain#47`**: `app-brain` reported `<no revision reported>` at 19:12:35 and 19:12:51,
+  i.e. the old container serving, before reporting the new revision. The lane reads App Brain's
+  *answer about landing behaviour*, which no deploy changes, not its revision. (3) It **fails
+  closed**: an unreadable estate source refuses, and that refusal is in neither the deliberate nor
+  the exception set, so it is a **finding** and the nightly control goes red.
+  **The consequence to know: a `brain` deploy that left App Brain down would halt the landing lane
+  for EVERY repository, not just `brain`** — the estate term is evaluated per subject and would fail
+  for all of them. Nothing lands wrongly, and the control reports it the same night. This is the
+  fourth self-reference in the programme after ADR-0015, ADR-0016 and the change-manager hotfix
+  case; unlike a required-status-check scheme, this one has an in-band recovery, because the lane
+  refusing does not prevent a human merging the fix.
