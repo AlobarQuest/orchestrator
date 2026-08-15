@@ -3073,8 +3073,18 @@ style of that module.
   the repository with the largest suite, the one every build session branches from. **`main` was
   verified by running `make check` by hand: 3504 passed, 1 skipped.** That is the only check those
   three bumps have ever had together.
-  **The named probe that would close this has still never been run**: whether an auto-merge ARMED by
-  the Dispatch App (rather than `GITHUB_TOKEN`) fires push runs. The App's *direct* merges do
-  (ADR-0020, measured); arming is a different act and is unproven. It is one throwaway repository
-  with an `on: push` workflow, and it decides whether the fix is estate-wide (change the arming
-  token) or per-repo (`workflow_dispatch` plus a scheduled `main` check).
+  **PROBE ANSWERED 2026-08-15, from data already in hand rather than a throwaway repository: an
+  auto-merge armed by a NON-`GITHUB_TOKEN` identity DOES fire push runs.** Same repository, same
+  workflow, same day, one variable. `#167` was armed with `gh pr merge --auto` under a **user**
+  identity at 15:50 while `Quality` was still pending; GitHub merged it at 16:04 when the check
+  passed, and a push `Quality` fired on the merge commit with `actor=AlobarQuest`. The three
+  commits the cascade merged with `GITHUB_TOKEN` minutes later carry **zero** push runs. So the
+  suppression is specific to `GITHUB_TOKEN` — GitHub's recursion guard — and not a property of
+  auto-merge. **Before building a probe, check whether the experiment has already been run**: three
+  weeks of merge history contained the differential, and the question had been open since
+  2026-08-11 as something needing new apparatus.
+  This proves the **PAT/user** half. The Dispatch App is a different identity and remains
+  unmeasured, though the mechanism (a guard on `GITHUB_TOKEN` specifically) predicts it fires. The
+  fix is therefore to arm with something other than `GITHUB_TOKEN`, and the open question is only
+  *which* credential — a PAT (simpler, already present in six repositories, broader) or the App
+  (the estate's machine actor, needs an App id and private key per repository).
