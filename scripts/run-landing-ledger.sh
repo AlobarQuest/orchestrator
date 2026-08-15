@@ -26,7 +26,7 @@ set -uo pipefail
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER bearer
 
 # The repositories the ledger covers. Every repository this estate lands code in, including the
-# three with no gate installed -- a repository whose updates never land unattended is exactly the
+# two with no gate installed -- a repository whose updates never land unattended is exactly the
 # one whose backlog of green updates is worth counting.
 REPOSITORIES=(
   AlobarQuest/orchestrator

@@ -373,9 +373,13 @@ def default_branch(reader: GitHubReader, repository: str) -> str:
 def current_rule_revision(reader: GitHubReader, repository: str, base_ref: str) -> str | None:
     """The blob sha of the gate at the branch tip, or None when the repository has no gate.
 
-    None is a real answer, not an error: three repositories in this estate deliberately have no
-    gate, and one of them cannot have one -- its own architecture guards forbid the command the
-    gate runs.
+    None is a real answer, not an error: two repositories in this estate deliberately have no
+    gate, both of them ones where landing redeploys something already serving, so they belong on
+    the routed lane instead.
+
+    Until 2026-08-15 this said THREE, and that the third could not have a gate at all -- its own
+    architecture guards forbade the command the gate runs. That repository was this one, and the
+    guards now carry a named exemption for the lane rather than a prohibition on it.
     """
     blob = reader.get(f"/repos/{repository}/contents/{GATE_PATH}", ref=base_ref)
     return blob.get("sha") if isinstance(blob, dict) else None
