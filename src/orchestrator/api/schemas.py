@@ -605,6 +605,12 @@ class EstateLandingAdmissionResponse(BaseModel):
     # field added to the service alone would pass every service-level assertion and reach no
     # caller. This estate has already shipped that exact defect once, on the runner brief.
     branch_update_qualifies: bool
+    # ADR-0024, and it is here under the same hazard as the line above. The reporting agent
+    # classifies a rollout-pin refusal by whether the BASE carries the pinned bytes -- a fact it
+    # cannot observe for itself, because it reads no repository and this is the only surface that
+    # could tell it. Undeclared, the answer carries the field on the service object and nothing on
+    # the wire, and the agent falls back to its fail-toward-a-finding default forever.
+    rollout_base_matches_pin: bool
 
 
 class EstateBranchUpdateCommandModel(BaseModel):

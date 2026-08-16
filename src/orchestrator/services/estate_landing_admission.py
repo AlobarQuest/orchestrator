@@ -274,6 +274,60 @@ class EstateLandingAdmission:
     # can report what a live pass would do without anything acting -- the acting path recomposes
     # this from scratch and never trusts a caller's copy of it.
     branch_update_qualifies: bool
+    # ADR-0024. The fact the freshness-derived criterion below takes as an argument, served so the
+    # OTHER consumer -- the out-of-process reporting agent, which cannot import this module -- can
+    # ask the same question this process asks. It is a fact rather than a verdict: what to do with
+    # it differs between the two, and only the term that read the blobs knows it.
+    rollout_base_matches_pin: bool
+
+
+def freshness_derived_refusals(
+    refusals: tuple[str, ...] | frozenset[str] | set[str],
+    *,
+    rollout_base_matches_pin: bool,
+) -> frozenset[str]:
+    """Which of these refusals are produced by the head's POSITION relative to its base, and say
+    nothing about the change itself? ADR-0024.
+
+    **ONE CONCEPT, TWO CONSUMERS, AND THEY ASK DIFFERENT QUESTIONS OF IT.**
+    `qualifies_for_branch_update` below asks *may the lane act on this* -- yes when every obstacle
+    is either freshness-derived or deliberate. The reporting agent asks *is this a finding* --
+    no, beside a refusal current policy can never clear, when what remains is freshness-derived.
+    Expressed once so a fifth member is answered in both places by construction, which is the
+    whole reason ADR-0024 rules on the class rather than on the case.
+
+    ## The criterion, and the discriminator that keeps it narrow
+
+    Being behind IS the position, so it is derived whenever it is present. A rollout pin that
+    differs is derived only when the BASE carries the pinned bytes: under that condition the head
+    simply predates a workflow change and bringing the base's commits in carries the pinned bytes
+    with it, while a base that does not carry them means the workflow genuinely moved and no
+    amount of freshening puts that right.
+
+    **A failing check is deliberately NOT a member, and it is the case that keeps this honest.**
+    Freshening re-runs checks and might turn one green, so *would freshening clear it?* is too
+    loose a test and would silence a red build. The discriminator is *does this say anything about
+    the change?* -- and a failing check does.
+
+    ## The head-behind conjunct, which is not decoration
+
+    A refusal cannot be caused by a position the head is not in. `qualifies_for_branch_update`
+    supplies that fact through its own return condition, so adding it here changes nothing for
+    that caller -- but the reporting consumer has no such guard, and without it a pull request
+    whose OWN DIFF edits the pinned rollout workflow (base carrying the pinned bytes, head current
+    with its base, head blob differing) would be classed as merely stale. That is `_rollout_term`'s
+    founding case and it must always report.
+
+    Returned members are intersected with what was actually raised, so the answer describes THESE
+    refusals rather than a vocabulary.
+    """
+    present = set(refusals)
+    if LANDING_HEAD_NOT_CURRENT_WITH_BASE not in present:
+        return frozenset()
+    derived = {LANDING_HEAD_NOT_CURRENT_WITH_BASE}
+    if rollout_base_matches_pin:
+        derived.add(LANDING_ROLLOUT_MOVED)
+    return frozenset(derived & present)
 
 
 def qualifies_for_branch_update(
@@ -310,16 +364,16 @@ def qualifies_for_branch_update(
     each refused for being behind their base and disqualified from the one mechanism that would
     bring them up to date.
 
-    It is self-clearing WHEN AND ONLY WHEN the BASE carries the pinned bytes and the head is
-    behind. Under those two conditions the difference is staleness, and bringing the base's commits
-    into the head carries the pinned bytes with it. Where the base does NOT carry them the workflow
-    genuinely moved, no amount of freshening puts that right, and every rule must still refuse.
+    **That carve-out is no longer stated here.** ADR-0024 found the same question being asked by a
+    second consumer and made it a criterion -- `freshness_derived_refusals` above -- of which this
+    is now one reader. What that function excuses, and why a genuinely moved workflow is not
+    excused, is stated there.
 
-    **The two facts arrive by different routes, deliberately.** The base comparison is an argument,
-    because only the term that read the blobs knows it. "The head is behind" is already the
-    presence of `LANDING_HEAD_NOT_CURRENT_WITH_BASE`, which the return below requires of every
-    qualifying pull request; restating it inside the carve-out would give one fact two sources and
-    leave the return's own condition attributable to nothing.
+    Note what this DID cost, since an earlier version of this docstring argued the opposite:
+    the criterion carries the "head is behind" conjunct itself, where this function had left it to
+    the return below on the grounds that restating it would give one fact two sources. That
+    reasoning held only while this was the sole reader. The two are equivalent HERE -- the return
+    requires the same thing -- so nothing about this answer moved.
 
     **The carve-out is self-limiting rather than trusted.** After an update the term re-evaluates
     against the NEW head: a pull request that does not touch the workflow then carries the pinned
@@ -334,12 +388,12 @@ def qualifies_for_branch_update(
     deadlock.** This test must be keyed on refusals that are genuinely independent of freshness --
     not merely on the ones that happened to be live when it was written.
     """
-    # A set literal rather than a named constant: nothing else shares it, and the condition on it
-    # is the whole content. `False` withholds the carve-out, so every path that did not positively
-    # observe a matching base leaves the refusal standing.
-    self_clearing = {LANDING_ROLLOUT_MOVED} if rollout_base_matches_pin else set()
+    # `False` withholds the carve-out, so every path that did not positively observe a matching
+    # base leaves the refusal standing.
     remainder = (
-        set(refusals) - {LANDING_HEAD_NOT_CURRENT_WITH_BASE} - DELIBERATE_REFUSALS - self_clearing
+        set(refusals)
+        - freshness_derived_refusals(refusals, rollout_base_matches_pin=rollout_base_matches_pin)
+        - DELIBERATE_REFUSALS
     )
     return LANDING_HEAD_NOT_CURRENT_WITH_BASE in refusals and not remainder
 
@@ -462,6 +516,7 @@ def estate_landing_admission(
         branch_update_qualifies=qualifies_for_branch_update(
             tuple(refusals), rollout_base_matches_pin=remote.rollout_base_matches_pin
         ),
+        rollout_base_matches_pin=remote.rollout_base_matches_pin,
     )
 
 

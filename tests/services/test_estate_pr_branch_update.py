@@ -41,6 +41,8 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_ROLLOUT_MOVED,
     LANDING_UPDATE_TYPE_UNPARSEABLE,
     EstateGatewayError,
+    EstateLandingAdmission,
+    freshness_derived_refusals,
     qualifies_for_branch_update,
 )
 from orchestrator.services.estate_pr_branch_update import (
@@ -283,6 +285,55 @@ def test_the_carve_out_excuses_ONE_refusal_and_nothing_beside_it(other: str) -> 
     )
 
 
+# --------------------------------------------------------------------------------------------
+# The criterion itself (ADR-0024), read directly rather than through either consumer.
+#
+# `qualifies_for_branch_update` cannot see the head-behind conjunct at all -- its own return
+# requires the same fact -- so the criterion needs controls of its own or half of it is pinned by
+# nothing on this side of the boundary.
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_stale_rollout_pin_is_freshness_derived_when_the_base_carries_the_pinned_bytes() -> None:
+    assert freshness_derived_refusals(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_ROLLOUT_MOVED), rollout_base_matches_pin=True
+    ) == frozenset({LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_ROLLOUT_MOVED})
+
+
+def test_a_rollout_pin_whose_base_DIFFERS_is_not_freshness_derived() -> None:
+    """The workflow genuinely moved. Identical refusals; only the base comparison differs, which is
+    the whole reason that fact is an argument."""
+    assert freshness_derived_refusals(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_ROLLOUT_MOVED), rollout_base_matches_pin=False
+    ) == frozenset({LANDING_HEAD_NOT_CURRENT_WITH_BASE})
+
+
+def test_nothing_is_freshness_derived_when_the_head_is_NOT_BEHIND() -> None:
+    """THE CONJUNCT, and this is the only control on this side that sees it.
+
+    A refusal cannot be caused by a position the head is not in. Here the base carries the pinned
+    bytes and the head is current, so the pin differs because THIS PULL REQUEST'S OWN DIFF edits
+    the workflow -- `_rollout_term`'s founding case. `qualifies_for_branch_update` is blind to the
+    conjunct because its return already requires the head to be behind; the reporting consumer has
+    no such guard, and dropping it there silences exactly this shape.
+    """
+    assert (
+        freshness_derived_refusals((LANDING_ROLLOUT_MOVED,), rollout_base_matches_pin=True)
+        == frozenset()
+    )
+
+
+def test_a_FAILING_CHECK_is_never_freshness_derived() -> None:
+    """The case that keeps the criterion narrow. Freshening re-runs checks and might turn one
+    green, so "would freshening clear it?" would admit it; "does it say anything about the change?"
+    does not. This also pins the intersection with what was actually raised: without it the answer
+    would name a rollout refusal nobody raised."""
+    assert freshness_derived_refusals(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_NOT_CLEAN),
+        rollout_base_matches_pin=True,
+    ) == frozenset({LANDING_HEAD_NOT_CURRENT_WITH_BASE})
+
+
 def test_the_deliberate_refusals_are_exactly_the_landers_own() -> None:
     """TWO PACKAGES, ONE VOCABULARY. The lander cannot import the orchestrator -- it is isolated
     from it on purpose -- so the two copies can only be held together from outside, and this
@@ -309,6 +360,35 @@ def test_the_freshness_refusal_the_lander_classifies_on_is_exactly_the_one_compo
     assert LANDING_HEAD_NOT_CURRENT_WITH_BASE == _FRESHNESS
 
 
+def test_the_rollout_refusal_the_lander_classifies_on_is_exactly_the_one_composed_here() -> None:
+    """The second lone string, added by ADR-0024 and pinned for the reason above."""
+    from estate_lander.cli import _ROLLOUT_MOVED
+
+    assert LANDING_ROLLOUT_MOVED == _ROLLOUT_MOVED
+
+
+def test_the_WIRE_KEY_the_lander_reads_the_base_comparison_from_is_a_field_this_side_SERVES() -> (
+    None
+):
+    """THE FOURTH CROSS-BOUNDARY STRING, and the only one whose drift both suites would applaud.
+
+    A coordinated rename on THIS side -- dataclass field, response model, construction keyword --
+    is exactly what a sweep guided by the served-shape pin produces, and every gate stays green:
+    that pin compares a renamed model to a renamed dataclass, and the lander's own tests pass
+    because its double serves the lander's literal. Only production sees it, where `.get` returns
+    `None` on a key nobody serves, the criterion excuses nothing, and `brain#31`/`#32` are held
+    forever with nothing saying why -- the flattering direction the constant's own comment warns
+    about.
+
+    Asserted against the SERVICE dataclass rather than the response model: the model is pinned to
+    the dataclass one test over, so this is the shorter chain, and it is the dataclass the route
+    serializes.
+    """
+    from estate_lander.cli import _BASE_MATCHES_PIN
+
+    assert _BASE_MATCHES_PIN in EstateLandingAdmission.__dataclass_fields__
+
+
 def test_the_exception_the_lander_suppresses_beside_is_exactly_the_one_composed_here() -> None:
     """The CONDITION of the suppression, which this increment made load-bearing twice over.
 
@@ -325,6 +405,43 @@ def test_the_exception_the_lander_suppresses_beside_is_exactly_the_one_composed_
     from estate_lander.cli import _EXCEPTION
 
     assert _EXCEPTION == frozenset({LANDING_UPDATE_TYPE_UNPARSEABLE})
+
+
+def test_the_two_copies_of_the_freshness_criterion_AGREE_POINTWISE() -> None:
+    """ADR-0024's "one concept, two consumers", held together from outside.
+
+    Set equality would not do here: the criterion is a FUNCTION of two arguments, not a list, so
+    what has to agree is every answer it gives. This walks the whole cross product of the refusal
+    vocabulary and both values of the base comparison -- 64 subsets by two -- so a copy that drifts
+    on any single input reddens, including the conjunct that only one input can see.
+
+    The lander may not import the orchestrator; a test may import both. Same mechanism as
+    `_DELIBERATE` above, one function rather than one set.
+    """
+    from itertools import combinations
+
+    from estate_lander.cli import _freshness_derived
+
+    vocabulary = (
+        LANDING_HEAD_NOT_CURRENT_WITH_BASE,
+        LANDING_ROLLOUT_MOVED,
+        LANDING_CHECKS_NOT_CLEAN,
+        LANDING_UPDATE_TYPE_UNPARSEABLE,
+        LANDING_PACE_EXHAUSTED,
+        "landing_something_nobody_has_thought_of",
+    )
+    subsets = [
+        subset for size in range(len(vocabulary) + 1) for subset in combinations(vocabulary, size)
+    ]
+
+    for subset in subsets:
+        for base_matches in (False, True):
+            assert freshness_derived_refusals(
+                subset, rollout_base_matches_pin=base_matches
+            ) == _freshness_derived(set(subset), rollout_base_matches_pin=base_matches), (
+                subset,
+                base_matches,
+            )
 
 
 # --------------------------------------------------------------------------------------------

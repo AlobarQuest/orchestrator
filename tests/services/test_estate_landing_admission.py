@@ -498,6 +498,24 @@ def test_a_moved_rollout_workflow_refuses(migrated_session: Session) -> None:
     assert LANDING_ROLLOUT_MOVED in answer.refusals
 
 
+def test_the_composed_answer_CARRIES_the_base_comparison_that_produced_the_refusal(
+    migrated_session: Session,
+) -> None:
+    """ADR-0024. One refusal, two causes, and only the term that read the blobs can tell them
+    apart -- so the comparison travels with the answer rather than being re-derived by whoever
+    reads it. The reporting agent cannot derive it at all: it reads no repository.
+
+    Both directions, because a field hard-coded to either value passes a single-direction check.
+    """
+    stale_head = _ask(migrated_session, gateway=FakeEstateGateway(head_blob="f" * 40, behind=3))
+    moved_workflow = _ask(migrated_session, gateway=FakeEstateGateway(blob="0" * 40, behind=3))
+
+    assert LANDING_ROLLOUT_MOVED in stale_head.refusals
+    assert stale_head.rollout_base_matches_pin is True
+    assert LANDING_ROLLOUT_MOVED in moved_workflow.refusals
+    assert moved_workflow.rollout_base_matches_pin is False
+
+
 def test_a_pull_request_THAT_EDITS_the_rollout_workflow_refuses(migrated_session: Session) -> None:
     """The case a base-only pin cannot see, and the reason the head is read too.
 
