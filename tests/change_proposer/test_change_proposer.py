@@ -389,10 +389,17 @@ def _factory_pull(**overrides: object) -> dict:
         ("SDS ", None),
         ("", None),
         (None, None),
+        # NOT a string. `open_pull_requests` projects the title straight from the response and
+        # guards only the two nested objects it reads, so a malformed body puts anything here --
+        # and `_pass` catches `ReadError`, not `TypeError`, so a raise would kill the whole
+        # scheduled run with a traceback instead of reporting a finding.
+        (17, None),
+        (["SDS", SPECIMEN_UNIT], None),
+        ({"title": SPECIMEN_UNIT}, None),
     ],
 )
 def test_the_marking_is_read_from_the_title_or_not_at_all(
-    title: str | None, expected: str | None
+    title: object, expected: str | None
 ) -> None:
     assert factory_unit_id(title) == expected
 

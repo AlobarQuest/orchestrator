@@ -47,7 +47,7 @@ FACTORY_TITLE_PREFIX = "SDS "
 _FACTORY_TITLE = re.compile(rf"^{re.escape(FACTORY_TITLE_PREFIX)}({WORK_UNIT_ID}):")
 
 
-def factory_unit_id(title: str | None) -> str | None:
+def factory_unit_id(title: object) -> str | None:
     """The work unit a pull request title says the factory opened it for, or None.
 
     None for every other pull request in the estate, which is almost all of them -- and None,
@@ -55,8 +55,15 @@ def factory_unit_id(title: str | None) -> str | None:
     is REFUSED rather than proposed with an absent unit: a record that says the factory opened it
     and cannot say for what is worse than no record, because a later reader would hold the deploy
     to it.
+
+    **TAKES `object`, AND THE TYPE GUARD IS NOT DECORATION.** `open_pull_requests` projects
+    `"title": item.get("title")` straight from the response -- it guards the two nested objects it
+    reads and not the scalars -- so a malformed body puts whatever it likes here. `re.match` on a
+    non-string raises `TypeError`, which `_pass` does not catch (it catches `ReadError`), so the
+    whole scheduled run would die with a traceback rather than reporting a finding. That is the
+    escape family this estate has already paid for twice, in a third place.
     """
-    if not title:
+    if not isinstance(title, str) or not title:
         return None
     match = _FACTORY_TITLE.match(title)
     return match.group(1) if match else None
