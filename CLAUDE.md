@@ -3167,3 +3167,31 @@ style of that module.
   Generalise: **when a refusal can be CAUSED by the condition another rule exists to clear, the two
   rules deadlock.** The eligibility test must be written against refusals that are genuinely
   independent of freshness, not merely against the ones that were live when it was written.
+
+- **A post-deploy check that asks whether production is HEALTHY, or which IMAGE it runs, cannot see
+  that the served surface is missing a field a consumer needs. Ask what it SERVES.** Two days were
+  lost to this on 2026-08-16: `#167` (the freshness rule) and `#177` (the deadlock fix) were merged
+  and undeployed, production's `EstateLandingAdmissionResponse` carried only its seven pre-Increment-6
+  keys, and the lander read `branch_update_qualifies`, got nothing, and **skipped every record**. The
+  recurring `0 updated, 0 would-update` was the field being absent — not the rule finding nothing to
+  do — and HQ read those lines each morning and reasoned from them. Production had been on
+  `4cb6dd8-adr0019inc5b-amd64` since ~2026-08-12, which predates Increment 6 entirely.
+  **The check is one command and belongs in every deploy verification alongside the digest:**
+  `curl -s https://sds.alobar.net/openapi.json | python3 -c "import sys,json;
+  print(sorted(json.load(sys.stdin)['components']['schemas']['<ResponseModel>']['properties']))"`.
+  Confirmed working after the 2026-08-16 swap to `6e47adb-adr0024-amd64`: the served properties are
+  now `branch_update_qualifies, change_record_id, head_sha, policy_version, pr_number, refusals,
+  repository, rollout_base_matches_pin, satisfied`.
+  Note the pairing with the existing `response_model` invariant: that one says a field the model
+  does not declare is silently dropped **in the code**; this one says a field the deployed image does
+  not carry is silently absent **in production**. Both fail the same way — the consumer reads a key
+  that is not there and continues — and neither is visible to a green test suite.
+
+- **Pointing Coolify at a new tag is HQ's mechanic, not Devon's gate.** The paved road's *"pointing
+  Coolify at the new tag stays a separate, manual gate"* means **the workflow does not do it**, not
+  that Devon does. His gate is deciding what and how a change may happen; the execution is HQ's, via
+  `infraops` (`coolify_update_application` + `coolify_deploy`), which is the sanctioned path and
+  which this session's infra-separation waiver permits. Misreading it cost a round-trip on
+  2026-08-16 and it is the same conflation as assigning him a merge. **Record the outgoing tag
+  before the write** — here `4cb6dd8-adr0019inc5b-amd64` — because the derivable `sha-<full>` tag
+  can be re-pointed by a later build and the digest is the only immutable identity.
