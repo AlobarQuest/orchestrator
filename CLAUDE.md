@@ -3137,3 +3137,25 @@ style of that module.
   from the default branch — the confirming check is
   `gh run list --workflow=quality.yml --event=schedule` the following morning, and a first run
   arriving ~26 minutes late is GitHub's scheduler rather than a broken cron.
+
+- **BEING BEHIND BASE CAUSES A CONDITION THAT DISQUALIFIES A PULL REQUEST FROM BEING BROUGHT UP TO
+  DATE. That is a deadlock, and it is blocking every `brain` landing right now.** Found 2026-08-16,
+  the morning after policy v3 admitted `brain`. The chain:
+  `_rollout_term` reads the pinned rollout workflow's blob on **both** the base and the head — and
+  the head read is load-bearing, because a pull request whose own diff edits the rollout workflow
+  passes a base-only check by construction. `brain#31`–`#35` were opened before `brain#47` changed
+  `ci.yml`, so their heads carry the OLD blob `6cad4cf9` against a pin of `c5c08871`, and every one
+  refuses with `landing_rollout_moved`. Measured: base blob **matches** the pin, head blob differs,
+  nothing has touched `ci.yml` since 08-14.
+  **`landing_rollout_moved` is not a deliberate refusal and not an exception, so it is a real
+  condition — and the freshness rule updates only a pull request whose SOLE remaining obstacle is
+  freshness.** So the five are behind base, refused for being behind base, and ineligible for the
+  one mechanism that would bring them up to date. `update-branch` would merge `main` into each head,
+  carrying `c5c08871` with it, and the pin would then match.
+  **The fix is narrow and the guard survives it:** when the BASE blob matches the pin and the head
+  is behind, the mismatch is staleness rather than divergence, so `landing_rollout_moved` is
+  self-clearing and must not block freshening. A pull request whose own diff edits the rollout
+  workflow still differs after the update and is still correctly refused.
+  Generalise: **when a refusal can be CAUSED by the condition another rule exists to clear, the two
+  rules deadlock.** The eligibility test must be written against refusals that are genuinely
+  independent of freshness, not merely against the ones that were live when it was written.
