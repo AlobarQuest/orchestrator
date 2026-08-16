@@ -4,20 +4,27 @@ ADR-0019 increment 4. **This program proposes and reports. It approves nothing, 
 and moves no record's status** -- and after this increment's other half it *cannot*, because the
 credential it holds is refused those routes by change-manager itself.
 
-WHAT IT IS FOR — and be precise, because a first version of this docstring was WRONG in a way that
-would have propagated. It said increment 3's factory-lane admission term was the consumer. It is
-not, today: that term reads `UnitPrBinding.pr_number`, i.e. the pull request **factory-runner**
-opened, and every one of those is authored by `AlobarQuest` — `FACTORY_PR_TOKEN` is a fine-grained
-PAT on a USER account, so GitHub reports `type: "User"` and the bot filter below refuses it.
+WHAT IT IS FOR. Two populations, and they were one until 2026-08-16.
 
-**This producer serves the DEPENDABOT population** — the pull requests ADR-0019's auto-merge lane
-concerns, and the nine currently waiting on `change-manager` and `brain`. Those records are read
-today by increment 2's rollout watcher, which observes what a landing actually caused and appends
-an observation to the record this creates.
+**The DEPENDABOT population** — the pull requests ADR-0019's auto-merge lane concerns. Those
+records are read by increment 2's rollout watcher, which observes what a landing actually caused
+and appends an observation to the record this creates, and by the estate lander, which asks about
+the APPROVED ones.
 
-Whether increment 3's term should also be fed — and how, since a Dependabot pull request has no
-work unit and therefore no binding — is the LANDING increment's question, not this one's. Do not
-read a green pass here as "the factory lane now has records."
+**The FACTORY population.** `FACTORY_PR_TOKEN` is a fine-grained PAT on a USER account, so GitHub
+reports `type: "User"` for every pull request factory-runner opens and the bot filter below
+refused all of them — which left the ADR-0020 factory lane into a redeploying repository dying at
+`change_record_absent`, and ADR-0022's unit-scoped observation with no subject to watch. A factory
+pull request is a THIRD case beside a human's and an update bot's, recognised by the marking
+factory-runner stamps on its own title (`change_proposer.factory_marking`). Nothing about the
+filter is loosened.
+
+A factory record is proposed with a change class that is deliberately OUTSIDE change-manager's
+deploy policy, so it stays `pending`: whether a machine-written change may land unattended is a
+decision for a person, and this program does not take it by choosing a conforming shape. The
+rollout watcher reads every deploy record whatever its status, so ADR-0022's observation is
+reached without waiting on that decision; the ADR-0020 landing lane refuses at
+`change_record_not_approved` until it is taken.
 
 WHY IT PROPOSES RATHER THAN AUTHORS. A rule requiring three hand-written fields is incompatible
 with anything unattended, so the acceptance criteria are read from the transcribed statement of
@@ -53,6 +60,7 @@ from change_proposer.change_manager import (
     ProposalRefused,
 )
 from change_proposer.criteria import CriteriaUnavailable, acceptance_criteria, rollback_for
+from change_proposer.factory_marking import FACTORY_TITLE_PREFIX, factory_unit_id
 from deploy_watcher.github import GitHubReader, ReadError
 from deploy_watcher.workflows import ROLLOUT_WORKFLOWS, attestation_for
 
@@ -123,6 +131,21 @@ REFUSAL_PREFIX = "REFUSED: "
 # refusal means "it is, and nobody can say what its deploy would attest".
 FINDING_STATUSES = frozenset({"refused", "error", "unreadable", "underivable"})
 
+# What kind of change a FACTORY pull request lands, as distinct from an update bot's.
+#
+# DELIBERATELY OUTSIDE change-manager's deploy policy, which pins `change_classes` to
+# `{"dependency-update"}` in every version to date. Two reasons, and the first is the decisive
+# one. Reusing `dependency-update` would make each factory record conform on shape and be
+# APPROVED by `_apply_policy` the instant it is proposed -- so this program would have decided,
+# silently, that a machine-written change may land unattended, which is a decision for a person
+# and not for this increment. It would also be untrue: the work unit behind a factory pull
+# request may be a dependency update, a maintenance remediation or a software delivery, and
+# nothing readable from a pull request title says which. A name that claims none of them is the
+# honest one, and it is the name a human would add to a policy version if he decided these
+# records should be pre-approved.
+FACTORY_CHANGE_CLASS = "factory-delivery"
+BOT_CHANGE_CLASS = "dependency-update"
+
 # What the retirement sweep must observe before it retires anything, mirrored from
 # `deploy_watcher.github.pull_request_disposition`.
 CLOSED_UNMERGED_DISPOSITION = "closed_unmerged"
@@ -154,8 +177,42 @@ def _in_scope() -> list[str]:
     return scope
 
 
+def _reasoning(repository: str, work_unit_id: str | None) -> str:
+    """Why this pull request carries a change record -- and, for a factory one, what opened it.
+
+    **A FROZEN REPLAY CONTRACT.** `reasoning` is one of change-manager's asserted fields, so this
+    string is compared against the stored one on every later pass and a reword turns every
+    existing record into a permanent 409. It must therefore say only what stays true forever: no
+    date, no count, no version, and no title.
+
+    THE WORK UNIT IDENTIFIER LIVES HERE, and the alternative was measured rather than assumed.
+    `note` is the only other asserted free-text field, and change-manager's own item page renders
+    it under the label *"Auto-fix held:"* -- a drift-lane caption that would misdescribe it in the
+    one place a person reads it. Neither field is machine-read for the unit today: the rollout
+    watcher takes the unit from the merge commit's `SDS-Unit:` trailer, not from this record, so a
+    named slot here would be a slot with no reader. What the record actually needs is for a person
+    reading it to see that a work unit is behind it, and `reasoning` is the field they read.
+    """
+    why = (
+        f"landing this pull request on the default branch of {repository} redeploys "
+        "production, so it is a deploying merge and carries a change record (ADR-0019)."
+    )
+    if work_unit_id is None:
+        return why
+    return (
+        f"{why} The factory opened it for work unit {work_unit_id}: the change was produced by a "
+        "runner acting under an authority envelope a human approved, rather than by a person or "
+        "by an update bot."
+    )
+
+
 def _proposal(
-    repository: str, pull: dict[str, Any], criteria: tuple[str, ...], rollback: Any
+    repository: str,
+    pull: dict[str, Any],
+    criteria: tuple[str, ...],
+    rollback: Any,
+    *,
+    work_unit_id: str | None,
 ) -> dict[str, Any]:
     """The record's facts, and EVERY ONE OF THEM MUST STAY TRUE.
 
@@ -176,16 +233,22 @@ def _proposal(
     The acceptance criteria CAN still drift, when the rollout workflow's bytes change, and that
     conflict is left in place on purpose: if what a green rollout attests has changed, the stored
     criteria really are stale, and a refusal is the honest way for a person to find out.
+
+    **The work unit is derived from the title and the title is still absent from the payload.**
+    That is not a contradiction: a work unit identifier is fixed for the life of the pull request
+    that carries it, where the rest of a title is the most volatile string available. What is
+    frozen here is the identifier, never the prose around it.
+
+    THE CRITERIA AND THE ROLLBACK ARE THE SAME FOR BOTH SHAPES, deliberately. They state what a
+    green rollout of this REPOSITORY attests and how its production is put back; who opened the
+    pull request changes neither.
     """
     return {
         "target_repository": repository,
         "pull_request_number": pull["number"],
-        "change_class": "dependency-update",
+        "change_class": BOT_CHANGE_CLASS if work_unit_id is None else FACTORY_CHANGE_CLASS,
         "risk": "caution",
-        "reasoning": (
-            f"landing this pull request on the default branch of {repository} redeploys "
-            "production, so it is a deploying merge and carries a change record (ADR-0019)."
-        ),
+        "reasoning": _reasoning(repository, work_unit_id),
         "acceptance_criteria": list(criteria),
         "rollback_plan": {"steps": list(rollback.steps), "target": rollback.target},
         "actor": "change-proposer",
@@ -199,10 +262,13 @@ def _consider(
     workflow = ROLLOUT_WORKFLOWS[repository.lower()]
     if pull.get("draft"):
         return None, "draft"
-    if not pull.get("is_bot"):
+    work_unit_id = factory_unit_id(pull.get("title"))
+    if work_unit_id is None and not pull.get("is_bot"):
         # A human's pull request is a human's to merge, which ADR-0019 puts out of scope by
-        # construction. Keyed on the account TYPE, never on a `[bot]` login suffix.
-        return None, "human-authored"
+        # construction. Keyed on the account TYPE, never on a `[bot]` login suffix -- and NOT
+        # loosened: what admits a factory pull request is the marking beside this filter, not a
+        # weaker reading of it.
+        return None, _unmarked_author_reason(pull)
     if pull.get("base_ref") != workflow.trigger_branch:
         # Merging into some other base fires no rollout, so there is no deploy to record.
         return None, f"base is {pull.get('base_ref')!r}, not {workflow.trigger_branch!r}"
@@ -212,7 +278,24 @@ def _consider(
         rollback = rollback_for(repository)
     except CriteriaUnavailable as error:
         return None, f"{REFUSAL_PREFIX}{error}"
-    return _proposal(repository, pull, criteria, rollback), "eligible"
+    return _proposal(repository, pull, criteria, rollback, work_unit_id=work_unit_id), "eligible"
+
+
+def _unmarked_author_reason(pull: dict[str, Any]) -> str:
+    """Why a user account's pull request was passed over -- and a breadcrumb when it looks
+    like drift.
+
+    A skip, never a finding, in both branches. A person is entitled to title a pull request
+    however they like, and turning that into a nightly page would be the permanently-red control
+    this estate keeps rebuilding. But a user-authored title that carries the factory PREFIX and
+    no readable unit is what one class of format drift looks like from here, so the line says so
+    rather than reading as an ordinary human's pull request. It is a breadcrumb beside the pin,
+    not a substitute for it: a drift that changed the prefix would not reach this branch at all,
+    and that is precisely what the consumer-compatibility check is for.
+    """
+    if str(pull.get("title") or "").startswith(FACTORY_TITLE_PREFIX):
+        return "human-authored (the title carries the factory prefix but names no work unit)"
+    return "human-authored"
 
 
 def _pass(

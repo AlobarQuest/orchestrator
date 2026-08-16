@@ -99,6 +99,22 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python -m scripts.check_capability_consumer_compatibility
 
+      # The THIRD surface, and the first that points the other way: a convention the consumer
+      # PRODUCES and this repo consumes. `change_proposer` recognises a factory pull request by
+      # the title factory-runner stamps, and if that format moves the recognition silently stops
+      # matching -- no deploy change record, no landing lane, no unit-scoped observation, and
+      # nothing red. Same job as its two siblings for the same reason: the required status check
+      # already protecting them protects this one too, and the job NAME stays as it is because it
+      # is the protected context string.
+      #
+      # A consumer-side pin on a producer-side convention cannot fire the moment factory-runner
+      # changes. It fires here on every pull request and on the daily scheduled run of this
+      # workflow, so the drift window is at most a day.
+      - name: Check the factory's pull request marking against the pinned consumer
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .venv/bin/python -m scripts.check_pr_title_marking_compatibility
+
   quality:
     name: Quality
     runs-on: ubuntu-latest

@@ -25,6 +25,8 @@ from change_proposer.change_manager import (
     is_allowed_write,
 )
 from change_proposer.cli import (
+    BOT_CHANGE_CLASS,
+    FACTORY_CHANGE_CLASS,
     FINDING_STATUSES,
     _consider,
     _in_scope,
@@ -33,6 +35,7 @@ from change_proposer.cli import (
     run,
 )
 from change_proposer.criteria import CriteriaUnavailable, acceptance_criteria, rollback_for
+from change_proposer.factory_marking import factory_unit_id
 from deploy_watcher.github import ReadError
 from deploy_watcher.workflows import (
     ATTESTS_REVISION,
@@ -356,6 +359,138 @@ def _any_transcribed_revision() -> str:
         if attestation.rollout_job:
             return revision
     raise AssertionError("the registry transcribes no revision with a rollout job")
+
+
+# --- the factory's third author case ------------------------------------------------------------
+
+SPECIMEN_UNIT = "0f1e2d3c-4b5a-4968-8776-655443332211"
+FACTORY_TITLE = f"SDS {SPECIMEN_UNIT}: Reformat embedded code blocks"
+
+
+def _factory_pull(**overrides: object) -> dict:
+    """What factory-runner opens: a USER account, carrying the marking on the title."""
+    return _pull(**{"title": FACTORY_TITLE, "author": "AlobarQuest", "is_bot": False, **overrides})
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        (FACTORY_TITLE, SPECIMEN_UNIT),
+        (f"SDS {SPECIMEN_UNIT}:", SPECIMEN_UNIT),
+        # Anchored at the very start: a marking somewhere inside a title is not a marking.
+        (f"chore: SDS {SPECIMEN_UNIT}: x", None),
+        (f" SDS {SPECIMEN_UNIT}: x", None),
+        # The identifier must be one, and lower case, exactly as the estate's other two readers
+        # of a unit claim spell it.
+        ("SDS not-a-uuid: x", None),
+        (f"SDS {SPECIMEN_UNIT.upper()}: x", None),
+        # The colon is part of the format.
+        (f"SDS {SPECIMEN_UNIT} x", None),
+        ("SDS ", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_the_marking_is_read_from_the_title_or_not_at_all(
+    title: str | None, expected: str | None
+) -> None:
+    assert factory_unit_id(title) == expected
+
+
+def test_a_factory_pull_request_is_proposable_and_a_human_s_is_still_refused() -> None:
+    """BOTH, in one control. A single positive case cannot tell "recognises the marking" from
+    "stopped filtering", and the filter is the thing that must not have moved."""
+    reader = _Reader(revision=_any_transcribed_revision())
+
+    factory, factory_why = _consider(reader, CM, _factory_pull())
+    human, human_why = _consider(reader, CM, _pull(is_bot=False, author="AlobarQuest"))
+
+    assert factory_why == "eligible" and factory is not None
+    assert human is None and human_why == "human-authored"
+
+
+def test_a_title_that_carries_the_prefix_but_names_no_unit_is_refused() -> None:
+    """Fail toward refusing. A record asserting the factory opened it, that cannot say for what,
+    is worse than no record -- and the line says which of the two refusals this was, because a
+    user-authored title carrying the prefix is what one class of format drift looks like."""
+    proposal, why = _consider(
+        _Reader(revision=_any_transcribed_revision()),
+        CM,
+        _factory_pull(title="SDS not-a-uuid: something"),
+    )
+
+    assert proposal is None
+    assert why.startswith("human-authored") and "names no work unit" in why
+
+
+def test_the_shape_is_keyed_on_the_marking_rather_than_on_who_opened_it() -> None:
+    """A machine account carrying the marking gets the factory record, not the update bot's.
+
+    factory-runner opens as a user today because `FACTORY_PR_TOKEN` is a PAT. If it ever opens as
+    the estate's App instead, GitHub reports a bot and nothing else about the pull request changes
+    -- so the record must not change either.
+    """
+    proposal, why = _consider(
+        _Reader(revision=_any_transcribed_revision()), CM, _pull(title=FACTORY_TITLE, is_bot=True)
+    )
+
+    assert why == "eligible" and proposal is not None
+    assert proposal["change_class"] == FACTORY_CHANGE_CLASS
+    assert SPECIMEN_UNIT in proposal["reasoning"]
+
+
+def test_the_whole_factory_payload_is_pinned() -> None:
+    """Every field is frozen at the first row carrying it, so every field is worth asserting.
+
+    `change_class` most of all. It is DELIBERATELY outside change-manager's deploy policy, which
+    pins `change_classes` to `{"dependency-update"}`: a factory record reusing that value would be
+    approved by policy the instant it is proposed, and whether a machine-written change may land
+    unattended is a decision for a person rather than a consequence of a string this program
+    chooses.
+    """
+    proposal, _ = _consider(_Reader(revision=_any_transcribed_revision()), CM, _factory_pull())
+
+    assert proposal is not None
+    assert proposal["change_class"] == FACTORY_CHANGE_CLASS != BOT_CHANGE_CLASS
+    assert proposal["reasoning"] == (
+        f"landing this pull request on the default branch of {CM} redeploys production, so it is "
+        "a deploying merge and carries a change record (ADR-0019). The factory opened it for work "
+        f"unit {SPECIMEN_UNIT}: the change was produced by a runner acting under an authority "
+        "envelope a human approved, rather than by a person or by an update bot."
+    )
+    # The rest is the deploying merge's own facts, and they do not depend on who opened it.
+    assert proposal["risk"] == "caution"
+    assert proposal["actor"] == "change-proposer"
+    assert proposal["target_repository"] == CM
+    assert proposal["pull_request_number"] == 7
+    # The title's PROSE is still absent -- only the identifier, which is fixed for the life of the
+    # pull request, is frozen into the record.
+    assert "Reformat embedded code blocks" not in json.dumps(proposal)
+
+
+def test_the_update_bot_payload_is_unchanged_by_the_factory_case() -> None:
+    """The whole dict, as a literal. The key set alone would not see a factory clause leaking into
+    `reasoning`, and a leak there is permanent: `reasoning` is an asserted field, so a reword turns
+    every existing record into a terminal 409 with no update path."""
+    proposal, why = _consider(_Reader(revision=_any_transcribed_revision()), CM, _pull())
+
+    assert why == "eligible" and proposal is not None
+    assert proposal["change_class"] == BOT_CHANGE_CLASS
+    assert proposal["reasoning"] == (
+        f"landing this pull request on the default branch of {CM} redeploys production, so it is "
+        "a deploying merge and carries a change record (ADR-0019)."
+    )
+    assert set(proposal) == {
+        "target_repository",
+        "pull_request_number",
+        "change_class",
+        "risk",
+        "reasoning",
+        "acceptance_criteria",
+        "rollback_plan",
+        "actor",
+    }
+    assert "work unit" not in proposal["reasoning"]
 
 
 # --- the pass itself -----------------------------------------------------------------------------
