@@ -493,6 +493,107 @@ def test_an_EXCEPTION_silences_being_behind_WITHOUT_silencing_a_failing_check_be
     assert report(outcomes) == EXIT_FINDINGS
 
 
+_ROLLOUT = "landing_rollout_moved"
+
+
+def _answer(refusals: list[str], **extra: Any) -> dict[str, Any]:
+    return {"satisfied": False, "refusals": refusals, "head_sha": HEAD, **extra}
+
+
+@pytest.mark.parametrize(
+    ("refusals", "base_matches", "verdict"),
+    [
+        # `brain#31`/`#32` as production carries them on 2026-08-16: behind their base, a rollout
+        # pin that differs BECAUSE they are behind, and a requirement-range title no rule can ever
+        # classify. Held and reported every night, forever, until this.
+        ([_BEHIND, _ROLLOUT, _UNPARSEABLE], True, "exception"),
+        # THE HALF A POSITIVE CASE CANNOT PROVE. Identical refusals, opposite base comparison: the
+        # workflow genuinely moved, freshening cannot put that right, and it must still report.
+        # Without this row the rule is indistinguishable from suppressing the code unconditionally.
+        ([_BEHIND, _ROLLOUT, _UNPARSEABLE], False, "held"),
+        # THE CONJUNCT. The base carries the pinned bytes and the head is NOT behind, so the pin
+        # differs because this pull request's own diff edits the workflow -- the founding case of
+        # the guard, which no exception beside it may silence.
+        ([_ROLLOUT, _UNPARSEABLE], True, "held"),
+        # A failing check is a fact about the change and is never position-caused.
+        ([_BEHIND, _ROLLOUT, _CHECKS, _UNPARSEABLE], True, "held"),
+        # Suppression is only ever BESIDE AN EXCEPTION. Alone, being behind is transient and the
+        # branch-update pass clears it, so it stays a finding until it does.
+        ([_BEHIND, _ROLLOUT], True, "held"),
+        # #168 preserved unchanged: the enumeration this criterion replaced still answers the case
+        # it was written for.
+        ([_BEHIND, _UNPARSEABLE], True, "exception"),
+    ],
+)
+def test_a_refusal_CAUSED_BY_BEING_BEHIND_is_suppressed_beside_an_exception(
+    refusals: list[str], base_matches: bool, verdict: str
+) -> None:
+    """ADR-0024, and the table is the rule -- the criterion cannot be shown by any single row.
+
+    The previous ruling suppressed ONE code beside an exception. `brain#31`/`#32` produced a
+    second the same way: the lane deliberately never freshens a pull request it can never land, so
+    the head never acquires the pinned rollout workflow and the pin refusal persists forever --
+    rebuilding the permanently-red control the first ruling exists to prevent, out of the third
+    ruling's own correctness.
+
+    So what is suppressed is a CATEGORY: a refusal produced by the head's position relative to its
+    base that says nothing about the change. Rows two, three and four are the ones that carry the
+    load, and each denies a different over-general reading.
+    """
+    client = FakeOrchestrator(
+        {(REPOSITORY, 31): _answer(refusals, rollout_base_matches_pin=base_matches)}
+    )
+
+    outcomes = _pass(_subjects(FakeRecords([_row(31)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == [verdict]
+    # THE LINE STILL PRINTS EVERY REFUSAL. Suppression governs the exit code and never the report:
+    # a reader must be able to see what was missed on a night nothing was a finding.
+    assert all(refusal in outcomes[0].detail for refusal in refusals)
+
+
+def test_an_answer_that_DOES_NOT_CARRY_the_base_comparison_leaves_the_line_a_FINDING() -> None:
+    """THE DEPLOYMENT-SKEW CONTROL, and it is a live state rather than a hypothetical one.
+
+    This program runs on a schedule against whatever orchestrator production is serving, and a
+    field is on the wire only once a release carrying it has been deployed. In that window the
+    answer has no such key -- and a missing key must withhold the criterion's conditional member,
+    never supply it. Reading `None` as permission would silence `brain#31` on an answer that never
+    said the base matched anything.
+    """
+    client = FakeOrchestrator({(REPOSITORY, 31): _answer([_BEHIND, _ROLLOUT, _UNPARSEABLE])})
+
+    outcomes = _pass(_subjects(FakeRecords([_row(31)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["held"]
+    assert report(outcomes) == EXIT_FINDINGS
+
+
+def test_a_GENUINELY_MOVED_workflow_still_reports_while_a_STALE_PIN_beside_it_goes_quiet() -> None:
+    """THE DISCRIMINATING CONTROL, both rows in ONE pass, like its two siblings above.
+
+    Were the rollout refusal suppressed unconditionally beside an exception, both of these would be
+    non-findings and the pass would exit clean -- so the exit code is what this asserts, not only
+    the statuses. The rows differ in exactly one fact, and it is the fact the orchestrator serves.
+    """
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 31): _answer(
+                [_BEHIND, _ROLLOUT, _UNPARSEABLE], rollout_base_matches_pin=True
+            ),
+            (REPOSITORY, 32): _answer(
+                [_BEHIND, _ROLLOUT, _UNPARSEABLE], rollout_base_matches_pin=False
+            ),
+        }
+    )
+    rows = [_row(31, item_id=61), _row(32, item_id=62)]
+
+    outcomes = _pass(_subjects(FakeRecords(rows)), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["exception", "held"]
+    assert report(outcomes) == EXIT_FINDINGS
+
+
 def test_an_UNCLASSIFIED_refusal_alone_is_a_finding() -> None:
     """The polarity. Only the three codes Devon ruled on are classified; every one of the others,
     present and future, must leave the line a finding on its own -- a code co-occurring with a
