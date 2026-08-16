@@ -2991,11 +2991,19 @@ style of that module.
   `attests=revision_confirmed` and no human acting. What remains open in that repository is `#48`
   alone, the permanent requirement-range exception. **A caveat worth carrying, because the counters
   say so: the freshness-update rule shipped in `#167` has fired ZERO times in production**
-  (`0 updated, 0 would-update` on every run). `#49` was current because HQ had run `update-branch`
-  by hand while probing the mechanism, and `#48` is correctly excluded as an exception — so the rule
-  is live, correct on the subjects it has seen, and **unexercised on a real qualifying subject**. Its
-  first true test is the next landing that stales a sibling which can still land, which on current
-  queues means after the policy admits a second repository.
+  (`0 updated, 0 would-update` on every run).
+  **CORRECTED 2026-08-16, and the first word was the wrong one: the rule is NOT LIVE. It is merged
+  and UNDEPLOYED.** Production's `EstateLandingAdmissionResponse` serves exactly seven keys —
+  `change_record_id`, `head_sha`, `policy_version`, `pr_number`, `refusals`, `repository`,
+  `satisfied` — and none of Increment 6's. The lander reads `branch_update_qualifies`, gets nothing,
+  and **skips every record in its branch-update pass**. So `0 updated, 0 would-update` was never
+  evidence about the rule's behaviour; it was the field being absent. `brain#33`–`#35` qualify
+  today and are not being freshened.
+  This is the estate's own **MERGED IS NOT DEPLOYED** invariant, walked past by HQ while reading
+  those very log lines every morning and reasoning from them. The check is one command and it is
+  the same one that bullet already prescribes:
+  `curl -s https://sds.alobar.net/openapi.json | python3 -c "import sys,json; print(sorted(json.load(sys.stdin)['components']['schemas']['EstateLandingAdmissionResponse']['properties']))"`.
+  **A log line reporting zero is not evidence the code that would report non-zero is running.**
 
 - **Landing into `brain` deploys the service the landing lane CONSULTS — and the self-reference is
   safe, measured, in one direction only.** `estate_landing_admission.py` asks the estate what
