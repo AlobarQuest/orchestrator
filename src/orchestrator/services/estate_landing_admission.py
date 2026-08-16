@@ -276,7 +276,9 @@ class EstateLandingAdmission:
     branch_update_qualifies: bool
 
 
-def qualifies_for_branch_update(refusals: tuple[str, ...]) -> bool:
+def qualifies_for_branch_update(
+    refusals: tuple[str, ...], *, rollout_base_matches_pin: bool
+) -> bool:
     """May the lane bring this pull request's head up to date with its base?
 
     **ONLY WHEN FRESHNESS IS THE SOLE REMAINING OBSTACLE**, and that rule is the whole design
@@ -295,10 +297,50 @@ def qualifies_for_branch_update(refusals: tuple[str, ...]) -> bool:
     freshness alone qualifies; so does one also refused because the day's pace is spent or the hour
     is outside the window, because each of those clears itself and neither says anything about the
     branch. Any other refusal -- present or future, named or not yet invented -- disqualifies,
-    which is the polarity this lane argues for everywhere else: an unclassified code must fail
+    save the single carve-out below, which is keyed on two FACTS rather than on membership of a
+    set. That polarity is what this lane argues for everywhere else: an unclassified code must fail
     toward refusing rather than toward acting.
+
+    ## The carve-out: a rollout pin that differs BECAUSE the head is stale
+
+    `_rollout_term` compares the pinned workflow's bytes at the base and at the head, so a head
+    opened before that file last changed reports `landing_rollout_moved` -- a refusal CAUSED by
+    being behind, which is the very condition this rule exists to clear. Read as an obstacle it is
+    a deadlock, and it was one: the five `alobarquest/brain` pull requests open on 2026-08-16 were
+    each refused for being behind their base and disqualified from the one mechanism that would
+    bring them up to date.
+
+    It is self-clearing WHEN AND ONLY WHEN the BASE carries the pinned bytes and the head is
+    behind. Under those two conditions the difference is staleness, and bringing the base's commits
+    into the head carries the pinned bytes with it. Where the base does NOT carry them the workflow
+    genuinely moved, no amount of freshening puts that right, and every rule must still refuse.
+
+    **The two facts arrive by different routes, deliberately.** The base comparison is an argument,
+    because only the term that read the blobs knows it. "The head is behind" is already the
+    presence of `LANDING_HEAD_NOT_CURRENT_WITH_BASE`, which the return below requires of every
+    qualifying pull request; restating it inside the carve-out would give one fact two sources and
+    leave the return's own condition attributable to nothing.
+
+    **The carve-out is self-limiting rather than trusted.** After an update the term re-evaluates
+    against the NEW head: a pull request that does not touch the workflow then carries the pinned
+    bytes and proceeds, while one whose own diff edits that file still differs and is still refused
+    -- `_rollout_term`'s founding case, untouched. The cost of that ambiguity is one build on a
+    pull request that will not land; nothing in the cascade can see a pull request's changed files,
+    so no narrower reading is available here.
+
+    ## The shape, because it will recur
+
+    **When a refusal can be CAUSED by the condition another rule exists to clear, the two rules
+    deadlock.** This test must be keyed on refusals that are genuinely independent of freshness --
+    not merely on the ones that happened to be live when it was written.
     """
-    remainder = set(refusals) - {LANDING_HEAD_NOT_CURRENT_WITH_BASE} - DELIBERATE_REFUSALS
+    # A set literal rather than a named constant: nothing else shares it, and the condition on it
+    # is the whole content. `False` withholds the carve-out, so every path that did not positively
+    # observe a matching base leaves the refusal standing.
+    self_clearing = {LANDING_ROLLOUT_MOVED} if rollout_base_matches_pin else set()
+    remainder = (
+        set(refusals) - {LANDING_HEAD_NOT_CURRENT_WITH_BASE} - DELIBERATE_REFUSALS - self_clearing
+    )
     return LANDING_HEAD_NOT_CURRENT_WITH_BASE in refusals and not remainder
 
 
@@ -417,7 +459,9 @@ def estate_landing_admission(
         head_sha=remote.head_sha,
         change_record_id=record.record_id,
         policy_version=record.policy_version,
-        branch_update_qualifies=qualifies_for_branch_update(tuple(refusals)),
+        branch_update_qualifies=qualifies_for_branch_update(
+            tuple(refusals), rollout_base_matches_pin=remote.rollout_base_matches_pin
+        ),
     )
 
 
@@ -563,6 +607,8 @@ def _pace_term(session: Session, repository: str, now) -> _Term:
 class _RemoteTerms:
     term: _Term
     head_sha: str | None
+    # Carried up rather than recomputed: the blobs were read once, by the term that owns them.
+    rollout_base_matches_pin: bool
 
 
 def _remote_terms(
@@ -580,7 +626,7 @@ def _remote_terms(
     try:
         pull = gateway.read_pull_request(repository=repository, number=pr_number)
     except EstateGatewayError:
-        return _RemoteTerms(_Term(False, (LANDING_PULL_REQUEST_UNREADABLE,)), None)
+        return _RemoteTerms(_Term(False, (LANDING_PULL_REQUEST_UNREADABLE,)), None, False)
 
     refusals: list[str] = []
     if pull.landed or not pull.open:
@@ -597,14 +643,14 @@ def _remote_terms(
     if conditions is None:
         # Already reported by the record term. Everything below is a condition this process was
         # not told, so it cannot be met and there is nothing further to say about it.
-        return _RemoteTerms(_Term(False, tuple(refusals)), pull.head_sha)
+        return _RemoteTerms(_Term(False, tuple(refusals)), pull.head_sha, False)
 
     fresh = _freshness_term(repository, pull, conditions, gateway)
     kind = _update_type_term(pull, conditions)
     rollout = _rollout_term(repository, pull, conditions, gateway)
     refusals.extend(fresh.refusals)
     refusals.extend(kind.refusals)
-    refusals.extend(rollout.refusals)
+    refusals.extend(rollout.term.refusals)
 
     met = (
         pull.open
@@ -615,9 +661,9 @@ def _remote_terms(
         and pull.mergeable_state == MERGEABLE_CLEAN
         and fresh.met
         and kind.met
-        and rollout.met
+        and rollout.term.met
     )
-    return _RemoteTerms(_Term(met, tuple(refusals)), pull.head_sha)
+    return _RemoteTerms(_Term(met, tuple(refusals)), pull.head_sha, rollout.base_matches_pin)
 
 
 def _freshness_term(
@@ -668,12 +714,34 @@ def _update_type_term(pull: EstatePullRequest, conditions: LandingConditions) ->
     return _Term(True, ())
 
 
+@dataclass(frozen=True)
+class _RolloutTerm:
+    term: _Term
+    # DID THE BASE CARRY THE PINNED BYTES? Reported beside the refusal because the refusal itself
+    # cannot tell "this head is stale" from "this workflow moved", and only the comparison below
+    # can. False wherever the question was not reached or not answered -- an unpinned repository
+    # and an unreadable blob are both merely *not known* to match, and a reader that treats
+    # not-known as matching would waive a condition on the strength of a failed read.
+    base_matches_pin: bool
+
+
+def _blob_matches(observed: str | None, expected: str) -> bool:
+    """One comparison, so the refusal and the fact beside it can never disagree.
+
+    Case-folded, for the reason the pin's own test gives: GitHub serves object names lower-cased
+    and a human transcribing one may not. Computing the fact with a second, raw comparison would
+    withhold the carve-out for an upper-cased pin alone -- refusing, but for a reason nobody could
+    read off either value.
+    """
+    return observed is not None and observed.lower() == expected.lower()
+
+
 def _rollout_term(
     repository: str,
     pull: EstatePullRequest,
     conditions: LandingConditions,
     gateway: EstateReadGateway,
-) -> _Term:
+) -> _RolloutTerm:
     """Is the rollout this landing would cause still the one the record's criteria describe?
 
     The record says what a green rollout attests. Nothing else in the estate checks that the
@@ -697,18 +765,32 @@ def _rollout_term(
     Nothing in the cascade can see a pull request's changed files -- the gateway has no method for
     it, deliberately -- so this is the whole of the protection, and it is why the head read is not
     an optimisation to be skipped when the base already matches.
+
+    **The two sides answer DIFFERENT questions once the answer leaves here**, which is why the base
+    comparison is carried out as well as the refusal. A head that differs while the base matches is
+    a head that predates the file's last change, and that is curable by bringing the base's commits
+    into it; a base that differs is a workflow this record was not written about, which nothing
+    about the branch can put right. `qualifies_for_branch_update` is the only reader, and this term
+    is the only party that can tell them apart -- the refusal is one string for both.
+
+    A `None` is the pinned path naming no file at that ref. A renamed or removed rollout is a moved
+    rollout; reading it as "nothing to compare" would waive the condition exactly when it matters
+    most.
     """
     pin = conditions.pin_for(repository)
     if pin is None:
-        return _Term(False, (LANDING_ROLLOUT_UNPINNED,))
-    for ref in (pull.base_ref, pull.head_sha):
-        try:
-            observed = gateway.blob_sha(repository=repository, path=pin.path, ref=ref)
-        except EstateGatewayError:
-            return _Term(False, (LANDING_ROLLOUT_UNREADABLE,))
-        # `None` is the pinned path naming no file at that ref. A renamed or deleted rollout is a
-        # moved rollout; reading it as "nothing to compare" would waive the condition exactly when
-        # it matters most.
-        if observed is None or observed.lower() != pin.blob_sha.lower():
-            return _Term(False, (LANDING_ROLLOUT_MOVED,))
-    return _Term(True, ())
+        return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_UNPINNED,)), False)
+    try:
+        at_base = gateway.blob_sha(repository=repository, path=pin.path, ref=pull.base_ref)
+        if not _blob_matches(at_base, pin.blob_sha):
+            return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_MOVED,)), False)
+        at_head = gateway.blob_sha(repository=repository, path=pin.path, ref=pull.head_sha)
+    except EstateGatewayError:
+        # False even when the BASE read succeeded and matched: a term that could not finish
+        # answering has not established the pair the carve-out rests on. Unobservable today --
+        # `landing_rollout_unreadable` disqualifies on its own -- so it is stated rather than
+        # left to whichever value happened to be in hand.
+        return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_UNREADABLE,)), False)
+    if not _blob_matches(at_head, pin.blob_sha):
+        return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_MOVED,)), True)
+    return _RolloutTerm(_Term(True, ()), True)

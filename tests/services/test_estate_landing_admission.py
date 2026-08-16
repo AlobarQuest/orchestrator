@@ -527,6 +527,28 @@ def test_a_pull_request_that_deletes_the_rollout_workflow_refuses(
     assert LANDING_ROLLOUT_MOVED in _ask(migrated_session, gateway=gateway).refusals
 
 
+def test_ONCE_A_HEAD_IS_CURRENT_the_pin_tells_the_two_causes_apart(
+    migrated_session: Session,
+) -> None:
+    """What the branch-update carve-out rests on, asserted where the pin is read.
+
+    One refusal, `landing_rollout_moved`, has two causes: a head that predates the file's last
+    change, and a head whose own diff edits it. Both rows below are a pull request that is no
+    longer behind -- the state bringing a branch up to date produces -- and they answer
+    differently. The first now carries the pinned bytes and every term is met; the second still
+    differs and is still refused. Were they indistinguishable after freshening, excusing the
+    refusal in order to permit it would be excusing it permanently.
+    """
+    stale_head_now_current = _ask(migrated_session, gateway=FakeEstateGateway(behind=0))
+    edits_the_workflow = _ask(
+        migrated_session, gateway=FakeEstateGateway(behind=0, head_blob="f" * 40)
+    )
+
+    assert stale_head_now_current.satisfied, stale_head_now_current.refusals
+    assert not edits_the_workflow.satisfied
+    assert LANDING_ROLLOUT_MOVED in edits_the_workflow.refusals
+
+
 def test_mergeability_the_remote_has_not_computed_yet_is_named_apart_from_a_red_check(
     migrated_session: Session,
 ) -> None:
