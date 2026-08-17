@@ -3226,3 +3226,25 @@ style of that module.
   Note the population was empty when this shipped: no open factory pull requests in either
   redeploying repository, so the branch is proven by controls, the cross-repo pin and a
   byte-identical live differential for the bot population — not yet by a live factory pull request.
+
+- **"Is this a factory target?" had THREE answers that disagreed pairwise, and ADR-0015 already
+  ruled which one is authoritative — the ruling was simply never implemented.** Measured 2026-08-17:
+  `delivery_profile` in `PROJECT.md` says orchestrator/intent-packages/security-standards/
+  infraops-mcp-server/change-manager/brain; the orchestrator's
+  `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` said intent-packages/security-standards/
+  change-manager/brain/**project-standards**/infraops-mcp-server; and the presence of
+  `.github/workflows/factory-runner-pilot.yml` said a third thing. `factory-runner` is the only
+  repository all three agreed on. `orchestrator` declares itself a target and cannot be dispatched
+  to; `project-standards` was **deliberately excluded by ADR-0015 on 2026-08-04** and was allowlisted
+  and given a caller on **2026-08-07** — by HQ, in commit `6aeff6f`, three days later, in a sweep
+  that never consulted the decision sitting in the repository it was working in. The episode was then
+  written into this file as a lesson about fine-grained PAT scopes, with the contradiction unnoticed.
+  **ADR-0015 names the single source of truth and the reason: the declaration belongs in `PROJECT.md`
+  frontmatter, "repo-local and self-describing, rather than a list inside the kit that the affected
+  repository cannot see."** That mechanism has never been built, which is exactly why the
+  contradiction survived — an env var cannot refuse an onboarding sweep, and a repository declaring
+  `factory_target: false` can. Reversed 2026-08-17 (Devon reaffirmed ADR-0015): caller removed
+  (`project-standards#23`), allowlist cut to five, verified from inside the container.
+  **The unbuilt half now has two independent reasons to exist**, and a design question ADR-0015 did
+  not face: the orchestrator has no checkout, so a repo-local declaration has to reach admission
+  somehow — a build-time bundle like the actor registry, App Brain, or a sync job.
