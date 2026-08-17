@@ -12,7 +12,7 @@ foundation_contract: 1
 applicable_standards:
   project: '1.0'
   security: '1.0'
-  code: '1.0'
+  code: '1.1'
 required_checks:
 - id: quality
   executor: github-actions:quality.yml
@@ -146,6 +146,7 @@ for their date and are not current policy.
 - [ ] (P1) The five non-deploying repos skip main-push CI on every auto-merged landing — an auto-merge armed with secrets.GITHUB_TOKEN triggers no on:push workflow (measured 3/3, ADR-0019 inc 4), so main can be red in intent-packages, security-standards, project-standards, infraops-mcp-server and factory-runner with nothing reporting it — added 2026-08-11
 - [ ] (P1) A change record is never closed when its landing SUCCEEDS, so the estate-landing agent exits 3 on every run from now on. Measured 2026-08-13 after the first autonomous deploying landing: record 52 landed change-manager#50 (merge 2ba9f7f2, deploy green, production serving it, watcher recorded verdict=success production_reached=yes attests=revision_confirmed) and the record is STILL 'approved'. So the agent keeps considering a closed PR, whose terms answer landing_mergeability_unknown and landing_head_not_current_with_base, and unknowns drive exit 3. A permanently red signal is one nobody reads — the estate's own stated reason for the ledger's 7-day window. The producer already retires a record whose PR closed UNMERGED; nothing closes the success case. The fact needed already exists and is already observed by the watcher. DECISION NEEDED: does the producer close it (it sweeps records and reads GitHub) or the watcher (it establishes the success and writes the outcome)? P1 because the control built to watch autonomous landings goes deaf on its second night. — added 2026-08-13
 - [ ] (P1) Nothing can propose a deploy change record for a factory-opened pull request, so ADR-0022's unit-scoped observation can never fire and the factory lane into change-manager is blocked at change_record_absent. change_proposer refuses non-bot pull requests (cli.py is_bot filter) and factory-runner opens pull requests with FACTORY_PR_TOKEN, a User account. Found by adversarial review 2026-08-13. — added 2026-08-13
+- [ ] (P2) No advisory lock in this repo is pinned by any test. Found 2026-08-14 by mutating a review fix on the lane-freshness branch: replacing a newly-added advisory lock with a clean no-op SURVIVED the mutation set. The idempotency matrix documents four advisory locks and all four are prose — so any of them could be deleted without reddening a single test, and the concurrency guarantee they represent is unverified. This is a gap beyond the branch that found it; the branch's own lock is pinned, the four pre-existing ones are not. — added 2026-08-14
 ## Future plans
 
 ## Known Non-obvious Invariants
