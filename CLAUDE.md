@@ -3248,3 +3248,29 @@ style of that module.
   **The unbuilt half now has two independent reasons to exist**, and a design question ADR-0015 did
   not face: the orchestrator has no checkout, so a repo-local declaration has to reach admission
   somehow — a build-time bundle like the actor registry, App Brain, or a sync job.
+
+- **THE SEVEN FACTORY REPOSITORIES ARE PUBLIC as of 2026-08-17, and the trigger was Actions minutes,
+  not a change of posture.** GitHub bills Actions only on private repositories. The estate ran out
+  mid-afternoon and every private repository's CI began failing in **2–5 seconds** at "Set up
+  Python" — before any repository content is read — while the two public ones
+  (`infraops-mcp-server`, `factory-runner`) passed CLEAN. That correlation IS the diagnosis: a
+  workflow failing at environment setup, split exactly along visibility, is quota rather than code.
+  **HQ first misread it as a GitHub outage**, because `githubstatus.com` genuinely reported a
+  Partial System Outage at the same time and the Actions API was 404ing estate-wide. Both were true
+  and unrelated; the 404s cleared on their own, the quota did not.
+  Consequence to know: with branch protection requiring a check that cannot run, **no private-repo
+  pull request can merge and the autonomous landing lane stops** (it refuses on
+  `landing_checks_not_clean`). Publishing restored all of it at once.
+  **Before publishing, the estate's own scanner is the gate, and read the ALLOWLIST rather than
+  trusting its reasons.** Four repositories scanned zero findings. `security-standards` carried 12
+  allowlisted BLOCKs — 6 tracked-file fixtures, 5 pinned git-history commits, 1 the write-guard
+  hook's own detection pattern. What settles it is that every one, tracked and historical, carries
+  the fixture prefix `0.45eb08` while the live bootstrap token is `0.838d18`: a different token, so
+  no credential was ever committed. The allowlist pins each finding's exact redacted match INCLUDING
+  LENGTH, so a different token in the same file still BLOCKs — it fails closed. Note what this does
+  **not** establish: that every commit in history was read. The scanner's detection is the basis,
+  which is sound for the repository that IS the scanner and is not an exhaustive audit.
+  **Revisit anything sized against Actions minutes.** The 2026-08-15 scheduled `main` checks were
+  costed at ~850 min/month against 3000 included, with `orchestrator` 89% of it — that constraint no
+  longer exists, so the cadence should be re-decided on its merits rather than left sized for a
+  limit that is gone.
