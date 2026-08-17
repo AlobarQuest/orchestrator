@@ -3195,3 +3195,34 @@ style of that module.
   2026-08-16 and it is the same conflation as assigning him a merge. **Record the outgoing tag
   before the write** — here `4cb6dd8-adr0019inc5b-amd64` — because the derivable `sha-<full>` tag
   can be re-pointed by a later build and the digest is the only immutable identity.
+
+- **ADR-0022's unit-scoped observation needs the change record to EXIST, not to carry a unit id —
+  and HQ's handoff asserted the opposite.** Corrected 2026-08-16 by the build session that
+  implemented it. `deploy_watcher/cli.py::_observe_unit` derives the unit from the merge commit's
+  **`SDS-Unit:` trailer** (`deploy_watcher/units.py::claimed_unit`) and confirms it against the
+  orchestrator's own `pr_merge` history; the change record contributes only
+  `(target_repository, pull_request_number)`, i.e. **which pull request to watch at all**. Verified
+  independently: factory-runner emits `SDS-Unit: {id}` in the commit message
+  (`src/factory_runner/cli.py:441`, `:454`), and the eight ledger repositories are
+  `squash_merge_commit_message = COMMIT_MESSAGES`, so a landing commit carries it.
+  **And the watcher reads every deploy record whatever its status** —
+  `deploy_watcher/change_manager.py::deploy_changes` applies no status filter — so a **pending**
+  factory record is sufficient. Phase-3 criterion 1's second half therefore does **not** wait on
+  the approval decision below. Storing the work-unit id on the record is still right, because
+  parsing the title is how the pull request is recognised at all; it is simply not what unblocks
+  the criterion.
+
+- **A factory pull request's change record is `change_class: factory-delivery` and sits OUTSIDE
+  deploy policy v3, deliberately.** Shipped 2026-08-16 (`#179`). Reusing `dependency-update` would
+  have had `_apply_policy` approve every factory record the instant it was proposed — a standing
+  grant that machine-written changes may land unattended into a redeploying repository, made
+  silently by a program rather than decided. So a factory record is created **pending**, and the
+  ADR-0020 landing lane now refuses at **`change_record_not_approved`** rather than
+  `change_record_absent`: P1 `6a98cb85fbae`'s blocker is closed and a different, deliberate gate is
+  what remains. The estate lander does not see these records at all (`_ASK_ABOUT = {"approved"}`),
+  so no new nightly findings. **The open decision is whether that approval is a policy version
+  admitting `factory-delivery` or a human click per record** — and it is a decision about standing
+  authority, not a configuration gap.
+  Note the population was empty when this shipped: no open factory pull requests in either
+  redeploying repository, so the branch is proven by controls, the cross-repo pin and a
+  byte-identical live differential for the bot population — not yet by a live factory pull request.
