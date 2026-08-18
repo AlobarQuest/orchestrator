@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the work-carrier LaunchAgent (ADR-0026). Install with
+     scripts/install-work-carrier-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
+     writes ~/Library/LaunchAgents/com.devon.work-carrier.plist.
+
+     No secrets live here: the wrapper fetches the read-scoped change-manager bearer from BWS at
+     runtime.
+
+     NOT IN THE CHANGE WINDOW, and that is the setting worth arguing about. The landing lane runs
+     at 02:15–05:15 because its pass ends in something changing a running service and policy
+     declares the hours for that. This pass changes NOTHING — it reads a listing and prints a
+     payload — so there is nothing for a window to bound. It runs at 07:05 so the queue a human
+     approved yesterday is prepared before they look at it, and once, because the queue does not
+     move on its own between firings: nothing but a human approving another record can add to it.
+
+     THE PASS ENDS AT A HUMAN, on purpose. Package intake requires an ActorRole.HUMAN actor and
+     human gates are browser-only, permanently (ADR-0006). ADR-0026 deliberately left the question
+     of whether a machine may ever register one undecided, so what this job produces is a payload
+     to paste, not an intake.
+
+     RunAtLoad is false. There is nothing to catch up on: a pass prepares whatever is approved at
+     the moment it runs, and a record it missed is prepared by the next one unchanged.
+
+     The exit code is the report. launchd discards it, so read the log — 0 every approved record
+     was prepared or there were none, 1 the tool failed, 2 it could not use its inputs, 3 a record
+     could not be prepared and needs a person. A pass that prepares several records and exits 0 is
+     the lane working; the payloads are in the log, waiting to be pasted. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.work-carrier</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-work-carrier.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>5</integer></dict>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <!-- Where this machine keeps the repository checkouts a work proposal can name. The
+             carry resolves <root>/<repo>/packages/<package_id> and refuses a record whose
+             package is not there, rather than authoring one. -->
+        <key>WORK_CARRIER_CHECKOUT_ROOT</key>
+        <string>__HOME__/Projects</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/work-carrier.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/work-carrier.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

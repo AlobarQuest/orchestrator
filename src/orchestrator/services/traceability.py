@@ -223,6 +223,7 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
             source_path=revision.source_path,
             source_commit=revision.source_commit,
             registered_by=revision.registered_by,
+            change_record_id=revision.change_record_id,
         ),
         unit=TraceabilityUnitHop(
             id=unit.id,

@@ -59,6 +59,15 @@ class PackageIntakeCommand:
     expected_version: int
     intake_purpose: str = "executable"
     follow_up: dict[str, Any] | None = None
+    # ADR-0026: the change-manager record a human approved to cause this work. Optional,
+    # because most intakes have no originating record and every intake before ADR-0026 had
+    # none. Recorded on trust: change-manager is the authority on its own records, the carry
+    # verifies the locator against the real package checkout before it prepares a payload, and
+    # a human gate that could not be completed while a foreign service was unreachable would be
+    # a worse failure than the one this would prevent. `EstatePrMerge.change_record_id` is the
+    # same trade against the same service -- the permission, written down at the moment it was
+    # exercised.
+    change_record_id: int | None = None
 
 
 def register_package_intake(
@@ -129,6 +138,7 @@ def register_package_intake(
             verification_mode=command.verification_mode,
             verification_limitations=command.verification_limitations,
             follow_up=follow_up,
+            change_record_id=command.change_record_id,
             actor_id=actor.actor_id,
             actor_role=actor.role,
             expected_version=command.expected_version,
@@ -265,12 +275,16 @@ def _legacy_identity_matches(
       intake did not exist before intake_purpose did, so a protocol_fixture event has always
       carried it and never needs this exemption. The `verification_limitations` normalization
       that goes with it is scoped the same way, for the same reason.
+    - `change_record_id` (ADR-0026) applies to every intake_purpose, like `follow_up`, and for
+      the same reason: both lanes could have been registered before the key existed.
     """
     if not isinstance(observed, dict):
         return False
     legacy = dict(expected)
     if command.follow_up is None and "follow_up" not in observed:
         legacy.pop("follow_up", None)
+    if command.change_record_id is None and "change_record_id" not in observed:
+        legacy.pop("change_record_id", None)
     if command.intake_purpose == "executable" and "intake_purpose" not in observed:
         legacy.pop("intake_purpose", None)
         expected_limitations = legacy.get("verification_limitations")
@@ -306,6 +320,11 @@ def _command_identity(
         "verification_mode": command.verification_mode,
         "verification_limitations": _normalize_json(command.verification_limitations),
         "follow_up": _normalize_json(command.follow_up),
+        # ADR-0026. IN the identity, deliberately: two intakes of one package revision that name
+        # different change records are two different registrations, and leaving it out would
+        # make the second a silent replay of the first -- which defeats recording a cause at all.
+        # It therefore needs the legacy exemption below, exactly as `follow_up` does.
+        "change_record_id": command.change_record_id,
         "enforcement_snapshot": _normalize_json(command.enforcement_snapshot),
         "authority": command.authority.normalized(),
         "registry_version": command.registry_version,

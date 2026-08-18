@@ -228,6 +228,13 @@ OUTBOUND_ALLOWLIST = {
     # answer obtained outside the transaction that records the decision is an answer about a
     # moment that has passed.
     Path("src/orchestrator/services/estate_pr_merge.py"),
+    # ADR-0026. `work_carrier` is a SEPARATE program (ADR-0002's shape), out of process and on a
+    # schedule, so this is not the orchestrator speaking HTTP. It makes ONE request -- a listing
+    # of the work proposals a human approved in change-manager -- and holds no write path to
+    # either system, which is what makes "a record it cannot carry is left exactly as it was" a
+    # property of the program's shape rather than of a branch. The last step of the carry is a
+    # human paste, so there is nothing for it to push.
+    Path("src/work_carrier/change_manager.py"),
     # ADR-0019 Increment 5b. `estate_lander` is a SEPARATE program (ADR-0002's shape), and its
     # egress is not the orchestrator's. It reads which changes the estate routed, asks the
     # orchestrator whether each may be landed, and relays the answer -- composing nothing, because

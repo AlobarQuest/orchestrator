@@ -191,6 +191,7 @@ def register_revision(
     verification_mode: str | None = None,
     verification_limitations: Mapping[str, Any] | list[Any] | None = None,
     follow_up: Mapping[str, Any] | None = None,
+    change_record_id: int | None = None,
     acceptance_criteria: Sequence[Mapping[str, Any]] | None = None,
     actor_id: str,
     actor_role: ActorRole,
@@ -261,6 +262,19 @@ def register_revision(
         # that path is ever wired to reachable production traffic, it needs the same exemption
         # treatment `_legacy_identity_matches` gives the intake path.
         "follow_up": _normalize_json(follow_up),
+        # ADR-0026. In `candidate`, so it joins both the stored row and the
+        # `revision.registered` event identity. That means a re-registration of one revision
+        # naming a DIFFERENT change record is a `revision_conflict` rather than a silent
+        # overwrite, which is the answer this field wants: the cause of a piece of work is not
+        # something a later caller gets to revise.
+        #
+        # It takes no legacy exemption, and unlike `follow_up` above it cannot rely on reason 2
+        # -- a change record id is not inside `canonical_package_hash`, so it cannot
+        # self-differentiate a revision. Reason 1 is what carries it: the only caller that
+        # passes `idempotency_key` here is `POST /api/v1/revisions`, unreachable by any
+        # principal in production. The intake path's own replay comparison is one layer up and
+        # DOES carry an exemption, in `package_intake._legacy_identity_matches`.
+        "change_record_id": change_record_id,
         "registered_by": actor_id,
     }
     command = {
