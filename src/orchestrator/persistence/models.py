@@ -68,6 +68,15 @@ OBSERVATION_SOURCE_SYSTEMS = (
     "uptime_monitor",
     "github",
     "drift_digest",
+    # ADR-0021's four scheduled jobs -- the estate's recovery and tamper-evidence floor:
+    # `com.devon.vps-backup` (four independent scripts), `com.devon.vps-backup-verify`,
+    # `com.devon.hetzner-snapshot` and `com.devon.factory-events`. One member for the whole
+    # lane rather than one per job, following `drift_digest`: `source_system` names the
+    # producing LANE and `subject_reference` names the individual run's subject. None of the
+    # members above fits -- `healthchecks` is a specific external service, `watchtower` a
+    # specific tool, `ops_dashboard` a specific application -- and reusing one would write
+    # false provenance into rows that have no supersession model and no delete route.
+    "recovery_floor",
 )
 OBSERVATION_TRUST_CLASSIFICATIONS = ("orchestrator", "delivery_system", "monitor", "external")
 OBSERVATION_SUBJECT_TYPES = (
@@ -106,6 +115,15 @@ OBSERVATION_TYPES = (
     # a record, and a row is written every pass whether or not anything was found -- so its
     # ABSENCE is the signal that the audit stopped running.
     "landing_audit",
+    # A recovery artifact was produced or proven: a backup run, a restore verification, a VPS
+    # snapshot (ADR-0021). Deliberately not `health` -- these jobs do not probe a running
+    # service, they either wrote a recoverable copy or did not.
+    "backup",
+    # An append-only, tamper-evident chain verified itself against its anchor. A separate type
+    # from `backup` because the claim is different in kind: a backup asserts that a copy exists,
+    # this asserts that a record has not been altered. Today's only producer is the nightly
+    # factory-events pass.
+    "chain_integrity",
 )
 OBSERVATION_STATUSES = (
     "passed",
