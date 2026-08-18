@@ -74,6 +74,20 @@ different verbs, and OBSERVER must not gain the second.
   printed payload.
 - **ADR-0006 is narrowed, not overturned.** Browser-only remains right for *decisions* — the
   decomposition and authority approvals. It was over-applied to a transcription.
-- The next honest question is whether the *decomposition* approval is also a transcription in
-  disguise. It is not — it is a human reading a proposed breakdown and its envelope — but it should
-  be asked deliberately rather than assumed, on the same evidence this decision rested on.
+- The next honest question was whether the *decomposition* approval is also a transcription in
+  disguise. **Asked and answered the same day: it is not.**
+
+  Devon, 2026-08-18: *"It allows me to see the basic commands being run. I can't verify that they
+  are the exact right commands, or that they are 100% safe, but I can check if they are in the
+  range of what I would think should be happening."*
+
+  **That is a reasonableness check, and it is a real one.** It does not establish correctness, and
+  claiming it does would be the overstatement that eventually discredits the gate. What it
+  establishes is that the proposed work is *within the range a person expected* — which catches the
+  failure that matters most here: a machine proposing something categorically wrong, rather than
+  subtly wrong.
+
+  It is checkable only because `constraints.allowed_commands` is a short, ordered, literal list. The
+  gate's value is therefore contingent on the envelope staying readable: anything that made it long,
+  generated, or indirect would convert this back into a transcription without anyone deciding to.
+  **Guard the readability, not just the click.**
