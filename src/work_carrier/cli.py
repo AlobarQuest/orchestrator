@@ -52,6 +52,7 @@ from work_carrier.orchestrator_client import (
     DEFAULT_BASE_URL as ORCHESTRATOR_DEFAULT_BASE_URL,
 )
 from work_carrier.orchestrator_client import (
+    IntakeRefused,
     OrchestratorClient,
     OrchestratorError,
 )
@@ -118,6 +119,35 @@ def _registrar(args: argparse.Namespace) -> OrchestratorClient | None:
     return OrchestratorClient(token, SYSTEM_KEY_ID, base_url=args.orchestrator_url)
 
 
+def _writer_for(
+    args: argparse.Namespace, registrar: OrchestratorClient | None, out
+) -> tuple[OrchestratorClient | None, int | None]:
+    """The client this pass will write with, or the exit code that says why there is none.
+
+    THE FLAG DECIDES, NOT THE PRESENCE OF A CLIENT. A pass that was not asked to register does
+    not touch the orchestrator even when a credential and an injected client are both to hand,
+    which is what makes "a bare invocation writes nothing" a property of this branch rather than
+    of how the caller happened to configure the environment.
+    """
+    if not args.register:
+        return None, None
+    if registrar is not None:
+        return registrar, None
+    try:
+        writer = _registrar(args)
+    except OrchestratorError as error:
+        # The CONSTRUCTOR raises for some malformed URLs and request time for others, so catching
+        # only the latter leaves an environment-variable typo crashing the pass with a traceback
+        # -- exactly what the constructor's own guard exists to prevent. Its sibling
+        # `HttpWorkRecordSource` has always reported this class as a tool failure; this agrees.
+        print(f"[TOOL FAILURE] {error}", file=out)
+        return None, EXIT_TOOL_FAILURE
+    if writer is None:
+        print("[UNUSABLE] WORK_CARRIER_ORCHESTRATOR_TOKEN is not set", file=out)
+        return None, EXIT_UNUSABLE
+    return writer, None
+
+
 def _carry(item: Prepared, writer: OrchestratorClient | None, out) -> str | None:
     """Report one prepared record, and register it when this pass was asked to.
 
@@ -142,9 +172,36 @@ def _carry(item: Prepared, writer: OrchestratorClient | None, out) -> str | None
         # not strand the rest of an approved queue behind it, and a registration is its own
         # transaction in the orchestrator, so there is nothing partial to unwind.
         print(f"           NOT CARRIED: {error}", file=out)
+        guidance = _guidance(error)
+        if guidance:
+            print(f"           {guidance}", file=out)
         return str(error)
     print(f"           carried: revision {revision.get('id')}", file=out)
     return None
+
+
+def _guidance(error: OrchestratorError) -> str:
+    """What a person should do about a refusal whose own message would misdirect them.
+
+    `package_intake_conflict` reads "already registered with different content", and for the
+    case this lane actually produces that is FALSE: a revision somebody registered by hand
+    through the form carries no change record and a different registrar, so the carry's payload
+    differs from the stored row in exactly those two fields and in no content at all. Whoever
+    reads the morning log would go looking for a divergence that is not there.
+
+    It is also the one refusal here that repeats. Nothing marks a change record carried -- the
+    carry holds no write to change-manager, deliberately -- so an approved record stays in the
+    queue and is re-attempted every pass. That is harmless while it replays and reports a
+    finding every morning once it conflicts, so the report has to name the act that ends it:
+    a person resolves the record in change-manager, and it leaves the approved queue.
+    """
+    if not isinstance(error, IntakeRefused) or error.code != "package_intake_conflict":
+        return ""
+    return (
+        "this package revision is already registered under a different cause or registrar; "
+        "a person decides whether the existing revision or this change record is right, and "
+        "resolving the record in change-manager is what takes it out of this queue"
+    )
 
 
 def _carry_all(
@@ -178,14 +235,9 @@ def run(
         print("[UNUSABLE] CHANGE_MANAGER_TOKEN is not set", file=out)
         return EXIT_UNUSABLE
 
-    # THE FLAG DECIDES, NOT THE PRESENCE OF A CLIENT. A pass that was not asked to register does
-    # not touch the orchestrator even when a credential and an injected client are both to hand,
-    # which is what makes "a bare invocation writes nothing" a property of this branch rather
-    # than of how the caller happened to configure the environment.
-    writer = (registrar if registrar is not None else _registrar(args)) if args.register else None
-    if args.register and writer is None:
-        print("[UNUSABLE] WORK_CARRIER_ORCHESTRATOR_TOKEN is not set", file=out)
-        return EXIT_UNUSABLE
+    writer, refusal = _writer_for(args, registrar, out)
+    if refusal is not None:
+        return refusal
 
     try:
         records = records_source.approved_work()
@@ -226,7 +278,11 @@ def main() -> int:
     args = _parse_args(argv)
     if not args.register:
         return run(argv)
-    writer = _registrar(args)
+    try:
+        writer = _registrar(args)
+    except OrchestratorError as error:
+        print(f"[TOOL FAILURE] {error}")
+        return EXIT_TOOL_FAILURE
     if writer is None:
         print("[UNUSABLE] WORK_CARRIER_ORCHESTRATOR_TOKEN is not set")
         return EXIT_UNUSABLE

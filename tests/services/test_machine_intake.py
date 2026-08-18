@@ -206,3 +206,36 @@ def test_decomposition_approval_still_refuses_the_system_actor(
         )
 
     assert error.value.code == "human_actor_required"
+
+
+def test_carrying_a_revision_a_human_already_pasted_is_a_conflict(
+    migrated_session: Session,
+) -> None:
+    """A KNOWN, DELIBERATE residual of ADR-0026's join, pinned so it is documented not latent.
+
+    A human registering through the form supplies the form's own idempotency key and names no
+    cause, so the carry's later registration misses the intake replay (different key) and then
+    differs from the stored row on `registered_by` and `change_record_id` -- and
+    `register_revision` compares both. The refusal is `package_intake_conflict`, whose message
+    says "different content" when the content is byte-identical.
+
+    It is NOT fixed here, and the reason is that both fields are load-bearing. `change_record_id`
+    is inside the comparison because ADR-0026 decided the cause of a piece of work is not
+    something a later caller gets to revise; loosening it would fail open on exactly the join
+    this increment exists to protect. `registered_by` conflates identity with content and is the
+    half that could defensibly leave, which is a decision about a guard three callers share.
+
+    The carry reports it with the human act that ends it, because nothing marks a change record
+    carried -- so an approved record is re-attempted every pass until a person resolves it.
+    """
+    register_package_intake(migrated_session, intake_command(), human_actor())
+    migrated_session.commit()
+
+    with pytest.raises(DomainError) as error:
+        register_package_intake(
+            migrated_session,
+            intake_command(change_record_id=CHANGE_RECORD, idempotency_key="work-carry-8801-1"),
+            system_actor(),
+        )
+
+    assert error.value.code == "package_intake_conflict"

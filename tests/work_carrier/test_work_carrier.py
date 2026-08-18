@@ -637,3 +637,177 @@ def test_registering_with_no_credential_is_unusable_input(checkout_root: Path) -
     assert code == EXIT_UNUSABLE
     assert "WORK_CARRIER_ORCHESTRATOR_TOKEN is not set" in out.getvalue()
     assert "[PREPARED]" not in out.getvalue()
+
+
+# ---------------------------------------------------------------------------------------
+# What the client does with an answer that is not a 2xx
+# ---------------------------------------------------------------------------------------
+
+
+def _client(handler):
+    import httpx
+
+    from work_carrier.orchestrator_client import OrchestratorClient
+
+    return OrchestratorClient(
+        "token",
+        "orchestrator-system",
+        base_url="https://example.invalid",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def test_a_redirect_is_a_refusal_not_a_success() -> None:
+    """The production case, and the reason `>= 400` is not the right test.
+
+    `POST /api/v1/package-intakes` sits behind a forward-auth router at the proxy, so a machine
+    bearer arriving there draws a 302 to id.alobar.net -- measured against production, not
+    inferred. httpx does not follow redirects, so a `>= 400` check waves that through to
+    `response.json()`, and the pass reports "the intake response was not JSON" every morning: a
+    routing refusal disguised as a response-encoding fault.
+    """
+    import httpx
+
+    from work_carrier.orchestrator_client import OrchestratorError
+
+    client = _client(
+        lambda request: httpx.Response(
+            302, headers={"Location": "https://id.example.invalid/authorize"}, text="<a>go</a>"
+        )
+    )
+    with pytest.raises(OrchestratorError) as error:
+        client.register_intake({"idempotency_key": "k"})
+
+    assert "302" in str(error.value)
+    assert "proxy routing" in str(error.value)
+    assert "not JSON" not in str(error.value)
+
+
+def test_a_2xx_that_is_not_201_is_still_a_success() -> None:
+    """The inverse, so the check above cannot pass by refusing everything."""
+    import httpx
+
+    client = _client(lambda request: httpx.Response(200, json={"id": "abc"}))
+    assert client.register_intake({"idempotency_key": "k"}) == {"id": "abc"}
+
+
+@pytest.mark.parametrize("status", [403, 409])
+def test_a_role_refusal_carries_the_hint_whatever_its_status(status: int) -> None:
+    """Keyed on the REFUSAL, not on the transport — and the 409 case is the discriminating one.
+
+    The hint used to key on 403, and that was wrong for exactly the credentials it names: the
+    intake role refusal was a 409 until `main.py`'s 403 set learned about it, so a worker bearer
+    got no hint at the moment it most needed one. Fixing the status made the old keying work
+    again by coincidence, which is precisely why this test pins the intent instead: a status is
+    a thing that has already moved once in this increment, and the hint must not move with it.
+    """
+    import httpx
+
+    from work_carrier.orchestrator_client import OrchestratorError
+
+    client = _client(
+        lambda request: httpx.Response(
+            status, json={"error": {"code": "intake_registrar_invalid", "message": "no"}}
+        )
+    )
+    with pytest.raises(OrchestratorError) as error:
+        client.register_intake({"idempotency_key": "k"})
+
+    assert "not the system one" in str(error.value)
+
+
+def test_an_unrelated_403_carries_no_credential_hint() -> None:
+    """The inverse. Without it the rule above passes on "always hint", which would attach the
+    wrong diagnosis to every refusal that happens to share a status."""
+    import httpx
+
+    from work_carrier.orchestrator_client import OrchestratorError
+
+    client = _client(
+        lambda request: httpx.Response(
+            403, json={"error": {"code": "csrf_rejected", "message": "no"}}
+        )
+    )
+    with pytest.raises(OrchestratorError) as error:
+        client.register_intake({"idempotency_key": "k"})
+
+    assert "not the system one" not in str(error.value)
+
+
+def test_a_refusal_carries_its_code_for_the_report_to_classify() -> None:
+    import httpx
+
+    from work_carrier.orchestrator_client import IntakeRefused
+
+    client = _client(
+        lambda request: httpx.Response(
+            409, json={"error": {"code": "package_intake_conflict", "message": "no"}}
+        )
+    )
+    with pytest.raises(IntakeRefused) as error:
+        client.register_intake({"idempotency_key": "k"})
+
+    assert error.value.code == "package_intake_conflict"
+
+
+def test_a_malformed_orchestrator_url_is_a_tool_failure_not_a_traceback(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CONSTRUCTOR raises for some malformed URLs and request time for others.
+
+    Catching only the second leaves an environment-variable typo crashing the pass with a
+    traceback, which is exactly what the constructor's own guard exists to prevent. Its sibling
+    `HttpWorkRecordSource` has always reported this class as a tool failure.
+    """
+    import io
+
+    monkeypatch.setenv("WORK_CARRIER_ORCHESTRATOR_TOKEN", "t")
+    out = io.StringIO()
+    code = run(
+        [
+            "--checkout-root",
+            str(checkout_root),
+            "--register",
+            "--orchestrator-url",
+            "https://exa\nmple.invalid",
+        ],
+        source=_Source([record()]),
+        out=out,
+    )
+
+    assert code == EXIT_TOOL_FAILURE
+    assert "[TOOL FAILURE]" in out.getvalue()
+    assert "unusable" in out.getvalue()
+
+
+def test_a_conflict_names_the_act_that_ends_it(checkout_root: Path) -> None:
+    """`package_intake_conflict` reads "already registered with different content", and for the
+    case this lane produces that is false: only the registrar and the change record differ.
+
+    It is also the one refusal that repeats -- nothing marks a change record carried, so an
+    approved record is re-attempted every pass. So the report has to name the human act that
+    takes it out of the queue, or the morning log accuses the content of a divergence that is
+    not there and offers nothing to do about it.
+    """
+    from work_carrier.orchestrator_client import IntakeRefused
+
+    rec = record()
+    runner, _ = runner_returning(payload_for(rec))
+    writer = _Writer(error=IntakeRefused("conflict", "package_intake_conflict"))
+    code, report = _run_with_writer([rec], checkout_root, writer, ["--register"], runner=runner)
+
+    assert code == EXIT_FINDINGS
+    assert "resolving the record in change-manager" in report
+
+
+def test_an_ordinary_refusal_carries_no_guidance(checkout_root: Path) -> None:
+    """The inverse, so the guidance is attached to one refusal rather than printed on all."""
+    from work_carrier.orchestrator_client import IntakeRefused
+
+    rec = record()
+    runner, _ = runner_returning(payload_for(rec))
+    writer = _Writer(error=IntakeRefused("nope", "intake_registrar_invalid"))
+    code, report = _run_with_writer([rec], checkout_root, writer, ["--register"], runner=runner)
+
+    assert code == EXIT_FINDINGS
+    assert "resolving the record in change-manager" not in report

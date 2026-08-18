@@ -35,6 +35,9 @@
 #     carrying would be a system asking itself for permission.
 #   - the `SDS Operator` project, read by the narrow `sds-operator` account: the orchestrator
 #     SYSTEM bearer. ADR-0027 admits SYSTEM and HUMAN to intake registration and nothing else.
+#     Fetched ONLY when the arguments carry --register: it is a canonical-mutation credential,
+#     and a pass that cannot use it should not hold it. That also keeps the read-only invocation
+#     usable on a machine with no access to that project.
 #
 # THE VENV'S BIN GOES ON PATH, and that is a requirement rather than tidiness: the carry resolves
 # `orchestrator` from PATH to build each payload, and without it every record refuses with
@@ -84,32 +87,45 @@ if [ -z "$BROAD_IDENTITY" ]; then
   exit 1
 fi
 
-SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
-  -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-if [ -z "$SDS_IDENTITY" ]; then
-  echo "FATAL: no BWS identity for the orchestrator credential (Keychain service Claude)" >&2
-  exit 1
-fi
-
 if [ -z "${CHANGE_MANAGER_TOKEN:-}" ]; then
   CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_UUID" "$BROAD_IDENTITY")"
   export CHANGE_MANAGER_TOKEN
 fi
-if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
-  WORK_CARRIER_ORCHESTRATOR_TOKEN="$(_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
-  export WORK_CARRIER_ORCHESTRATOR_TOKEN
-fi
 
-# `set -e` is deliberately not used, so a failed fetch would otherwise leave these EMPTY and fall
+# `set -e` is deliberately not used, so a failed fetch would otherwise leave this EMPTY and fall
 # through -- into an exit 2 that reports "unusable input" for what is actually a credential
-# failure. Name each here, so the exit code means what this header says it means.
+# failure. Name it here, so the exit code means what this header says it means.
 if [ -z "${CHANGE_MANAGER_TOKEN:-}" ]; then
   echo "FATAL: could not read the change-manager credential from BWS" >&2
   exit 1
 fi
-if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
-  echo "FATAL: could not read the orchestrator system credential from BWS" >&2
-  exit 1
+
+# THE SYSTEM BEARER IS FETCHED ONLY FOR A PASS THAT WILL WRITE, and the gate is not tidiness. It
+# is a canonical-mutation credential, and a pass that cannot use it should not hold it. Fetching
+# it unconditionally also broke the read-only invocation this file's own header advertises: on
+# any machine that cannot read the `SDS Operator` project -- which is every machine but this one
+# -- `run-work-carrier.sh` with no arguments would exit 1 on a credential it was never going to
+# send. Inspecting what would be registered must not require the right to register it.
+_wants_register=0
+for _arg in "$@"; do
+  if [ "$_arg" = "--register" ]; then _wants_register=1; fi
+done
+
+if [ "$_wants_register" -eq 1 ]; then
+  SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
+    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
+  if [ -z "$SDS_IDENTITY" ]; then
+    echo "FATAL: no BWS identity for the orchestrator credential (Keychain service Claude)" >&2
+    exit 1
+  fi
+  if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
+    WORK_CARRIER_ORCHESTRATOR_TOKEN="$(_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
+    export WORK_CARRIER_ORCHESTRATOR_TOKEN
+  fi
+  if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
+    echo "FATAL: could not read the orchestrator system credential from BWS" >&2
+    exit 1
+  fi
 fi
 
 export PATH="$REPO_ROOT/.venv/bin:$PATH"

@@ -4,6 +4,15 @@
 `DomainError` and `APIAuthenticationError` have registered handlers -- so a refusal raised as
 anything else reaches the caller as a bare 500 that no client can classify. The code is read
 from where the handler actually puts it: NESTED under `error`, never top-level.
+
+**THE STATUS IS ASSERTED, NOT MERELY "NOT 500".** The first draft of this file checked only that
+each refusal was not a 500, and that looseness let a real regression through: splitting intake's
+role refusal out of `human_actor_required` moved it out of `main.py`'s 403 set, so a worker
+credential silently began receiving 409 -- which that handler's own comment says tells a caller
+to change its request rather than that it may not make one. A test that cannot see a status
+change cannot protect a status contract. The two codes are deliberately different statuses:
+`intake_registrar_invalid` is 403 because that actor may not register at all, and
+`intake_change_record_required` is 409 because that actor may, and the request is what is wrong.
 """
 
 import uuid
@@ -46,7 +55,7 @@ def test_a_machine_intake_without_a_change_record_is_a_named_refusal(
 ) -> None:
     response = db_client.post("/api/v1/package-intakes", headers=SYSTEM, json=intake_payload())
 
-    assert response.status_code != 500, response.text
+    assert response.status_code == 409, response.text
     assert _code(response) == "intake_change_record_required"
 
 
@@ -64,7 +73,7 @@ def test_a_worker_credential_may_not_register_an_intake(db_client: TestClient) -
         json=intake_payload(change_record_id=CHANGE_RECORD),
     )
 
-    assert response.status_code != 500, response.text
+    assert response.status_code == 403, response.text
     assert _code(response) == "intake_registrar_invalid"
 
 
@@ -75,7 +84,7 @@ def test_a_verifier_credential_may_not_register_an_intake(db_client: TestClient)
         json=intake_payload(change_record_id=CHANGE_RECORD),
     )
 
-    assert response.status_code != 500, response.text
+    assert response.status_code == 403, response.text
     assert _code(response) == "intake_registrar_invalid"
 
 
@@ -89,7 +98,7 @@ def test_an_observer_credential_is_refused_before_the_service(db_client: TestCli
         json=intake_payload(change_record_id=CHANGE_RECORD),
     )
 
-    assert response.status_code != 500, response.text
+    assert response.status_code == 403, response.text
     assert _code(response) == "role_forbidden"
 
 
@@ -122,8 +131,8 @@ def test_the_bootstrap_revision_lane_still_refuses_the_system_actor(
         },
     )
 
-    assert response.status_code != 500, response.text
-    assert _code(response) == "human_actor_required", response.text
+    assert response.status_code == 403, response.text
+    assert _code(response) == "human_actor_required"
 
 
 def test_a_machine_intake_replays_rather_than_registering_twice(db_client: TestClient) -> None:

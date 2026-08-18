@@ -37,6 +37,19 @@ class OrchestratorError(Exception):
     """The orchestrator could not be asked, or refused in a way this pass cannot interpret."""
 
 
+class IntakeRefused(OrchestratorError):
+    """The orchestrator refused. A fact about the subject, not a broken tool.
+
+    It CARRIES THE REFUSAL CODE as well as the message, because not every refusal means the same
+    thing to a reader and the message is prose that will be reworded. A `DomainError` reaches the
+    wire nested under `error`, so classifying refusals apart needs the code read from there.
+    """
+
+    def __init__(self, message: str, code: str = "") -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class ForbiddenEndpointError(OrchestratorError):
     """This program tried to reach a path it is not allowed to reach."""
 
@@ -63,6 +76,34 @@ def _detail(response: httpx.Response) -> str:
         if payload.get("detail"):
             return str(payload["detail"])[:400]
     return f"HTTP {response.status_code}"
+
+
+def _hint(response: httpx.Response) -> str:
+    """A pointer at the likeliest misconfiguration, keyed on the REFUSAL rather than the status.
+
+    A role refusal from this route is `intake_registrar_invalid`, and it is a 403 -- but the
+    adjacent refusal for a machine that named no change record is a 409, and so is a redirect's
+    neighbour. Keying on the code rather than on 403 keeps the hint attached to the case it was
+    written for even when the status for that case moves.
+    """
+    if _error_code(response) in {"intake_registrar_invalid", "role_forbidden"}:
+        return " -- the credential is not the system one"
+    if 300 <= response.status_code < 400:
+        return " -- a redirect, so the request did not reach the app: check the proxy routing"
+    return ""
+
+
+def _error_code(response: httpx.Response) -> str:
+    """The refusal's own code, read from where a `DomainError` actually puts it: NESTED."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return ""
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict) and isinstance(error.get("code"), str):
+            return error["code"]
+    return ""
 
 
 class OrchestratorClient:
@@ -128,11 +169,19 @@ class OrchestratorClient:
             raise OrchestratorError(
                 f"the orchestrator is unreachable for POST {path}: {type(error).__name__}"
             ) from None
-        if response.status_code >= 400:
-            hint = " -- the credential is not the system one" if response.status_code == 403 else ""
-            raise OrchestratorError(
-                f"the orchestrator answered {response.status_code} for {path}{hint}: "
-                f"{_detail(response)}"
+        if not 200 <= response.status_code < 300:
+            # ANY non-2xx, not `>= 400`, and the difference is the production case rather than a
+            # pedantic one. `POST /api/v1/package-intakes` sits behind an Alobar ID forward-auth
+            # router at the proxy, so a machine bearer arriving there draws a **302** to
+            # id.alobar.net -- measured, not inferred. httpx does not follow redirects, so a
+            # `>= 400` check waves that through to `response.json()`, which dies on the redirect
+            # body and reports "the intake response was not JSON": a routing refusal disguised
+            # every morning as a response-encoding fault. Naming the status is what makes the
+            # answer point at the proxy.
+            raise IntakeRefused(
+                f"the orchestrator answered {response.status_code} for {path}{_hint(response)}: "
+                f"{_detail(response)}",
+                _error_code(response),
             )
         try:
             body = response.json()
