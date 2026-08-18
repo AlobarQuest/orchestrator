@@ -208,6 +208,18 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
     # column -- distinguishable from a declaration that says `required: false`, which matters
     # because the first can never be recovered and the second is a real answer.
     follow_up: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # ADR-0026: WHAT CAUSED THIS WORK -- the change-manager record a human approved. The
+    # revision is the first durable artifact a human approves here and the thing revisioning
+    # creates, so a new revision inherits the originating reference EXPLICITLY, by carrying it
+    # in its own intake payload, rather than by any mechanism that could quietly lose it.
+    #
+    # An integer belonging to a FOREIGN system, so deliberately no foreign key: this database
+    # cannot enforce it and a constraint that cannot be enforced is a claim rather than a
+    # guarantee. `EstatePrMerge.change_record_id` is the same shape against the same service.
+    #
+    # NULL means "nothing recorded a cause", which is every revision registered before this
+    # column and every revision a human intakes without one. It never means "no cause exists".
+    change_record_id: Mapped[int | None] = mapped_column(Integer)
     work_package: Mapped[WorkPackage] = relationship()
 
 

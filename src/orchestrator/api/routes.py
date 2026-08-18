@@ -433,6 +433,7 @@ def package_intake_command(body: PackageIntakeRegistration) -> PackageIntakeComm
         expected_version=body.expected_version,
         intake_purpose=body.intake_purpose,
         follow_up=body.follow_up,
+        change_record_id=body.change_record_id,
     )
 
 
@@ -2090,6 +2091,7 @@ def _package_intake_payload(
         "authority_fingerprint": revision.authority_fingerprint,
         "authority": command.get("authority"),
         "follow_up": revision.follow_up,
+        "change_record_id": revision.change_record_id,
         "registry_version": revision.registry_version,
         "registered_by": revision.registered_by,
         "registered_at": revision.registered_at,

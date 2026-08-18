@@ -450,7 +450,18 @@ def _validate_current_state(
         raise PackageSourceError(error)
 
 
-def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[str, object]:
+def load_package_intake_payload(
+    path: Path,
+    *,
+    source_repository: str,
+    change_record_id: int | None = None,
+) -> dict[str, object]:
+    """The intake payload for an approved package.
+
+    `change_record_id` (ADR-0026) is the one field here that is NOT derived from the package:
+    it says what caused the work, and a package cannot know that. It is supplied by whoever
+    invokes the emitter -- the carry, from the approved change-manager record it is carrying.
+    """
     resolved_path = _resolve_source_path(path)
     package = _read_yaml(resolved_path / "package.yaml")
     lineage = _read_yaml(resolved_path / "lineage.yaml")
@@ -462,6 +473,7 @@ def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[s
         source_repository=source_repository,
         intake_purpose="executable",
         protocol_fixture_only=False,
+        change_record_id=change_record_id,
     )
 
 
@@ -492,6 +504,7 @@ def _load_intake_payload(
     source_repository: str,
     intake_purpose: str,
     protocol_fixture_only: bool,
+    change_record_id: int | None = None,
 ) -> dict[str, object]:
     acceptance_criteria = _acceptance_criteria(package.get("acceptance"))
     revision = package.get("revision")
@@ -535,7 +548,7 @@ def _load_intake_payload(
     # field existed is that nobody said. Membership is validated at intake, not here.
     if "reach" in package:
         enforcement_snapshot["reach"] = package["reach"]
-    return {
+    payload: dict[str, object] = {
         "package_id": package["package_id"],
         "source_repository": source_repository,
         "revision": revision,
@@ -557,3 +570,11 @@ def _load_intake_payload(
         "registry_version": 1,
         "acceptance_criteria": acceptance_criteria,
     }
+    # OMITTED rather than emitted as null when there is none, for the reason `reach` above is:
+    # absent means nobody named a cause, and every payload emitted before ADR-0026 was absent.
+    # The intake replay's legacy exemption keys on the key being missing from the stored event,
+    # so an unconditional `null` would work too -- but a payload that is byte-identical to what
+    # it used to be is a smaller claim than one that is merely equivalent.
+    if change_record_id is not None:
+        payload["change_record_id"] = change_record_id
+    return payload

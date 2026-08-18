@@ -991,6 +991,10 @@ class PackageIntakeRegistration(CommandBase):
     acceptance_criteria: list[PackageAcceptanceCriterionCommand] = Field(min_length=1)
     intake_purpose: Literal["executable", "protocol_fixture"] = "executable"
     follow_up: dict[str, Any] | None = None
+    # ADR-0026: the change-manager record a human approved to cause this work. Bounded by int4
+    # because the column is an Integer, and `strict` because pydantic's lax mode reads `true`
+    # as 1 -- which would attribute a revision to change record 1 rather than refusing.
+    change_record_id: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
 
 
 class PackageAcceptanceCriterionResponse(BaseModel):
@@ -1006,6 +1010,7 @@ class PackageAcceptanceCriterionResponse(BaseModel):
 
 class PackageIntakeResponse(BaseModel):
     id: UUID
+    change_record_id: int | None = None
     package_id: str
     source_repository: str
     revision: int
@@ -1672,6 +1677,11 @@ class TraceabilityIntentHop(BaseModel):
     source_path: str
     source_commit: str
     registered_by: str
+    # ADR-0026. The chain could already answer what a work unit caused; this is the half that
+    # says what caused the work. It belongs on the intent hop because the revision is where the
+    # link is stored -- an observation would not do, because the observation hop filters on
+    # `subject_type="work_unit"`, so a revision-scoped observation never reaches any chain.
+    change_record_id: int | None = None
 
 
 class TraceabilityUnitHop(BaseModel):
