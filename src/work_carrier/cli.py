@@ -1,16 +1,26 @@
-"""The carry, on a schedule. ADR-0026.
+"""The carry, on a schedule. ADR-0026, completed by ADR-0027.
 
-Reads the work proposals a human approved in change-manager and prints, for each, the exact
-intake payload to paste into the orchestrator's `/review/intakes/new` form -- or the reason it
-cannot be prepared.
+Reads the work proposals a human approved in change-manager and, for each, builds the exact
+intake payload the orchestrator wants -- then either prints it or registers it, depending on
+whether it was asked to.
 
-**THIS PROGRAM WRITES NOTHING, to either system.** It holds no write path to change-manager and
-none to the orchestrator, so "a record the carry cannot prepare is left exactly as it was" is a
-property of its shape rather than of a branch that has to be reached correctly. The last step of
-the carry is a HUMAN PASTE, and that is a decision ADR-0026 declined to make rather than a gap:
-intake requires an `ActorRole.HUMAN` actor and human gates are browser-only, permanently
-(ADR-0006), so registering an intake unattended would be the first automated path into canonical
-work. `prepare.py` carries the argument.
+**A BARE INVOCATION WRITES NOTHING.** `--register` is what makes this pass act; without it the
+payloads go to stdout and both systems are left exactly as they were. That is not a leftover of
+the old design, it is the mode in which the lane is inspected: a person can read what would be
+registered without anything being.
+
+**WITH `--register`, THE LAST STEP IS NO LONGER A HUMAN PASTE.** ADR-0027 removed the
+`ActorRole.HUMAN` requirement from intake registration, having found that the gate was
+protecting a transcription: every intake in production was authored by an AI and typed into a
+form by a person. What replaced it is attribution -- a machine-registered intake must name the
+approved change record that caused it, which is exactly what this program has and a person
+pasting JSON did not. ADR-0006 is narrowed, not overturned: the breakdown approval and the
+authority approval are decisions and are still a human in a browser, so this pass ends at a
+queue for a person rather than at a running change.
+
+**IT STILL CANNOT DECIDE ANYTHING.** Every rule about what may be registered is evaluated inside
+the orchestrator, in the transaction that records it. This program relays a payload it did not
+compose, for a record it did not approve.
 
 WHY IT ENUMERATES FROM CHANGE-MANAGER, naming the pipeline. `GET /api/items` withholds a proposed
 source from any caller that does not name one, because the 04:00 change-window executor lists
@@ -18,9 +28,10 @@ approved items with no source filter and hands what comes back to an LLM agent h
 Coolify tools. Naming the source is how this program sees what that one deliberately cannot.
 
 EXIT CODES: 0 clean, 1 tool failure, 2 unusable input, 3 findings. A record that could not be
-PREPARED is a finding -- somebody has to look at why. A record prepared successfully is NOT: it is
-ordinary work waiting on the paste that is the design, and making it a finding would leave this
-control permanently red for doing its job, which this estate has now recorded four times.
+PREPARED is a finding, and so is one that could not be REGISTERED -- somebody has to look at why
+in both cases. A record carried successfully is NOT, nor is one merely prepared on a pass that
+was not asked to register: making either a finding would leave this control permanently red for
+doing its job, which this estate has now recorded four times.
 """
 
 from __future__ import annotations
@@ -37,6 +48,13 @@ from work_carrier.change_manager import (
     HttpWorkRecordSource,
     WorkRecordSource,
 )
+from work_carrier.orchestrator_client import (
+    DEFAULT_BASE_URL as ORCHESTRATOR_DEFAULT_BASE_URL,
+)
+from work_carrier.orchestrator_client import (
+    OrchestratorClient,
+    OrchestratorError,
+)
 from work_carrier.prepare import Prepared, Refused, prepare
 
 EXIT_OK = 0
@@ -46,13 +64,28 @@ EXIT_FINDINGS = 3
 
 DEFAULT_CHECKOUT_ROOT = "~/Projects"
 
+# ADR-0027 recommends the SYSTEM actor: it already performs canonical mutation, so it needs no
+# registry entry and no image rebuild. A carrier-specific actor would attribute more precisely
+# and costs a merged security-standards commit plus a rebuild, because `agent_id` resolves
+# against a bundle baked into the image. `source_system` on the record and the change record id
+# on the revision already carry the provenance a distinct identity would add.
+SYSTEM_KEY_ID = "orchestrator-system"
+
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="work-carrier",
         description=(
-            "Prepare an orchestrator package intake for every approved change-manager work "
-            "proposal. Reads only; the intake itself is a human act."
+            "Carry every approved change-manager work proposal into an orchestrator package "
+            "intake. Without --register the pass prints the payloads and writes nothing."
+        ),
+    )
+    parser.add_argument(
+        "--register",
+        action="store_true",
+        help=(
+            "actually register the prepared intakes (ADR-0027). Without it the pass reports "
+            "and writes nothing, to either system."
         ),
     )
     parser.add_argument(
@@ -64,6 +97,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--change-manager-url",
         default=os.environ.get("CHANGE_MANAGER_URL", DEFAULT_BASE_URL),
     )
+    parser.add_argument(
+        "--orchestrator-url",
+        default=os.environ.get("WORK_CARRIER_ORCHESTRATOR_URL", ORCHESTRATOR_DEFAULT_BASE_URL),
+    )
     return parser.parse_args(argv)
 
 
@@ -74,10 +111,61 @@ def _source(args: argparse.Namespace) -> WorkRecordSource | None:
     return HttpWorkRecordSource(base_url=args.change_manager_url, token=token)
 
 
+def _registrar(args: argparse.Namespace) -> OrchestratorClient | None:
+    token = os.environ.get("WORK_CARRIER_ORCHESTRATOR_TOKEN", "")
+    if not token:
+        return None
+    return OrchestratorClient(token, SYSTEM_KEY_ID, base_url=args.orchestrator_url)
+
+
+def _carry(item: Prepared, writer: OrchestratorClient | None, out) -> str | None:
+    """Report one prepared record, and register it when this pass was asked to.
+
+    Returns the refusal message when a registration failed and `None` otherwise -- including on
+    a pass that was not asked to register, which is not a finding.
+    """
+    print(
+        f"[PREPARED] change record {item.record.change_record_id}: "
+        f"{item.record.package_id} revision {item.record.package_revision} "
+        f"(approved by {item.record.decided_by or 'unrecorded'})",
+        file=out,
+    )
+    print(f"           package: {item.package_path}", file=out)
+    if writer is None:
+        print("           not registered — this pass was not asked to (--register):", file=out)
+        print(json.dumps(item.payload, sort_keys=True, default=str), file=out)
+        return None
+    try:
+        revision = writer.register_intake(item.payload)
+    except OrchestratorError as error:
+        # Per-record isolation, and it matters more here than at prepare time: one refusal must
+        # not strand the rest of an approved queue behind it, and a registration is its own
+        # transaction in the orchestrator, so there is nothing partial to unwind.
+        print(f"           NOT CARRIED: {error}", file=out)
+        return str(error)
+    print(f"           carried: revision {revision.get('id')}", file=out)
+    return None
+
+
+def _carry_all(
+    prepared: list[Prepared], writer: OrchestratorClient | None, out
+) -> tuple[int, list[str]]:
+    carried = 0
+    unregistered: list[str] = []
+    for item in prepared:
+        failure = _carry(item, writer, out)
+        if failure is not None:
+            unregistered.append(failure)
+        elif writer is not None:
+            carried += 1
+    return carried, unregistered
+
+
 def run(
     argv: list[str],
     *,
     source: WorkRecordSource | None = None,
+    registrar: OrchestratorClient | None = None,
     out=sys.stdout,
 ) -> int:
     args = _parse_args(argv)
@@ -88,6 +176,15 @@ def run(
     records_source = source if source is not None else _source(args)
     if records_source is None:
         print("[UNUSABLE] CHANGE_MANAGER_TOKEN is not set", file=out)
+        return EXIT_UNUSABLE
+
+    # THE FLAG DECIDES, NOT THE PRESENCE OF A CLIENT. A pass that was not asked to register does
+    # not touch the orchestrator even when a credential and an injected client are both to hand,
+    # which is what makes "a bare invocation writes nothing" a property of this branch rather
+    # than of how the caller happened to configure the environment.
+    writer = (registrar if registrar is not None else _registrar(args)) if args.register else None
+    if args.register and writer is None:
+        print("[UNUSABLE] WORK_CARRIER_ORCHESTRATOR_TOKEN is not set", file=out)
         return EXIT_UNUSABLE
 
     try:
@@ -108,20 +205,7 @@ def run(
         else:
             refused.append(outcome)
 
-    for item in prepared:
-        print(
-            f"[PREPARED] change record {item.record.change_record_id}: "
-            f"{item.record.package_id} revision {item.record.package_revision} "
-            f"(approved by {item.record.decided_by or 'unrecorded'})",
-            file=out,
-        )
-        print(f"           package: {item.package_path}", file=out)
-        print(
-            "           paste into https://sds.alobar.net/review/intakes/new "
-            "(the form supplies its own idempotency key):",
-            file=out,
-        )
-        print(json.dumps(item.payload, sort_keys=True, default=str), file=out)
+    carried, unregistered = _carry_all(prepared, writer, out)
     for item in refused:
         print(
             f"[REFUSED]  change record {item.record.change_record_id}: "
@@ -130,14 +214,24 @@ def run(
         )
 
     print(
-        f"\n{len(records)} approved, {len(prepared)} prepared, {len(refused)} refused.",
+        f"\n{len(records)} approved, {len(prepared)} prepared, {carried} carried, "
+        f"{len(refused)} refused, {len(unregistered)} not carried.",
         file=out,
     )
-    return EXIT_FINDINGS if refused else EXIT_OK
+    return EXIT_FINDINGS if (refused or unregistered) else EXIT_OK
 
 
 def main() -> int:
-    return run(sys.argv[1:])
+    argv = sys.argv[1:]
+    args = _parse_args(argv)
+    if not args.register:
+        return run(argv)
+    writer = _registrar(args)
+    if writer is None:
+        print("[UNUSABLE] WORK_CARRIER_ORCHESTRATOR_TOKEN is not set")
+        return EXIT_UNUSABLE
+    with writer:
+        return run(argv, registrar=writer)
 
 
 if __name__ == "__main__":  # pragma: no cover - module entry point

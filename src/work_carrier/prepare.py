@@ -1,26 +1,22 @@
 """Turn one approved change record into a ready intake payload, or say why it cannot be.
 
-**THE CARRY CANNOT COMPLETE, AND THIS MODULE IS WHERE THAT STOPS BEING A SURPRISE.** Package
-intake requires an `ActorRole.HUMAN` actor, and the only human-reachable intake path in
-production is the `/review/intakes/new` form -- human gates are browser-only, permanently
-(ADR-0006). So no scheduled program may register an intake, and ADR-0026 deliberately did not
-decide whether one ever should: that would be the first automated path into canonical work, a
-standing-authority decision of ADR-0025's weight, and this increment is the evidence on which
-to make it rather than the making of it.
-
-What the carry therefore does is everything up to that gate. It reads the approved record,
-finds the package it names, gets the payload built and VERIFIED, and prints it. The human's
-remaining act is a paste and a click, where before it was knowing a package existed, finding
-it, and knowing which arguments to give a CLI.
+**THIS MODULE STOPS AT A VERIFIED PAYLOAD, AND THAT BOUNDARY IS DELIBERATE.** It reads the
+approved record, finds the package it names, and gets the payload built and VERIFIED. Whether
+that payload is then printed or registered is `cli.py`'s decision and no business of this one --
+so every refusal here is a refusal to produce a payload at all, which is the same refusal in
+both modes. Before ADR-0027 this module carried the argument for why the carry could not
+complete: intake required an `ActorRole.HUMAN` actor, so no scheduled program could register
+one. That gate is gone, having been found to protect a transcription rather than a judgment, and
+what replaced it is the change record id this module already refuses to omit.
 
 **IT SHELLS OUT TO `orchestrator emit-intake-payload` RATHER THAN IMPORTING THE FUNCTION.** Two
 reasons, and the second is the one that decided it. First, `work_carrier` is a separate program
 (ADR-0002's shape) and every sibling -- the watcher, the ledger, the lander, the reconciliation
 runner -- is held by an architecture test to importing nothing from `orchestrator`; a program
 that imported it would be the precedent that makes the rule soft. Second, and better: the
-production intake path is documented as `emit-intake-payload` -> the form, so a carry that runs
-that exact command produces BYTE-IDENTICAL output to what a human would produce by hand. That is
-the strongest available statement that the carry relaxes nothing -- there is no second path to
+documented intake payload is what that command emits, so a carry that runs it produces
+BYTE-IDENTICAL output to what a person produces by hand and pastes into the form. That is the
+strongest available statement that the carry relaxes nothing -- there is no second path to
 diverge, because there is no second path.
 
 **IT VERIFIES BY BUILDING, WHICH IS WHY THERE IS NO SEPARATE CHECK.** The emitter reads
@@ -60,9 +56,9 @@ class Refused:
 
     NOTHING IS WRITTEN ANYWHERE when this is returned. The record keeps its status, its
     decision and its history; the orchestrator learns nothing; no partial payload exists. That
-    is a property of the program's shape rather than of this branch -- `work_carrier` holds no
-    write path to either system -- so there is no ordering in which a refusal leaves something
-    half done.
+    is a property of the ORDER rather than of this branch: the registration `cli.py` may perform
+    happens only on a `Prepared`, so a refusal is reached before anything could have been sent.
+    change-manager is untouched either way -- this program holds no write path to it at all.
     """
 
     record: WorkRecord
@@ -87,9 +83,11 @@ def emit_key(record: WorkRecord) -> str:
 
     Derived from the record so a re-run prints the same bytes rather than a payload that differs
     only in a random field, which would make two passes look like two different pieces of work.
-    It is NOT the key the intake is registered under: `/review/intakes` takes its key from the
-    CSRF-bound form field and ignores the pasted one, so that re-submitting the rendered page is
-    a replay rather than a second intake.
+    It IS the key a `--register` pass registers under -- `POST /api/v1/package-intakes` takes
+    the payload's own key -- which is what makes a second scheduled pass over an unchanged queue
+    a replay rather than a second intake. It is NOT the key a paste registers under:
+    `/review/intakes` takes its key from the CSRF-bound form field and ignores the pasted one, so
+    that re-submitting the rendered page is a replay for its own separate reason.
     """
     return f"work-carry-{record.change_record_id}-{record.package_revision}"
 

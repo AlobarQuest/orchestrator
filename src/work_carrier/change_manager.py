@@ -6,6 +6,11 @@ makes "an item the carry cannot prepare is left exactly as it was" a structural 
 than a promise. There is no code here that could write, so no branch that could be reached
 wrongly, and no ordering in which a partial failure leaves the record changed.
 
+That is unchanged by ADR-0027, which gave the carry a write to the ORCHESTRATOR and none here.
+The asymmetry is the point: a carry that could approve the proposal it is carrying would be a
+system asking itself for permission, and the human decision this whole lane exists to serve is
+the one recorded in this service.
+
 That bound is asserted here as intent, not as the control. change-manager's own scope table is
 the control, and `read` is the scope this program's credential should hold. This is what makes a
 mistake in this program fail before a request leaves it, and what keeps the bound true in a

@@ -254,7 +254,7 @@ def _run(records, root: Path, error: Exception | None = None):
 def test_an_empty_queue_is_a_clean_pass(checkout_root: Path) -> None:
     code, report = _run([], checkout_root)
     assert code == EXIT_OK
-    assert "0 approved, 0 prepared, 0 refused." in report
+    assert "0 approved, 0 prepared, 0 carried, 0 refused, 0 not carried." in report
 
 
 def test_a_refusal_is_a_finding(checkout_root: Path) -> None:
@@ -273,7 +273,7 @@ def test_one_refusal_does_not_stop_the_other_records(checkout_root: Path) -> Non
     code, report = _run([record(), record(change_record_id=78)], checkout_root)
     assert code == EXIT_FINDINGS
     assert report.count("[REFUSED]") == 2
-    assert "2 approved, 0 prepared, 2 refused." in report
+    assert "2 approved, 0 prepared, 0 carried, 2 refused, 0 not carried." in report
 
 
 def test_change_manager_being_unreadable_is_a_tool_failure_not_a_finding(
@@ -295,7 +295,9 @@ def test_a_missing_checkout_root_is_unusable_input(tmp_path: Path) -> None:
     assert "no checkout root" in out.getvalue()
 
 
-def test_the_pass_prints_the_payload_it_prepared(checkout_root: Path) -> None:
+def test_a_pass_that_was_not_asked_to_register_prints_the_payload(
+    checkout_root: Path,
+) -> None:
     import io
 
     rec = record()
@@ -313,9 +315,9 @@ def test_the_pass_prints_the_payload_it_prepared(checkout_root: Path) -> None:
     report = out.getvalue()
     assert code == EXIT_OK, report
     assert "[PREPARED]" in report
-    assert "1 approved, 1 prepared, 0 refused." in report
+    assert "1 approved, 1 prepared, 0 carried, 0 refused, 0 not carried." in report
     assert '"change_record_id": 77' in report or '"change_record_id":77' in report
-    assert "/review/intakes/new" in report
+    assert "not asked to (--register)" in report
 
 
 # ---------------------------------------------------------------------------------------
@@ -488,3 +490,150 @@ def test_a_malformed_base_url_is_a_tool_failure_not_a_traceback() -> None:
     source = HttpWorkRecordSource(base_url="https://host..example", token="t")
     with pytest.raises(ChangeManagerError):
         source.approved_work()
+
+
+# ---------------------------------------------------------------------------------------
+# Registering — ADR-0027
+# ---------------------------------------------------------------------------------------
+
+
+class _Writer:
+    """A stand-in for the orchestrator client that RECORDS what it was asked to do.
+
+    Counting the calls is the point: the property under test is not what the report says but
+    whether anything left the process, and a double that only returned a body could not tell a
+    pass that wrote nothing from one that wrote and reported badly.
+    """
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.payloads: list[dict] = []
+        self._error = error
+
+    def register_intake(self, payload: dict) -> dict:
+        self.payloads.append(payload)
+        if self._error is not None:
+            raise self._error
+        return {"id": "11111111-1111-1111-1111-111111111111"}
+
+
+def _run_with_writer(records, root: Path, writer, argv: list[str], runner=None):
+    import io
+
+    import work_carrier.cli as cli_module
+    import work_carrier.prepare as prepare_module
+
+    original = prepare_module.prepare
+    if runner is not None:
+        cli_module.prepare = lambda r, **kw: original(r, **kw, runner=runner)
+    try:
+        out = io.StringIO()
+        code = run(
+            ["--checkout-root", str(root), *argv],
+            source=_Source(records),
+            registrar=writer,
+            out=out,
+        )
+    finally:
+        cli_module.prepare = original
+    return code, out.getvalue()
+
+
+def test_a_bare_pass_writes_nothing_even_with_a_client_to_hand(checkout_root: Path) -> None:
+    """`--register` decides, not the presence of a client.
+
+    Keyed on the flag rather than on whether a credential happened to be configured, so "a bare
+    invocation writes nothing" is a property of the branch rather than of the environment the
+    caller set up. A writer is handed in here precisely so the test cannot pass by accident.
+    """
+    rec = record()
+    runner, _ = runner_returning(payload_for(rec))
+    writer = _Writer()
+    code, report = _run_with_writer([rec], checkout_root, writer, [], runner=runner)
+
+    assert code == EXIT_OK, report
+    assert writer.payloads == []
+    assert "not asked to (--register)" in report
+
+
+def test_registering_carries_the_emitters_payload_unedited(checkout_root: Path) -> None:
+    """The payload is what `orchestrator emit-intake-payload` produced, byte for byte.
+
+    That is the strongest available statement that the carry relaxes nothing: it is the same
+    command whose output a human pastes, so there is no second composition to diverge from it.
+    """
+    rec = record()
+    runner, _ = runner_returning(payload_for(rec))
+    writer = _Writer()
+    code, report = _run_with_writer([rec], checkout_root, writer, ["--register"], runner=runner)
+
+    assert code == EXIT_OK, report
+    assert writer.payloads == [payload_for(rec)]
+    assert "carried: revision 11111111-1111-1111-1111-111111111111" in report
+    assert "1 approved, 1 prepared, 1 carried, 0 refused, 0 not carried." in report
+
+
+def test_a_refused_record_is_never_registered(checkout_root: Path) -> None:
+    """The fixture package is not in the tamper-evident approval chain, so `prepare` refuses it.
+    Nothing that was refused may reach the orchestrator, whatever the pass was asked to do."""
+    writer = _Writer()
+    code, report = _run_with_writer([record()], checkout_root, writer, ["--register"])
+
+    assert code == EXIT_FINDINGS
+    assert writer.payloads == []
+    assert "[REFUSED]" in report
+
+
+def test_a_registration_failure_is_a_finding_and_does_not_stop_the_queue(
+    checkout_root: Path,
+) -> None:
+    """A refusal from the orchestrator needs a person, so it is exit 3 -- and per-record
+    isolation means the second record is still attempted rather than stranded behind the
+    first."""
+    from work_carrier.orchestrator_client import OrchestratorError
+
+    first = record()
+    second = record(change_record_id=78)
+    by_record = {str(rec.change_record_id): payload_for(rec) for rec in (first, second)}
+
+    def runner(command, **kwargs):
+        wanted = command[command.index("--change-record") + 1]
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(by_record[wanted]), stderr=""
+        )
+
+    writer = _Writer(error=OrchestratorError("the orchestrator answered 409"))
+    code, report = _run_with_writer(
+        [first, second], checkout_root, writer, ["--register"], runner=runner
+    )
+
+    assert code == EXIT_FINDINGS
+    assert len(writer.payloads) == 2
+    assert report.count("NOT CARRIED") == 2
+    assert "2 approved, 2 prepared, 0 carried, 0 refused, 2 not carried." in report
+
+
+def test_registering_with_no_credential_is_unusable_input(checkout_root: Path) -> None:
+    """Named rather than falling through to a pass that silently prints instead of writing.
+
+    The dangerous shape is a scheduled `--register` run whose credential fetch failed reporting
+    a clean pass: it would look identical to a queue that was carried.
+    """
+    import io
+
+    import pytest as _pytest
+
+    monkeypatch = _pytest.MonkeyPatch()
+    monkeypatch.delenv("WORK_CARRIER_ORCHESTRATOR_TOKEN", raising=False)
+    try:
+        out = io.StringIO()
+        code = run(
+            ["--checkout-root", str(checkout_root), "--register"],
+            source=_Source([record()]),
+            out=out,
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert code == EXIT_UNUSABLE
+    assert "WORK_CARRIER_ORCHESTRATOR_TOKEN is not set" in out.getvalue()
+    assert "[PREPARED]" not in out.getvalue()

@@ -1,30 +1,37 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Template for the work-carrier LaunchAgent (ADR-0026). Install with
+<!-- Template for the work-carrier LaunchAgent (ADR-0026, completed by ADR-0027). Install with
      scripts/install-work-carrier-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
      writes ~/Library/LaunchAgents/com.devon.work-carrier.plist.
 
-     No secrets live here: the wrapper fetches the read-scoped change-manager bearer from BWS at
-     runtime.
+     No secrets live here: the wrapper fetches the read-scoped change-manager bearer and the
+     orchestrator SYSTEM bearer from BWS at runtime, under two different identities.
+
+     THIS JOB REGISTERS INTAKES. It passes --register, so a pass writes to the orchestrator --
+     which the bare command does not. Before ADR-0027 the pass ended at a printed payload for a
+     person to paste, and that gate was found to be protecting a transcription rather than a
+     judgment: every intake in production was authored by an AI and typed into a form by a
+     person. What replaced it is attribution -- a machine-registered intake must name the
+     approved change record that caused it.
 
      NOT IN THE CHANGE WINDOW, and that is the setting worth arguing about. The landing lane runs
-     at 02:15–05:15 because its pass ends in something changing a running service and policy
-     declares the hours for that. This pass changes NOTHING — it reads a listing and prints a
-     payload — so there is nothing for a window to bound. It runs at 07:05 so the queue a human
-     approved yesterday is prepared before they look at it, and once, because the queue does not
-     move on its own between firings: nothing but a human approving another record can add to it.
+     at 02:15-05:15 because its pass ends in something changing a running service and policy
+     declares the hours for that. A registered intake changes nothing that is running: it creates
+     a package revision that cannot become work until a person approves a breakdown and then an
+     authority envelope. It runs at 07:05 so the queue a human approved yesterday is carried
+     before they look at it, and ONCE, because the queue does not move on its own between
+     firings: nothing but a person approving another record can add to it.
 
-     THE PASS ENDS AT A HUMAN, on purpose. Package intake requires an ActorRole.HUMAN actor and
-     human gates are browser-only, permanently (ADR-0006). ADR-0026 deliberately left the question
-     of whether a machine may ever register one undecided, so what this job produces is a payload
-     to paste, not an intake.
+     A SECOND PASS OVER AN UNCHANGED QUEUE IS A REPLAY, not a second intake. The payload's
+     idempotency key is derived from the record and its revision, so re-registering an intake
+     that already exists returns the same revision. That is what makes a schedule safe here.
 
-     RunAtLoad is false. There is nothing to catch up on: a pass prepares whatever is approved at
-     the moment it runs, and a record it missed is prepared by the next one unchanged.
+     RunAtLoad is false. There is nothing to catch up on: a pass carries whatever is approved at
+     the moment it runs, and a record it missed is carried by the next one unchanged.
 
-     The exit code is the report. launchd discards it, so read the log — 0 every approved record
-     was prepared or there were none, 1 the tool failed, 2 it could not use its inputs, 3 a record
-     could not be prepared and needs a person. A pass that prepares several records and exits 0 is
-     the lane working; the payloads are in the log, waiting to be pasted. -->
+     The exit code is the report. launchd discards it, so read the log -- 0 every approved record
+     was carried or there were none, 1 the tool failed, 2 it could not use its inputs, 3 a record
+     could not be prepared or the orchestrator refused to register it, and either needs a person.
+-->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -35,6 +42,7 @@
     <array>
         <string>/bin/bash</string>
         <string>__REPO_ROOT__/scripts/run-work-carrier.sh</string>
+        <string>--register</string>
     </array>
 
     <key>StartCalendarInterval</key>

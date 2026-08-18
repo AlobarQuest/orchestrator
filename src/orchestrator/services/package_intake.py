@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,6 +24,10 @@ _PROTOCOL_FIXTURE_SOURCE = "protocol_fixture"
 _VALID_STATUSES = frozenset({"approved"})
 _VALID_PROTOCOL_FIXTURE_STATUSES = frozenset({"closed"})
 _VERIFICATION_MODE = "caller_attested_cli_verified"
+# ADR-0027. The roles that may register an intake. `register_revision` defaults to
+# `HUMAN_REGISTRARS` and this is the only caller that widens it -- having first applied the
+# asymmetric rule below, which is stricter than membership in this set.
+INTAKE_REGISTRAR_ROLES: Final = frozenset({ActorRole.HUMAN, ActorRole.SYSTEM})
 
 
 @dataclass(frozen=True)
@@ -75,7 +79,7 @@ def register_package_intake(
     command: PackageIntakeCommand,
     actor: ActorContext,
 ) -> WorkPackageRevision:
-    _require_human(actor)
+    _require_intake_registrar(actor, command.change_record_id)
     if command.expected_version != 0:
         raise DomainError(
             "version_conflict",
@@ -141,6 +145,7 @@ def register_package_intake(
             change_record_id=command.change_record_id,
             actor_id=actor.actor_id,
             actor_role=actor.role,
+            admitted_registrar_roles=INTAKE_REGISTRAR_ROLES,
             expected_version=command.expected_version,
         )
     except DomainError as error:
@@ -195,12 +200,46 @@ def _protocol_fixture_error(command: PackageIntakeCommand) -> DomainError | None
     return None
 
 
-def _require_human(actor: ActorContext) -> None:
-    if not actor.actor_id or actor.role is not ActorRole.HUMAN:
+def _require_intake_registrar(actor: ActorContext, change_record_id: int | None) -> None:
+    """Who may register an intake, and what a machine must name when it does. ADR-0027.
+
+    THE ASYMMETRY IS THE WHOLE GUARD, so it is one function rather than two checks that could
+    drift apart. `_require_human` used to stand here and was protecting a transcription: every
+    intake in production was authored by an AI and typed into a form by a person, so the gate
+    asked a human to retype a machine's work. What replaces it is attribution.
+
+    - HUMAN: admitted, and `change_record_id` stays optional. The hand-registration escape hatch
+      must not break, and every intake before ADR-0026 names no record at all.
+    - SYSTEM: admitted, and `change_record_id` is REQUIRED. The fail-open this closes is a
+      machine-registered intake with no reference -- canonical work with no decision behind it,
+      which is the one thing the human act weakly prevented.
+    - Any other role, or no actor at all: refused. ADR-0026 gave OBSERVER leave to propose;
+      registering is a different verb, and the worker and verifier credentials were never
+      offered this and do not gain it here.
+
+    THE REFERENCE IS RECORDED ON TRUST, NOT VERIFIED. Nothing here asks change-manager whether
+    that record exists or was approved, and nothing should: it would put a synchronous read of a
+    foreign service inside the transaction that writes canonical work, so a service outage would
+    become a refusal to record work a person had already approved. The carrier reads only
+    approved items and is the component that already holds that answer, so the check belongs
+    there, before the call. A reader must not take this guard for validation of the record.
+
+    The requirement is blanket across `intake_purpose` rather than scoped to the executable
+    lane. A protocol fixture cannot create work units, so it is not the canonical work the rule
+    is about -- but nothing registers one by machine today, and a machine that ever does can
+    name its cause like any other.
+    """
+    if not actor.actor_id or actor.role not in INTAKE_REGISTRAR_ROLES:
         raise DomainError(
-            "human_actor_required",
-            "registration requires a registered human actor",
+            "intake_registrar_invalid",
+            "an intake is registered by a human or by the system actor",
             None,
+        )
+    if actor.role is not ActorRole.HUMAN and not change_record_id:
+        raise DomainError(
+            "intake_change_record_required",
+            "a machine-registered intake must name the approved change record that caused it",
+            "register it with the change record id, or register it as a human",
         )
 
 

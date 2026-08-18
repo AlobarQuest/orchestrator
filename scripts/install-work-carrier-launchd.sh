@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# Install the work-carrier LaunchAgent (ADR-0026).
+# Install the work-carrier LaunchAgent (ADR-0026, completed by ADR-0027).
 #
-# A SEPARATE OPERATOR STEP, like every schedule here -- but the least consequential of them. The
-# pass writes NOTHING, to either system: it reads change-manager's approved work proposals and
-# prints the intake payload for each. Installing it cannot cause a change; at worst it produces a
-# log nobody reads.
+# A SEPARATE OPERATOR STEP, like every schedule here -- and unlike the version this replaces, the
+# installed job WRITES. It passes --register, so each approved change-manager work proposal
+# becomes an orchestrator package intake with no person in between. Installing it opens a lane;
+# not installing it leaves a lane with no throughput, which is the trade to make deliberately.
 #
-# INSTALLING IT IS NOT THE WHOLE LANE, and the missing half is a person. Package intake requires
-# an ActorRole.HUMAN actor and human gates are browser-only, permanently (ADR-0006), so what this
-# job produces is a payload to paste into /review/intakes/new -- never an intake. ADR-0026
-# deliberately left the question of whether a machine may ever register one undecided.
+# WHAT IT CANNOT DO IS THE REASON THIS IS SAFE TO SCHEDULE. A registered intake is a package
+# revision, and a package revision cannot become work until a person approves a breakdown and
+# then an authority envelope -- both browser-only decisions (ADR-0006, narrowed by ADR-0027 for
+# intake alone). So a pass ends at a queue for a human, never at a running change. It also
+# registers only what change-manager reports as APPROVED, and only through the SYSTEM bearer,
+# which the orchestrator refuses unless the intake names the change record that caused it.
+#
+# THE JOB READS THE MAIN TREE'S WORKING COPY. `run-work-carrier.sh` resolves its repository root
+# from its own path and runs `$REPO_ROOT/.venv/bin/work-carrier`, so merging a change to this
+# program alters nothing on this machine until the main tree is pulled. No `uv sync` is needed
+# for an edit to an existing module; a NEW dependency does need one.
 #
 # Usage: scripts/install-work-carrier-launchd.sh
 set -euo pipefail
@@ -38,7 +45,7 @@ launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$TARGET"
 
 echo "installed $TARGET"
-echo "  runs at 07:05 local; log: $HOME/Library/Logs/work-carrier.log"
-echo "  it writes nothing: each approved record becomes a payload to paste at"
-echo "  https://sds.alobar.net/review/intakes/new"
-echo "  run one pass now: $REPO_ROOT/scripts/run-work-carrier.sh"
+echo "  runs at 07:05 local, with --register; log: $HOME/Library/Logs/work-carrier.log"
+echo "  each approved change-manager work proposal becomes an orchestrator package intake"
+echo "  inspect without writing: $REPO_ROOT/scripts/run-work-carrier.sh"
+echo "  one real pass now:       $REPO_ROOT/scripts/run-work-carrier.sh --register"

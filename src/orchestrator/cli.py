@@ -243,10 +243,10 @@ def register_unit(revision_id: str, data: DataOption, json_output: JsonOption = 
 @app.command(
     "intake-package",
     help=(
-        "LOCAL DEVELOPMENT ONLY -- cannot register an intake against production. The route it "
-        "calls requires a human actor and is machine-only at the production proxy, and no "
-        "standing human credential exists (ADR-0006). Against production, use "
-        "`emit-intake-payload` and paste the result into /review/intakes/new."
+        "Register a package intake. Against production this needs the SYSTEM credential and a "
+        "--change-record, because ADR-0027 requires a machine-registered intake to name the "
+        "approved change record that caused it. `work-carrier --register` is the lane that "
+        "does this on a schedule; a person registers through /review/intakes/new."
     ),
 )
 def intake_package(
@@ -255,14 +255,18 @@ def intake_package(
     idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
     json_output: JsonOption = False,
 ) -> None:
-    """Register a package intake. **Local development and protocol fixtures only.**
+    """Register a package intake, as whichever actor the configured credential resolves to.
 
-    Kept rather than deleted because it works against a local orchestrator, where a HUMAN actor is
-    available. It can never work against production: `register_package_intake` requires
-    `ActorRole.HUMAN`, and `POST /api/v1/package-intakes` sits on the machine-only router, so a
-    browser session's identity is stripped before arrival and a SYSTEM bearer is refused as
-    non-human. Human gates are browser-only, permanently -- see ADR-0006. The production path is
-    `emit-intake-payload` -> the `/review/intakes/new` form.
+    ADR-0027 admitted the SYSTEM actor to this route, so this command CAN work against
+    production -- with two conditions that are easy to miss. It must carry `--change-record`,
+    because a machine-registered intake that names no cause is refused; and the production proxy
+    must route `POST /api/v1/package-intakes` to the machine router, which it did not while the
+    route was human-only.
+
+    It has no `--change-record` option of its own and so is a LOCAL command in practice. The
+    production lane is `work-carrier --register`, which reads the approved record, builds this
+    same payload with `emit-intake-payload`, and registers it; a person uses the
+    `/review/intakes/new` form.
     """
 
     def operation() -> Any:
