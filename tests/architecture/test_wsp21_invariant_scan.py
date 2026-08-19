@@ -234,6 +234,12 @@ OUTBOUND_ALLOWLIST = {
     # path to that service at all, which is what keeps a carry from approving the proposal it is
     # carrying.
     Path("src/work_carrier/change_manager.py"),
+    # ADR-0028. `bump_proposer` is likewise a SEPARATE, scheduled program. It makes exactly two
+    # kinds of request here -- a listing of the work records it has already made, and one
+    # proposal -- and its own allowlist refuses every other path, including every route that
+    # could move a record's status. That bound is what keeps the producer on the far side of
+    # the human decision it exists to prompt.
+    Path("src/bump_proposer/change_manager.py"),
     # ADR-0027. The other half of the same program: the intake registration that completes the
     # carry. ONE write, `POST /api/v1/package-intakes`, enforced in code by `is_allowed_write`
     # and in tests by test_work_carrier_isolation.py. It composes no decision -- every rule about
