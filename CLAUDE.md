@@ -1142,6 +1142,16 @@ style of that module.
   would have left **two** calls for a second attempt and killed the unit permanently. An envelope
   is write-once and its approval cannot be taken back, so this number is one of the few that
   genuinely cannot be fixed later.
+  **CLOSED 2026-08-19 for the dependency-update lane, and the shape of the defect is the durable
+  part.** `intent-packages`' `approval-policy.toml` granted `max_llm_calls = 120` and its own
+  comment said so — *"120 rather than the profile default of 4"*. But the grant is a **CEILING on
+  what a package may DECLARE**, while the unit envelope is stamped from
+  `profiles/dependency_update.py::BUDGETS`, and that constant was **4**. Nothing compared them, so
+  every unit this lane emitted carried a thirtieth of the budget its own package had been approved
+  for. **A comment that NAMES a divergence is not a check**, and this one had named it for weeks.
+  The constant is 120 now and a test asserts the stamped envelope's budgets EQUAL the grant's
+  ceilings — equality rather than ordering, because `<=` passes against the very defect it would
+  exist to catch (intent-packages #72).
 
 - **Coolify stores an `is_literal` env value wrapped in single quotes and injects the STRIPPED
   form — so a write must send the RAW value, and `is_build_time` is rejected outright.** Two
@@ -2518,6 +2528,29 @@ style of that module.
   on `push:` that checks out with the secret and pushes a commit **touching
   `.github/workflows/**`**, which is the exact operation a token without Workflows:
   Read-and-write is rejected for. (Rewired and probed for all four, 2026-08-04, WS-P2.34.)
+  **THOSE TWO COUNTS WERE NEVER RECONCILED, AND THAT IS EXACTLY HOW A DEAD COPY SURVIVED TWO
+  WEEKS.** The bullet said seven repos hold it and, one line later, that the rewire covered "all
+  four". The three it did not name were `project-standards` (re-set at onboarding 2026-08-07) and
+  **`infraops-mcp-server` and `orchestrator`, both left on the 2026-07-14 token, which had been
+  revoked**. It surfaced on 2026-08-19 as the first dispatch to `infraops-mcp-server` since
+  2026-07-23 — i.e. the first since the rotation — dying at `actions/checkout` with
+  `fatal: could not read Username for 'https://github.com': terminal prompts disabled`. **Read that
+  message as an invalid credential, never as a missing permission**: a token that authenticates but
+  lacks repository access answers `403`, while a revoked or expired one is refused outright and git
+  falls back to prompting. Nothing was lost — checkout precedes the claim, so the unit never left
+  `ready` — but a run and a diagnosis were. Both were re-synced from BWS on 2026-08-19 and **all
+  seven now carry the current token**. When a bullet states a population and a smaller action over
+  it, reconcile the two numbers or the difference is invisible until it fails.
+  **Two probe traps, both hit that day.** (1) **`gh secret set --body -` writes the LITERAL string
+  `-`; stdin is read only when `--body` is omitted entirely** (`… | gh secret set NAME --repo R`).
+  The clobber was visible only because GitHub then masked every `-` in the job log, rendering
+  `astral-sh/setup-uv` as `astral***sh/setup***uv`. (2) **Since the repositories went public on
+  2026-08-17, `GET /repos/{owner}/{repo}` answers 200 unauthenticated, so a status-code sweep proves
+  nothing about a token's reach.** Read `.permissions.push` instead and run the unauthenticated and
+  garbage-token controls beside it — both answer "no permissions block", which is what makes
+  `push=true` mean something. So measured, the current token reaches all eight factory-adjacent
+  repositories with write, **`project-standards` included** — correcting this file's claim that it
+  was the one repository the PAT could not reach.
 
 - **The named-check evidence lane is closed to any criterion not declared `automated_check` — at
   INGESTION, not only in intent-packages' `factory verify` pre-check.** `record_named_check_evidence`
@@ -3332,3 +3365,49 @@ style of that module.
   serving both. This file already carried the two-identity rule for launchers; it applies to
   interactive `factory decompose` too, and reading it in one context did not prevent violating it in
   another an hour later.
+
+- **`npm install` and `npm ci` DISAGREE, and the target repository's named check runs the second —
+  so proving the mutator works is not proving the gate passes.** `npm install` resolves a workable
+  tree and writes a lockfile; `npm ci` installs that lockfile **strictly** and refuses it when a
+  peer range is unsatisfied. Measured on one tree seconds apart, 2026-08-19: `npm install` rc=0,
+  `npm ci` rc=1. So the dependency-update dry run — which proves a real diff, idempotency, moved pin
+  sites and a runner-honest verifier — passed on a tree the gate refuses, and the failure surfaced
+  only after two human approvals and a spent work-unit attempt. The subject was typescript
+  5.9.3 → 7.0.2 into `infraops-mcp-server`, refused by
+  `peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.67.0`; **no published
+  `typescript-eslint` lifts that ceiling, the `canary` tag included**, so the bump is unadoptable
+  rather than merely hard. TypeScript 7 itself compiles that codebase clean — the blocker was the
+  eslint toolchain, which is why the compiler-shaped checks all passed.
+  **Closed by naming `npm ci` in the npm verifier** (intent-packages #73): `dry_run_mutation`
+  executes the whole ordered list, so the refusal moved to authoring time — proven against the real
+  checkout, `mutation command failed: 'npm ci' exited 1`, with a positive control (typescript
+  5.9.2, inside the peer range) still ACCEPTED so the change is not one that refuses everything.
+  **Generalise past npm: the estate's dry-run rule says prove the mutator yields a diff and prove
+  the verifier executes tools. It does not say prove the TARGET REPOSITORY'S OWN GATE would pass,
+  and those are different commands.** Before trusting a dependency-update envelope, read the target
+  repo's named-check workflow and ask which command it installs with.
+
+- **A `work`-source change record's status is human-only, and no producer credential can move it.**
+  `src/bump_proposer/change_manager.py` is propose-and-read by construction — `/api/work-changes`
+  and `/api/items`, anchored so no `/api/items/{id}/…` verb matches — and change-manager's
+  `propose` scope refuses every status-moving route server-side whatever the client sends. That is
+  ADR-0028's human decision, not an oversight. The `deploy` source is different: it has a
+  `deploy-retirement` route whose closed vocabulary has exactly one member
+  (`pull_request_closed_unmerged`), because its outcome cannot be chosen — it takes a fact and lets
+  the server decide. **So retiring a `work` record whose bump turned out to be unadoptable is a
+  human click, and there is no machine path to it.** Verified 2026-08-19 on records 59/60/61.
+  Note also the credential lives in a BWS project the narrow `sds-operator` identity cannot read —
+  `bws` answers `404 Resource not found`, which reads like a missing secret rather than a denied
+  one. Use the broad identity for it; this is the two-identity rule again, in a third place.
+
+- **`commands/fail` is the VERIFIER's edge, and `revision_required` is a cul-de-sac for a unit you
+  intend to retire.** `(submitted → failed)` and `(verifying → failed)` are VERIFIER edges;
+  `(failed → cancelled)` is HUMAN; and **`(revision_required → cancelled)` is not a legal edge at
+  all** — from `revision_required` the only way out is `→ ready` under SYSTEM. So a unit whose work
+  is genuinely unachievable must be driven to `failed`, not left where a normal `/verify` on failing
+  deterministic evidence would put it. Record the observed named-check evidence FIRST — the
+  ingestion route accepts `expected_conclusion: "failure"` and records what GitHub actually
+  concluded under `observation` — then `commands/fail` with the reason, so the terminal state cites
+  an observation rather than an assertion. The cancel is the human's. (Verified 2026-08-19 on unit
+  `6bc89d79`, read from `kernel/transitions.py` and `api/routes.py::COMMAND_TARGETS` rather than
+  guessed.)
