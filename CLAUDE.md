@@ -3311,3 +3311,24 @@ style of that module.
   tolerates the new schema and the new one does not tolerate the old — was skipped three times in one
   afternoon without anything noticing. Earlier deploys were fine only because nothing needed a
   migration; that is luck, not a working practice.
+
+- **`factory decompose` NEEDS TWO BWS IDENTITIES IN ONE INVOCATION, and setting one ambient
+  `BWS_ACCESS_TOKEN` for both fails as a bare `http_error: HTTP 400` that names nothing.** Measured
+  2026-08-19. The orchestrator bearer lives in the `SDS Operator` project (narrow `sds-operator`
+  account, Keychain `BWS_ACCESS_TOKEN_SDS`); the Code/Infra Brain keys the enrichment step needs
+  live in the `brains` project, readable only by the broad account (Keychain
+  `BWS_ACCESS_TOKEN_VPS_BACKUP`). Export the narrow one for the whole run — the obvious thing to do,
+  since the API token needs it — and `bws secret get 750f737f…` answers **`404 Not Found`**, which
+  surfaces through the factory client as an HTTP 400 with no error envelope.
+  **The diagnosis cost six probes because every plausible cause was eliminated first:** the
+  orchestrator's own log showed only a 201 and two 200s and never the failing request; the
+  decomposition-proposals GET answers 200 by hand; `orchestrator conformance-claim` returns green;
+  and the brain API answers **401** for a missing, empty *or* garbage key — so an empty key was not
+  the mechanism either. The call sequence is `api.get_intake` → `client.conformance_claim` →
+  `enrichment_for_profile(..., client=brain_client)` → (only with `--submit`)
+  `api.propose_decomposition`, so a DRY run that fails has failed in the enrichment step.
+  **The fix is the shape `scripts/run-estate-landing.sh` already uses**: read each Keychain item
+  directly and give each override a distinct variable name, never one ambient `BWS_ACCESS_TOKEN`
+  serving both. This file already carried the two-identity rule for launchers; it applies to
+  interactive `factory decompose` too, and reading it in one context did not prevent violating it in
+  another an hour later.
