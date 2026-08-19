@@ -562,12 +562,18 @@ def create_intake(
 ) -> RedirectResponse:
     """Register a package intake from the `emit-intake-payload` JSON pasted into the form.
 
-    This is the only human-reachable intake path in production: the `/api/v1/package-intakes`
-    route requires a HUMAN actor but sits on an M2M-only router, and no HUMAN credential exists
-    (ADR-0006). It relaxes NOTHING -- the pasted JSON goes through the same
-    `PackageIntakeRegistration` validation and the same `register_package_intake` service as the
-    API route, so the `caller_attested_cli_verified` requirement, the `expected_version: 0`
-    requirement and the approved-package requirement all still hold.
+    This is the only HUMAN-reachable intake path in production, and since ADR-0027 it is no
+    longer the only intake path: a machine may register through `POST /api/v1/package-intakes`,
+    provided it names the approved change record that caused the work. That guard was protecting
+    a transcription -- the payload pasted here was authored by an AI every time -- so what
+    replaced it is attribution rather than a person retyping.
+
+    A person still needs this form, which is why it stays: no HUMAN credential exists (ADR-0006),
+    so the browser session is the only way to register an intake that names no cause. It relaxes
+    NOTHING -- the pasted JSON goes through the same `PackageIntakeRegistration` validation and
+    the same `register_package_intake` service as the API route, so the
+    `caller_attested_cli_verified` requirement, the `expected_version: 0` requirement and the
+    approved-package requirement all still hold.
     """
     _human(actor)
     _require_form(

@@ -229,12 +229,17 @@ OUTBOUND_ALLOWLIST = {
     # moment that has passed.
     Path("src/orchestrator/services/estate_pr_merge.py"),
     # ADR-0026. `work_carrier` is a SEPARATE program (ADR-0002's shape), out of process and on a
-    # schedule, so this is not the orchestrator speaking HTTP. It makes ONE request -- a listing
-    # of the work proposals a human approved in change-manager -- and holds no write path to
-    # either system, which is what makes "a record it cannot carry is left exactly as it was" a
-    # property of the program's shape rather than of a branch. The last step of the carry is a
-    # human paste, so there is nothing for it to push.
+    # schedule, so this is not the orchestrator speaking HTTP. It makes ONE request here -- a
+    # listing of the work proposals a human approved in change-manager -- and holds no write
+    # path to that service at all, which is what keeps a carry from approving the proposal it is
+    # carrying.
     Path("src/work_carrier/change_manager.py"),
+    # ADR-0027. The other half of the same program: the intake registration that completes the
+    # carry. ONE write, `POST /api/v1/package-intakes`, enforced in code by `is_allowed_write`
+    # and in tests by test_work_carrier_isolation.py. It composes no decision -- every rule about
+    # what may be registered is evaluated inside the orchestrator, in the transaction that
+    # records it -- and the payload it sends is the emitter's own bytes, unedited.
+    Path("src/work_carrier/orchestrator_client.py"),
     # ADR-0019 Increment 5b. `estate_lander` is a SEPARATE program (ADR-0002's shape), and its
     # egress is not the orchestrator's. It reads which changes the estate routed, asks the
     # orchestrator whether each may be landed, and relays the answer -- composing nothing, because

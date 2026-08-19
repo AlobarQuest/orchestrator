@@ -1,56 +1,73 @@
 #!/usr/bin/env bash
-# One carry pass: every approved change-manager work proposal becomes a ready orchestrator
-# intake payload, printed for a human to paste (ADR-0026).
+# One carry pass: every approved change-manager work proposal becomes an orchestrator package
+# intake (ADR-0026, completed by ADR-0027).
 #
-# THIS PASS WRITES NOTHING, to either system. It reads change-manager's approved work proposals
-# and runs `orchestrator emit-intake-payload` against the package each one names. There is no
-# write path in the program, so "a record it could not prepare is left exactly as it was" is a
-# property of its shape rather than of a branch that has to be reached correctly.
+# WHAT A PASS DOES DEPENDS ON ONE FLAG. Without `--register` it reads change-manager's approved
+# work proposals, runs `orchestrator emit-intake-payload` against the package each names, prints
+# the payloads, and writes NOTHING to either system. With `--register` it also registers each
+# prepared intake. The scheduled job passes `--register`; the bare form is how a person inspects
+# what would be registered without anything being.
 #
-# WHY THE LAST STEP IS A HUMAN AND NOT THIS SCRIPT. Package intake requires an `ActorRole.HUMAN`
-# actor, and human gates are browser-only, permanently (ADR-0006). ADR-0026 deliberately did NOT
-# decide whether a machine may ever register one -- that would be the first automated path into
-# canonical work, a standing-authority decision of ADR-0025's weight -- and said this work is the
-# evidence on which to make that decision rather than the making of it. So the pass ends with a
-# payload on stdout and a person pasting it into /review/intakes/new.
+# WHY THE LAST STEP IS NO LONGER A HUMAN PASTE. Intake registration used to require an
+# `ActorRole.HUMAN` actor. ADR-0027 removed that, having found the gate was protecting a
+# transcription rather than a judgment: every intake in production was authored by an AI and
+# typed into a form by a person. What replaced it is attribution -- a machine-registered intake
+# must name the approved change record that caused it, which this pass has and a paste did not.
+# ADR-0006 is narrowed, not overturned: the breakdown approval and the authority approval are
+# decisions and are still a person in a browser, so this pass ends at a queue for a human rather
+# than at a running change.
 #
-# WHY IT IS NOT IN THE CHANGE WINDOW. Nothing here changes anything, so there is nothing for a
-# window to bound. It runs in the morning so the queue a human approved yesterday is prepared
-# before they look at it.
+# WHY IT IS NOT IN THE CHANGE WINDOW. A registered intake changes nothing that is running: it
+# creates a package revision that cannot become work until a human approves a breakdown and then
+# an authority envelope. The window bounds acts on live services, and this is not one. It runs in
+# the morning so the queue a person approved yesterday is carried before they look at it.
 #
-# ONE CREDENTIAL, and it is the READ-scoped one. This program reads a listing; the `read` scope is
-# exactly that and change-manager refuses everything else to it. It must NOT reach for the full
-# bearer, which can approve a record -- a carry that could approve the proposal it is carrying
-# would be a system asking itself for permission.
-#
-# ONE BWS IDENTITY, unlike the landing lane's two: the only secret this pass needs lives in the
-# change-manager project, which the broad machine account reads. `sds-token.sh` is deliberately
-# NOT sourced -- it exports a narrow identity that cannot read this project, and sourcing it
-# alongside a default would make one ambient value stand for both identities, which is the failure
-# this estate already recorded on the launchers that do need two.
+# TWO BWS IDENTITIES, and each Keychain item is read DIRECTLY rather than through
+# `sds-token.sh`. That helper respects an already-set BWS_ACCESS_TOKEN, so sourcing it beside a
+# second `${BWS_ACCESS_TOKEN:-...}` default makes ONE ambient value stand for BOTH identities --
+# and then no value of it works, because exported broad the SDS project is denied and exported
+# narrow the change-manager project is. Under launchd nothing is exported and it works, so the
+# failure appears only in the shell an operator debugs from, naming BWS rather than the cause.
+# Each override below therefore has its own variable name.
+#   - the change-manager project, read by the BROAD machine account: the READ-scoped bearer,
+#     which enumerates approved records and can do nothing else. It must NOT reach for the full
+#     bearer, which can approve a record -- a carry that could approve the proposal it is
+#     carrying would be a system asking itself for permission.
+#   - the `SDS Operator` project, read by the narrow `sds-operator` account: the orchestrator
+#     SYSTEM bearer. ADR-0027 admits SYSTEM and HUMAN to intake registration and nothing else.
+#     Fetched ONLY when the arguments carry --register: it is a canonical-mutation credential,
+#     and a pass that cannot use it should not hold it. That also keeps the read-only invocation
+#     usable on a machine with no access to that project.
 #
 # THE VENV'S BIN GOES ON PATH, and that is a requirement rather than tidiness: the carry resolves
 # `orchestrator` from PATH to build each payload, and without it every record refuses with
 # `emitter_not_on_path` -- a clean refusal, but a whole pass of them.
 #
 # EXIT CODES, the whole interface a scheduled run has:
-#   0  every approved record was either prepared or there were none.
+#   0  every approved record was carried (or prepared, on a pass not asked to register), or
+#      there were none.
 #   1  the tool itself failed (a missing or unreadable credential, change-manager unreachable).
 #   2  the tool ran but could not use its inputs (no checkout root, no credential configured).
-#   3  something was found -- a record that could not be prepared, which needs a person.
+#   3  something was found -- a record that could not be prepared, or one the orchestrator
+#      refused to register. Either needs a person.
 #
-# A PREPARED RECORD IS NOT A FINDING. It is ordinary work waiting on the paste that IS the design,
-# and making it one would leave this control permanently red for doing its job -- which this
-# estate has now recorded itself doing four times.
+# A CARRIED RECORD IS NOT A FINDING, and neither is one merely prepared on a pass that was not
+# asked to register. Making either one would leave this control permanently red for doing its
+# job -- which this estate has now recorded itself doing four times.
 #
 # Usage:
-#   scripts/run-work-carrier.sh
+#   scripts/run-work-carrier.sh                # reports; writes nothing
+#   scripts/run-work-carrier.sh --register     # registers the intakes it prepared
+# Install as a scheduled job with:
+#   scripts/install-work-carrier-launchd.sh
 set -uo pipefail
 
-# The READ-scoped change-manager bearer: it enumerates change records and can do nothing else.
-# Probed against production 2026-08-12 by the landing lane, which holds the same secret: 200 on
-# the listing, 403 on approve and on deploy-observation.
+# BWS UUIDs (values fetched at runtime; never stored in this repo).
+# The READ-scoped change-manager bearer. Probed against production 2026-08-12 by the landing
+# lane, which holds the same secret: 200 on the listing, 403 on approve and on the observation.
 CHANGE_MANAGER_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
+# The orchestrator SYSTEM bearer, in the `SDS Operator` project.
+ORCHESTRATOR_SYSTEM_UUID="221a48d5-3f29-4898-b300-b4820140c880"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -81,6 +98,34 @@ fi
 if [ -z "${CHANGE_MANAGER_TOKEN:-}" ]; then
   echo "FATAL: could not read the change-manager credential from BWS" >&2
   exit 1
+fi
+
+# THE SYSTEM BEARER IS FETCHED ONLY FOR A PASS THAT WILL WRITE, and the gate is not tidiness. It
+# is a canonical-mutation credential, and a pass that cannot use it should not hold it. Fetching
+# it unconditionally also broke the read-only invocation this file's own header advertises: on
+# any machine that cannot read the `SDS Operator` project -- which is every machine but this one
+# -- `run-work-carrier.sh` with no arguments would exit 1 on a credential it was never going to
+# send. Inspecting what would be registered must not require the right to register it.
+_wants_register=0
+for _arg in "$@"; do
+  if [ "$_arg" = "--register" ]; then _wants_register=1; fi
+done
+
+if [ "$_wants_register" -eq 1 ]; then
+  SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
+    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
+  if [ -z "$SDS_IDENTITY" ]; then
+    echo "FATAL: no BWS identity for the orchestrator credential (Keychain service Claude)" >&2
+    exit 1
+  fi
+  if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
+    WORK_CARRIER_ORCHESTRATOR_TOKEN="$(_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
+    export WORK_CARRIER_ORCHESTRATOR_TOKEN
+  fi
+  if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
+    echo "FATAL: could not read the orchestrator system credential from BWS" >&2
+    exit 1
+  fi
 fi
 
 export PATH="$REPO_ROOT/.venv/bin:$PATH"
