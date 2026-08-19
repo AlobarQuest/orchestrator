@@ -3295,3 +3295,19 @@ style of that module.
   covered by `orchestrator-review`. That check is the difference between a safe deletion and
   silently removing a fallback nobody notices is gone.
   Pre-deletion backup: `/data/coolify/proxy/dynamic/.orchestrator.yaml.bak-adr0027`.
+
+- **A DEPLOY VERIFICATION THAT CHECKS HEALTH, DIGEST, REVISION LABEL AND SERVED SCHEMA STILL CANNOT
+  SEE THAT THE DATABASE IS BEHIND.** On 2026-08-19 HQ deployed three images (`#181`, `#182`, `#183`)
+  and ran **zero** migrations; production sat at `0026_adr19_estate_merge` while head was
+  `0028_adr26_change_record`, serving code that expected a column the database did not have. It
+  surfaced as a **bare HTTP 500** from `POST /api/v1/package-intakes` — because only `DomainError`
+  and `APIAuthenticationError` have registered handlers, a schema mismatch reaches the wire with no
+  diagnosis, and only the container log named it:
+  `psycopg.errors.UndefinedColumn: column work_package_revisions.change_record_id does not exist`.
+  **Add `alembic current` vs `alembic heads` to every deploy verification.** It is one command and
+  it is the only one of the five that can see this:
+  `docker exec <container> sh -c 'cd /app && .venv/bin/alembic current; .venv/bin/alembic heads'`.
+  The ordering rule already recorded here — migrate BEFORE the image swap, because the old container
+  tolerates the new schema and the new one does not tolerate the old — was skipped three times in one
+  afternoon without anything noticing. Earlier deploys were fine only because nothing needed a
+  migration; that is luck, not a working practice.
