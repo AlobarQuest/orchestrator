@@ -37,6 +37,9 @@ deploy-watcher = "deploy_watcher.cli:app"
 # ADR-0019 increment 5a. Shipped in increment 4 with a `main()` and no entry point, so
 # nothing could invoke it but `python -m`; "the producer gets a caller" starts here.
 change-proposer = "change_proposer.cli:main"
+# ADR-0028. The producer at the head of the work lane: a dependency bump the auto-merge
+# cascade refuses becomes a revision of a standing package and a work record for a person.
+bump-proposer = "bump_proposer.cli:main"
 # ADR-0019 increment 5b. The caller that asks the orchestrator to land what the estate has
 # routed and approved. It composes nothing: every term lives inside the orchestrator.
 estate-landing = "estate_lander.cli:main"
