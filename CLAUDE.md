@@ -512,7 +512,14 @@ style of that module.
   the authority approval as a **GUI click**, not a devtools `fetch()`. Use that form, NOT the
   generic "approve" button. Package **intake** is done by a browser `fetch()` to `POST
   /api/v1/package-intakes` through the `orchestrator-intake-human` forward-auth router (also
-  verified 2026-07-22). The earlier "no authority-approval form; pasted `fetch()` in devtools"
+  verified 2026-07-22).
+  **SUPERSEDED 2026-08-19 (ADR-0027): that router is DELETED and intake is no longer human-only.**
+  `POST /api/v1/package-intakes` now falls through to the M2M `orchestrator-api` router, so the
+  carrier registers as `orchestrator-system`. The human path is unaffected and was checked before
+  the deletion: the `/review` form posts to **`/review/intakes`**, not the API route, and keeps its
+  own forward-auth chain. Had it posted to the API route, deleting the router would have removed
+  the human escape hatch the asymmetric registrar guard exists to preserve.
+  The earlier "no authority-approval form; pasted `fetch()` in devtools"
   claim here is obsolete.
 
 - **Authority approval does NOT move the unit's state — `DRAFT → READY` is a separate SYSTEM
@@ -537,8 +544,8 @@ style of that module.
   `POST /review/decomposition-proposals/{id}/approve` (`web.py`, `_human` + CSRF) under the
   `orchestrator-review` router, which *does* carry the forward-auth chain. This is unlike intake
   and authority approval, which each have their own dedicated forward-auth `/api` router
-  (`orchestrator-intake-human`, `orchestrator-authority-approval-human`) and so *are* done by
-  browser `fetch`. A browser `401` on any orchestrator `/api` route means the endpoint is
+  (`orchestrator-authority-approval-human`; `orchestrator-intake-human` **existed until 2026-08-19
+  and was deleted under ADR-0027**) and so *are* done by browser `fetch`. A browser `401` on any orchestrator `/api` route means the endpoint is
   M2M-only, not that auth is down. (Verified 2026-07-17.)
 
 - **Driving a dispatch needs the M2M bearer tokens — fetch them, don't hunt.** The two
@@ -3274,3 +3281,17 @@ style of that module.
   costed at ~850 min/month against 3000 included, with `orchestrator` 89% of it — that constraint no
   longer exists, so the cadence should be re-decided on its merits rather than left sized for a
   limit that is gone.
+
+- **`POST /api/v1/package-intakes` was M2M-UNREACHABLE, so the merged code change alone was inert
+  until a Traefik router was deleted.** Measured 2026-08-19 with a control:
+  `GET /api/v1/status-ledger` answered **200** with the SYSTEM bearer while
+  `POST /api/v1/package-intakes` answered **302** to Authentik, because `orchestrator-intake-human`
+  (priority 230, exact `Path` + `Method`) forced that one route through the forward-auth chain.
+  ADR-0027 falsified that router's stated premise — its own comment said intake *"requires a
+  registered HUMAN actor"* — so the merge, the deletion and this correction are ONE operation.
+  **Check where the human form actually posts before deleting a human router.** Deleting this one
+  sends the path to the identity-stripping M2M router, which would have removed the human escape
+  hatch had the form used it. It does not: `templates/intake_new.html` posts to `/review/intakes`,
+  covered by `orchestrator-review`. That check is the difference between a safe deletion and
+  silently removing a fallback nobody notices is gone.
+  Pre-deletion backup: `/data/coolify/proxy/dynamic/.orchestrator.yaml.bak-adr0027`.
