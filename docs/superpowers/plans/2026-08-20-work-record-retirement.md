@@ -36,7 +36,33 @@ path between *the work finished* and the record that asked for it.
 May a machine retire a record a human approved? ADR-0028 deliberately keeps the record as the human
 decision and change-manager's `propose` scope refuses every status-moving route server-side.
 
-**There is a precedent and it should be copied rather than re-argued.** `app/deploy_retirement.py`
+**CORRECTED 2026-08-20, after this plan was first committed: the `deploy` source has solved BOTH
+directions and the `work` source has neither.** `app/deploy_retirement.py` (ADR-0019 inc 5b) closes
+a record whose pull request closed UNMERGED; `app/deploy_settlement.py` (**ADR-0022**) closes one
+whose landing SUCCEEDED. The success direction is the one this plan is about, so read
+`deploy_settlement.py` first — its opening paragraph describes the identical defect one source over:
+*"an approved record sits in the estate authorising a landing that is done — the mirror image of the
+closed-unmerged case … and the half nobody had."*
+
+**Two rules it states that this plan must answer, and the first one reframes open question 2.**
+
+*"WHY THE WATCHER AND NOT THE PRODUCER. ADR-0022. The producer's remit is what MAY happen; the
+watcher's is what DID."* Deploy gave the closure to the component that already held the fact, rather
+than to the one that would have had to go looking. The `work` lane has no watcher — so the question
+is not "`work_carrier` or a new producer" as a matter of taste, it is **which component already
+holds the completion fact, or whether one must exist**. Answer it against that rule.
+
+*"WHY THIS IS NOT A ROUTE OF ITS OWN, where retirement is."* A settlement needs no route because the
+server DERIVES the fact from coordinates already supplied; a retirement needs one because the fact is
+visible only to the caller. **change-manager has no orchestrator egress and cannot derive "the unit
+completed"** — so the work case is retirement-shaped even though its direction is settlement's. That
+is why the design below is a route, and the reason is now stated rather than assumed.
+
+Also carry ADR-0022's judgment about *strength*: it settles on `revision_confirmed` (production was
+asked) and refuses `rollout_unverified` (something merely looked green). The work analogue is below —
+completion, not settlement.
+
+**The retirement precedent still gives the SHAPE.** `app/deploy_retirement.py`
 already lets a producer retire a `deploy` record. Read its module docstring in full before designing
 anything; the load-bearing paragraph is *"WHY IT IS SAFE TO ACT ON A FACT THIS SERVICE CANNOT
 CHECK… The difference is DIRECTION."* A retirement can only ever remove permission, so a caller that
@@ -149,7 +175,8 @@ an inventory of guards is itself a vocabulary that drifts.
 ## Open questions for the human
 
 1. **Is an ADR warranted?** This grants a machine a status-moving verb over a human decision. It is
-   narrower than ADR-0019's and squarely inside its reasoning, so it may be an increment rather than
-   a new decision — but the answer belongs to Devon, not to the build session.
-2. **`work_carrier` or a new producer** (see P4).
+   narrower than ADR-0019's and squarely inside ADR-0022's reasoning, so it may be an increment
+   rather than a new decision — but the answer belongs to Devon, not to the build session.
+2. **Which component holds the completion fact** — `work_carrier`, a new watcher, or something else
+   (see P4, and answer it against ADR-0022's producer/watcher rule rather than by convenience).
 3. **Whether the orchestrator read answers settlement or only identity** (see P1).
