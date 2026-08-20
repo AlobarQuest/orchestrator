@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# One carry pass: every approved change-manager work proposal becomes an orchestrator package
-# intake (ADR-0026, completed by ADR-0027).
+# One pass over the work lane's approved queue, in TWO phases (ADR-0026/0027, and ADR-0029).
+#
+# RETIREMENT FIRST, then the carry. A record whose work the delivery system has already built is
+# retired (`work-watcher`); every record still waiting becomes an orchestrator package intake
+# (`work-carrier`). The order is load-bearing and the reason is at the invocation below.
 #
 # WHAT A PASS DOES DEPENDS ON ONE FLAG. Without `--register` it reads change-manager's approved
 # work proposals, runs `orchestrator emit-intake-payload` against the package each names, prints
@@ -43,21 +46,24 @@
 # `orchestrator` from PATH to build each payload, and without it every record refuses with
 # `emitter_not_on_path` -- a clean refusal, but a whole pass of them.
 #
-# EXIT CODES, the whole interface a scheduled run has:
-#   0  every approved record was carried (or prepared, on a pass not asked to register), or
-#      there were none.
-#   1  the tool itself failed (a missing or unreadable credential, change-manager unreachable).
-#   2  the tool ran but could not use its inputs (no checkout root, no credential configured).
-#   3  something was found -- a record that could not be prepared, or one the orchestrator
-#      refused to register. Either needs a person.
+# EXIT CODES, the whole interface a scheduled run has. BOTH phases report on this scale and
+# the WORST outcome is what the pass exits with -- see the ranking at the invocation below, which
+# deliberately does not use the `for rc in 1 3 2` fold that lets a 127 read as success.
+#   0  nothing needed doing, or everything that did was done.
+#   1  a tool itself failed (an unreadable credential, change-manager unreachable).
+#   2  a tool ran but could not use its inputs (no checkout root, no credential configured).
+#   3  something was found -- a record that could not be prepared, one the orchestrator refused
+#      to register, or one whose retirement change-manager refused. Each needs a person.
 #
 # A CARRIED RECORD IS NOT A FINDING, and neither is one merely prepared on a pass that was not
 # asked to register. Making either one would leave this control permanently red for doing its
-# job -- which this estate has now recorded itself doing four times.
+# job -- which this estate has now recorded itself doing four times. The same rule governs the
+# retirement phase: a record retired, a retirement replayed, a record whose work is merely
+# incomplete, and a record with no work at all are all ordinary and none is a finding.
 #
 # Usage:
-#   scripts/run-work-carrier.sh                # reports; writes nothing
-#   scripts/run-work-carrier.sh --register     # registers the intakes it prepared
+#   scripts/run-work-carrier.sh                # reports both phases; writes nothing
+#   scripts/run-work-carrier.sh --register     # retires what is built, registers what is not
 # Install as a scheduled job with:
 #   scripts/install-work-carrier-launchd.sh
 set -uo pipefail
@@ -68,6 +74,11 @@ set -uo pipefail
 CHANGE_MANAGER_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
 # The orchestrator SYSTEM bearer, in the `SDS Operator` project.
 ORCHESTRATOR_SYSTEM_UUID="221a48d5-3f29-4898-b300-b4820140c880"
+# ADR-0029. The PROPOSE-scoped change-manager bearer the retirement writes with, in the same
+# BWS project as the read bearer above and read by the same broad identity. The scope reaches
+# more than the retirement route; `work_watcher/change_manager.py` allowlists exactly one path,
+# which is where that bound is asserted and tested.
+CHANGE_MANAGER_PROPOSE_UUID="acccb346-4baa-43ec-a1d4-b4a400c048ee"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -128,5 +139,86 @@ if [ "$_wants_register" -eq 1 ]; then
   fi
 fi
 
+# THE RETIREMENT BEARER, and it is a THIRD secret rather than a third identity: the `propose`
+# credential lives in the change-manager BWS project the BROAD account already reads for the
+# listing above. Fetched only for a pass that will act, exactly as the SYSTEM bearer is -- a
+# reporting pass lists with the READ-scoped bearer it already has and cannot write anyway,
+# because the watcher's write is gated on its own flag and not on which credential is present.
+if [ "$_wants_register" -eq 1 ]; then
+  if [ -z "${WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}" ]; then
+    WORK_WATCHER_CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" \
+      "$BROAD_IDENTITY")"
+    export WORK_WATCHER_CHANGE_MANAGER_TOKEN
+  fi
+  if [ -z "${WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}" ]; then
+    echo "FATAL: could not read the change-manager propose credential from BWS" >&2
+    exit 1
+  fi
+else
+  # A reporting pass lists with the bearer it already has. It cannot write whatever it holds:
+  # the watcher's write is gated on `--retire`, not on which credential is present.
+  export WORK_WATCHER_CHANGE_MANAGER_TOKEN="$CHANGE_MANAGER_TOKEN"
+  # The orchestrator bearer was NOT fetched above, because a reporting pass is not entitled to
+  # the right to register. The watcher still needs a READ against the orchestrator to learn what
+  # is complete, so try for it here and SKIP the phase if this machine cannot read that project
+  # -- rather than reporting the whole pass unusable, which would break the read-only invocation
+  # this file's header promises works anywhere.
+  SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
+    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
+  if [ -n "$SDS_IDENTITY" ] && [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
+    WORK_CARRIER_ORCHESTRATOR_TOKEN="$(_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
+  fi
+fi
+export WORK_WATCHER_ORCHESTRATOR_TOKEN="${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}"
+
 export PATH="$REPO_ROOT/.venv/bin:$PATH"
+
+# THE WORST OUTCOME WINS, and an UNRECOGNISED code is the worst of all.
+#
+# The `for rc in 1 3 2` fold these launchers have used elsewhere lets any code outside {0,1,2,3}
+# -- 127 for a missing binary is the one that actually happens -- fall through to `exit 0`, so a
+# scheduled job that never ran reports a clean pass. Ranking instead means an unknown code is
+# both preserved and dominant.
+_rank() {
+  case "$1" in
+    0) echo 0 ;;
+    3) echo 1 ;;
+    1) echo 2 ;;
+    2) echo 3 ;;
+    *) echo 4 ;;
+  esac
+}
+
+WORST_CODE=0
+WORST_RANK=0
+_record_outcome() {
+  local rank
+  rank="$(_rank "$1")"
+  if [ "$rank" -gt "$WORST_RANK" ]; then
+    WORST_RANK="$rank"
+    WORST_CODE="$1"
+  fi
+}
+
+# THE WATCHER RUNS FIRST, and the order is load-bearing rather than cosmetic. The carry selects
+# on `status=approved`; a record whose work is already built is still in that queue until the
+# watcher retires it, so a carry that read the listing first would re-register a finished
+# revision and draw the very refusal ADR-0029 exists to remove -- then watch the record be
+# retired a second later, having reported a finding on the morning the defect was fixed.
+if [ -z "${WORK_WATCHER_ORCHESTRATOR_TOKEN:-}" ]; then
+  # Reporting pass on a machine that cannot read the orchestrator's project. Skipping is right
+  # and contributes NO exit code: nothing was found and nothing failed, so folding a 2 in here
+  # would report an unusable pass for a phase this invocation was never entitled to run.
+  echo "[SKIPPED]  the retirement phase needs an orchestrator credential this pass has not got"
+elif [ "$_wants_register" -eq 1 ]; then
+  "$REPO_ROOT/.venv/bin/work-watcher" --retire
+  _record_outcome "$?"
+else
+  "$REPO_ROOT/.venv/bin/work-watcher"
+  _record_outcome "$?"
+fi
+
 "$REPO_ROOT/.venv/bin/work-carrier" "$@"
+_record_outcome "$?"
+
+exit "$WORST_CODE"

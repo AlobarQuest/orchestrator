@@ -246,6 +246,18 @@ OUTBOUND_ALLOWLIST = {
     # what may be registered is evaluated inside the orchestrator, in the transaction that
     # records it -- and the payload it sends is the emitter's own bytes, unedited.
     Path("src/work_carrier/orchestrator_client.py"),
+    # ADR-0029. `work_watcher` is the work lane's watcher, a SEPARATE program that shares the
+    # carry's invocation and runs before it. TWO files, one route each. The change-manager
+    # one is the only MUTATING egress either work-lane program has, and it is one-directional
+    # by construction: its single route can reach `resolved` and no other status, so a bug
+    # here stops work a person approved and cannot cause any. Its scope permits more than its
+    # allowlist does -- `POST /api/deploy-changes` among it -- and
+    # test_work_watcher_isolation.py is the control for that gap.
+    Path("src/work_watcher/change_manager.py"),
+    # The other half: the read that establishes the fact. The completion rule is derived
+    # inside the orchestrator (ADR-0029) and relayed here, so this program composes nothing
+    # and writes nothing to the system that owns the work.
+    Path("src/work_watcher/orchestrator_client.py"),
     # ADR-0019 Increment 5b. `estate_lander` is a SEPARATE program (ADR-0002's shape), and its
     # egress is not the orchestrator's. It reads which changes the estate routed, asks the
     # orchestrator whether each may be landed, and relays the answer -- composing nothing, because

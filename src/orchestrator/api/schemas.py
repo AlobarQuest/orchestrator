@@ -1763,3 +1763,30 @@ class TraceabilityChainResponse(BaseModel):
 class TraceabilityResponse(BaseModel):
     anchor: TraceabilityAnchorResponse
     chains: list[TraceabilityChainResponse]
+
+
+class ChangeRecordUnitResponse(BaseModel):
+    """One unit the change record caused, and the state the verdict below was computed from."""
+
+    unit_id: UUID
+    unit_key: str
+    revision_id: UUID
+    state: str
+
+
+class ChangeRecordWorkResponse(BaseModel):
+    """What a change record caused, and whether it is done (ADR-0029).
+
+    `all_units_completed` is named for the narrow rule rather than for anything that reads as a
+    synonym for "settled": it is true when there is at least one unit and every one of them is
+    `completed`, and false for every other shape including a record nothing has carried yet.
+
+    The units are served ALONGSIDE the verdict rather than instead of it. A response model drops
+    every key it does not declare, so a consumer reading a field this model omits gets silence --
+    which is why the evidence for the verdict has to be declared here to travel at all.
+    """
+
+    change_record_id: int
+    revision_ids: list[UUID]
+    units: list[ChangeRecordUnitResponse]
+    all_units_completed: bool
