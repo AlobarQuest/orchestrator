@@ -2122,14 +2122,45 @@ style of that module.
   finalize step then correctly refused (the clean-clone control identified it as pre-existing in
   one step).
 
-- **`allowed_commands` is ADVISORY to the coding agent and MANDATORY at finalize.** It reaches the
-  agent only as prompt text (`cli.py` `_prompt`, `"\n".join(f"- {command}" …)`) — nothing blocks the
-  agent from running something else — and it becomes `verification_commands` at finalize
-  (`cli.py:839`), which re-executes the ordered list before checking `git status`. Two consequences:
-  an unlisted command the agent improvises may make a run *appear* to work, and a listed command
-  that cannot run makes finalize fail **however well the coding phase went**. Read this together
-  with the ordering rule (mutators first, verifier last) — the ordering matters because of the
-  re-execution, and every listed command must therefore be idempotent.
+- **`allowed_commands` is the coding agent's ENTIRE Bash vocabulary, ENFORCED — and it is also
+  re-executed at finalize. A command absent from the envelope is a command the agent CANNOT RUN.**
+  **CORRECTED 2026-08-20. This bullet said "ADVISORY to the coding agent … nothing blocks the agent
+  from running something else", and that is false; believing it cost a work unit.** The prompt half
+  is real and is probably how the error arose — the list does reach the agent as text (`cli.py:215`,
+  `"\n".join(f"- {command}" …)`) — but tracing the prompt and stopping there misses the second
+  consumer. `cli.py:495` calls `write_tool_policy(permissions.allowed_commands,
+  brief.authority.fingerprint, edit_allowed=…)`, whose docstring is *"Write the RUNNER-OWNED hook
+  policy and Claude settings outside the checkout"*: it writes `policy.json` (chmod 0400, outside
+  the checkout so the agent cannot reach it) plus a `settings.json`, and the reusable workflow hands
+  that to the Claude Code action as `settings: ${{ steps.prepare.outputs.settings_file }}`. The
+  authorizer is `command_policy.py::authorize_tool` — *"Return an allow decision only for an EXACT
+  Bash command or contained Edit path"* — matched per Bash call, failing closed on an unreadable
+  policy. Everything it enforces is derived from the envelope: the command list verbatim, the
+  authority fingerprint, and `edit_allowed` from `capabilities["repo.edit"]`. Nothing else feeds it,
+  and **this is not a dev-machine safety net** — the failure below happened on a GitHub-hosted
+  `ubuntu-latest`.
+  **The consequence the old bullet named does not exist, and the real one is its opposite.** There
+  is no hazard of "an unlisted command the agent improvises makes a run appear to work" — an
+  unlisted command cannot run. The hazard is that **an envelope which omits a command the work needs
+  makes the work impossible**, quietly: the agent reports being blocked and does what it still can.
+  Measured 2026-08-19 on zod 3.25.76 → 4.4.3 into `infraops-mcp-server`, a real migration where the
+  MCP SDK's `server.tool()` signature shifts under zod 4's types. The envelope omitted
+  `npm run build`; the agent attempted it, was refused by the hook, said so in its own summary, and
+  moved the pin — a two-file pull request whose three checks all failed, 35 turns, $0.32, and a
+  spent attempt on a write-once envelope that can never be given the missing command.
+  **So an envelope must be COMPLETE for the work it authorises**, which collides with the fact that
+  `factory decompose` proves a bump is possible by running the envelope's commands against a tree no
+  agent has touched. A command that can only pass AFTER the coding phase must therefore be granted
+  and excluded from authoring's dry run — `intent-packages`'
+  `dependency_update.py::commands_deferred_to_coding`, keyed on what a failure MEANS: `npm ci`
+  failing means the dependency graph cannot resolve, which no in-scope source change fixes, so
+  authoring runs it; a build failing is the assignment, so authoring does not. Deferring is not
+  exempting: finalize re-executes the whole list regardless.
+  **The finalize half of the old bullet stands unchanged.** `allowed_commands` becomes
+  `verification_commands` at finalize (`cli.py:839`), which re-executes the ordered list before
+  checking `git status` — so a listed command that cannot run makes finalize fail **however well the
+  coding phase went**, the ordering rule (mutators first, verifier last) matters because of that
+  re-execution, and every listed command must be idempotent.
 
 - **The reusable workflow syncs the RUNNER CLI, never the TARGET repository — so any envelope whose
   verifier needs project dependencies must authorize the sync itself.** `factory-runner.yml` runs
