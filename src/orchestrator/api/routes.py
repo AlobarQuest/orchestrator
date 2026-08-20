@@ -18,6 +18,7 @@ from orchestrator.api.schemas import (
     AdjudicationResponse,
     ApprovalCommand,
     ApprovalResponse,
+    ChangeRecordWorkResponse,
     ClaimCommand,
     ConsistencyReportResponse,
     ContextSnapshotResponse,
@@ -123,6 +124,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.change_record import ChangeRecordSource, HttpChangeRecordSource
+from orchestrator.services.change_record_work import work_for_change_record
 from orchestrator.services.claims import (
     authorize_retry,
     claim_unit,
@@ -1899,6 +1901,41 @@ def history(
 
 
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+@router.get(
+    "/change-records/{change_record_id}/work",
+    response_model=ChangeRecordWorkResponse,
+)
+def change_record_work_route(
+    change_record_id: int,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """ADR-0029: what work a change record caused, and whether all of it is done.
+
+    Authentication-only, no role gate, matching the other read surfaces. Read-only: it writes
+    nothing and decides nothing about the record, which lives in another service entirely.
+
+    A record with no revision answers 200 with an empty list and a false verdict rather than 404.
+    That is the ordinary state of every record a person has approved and the carry has not yet
+    reached, so a 404 would make the common case indistinguishable from a broken identifier.
+    """
+    answer = work_for_change_record(session, change_record_id)
+    return {
+        "change_record_id": answer.change_record_id,
+        "revision_ids": list(answer.revision_ids),
+        "units": [
+            {
+                "unit_id": unit.unit_id,
+                "unit_key": unit.unit_key,
+                "revision_id": unit.revision_id,
+                "state": unit.state,
+            }
+            for unit in answer.units
+        ],
+        "all_units_completed": answer.all_units_completed,
+    }
 
 
 @router.get("/traceability", response_model=TraceabilityResponse)

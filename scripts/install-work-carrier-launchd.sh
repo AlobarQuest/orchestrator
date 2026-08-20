@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the work-carrier LaunchAgent (ADR-0026, completed by ADR-0027).
+# Install the work-lane LaunchAgent (ADR-0026, completed by ADR-0027; two phases since ADR-0029).
 #
 # A SEPARATE OPERATOR STEP, like every schedule here -- and unlike the version this replaces, the
 # installed job WRITES. It passes --register, so each approved change-manager work proposal
@@ -13,10 +13,15 @@
 # registers only what change-manager reports as APPROVED, and only through the SYSTEM bearer,
 # which the orchestrator refuses unless the intake names the change record that caused it.
 #
+# THE PASS IS TWO PROGRAMS SINCE ADR-0029, and the retirement runs FIRST: a record whose work is
+# already built leaves the approved queue before the carry reads that queue. Both are gated on the
+# same `--register` the job passes, so installing this opens both halves of the lane at once.
+#
 # THE JOB READS THE MAIN TREE'S WORKING COPY. `run-work-carrier.sh` resolves its repository root
-# from its own path and runs `$REPO_ROOT/.venv/bin/work-carrier`, so merging a change to this
-# program alters nothing on this machine until the main tree is pulled. No `uv sync` is needed
-# for an edit to an existing module; a NEW dependency does need one.
+# from its own path and runs `$REPO_ROOT/.venv/bin/work-watcher` and `.../work-carrier`, so merging
+# a change to either program alters nothing on this machine until the main tree is pulled. No
+# `uv sync` is needed for an edit to an existing module; a NEW module or dependency does need one
+# -- and `work-watcher` is a new console script, so the first pull after ADR-0029 needs one.
 #
 # Usage: scripts/install-work-carrier-launchd.sh
 set -euo pipefail
@@ -26,10 +31,15 @@ LABEL="com.devon.work-carrier"
 TEMPLATE="$REPO_ROOT/scripts/$LABEL.plist"
 TARGET="$HOME/Library/LaunchAgents/$LABEL.plist"
 
-if [ ! -x "$REPO_ROOT/.venv/bin/work-carrier" ]; then
-  echo "FATAL: $REPO_ROOT/.venv/bin/work-carrier is missing — run 'uv sync' first" >&2
-  exit 1
-fi
+for _program in work-watcher work-carrier; do
+  if [ ! -x "$REPO_ROOT/.venv/bin/$_program" ]; then
+    # `work-watcher` is the one that will be missing after an ADR-0029 pull without `uv sync`: the
+    # launcher invokes it by absolute path, so its absence is a 127 the fold now surfaces rather
+    # than swallows -- but catching it here means catching it at install rather than at 07:05.
+    echo "FATAL: $REPO_ROOT/.venv/bin/$_program is missing — run 'uv sync' first" >&2
+    exit 1
+  fi
+done
 # The carry resolves `orchestrator` from PATH to build each payload. The wrapper puts the venv's
 # bin there, so a missing console script is a whole pass of `emitter_not_on_path` refusals --
 # clean, and useless. Named here so the failure is caught at install rather than at 07:05.

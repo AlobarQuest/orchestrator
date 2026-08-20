@@ -46,6 +46,10 @@ estate-landing = "estate_lander.cli:main"
 # ADR-0026. The carry: an approved change-manager work proposal becomes a ready orchestrator
 # intake payload. It writes to neither system -- the intake itself is a human act (ADR-0006).
 work-carrier = "work_carrier.cli:main"
+# ADR-0029. The work lane's watcher: an approved record whose work was built is retired.
+# Runs in the carry's pass and BEFORE it, so a finished record leaves the approved queue
+# before the carry reads that queue.
+work-watcher = "work_watcher.cli:main"
 
 [dependency-groups]
 dev = [
