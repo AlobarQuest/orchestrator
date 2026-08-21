@@ -2867,10 +2867,20 @@ style of that module.
   MACHINE.** `com.devon.deploy-watcher` (and its siblings) invoke
   `~/Projects/orchestrator/scripts/run-*.sh`, whose `REPO_ROOT` resolves off `BASH_SOURCE`, and the
   program is `$REPO_ROOT/.venv/bin/<name>`. The step that is easy to forget is `git pull` in the
-  main tree; **no `uv sync` is needed for a new module**, because the editable install is a bare
+  main tree; **no `uv sync` is needed for a new MODULE**, because the editable install is a bare
   `.pth` path append. The failure of forgetting is silent in the worst direction: the old launcher
   sets no new environment variable, the old CLI requires none, and the job keeps exiting 0 while
   the thing you shipped never runs.
+  **CORRECTED 2026-08-21: a new CONSOLE SCRIPT is the opposite case, and the original wording is
+  incomplete in the direction that bites.** A `[project.scripts]` entry does NOT appear from a
+  `git pull` — `uv sync` is mandatory — and the launchers invoke it by absolute path
+  (`$REPO_ROOT/.venv/bin/<name>`), so the pass hits a missing binary rather than an import error.
+  Measured on `work-watcher` (ADR-0029): after pulling `d5afa9b` the entry was declared in
+  `pyproject.toml` and absent from `.venv/bin` until a sync. Read the rule as **module → no sync,
+  bin entry → sync**, and check `[project.scripts]` in the diff rather than inferring from whether
+  files were added. The blast radius is now smaller than it was: the launchers' exit-code fold
+  surfaces a missing binary as 127 instead of folding it to 0, and the installer refuses at install
+  time — but only for lanes that have an installer.
 
 - **The deploy-change-record population is DEPENDABOT BY CONSTRUCTION, so anything keyed on a
   change record can never see factory work.** `src/change_proposer/` is the only writer of
@@ -3442,3 +3452,29 @@ style of that module.
   an observation rather than an assertion. The cancel is the human's. (Verified 2026-08-19 on unit
   `6bc89d79`, read from `kernel/transitions.py` and `api/routes.py::COMMAND_TARGETS` rather than
   guessed.)
+
+- **A full `--register` pass of the work lane exits 3 on change record 62, and that is NOT the
+  retirement lane failing.** Two defects wear the same `409 idempotency key belongs to a different
+  operation`, and only one is closed. **61's** — work done, nothing retired the record — is fixed by
+  ADR-0029. **62's** is different and cannot be fixed by it: the record was already carried, its work
+  is NOT complete, and `intent-packages`' `main` moved underneath it, so the fixed key
+  `work-carry-62-2` now carries a different `source_commit` than the intake it registered
+  (`10b13d47…` against a `main` of `155c50d…`). The retirement rule is keyed on COMPLETION, so the
+  watcher correctly reports 62 as `[WAITING]` and not as a finding — the acting pass touches only
+  records whose work is built. Backlog item **150** is the open half. Written down because a red
+  signal needs its reason beside it: without this, the next reader sees exit 3 the morning after the
+  fix shipped and concludes the lane is broken. Note the cause is new rather than incidental — it
+  exists *because* the lane now runs fast enough that `main` moves between a carry and its
+  completion (record 61's unit went registration → completed in **5m33s**).
+
+- **In `change-manager`, no test can see a missing `db.commit()`, and the estate's usual advice does
+  not save you.** This repository's standing rule is that a persistence assertion must re-read
+  through a DIFFERENT session, because `expire_all()` only defeats the identity map. That is correct
+  here and **insufficient in change-manager**: its `db` fixture hands the application the same
+  session the test asserts through, and its in-memory engine behind a `StaticPool` gives every
+  session ONE connection — so a flushed-but-uncommitted row is visible to a second `Session` as
+  well. The discriminating control there is a **file-backed** database plus a second session; only
+  that separates the connections. Found 2026-08-21 building ADR-0029's retirement route. Generalise
+  past this repo: before trusting "re-read through a different session", check what the fixture's
+  engine and pool actually give two sessions — the advice assumes connection isolation the fixture
+  may not provide.
