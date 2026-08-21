@@ -3500,3 +3500,25 @@ style of that module.
   Until then: **run anything that verifies a package approval from a MAIN tree**, and treat an
   approval-verification refusal seen from a worktree as unproven rather than as a finding about the
   package.
+
+- **DECISION (Devon, 2026-08-21): `resolved` is TERMINAL BY DESIGN in change-manager, and is not
+  going to be made recoverable.** It was considered and declined, so do not re-open it.
+  `resolved` means what it says — the issue is resolved, outside of any automation — and its whole
+  job is to tell change-manager the work is done and there is nothing further to worry about.
+  `reactivate` is guarded to `wontfix` (`app/transitions.py`) because reversing a *decline* is
+  natural and reversing a *thing that happened* is not.
+  **The recovery model is the world, not the machine.** In Devon's words: worst case something is
+  marked resolved in error, and *"whatever raised the signal raises it again, because it was not
+  resolved."* Read **signal** as the underlying condition — an outdated dependency is still
+  outdated, a drift is still drifted — not as the producer re-proposing. The condition persists and
+  resurfaces; a closed record does not make the world forget.
+  **Record 59 is NOT a counter-example, and an agent finding it will think it is.** It was
+  `resolved` by a mis-click during the window when `/review` offered no Approve button — a build-
+  session-identified defect, remediated in change-manager#65 — not a mode of operation. Recovering
+  it cost a hand-authored package revision 2 plus fresh approvals, which is the price of a defect
+  that no longer exists, not the standing cost of this design. Do not cite it to argue for
+  recoverability; that argument was made from it on 2026-08-21 and was wrong on both counts.
+  What IS true and worth knowing: because a `work`-lane record's identity is the package revision,
+  a re-proposal of the same bump replays onto the existing record (200) rather than minting a new
+  pending one. That is a fact about the producer's idempotency, not about whether the underlying
+  problem recurs.
