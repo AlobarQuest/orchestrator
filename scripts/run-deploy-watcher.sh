@@ -42,6 +42,25 @@ CHANGE_MANAGER_M2M_UUID="3b9503da-eb7e-401d-b4a7-b4a400c07efb"   # change-manage
 ORCHESTRATOR_OBSERVER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
+# Dependabot cascade stops at the merge, which is complete for a repository whose landing redeploys
+# a hosted application and incomplete for this one, whose code runs from a working copy here
+# (orchestrator ADR-0031). Best-effort by construction: the helper prints one `[activation]` line
+# and returns 0 whatever it finds, so this job is never gated on being able to update itself. It
+# re-execs this script when HEAD moves, because bash reads a script incrementally by byte offset
+# and the file it just rewrote is this one.
+_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
+if [ -r "$_SDS_ACTIVATE" ]; then
+    # shellcheck source=/dev/null
+    . "$_SDS_ACTIVATE"
+else
+    activate_checkout() {
+        echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
+             "this run is not activated"
+    }
+fi
+activate_checkout "$REPO_ROOT" "$0" "$@"
+
 
 # TWO BWS IDENTITIES, AND NEITHER CAN DO THE OTHER'S HALF. Measured 2×2 with controls on
 # 2026-08-13: the change-manager bearer lives in a project only the BROAD machine account can read,
