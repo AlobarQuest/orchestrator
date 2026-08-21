@@ -43,8 +43,9 @@ bump-proposer = "bump_proposer.cli:main"
 # ADR-0019 increment 5b. The caller that asks the orchestrator to land what the estate has
 # routed and approved. It composes nothing: every term lives inside the orchestrator.
 estate-landing = "estate_lander.cli:main"
-# ADR-0026. The carry: an approved change-manager work proposal becomes a ready orchestrator
-# intake payload. It writes to neither system -- the intake itself is a human act (ADR-0006).
+# ADR-0026, completed by ADR-0027. The carry: an approved change-manager work proposal becomes
+# a registered orchestrator package intake. It writes nothing to change-manager, and registers
+# only after asking the orchestrator whether the record has already caused work.
 work-carrier = "work_carrier.cli:main"
 # ADR-0029. The work lane's watcher: an approved record whose work was built is retired.
 # Runs in the carry's pass and BEFORE it, so a finished record leaves the approved queue

@@ -225,8 +225,25 @@ def test_carrying_a_revision_a_human_already_pasted_is_a_conflict(
     this increment exists to protect. `registered_by` conflates identity with content and is the
     half that could defensibly leave, which is a decision about a guard three callers share.
 
-    The carry reports it with the human act that ends it, because nothing marks a change record
-    carried -- so an approved record is re-attempted every pass until a person resolves it.
+    **NARROWED 2026-08-21, and the narrowing is why this test is still here.** The carry now asks
+    the orchestrator what a record has already caused and skips a record that has caused
+    anything, so the case it re-attempted every morning -- its OWN earlier registration -- can no
+    longer arise. This one still can, and for a reason that is the whole point: an intake
+    registered naming NO change record binds no revision to the record, so
+    `GET /api/v1/change-records/{id}/work` answers with an empty list and the carry correctly
+    reads that as "not yet carried". The paste is invisible to the question.
+
+    Which half of the estate that leaves open depends on WHAT was pasted. A person pasting the
+    payload this program prints is pasting a payload that names the cause -- `create_intake`
+    passes every field but the idempotency key through untouched -- so that revision IS bound to
+    the record and the carry now skips it. Only a revision registered by some other route,
+    naming no cause, reproduces what is pinned here, and for that record the carry is still
+    re-attempted every pass until a person resolves it.
+
+    So this pins a SERVICE behaviour, not a carry behaviour, and the service behaviour is
+    unchanged and still reachable -- by the carry in the narrow case above, and by any other
+    caller. A guard that one caller has stopped reaching is not the same as a guard that is
+    wrong.
     """
     register_package_intake(migrated_session, intake_command(), human_actor())
     migrated_session.commit()

@@ -254,7 +254,9 @@ def _run(records, root: Path, error: Exception | None = None):
 def test_an_empty_queue_is_a_clean_pass(checkout_root: Path) -> None:
     code, report = _run([], checkout_root)
     assert code == EXIT_OK
-    assert "0 approved, 0 prepared, 0 carried, 0 refused, 0 not carried." in report
+    assert (
+        "0 approved, 0 already carried, 0 prepared, 0 carried, 0 refused, 0 not carried." in report
+    )
 
 
 def test_a_refusal_is_a_finding(checkout_root: Path) -> None:
@@ -273,7 +275,9 @@ def test_one_refusal_does_not_stop_the_other_records(checkout_root: Path) -> Non
     code, report = _run([record(), record(change_record_id=78)], checkout_root)
     assert code == EXIT_FINDINGS
     assert report.count("[REFUSED]") == 2
-    assert "2 approved, 0 prepared, 0 carried, 2 refused, 0 not carried." in report
+    assert (
+        "2 approved, 0 already carried, 0 prepared, 0 carried, 2 refused, 0 not carried." in report
+    )
 
 
 def test_change_manager_being_unreadable_is_a_tool_failure_not_a_finding(
@@ -315,7 +319,9 @@ def test_a_pass_that_was_not_asked_to_register_prints_the_payload(
     report = out.getvalue()
     assert code == EXIT_OK, report
     assert "[PREPARED]" in report
-    assert "1 approved, 1 prepared, 0 carried, 0 refused, 0 not carried." in report
+    assert (
+        "1 approved, 0 already carried, 1 prepared, 0 carried, 0 refused, 0 not carried." in report
+    )
     assert '"change_record_id": 77' in report or '"change_record_id":77' in report
     assert "not asked to (--register)" in report
 
@@ -502,12 +508,36 @@ class _Writer:
 
     Counting the calls is the point: the property under test is not what the report says but
     whether anything left the process, and a double that only returned a body could not tell a
-    pass that wrote nothing from one that wrote and reported badly.
+    pass that wrote nothing from one that wrote and reported badly. The same applies to the
+    READ this client now performs first -- `asked` is what proves a pass consulted the
+    orchestrator at all, which is a different question from what it did with the answer.
+
+    `carried` maps a change record id to what the orchestrator says it has already caused. The
+    DEFAULT IS EMPTY, i.e. never carried, so every test written before that read existed still
+    exercises the path it was written for.
     """
 
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        error: Exception | None = None,
+        *,
+        carried: dict[int, tuple[str, ...]] | None = None,
+        read_error: Exception | None = None,
+        read_errors: dict[int, Exception] | None = None,
+    ) -> None:
         self.payloads: list[dict] = []
+        self.asked: list[int] = []
         self._error = error
+        self._carried = carried or {}
+        self._read_error = read_error
+        self._read_errors = read_errors or {}
+
+    def carried_revisions(self, change_record_id: int) -> tuple[str, ...]:
+        self.asked.append(change_record_id)
+        failure = self._read_errors.get(change_record_id, self._read_error)
+        if failure is not None:
+            raise failure
+        return self._carried.get(change_record_id, ())
 
     def register_intake(self, payload: dict) -> dict:
         self.payloads.append(payload)
@@ -569,7 +599,9 @@ def test_registering_carries_the_emitters_payload_unedited(checkout_root: Path) 
     assert code == EXIT_OK, report
     assert writer.payloads == [payload_for(rec)]
     assert "carried: revision 11111111-1111-1111-1111-111111111111" in report
-    assert "1 approved, 1 prepared, 1 carried, 0 refused, 0 not carried." in report
+    assert (
+        "1 approved, 0 already carried, 1 prepared, 1 carried, 0 refused, 0 not carried." in report
+    )
 
 
 def test_a_refused_record_is_never_registered(checkout_root: Path) -> None:
@@ -609,7 +641,9 @@ def test_a_registration_failure_is_a_finding_and_does_not_stop_the_queue(
     assert code == EXIT_FINDINGS
     assert len(writer.payloads) == 2
     assert report.count("NOT CARRIED") == 2
-    assert "2 approved, 2 prepared, 0 carried, 0 refused, 2 not carried." in report
+    assert (
+        "2 approved, 0 already carried, 2 prepared, 0 carried, 0 refused, 2 not carried." in report
+    )
 
 
 def test_registering_with_no_credential_is_unusable_input(checkout_root: Path) -> None:
@@ -811,3 +845,285 @@ def test_an_ordinary_refusal_carries_no_guidance(checkout_root: Path) -> None:
 
     assert code == EXIT_FINDINGS
     assert "resolving the record in change-manager" not in report
+
+
+# ---------------------------------------------------------------------------------------
+# Not carrying what has already been carried
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_record_whose_work_already_exists_is_not_registered_again(
+    checkout_root: Path,
+) -> None:
+    """The whole increment, at the surface that matters: NOTHING IS POSTED.
+
+    Asserted on `payloads` rather than on the report, because the report is what a predicate
+    returning the right answer produces and the write is what the defect actually was. A pass
+    that printed `[CARRIED]` and registered anyway would satisfy every assertion about the text.
+    """
+    rec = record()
+    runner, seen = runner_returning(payload_for(rec))
+    writer = _Writer(carried={rec.change_record_id: ("7e597f88-6e35-4b1e-99f1-67386d11bc53",)})
+    code, report = _run_with_writer([rec], checkout_root, writer, ["--register"], runner=runner)
+
+    assert code == EXIT_OK, report
+    assert writer.payloads == []
+    assert writer.asked == [rec.change_record_id]
+    assert "[CARRIED]" in report
+    assert "7e597f88-6e35-4b1e-99f1-67386d11bc53" in report
+    assert (
+        "1 approved, 1 already carried, 0 prepared, 0 carried, 0 refused, 0 not carried." in report
+    )
+    assert seen == [], "a record already carried needs no payload, so the emitter is not run"
+
+
+def test_a_record_with_no_work_yet_is_carried(checkout_root: Path) -> None:
+    """The other direction, and it is the one an inverted predicate breaks SILENTLY.
+
+    An empty `revision_ids` is the ordinary answer for every record a person approved and this
+    program has not reached. Read as "already carried" it would stop the lane carrying anything
+    at all, while reporting a clean pass every morning -- so the empty case needs its own
+    assertion that the POST HAPPENED, not merely that nothing was skipped.
+    """
+    rec = record()
+    runner, _ = runner_returning(payload_for(rec))
+    writer = _Writer(carried={rec.change_record_id: ()})
+    code, report = _run_with_writer([rec], checkout_root, writer, ["--register"], runner=runner)
+
+    assert code == EXIT_OK, report
+    assert writer.payloads == [payload_for(rec)]
+    assert "[CARRIED]" not in report
+    assert "1 approved, 0 already carried, 1 prepared, 1 carried" in report
+
+
+def test_a_carried_record_is_skipped_before_its_package_is_read(tmp_path: Path) -> None:
+    """The ORDER, pinned: it asks before it prepares, not before it registers.
+
+    This record's checkout does not exist, so a pass that prepared first would refuse it
+    `package_not_on_disk` and exit 3 -- a finding about a record whose work the delivery system
+    is already building, and about a payload nobody wanted. It is not a synthetic case: the same
+    record reports exactly that from a git worktree, where the emitter cannot resolve the sibling
+    `intent-packages` checkout it verifies approvals with.
+    """
+    (tmp_path / "somewhere").mkdir()
+    rec = record()
+    writer = _Writer(carried={rec.change_record_id: ("7e597f88",)})
+    code, report = _run_with_writer([rec], tmp_path, writer, ["--register"])
+
+    assert code == EXIT_OK, report
+    assert writer.payloads == []
+    assert "[CARRIED]" in report
+    assert "[REFUSED]" not in report
+
+
+def test_a_record_the_pass_could_not_ask_about_is_a_finding_and_is_not_carried(
+    checkout_root: Path,
+) -> None:
+    """Fail closed, and the queue behind it is still carried.
+
+    A lane that cannot tell whether it has already acted must not act -- so the unanswerable
+    record is a finding AND is not registered. Per-record isolation is the second half: one
+    record nobody can answer about must not strand the rest, which is the property every other
+    loop in this program already has.
+    """
+    from work_carrier.orchestrator_client import OrchestratorError
+
+    first = record()
+    second = record(change_record_id=78)
+    by_record = {str(rec.change_record_id): payload_for(rec) for rec in (first, second)}
+
+    def runner(command, **kwargs):
+        wanted = command[command.index("--change-record") + 1]
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(by_record[wanted]), stderr=""
+        )
+
+    writer = _Writer(
+        read_errors={first.change_record_id: OrchestratorError("the orchestrator is unreachable")}
+    )
+    code, report = _run_with_writer(
+        [first, second], checkout_root, writer, ["--register"], runner=runner
+    )
+
+    assert code == EXIT_FINDINGS
+    assert writer.asked == [first.change_record_id, second.change_record_id]
+    assert writer.payloads == [payload_for(second)], (
+        "the record nobody could answer about is not registered, and the one after it still is"
+    )
+    assert "[FINDING]" in report
+    assert "2 approved, 0 already carried, 1 prepared, 1 carried" in report
+
+
+def test_a_bare_pass_does_not_ask_either(checkout_root: Path) -> None:
+    """`--register` decides the READ as well as the write.
+
+    The read exists to prevent this program's own write, so a pass that writes nothing has
+    nothing to prevent -- and requiring the orchestrator credential for a reporting pass would
+    break the read-only invocation the launcher advertises works on any machine.
+    """
+    rec = record()
+    runner, _ = runner_returning(payload_for(rec))
+    writer = _Writer(carried={rec.change_record_id: ("7e597f88",)})
+    code, report = _run_with_writer([rec], checkout_root, writer, [], runner=runner)
+
+    assert code == EXIT_OK, report
+    assert writer.asked == []
+    assert writer.payloads == []
+    assert "not asked to (--register)" in report
+
+
+# ---------------------------------------------------------------------------------------
+# What the client does with the answer to the read
+# ---------------------------------------------------------------------------------------
+
+
+def _work_handler(body, *, status: int = 200):
+    import httpx
+
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        return httpx.Response(status, json=body)
+
+    return handler, seen
+
+
+def test_the_read_asks_the_route_for_the_record_and_relays_what_it_says() -> None:
+    """The path is composed from the record id, and the ids come back unchanged."""
+    handler, seen = _work_handler(
+        {
+            "change_record_id": 62,
+            "revision_ids": ["7e597f88-6e35-4b1e-99f1-67386d11bc53"],
+            "units": [{"state": "submitted"}],
+            "all_units_completed": False,
+        }
+    )
+
+    assert _client(handler).carried_revisions(62) == ("7e597f88-6e35-4b1e-99f1-67386d11bc53",)
+    assert seen == [("GET", "/api/v1/change-records/62/work")]
+
+
+def test_an_empty_answer_is_not_carried_rather_than_an_absence() -> None:
+    """A record the orchestrator has never seen answers 200 with an empty list, not 404.
+
+    Measured against production: change record 99 and an id nothing has ever used both answer
+    that way. So there is no not-found case for this client to distinguish, and an empty tuple
+    is the ordinary answer rather than a failure to get one.
+    """
+    handler, _ = _work_handler(
+        {"change_record_id": 99, "revision_ids": [], "units": [], "all_units_completed": False}
+    )
+
+    assert _client(handler).carried_revisions(99) == ()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param({"change_record_id": 62, "units": []}, id="key-absent"),
+        pytest.param({"revision_ids": None}, id="key-null"),
+        pytest.param({"revision_ids": "7e597f88"}, id="key-not-a-list"),
+        pytest.param({"revision_ids": 1}, id="key-a-scalar"),
+    ],
+)
+def test_an_answer_that_does_not_carry_the_revision_ids_is_a_finding(body) -> None:
+    """NEVER "not carried" -- the direction of this failure is the whole point of the check.
+
+    A FastAPI `response_model` DROPS every key it does not declare, so a field that stopped
+    being served arrives as ABSENCE rather than as an error. Read as an empty list, that puts
+    this lane silently back to registering over its own work every morning, which is the defect
+    the read exists to end. The watcher is deliberately lenient on the same key because there it
+    is decoration for a reader; here it is the answer.
+    """
+    from work_carrier.orchestrator_client import OrchestratorError
+
+    handler, _ = _work_handler(body)
+    with pytest.raises(OrchestratorError) as error:
+        _client(handler).carried_revisions(62)
+    assert "already caused" in str(error.value)
+
+
+def test_a_non_2xx_answer_to_the_read_is_a_finding_not_an_empty_list() -> None:
+    """Same direction, one layer out: a refusal must not read as "nothing has been carried"."""
+    from work_carrier.orchestrator_client import OrchestratorError
+
+    handler, _ = _work_handler({"detail": "Not Found"}, status=404)
+    with pytest.raises(OrchestratorError) as error:
+        _client(handler).carried_revisions(62)
+    assert "404" in str(error.value)
+
+
+def test_a_read_that_cannot_be_sent_names_the_type_and_not_the_request() -> None:
+    """An httpx error carries the request, and a diagnostic that prints it leaks the bearer."""
+    import httpx
+
+    from work_carrier.orchestrator_client import OrchestratorError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("nope", request=request)
+
+    with pytest.raises(OrchestratorError) as error:
+        _client(handler).carried_revisions(62)
+    assert "ConnectError" in str(error.value)
+    assert "token" not in str(error.value)
+
+
+def test_a_read_answer_that_is_not_an_object_is_a_finding() -> None:
+    from work_carrier.orchestrator_client import OrchestratorError
+
+    handler, _ = _work_handler(["7e597f88"])
+    with pytest.raises(OrchestratorError):
+        _client(handler).carried_revisions(62)
+
+
+def test_nothing_is_posted_for_a_carried_record_through_the_real_client(
+    checkout_root: Path,
+) -> None:
+    """The same property as the double's, asserted where a request would actually leave.
+
+    A test double can only prove the CLI called it the way the test expected; this one runs the
+    real `OrchestratorClient` over a mock transport and reads what was sent. It is the control
+    for the double itself -- if `_Writer` and the client ever disagree about what "carried"
+    means, one of these two tests reddens.
+    """
+    import io
+
+    import httpx
+
+    from work_carrier.orchestrator_client import OrchestratorClient
+
+    rec = record()
+    sent: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append((request.method, request.url.path))
+        return httpx.Response(
+            200,
+            json={
+                "change_record_id": rec.change_record_id,
+                "revision_ids": ["7e597f88-6e35-4b1e-99f1-67386d11bc53"],
+                "units": [{"state": "submitted"}],
+                "all_units_completed": False,
+            },
+        )
+
+    client = OrchestratorClient(
+        "token",
+        "orchestrator-system",
+        base_url="https://example.invalid",
+        transport=httpx.MockTransport(handler),
+    )
+    out = io.StringIO()
+    code = run(
+        ["--checkout-root", str(checkout_root), "--register"],
+        source=_Source([rec]),
+        registrar=client,
+        out=out,
+    )
+
+    assert code == EXIT_OK, out.getvalue()
+    assert sent == [("GET", f"/api/v1/change-records/{rec.change_record_id}/work")], (
+        "the read is the only request a carried record produces; a POST here is the defect"
+    )
+    assert "[CARRIED]" in out.getvalue()

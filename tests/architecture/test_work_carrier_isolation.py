@@ -16,10 +16,17 @@ by hand. There is no second path to diverge because there is no second path.
 intake it prepared, so the claim this file used to make -- that no code here could write at all
 -- is no longer true and is not weakened into prose. What replaces it is narrower and checkable:
 change-manager is still read-only (`HttpWorkRecordSource` has exactly one public method, and it
-is a read), and the orchestrator surface is exactly `POST /api/v1/package-intakes`. So "a record
-the carry could not PREPARE is left exactly as it was" survives as a property of the program's
-shape -- the write happens only after a payload the emitter built and this program re-checked --
-and "a record it could not prepare is never registered" is the behaviour test one directory over.
+is a read), and the orchestrator WRITE surface is exactly `POST /api/v1/package-intakes`. So "a
+record the carry could not PREPARE is left exactly as it was" survives as a property of the
+program's shape -- the write happens only after a payload the emitter built and this program
+re-checked -- and "a record it could not prepare is never registered" is the behaviour test one
+directory over.
+
+**AND THE ORCHESTRATOR SURFACE IS NO LONGER WRITE-ONLY.** Since 2026-08-21 the carry also READS
+`GET /api/v1/change-records/{id}/work`, to find out whether the record it is about to carry has
+already been carried. That is a second route and a second allowlist, pinned here the same way:
+two predicates, neither of which can satisfy the other, so a read allowlist that admitted the
+write route -- or the reverse -- reddens rather than quietly opening a surface nobody decided on.
 """
 
 from __future__ import annotations
@@ -31,7 +38,11 @@ import pytest
 
 from work_carrier.change_manager import ForbiddenEndpointError, HttpWorkRecordSource, is_allowed
 from work_carrier.orchestrator_client import ForbiddenEndpointError as ForbiddenWriteError
-from work_carrier.orchestrator_client import OrchestratorClient, is_allowed_write
+from work_carrier.orchestrator_client import (
+    OrchestratorClient,
+    is_allowed_read,
+    is_allowed_write,
+)
 
 CARRIER = Path("src/work_carrier")
 ORCHESTRATOR = Path("src/orchestrator")
@@ -44,6 +55,10 @@ ALLOWED_TOP_LEVEL = {
     "json",
     "os",
     "pathlib",
+    # For the read allowlist's anchored path template, the same shape the watcher's uses. A
+    # membership test would need no regex, but the path carries an id, so what has to be
+    # asserted is a TEMPLATE -- and a hand-rolled split-and-check is a parser nobody reviews.
+    "re",
     "subprocess",
     "sys",
     "typing",
@@ -124,14 +139,43 @@ def test_the_orchestrator_write_surface_is_one_route_and_no_more() -> None:
         assert not is_allowed_write(forbidden), forbidden
 
 
-def test_the_carrier_registers_and_can_do_nothing_else_to_the_orchestrator() -> None:
-    """One public write method, named. A second would be a surface nobody decided to open."""
+def test_the_orchestrator_read_surface_is_one_route_and_no_more() -> None:
+    """The read's own allowlist, and it may not admit the write route either.
+
+    Anchored, so a record id cannot compose a path to somewhere else: a traversal segment, a
+    trailing path, or a sibling route under the same prefix all have to fail.
+    """
+    assert is_allowed_read("/api/v1/change-records/62/work")
+    for forbidden in (
+        "/api/v1/change-records/62/work/",
+        "/api/v1/change-records/62/work/units",
+        "/api/v1/change-records/62",
+        "/api/v1/change-records/62/../../work-units",
+        "/api/v1/change-records//work",
+        "/api/v1/package-intakes",
+        "/api/v1/work-units/1/evidence-pack",
+    ):
+        assert not is_allowed_read(forbidden), forbidden
+
+
+def test_neither_allowlist_can_satisfy_the_other() -> None:
+    """Two predicates rather than one path check, asserted rather than described.
+
+    A single allowlist shared by both verbs would let the read's route be POSTed to and the
+    write's be GOT -- surfaces nobody decided to open, and each invisible from the other side.
+    """
+    assert not is_allowed_write("/api/v1/change-records/62/work")
+    assert not is_allowed_read("/api/v1/package-intakes")
+
+
+def test_the_carrier_asks_and_registers_and_can_do_nothing_else_to_the_orchestrator() -> None:
+    """Two public methods, named: one read, one write. A third is a surface nobody decided on."""
     public = {
         name
         for name in vars(OrchestratorClient)
         if not name.startswith("_") and name not in {"close"}
     }
-    assert public == {"register_intake"}
+    assert public == {"carried_revisions", "register_intake"}
 
 
 def test_a_forbidden_write_never_reaches_the_transport() -> None:
@@ -151,6 +195,27 @@ def test_a_forbidden_write_never_reaches_the_transport() -> None:
     )
     with pytest.raises(ForbiddenWriteError):
         client._post("/api/v1/work-units/1/approvals", {})
+    assert seen == []
+
+
+def test_a_forbidden_read_never_reaches_the_transport() -> None:
+    """The guard is BEFORE the request, not a check on what came back."""
+    import httpx
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return httpx.Response(200, json={})
+
+    client = OrchestratorClient(
+        "token",
+        "orchestrator-system",
+        base_url="https://example.invalid",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ForbiddenWriteError):
+        client._get("/api/v1/work-units/1/evidence-pack")
     assert seen == []
 
 
