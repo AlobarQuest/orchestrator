@@ -2881,6 +2881,14 @@ style of that module.
   files were added. The blast radius is now smaller than it was: the launchers' exit-code fold
   surfaces a missing binary as 127 instead of folding it to 0, and the installer refuses at install
   time — but only for lanes that have an installer.
+  **SHARPENED 2026-08-21: in a FRESH WORKTREE, `uv sync --frozen` is necessary and NOT SUFFICIENT.**
+  Measured building item 150's fix: `work-carrier` and `work-watcher` were declared in
+  `pyproject.toml` and absent from the new worktree's `.venv/bin` after a clean `uv sync --frozen`;
+  `uv sync --reinstall-package orchestrator` installed both. So the rule has two halves — **a pull
+  into an existing tree needs a sync; a fresh worktree may need a reinstall on top of one** — and the
+  failure is the same either way: the launchers invoke by absolute path, so it dies at a missing
+  binary rather than at an import error. Check `.venv/bin` against `[project.scripts]` directly
+  rather than trusting that a sync did it.
 
 - **The deploy-change-record population is DEPENDABOT BY CONSTRUCTION, so anything keyed on a
   change record can never see factory work.** `src/change_proposer/` is the only writer of
@@ -3478,3 +3486,17 @@ style of that module.
   past this repo: before trusting "re-read through a different session", check what the fixture's
   engine and pool actually give two sessions — the advice assumes connection isolation the fixture
   may not provide.
+
+- **`emit-intake-payload` cannot verify a package approval from a git WORKTREE, and it fails with a
+  message that reads like a package fault.** It resolves the sibling `intent-packages` checkout by a
+  fixed relative path from its own module file, so from `~/Projects/orchestrator/.worktrees/<ws>/` it
+  lands at `.worktrees/intent-packages/src` — which does not exist — and refuses with
+  `package_not_intakeable — approval verification failed`. Nothing in that message says "wrong
+  directory". **Every build session works in a worktree by convention, so this is the DEFAULT
+  environment for the carry and for `factory decompose`**, and it nearly cost item 150's live
+  differential: the worktree's first pass returned a plausible and alarming answer about record 62's
+  package, and only re-running from the main tree settled it. Backlogged P2 `3c6f2330fa37`; the fix
+  is an environment override of the kind `SECURITY_STANDARDS_DIR` already provides one function over.
+  Until then: **run anything that verifies a package approval from a MAIN tree**, and treat an
+  approval-verification refusal seen from a worktree as unproven rather than as a finding about the
+  package.
