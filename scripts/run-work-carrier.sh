@@ -56,10 +56,19 @@
 #      to register, or one whose retirement change-manager refused. Each needs a person.
 #
 # A CARRIED RECORD IS NOT A FINDING, and neither is one merely prepared on a pass that was not
-# asked to register. Making either one would leave this control permanently red for doing its
-# job -- which this estate has now recorded itself doing four times. The same rule governs the
-# retirement phase: a record retired, a retirement replayed, a record whose work is merely
-# incomplete, and a record with no work at all are all ordinary and none is a finding.
+# asked to register, nor one the carry finds it has ALREADY carried. Making any of them one
+# would leave this control permanently red for doing its job -- which this estate has now
+# recorded itself doing five times. The same rule governs the retirement phase: a record
+# retired, a retirement replayed, a record whose work is merely incomplete, and a record with
+# no work at all are all ordinary and none is a finding.
+#
+# THE CARRY ASKS BEFORE IT REGISTERS. Nothing marks a change record carried -- this lane holds
+# no write to change-manager -- so an approved record stays in the approved queue from the
+# moment it is carried until the watcher or a person retires it. The carry therefore asks the
+# orchestrator what the record has already caused (ADR-0029's route, the same one the watcher
+# reads) and skips a record that has caused anything. Only a `--register` pass asks: the read
+# exists to prevent this program's own write, and requiring the orchestrator credential for a
+# reporting pass would break the read-only invocation this header promises works anywhere.
 #
 # Usage:
 #   scripts/run-work-carrier.sh                # reports both phases; writes nothing

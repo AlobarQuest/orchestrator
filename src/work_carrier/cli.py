@@ -27,11 +27,21 @@ source from any caller that does not name one, because the 04:00 change-window e
 approved items with no source filter and hands what comes back to an LLM agent holding production
 Coolify tools. Naming the source is how this program sees what that one deliberately cannot.
 
+**IT ASKS WHAT A RECORD HAS ALREADY CAUSED BEFORE IT CARRIES IT.** Nothing in change-manager
+marks a record carried -- this program holds no write to that service, deliberately -- so an
+approved record stays in the approved queue from the moment it is carried until a person or the
+watcher retires it. Selecting on status alone therefore meant re-registering the same work every
+morning: a replay while the payload was unchanged, and a `409` from the moment the packages
+repository moved under a fixed idempotency key, i.e. a finding every day for a record whose work
+was already being built. The orchestrator can answer the question directly (ADR-0029's
+`GET /api/v1/change-records/{id}/work`), so the carry asks rather than being told.
+
 EXIT CODES: 0 clean, 1 tool failure, 2 unusable input, 3 findings. A record that could not be
-PREPARED is a finding, and so is one that could not be REGISTERED -- somebody has to look at why
-in both cases. A record carried successfully is NOT, nor is one merely prepared on a pass that
-was not asked to register: making either a finding would leave this control permanently red for
-doing its job, which this estate has now recorded four times.
+PREPARED is a finding, so is one that could not be REGISTERED, and so is one this pass could not
+ASK about -- somebody has to look at why in all three cases. A record carried successfully is
+NOT, nor is one merely prepared on a pass that was not asked to register, nor one this pass finds
+it has ALREADY carried: making any of them a finding would leave this control permanently red for
+doing its job, which this estate has now recorded five times.
 """
 
 from __future__ import annotations
@@ -46,6 +56,7 @@ from work_carrier.change_manager import (
     DEFAULT_BASE_URL,
     ChangeManagerError,
     HttpWorkRecordSource,
+    WorkRecord,
     WorkRecordSource,
 )
 from work_carrier.orchestrator_client import (
@@ -148,6 +159,59 @@ def _writer_for(
     return writer, None
 
 
+def _records_to_carry(
+    records: tuple[WorkRecord, ...],
+    writer: OrchestratorClient | None,
+    out,
+) -> tuple[list[WorkRecord], int, list[str]]:
+    """Split the approved queue into what this pass has not carried and what it already has.
+
+    **IT ASKS BEFORE IT PREPARES, not before it registers, and the order is the substance.** A
+    record whose work already exists needs no payload: building one runs the emitter against a
+    checkout, verifies an approval chain and can fail for reasons that have nothing to do with
+    this record's business, all to produce bytes that would then be thrown away. Asking first
+    also means a record already carried is reported as such even when its package has since
+    moved on disk, which is the state record 62 was in when this was written.
+
+    **ONLY A PASS THAT WILL REGISTER ASKS.** The read exists to prevent this program's own
+    write, so a pass that writes nothing has nothing to prevent -- and requiring the orchestrator
+    credential for a reporting pass would break the read-only invocation `run-work-carrier.sh`
+    advertises works on any machine, including ones with no access to that BWS project. The
+    information is not lost to a person inspecting the lane: the watcher runs first in the same
+    pass and reports the same record as `[WAITING]`, off its own read of the same route.
+
+    **A RECORD THIS PASS COULD NOT ASK ABOUT IS A FINDING AND IS NOT CARRIED.** Fail closed: a
+    lane that cannot tell whether it has already acted must not act. Per-record isolation, as
+    everywhere else here -- one unanswerable record must not strand the queue behind it.
+    """
+    if writer is None:
+        return list(records), 0, []
+    pending: list[WorkRecord] = []
+    carried = 0
+    findings: list[str] = []
+    for record in records:
+        label = (
+            f"change record {record.change_record_id}: "
+            f"{record.package_id} revision {record.package_revision}"
+        )
+        try:
+            revisions = writer.carried_revisions(record.change_record_id)
+        except OrchestratorError as error:
+            print(f"[FINDING]  {label}: {error}", file=out)
+            findings.append(str(error))
+            continue
+        if revisions:
+            # NOT A FINDING. This is the ordinary state of every record whose work the delivery
+            # system is still building, and making it one would leave this control red for
+            # exactly as long as the work takes -- which is the mistake this estate has now
+            # recorded itself making five times.
+            print(f"[CARRIED]  {label}: {', '.join(revisions)}", file=out)
+            carried += 1
+            continue
+        pending.append(record)
+    return pending, carried, findings
+
+
 def _carry(item: Prepared, writer: OrchestratorClient | None, out) -> str | None:
     """Report one prepared record, and register it when this pass was asked to.
 
@@ -189,11 +253,14 @@ def _guidance(error: OrchestratorError) -> str:
     differs from the stored row in exactly those two fields and in no content at all. Whoever
     reads the morning log would go looking for a divergence that is not there.
 
-    It is also the one refusal here that repeats. Nothing marks a change record carried -- the
-    carry holds no write to change-manager, deliberately -- so an approved record stays in the
-    queue and is re-attempted every pass. That is harmless while it replays and reports a
-    finding every morning once it conflicts, so the report has to name the act that ends it:
-    a person resolves the record in change-manager, and it leaves the approved queue.
+    IT NO LONGER REPEATS FOR THE COMMON CASE, and the narrowing is worth stating because this
+    paragraph used to describe the whole of it. A record whose revision the carry itself
+    registered is now skipped before it is prepared, so the conflict that used to recur every
+    morning cannot arise. What survives is the case above: a revision registered naming NO change
+    record leaves the record with no work bound to it, so `carried_revisions` answers empty, the
+    carry attempts it, and the conflict does recur every pass. The report therefore still has to
+    name the act that ends it -- a person resolves the record in change-manager, and it leaves
+    the approved queue.
     """
     if not isinstance(error, IntakeRefused) or error.code != "package_intake_conflict":
         return ""
@@ -245,9 +312,11 @@ def run(
         print(f"[TOOL FAILURE] {error}", file=out)
         return EXIT_TOOL_FAILURE
 
+    pending, already_carried, unanswered = _records_to_carry(records, writer, out)
+
     prepared: list[Prepared] = []
     refused: list[Refused] = []
-    for record in records:
+    for record in pending:
         # Per-record isolation, deliberately: one record that cannot be prepared must not stop
         # the others being carried, and there is nothing to roll back because nothing was
         # written. A pass is a report over the whole approved queue or it is not a report.
@@ -266,11 +335,12 @@ def run(
         )
 
     print(
-        f"\n{len(records)} approved, {len(prepared)} prepared, {carried} carried, "
+        f"\n{len(records)} approved, {already_carried} already carried, "
+        f"{len(prepared)} prepared, {carried} carried, "
         f"{len(refused)} refused, {len(unregistered)} not carried.",
         file=out,
     )
-    return EXIT_FINDINGS if (refused or unregistered) else EXIT_OK
+    return EXIT_FINDINGS if (refused or unregistered or unanswered) else EXIT_OK
 
 
 def main() -> int:
