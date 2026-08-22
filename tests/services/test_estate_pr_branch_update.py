@@ -34,7 +34,10 @@ from orchestrator.persistence.models import Event
 from orchestrator.services import estate_pr_merge
 from orchestrator.services.estate_landing_admission import (
     DELIBERATE_REFUSALS,
+    LANDING_CHECKS_AWAITING_VERDICT,
+    LANDING_CHECKS_IN_FLIGHT,
     LANDING_CHECKS_NOT_CLEAN,
+    LANDING_CHECKS_VERDICT_UNREADABLE,
     LANDING_HEAD_NOT_CURRENT_WITH_BASE,
     LANDING_OUTSIDE_CHANGE_WINDOW,
     LANDING_PACE_EXHAUSTED,
@@ -334,6 +337,65 @@ def test_a_FAILING_CHECK_is_never_freshness_derived() -> None:
     ) == frozenset({LANDING_HEAD_NOT_CURRENT_WITH_BASE})
 
 
+def test_an_UNANSWERED_CHECK_does_not_disqualify_a_stale_branch() -> None:
+    """The deadlock this change exists to break. Nothing else in the estate re-runs an abandoned
+    check, so a pull request holding one waits forever -- and bringing the branch up to date is the
+    act that answers it."""
+    assert qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_AWAITING_VERDICT),
+        rollout_base_matches_pin=False,
+    )
+
+
+def test_an_UNANSWERED_CHECK_ALONE_does_not_qualify_anything() -> None:
+    """THE OTHER HALF OF THE PAIR, and it is the one that catches an excuse written too widely.
+    A head that is current with its base is not stale, so there is nothing to bring up to date and
+    no act this refusal could be excused by. Both cases are needed: a subtraction that ignored the
+    head's position would pass the case above and fail here."""
+    assert not qualifies_for_branch_update(
+        (LANDING_CHECKS_AWAITING_VERDICT,), rollout_base_matches_pin=False
+    )
+
+
+def test_a_FAILING_CHECK_still_disqualifies_a_stale_branch() -> None:
+    """The boundary that makes the split worth having. Freshening cannot turn a red verdict green,
+    so offering it a build spends one to re-learn the same answer -- and a build running reads as
+    progress. A subtraction that took the whole checks family rather than the one code would pass
+    every test above and lose this."""
+    assert not qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_NOT_CLEAN),
+        rollout_base_matches_pin=False,
+    )
+
+
+def test_a_check_STILL_RUNNING_disqualifies_a_stale_branch() -> None:
+    """Bringing the branch up to date would abandon the very run whose verdict is awaited, turning
+    a question that answers itself in minutes into one that needs another build."""
+    assert not qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_IN_FLIGHT),
+        rollout_base_matches_pin=False,
+    )
+
+
+def test_runs_that_could_not_be_read_disqualify_a_stale_branch() -> None:
+    """Which of the three holds is unknown, so acting would be acting on a question nobody asked."""
+    assert not qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_VERDICT_UNREADABLE),
+        rollout_base_matches_pin=False,
+    )
+
+
+def test_an_unanswered_check_is_NOT_a_member_of_the_freshness_criterion() -> None:
+    """It is excused for ACTING and not for REPORTING, which is why it is a separate subtraction
+    rather than a fifth member here. The criterion asks whether the head's POSITION caused the
+    refusal; an abandoned run is not a position, and folding it in would also make it quiet beside
+    a permanent exception, where it is still worth saying."""
+    assert freshness_derived_refusals(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_AWAITING_VERDICT),
+        rollout_base_matches_pin=True,
+    ) == frozenset({LANDING_HEAD_NOT_CURRENT_WITH_BASE})
+
+
 def test_the_deliberate_refusals_are_exactly_the_landers_own() -> None:
     """TWO PACKAGES, ONE VOCABULARY. The lander cannot import the orchestrator -- it is isolated
     from it on purpose -- so the two copies can only be held together from outside, and this
@@ -426,6 +488,7 @@ def test_the_two_copies_of_the_freshness_criterion_AGREE_POINTWISE() -> None:
         LANDING_HEAD_NOT_CURRENT_WITH_BASE,
         LANDING_ROLLOUT_MOVED,
         LANDING_CHECKS_NOT_CLEAN,
+        LANDING_CHECKS_AWAITING_VERDICT,
         LANDING_UPDATE_TYPE_UNPARSEABLE,
         LANDING_PACE_EXHAUSTED,
         "landing_something_nobody_has_thought_of",
