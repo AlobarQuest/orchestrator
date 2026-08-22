@@ -108,6 +108,7 @@ _EXCEPTION = frozenset({"landing_update_type_unparseable"})
 # carries no information a reader could act on. (Devon's third refusal ruling, 2026-08-14.)
 _FRESHNESS = "landing_head_not_current_with_base"
 
+
 # ADR-0024. A rollout pin that differs BECAUSE the head is stale -- the same code the orchestrator
 # raises when a workflow genuinely moved, which is why the base comparison below has to arrive with
 # the answer rather than being guessed from the code.
@@ -263,6 +264,15 @@ def _held_status(refusals: list[str], *, rollout_base_matches_pin: bool) -> str:
     unconditional early return would do that AND silence `{behind, checks_not_clean}`. Both are the
     over-general version of this rule, which is the shape every fix in this family has taken.
 
+    AN UNANSWERED CHECK (`landing_checks_awaiting_verdict`) IS DELIBERATELY IN NO SET, so it is a
+    finding like any code this program does not enumerate. The orchestrator excuses it for ACTING
+    -- bringing the branch up to date is what re-runs an abandoned check -- and a suppression here
+    was written, measured, and removed: it can never fire. Qualifying requires the head to be
+    behind, being behind is itself unexplained, so the line is held whatever this rule says about
+    the other code. An inert suppression is worse than none, because a later change to the
+    freshness rule would switch it on with nobody re-deciding it. The mechanism is what makes the
+    refusal transient; the label would have added nothing.
+
     **WHAT IS SUBTRACTED IS A CRITERION, NOT A LIST** (ADR-0024). The enumeration this rule used to
     carry was one member deep and grew a second the moment a permanent exception acquired a second
     position-caused refusal -- `brain#31`/`#32`, behind their base with a rollout pin that differs
@@ -277,7 +287,9 @@ def _held_status(refusals: list[str], *, rollout_base_matches_pin: bool) -> str:
         )
     if unexplained or not refusals:
         return "held"
-    return "exception" if _EXCEPTION & present else "deliberate"
+    if _EXCEPTION & present:
+        return "exception"
+    return "deliberate"
 
 
 def _consider(client: OrchestratorClient, repository: str, number: int, submit: bool) -> Outcome:

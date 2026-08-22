@@ -25,7 +25,10 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_APP_CREDENTIALS_MISSING,
     LANDING_AUTHOR_NOT_THE_UPDATE_BOT,
     LANDING_BASE_NOT_DEFAULT_BRANCH,
+    LANDING_CHECKS_AWAITING_VERDICT,
+    LANDING_CHECKS_IN_FLIGHT,
     LANDING_CHECKS_NOT_CLEAN,
+    LANDING_CHECKS_VERDICT_UNREADABLE,
     LANDING_CONDITIONS_UNREADABLE,
     LANDING_ESTATE_SOURCE_UNCONFIGURED,
     LANDING_ESTATE_UNKNOWN,
@@ -76,6 +79,7 @@ from tests.services.estate_landing_doubles import (
     approved,
     conditions,
     pull_request,
+    run,
 )
 
 PR = 49
@@ -364,9 +368,201 @@ def test_only_the_update_bot_itself_is_admitted(
 
 
 def test_a_pull_request_the_remote_will_not_land_refuses(migrated_session: Session) -> None:
-    gateway = FakeEstateGateway(pull=pull_request(mergeable_state="blocked"))
+    """A required check that FAILED. The composite says `blocked`, and so it does for three other
+    causes -- which is why the runs are read before this refusal is raised."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(mergeable_state="blocked"), runs=(run(conclusion="failure"),)
+    )
 
     assert LANDING_CHECKS_NOT_CLEAN in _ask(migrated_session, gateway=gateway).refusals
+
+
+# ---------------------------------------------------------------------------
+# No verdict is not a failed verdict.
+#
+# Measured 2026-08-22 against one repository with one required check: a genuinely failing gate, a
+# gate abandoned mid-run and a gate still running ALL answer `mergeable_state: blocked`, and only
+# a green gate answers `clean`. Three live pull requests in this estate's ledger repositories were
+# `blocked` with every run at their head abandoned. So the composite cannot separate them and the
+# runs at the head are read.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("conclusion", ["cancelled", "skipped", "stale"])
+def test_an_abandoned_check_is_an_absent_verdict_not_a_failed_one(
+    migrated_session: Session, conclusion: str
+) -> None:
+    gateway = FakeEstateGateway(
+        pull=pull_request(mergeable_state="blocked"), runs=(run(conclusion=conclusion),)
+    )
+
+    refusals = _ask(migrated_session, gateway=gateway).refusals
+
+    assert LANDING_CHECKS_AWAITING_VERDICT in refusals
+    assert LANDING_CHECKS_NOT_CLEAN not in refusals
+
+
+def test_a_head_with_no_runs_at_all_has_reached_no_verdict(migrated_session: Session) -> None:
+    """A required context nothing published. Blocked, and nothing has said no."""
+    gateway = FakeEstateGateway(pull=pull_request(mergeable_state="blocked"), runs=())
+
+    refusals = _ask(migrated_session, gateway=gateway).refusals
+
+    assert LANDING_CHECKS_AWAITING_VERDICT in refusals
+    assert LANDING_CHECKS_NOT_CLEAN not in refusals
+
+
+def test_a_green_run_beside_an_abandoned_one_is_still_an_absent_verdict(
+    migrated_session: Session,
+) -> None:
+    """`brain#35`'s shape, measured: one workflow succeeded and the required one was abandoned. A
+    run that passed cannot be what holds the landing, so it neither refuses nor excuses."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(mergeable_state="blocked"),
+        runs=(run(), run(conclusion="cancelled")),
+    )
+
+    refusals = _ask(migrated_session, gateway=gateway).refusals
+
+    assert LANDING_CHECKS_AWAITING_VERDICT in refusals
+    assert LANDING_CHECKS_NOT_CLEAN not in refusals
+
+
+@pytest.mark.parametrize(
+    "conclusion", ["failure", "timed_out", "action_required", "startup_failure", "invented_by_a"]
+)
+def test_any_conclusion_nobody_enumerated_reads_as_a_verdict_this_lane_may_not_land_on(
+    migrated_session: Session, conclusion: str
+) -> None:
+    """THE POLARITY, and it is the whole safety of the split. The absent set is closed and small;
+    everything else -- including a word the platform has not invented yet -- fails toward refusing.
+    A conclusion that fell through to `awaiting_verdict` would invite the branch to be freshened on
+    the strength of a verdict nobody read."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(mergeable_state="blocked"), runs=(run(conclusion=conclusion),)
+    )
+
+    refusals = _ask(migrated_session, gateway=gateway).refusals
+
+    assert LANDING_CHECKS_NOT_CLEAN in refusals
+    assert LANDING_CHECKS_AWAITING_VERDICT not in refusals
+
+
+def test_a_run_still_going_is_neither_a_verdict_nor_its_absence(migrated_session: Session) -> None:
+    """Waiting answers it for free; freshening would abandon the very run being waited on."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(mergeable_state="blocked"),
+        runs=(run(status="in_progress", conclusion=None),),
+    )
+
+    refusals = _ask(migrated_session, gateway=gateway).refusals
+
+    assert LANDING_CHECKS_IN_FLIGHT in refusals
+    assert LANDING_CHECKS_AWAITING_VERDICT not in refusals
+    assert LANDING_CHECKS_NOT_CLEAN not in refusals
+
+
+def test_a_failing_run_outranks_one_still_going(migrated_session: Session) -> None:
+    """The head has said no, whatever else is pending. Reading these in the other order would let
+    an in-flight sibling excuse a failure."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(mergeable_state="blocked"),
+        runs=(run(status="queued", conclusion=None), run(conclusion="failure")),
+    )
+
+    refusals = _ask(migrated_session, gateway=gateway).refusals
+
+    assert LANDING_CHECKS_NOT_CLEAN in refusals
+    assert LANDING_CHECKS_IN_FLIGHT not in refusals
+
+
+def test_runs_that_cannot_be_read_refuse_rather_than_assuming_which_case_holds(
+    migrated_session: Session,
+) -> None:
+    gateway = FakeEstateGateway(
+        pull=pull_request(mergeable_state="blocked"),
+        runs_error=EstateGatewayError("read_status", 503),
+    )
+
+    refusals = _ask(migrated_session, gateway=gateway).refusals
+
+    assert LANDING_CHECKS_VERDICT_UNREADABLE in refusals
+    assert LANDING_CHECKS_AWAITING_VERDICT not in refusals
+
+
+def test_a_clean_pull_request_is_never_asked_about_its_runs(migrated_session: Session) -> None:
+    """The second read costs a remote call, and a permitted composite has nothing to separate."""
+    gateway = FakeEstateGateway(pull=pull_request(mergeable_state="clean"))
+
+    _ask(migrated_session, gateway=gateway)
+
+    assert gateway.run_reads == []
+
+
+@pytest.mark.parametrize("state", ["dirty", "draft", "unstable", "has_hooks", "behind"])
+def test_only_a_blocked_pull_request_is_inquired_into(
+    migrated_session: Session, state: str
+) -> None:
+    """Every other unpermitted value is a statement about the BRANCH rather than about a verdict,
+    and none is made right by a fresher base -- a conflicted branch least of all, where the update
+    would fail at the remote. Each keeps the original refusal, and none spends the extra read."""
+    gateway = FakeEstateGateway(pull=pull_request(mergeable_state=state))
+
+    refusals = _ask(migrated_session, gateway=gateway).refusals
+
+    assert LANDING_CHECKS_NOT_CLEAN in refusals
+    assert LANDING_CHECKS_AWAITING_VERDICT not in refusals
+    assert gateway.run_reads == []
+
+
+def test_a_mergeability_the_remote_has_not_computed_is_not_asked_about_its_runs(
+    migrated_session: Session,
+) -> None:
+    """`unknown` already has its own refusal and its own remedy: ask again. Spending the second
+    read on it would classify a pull request whose composite is not yet an answer."""
+    gateway = FakeEstateGateway(pull=pull_request(mergeable_state="unknown"))
+
+    refusals = _ask(migrated_session, gateway=gateway).refusals
+
+    assert LANDING_MERGEABILITY_UNKNOWN in refusals
+    assert LANDING_CHECKS_AWAITING_VERDICT not in refusals
+    assert gateway.run_reads == []
+
+
+def test_the_runs_are_read_at_the_pull_requests_own_head(migrated_session: Session) -> None:
+    """Not at the base, and not at a head carried from anywhere else. A verdict read at the wrong
+    commit is a verdict about a different tree."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(mergeable_state="blocked"), runs=(run(conclusion="cancelled"),)
+    )
+
+    _ask(migrated_session, gateway=gateway)
+
+    assert gateway.run_reads == [(REPOSITORY, HEAD)]
+
+
+@pytest.mark.parametrize(
+    ("runs", "expected"),
+    [
+        ((run(conclusion="failure"),), LANDING_CHECKS_NOT_CLEAN),
+        ((run(conclusion="cancelled"),), LANDING_CHECKS_AWAITING_VERDICT),
+        ((run(status="in_progress", conclusion=None),), LANDING_CHECKS_IN_FLIGHT),
+    ],
+)
+def test_no_reading_of_the_checks_ADMITS_a_pull_request_the_remote_has_blocked(
+    migrated_session: Session, runs: tuple[object, ...], expected: str
+) -> None:
+    """SEPARATING THE CAUSES DOES NOT SOFTEN THE ANSWER. Every one of the three still refuses; only
+    the name and the remedy differ. Without this, a term left out of the composed conjunction would
+    let a `blocked` pull request through while each refusal test above still passed -- the answer
+    naming a condition and permitting anyway, which is the fail-open shape this module argues
+    against in its own opening."""
+    gateway = FakeEstateGateway(pull=pull_request(mergeable_state="blocked"), runs=runs)  # type: ignore[arg-type]
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert not answer.satisfied
+    assert expected in answer.refusals
 
 
 # ---------------------------------------------------------------------------

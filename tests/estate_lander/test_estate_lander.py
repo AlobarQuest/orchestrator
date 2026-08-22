@@ -340,6 +340,47 @@ def test_a_DELIBERATE_refusal_alone_is_not_a_finding(refusal: str) -> None:
     assert report(outcomes) == EXIT_OK
 
 
+@pytest.mark.parametrize(
+    "refusals",
+    [
+        ["landing_checks_awaiting_verdict"],
+        ["landing_checks_awaiting_verdict", "landing_head_not_current_with_base"],
+        ["landing_checks_in_flight"],
+    ],
+)
+def test_a_check_that_reached_no_verdict_is_a_finding(refusals: list[str]) -> None:
+    """THE POLARITY, and the non-membership is deliberate rather than an omission.
+
+    The orchestrator excuses `landing_checks_awaiting_verdict` for ACTING -- bringing the branch up
+    to date is what re-runs an abandoned check -- and it is excused for nothing here. A suppression
+    keyed on the qualification was written and then measured out: qualifying requires the head to
+    be behind, and being behind is itself unexplained, so the line is held whichever way this rule
+    goes. The mechanism makes the refusal transient; a label saying so would have been inert, and
+    an inert suppression is a fail-open waiting for the freshness rule to be refactored.
+
+    A check STILL RUNNING is a finding for a stronger reason: the lane must not touch it at all,
+    because bringing the branch up to date would abandon the very run being waited on.
+
+    The detail line still names the code, so an operator reads the right cause -- which is what
+    the split bought -- without this program having to know it.
+    """
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 60): {
+                "satisfied": False,
+                "refusals": refusals,
+                "branch_update_qualifies": True,
+                "head_sha": HEAD,
+            }
+        }
+    )
+
+    outcomes = _pass(_subjects(FakeRecords([_row(60)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["held"]
+    assert report(outcomes) == EXIT_FINDINGS
+
+
 def test_an_EXCEPTION_alone_is_not_a_finding_and_is_NOT_called_deliberate() -> None:
     """A requirement-range bump states no single delta, so no update-type rule applies to it --
     ADR-0018 decided that and left it. It never clears and it waits on a person, which is a

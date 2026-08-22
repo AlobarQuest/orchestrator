@@ -70,6 +70,7 @@ from orchestrator.services.estate_landing_admission import (
     EstateLandingAdmission,
     EstatePullRequest,
     EstateReadGateway,
+    HeadCheckRun,
     estate_landing_admission,
 )
 from orchestrator.services.github_app import GitHubAppTokenError
@@ -520,6 +521,48 @@ class GitHubEstatePullRequests:
             return None
         sha = body.get("sha")
         return sha if isinstance(sha, str) and sha else None
+
+    def head_check_runs(self, *, repository: str, head_sha: str) -> tuple[HeadCheckRun, ...]:
+        """Every workflow run at this head, so the cascade can tell a verdict from its absence.
+
+        **The workflow-run listing rather than the check-runs one, and that is forced.** This
+        estate's App holds no `checks` permission, so the check-runs API answers 403 while this
+        listing answers 200 -- the same constraint, and the same substitution, that the named-check
+        observer already lives with. Every check this estate publishes is a workflow job, so the
+        two sets coincide here; a check published by any other application would be invisible, and
+        the cascade's conservative reading of an empty answer is what covers that.
+
+        `per_page=100` because one head legitimately carries several: a workflow fires on both the
+        push and the pull request, more than one workflow may watch a branch, and a re-run adds
+        another. A default page would silently truncate, and truncation drops runs -- which is the
+        direction that loses a failing one.
+        """
+        body = self._get(
+            f"{GITHUB_API_URL}/repos/{repository}/actions/runs"
+            f"?head_sha={quote(head_sha, safe='')}&per_page=100"
+        )
+        if not isinstance(body, dict):
+            raise EstateGatewayError("runs_response_invalid")
+        rows = body.get("workflow_runs")
+        if not isinstance(rows, list):
+            raise EstateGatewayError("runs_response_invalid")
+        runs: list[HeadCheckRun] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise EstateGatewayError("runs_response_invalid")
+            status = row.get("status")
+            conclusion = row.get("conclusion")
+            if not isinstance(status, str):
+                # A run whose state cannot be read is not a run that reported nothing. Refusing
+                # the whole answer keeps the caller from reading a partial list as a complete one.
+                raise EstateGatewayError("runs_response_invalid")
+            runs.append(
+                HeadCheckRun(
+                    status=status,
+                    conclusion=conclusion if isinstance(conclusion, str) else None,
+                )
+            )
+        return tuple(runs)
 
     def submit_merge(
         self, *, repository: str, number: int, head_sha: str, commit_message: str
