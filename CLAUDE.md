@@ -2937,7 +2937,19 @@ style of that module.
   sixteen live in `.worktrees/deploy-policy-actor/`, an untracked stale worktree carrying its OWN
   `pyproject.toml` — so ruff resolves config from it and never sees the repo-root exclusion, and CI,
   which checks out a fresh tree, never sees any of it. **Measure this class of thing on a clean
-  clone (`git archive HEAD`), not a working tree**, or you are counting scaffolding. Every repo
+  clone (`git archive HEAD`), not a working tree**, or you are counting scaffolding.
+  **That worktree is GONE as of 2026-08-23 — do not go looking for it, and do not read its absence
+  as the hazard being gone.** Removed after checking what removal would cost: branch
+  `adr0019-deploy-policy-actor` at `9dd6847`, clean, twelve days old, and **both** its commits'
+  content byte-identical to `origin/main` — landed via PR #35's SQUASH merge, which is why
+  `git merge-base --is-ancestor` said "not in main" and was the wrong test. **Ancestry is always the
+  wrong test in this estate**: squash-merging guarantees a branch commit is never an ancestor of
+  `main` even when its content is there. Compare the FILES.
+  The hazard itself was already narrower than this bullet implies: `make check` prunes `.worktrees`
+  via `PRUNE_DIRS`, and ruff skips it via gitignore, so the repo's own gate was never distorted.
+  What a stale worktree distorts is **ad-hoc** measurement — a bare `find`, a `grep`, a hand-run
+  ruff — which is exactly how it produced the wrong count corrected above. 707 Python and 37
+  Markdown files sat there for anything that walked the filesystem without pruning. Every repo
   pinned at `0.15.20` is green today and goes red the moment Dependabot bumps it; `change-manager#51`
   is the first of **five**, not six — `infraops-mcp-server` has no ruff dependency at all, no pin and
   no lockfile entry, so nothing can bump it and it could never have gone red. `intent-packages` reads
