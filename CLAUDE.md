@@ -3522,3 +3522,35 @@ style of that module.
   a re-proposal of the same bump replays onto the existing record (200) rather than minting a new
   pending one. That is a fact about the producer's idempotency, not about whether the underlying
   problem recurs.
+
+- **`mergeable_state` is ONE WORD covering FOUR causes, and only one of them means the change is
+  bad.** A genuinely failing check, a run abandoned mid-flight, a run still going, and a required
+  context that never reported **all answer `blocked`**; only a green head answers `clean`. Measured
+  2026-08-22 on a disposable repository, one variable at a time. So any consumer that needs the
+  *cause* must read the workflow runs at the head — and specifically the **workflow-run listing**,
+  not the check-runs API, which answers **403** because the `Alobar SDS Dispatch` App holds no
+  `checks` permission. The landing lane collapsed all four into `landing_checks_not_clean` and
+  therefore held three clean Dependabot bumps for four days on the strength of runs GitHub had
+  cancelled when the estate's Actions quota ran out. It now separates them:
+  `landing_checks_not_clean` (a real failure), `landing_checks_awaiting_verdict` (abandoned — does
+  NOT disqualify the branch update, because updating is what produces the verdict), and
+  `landing_checks_in_flight` (still running — DOES disqualify, because freshening would abandon the
+  run being waited on).
+
+- **A disposable control repository must be PUBLIC, or this estate's Actions quota answers the
+  experiment for you.** A private repo with the quota spent fails **every** job in seconds at
+  environment setup, and the job carries **zero steps** — which reads as whatever failure the
+  control was built to produce. Compounding it: a workflow with no `actions/checkout` runs its
+  assertions against an empty directory, so a gate meant to fail on a file cannot see the file.
+  Both were live in one control on 2026-08-22 and it returned the expected answer for two
+  independent wrong reasons. **Before believing a red control, check `jobs[].steps` is non-empty.**
+  This is the estate's own *a probe must discriminate* rule with a specific, cheap check attached.
+
+- **A refusal excused for ACTING is not automatically excused for REPORTING, and the two consumers
+  read different criteria.** In the landing lane, `qualifies_for_branch_update` excuses
+  `landing_checks_awaiting_verdict` — the update is exactly the remedy. `freshness_derived_refusals`
+  deliberately does NOT, because it asks whether the head's *position* caused the refusal, and an
+  abandoned run is not a position. **Folding a code into a shared criterion to excuse it for one
+  consumer silently excuses it for the other**, which is how a suppression written for a report
+  becomes a permission to act. Related and already recorded: the deliberate-refusal categories are
+  tested with SUBSET semantics for the same reason a shared set would be wrong.
