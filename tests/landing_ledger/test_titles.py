@@ -1,11 +1,16 @@
 """The delta parser, held to the one it copies.
 
-`bump_proposer.titles` is a second copy of
-`orchestrator.services.estate_landing_admission.update_type_of`, because this program cannot
-import that module -- it is an out-of-process program and that module reaches SQLAlchemy. The
-copy is therefore PINNED here rather than trusted: a test that imports both, and asserts they
-agree on a corpus, which includes every open Dependabot pull request the estate carried on the
-day this shipped.
+`landing_ledger.titles` is a second copy of
+`orchestrator.services.estate_landing_admission.update_type_of`, because the programs that
+read it cannot import that module -- they are out-of-process programs and that module reaches
+SQLAlchemy. The copy is therefore PINNED here rather than trusted: a test that imports both,
+and asserts they agree on a corpus, which includes every open Dependabot pull request the
+estate carried on the day this shipped.
+
+TWO CONSUMERS READ IT, which is why it lives in the ledger rather than in either of them:
+`bump_proposer` decides which bumps it may propose, and `landing_ledger.audit` decides which
+open updates can never be classified at all. This pin is what keeps all three answers one
+answer.
 
 A byte comparison of the two regexes is also asserted, but it is the weaker of the two checks
 and is here only to name the drift quickly. What actually matters is the agreement.
@@ -15,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from bump_proposer.titles import BUMP_PATTERN, bump_of
+from landing_ledger.titles import BUMP_PATTERN, bump_of
 from orchestrator.services.estate_landing_admission import _BUMP, update_type_of
 
 # The DISTINCT titles of every open Dependabot pull request across the six cascade

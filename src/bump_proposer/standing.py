@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from bump_proposer.titles import Bump
+from landing_ledger.titles import Bump
 
 DEFAULT_CHECKOUT: Final = Path.home() / "Projects" / "intent-packages"
 PACKAGES_REPOSITORY: Final = "AlobarQuest/intent-packages"

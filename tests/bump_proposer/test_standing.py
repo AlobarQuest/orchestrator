@@ -21,7 +21,7 @@ from bump_proposer.standing import (
     discover,
     write_versions,
 )
-from bump_proposer.titles import Bump
+from landing_ledger.titles import Bump
 
 BUMP = Bump(from_version="3.25.76", to_version="4.4.3", kind="semver-major")
 

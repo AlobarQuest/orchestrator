@@ -60,7 +60,6 @@ from bump_proposer.standing import (
     require_clean,
     snapshot_hash,
 )
-from bump_proposer.titles import Bump, bump_of
 from landing_ledger.github import (
     GitHubReader,
     LedgerError,
@@ -70,6 +69,7 @@ from landing_ledger.github import (
 )
 from landing_ledger.model import PendingUpdate
 from landing_ledger.rules import Rule, rule_for
+from landing_ledger.titles import Bump, bump_of
 
 EXIT_OK: Final = 0
 EXIT_UNUSABLE: Final = 2

@@ -8,18 +8,25 @@ only one of the three that tracked the change.
 
 **THIS IS A SECOND COPY OF A PARSER THAT ALREADY EXISTS, and it is held to the original
 rather than trusted.** The authority is
-:func:`orchestrator.services.estate_landing_admission.update_type_of`, which this program
-cannot import: an out-of-process program in this repository imports nothing from
+:func:`orchestrator.services.estate_landing_admission.update_type_of`, which the programs
+here cannot import: an out-of-process program in this repository imports nothing from
 ``orchestrator``, and that module reaches SQLAlchemy. The estate's answer to a vocabulary
 that must agree across that boundary is a mirror pinned by a test that imports both -- the
 arrangement ``estate_lander._DELIBERATE`` already uses. Here the pin is stronger than a
-literal comparison: ``tests/bump_proposer/test_titles.py`` asserts that the two agree on the
+literal comparison: ``tests/landing_ledger/test_titles.py`` asserts that the two agree on the
 classification of every title in a corpus, including every open pull request the estate
-carried when this shipped, so a divergence is a red test rather than a producer quietly
+carried when this shipped, so a divergence is a red test rather than a consumer quietly
 selecting a different population from the one the lander refuses.
 
+**IT LIVES HERE, IN THE LEDGER, BECAUSE TWO PROGRAMS NEED IT AND THIS IS THE ONE THEY BOTH
+ALREADY DEPEND ON.** ``bump_proposer`` reads it to know which bumps it may propose;
+``landing_ledger.audit`` reads it to tell a subject that CANNOT be classified from one that
+merely was not. A copy in each would be the estate's own N-copies-of-one-vocabulary defect,
+where only the copies that run get corrected -- and the import direction is already settled:
+the proposer imports the ledger, for the transcribed gate registry, and never the reverse.
+
 **What this adds beyond the original is the two VERSIONS**, which `update_type_of` computes
-and discards. They are the content of the package revision this producer writes, so they
+and discards. They are the content of the package revision the proposer writes, so they
 cannot be recovered from the classification alone -- which is why a mirror was needed at all
 rather than a call.
 
