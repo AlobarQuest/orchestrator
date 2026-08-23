@@ -11,7 +11,11 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from landing_ledger.audit import STALL_ELIGIBLE_NOT_ARMED
+from landing_ledger.audit import (
+    EXCEPTION_UPDATE_TYPE_UNPARSEABLE,
+    STALL_ELIGIBLE_NOT_ARMED,
+    STALL_METADATA_UNREADABLE,
+)
 from landing_ledger.cli import (
     EXIT_FINDINGS,
     EXIT_INCOMPLETE,
@@ -66,18 +70,20 @@ def _routes(
     conclusion: str = "success",
     author: str = "dependabot[bot]",
     gate: str | None = UNDERSCORED,
+    title: str = "chore(actions): bump astral-sh/setup-uv from 5 to 7",
+    message: str = TRAILER,
 ) -> dict[str, Any]:
     routes: dict[str, Any] = {
         f"/repos/{REPO}": {"default_branch": "main"},
         f"/repos/{REPO}/pulls": [{"number": 31, "user": {"login": author}}],
         f"/repos/{REPO}/pulls/31": {
             "number": 31,
-            "title": "chore(actions): bump astral-sh/setup-uv from 5 to 7",
+            "title": title,
             "created_at": "2026-07-31T20:48:38Z",
             "auto_merge": {"merge_method": "squash"} if armed else None,
             "head": {"sha": HEAD, "ref": "dependabot/github_actions/astral-sh/setup-uv-7"},
         },
-        f"/repos/{REPO}/commits/{HEAD}": {"commit": {"message": TRAILER}},
+        f"/repos/{REPO}/commits/{HEAD}": {"commit": {"message": message}},
         f"/repos/{REPO}/actions/runs": {
             "workflow_runs": [
                 {"id": 1, "path": ".github/workflows/quality.yml", "event": "pull_request"},
@@ -476,6 +482,41 @@ def test_an_audit_pass_that_could_not_MEASURE_tells_its_launcher(
     result = _drive(monkeypatch, ["audit", "--repository", REPO], unreachable=True)
 
     assert result.exit_code == EXIT_INCOMPLETE
+
+
+def test_a_pass_whose_only_condition_is_an_EXCEPTION_exits_ZERO_and_still_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The defect this increment closes, at the surface the launcher reads.
+
+    A requirement range with no metadata trailer -- the shape seven live subjects had on
+    2026-08-23 -- made this pass exit 2 every night on a condition no pass will ever clear. It is
+    quiet in the exit code and loud in the report, which is the whole point of the category:
+    exiting non-zero forever is how a control stops being read, and suppressing it entirely is
+    how a fact gets lost.
+    """
+    routes = _routes(
+        title="chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0",
+        message="chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0",
+    )
+
+    result = _drive(monkeypatch, ["audit", "--repository", REPO], routes=routes)
+
+    assert result.exit_code == EXIT_OK
+    assert EXCEPTION_UPDATE_TYPE_UNPARSEABLE in result.output
+    assert STALL_METADATA_UNREADABLE not in result.output
+
+
+def test_a_pass_whose_metadata_is_missing_from_a_CLASSIFIABLE_title_still_exits_TWO(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The discriminator at the same surface. Without it the change above is a suppression."""
+    routes = _routes(message="chore(actions): bump astral-sh/setup-uv from 5 to 7")
+
+    result = _drive(monkeypatch, ["audit", "--repository", REPO], routes=routes)
+
+    assert result.exit_code == EXIT_FINDINGS
+    assert STALL_METADATA_UNREADABLE in result.output
 
 
 def test_a_complete_recording_pass_exits_zero(monkeypatch: pytest.MonkeyPatch) -> None:

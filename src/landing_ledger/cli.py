@@ -49,6 +49,12 @@ RECOVERABLE = (LedgerError, LedgerWriteError, KeyError, TypeError, ValueError)
 # Nothing to report, and everything was measured.
 EXIT_OK = 0
 # Something was found. The pass worked; reality did not.
+#
+# A FINDING ONLY -- never an exception. `audit.exceptions` holds subjects current policy can never
+# decide, and they are printed in the report and recorded in the observation without touching this
+# code. That is the point: a control that exits non-zero on a condition no pass will ever clear is
+# a control nobody reads, and a real finding then arrives as one more line in a report already
+# known to be noise.
 EXIT_FINDINGS = 2
 # Some part of reality could not be read, so the answer is missing rather than clean. This
 # outranks findings: an incomplete pass cannot claim it found everything there was to find.

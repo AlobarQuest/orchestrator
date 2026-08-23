@@ -20,6 +20,7 @@ from landing_ledger.audit import (
     DRIFT_RULE_DID_NOT_SUCCEED,
     DRIFT_RULE_MISSING,
     DRIFT_RULE_UNKNOWN,
+    EXCEPTION_UPDATE_TYPE_UNPARSEABLE,
     FACTORY_CLAIM_UNREADABLE,
     FACTORY_FINGERPRINT_MISMATCH,
     FACTORY_HUMAN_ADJUDICATION,
@@ -359,6 +360,20 @@ def test_a_landing_that_changed_the_gate_is_flagged_as_judged_by_its_own_change(
 # ---------------------------------------------------------------------------------------------
 
 
+# The default title STATES A SINGLE DELTA, and that is load-bearing rather than decoration. From
+# 2026-08-23 the title is what separates an open update nothing can classify from one the gate
+# should have been able to decide, so a fixture whose title stated no delta would make every
+# metadata-unreadable case an exception and leave the finding untested.
+CLASSIFIABLE_TITLE = "chore(deps): bump ruff from 0.15.20 to 0.15.21"
+
+# The two shapes that state no single delta, both measured on live subjects: a requirement range
+# (orchestrator#174, and the same setuptools bump open on three more repositories) and a docker
+# tag that is not semver (orchestrator#3). A grouped bump is the third and is covered in the
+# parser's own corpus.
+RANGE_TITLE = "chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0"
+DOCKER_TITLE = "chore(deps): bump python from 3.12-slim to 3.14-slim"
+
+
 def pending(
     *,
     number: int = 31,
@@ -367,6 +382,7 @@ def pending(
     ecosystem: str = "uv",
     conclusions: tuple[str, ...] = ("success",),
     concluded_at: datetime | None = NOW - timedelta(days=1),
+    title: str = CLASSIFIABLE_TITLE,
 ) -> PendingUpdate:
     return PendingUpdate(
         repository=REPO,
@@ -374,7 +390,7 @@ def pending(
         head_commit="a" * 40,
         opened_at=NOW - timedelta(days=8),
         armed=armed,
-        title="chore(deps): bump ruff",
+        title=title,
         checks=tuple(
             Check(name=f"job{index}", conclusion=value, run=index)
             for index, value in enumerate(conclusions)
@@ -394,13 +410,16 @@ def test_eligible_green_and_unarmed_FIRES() -> None:
     identically, which is why one detector covers both."""
     rule = REGISTRY[UNDERSCORED]
 
-    assert kinds(audit_pending(pending(), rule, NOW)) == [STALL_ELIGIBLE_NOT_ARMED]
+    findings, exceptions = audit_pending(pending(), rule, NOW)
+
+    assert kinds(findings) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert exceptions == ()
 
 
 def test_eligible_but_red_is_the_checks_doing_their_job() -> None:
     rule = REGISTRY[UNDERSCORED]
 
-    assert audit_pending(pending(conclusions=("success", "failure")), rule, NOW) == ()
+    assert audit_pending(pending(conclusions=("success", "failure")), rule, NOW) == ((), ())
 
 
 def test_a_package_major_left_unarmed_is_the_rule_declining_to_act() -> None:
@@ -410,15 +429,18 @@ def test_a_package_major_left_unarmed_is_the_rule_declining_to_act() -> None:
 
     result = audit_pending(pending(update_type=MAJOR, ecosystem="npm_and_yarn"), rule, NOW)
 
-    assert result == ()
+    assert result == ((), ())
 
 
 def test_an_actions_major_left_unarmed_FIRES_under_the_rule_that_permits_it() -> None:
     rule = REGISTRY[UNDERSCORED]
 
-    result = audit_pending(pending(update_type=MAJOR, ecosystem="github_actions"), rule, NOW)
+    findings, exceptions = audit_pending(
+        pending(update_type=MAJOR, ecosystem="github_actions"), rule, NOW
+    )
 
-    assert kinds(result) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert kinds(findings) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert exceptions == ()
 
 
 def test_armed_and_green_but_only_just_is_a_landing_about_to_happen() -> None:
@@ -426,27 +448,73 @@ def test_armed_and_green_but_only_just_is_a_landing_about_to_happen() -> None:
 
     result = audit_pending(pending(armed=True, concluded_at=NOW - timedelta(seconds=5)), rule, NOW)
 
-    assert result == ()
+    assert result == ((), ())
 
 
 def test_armed_and_green_for_an_hour_and_still_open_FIRES() -> None:
     """The purest form of the question: nothing is stopping it and it is not landing."""
     rule = REGISTRY[UNDERSCORED]
 
-    result = audit_pending(pending(armed=True, concluded_at=NOW - timedelta(hours=6)), rule, NOW)
+    findings, exceptions = audit_pending(
+        pending(armed=True, concluded_at=NOW - timedelta(hours=6)), rule, NOW
+    )
 
-    assert kinds(result) == [STALL_ARMED_NOT_LANDED]
+    assert kinds(findings) == [STALL_ARMED_NOT_LANDED]
+    assert exceptions == ()
 
 
-def test_an_unreadable_update_FIRES_rather_than_being_classified_as_ineligible() -> None:
+def test_an_unreadable_update_whose_title_STATES_a_delta_FIRES() -> None:
+    """THE DISCRIMINATOR for the exception below, and without it that change is a suppression.
+
+    The bot names a version delta this gate could have decided, and its metadata trailer is
+    missing anyway -- so the audit genuinely cannot say whether the gate should have armed it,
+    and that is a finding a person can act on. It is exactly the condition
+    `update_metadata_unreadable` was named for.
+    """
     rule = REGISTRY[UNDERSCORED]
 
-    assert kinds(audit_pending(pending(update_type=None), rule, NOW)) == [STALL_METADATA_UNREADABLE]
+    findings, exceptions = audit_pending(pending(update_type=None), rule, NOW)
+
+    assert kinds(findings) == [STALL_METADATA_UNREADABLE]
+    assert exceptions == ()
+
+
+@pytest.mark.parametrize("title", [RANGE_TITLE, DOCKER_TITLE])
+def test_a_title_stating_no_single_delta_is_an_EXCEPTION_rather_than_a_finding(title) -> None:
+    """The seven subjects that made this detector exit non-zero every night.
+
+    A requirement range states two ranges rather than a delta; a docker tag is not semver at all.
+    Neither states something any rule about update types could be applied to, which is a property
+    of the subject and not a defect anywhere -- the landing lane already classifies the identical
+    condition as an exception, and this is the second control looking at the same pull requests.
+    """
+    rule = REGISTRY[UNDERSCORED]
+
+    findings, exceptions = audit_pending(pending(update_type=None, title=title), rule, NOW)
+
+    assert findings == ()
+    assert kinds(exceptions) == [EXCEPTION_UPDATE_TYPE_UNPARSEABLE]
+    assert exceptions[0].subject == f"{REPO}#31"
+
+
+def test_the_title_is_not_consulted_when_the_METADATA_is_readable() -> None:
+    """The bound on the new question, and it is the one that keeps this detector about the GATE.
+
+    The gate reads the metadata trailer and never the title. So an update whose trailer says
+    `semver-minor` is decided in the gate's own terms however its title reads -- here it is
+    permitted, green and unarmed, which is a stall and stays one.
+    """
+    rule = REGISTRY[UNDERSCORED]
+
+    findings, exceptions = audit_pending(pending(title=RANGE_TITLE), rule, NOW)
+
+    assert kinds(findings) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert exceptions == ()
 
 
 def test_a_head_with_nothing_concluded_is_not_green() -> None:
     assert not is_green(pending(conclusions=()))
-    assert audit_pending(pending(conclusions=()), REGISTRY[UNDERSCORED], NOW) == ()
+    assert audit_pending(pending(conclusions=()), REGISTRY[UNDERSCORED], NOW) == ((), ())
 
 
 # ---------------------------------------------------------------------------------------------
@@ -737,6 +805,45 @@ def test_a_finding_raises_the_severity_the_row_is_filed_under() -> None:
     assert audit.severity == "warning"
 
 
+def test_an_exception_reaches_the_repositorys_own_list_and_not_its_findings() -> None:
+    """The whole change, at the level the caller reads. A repository whose entire open queue is
+    unclassifiable is QUIET -- it says so in its own list, not in its severity and not in the
+    exit code the caller computes from `findings`.
+    """
+    audit = audit_repository(
+        repository=REPO,
+        landings=[],
+        pending=(
+            pending(update_type=None, title=RANGE_TITLE),
+            pending(number=32, update_type=None, title=DOCKER_TITLE),
+        ),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+    )
+
+    assert audit.findings == ()
+    assert kinds(audit.exceptions) == [EXCEPTION_UPDATE_TYPE_UNPARSEABLE] * 2
+    assert audit.severity == "info"
+
+
+def test_an_exception_does_NOT_silence_a_real_finding_beside_it() -> None:
+    """The over-general version of this rule would make a repository quiet once one of its open
+    updates could not be classified. Both are reported, each under its own category."""
+    audit = audit_repository(
+        repository=REPO,
+        landings=[],
+        pending=(pending(update_type=None, title=RANGE_TITLE), pending(number=32)),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+    )
+
+    assert kinds(audit.findings) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert kinds(audit.exceptions) == [EXCEPTION_UPDATE_TYPE_UNPARSEABLE]
+    assert audit.severity == "warning"
+
+
 # ---------------------------------------------------------------------------------------------
 # The record the pass files.
 # ---------------------------------------------------------------------------------------------
@@ -833,6 +940,50 @@ def test_a_flood_of_findings_is_trimmed_to_fit_with_its_true_count_beside_it() -
     assert body["facts"]["findings_found"] == 200
     assert 0 < len(body["facts"]["findings"]) < MAX_LIST
     assert len(encoded) <= 4096
+
+
+def test_an_exception_is_recorded_in_the_row_with_its_own_count() -> None:
+    """A quiet category still has to be written down, or it is a category that was suppressed."""
+    audit = audit_repository(
+        repository=REPO,
+        landings=[],
+        pending=(pending(update_type=None, title=RANGE_TITLE),),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+    )
+
+    body = audit_observation(audit, "20260808T120000Z", NOW)
+
+    assert body["facts"]["exceptions_found"] == 1
+    assert body["facts"]["exceptions"][0]["kind"] == EXCEPTION_UPDATE_TYPE_UNPARSEABLE
+    assert body["facts"]["findings_found"] == 0
+    assert body["severity"] == "info"
+    assert "0 finding(s) and 1 exception(s)" in body["summary"]
+
+
+def test_exceptions_are_dropped_before_caveats_when_the_record_will_not_fit() -> None:
+    """Least urgent first: an exception is permanent, so it says the same thing tomorrow.
+
+    Enough long-named exceptions to blow the byte bound on their own, beside one caveat that must
+    survive them.
+    """
+    audit = audit_repository(
+        repository=REPO,
+        landings=[landing(files=[GATE_PATH], ecosystem="e" * 200)],
+        pending=tuple(
+            pending(number=index, update_type=None, title=RANGE_TITLE) for index in range(60)
+        ),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+    )
+
+    body = audit_observation(audit, "20260808T120000Z", NOW)
+
+    assert body["facts"]["exceptions_found"] == 60
+    assert body["facts"]["caveats"], "the caveat was trimmed before the exceptions"
+    assert len(body["facts"]["exceptions"]) < MAX_LIST
 
 
 def test_caveats_are_dropped_before_findings_when_the_record_will_not_fit() -> None:
