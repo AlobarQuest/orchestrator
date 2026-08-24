@@ -3592,6 +3592,19 @@ style of that module.
   the branch. Put an **absolute `cd` inside the backgrounded command itself**, and read `rootdir:`
   beside the collected count. The header survives where the summary does not: `rootdir:` prints in
   the first six lines, so it outlives the output truncation that eats trailing summary lines.
+  **BUT `-q` SUPPRESSES THE ENTIRE HEADER, INCLUDING `rootdir:` — so the compact form everyone uses
+  for counting is exactly the form that hides the only tell.** Measured 2026-08-24: `--collect-only`
+  prints `rootdir:` on line 3; `--collect-only -q` prints node ids and a bare count and no header at
+  all. If a count matters, run without `-q`, or read `rootdir:` from a separate non-quiet run.
+  **This is the best explanation for an otherwise undetermined observation** (WS parked-checkout,
+  2026-08-24): a hooked `uv run pytest` reported **66 collected / 66 passed against a true 83**,
+  with per-file counts of 31/14/16/5 — *`main`'s shape exactly* — while a direct
+  `.venv/bin/python -m pytest` answered 83 from the same tree seconds later. A drifted cwd reading
+  the MAIN tree while the worktree held the edits produces precisely that, and `-q` would have
+  hidden it. **Stated as the leading hypothesis, not as fact:** HQ could not reproduce a
+  hook-caching effect — from the repo root, hooked and direct agreed at 83 three times running —
+  and the build session was right to refuse to name a mechanism its evidence did not carry. Take
+  any count that matters from the direct form, non-quiet.
   This is the existing "absolute `cd` every Bash call" rule with the specific tell attached — and
   it is a *third* way `make check` reports a green it did not earn, beside exit-5-no-tests-collected
   and tool-guarded skips.
@@ -3695,3 +3708,29 @@ style of that module.
   showed `gone` for 10 of 10 local branches, while `orchestrator` showed it for only 14 of 39.
   **No git setting deletes a LOCAL branch**, which is why the teardown step above had to change
   rather than being automated away.
+
+
+- **A mutation harness must restore from GIT, not from memory — a timeout is not a clean exit.**
+  A command timeout sends `SIGTERM`, Python's default handling does not run `finally`, and the
+  mutation is left on disk, surfacing later as an edit nobody made. Measured 2026-08-24: a killed
+  run left one deleted line in a `cli.py` that read as a source defect an hour later and cost a real
+  diagnosis. Restore with `git checkout <ref> -- <path>` and **assert the restore landed** before
+  the next mutation. Pairs with the existing rule that a mutation harness must set
+  `PYTHONDONTWRITEBYTECODE=1`: both are ways a harness silently reports about a tree that is not the
+  one you think you are testing.
+
+- **`git clone` of an EMPTY repository sets no `origin/HEAD`, and pushing to it never creates one.**
+  Only a clone from a non-empty remote, or an explicit `git remote set-head origin -a`, does.
+  Measured 2026-08-24. So a fixture built the obvious way — `init --bare` → clone → commit → push —
+  **differs from every real checkout in exactly that ref**, and a classifier that reads
+  `origin/HEAD` then measures the wrong path in every test while looking thoroughly covered. This is
+  the fixture-shaped twin of *validate the classifier against the population*.
+
+- **`git rev-parse --abbrev-ref origin/HEAD` prints the literal string `origin/HEAD` on STDOUT and
+  exits 128 when the ref is absent — so only the EXIT STATUS discriminates absence.** And when
+  `origin/HEAD` is a symbolic ref pointing outside `refs/remotes/origin/`, it answers a **bare**
+  name (`main`, `v1`), so only a prefix check discriminates that case. Measured 2026-08-24 while
+  building the sweep's default-branch read. A reader that trusts stdout classifies every checkout as
+  being off its default branch; a reader that skips the prefix check can be accidentally right when
+  the symbolic ref happens to point at the local default, which is why only a symbolic-ref-to-a-TAG
+  control discriminates.
