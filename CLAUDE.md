@@ -2845,11 +2845,15 @@ style of that module.
   must not move.
 
 - **Adding a source file under `src/` adds THREE parametrized cases to
-  `tests/architecture/test_wsp21_invariant_scan.py`, not two** — `test_no_tracked_source_carries_a_secret`,
+  `tests/architecture/test_wsp21_invariant_scan.py`, and a new `scripts/*.sh` adds TWO** —
+  `test_no_tracked_source_carries_a_secret`,
   `test_nothing_in_the_repo_calls_a_merge_method` and `test_nothing_in_the_repo_merges_a_pull_request`.
   The existing bullet above says two; measured 2026-08-13, two new `src/deploy_watcher/` modules
   added exactly six. The reconciliation method it prescribes (diff node ids between `main` and the
   branch) is right and is what produced this correction.
+  **The shell figure was measured 2026-08-24: the merge-method scan is Python-only, so a script
+  draws two cases rather than three.** That day 5 Python files plus 2 shell scripts added exactly
+  19. Use the multiplier only as a cross-check — the node-id diff remains the answer.
 
 - **`scripts/sds-token.sh` RESPECTS an already-set `BWS_ACCESS_TOKEN`, so a launcher that needs TWO
   BWS identities must not source it alongside a `${BWS_ACCESS_TOKEN:-…}` default.** One ambient
@@ -3591,3 +3595,40 @@ style of that module.
   empty and produces `sqlalchemy.exc.ArgumentError: Could not parse SQLAlchemy URL` across every
   collection target — which reads as a broken environment rather than as a typo one line up. Use
   separate `export` statements.
+
+- **`git log` obeys the OPERATOR'S GLOBAL config, and `log.showSignature` puts `gpg:` lines on
+  STDOUT — so a parse that works on every machine in this estate today is one
+  `git config --global` away from breaking on all of them at once.** Measured 2026-08-24 against
+  a signed squash merge: `git -c log.showSignature=true log -1 --format=%H%n%cI <sha>` emits
+  **three** `gpg:` lines *before* the format output, on stdout, not stderr — so anything counting
+  lines or splitting fields silently reads a signature warning as data. Every commit GitHub
+  squashes onto `main` here is signed, so the trigger is real rather than exotic. Pass
+  **`--no-show-signature`** on any programmatic `git log`; verified to restore exact output.
+  **Note the class, which is the durable part: a test suite that scrubs the global git config —
+  which it should — is STRUCTURALLY BLIND to every defect of this shape.** The control can only be
+  a shape assertion plus a measurement recorded outside the suite.
+
+- **`git remote get-url` applies `url.<base>.insteadOf` and answers with the URL git will TALK to;
+  only `git config --get remote.origin.url` answers with the URL the repository is CONFIGURED
+  with.** Measured 2026-08-24 — `remote -v` rewrites too. What *identifies* a repository is the
+  configured value; the rewrite is a transport detail of one machine, so a producer keying identity
+  on `get-url` reports a different name on a machine with a rewrite rule. Consequence for a
+  read-only git allowlist: `config` must be **on** it, and because `git config a b` *sets* a value,
+  the subcommand name alone is not a permission — require the `--get` form explicitly.
+
+- **A `plistlib` failure on a plist TEMPLATE is not evidence the template is broken: launchd is
+  more permissive than expat about `--` inside an XML comment.** `scripts/com.devon.landing-ledger.plist`
+  raises `ExpatError: not well-formed (invalid token)` under `plistlib.load` and is loaded and
+  running under launchd right now (`launchctl list` confirms it). Verified 2026-08-24. **Do not
+  "fix" a template on the strength of a `plistlib` failure, and do not add a `plistlib` gate
+  expecting it to mean anything.** This also explains a note left open in the 2026-08-21
+  cascade-activation spec, which recorded that four orchestrator plists "would not parse with
+  `plistlib`" and treated it as an unknown.
+
+- **A script that installs a LaunchAgent must REFUSE to run from a linked worktree.** `REPO_ROOT`
+  resolves from `BASH_SOURCE` and is written into the plist verbatim, so installing from a build
+  worktree pins the scheduled job to a path that session tears down — after which it fails every
+  morning with **nothing reporting it**, which is the silent-quiet twin of a permanently-red
+  control. The discriminator is `git rev-parse --git-dir` versus `--git-common-dir`: they differ in
+  a linked worktree and are equal in a main tree, measured both ways 2026-08-24.
+  `install-activation-sweep-launchd.sh` enforces it; copy that guard into any future installer.
