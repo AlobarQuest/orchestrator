@@ -3642,9 +3642,11 @@ style of that module.
   a linked worktree and are equal in a main tree, measured both ways 2026-08-24.
   `install-activation-sweep-launchd.sh` enforces it; copy that guard into any future installer.
 
-- **THREE git-based tests for "did this branch land?" ALL fail in this estate, and the only reliable
-  answer comes from GitHub.** Squash-merge is the root cause of all three, and each was measured
-  wrong on real branches within 24 hours of 2026-08-24:
+- **FOUR tests for "did this branch land?" all have blind spots in this estate — the GitHub one
+  included. Only a NAMED ARTIFACT settles it.** (This bullet said "three" and called the GitHub
+  lookup reliable when written on 2026-08-24; the fourth was measured hours later, against the
+  residue the first three could not classify.) Squash-merge is the root cause of the first three,
+  and each was measured wrong on real branches within 24 hours of 2026-08-24:
   1. **`git merge-base --is-ancestor`** — a squashed branch commit is *never* an ancestor of `main`,
      even when its content is fully landed. This is also why **`git branch -d` refuses these
      branches and `-D` is required**; `-d` runs the same test.
@@ -3659,10 +3661,31 @@ style of that module.
      conservative direction), and the wrong one for a population.
   **Ask GitHub instead: `gh pr list --repo <r> --head <branch> --state merged`.** GitHub records
   that a pull request merged regardless of how it was merged. On the same population it answered
-  **74 merged, 5 without a merged pull request** — and the 5 were genuine (superseded variants and
-  a branch named `backup/…-superseded-…`). Generalise past branches: **when a local heuristic and
-  the system of record can both answer a question, and the local one has a known blind spot, ask
-  the system of record.**
+  **74 merged, 5 without a merged pull request.** But:
+  **4. `gh pr list --head <branch>` is authoritative about the branch NAME, and the name is the weak
+  link.** It asks *"was there a merged pull request from this exact head?"*, so a rebase, a rename
+  or a cleaned redo breaks the association though the work landed. **All 5 of that residue had in
+  fact landed, under a different name** — an earlier version of this bullet called them "genuine"
+  and was wrong. Every one had a near-twin in the merged list: `deliberate-refusals` beside the
+  merged `deliberate-refusals-rebased`, `wsp37-inc4b-act-clean` beside the merged
+  `wsp37-inc4b-act`, two `worktree-agent-<hex>` scaffolds whose work landed under proper names, and
+  one branch called `backup/local-main-superseded-20260811`. **A near-twin in the merged list is
+  the tell.**
+  **What settles it is a NAMED ARTIFACT the branch introduced — look for that, never for a diff.**
+  A migration file is close to ideal: its name is unique and it either exists on `main` or does
+  not. `0022_wsp36_landing_type.py`, `0023_wsp36_landing_audit.py` and `0025_wsp37_pr_merge.py`
+  resolved three of the five outright. Failing a migration, a new module or a distinctive constant
+  does the same — `_DELIBERATE`/`_EXCEPTION` in `estate_lander/cli.py` resolved a fourth. The fifth
+  was **superseded**: `main` carried a *more developed* version of the same reasoning, which no
+  equality test could ever have shown.
+  **Working order for this estate: (a) `gh pr list --head`, which classified 74 of 79; (b) for the
+  residue, name the artifact and check `main` for it.** Content diffing is the wrong tool at both
+  steps. With one human on this machine and otherwise only agents, the residue's shape is
+  predictable — a session rebases, renames or redoes a branch, the tidy version merges, and the
+  original lingers with a broken pull-request link.
+  Generalise past branches: **when a local heuristic and the system of record can both answer a
+  question, ask the system of record — then check what its answer is KEYED ON, because that key is
+  its blind spot.**
 
 - **`delete_branch_on_merge` converts an unanswerable question into a trivial one, and is now `true`
   on all six SDS targets** (it was already true on four; `orchestrator` and `intent-packages` were
