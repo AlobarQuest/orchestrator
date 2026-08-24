@@ -77,6 +77,13 @@ OBSERVATION_SOURCE_SYSTEMS = (
     # specific tool, `ops_dashboard` a specific application -- and reusing one would write
     # false provenance into rows that have no supersession model and no delete route.
     "recovery_floor",
+    # ADR-0030's routine staleness sweep -- the second deployment model, where a change becomes
+    # live when the code is pulled into a working copy on the operator machine and the next
+    # process start picks it up. One member for the whole lane, following `drift_digest` and
+    # `recovery_floor`: `source_system` names the producing LANE and `subject_reference` names
+    # the individual run's subject. None of the members above fits, and reusing a near-miss would
+    # write false provenance into rows that have no supersession model and no delete route.
+    "machine_activation",
 )
 OBSERVATION_TRUST_CLASSIFICATIONS = ("orchestrator", "delivery_system", "monitor", "external")
 OBSERVATION_SUBJECT_TYPES = (
@@ -124,6 +131,11 @@ OBSERVATION_TYPES = (
     # this asserts that a record has not been altered. Today's only producer is the nightly
     # factory-events pass.
     "chain_integrity",
+    # What one enrolled working copy on the operator machine will execute at its next start
+    # (ADR-0030). Deliberately neither `drift`, which is the infrastructure drift digest's, nor
+    # `inventory`, which asserts nothing: this says a named checkout is at a named commit, and
+    # whether that is what was merged.
+    "activation",
 )
 OBSERVATION_STATUSES = (
     "passed",

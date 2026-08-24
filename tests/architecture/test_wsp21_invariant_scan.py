@@ -309,6 +309,14 @@ OUTBOUND_ALLOWLIST = {
     # that bound is enforced twice over: by the credential's scope at change-manager, and here in
     # code before a request is built. Its egress is not the orchestrator's.
     Path("src/change_proposer/change_manager.py"),
+    # ADR-0030. The machine-activation sweep is a SEPARATE program (ADR-0002's shape), out of
+    # process and on a clock. Its subject is local git on the operator machine, which it reads
+    # through a subcommand allowlist that makes `pull` unreachable rather than merely unused --
+    # so the ONLY thing it speaks HTTP to is the orchestrator, and only to file what it found.
+    # One endpoint, the OBSERVER role's whole write surface, and no read surface at all;
+    # enforced in code by `is_allowed_write` and pinned by test_activation_sweep_isolation.py.
+    # Its egress is not the orchestrator's.
+    Path("src/activation_sweep/orchestrator_client.py"),
 }
 
 

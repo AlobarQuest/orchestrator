@@ -51,6 +51,10 @@ work-carrier = "work_carrier.cli:main"
 # Runs in the carry's pass and BEFORE it, so a finished record leaves the approved queue
 # before the carry reads that queue.
 work-watcher = "work_watcher.cli:main"
+# ADR-0030. The machine-activation sweep: what each enrolled working copy on the operator
+# machine will execute at its next start, and whether that is what was merged. It is also
+# the only control over ADR-0031, whose activation helper returns 0 whatever it finds.
+activation-sweep = "activation_sweep.cli:app"
 
 [dependency-groups]
 dev = [
