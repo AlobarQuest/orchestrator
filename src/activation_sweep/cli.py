@@ -18,6 +18,17 @@ from typing import Annotated, Any, Protocol
 
 import typer
 
+from activation_sweep.bind import (
+    NullBinder,
+    bind_checkout,
+    has_findings,
+)
+from activation_sweep.binding_client import (
+    UnusableEndpointError as BindingUnusableEndpointError,
+)
+from activation_sweep.binding_client import (
+    open_binding_client,
+)
 from activation_sweep.checkout import (
     ForbiddenCommandError,
     GitError,
@@ -43,6 +54,11 @@ RECOVERABLE = (GitError, SweepWriteError, KeyError, TypeError, ValueError)
 UNRECOVERABLE = (ForbiddenCommandError, ForbiddenEndpointError)
 
 TOKEN_VARIABLE = "ACTIVATION_SWEEP_TOKEN"
+# A SECOND credential, for the SECOND lane. The sweep records observations as OBSERVER; binding a
+# release artifact is admitted only for the SYSTEM actor, so the two cannot share a bearer and
+# must not share a variable -- one ambient token serving both identities is the failure this
+# estate has already paid for twice, in the launchers and in `factory decompose`.
+BINDING_TOKEN_VARIABLE = "ACTIVATION_BIND_TOKEN"
 
 # Nothing to report, and every enrolled checkout was measured and filed.
 EXIT_OK = 0
@@ -196,3 +212,52 @@ def sweep_command(
             ),
         )
     )
+
+
+@app.command("bind")
+def bind_command(
+    checkout: Annotated[
+        list[str],
+        typer.Option(help="Path to a MACHINE-LOCAL working copy; repeatable."),
+    ],
+    orchestrator_url: Annotated[str, typer.Option()] = "https://sds.alobar.net",
+    credential_key_id: Annotated[str, typer.Option()] = "orchestrator-system",
+    fetch: Annotated[
+        bool, typer.Option(help="Update remote-tracking refs before measuring. Never pulls.")
+    ] = True,
+    dry_run: Annotated[
+        bool, typer.Option(help="Read candidates and print what would be bound; write nothing.")
+    ] = False,
+) -> None:
+    """Bind a release artifact for every unit whose landing this machine has activated.
+
+    THE CHECKOUTS PASSED HERE ARE NOT THE SWEEP'S SIX. Two of the SDS targets -- `change-manager`
+    and `brain` -- become live by a hosted application swapping a container image, which is the
+    first model and already recorded. Binding a machine-local artifact for one of them would
+    assert that a working copy on this machine is what serves them, which is false, and it is the
+    collapse the kind discriminator exists to prevent. The wrapper passes the four that have no
+    hosted application; nothing here infers the list.
+
+    A DRY RUN READS AND WRITES NOTHING. It still needs the credential, because knowing what would
+    be bound requires asking which units are candidates -- and that is the run to make first, so
+    the units about to be bound are seen before anything permanent exists.
+    """
+    token = os.environ.get(BINDING_TOKEN_VARIABLE, "")
+    if not token:
+        typer.echo(f"{BINDING_TOKEN_VARIABLE} is required", err=True)
+        raise typer.Exit(code=1)
+    try:
+        client = open_binding_client(
+            base_url=orchestrator_url, credential_key_id=credential_key_id, token=token
+        )
+    except BindingUnusableEndpointError as error:
+        typer.echo(f"--orchestrator-url: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    with client:
+        binder = NullBinder(client) if dry_run else client
+        summaries = [bind_checkout(path, binder, fetch=fetch, dry_run=dry_run) for path in checkout]
+    typer.echo(json.dumps(summaries, indent=2, sort_keys=True))
+    # No `EXIT_FINDINGS` here, and the asymmetry with `sweep` is the point. The sweep's findings
+    # are conditions of the MACHINE -- behind, dirty -- which a person should act on. This lane's
+    # only non-clean answers are missing ones, so an incomplete pass is the only thing to report.
+    raise typer.Exit(code=EXIT_INCOMPLETE if has_findings(summaries) else EXIT_OK)

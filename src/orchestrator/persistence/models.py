@@ -642,10 +642,39 @@ class InfraLaneLink(UUIDPrimaryKey, Base):
     idempotency_key: Mapped[str] = mapped_column(String)
 
 
+# What KIND of thing a release artifact binding names, and it is the one field a reader consults
+# to tell the estate's two activation models apart (ADR-0030).
+#
+# `container_image` is the model this table was shaped for: an image with a registry digest, built
+# and pushed, swapped in by the hosting platform. `machine_local` is the second model, which had
+# been running the whole time and which nothing recorded: a change becomes live on the operator
+# machine when the code is pulled into a working copy and the next process start picks it up.
+#
+# THE THREE REGISTRY COLUMNS ARE CONDITIONAL ON THIS VALUE, and that is the point of introducing
+# it. A working copy has no registry, no registry repository and no image name, and writing
+# "local" into those columns because a CHECK insisted would make the two models look IDENTICAL in
+# exactly the columns a reader would use to separate them -- the collapse ADR-0030 exists to
+# prevent, arriving through the back door. So they are required for one kind and forbidden for the
+# other, and the constraint below says so.
+#
+# `artifact_digest` is required for BOTH and its validator is untouched. A machine-local binding
+# supplies a real content digest -- `git archive HEAD` hashed -- so the invariant that this table
+# refuses a bare commit sha stays literally true rather than being relaxed for a second case.
+CONTAINER_IMAGE_KIND = "container_image"
+MACHINE_LOCAL_KIND = "machine_local"
+RELEASE_ARTIFACT_KINDS = (CONTAINER_IMAGE_KIND, MACHINE_LOCAL_KIND)
+
+
 class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
     __tablename__ = "release_artifact_bindings"
     __table_args__ = (
         UniqueConstraint("idempotency_key"),
+        # NULLS NOT DISTINCT, and it is load-bearing rather than tidy. Postgres treats NULLs in a
+        # unique constraint as distinct by default, so the moment the three registry columns
+        # became nullable for `machine_local` this constraint would have stopped deduplicating
+        # every machine-local row -- an existing guarantee silently weakened by a migration whose
+        # stated subject was something else. Requires Postgres 15 or later; this estate runs 16
+        # locally, in CI and in production.
         UniqueConstraint(
             "work_package_revision_id",
             "work_unit_id",
@@ -656,6 +685,11 @@ class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
             "artifact_repository",
             "artifact_name",
             name="uq_release_artifact_source_tuple",
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint(
+            "kind IN ({})".format(", ".join(f"'{kind}'" for kind in RELEASE_ARTIFACT_KINDS)),
+            name="ck_release_artifact_kind",
         ),
         CheckConstraint(
             "implementation_pr_number IS NULL OR implementation_pr_number > 0",
@@ -667,10 +701,18 @@ class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
         ),
         CheckConstraint(
             "package_revision_hash <> '' AND source_repository <> '' "
-            "AND source_commit <> '' AND merge_commit <> '' "
-            "AND artifact_registry <> '' AND artifact_repository <> '' "
-            "AND artifact_name <> '' AND artifact_digest <> ''",
+            "AND source_commit <> '' AND merge_commit <> '' AND artifact_digest <> ''",
             name="ck_release_artifact_required_text",
+        ),
+        # The registry three, conditional on kind. FORBIDDEN rather than merely optional for a
+        # machine-local row: a NULL says nobody wrote a registry, where an empty string or a
+        # placeholder would say somebody wrote one and it was this.
+        CheckConstraint(
+            f"(kind = '{CONTAINER_IMAGE_KIND}' AND artifact_registry <> '' "
+            "AND artifact_repository <> '' AND artifact_name <> '') "
+            f"OR (kind = '{MACHINE_LOCAL_KIND}' AND artifact_registry IS NULL "
+            "AND artifact_repository IS NULL AND artifact_name IS NULL)",
+            name="ck_release_artifact_registry_by_kind",
         ),
     )
 
@@ -683,9 +725,10 @@ class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
     implementation_pr_number: Mapped[int | None] = mapped_column(Integer)
     source_commit: Mapped[str] = mapped_column(String)
     merge_commit: Mapped[str] = mapped_column(String)
-    artifact_registry: Mapped[str] = mapped_column(String)
-    artifact_repository: Mapped[str] = mapped_column(String)
-    artifact_name: Mapped[str] = mapped_column(String)
+    kind: Mapped[str] = mapped_column(String, server_default=text(f"'{CONTAINER_IMAGE_KIND}'"))
+    artifact_registry: Mapped[str | None] = mapped_column(String)
+    artifact_repository: Mapped[str | None] = mapped_column(String)
+    artifact_name: Mapped[str | None] = mapped_column(String)
     artifact_digest: Mapped[str] = mapped_column(String)
     artifact_tag: Mapped[str | None] = mapped_column(String)
     workflow_run_id: Mapped[str | None] = mapped_column(String)

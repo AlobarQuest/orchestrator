@@ -7,6 +7,12 @@ from typing import Any
 import httpx
 import pytest
 
+from activation_sweep.binding_client import (
+    is_allowed_read as binding_is_allowed_read,
+)
+from activation_sweep.binding_client import (
+    is_allowed_write as binding_is_allowed_write,
+)
 from activation_sweep.checkout import READ_ONLY, ForbiddenCommandError, run_git
 from activation_sweep.orchestrator_client import (
     ForbiddenEndpointError,
@@ -108,7 +114,11 @@ def test_only_the_client_module_can_speak_http() -> None:
         if {"httpx", "requests", "urllib.request", "http.client", "aiohttp"} & _file_imports(path)
     }
 
-    assert speaks == {"orchestrator_client.py"}
+    # TWO modules, one per lane, and the split is the property rather than an exception to it.
+    # `sweep` writes observations as OBSERVER and reads nothing; `bind` writes a release artifact
+    # as SYSTEM and must read first. A single module serving both would hold both credentials'
+    # reach behind one guard, so the surfaces are separated where the credentials are.
+    assert speaks == {"orchestrator_client.py", "binding_client.py"}
 
 
 def test_the_sweep_has_no_read_surface_at_all() -> None:
@@ -217,3 +227,27 @@ def test_the_git_surface_can_read_and_fetch_and_nothing_else(tmp_path: Path) -> 
             run_git(tmp_path, subcommand)
     with pytest.raises(ForbiddenCommandError):
         run_git(tmp_path)
+
+
+def test_the_binding_lanes_surface_is_two_paths_and_no_more() -> None:
+    """One read and one write, both anchored. Controls in both directions.
+
+    The unit-id shape is spelled into the write pattern so a prefix, a trailing slash, or
+    `.../{id}/anything-else` does not match. Without that the pattern would admit every per-unit
+    command route -- `dispatch`, `commands/ready`, `pr-merge` -- which is the reach this lane's
+    SYSTEM credential actually has and the reason the bound is written in code.
+    """
+    unit = "00000000-0000-0000-0000-000000000000"
+    assert binding_is_allowed_write(f"/api/v1/work-units/{unit}/release-artifacts")
+    assert not binding_is_allowed_write(f"/api/v1/work-units/{unit}/release-artifacts/")
+    assert not binding_is_allowed_write(f"/api/v1/work-units/{unit}/commands/ready")
+    assert not binding_is_allowed_write(f"/api/v1/work-units/{unit}/dispatch")
+    assert not binding_is_allowed_write(f"/api/v1/work-units/{unit}/pr-merge")
+    assert not binding_is_allowed_write("/api/v1/observations")
+    assert not binding_is_allowed_write("/api/v1/machine-activation-candidates")
+
+    assert binding_is_allowed_read("/api/v1/machine-activation-candidates")
+    assert binding_is_allowed_read("/api/v1/machine-activation-candidates?repository=a/b")
+    assert not binding_is_allowed_read("/api/v1/machine-activation-candidates/")
+    assert not binding_is_allowed_read(f"/api/v1/work-units/{unit}/evidence-pack")
+    assert not binding_is_allowed_read("/api/v1/observations")

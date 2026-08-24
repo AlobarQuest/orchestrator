@@ -41,6 +41,18 @@ class AuthorityEnvelope:
     def level_for(self, capability: str) -> str:
         return self.capabilities.get(capability, "prohibited")
 
+    @property
+    def target_repository(self) -> str:
+        """The repository this unit's work may touch, or "" when the envelope names none.
+
+        A PROPERTY, not a field: it reads `constraints`, which is already a known field, so it
+        adds nothing to `normalized()` and cannot move an authority fingerprint. Defined here
+        because two subsystems now route on it -- admission, and the machine-local activation
+        lane -- and a rule spelled in two places is where this estate's drift consistently lives.
+        """
+        repository = self.constraints.get("target_repository")
+        return repository if isinstance(repository, str) else ""
+
     def normalized(self) -> dict[str, Any]:
         return {
             "budgets": {

@@ -439,8 +439,7 @@ def _target_repository(envelope: AuthorityEnvelope) -> str:
     The runner refuses to act unless the workflow it runs in IS the unit's target repo,
     so a process-global target would misroute every fan-out unit rather than fail.
     """
-    repository = envelope.constraints.get("target_repository")
-    return repository if isinstance(repository, str) else ""
+    return envelope.target_repository
 
 
 def _conformance_blocked_reason(envelope: AuthorityEnvelope) -> str | None:

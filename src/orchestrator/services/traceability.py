@@ -251,6 +251,7 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
         artifact=[
             TraceabilityArtifactHop(
                 artifact_digest=b.artifact_digest,
+                kind=b.kind,
                 artifact_registry=b.artifact_registry,
                 artifact_repository=b.artifact_repository,
                 artifact_name=b.artifact_name,
