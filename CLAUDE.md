@@ -3753,3 +3753,38 @@ style of that module.
   `commit,artifact,deployment`), which is what separates *the query is broken* from *this subject
   has no binding*. Without it, an empty result proves nothing, exactly as a search zero does not
   prove absence.
+
+- **A NEGATIVE-AUTHORIZATION PROBE THAT FOLLOWS REDIRECTS REPORTS A SECURITY CONTROL AS ABSENT.**
+  Measured 2026-08-24 running criterion 3's negative tests. `POST /api/v1/work-units/{id}/approvals`
+  sits behind the `orchestrator-authority-approval-human` forward-auth Traefik router, so an M2M
+  bearer gets **302 to `id.alobar.net`** and never reaches the app. `urllib` (and `curl -L`, and
+  `requests` by default) **follows that redirect**, lands on Authentik's authorize page, and returns
+  **200** — which a harness scoring "did this succeed?" reads as *the OBSERVER credential just
+  approved a work unit*. It had not; the evidence pack showed the unit's only approval was still
+  Devon's original one. **Disable redirect following in any authorization probe** and treat 3xx as
+  its own outcome, because the redirect IS the refusal. Re-run with redirects off: 403 on seven
+  routes, 302 on the eighth, **0 not refused**.
+  Two things this makes concrete. **A 200 in an authorization test is only meaningful if you know
+  WHICH SERVER produced it** — read the final URL, or don't follow. And **the estate refuses at two
+  different layers**: `_confine_observer` (app, `role_forbidden`) and the proxy's forward-auth
+  routing (302). A route protected only by the second would fall through to the M2M router if that
+  Traefik entry were ever deleted — as `orchestrator-intake-human` was on 2026-08-19 under ADR-0027.
+  `/approvals` is protected by BOTH (`_require_human` and the observer confinement also refuse it),
+  so it is defence in depth rather than a single point; **check that property before deleting any
+  human router**, which is the same check ADR-0027 required and passed.
+
+- **Criterion 3's negative tests, re-established 2026-08-24 and the population is now FOUR
+  producers, not one.** The 2026-08-07 proof covered `orchestrator-drift-reporter` alone. The
+  observe-and-report producers now share ONE credential by design — `orchestrator-observer`
+  (`f793576f-…`) is used by the **activation sweep, the deploy watcher and the landing ledger** —
+  so a single negative test covers all of them, which is the payoff of the deliberate
+  one-credential decision. Re-proven against production: `commands/ready`, `commands/fail`,
+  `pr-merge`, `estate-pr-merge`, `dispatch`, `verify` and `release-artifacts` all **403
+  `role_forbidden`**; `approvals` **302**; `GET /observations` **200** as the positive control that
+  the credential is live and the refusals are authorization rather than a dead token.
+  **Separately, and NOT covered by that test: five scheduled producers hold the SYSTEM bearer** —
+  `estate-landing`, `work-carrier`, `follow-up-mint`, `run-tracker-projection` and
+  `run-tracker-reconciliation`. SYSTEM *can* transition a unit and merge, by design (ADR-0020's
+  landing lane merges; ADR-0028's carrier registers intakes), so whether criterion 3's phrase
+  "external producer" reaches them is a CLASSIFICATION question and not a test result. Do not test
+  it by attempting a transition — that mutates production.
