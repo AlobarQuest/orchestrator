@@ -143,6 +143,7 @@ def test_the_served_body_carries_every_field_the_producer_reads(
         "work_package_revision_id",
         "package_revision_hash",
         "unit_key",
+        "work_unit_version",
         "source_repository",
         "pr_number",
         "source_commit",

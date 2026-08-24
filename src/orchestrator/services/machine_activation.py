@@ -76,6 +76,13 @@ class MachineActivationCandidate:
     work_package_revision_id: uuid.UUID
     package_revision_hash: str
     unit_key: str
+    # The unit's version AT THIS READ, so the producer can send a real `expected_version` rather
+    # than probing for one. `CommandBase.expected_version` is `int = Field(ge=0)` -- required and
+    # non-nullable -- so a producer with no version cannot post at all, and the estate's
+    # documented workaround (post 0, read `current_version` off the conflict, retry) is a retry
+    # branch this route can simply remove. If the unit transitions between this read and the
+    # write, the write correctly fails as `version_conflict`, which is what the check is for.
+    work_unit_version: int
     source_repository: str
     pr_number: int
     source_commit: str
@@ -125,6 +132,7 @@ def machine_activation_candidates(
                 work_package_revision_id=revision.id,
                 package_revision_hash=revision.content_hash,
                 unit_key=unit.unit_key,
+                work_unit_version=unit.version,
                 source_repository=repository.strip(),
                 pr_number=binding.pr_number,
                 source_commit=binding.head_sha,

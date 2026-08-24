@@ -38,6 +38,7 @@ def candidate_row(commit: str, *, binding_id: str | None = None) -> dict[str, An
         "work_package_revision_id": "11111111-2222-3333-4444-555555555555",
         "package_revision_hash": "sha256:package",
         "unit_key": "example-ac-001",
+        "work_unit_version": 3,
         "source_repository": REPOSITORY,
         "pr_number": 81,
         "source_commit": "f" * 40,

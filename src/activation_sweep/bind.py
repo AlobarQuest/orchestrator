@@ -98,6 +98,7 @@ class Candidate:
     package_revision_id: str
     package_revision_hash: str
     unit_key: str
+    work_unit_version: int
     source_repository: str
     pr_number: int
     source_commit: str
@@ -116,7 +117,12 @@ class Candidate:
             "source_commit",
             "merge_commit",
         )
+        # `work_unit_version` is checked for PRESENCE rather than truthiness: 0 is a real version
+        # and the only falsy one, so a `not row.get(...)` test would report a brand-new unit's
+        # candidate as a narrowed contract.
         missing = [name for name in required if not row.get(name)]
+        if row.get("work_unit_version") is None:
+            missing.append("work_unit_version")
         if missing:
             raise BindingCallError(
                 f"the orchestrator's candidate is missing {', '.join(sorted(missing))}"
@@ -128,6 +134,7 @@ class Candidate:
             unit_key=str(row["unit_key"]),
             source_repository=str(row["source_repository"]),
             pr_number=int(row["pr_number"]),
+            work_unit_version=int(row["work_unit_version"]),
             source_commit=str(row["source_commit"]),
             merge_commit=str(row["merge_commit"]),
             bound=row.get("binding_id") is not None,
@@ -143,7 +150,12 @@ def binding_payload(candidate: Candidate, *, path: str, head: str, digest: str) 
     """
     return {
         "idempotency_key": f"machine-activation:{candidate.work_unit_id}",
-        "expected_version": None,
+        # A REAL version, read from the candidate. `CommandBase.expected_version` is a required,
+        # non-nullable `int`, so `None` here is a 422 from request validation -- before the
+        # service, before any of its named errors, and invisible to every test that calls the
+        # service directly. Measured in production on this lane's first live pass: twelve
+        # refusals, all 422, nothing written.
+        "expected_version": candidate.work_unit_version,
         "kind": MACHINE_LOCAL_KIND,
         "package_revision_id": candidate.package_revision_id,
         "package_revision_hash": candidate.package_revision_hash,
