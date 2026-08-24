@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from activation_sweep.binding import has_activated
 from activation_sweep.checkout import (
     BEHIND,
     CONDITIONS,
@@ -469,8 +470,15 @@ def test_every_git_log_read_refuses_the_operators_signature_setting(estate: Esta
     assert all(NO_SIGNATURE in args for args in logs)
 
 
-def test_the_read_only_surface_is_what_the_reader_actually_uses(estate: Estate) -> None:
-    """A rot check on the allowlist: a member nothing runs is a permission nobody is watching."""
+def test_the_read_only_surface_is_what_the_readers_actually_use(estate: Estate) -> None:
+    """A rot check on the allowlist: a member nothing runs is a permission nobody is watching.
+
+    BOTH readers, because the allowlist serves both lanes (ADR-0030). `read_checkout` uses every
+    member but one; `merge-base` belongs to the unit-caused lane, which asks whether a landing
+    commit is in the history a working copy holds. Checking only the first reader would have
+    turned this rot check into a test that fails whenever the OTHER lane grows a subcommand --
+    which is the guard reporting on the wrong reader rather than a permission going unwatched.
+    """
     estate.land_upstream()
     used: set[str] = set()
     import activation_sweep.checkout as module
@@ -486,6 +494,7 @@ def test_the_read_only_surface_is_what_the_reader_actually_uses(estate: Estate) 
     module.subprocess.run = capture  # type: ignore[assignment]
     try:
         read_checkout(estate.local, fetch=True)
+        has_activated(estate.local, git(estate.local, "rev-parse", "HEAD").strip())
     finally:
         module.subprocess.run = original  # type: ignore[assignment]
 

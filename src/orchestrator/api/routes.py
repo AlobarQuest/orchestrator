@@ -65,6 +65,7 @@ from orchestrator.api.schemas import (
     KnowledgePromotionSubmitCommandModel,
     LeaseResponse,
     LifecycleCommand,
+    MachineActivationCandidateResponse,
     ObservationCommandModel,
     ObservationResponse,
     PackageAcceptanceCriterionResponse,
@@ -216,6 +217,7 @@ from orchestrator.services.lifecycle import (
     transition_unit,
     unit_history,
 )
+from orchestrator.services.machine_activation import machine_activation_candidates
 from orchestrator.services.observations import (
     ObservationCommand,
     ObservationFilters,
@@ -965,6 +967,7 @@ def create_release_artifact(
                 implementation_pr_number=body.implementation_pr_number,
                 source_commit=body.source_commit,
                 merge_commit=body.merge_commit,
+                kind=body.kind,
                 artifact_registry=body.artifact_registry,
                 artifact_repository=body.artifact_repository,
                 artifact_name=body.artifact_name,
@@ -999,6 +1002,25 @@ def release_artifacts(
     session: SessionDep,
 ) -> object:
     return _raise_error(list_release_artifacts(session, unit_id))
+
+
+@router.get(
+    "/machine-activation-candidates",
+    response_model=list[MachineActivationCandidateResponse],
+)
+def machine_activation_candidates_route(
+    repository: str,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """ADR-0030: which completed units a machine-local working copy could bind an artifact for.
+
+    Authentication-only, matching the other read surfaces. Read-only: it writes nothing and
+    asserts nothing about the machine. A repository with no confirmed landings answers with an
+    empty list rather than a 404 -- the ordinary state of a repository the factory has not landed
+    into yet, which a 404 would make indistinguishable from a misspelled name.
+    """
+    return list(machine_activation_candidates(session, repository))
 
 
 @router.post(

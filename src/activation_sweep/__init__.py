@@ -4,10 +4,22 @@ A SEPARATE program (ADR-0002's shape), sibling to `landing_ledger` and `deploy_w
 local git and records one observation per enrolled working copy. It shares no import path with
 `src/orchestrator/`, and its write surface is one endpoint.
 
-ADR-0030 names two lanes and this is the second of them. The first -- a `ReleaseArtifactBinding`
-carrying a content digest -- needs a COMPLETED work unit, and a routine pull has none, so this
-sweep structurally cannot write bindings and does not try. What it writes is a generic observation
-under the OBSERVER credential, on a clock, about repositories rather than units.
+ADR-0030 names two lanes and BOTH now live in this package, under separate commands and separate
+credentials.
+
+* `sweep` -- what this module's docstring describes. One generic observation per enrolled working
+  copy, under the OBSERVER credential, on a clock, about REPOSITORIES rather than units. A routine
+  pull has no work unit, so this lane structurally cannot write a `ReleaseArtifactBinding` and does
+  not try.
+* `bind` -- the unit-caused lane (`bind.py`). A `ReleaseArtifactBinding` carrying a real content
+  digest, for a COMPLETED unit whose landing commit this machine has actually pulled, under the
+  SYSTEM credential.
+
+They share a program because they share the only expensive thing: knowing which working copy is
+which repository. They share nothing else. Separate commands, separate bearers, separate confined
+HTTP surfaces, separate exit-code meanings -- and separate enrolled sets, because two of the six
+SDS targets become live by a hosted application swapping an image and must never be described as
+running from a working copy on this machine.
 
 WHAT IT IS FOR, in the order the arguments actually weigh:
 

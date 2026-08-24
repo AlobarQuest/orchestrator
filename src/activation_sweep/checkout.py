@@ -69,7 +69,9 @@ from pathlib import Path
 
 # Every git subcommand this program may run. See the module docstring: `fetch` is the only member
 # that writes anything at all, and remote-tracking refs are the whole of what it writes.
-READ_ONLY = frozenset({"rev-parse", "rev-list", "config", "status", "log", "fetch"})
+# `merge-base` was added for the unit-caused lane (ADR-0030): it answers whether a landing
+# commit is in the history a working copy holds, and it writes nothing.
+READ_ONLY = frozenset({"rev-parse", "rev-list", "config", "status", "log", "fetch", "merge-base"})
 
 # `config` is the one member that can also WRITE -- `git config a b` sets a value -- so it carries
 # an extra condition rather than being trusted by name. It is on the list at all because

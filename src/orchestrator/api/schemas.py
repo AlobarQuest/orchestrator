@@ -129,9 +129,14 @@ class ReleaseArtifactCommandModel(CommandBase):
     implementation_pr_number: int | None = Field(default=None, gt=0)
     source_commit: str = Field(min_length=1)
     merge_commit: str = Field(min_length=1)
-    artifact_registry: str = Field(min_length=1)
-    artifact_repository: str = Field(min_length=1)
-    artifact_name: str = Field(min_length=1)
+    # Defaulted so every existing caller keeps its meaning. The registry three below are
+    # OPTIONAL here and conditional in the service, which is the authority: a container image
+    # requires them and a machine-local activation refuses them. Loosening the wire while the
+    # service still refuses keeps one rule in one place.
+    kind: str = "container_image"
+    artifact_registry: str | None = None
+    artifact_repository: str | None = None
+    artifact_name: str | None = None
     artifact_digest: str = Field(min_length=1)
     artifact_tag: str | None = None
     workflow_run_id: str | None = None
@@ -690,9 +695,10 @@ class ReleaseArtifactResponse(BaseModel):
     implementation_pr_number: int | None
     source_commit: str
     merge_commit: str
-    artifact_registry: str
-    artifact_repository: str
-    artifact_name: str
+    kind: str
+    artifact_registry: str | None
+    artifact_repository: str | None
+    artifact_name: str | None
     artifact_digest: str
     artifact_tag: str | None
     workflow_run_id: str | None
@@ -712,6 +718,26 @@ class ReleaseArtifactResponse(BaseModel):
     event_id: UUID
     evidence_id: UUID
     idempotency_key: str
+
+
+class MachineActivationCandidateResponse(BaseModel):
+    """One completed unit a machine-local working copy could bind a release artifact for.
+
+    Everything here is the ORCHESTRATOR's half of the answer. Whether the working copy actually
+    holds `merge_commit`, and what its content digest is, are facts only the machine has.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    work_unit_id: UUID
+    work_package_revision_id: UUID
+    package_revision_hash: str
+    unit_key: str
+    source_repository: str
+    pr_number: int
+    source_commit: str
+    merge_commit: str
+    binding_id: UUID | None
 
 
 class DeploymentObservationResponse(BaseModel):
@@ -1708,9 +1734,12 @@ class TraceabilityCommitHop(BaseModel):
 
 class TraceabilityArtifactHop(BaseModel):
     artifact_digest: str
-    artifact_registry: str
-    artifact_repository: str
-    artifact_name: str
+    # The ONE field that separates the estate's two activation models. A reader who does not know
+    # which repository is hosted and which is machine-local reads this and knows anyway.
+    kind: str
+    artifact_registry: str | None = None
+    artifact_repository: str | None = None
+    artifact_name: str | None = None
     artifact_tag: str | None = None
     workflow_run_url: str | None = None
     builder_id: str | None = None

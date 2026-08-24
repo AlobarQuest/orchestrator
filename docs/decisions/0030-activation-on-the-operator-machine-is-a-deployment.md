@@ -182,6 +182,48 @@ write bindings.**
   (`orchestrator-drift-reporter`, the standing identity for every observe-and-report producer per
   ADR-0017).
 
+**BUILT 2026-08-24, and the split survives in a form worth stating precisely, because a reader of
+the sentence above will look for two programs and find one.** Both lanes live in
+`src/activation_sweep`, as `activation-sweep sweep` and `activation-sweep bind`. They share a
+package because they share the only expensive thing — knowing which working copy is which
+repository — and they share nothing else: separate credentials (OBSERVER, SYSTEM), separate
+confined HTTP surfaces, separate exit-code meanings, and separate enrolled sets. The claim above
+that *"the staleness sweep structurally cannot write bindings"* is unchanged and is still true of
+the `sweep` command; it was never a claim about the package.
+
+**Two things the build established that this section assumed otherwise.**
+
+**(1) `UnitPrMerge` is not the source of the landing commit, and could not be.** The obvious
+reading — the orchestrator's own record of its own act — has no row for the population this lane
+exists to serve: `infraops-mcp-server` #81, the estate's first fully-automated signal-to-merge, was
+landed by a person, so the one unit the lane most needed would have been unreachable. The commit is
+read instead from the **landing ledger's own observation**, which an independent program derived
+from GitHub, and it is confirmed against the orchestrator's own worker-written
+`UnitPrBinding.head_sha`. Two parties must agree before a unit is a candidate. A commit trailer
+naming a unit was rejected as a source for the reason ADR-0022 already records: it is the runner
+attesting to its own compliance.
+
+**(2) Reuse was not free, and §3's assumption that it was mostly free is what needed deciding.**
+The table's CHECK required a registry, a registry repository and an image name that a working copy
+does not have. Those three are now **conditional on `kind`** — required for `container_image`,
+refused for `machine_local` — which cost migration `0030_adr30_binding_kind`. Writing `"local"`
+into them would have made the two models identical in exactly the columns a reader separates them
+by, which is this section's own argument turned around. The migration also had to recreate the
+source-tuple unique constraint with `NULLS NOT DISTINCT`: Postgres treats NULLs in a unique
+constraint as distinct, so making three of its eight columns nullable would otherwise have
+silently stopped it deduplicating, weakening an existing guarantee as a side effect of a change
+about something else.
+
+**What this lane does NOT fill is the `deployment` hop, and that is a recommendation for HQ rather
+than a gap.** `deployment_observations` models an independent party confirming that a URL serves a
+digest; on the operator machine the program that computes the digest is the program that read the
+working copy, so a row there would be the producer attesting to its own act — the shape ADR-0020's
+detector and the conformance anti-tautology rule both refuse. The build's recommendation is that
+criterion 2 is satisfiable with `commit` and `artifact` populated and `deployment` **legitimately
+absent** for a machine-local target: the estate's *"not applicable is distinct from not met"*
+ruling a fifth time, and the same treatment `conditions` already has. A fifth summary shape is the
+alternative and was deliberately not shipped.
+
 **The sweep must not route through `deployment_observations`**, whose summaries are exact-key-set
 bounded to four shapes (`auth_summary`, `route_summary`, `dispatch_summary`, `status_summary`); a
 machine fact fits none of them and would be refused as `deployment_observation_invalid`.

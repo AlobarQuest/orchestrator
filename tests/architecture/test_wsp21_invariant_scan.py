@@ -317,6 +317,13 @@ OUTBOUND_ALLOWLIST = {
     # enforced in code by `is_allowed_write` and pinned by test_activation_sweep_isolation.py.
     # Its egress is not the orchestrator's.
     Path("src/activation_sweep/orchestrator_client.py"),
+    # ADR-0030's OTHER lane, in the same program and deliberately not in the same module. Binding
+    # a release artifact for a unit this machine has activated needs the SYSTEM credential and a
+    # read, where the sweep above needs OBSERVER and no read at all -- so a second confined
+    # surface rather than a widening of the first, which is what keeps either from quietly
+    # acquiring the other's reach. Two paths, one GET and one POST, enforced in code by
+    # `is_allowed_read` / `is_allowed_write`. Its egress is not the orchestrator's.
+    Path("src/activation_sweep/binding_client.py"),
 }
 
 
