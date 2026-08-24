@@ -476,9 +476,15 @@ def _existing_source_tuple(
 
 
 def _same_binding_facts(row: ReleaseArtifactBinding, command: ReleaseArtifactCommand) -> bool:
+    # `kind` is deliberately NOT compared, and its absence is a conclusion rather than an
+    # oversight. The source tuple this is reached through includes the three registry columns,
+    # which the kind-conditional CHECK forces to be NULL for one kind and non-empty for the
+    # other -- so two rows can never share a source tuple and differ in kind. A comparison
+    # nothing can make differ is untestable, and an untestable clause beside testable ones is
+    # how a mutation set comes to report a false green. Measured: adding it survived every
+    # control.
     return (
         row.package_revision_hash == command.package_revision_hash
-        and row.kind == command.kind
         and row.implementation_pr_number == command.implementation_pr_number
         and row.artifact_digest == command.artifact_digest
         and row.artifact_tag == _optional_text(command.artifact_tag)

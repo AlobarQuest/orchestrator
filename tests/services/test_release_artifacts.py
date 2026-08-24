@@ -2,7 +2,9 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+import pytest
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -459,15 +461,16 @@ def test_a_stored_command_recorded_before_kind_existed_reads_as_a_container_imag
     assert _stored_command({}) is None
 
 
-def test_the_source_tuple_still_deduplicates_when_the_registry_columns_are_null(
+def test_the_service_deduplicates_a_repeated_source_tuple_carrying_nulls(
     migrated_session: Session,
 ) -> None:
-    """NULLS NOT DISTINCT, measured through the service rather than asserted about DDL.
+    """The SERVICE's source-tuple branch, reached under a different idempotency key.
 
-    Postgres treats NULLs in a unique constraint as distinct by default, so making three of this
-    tuple's eight columns nullable would silently stop it deduplicating every machine-local row.
-    A second binding under a DIFFERENT idempotency key presents the same source tuple, so it must
-    reach the source-tuple branch rather than opening a second row.
+    THIS DOES NOT MEASURE `NULLS NOT DISTINCT`, and the docstring said it did until a mutation
+    proved otherwise: `_existing_source_tuple` compares with `IS NULL` in Python, so the service
+    finds the row whether or not the database constraint would. The constraint is the backstop
+    beneath this, and it has its own test below. Two claims, two tests -- the merged version was
+    correct about the wrong noun.
     """
     unit = completed_unit(migrated_session, key="null-tuple-unit")
     first = record_release_artifact(migrated_session, machine_local_command(unit))
@@ -508,3 +511,53 @@ def test_a_machine_local_binding_names_the_repository_rather_than_a_registry_pat
     assert evidence.stable_ref is not None
     assert evidence.stable_ref == f"machine_local:AlobarQuest/orchestrator@{MACHINE_DIGEST}"
     assert "None" not in evidence.stable_ref
+
+
+def test_the_source_tuple_constraint_itself_refuses_a_duplicate_carrying_nulls(
+    migrated_session: Session,
+) -> None:
+    """NULLS NOT DISTINCT, measured at the DATABASE by writing round the service.
+
+    Postgres treats NULLs in a unique constraint as distinct by DEFAULT, so making three of this
+    tuple's eight columns nullable would silently stop it deduplicating every machine-local row --
+    an existing guarantee weakened as a side effect of a migration about something else. The
+    service cannot show that: it does the `IS NULL` comparison itself and dedupes either way. So
+    this inserts the second row directly, which is the only reader that sees the constraint.
+
+    `release_artifact_bindings` carries no append-only trigger, so the insert is possible; the FK
+    columns are reused from the row the service wrote, since neither is part of the tuple.
+    """
+    unit = completed_unit(migrated_session, key="db-constraint-unit")
+    row = record_release_artifact(migrated_session, machine_local_command(unit))
+    assert isinstance(row, ReleaseArtifactBinding)
+
+    with pytest.raises(IntegrityError):
+        migrated_session.execute(
+            text(
+                """
+                INSERT INTO release_artifact_bindings (
+                    id, work_unit_id, work_package_revision_id, package_revision_hash,
+                    source_repository, source_commit, merge_commit, kind, artifact_digest,
+                    summary, recorded_by, recorded_at, event_id, evidence_id, idempotency_key
+                ) VALUES (
+                    :id, :work_unit_id, :revision_id, :package_revision_hash,
+                    :source_repository, :source_commit, :merge_commit, 'machine_local', :digest,
+                    '{}'::jsonb, 'system', now(), :event_id, :evidence_id, :idempotency_key
+                )
+                """
+            ),
+            {
+                "id": uuid.uuid4(),
+                "work_unit_id": row.work_unit_id,
+                "revision_id": row.work_package_revision_id,
+                "package_revision_hash": row.package_revision_hash,
+                "source_repository": row.source_repository,
+                "source_commit": row.source_commit,
+                "merge_commit": row.merge_commit,
+                "digest": OTHER_DIGEST,
+                "event_id": row.event_id,
+                "evidence_id": row.evidence_id,
+                "idempotency_key": "a-second-key-entirely",
+            },
+        )
+    migrated_session.rollback()

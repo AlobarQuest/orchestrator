@@ -245,6 +245,25 @@ def test_an_unmeasurable_checkout_is_a_finding_and_names_why(tmp_path: Path) -> 
     assert has_findings([summary])
 
 
+def test_a_candidate_missing_a_field_names_the_field_rather_than_raising_a_bare_key_error() -> None:
+    """The guard earns its place on the MESSAGE, and only a direct read can see that.
+
+    Through `bind_checkout` the outcome is `unavailable` either way -- a bare `KeyError` is in the
+    RECOVERABLE family and reaches the same branch -- so the pass-level test below cannot tell the
+    guard from its absence. What differs is what a person reads at 07:10: `the orchestrator's
+    candidate is missing merge_commit` names a narrowed contract, where `KeyError: merge_commit`
+    reads as this program being broken. Found by mutation: deleting the guard survived every
+    control until this existed.
+    """
+    row = candidate_row("a" * 40)
+    del row["merge_commit"]
+
+    with pytest.raises(BindingCallError) as raised:
+        Candidate.of(row)
+
+    assert "merge_commit" in str(raised.value)
+
+
 def test_a_candidate_missing_a_field_is_a_finding_rather_than_a_guess(estate: Estate) -> None:
     """A response model DROPS every key it does not declare, so a narrowed contract arrives
     as absence rather than as an error."""

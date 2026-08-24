@@ -214,6 +214,42 @@ def test_a_unit_targeting_another_repository_is_not_a_candidate(
     assert len(machine_activation_candidates(migrated_session, "AlobarQuest/brain")) == 1
 
 
+def test_a_units_target_repository_is_checked_even_when_a_landing_is_present(
+    migrated_session: Session,
+) -> None:
+    """The unit filter, isolated from the observation filter.
+
+    The test above passes with the unit's target repository ignored entirely, because no landing
+    exists for the queried repository and the pass returns before the unit loop is reached -- the
+    guard measured by accident rather than on purpose. Here the landing IS present and the two
+    units differ only in the repository their authority names, so the target check is the sole
+    thing that can exclude one of them. Found by mutation: `if target != wanted: continue`
+    survived removal until this existed.
+    """
+    landed_unit(migrated_session, key="right-repo-unit")
+    landed_unit(migrated_session, key="wrong-repo-unit", repository="AlobarQuest/brain")
+    record_landing(migrated_session)
+
+    candidates = machine_activation_candidates(migrated_session, REPOSITORY)
+
+    assert [candidate.unit_key for candidate in candidates] == ["right-repo-unit"]
+
+
+def test_a_landing_row_naming_another_repository_in_its_facts_is_skipped(
+    migrated_session: Session,
+) -> None:
+    """The row's SUBJECT and the row's FACTS are two separate writes and can disagree.
+
+    The query selects on `subject_reference`; the facts carry `repository` as well, and reading
+    the commit out of a row whose facts describe a different repository would attribute a landing
+    that never happened here. Found by mutation.
+    """
+    landed_unit(migrated_session)
+    record_landing(migrated_session, repository="AlobarQuest/brain", subject_reference=REPOSITORY)
+
+    assert machine_activation_candidates(migrated_session, REPOSITORY) == ()
+
+
 def test_the_repository_match_is_case_folded_on_both_sides(migrated_session: Session) -> None:
     """Production holds both spellings, so an exact comparison would refuse a real candidate.
 
