@@ -27,27 +27,40 @@ set -uo pipefail
 # BWS UUID (the value is fetched at runtime; never stored in this repo). See .bws-secrets.toml.
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER
 
-# THE ENROLLED WORKING COPIES, and the list is a parameter of ADR-0030's RULE rather than the
-# rule: a repository is enrolled when its consumers begin a fresh process in the ordinary course
-# of operation, without a human deciding to restart them. Adding such a consumer enrols its
-# repository, and the KeepAlive daemons are deliberately absent -- a sweep attests the disk, and
-# for a process serving continuously between starts the gap between the disk and the loaded code
-# is exactly what goes unobserved.
+# THE ENROLLED WORKING COPIES: the SDS targets. One condition, not two.
 #
-# The paths are enumerated here rather than globbed, because the consumers are enumerated from
-# the LaunchAgent plists and `~/.claude.json` and not from a path convention: `project-standards`
-# is driven by `integrations/portfolio-scan.sh`, `FacelessTT` by `tools/tiktok_scraper_cron.sh`,
-# and a sweep of `Projects/*/scripts/*.sh` misses both.
+# CORRECTED 2026-08-24 on Devon's ruling. The list shipped with NINE entries under a rule --
+# "a repository is enrolled when its consumers begin a fresh process in the ordinary course" --
+# that NOBODY RATIFIED. ADR-0030 recorded that rule as Devon's; he decided only Q1 (watcher
+# first). Q2 was answered by HQ, which wrote "no decision needed from you"; the build session
+# then generalised HQ's list into that rule, which admitted `email-capture`, `FacelessTT` and
+# `~/.claude` -- none of them SDS repositories.
+#
+# The rule is now the estate's OWN definition of an SDS target, already ratified elsewhere and
+# not reinvented here: the repository self-identifies in `PROJECT.md` frontmatter (ADR-0015) and
+# the conformance kit judges it ready. `project-standards` declares `factory_target: false` and
+# is therefore correctly absent; `orchestrator` self-declares and is not on the dispatch
+# allowlist only because it IS the system and cannot be dispatched to.
+#
+# An earlier draft of this list added a SECOND condition -- "something on this machine executes
+# from the working copy" -- and dropped `change-manager` and `brain` on it. That condition was
+# invented here and is not the estate's. It was also weaker than it looked: a build session's
+# first act is `git worktree add ... main`, which branches from the LOCAL default branch, so a
+# stale checkout of a hosted-application repository starts a session on stale code, and nothing
+# else watches those two. The measurement this sweep files is the state of a working copy
+# relative to its upstream, which is true and useful for every SDS target.
+#
+# TODO(scope-registry): this list is the FOURTH place the estate answers "which repos are in
+# SDS scope", after `PROJECT.md` frontmatter, ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES
+# and the presence of a caller workflow -- and those three already disagree. It should be
+# DERIVED rather than written here; see the scope-registry spec.
 CHECKOUTS=(
   "$HOME/Projects/orchestrator"
-  "$HOME/Projects/vps-backup"
-  "$HOME/Projects/infraops-mcp-server"
-  "$HOME/Projects/project-standards"
   "$HOME/Projects/intent-packages"
   "$HOME/Projects/security-standards"
-  "$HOME/Projects/email-capture"
-  "$HOME/Projects/FacelessTT"
-  "$HOME/.claude"
+  "$HOME/Projects/infraops-mcp-server"
+  "$HOME/Projects/change-manager"
+  "$HOME/Projects/brain"
 )
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

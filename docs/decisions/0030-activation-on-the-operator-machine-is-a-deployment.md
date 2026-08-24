@@ -2,15 +2,12 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-21
-- **Decided by:** Devon decided **Q1 only** ("I selected A for Q1", 2026-08-21). **Q2 (scope),
-  Q3 (reuse `ReleaseArtifactBinding`) and Q4 (ADR first) were decided by HQ**, which told him in
-  writing *"Q2, Q3, Q4 — answered, no decision needed from you."* This line previously read
-  "Devon (Q1–Q4)" and was corrected 2026-08-24 when he said the scope rule did not match his
-  memory — it did not, because he never made it. **§2's enrolment rule is HQ's, generalised one
-  step further by the build session:** HQ's actual Q2 answer was a seven-repo list (the factory
-  five plus `vps-backup` and `infraops-mcp-server`), and the rule as written admits nine, adding
-  `email-capture`, `FacelessTT` and `~/.claude`. Scope is therefore an OPEN question, not a
-  ratified one — see the note at the end of §2.
+- **Decided by:** Devon decided **Q1** ("I selected A for Q1", 2026-08-21) and **Q2 scope**
+  ("six", 2026-08-24). **Q3 and Q4 were decided by HQ**, which told him in writing *"Q2, Q3, Q4 —
+  answered, no decision needed from you."* The header previously read "Devon (Q1–Q4)" and was
+  corrected 2026-08-24 when he said the scope rule did not match his memory — it did not, because
+  he had never been asked. §2's original enrolment rule was HQ's, generalised further by the build
+  session; it is superseded there.
 - **Relates to:** ADR-0009 (`reach`, which already declares `operator_machine`), ADR-0022 (the
   watcher owns outcomes, and the observation discipline this ADR inherits), Phase-3 exit
   criteria 1 and 2
@@ -64,7 +61,46 @@ the next start, run, or invocation will execute.** It never attests the currency
 process. For a consumer that only executes at a start, those are the same fact. For a process
 serving continuously between starts they are not, which is what §2 excludes.
 
-### 2. Scope is the rule, not a list: a consumer must get a fresh start in the ordinary course
+### 2. Scope: the SDS targets
+
+**SUPERSEDED AND CORRECTED 2026-08-24 by Devon's ruling — the rule stated in the rest of this
+section was never ratified and admitted repositories that are not part of the SDS.** He decided
+Q1 only; HQ decided Q2 and said so in writing; the build session then generalised HQ's list into
+the fresh-start rule below, which admitted nine — including `email-capture`, `FacelessTT` and
+`~/.claude`.
+
+**The enrolled set is the SDS targets, by the estate's OWN definition, which this ADR does not
+reinvent:** the repository self-identifies in `PROJECT.md` frontmatter (ADR-0015) and the
+conformance kit judges it ready (`ADMISSION_CHECKS`). Measured 2026-08-24, that is six —
+`orchestrator`, `intent-packages`, `security-standards`, `infraops-mcp-server`, `change-manager`,
+`brain`. `project-standards` declares `factory_target: false` and is correctly absent.
+`orchestrator` is absent from the production dispatch allowlist only because it IS the system and
+cannot be dispatched to.
+
+**An intermediate draft added a second condition — "something on this machine executes from the
+working copy" — and dropped `change-manager` and `brain` on it. That condition was invented here,
+is not the estate's, and is recorded because rejecting it is the useful part.** It was weaker than
+it looked. What this sweep files is the state of a working copy relative to its upstream; the
+"what the next start will execute" reading in §1 is an interpretation laid over that, not what the
+row says (`summary_of` mentions no process). And the interpretation's own hazard survives for
+hosted-application repositories anyway: a build session's first act is `git worktree add … main`,
+which branches from the LOCAL default branch, so a stale checkout starts a session on stale code —
+with nothing else watching, since no launcher pulls them.
+
+**Consequent amendment to §1:** the observation attests **the state of a working copy on this
+machine**. For a repository with a machine-local consumer that also predicts what the next start
+runs; for one without, it does not, and the row neither says nor needs to say so. §1's original
+bound — "it attests what the next start, run, or invocation will execute" — was narrower than the
+code and is superseded by this sentence. What §1 still rules out is unchanged and is the point:
+it never attests the currency of a RUNNING process.
+
+**The KeepAlive exclusion below is now moot rather than wrong** — no daemon repository is an SDS
+target, so the question does not arise. Its reasoning is kept because it is the argument for why a
+disk sweep cannot speak for a continuously-serving process.
+
+#### The superseded rule, kept because the reasoning about daemons is still used
+
+~~Scope is the rule, not a list: a consumer must get a fresh start in the ordinary course~~
 
 A repository is enrolled when its consumers begin a fresh process in the ordinary course of
 operation, without a human deciding to restart them. Measured 2026-08-21 from

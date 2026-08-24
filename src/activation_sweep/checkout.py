@@ -18,9 +18,13 @@ is always 0 -- the control reports clean because it never looked. `read_checkout
 so a test can measure hermetically; the CLI refuses to RECORD an unfetched measurement.
 
 DIRTY MEANS MODIFIED TRACKED FILES, NEVER UNTRACKED ONES, and the exclusion is the whole reason
-this reads `--untracked-files=no`. `FacelessTT`'s cron writes untracked artifacts as its normal
-output -- 62 of them on 2026-08-24 -- so counting porcelain lines would make that repository red
-on every sweep forever, which is a control nobody reads. A tracked modification is a different
+this reads `--untracked-files=no`. The rule was chosen against a measured case: `FacelessTT`'s
+cron writes untracked artifacts as its normal output -- 62 of them on 2026-08-24 -- so counting
+porcelain lines would have made that repository red on every sweep forever, which is a control
+nobody reads. That repository left the enrolled set later the same day (see the wrapper's own
+comment), but the rule outlives its example: any repository whose consumer writes beside its
+checkout would reproduce it, and untracked files never change what a fresh start executes.
+A tracked modification is a different
 thing: somebody edited code the machine runs and never committed it, and `security-scan`'s
 `controlplane.drift` already reports exactly that condition.
 

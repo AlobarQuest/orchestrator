@@ -32,8 +32,9 @@ entire stored command -- `summary`, `status`, `severity`, `source_url`, `trust_c
 (`services/observations.py::_validate_idempotent_replay`, `::_command_payload`). So rewording one
 clause of `summary_of` would have made the next sweep an `idempotency_conflict` for every checkout
 whose git state had not moved since its last row -- the section 5.2 defect exactly, one field over,
-self-healing only when that repository's HEAD or tree next moves, which for `email-capture` or
-`~/.claude` can be weeks. Two independent adversarial reviews found it; no test could, because
+self-healing only when that repository's HEAD or tree next moves, which for a quiet checkout
+like `security-standards` or `infraops-mcp-server` can be weeks. Two independent adversarial
+reviews found it; no test could, because
 every test generates both sides from one version of the producer.
 
 Digesting the whole body makes any producer change APPEND, which is always safe. **The residual is
