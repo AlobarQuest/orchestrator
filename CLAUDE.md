@@ -3566,3 +3566,28 @@ style of that module.
   consumer silently excuses it for the other**, which is how a suppression written for a report
   becomes a permission to act. Related and already recorded: the deliberate-refusal categories are
   tested with SUBSET semantics for the same reason a shared set would be wrong.
+
+- **A backgrounded gate inherits the session's DRIFTED cwd, and a green `make check` over the wrong
+  tree is success-shaped — read pytest's `rootdir:` line before believing a gate verified your
+  branch.** A build session works in a worktree, but any `cd` to another tree for an unrelated read
+  moves the shell, and a later backgrounded `make check` runs *there*. Observed 2026-08-23, the
+  ledger-exception build: the session's second gate reported
+  `rootdir: /Users/devon/Projects/orchestrator` — HQ's main tree, on `main` — ran **17m42s**, and
+  passed. **The danger is that it is GREEN**, so nothing about the output invites suspicion; the
+  only tell is one line of pytest's header, and the collected count differs only if the branch
+  changed the test count. That run was a legitimate `main` baseline and worthless as evidence about
+  the branch. Put an **absolute `cd` inside the backgrounded command itself**, and read `rootdir:`
+  beside the collected count. The header survives where the summary does not: `rootdir:` prints in
+  the first six lines, so it outlives the output truncation that eats trailing summary lines.
+  This is the existing "absolute `cd` every Bash call" rule with the specific tell attached — and
+  it is a *third* way `make check` reports a green it did not earn, beside exit-5-no-tests-collected
+  and tool-guarded skips.
+
+- **A single `export A=x B="$A"` expands `$A` to its PRIOR value, never to `x`.** Argument expansion
+  happens before any assignment in the same command takes effect. **This is not a shell-specific
+  quirk** — measured identically in `zsh` and `bash` 2026-08-24, so do not "fix" it by assuming the
+  other shell differs. It bites hardest in the worktree recipe, where `export
+  TEST_DATABASE_URL=… ORCHESTRATOR_DATABASE_URL="$TEST_DATABASE_URL"` silently sets the second to
+  empty and produces `sqlalchemy.exc.ArgumentError: Could not parse SQLAlchemy URL` across every
+  collection target — which reads as a broken environment rather than as a typo one line up. Use
+  separate `export` statements.
