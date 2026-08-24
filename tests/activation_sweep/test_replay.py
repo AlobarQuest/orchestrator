@@ -128,3 +128,52 @@ def test_the_facts_survive_the_orchestrators_own_bounds_and_secret_detector(
     assert row.facts["conditions"] == ["behind", "dirty"]
     assert len(row.facts["missing"]) == 10
     assert row.facts["measured"]["behind_by"] == 15
+
+
+def test_a_parked_checkouts_nulls_are_accepted_by_the_real_ingestion_service(
+    migrated_session: Session, estate: Estate
+) -> None:
+    """ACCEPTANCE 1's "recorded: true", against the service that actually stores it.
+
+    A parked row carries JSON `null` for `upstream`, `behind_by` and `ahead_by`, which no other
+    activation row does. Whether ingestion accepts a null inside `facts` is a property of
+    `record_observation` and its bounds, not of the producer -- so it is asked here rather than
+    assumed, and the nulls are read BACK off the stored row. Omitting the keys would preserve the
+    same absent-is-not-zero property, so this test is what chose between the two shapes.
+    """
+    estate.park()
+    row = _record(migrated_session, estate)
+
+    assert row.status == "degraded"
+    assert row.severity == "warning"
+    assert row.facts["conditions"] == ["parked"]
+    assert row.facts["measured"]["behind_by"] is None
+    assert row.facts["measured"]["ahead_by"] is None
+    assert row.facts["checkout"]["upstream"] is None
+    assert row.facts["checkout"]["default_branch"] == "main"
+    assert "current" not in row.summary
+
+
+def test_parking_and_returning_appends_then_replays(
+    migrated_session: Session, estate: Estate
+) -> None:
+    """SECTION 5.2 for the new condition, on a real database.
+
+    HEAD NEVER MOVES across these three passes -- `checkout -b` and back is not a commit -- so a
+    reference keyed on `(repository, head_sha)` would be one key carrying two different sets of
+    facts and would wedge the producer permanently on its second sweep. This is the same shape
+    the dirty/clean test proves, on the axis this increment adds, and it is the reason the new
+    condition needed no change to the reference at all.
+    """
+    before = _record(migrated_session, estate)
+    estate.park()
+    parked = _record(migrated_session, estate)
+    again = _record(migrated_session, estate)
+    estate.return_to_default()
+    after = _record(migrated_session, estate)
+
+    assert parked.id != before.id
+    assert again.id == parked.id
+    assert after.id == before.id
+    assert _rows(migrated_session) == 2
+    assert parked.facts["head"]["commit"] == before.facts["head"]["commit"]

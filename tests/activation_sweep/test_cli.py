@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from activation_sweep.checkout import BEHIND, DIRTY
+from activation_sweep.checkout import BEHIND, DIRTY, PARKED
 from activation_sweep.cli import (
     EXIT_FINDINGS,
     EXIT_INCOMPLETE,
@@ -102,6 +102,70 @@ def test_a_dirty_checkout_is_a_finding(estate: Estate, recorder: Recorder) -> No
 
     assert result.exit_code == EXIT_FINDINGS
     assert json.loads(result.stdout)[0]["conditions"] == [DIRTY]
+
+
+def test_a_parked_checkout_is_a_FINDING_and_never_an_incomplete_pass(
+    estate: Estate, recorder: Recorder
+) -> None:
+    """ACCEPTANCE 1 AND 4, AND THE EXIT CODE IS THE HALF THAT MATTERS.
+
+    3 means something could not be measured; 2 means something was found. A parked checkout has
+    been measured exactly, so reporting it as 3 would make a real condition indistinguishable
+    from a broken tool -- which is what the old row did, and it is the distinction this estate
+    keeps rediscovering. The row is also FILED: `recorded: true`, `unavailable: false`.
+    """
+    branch = estate.park()
+
+    result = _invoke("--checkout", str(estate.local))
+
+    assert result.exit_code == EXIT_FINDINGS
+    summary = json.loads(result.stdout)[0]
+    assert summary["conditions"] == [PARKED]
+    assert summary["recorded"] is True
+    assert summary["unavailable"] is False
+    assert summary["reason"] is None
+    # A reader at 07:10 sees where it is and where it should have been, without opening a shell.
+    assert summary["branch"] == branch
+    assert summary["default_branch"] == "main"
+    assert summary["behind_by"] is None
+    assert len(recorder.bodies) == 1
+    assert recorder.bodies[0]["facts"]["conditions"] == [PARKED]
+
+
+def test_a_parked_checkout_and_an_unreadable_one_exit_DIFFERENTLY(
+    estate: Estate, recorder: Recorder, tmp_path: Path
+) -> None:
+    """ACCEPTANCE 4's discriminating half, on one run rather than two.
+
+    Asserting only that parked exits 2 cannot see a change that made everything exit 2. The pair
+    shows the two categories reaching different codes from the same program on the same day, and
+    shows 3 still outranking 2 when both are present.
+    """
+    estate.park()
+    unreadable = tmp_path / "not-a-repository"
+    unreadable.mkdir()
+
+    parked_only = _invoke("--checkout", str(estate.local))
+    unreadable_only = _invoke("--checkout", str(unreadable))
+    together = _invoke("--checkout", str(estate.local), "--checkout", str(unreadable))
+
+    assert parked_only.exit_code == EXIT_FINDINGS
+    assert unreadable_only.exit_code == EXIT_INCOMPLETE
+    assert together.exit_code == EXIT_INCOMPLETE
+    assert json.loads(unreadable_only.stdout)[0]["unavailable"] is True
+    assert json.loads(unreadable_only.stdout)[0].get("conditions") is None
+
+
+def test_returning_a_parked_checkout_to_its_default_branch_exits_clean(
+    estate: Estate, recorder: Recorder
+) -> None:
+    """ACCEPTANCE 2 at the exit code, which is what the scheduled caller actually reads."""
+    estate.park()
+    assert _invoke("--checkout", str(estate.local)).exit_code == EXIT_FINDINGS
+
+    estate.return_to_default()
+
+    assert _invoke("--checkout", str(estate.local)).exit_code == EXIT_OK
 
 
 def test_an_unmeasurable_checkout_outranks_a_finding(

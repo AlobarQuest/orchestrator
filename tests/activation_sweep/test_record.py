@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import ast
 import json
-from dataclasses import replace
 from pathlib import Path
 
-from activation_sweep.checkout import BEHIND, CONDITIONS, DIRTY, conditions_of, read_checkout
+from activation_sweep.checkout import (
+    BEHIND,
+    CONDITIONS,
+    DIRTY,
+    PARKED,
+    conditions_of,
+    read_checkout,
+)
 from activation_sweep.record import (
     MAX_FACT_BYTES as RECORD_MAX_FACT_BYTES,
 )
@@ -158,7 +164,7 @@ def test_the_summary_names_every_condition_it_found(estate: Estate) -> None:
 
 def test_a_dirty_only_summary_reads_as_a_sentence(estate: Estate) -> None:
     """The clause that is not first is the one a shared verb breaks, and it is the common case:
-    seven of the nine enrolled copies can only ever produce one clause at a time."""
+    a checkout produces one clause at a time far more often than two."""
     estate.modify_tracked()
 
     assert summary_of(read_checkout(estate.local)).endswith("has 1 modified tracked file")
@@ -166,32 +172,109 @@ def test_a_dirty_only_summary_reads_as_a_sentence(estate: Estate) -> None:
 
 def test_the_summary_covers_the_condition_vocabulary_totally(estate: Estate) -> None:
     """Every member reaches a clause. A member with no clause is a condition the record's own
-    sentence silently drops, which is how a finding becomes invisible to the person reading it."""
+    sentence silently drops, which is how a finding becomes invisible to the person reading it.
+
+    TOTAL over the vocabulary, not over the clauses this test happens to know about: a member
+    with a branch in `conditions_of` and none in `summary_of` is a silent drop, and a test naming
+    two clauses cannot see the third.
+
+    Each member is exercised as a PAIR OF REAL READS -- one tree that has the condition and one
+    that does not -- rather than by `replace()`-ing a field of one state. A synthetic parked
+    Checkout would carry a feature branch beside a measured `behind_by`, which is a shape
+    `read_checkout` never produces, and its summary would render a comparison against `None`.
+    The pair also discriminates in a way a single state cannot: it shows the clause APPEARING
+    with the condition, so a clause hardcoded into every sentence would fail here.
+    """
+    sentences: dict[str, tuple[str, str]] = {}
+
+    estate.modify_tracked()
+    sentences[DIRTY] = (summary_of(read_checkout(estate.local)), "")
+    estate.restore_tracked()
+    without_dirty = summary_of(read_checkout(estate.local))
+    sentences[DIRTY] = (sentences[DIRTY][0], without_dirty)
+
     estate.land_upstream()
+    sentences[BEHIND] = (summary_of(read_checkout(estate.local)), without_dirty)
+
+    estate.park()
+    parked_state = read_checkout(estate.local)
+    sentences[PARKED] = (summary_of(parked_state), sentences[BEHIND][0])
+
+    for condition in CONDITIONS:
+        with_it, without_it = sentences[condition]
+        assert with_it != without_it, condition
+        assert len(with_it) > 0, condition
+
+    # And the clauses read as sentences, jointly and singly -- the case a shared verb breaks.
+    estate.return_to_default()
+    estate.modify_tracked()
+    both = read_checkout(estate.local)
+    assert conditions_of(both) == (BEHIND, DIRTY)
+    assert summary_of(both).endswith("is 1 behind origin/main and has 1 modified tracked file")
+    assert sentences[DIRTY][0].endswith("has 1 modified tracked file")
+    assert sentences[BEHIND][0].endswith("is 1 behind origin/main")
+    assert conditions_of(parked_state) == (PARKED,)
+    assert sentences[PARKED][0].endswith(
+        "is parked on chore/pin-code-standard-1.1 rather than main"
+    )
+
+
+def test_a_parked_summary_never_asserts_currency(estate: Estate) -> None:
+    """ACCEPTANCE 5. The sweep must not say a checkout is current with anything when it is not on
+    the branch currency would be measured against -- and an absent `behind_by` must not read as a
+    good one either, which is why the nulls are asserted beside the sentence.
+
+    Pinned on the WORD rather than on the whole phrase: the currency clause is prose, and a
+    reword that kept the claim while changing the sentence would slip past a phrase match.
+    """
+    clean = summary_of(read_checkout(estate.local))
+    estate.park()
+    body = activation_observation(read_checkout(estate.local))
+
+    assert "current" not in body["summary"]
+    assert body["facts"]["measured"]["behind_by"] is None
+    assert body["facts"]["measured"]["ahead_by"] is None
+    assert body["facts"]["checkout"]["upstream"] is None
+    # The control, on the same tree one branch away: the producer DOES emit the word, so its
+    # absence above is the parked state rather than a word this program never writes.
+    assert "current" in clean
+
+
+def test_a_parked_checkout_records_a_degraded_observation_that_is_not_unavailable(
+    estate: Estate,
+) -> None:
+    """ACCEPTANCE 1, at the record layer: `~/Projects/brain`'s exact state is a CONDITION.
+
+    The six days it sat on `chore/pin-code-standard-1.1` produced
+    `git rev-list exited 128 / recorded: false / unavailable: true` -- fail-closed, honest, and
+    the wrong category. Everything asserted below was knowable the whole time.
+    """
+    branch = estate.park()
+    body = activation_observation(read_checkout(estate.local))
+
+    assert body["facts"]["conditions"] == [PARKED]
+    assert body["status"] == STATUS_CONDITION
+    assert body["severity"] == SEVERITY_CONDITION
+    assert body["facts"]["checkout"]["branch"] == branch
+    assert body["facts"]["checkout"]["default_branch"] == "main"
+    assert body["facts"]["head"]["commit"]
+    assert body["facts"]["measured"]["tracked_modifications"] == 0
+    assert "missing" not in body["facts"]
+
+
+def test_a_parked_checkout_still_reports_its_tracked_modifications(estate: Estate) -> None:
+    """The spec's second sentence: a parked checkout is MEASURED, so what is still knowable is
+    still reported. A row that dropped dirt on parking would hide an uncommitted edit behind a
+    branch name."""
+    estate.park()
     estate.modify_tracked()
     state = read_checkout(estate.local)
-    sentence = summary_of(state)
-    estate.restore_tracked()
-    clean = summary_of(read_checkout(estate.local))
 
-    # TOTAL over the vocabulary, not over two hardcoded clauses: a member with a branch in
-    # `conditions_of` and none in `summary_of` is a condition the record's own sentence silently
-    # drops, and a test naming the two clauses it knows about cannot see the third.
-    #
-    # The clause a member contributes is prose, so what is asserted is that removing the member
-    # from the checkout removes something from the sentence and nothing else does.
-    for condition in CONDITIONS:
-        without = {
-            BEHIND: replace(state, behind_by=0),
-            DIRTY: replace(state, tracked_modifications=0),
-        }
-        assert condition in conditions_of(state)
-        assert summary_of(without[condition]) != sentence
-        assert len(summary_of(without[condition])) < len(sentence)
-    assert "is 1 behind" in sentence and "has 1 modified tracked file" in sentence
-    # And the dirty clause vanishes with the condition while the behind clause survives, which a
-    # sentence built by string concatenation gets wrong in exactly one direction.
-    assert clean.endswith("is 1 behind origin/main")
+    assert conditions_of(state) == (PARKED, DIRTY)
+    assert state.tracked_modifications == 1
+    assert summary_of(state).endswith(
+        "is parked on chore/pin-code-standard-1.1 rather than main and has 1 modified tracked file"
+    )
 
 
 def _perturbed(value: object) -> object:

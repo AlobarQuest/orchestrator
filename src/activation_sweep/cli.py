@@ -117,6 +117,9 @@ def sweep_checkout(
         repository=state.repository,
         head=state.head,
         branch=state.branch,
+        # Beside the branch, because "parked" in `conditions` without it makes the reader open a
+        # terminal to find out what the checkout should have been on.
+        default_branch=state.default_branch,
         upstream=state.upstream,
         conditions=list(conditions),
         behind_by=state.behind_by,
