@@ -1589,11 +1589,20 @@ style of that module.
   fragment left behind blocks **whoever stops next**, not its author. On 2026-08-14 one such file
   blocked two sessions on work neither had written.
   **(2) Remove the worktree and drop the test database** — `git worktree remove … --force` +
-  `dropdb`. **(3) Leave the branch and the pull request**; HQ merges, so the branch must survive.
-  **The objection to answer, because a session will raise it: "leave it up in case CI sends me
-  back."** Recreating is fully scripted and takes about three minutes, HQ owns the merge and
-  therefore owns any CI failure, and a genuine second attempt wants a fresh tree from current `main`
-  anyway. Standing by is the exception and needs to be asked for, not assumed. Note the Agent tool's `isolation: "worktree"` covers subagents a session
+  `dropdb`. **(3) DELETE THE BRANCH ONCE YOUR PULL REQUEST IS MERGED — locally as well as on the
+  remote.** **CORRECTED 2026-08-24; this step used to read "Leave the branch and the pull request;
+  HQ merges, so the branch must survive."** That was written when HQ did the merging. Sessions now
+  merge their own pull requests, so the session that merges is the one place that knows the branch
+  is finished, and leaving it stranded the branch forever. The cost was measured: **79
+  landed-but-undeleted local branches across the six SDS targets** on 2026-08-24, 39 of them in
+  `orchestrator` — every one correct behaviour under the old instruction, which is what made it
+  invisible. `delete_branch_on_merge` is now `true` on all six repositories, so the REMOTE branch
+  goes on merge; **the local one is yours** (`git branch -D`, since `-d` uses ancestry and
+  squash-merge defeats it). If your pull request is NOT merged when you finish, leave both and say
+  so. **The objection to answer, because a session will raise it: "leave it up in case CI sends me
+  back."** Recreating is fully scripted and takes about three minutes, and a genuine second attempt
+  wants a fresh tree from current `main` anyway. Standing by is the exception and needs to be asked
+  for, not assumed. Note the Agent tool's `isolation: "worktree"` covers subagents a session
   spawns and does nothing for a session opened in a terminal, which is the case that was hurting.
 
 - **A claim is NOT released when a unit COMPLETES — only on failure and cancellation — so
@@ -3632,3 +3641,34 @@ style of that module.
   control. The discriminator is `git rev-parse --git-dir` versus `--git-common-dir`: they differ in
   a linked worktree and are equal in a main tree, measured both ways 2026-08-24.
   `install-activation-sweep-launchd.sh` enforces it; copy that guard into any future installer.
+
+- **THREE git-based tests for "did this branch land?" ALL fail in this estate, and the only reliable
+  answer comes from GitHub.** Squash-merge is the root cause of all three, and each was measured
+  wrong on real branches within 24 hours of 2026-08-24:
+  1. **`git merge-base --is-ancestor`** — a squashed branch commit is *never* an ancestor of `main`,
+     even when its content is fully landed. This is also why **`git branch -d` refuses these
+     branches and `-D` is required**; `-d` runs the same test.
+  2. **`git cherry`** (patch-id) — survives a one-commit squash and fails on a multi-commit one.
+     `brain`'s `ci/verify-revision` had two commits collapsed into one squash; cherry reported `+`
+     (unlanded) while **all four touched files were byte-identical to `main`**. It had landed as
+     PR #47 on 2026-08-14.
+  3. **Content comparison** — the fix for (1) and (2), and *too conservative* on its own: once
+     `main` changes the same file again, a landed branch's tip differs anyway. Applied across the
+     six SDS targets it reported **61 of 79 branches as possibly-unlanded**, which is useless.
+     It remains the right test for a SINGLE branch you are about to delete (it is safe in the
+     conservative direction), and the wrong one for a population.
+  **Ask GitHub instead: `gh pr list --repo <r> --head <branch> --state merged`.** GitHub records
+  that a pull request merged regardless of how it was merged. On the same population it answered
+  **74 merged, 5 without a merged pull request** — and the 5 were genuine (superseded variants and
+  a branch named `backup/…-superseded-…`). Generalise past branches: **when a local heuristic and
+  the system of record can both answer a question, and the local one has a known blind spot, ask
+  the system of record.**
+
+- **`delete_branch_on_merge` converts an unanswerable question into a trivial one, and is now `true`
+  on all six SDS targets** (it was already true on four; `orchestrator` and `intent-packages` were
+  set 2026-08-24). Once the remote branch is deleted on merge, `git fetch --prune` makes the local
+  branch report `[origin/<name>: gone]` — a reliable local prune signal needing neither a pull-request
+  lookup nor content guessing. The difference is measurable: `brain`, which already had the setting,
+  showed `gone` for 10 of 10 local branches, while `orchestrator` showed it for only 14 of 39.
+  **No git setting deletes a LOCAL branch**, which is why the teardown step above had to change
+  rather than being automated away.
