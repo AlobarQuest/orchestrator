@@ -18,8 +18,14 @@ from typing import Annotated, Any, Protocol
 
 import typer
 
-from activation_sweep.checkout import GitError, conditions_of, read_checkout
+from activation_sweep.checkout import (
+    ForbiddenCommandError,
+    GitError,
+    conditions_of,
+    read_checkout,
+)
 from activation_sweep.orchestrator_client import (
+    ForbiddenEndpointError,
     SweepWriteError,
     UnusableEndpointError,
     open_client,
@@ -29,6 +35,12 @@ from activation_sweep.record import activation_observation
 app = typer.Typer(no_args_is_help=True)
 
 RECOVERABLE = (GitError, SweepWriteError, KeyError, TypeError, ValueError)
+
+# The two guard violations, which must NEVER be absorbed. Both are subclasses of a `RECOVERABLE`
+# family, so without naming them here a `git pull` reaching the runner, or a write aimed outside
+# the one permitted endpoint, would be reported as "this working copy could not be measured" --
+# the guards firing and nobody hearing it. They are programming errors: let them crash.
+UNRECOVERABLE = (ForbiddenCommandError, ForbiddenEndpointError)
 
 TOKEN_VARIABLE = "ACTIVATION_SWEEP_TOKEN"
 
@@ -87,11 +99,18 @@ def sweep_checkout(
         "checkout": path,
         "unavailable": False,
         "recorded": None if dry_run else False,
+        # Why, not just that. Nine expired-bearer 401s and nine broken repositories are the same
+        # exit code and the same log line without this, and `run_git` and `post` both compose a
+        # careful, deliberately secret-free diagnostic that was being thrown away.
+        "reason": None,
     }
     try:
         state = read_checkout(Path(path), fetch=fetch)
-    except RECOVERABLE:
+    except UNRECOVERABLE:
+        raise
+    except RECOVERABLE as error:
         summary["unavailable"] = True
+        summary["reason"] = str(error)
         return summary
     conditions = conditions_of(state)
     summary.update(
@@ -114,7 +133,10 @@ def sweep_checkout(
         return summary
     try:
         writer.record_observation(body)
-    except RECOVERABLE:
+    except UNRECOVERABLE:
+        raise
+    except RECOVERABLE as error:
+        summary["reason"] = str(error)
         return summary
     summary["recorded"] = True
     return summary

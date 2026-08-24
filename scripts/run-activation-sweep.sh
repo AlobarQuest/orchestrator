@@ -68,7 +68,22 @@ else
              "this run is not activated"
     }
 fi
-activate_checkout "$REPO_ROOT" "$0" "$@"
+# A DRY RUN MUST NOT ACTIVATE, and this is not fussiness. `activate_checkout` fast-forwards the
+# working copy, may re-run `uv sync`, and re-execs -- so an operator running the installer's own
+# `--dry-run` verification step, which is documented as writing nothing, would get a repository
+# mutation they were told would not happen. On a feature branch the helper returns early, which is
+# exactly what hides it during a build session.
+_sweep_is_dry_run() {
+  for argument in "$@"; do
+    [ "$argument" = "--dry-run" ] && return 0
+  done
+  return 1
+}
+if _sweep_is_dry_run "$@"; then
+  echo "[activation] --dry-run: not activating; this run changes nothing"
+else
+  activate_checkout "$REPO_ROOT" "$0" "$@"
+fi
 
 # Load BWS_ACCESS_TOKEN from the Keychain via the approved helper (never a plaintext file). ONE
 # identity: the three secrets this sweep's siblings juggle are not needed here, because it reads

@@ -15,10 +15,19 @@ existing and returning False, so a future read has to be written deliberately.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
 OBSERVATIONS_ENDPOINT = "/api/v1/observations"
+
+# A DNS label is at most 63 octets (RFC 1035) and may not be empty. Both limits are checked here
+# rather than left to `httpx`, and the reason is measured: a doubled dot and an over-long label
+# both CONSTRUCT fine and raise `UnicodeError` at REQUEST time, from IDNA encoding. Left to the
+# request they would be absorbed as nine per-checkout write failures and reported as an incomplete
+# pass -- the opposite of what they are, which is one typo making the tool unusable for every
+# checkout at once.
+MAX_DNS_LABEL = 63
 
 
 class SweepWriteError(RuntimeError):
@@ -36,11 +45,30 @@ class UnusableEndpointError(RuntimeError):
     checkout its row, and this is the tool being unusable for every checkout at once.
 
     TODAY THE DISTINCTION IS TAXONOMY RATHER THAN BEHAVIOUR, and saying so is more useful than a
-    test that would assert the class hierarchy back to itself. `open_client` is called before the
-    per-checkout loop, so that handler never sees this error whichever family it belongs to -- a
-    mutation reparenting it under `SweepWriteError` survives the whole suite, which is how this
-    note came to be written rather than the original claim that it would not.
+    test that would assert the class hierarchy back to itself. Everything that raises this is
+    raised by `open_client`, which the CLI calls before the per-checkout loop, so that handler
+    never sees it whichever family it belongs to -- a mutation reparenting it under
+    `SweepWriteError` survives the whole suite, which is how this note came to be written rather
+    than the original claim that it would not.
     """
+
+
+def _validate_base_url(base_url: str) -> None:
+    """Refuse a URL that would only fail once a request was made.
+
+    `httpx` refuses some malformed URLs at the CONSTRUCTOR and others at REQUEST time, so a guard
+    on one half is not a guard -- and the two halves would otherwise carry different exit codes,
+    since a request-time failure is indistinguishable from the orchestrator being down. Measured
+    against the real library: a control character raises `InvalidURL` at construction, while
+    `https://host..example` and a label over sixty-three characters construct cleanly and raise
+    `UnicodeError` from IDNA encoding at request time.
+    """
+    parsed = urlsplit(base_url.strip())
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise UnusableEndpointError("the orchestrator URL must be https with a host")
+    for label in parsed.hostname.split("."):
+        if not label or len(label) > MAX_DNS_LABEL:
+            raise UnusableEndpointError("the orchestrator URL has a malformed host")
 
 
 def open_client(
@@ -50,13 +78,13 @@ def open_client(
     token: str,
     transport: httpx.BaseTransport | None = None,
 ) -> OrchestratorClient:
-    """Construct the client, translating a malformed base URL into this module's own error.
+    """Construct the client, translating an unusable base URL into this module's own error.
 
-    `httpx` refuses some malformed URLs at the CONSTRUCTOR and others at request time, so a guard
-    on one half is not a guard. Both halves live HERE, beside each other -- which also means the
-    CLI imports no HTTP client at all, and this program's entry in the repository's outbound
-    allowlist stays at exactly one file.
+    Both halves of the guard live HERE, beside each other -- which also means the CLI imports no
+    HTTP client at all, and this program's entry in the repository's outbound allowlist stays at
+    exactly one file.
     """
+    _validate_base_url(base_url)
     try:
         return OrchestratorClient(
             base_url=base_url,
@@ -124,4 +152,13 @@ class OrchestratorClient:
             # prints what it was given is how a value that should not be in a transcript gets
             # into one.
             raise SweepWriteError(f"orchestrator rejected POST {path}: {response.status_code}")
-        return dict(response.json())
+        try:
+            body = response.json()
+        except ValueError as error:
+            # A 2xx that is not JSON -- a 204, or a proxy's page, since redirects are not
+            # followed. Left outside this guard it would escape as a bare `ValueError` and be
+            # reported as though a working copy had been unreadable.
+            raise SweepWriteError(f"orchestrator answered POST {path} with a non-JSON body") from (
+                error
+            )
+        return dict(body)

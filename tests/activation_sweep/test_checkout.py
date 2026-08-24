@@ -11,6 +11,7 @@ from activation_sweep.checkout import (
     BEHIND,
     CONDITIONS,
     DIRTY,
+    NO_SIGNATURE,
     READ_ONLY,
     ForbiddenCommandError,
     GitError,
@@ -74,6 +75,18 @@ def test_untracked_files_are_not_dirt_but_a_tracked_modification_is(estate: Esta
     assert conditions_of(dirty) == (DIRTY,)
     assert dirty.tracked_modifications == 1
     assert len(git(estate.local, "status", "--porcelain").splitlines()) == 63
+
+
+def test_a_truncated_subject_never_ends_on_whitespace(estate: Estate) -> None:
+    """The orchestrator strips every stored string, so a cut landing on a space would make the
+    stored facts differ from the bytes the reference's digest was taken over -- and a later
+    reader could no longer recompute one from the other."""
+    estate.land_upstream("word " * 80)
+
+    subject = read_checkout(estate.local).missing[0].subject
+
+    assert len(subject) < 200
+    assert subject == subject.strip()
 
 
 def test_a_staged_change_is_dirt_too(estate: Estate) -> None:
@@ -155,8 +168,12 @@ def test_a_checkout_with_no_upstream_is_unmeasurable(estate: Estate) -> None:
     """There is nothing to be behind. Saying `current` would be an answer nobody measured."""
     git(estate.local, "branch", "--unset-upstream")
 
-    with pytest.raises(GitError):
+    with pytest.raises(GitError) as error:
         read_checkout(estate.local)
+
+    # And it SAYS what happened. `rev-parse @{u}` exits 128, so without this the operator gets
+    # `git rev-parse exited 128` for a condition that has a name.
+    assert "no upstream branch" in str(error.value)
 
 
 def test_a_remote_the_sweep_cannot_name_is_refused_rather_than_guessed(estate: Estate) -> None:
@@ -224,11 +241,57 @@ def test_the_git_runner_never_prompts_and_takes_no_optional_lock(estate: Estate)
 
 
 def test_a_git_failure_never_carries_its_output_into_the_message(estate: Estate) -> None:
-    """A git failure's stderr can name the remote it was talking to. Only the status escapes."""
-    with pytest.raises(GitError) as error:
-        run_git(estate.local, "rev-parse", "--verify", "refs/heads/does-not-exist")
+    """A git failure's stderr can name the REMOTE it was talking to. Only the status escapes.
 
-    assert "does-not-exist" not in str(error.value)
+    The control has to be a FETCH. An earlier version failed a `rev-parse` on a missing ref and
+    asserted the ref name was absent -- but git's message there is `fatal: Needed a single
+    revision`, which never contains it, so the assertion held whether or not stderr was being
+    interpolated. A failing fetch is the case the docstring names and the only one that
+    discriminates: it writes the remote URL into stderr.
+    """
+    git(estate.local, "config", "remote.origin.url", "https://github.invalid/AlobarQuest/nope.git")
+    git(estate.local, "config", "--unset-all", f"url.{estate.origin}.insteadOf")
+
+    with pytest.raises(GitError) as error:
+        run_git(estate.local, "fetch", "--quiet", timeout=60)
+
+    message = str(error.value)
+    assert "github.invalid" not in message
+    assert "AlobarQuest/nope" not in message
+    assert "git fetch exited" in message
+
+
+def test_every_git_log_read_refuses_the_operators_signature_setting(estate: Estate) -> None:
+    """`log.showSignature = true` in the operator's GLOBAL config makes `git log` print three
+    `gpg:` lines PER COMMIT onto stdout ahead of the format string. Measured on this machine
+    against a signed squash merge, the two-line HEAD read becomes five lines and the
+    missing-commits read becomes forty entries whose commit is the literal `gpg:`.
+
+    No hermetic control can reproduce it -- the fixtures scrub the global config, correctly, and
+    these commits are unsigned -- so what is pinned is the SHAPE: every `git log` this program
+    issues carries the flag, and a new call site that forgets it reds here.
+    """
+    estate.land_upstream()
+    reads: list[tuple[str, ...]] = []
+    import activation_sweep.checkout as module
+
+    original = module.subprocess.run
+
+    def capture(args, **kwargs):  # type: ignore[no-untyped-def]
+        reads.append(tuple(args))
+        return original(args, **kwargs)
+
+    module.subprocess.run = capture  # type: ignore[assignment]
+    try:
+        # Fetched, so the checkout is behind and BOTH `log` reads fire -- the HEAD read and the
+        # missing-commits read. The second is the one that would fill `missing` with `gpg:`.
+        read_checkout(estate.local, fetch=True)
+    finally:
+        module.subprocess.run = original  # type: ignore[assignment]
+
+    logs = [args for args in reads if args[3] == "log"]
+    assert len(logs) == 2
+    assert all(NO_SIGNATURE in args for args in logs)
 
 
 def test_the_read_only_surface_is_what_the_reader_actually_uses(estate: Estate) -> None:

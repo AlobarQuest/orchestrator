@@ -11,7 +11,10 @@ from activation_sweep.checkout import READ_ONLY, ForbiddenCommandError, run_git
 from activation_sweep.orchestrator_client import (
     ForbiddenEndpointError,
     OrchestratorClient,
+    SweepWriteError,
+    UnusableEndpointError,
     is_allowed_write,
+    open_client,
 )
 
 SWEEP = Path("src/activation_sweep")
@@ -29,6 +32,9 @@ ALLOWED_TOP_LEVEL = {
     "re",
     "subprocess",
     "typing",
+    # `urllib.parse` only, for the base-URL shape check. `urllib.request` is an HTTP client and
+    # is in the scan's own `HTTP_CLIENTS` set, so it could never arrive here unnoticed.
+    "urllib",
     "__future__",
 }
 
@@ -117,6 +123,70 @@ def test_the_sweep_has_no_read_surface_at_all() -> None:
     assert not any(
         hasattr(OrchestratorClient, name) for name in ("get", "read_observations", "_read")
     )
+
+
+def test_the_credential_is_sent_on_every_request() -> None:
+    """Nothing else asserts the two headers, and a client that authenticated with neither would
+    fail identically to an expired bearer -- 401 on every checkout, once a morning."""
+    seen: list[httpx.Headers] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers)
+        return httpx.Response(201, json={})
+
+    _client(handler).record_observation({})
+
+    assert seen[0]["authorization"] == "Bearer t"
+    assert seen[0]["x-credential-key-id"] == "orchestrator-observer"
+
+
+def test_a_rejected_write_carries_the_status_and_nothing_else() -> None:
+    """The rejection body echoes the command back, so a diagnostic that prints what it was given
+    is how a value that should not be in a transcript gets into one."""
+    body = {"error": {"code": "observation_invalid", "command": {"idempotency_key": "secret-ish"}}}
+    client = _client(lambda request: httpx.Response(422, json=body))
+
+    with pytest.raises(SweepWriteError) as error:
+        client.record_observation({})
+
+    assert str(error.value) == "orchestrator rejected POST /api/v1/observations: 422"
+
+
+def test_a_success_that_is_not_json_is_this_clients_error_rather_than_a_bare_ValueError() -> None:
+    """A 204, or a proxy's page. Left unguarded it escapes as `ValueError` and the CLI reports it
+    as though a working copy had been unreadable."""
+    client = _client(lambda request: httpx.Response(200, text="<html>nginx</html>"))
+
+    with pytest.raises(SweepWriteError):
+        client.record_observation({})
+
+
+@pytest.mark.parametrize(
+    "unusable",
+    [
+        # Refused at the CONSTRUCTOR by httpx.
+        "https://ho\x00st",
+        # Constructed cleanly by httpx and refused at REQUEST time by IDNA encoding -- a
+        # `UnicodeError`, which is neither `HTTPError` nor `InvalidURL`. Both shapes are ordinary
+        # environment-variable typos, and both are caught here instead so that the tool refusing
+        # is one clear exit rather than nine per-checkout write failures.
+        "https://sds..alobar.net",
+        "https://" + "a" * 71 + ".net",
+        "http://sds.alobar.net",
+        "https://",
+    ],
+)
+def test_an_unusable_orchestrator_url_is_refused_before_a_client_exists(unusable: str) -> None:
+    with pytest.raises(UnusableEndpointError):
+        open_client(base_url=unusable, credential_key_id="orchestrator-observer", token="t")
+
+
+def test_a_usable_orchestrator_url_still_opens() -> None:
+    """A refusal that refused everything would look identical on the test above."""
+    with open_client(
+        base_url="https://sds.alobar.net", credential_key_id="orchestrator-observer", token="t"
+    ) as client:
+        assert client is not None
 
 
 def test_a_forbidden_write_never_reaches_the_transport() -> None:

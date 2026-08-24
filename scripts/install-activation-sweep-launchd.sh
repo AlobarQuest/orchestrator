@@ -18,6 +18,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE="$REPO_ROOT/scripts/$LABEL.plist"
 TARGET="$HOME/Library/LaunchAgents/$LABEL.plist"
 
+# INSTALL FROM THE MAIN TREE, NEVER FROM A BUILD WORKTREE. `REPO_ROOT` is resolved from this
+# script's own location and is written into the plist verbatim, so installing from a worktree
+# pins the LaunchAgent to a path that gets deleted at teardown -- after which the job dies every
+# morning with nothing reporting it, which is the exact failure class ADR-0030 exists to catch.
+# Building sessions work in worktrees here by convention, so this is the likely mistake.
+if [ "$(git -C "$REPO_ROOT" rev-parse --git-dir)" != \
+     "$(git -C "$REPO_ROOT" rev-parse --git-common-dir)" ]; then
+  echo "FATAL: $REPO_ROOT is a linked worktree. Install from the main tree." >&2
+  exit 1
+fi
+
 # A console script does NOT arrive with a `git pull`: `uv sync` installs it, and a fresh worktree
 # may additionally need `uv sync --reinstall-package orchestrator`. Refusing here turns that into
 # a message at install time rather than a 127 at 07:10.

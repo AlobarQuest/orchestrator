@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import ast
 import json
+from dataclasses import replace
 from pathlib import Path
 
-from activation_sweep.checkout import BEHIND, DIRTY, conditions_of, read_checkout
+from activation_sweep.checkout import BEHIND, CONDITIONS, DIRTY, conditions_of, read_checkout
+from activation_sweep.record import (
+    MAX_FACT_BYTES as RECORD_MAX_FACT_BYTES,
+)
 from activation_sweep.record import (
     OBSERVATION_TYPE,
     SEVERITY_CONDITION,
@@ -15,6 +19,7 @@ from activation_sweep.record import (
     STATUS_CONDITION,
     STATUS_CURRENT,
     activation_observation,
+    reference_for,
     summary_of,
 )
 from orchestrator.api.schemas import ObservationCommandModel
@@ -164,17 +169,95 @@ def test_the_summary_covers_the_condition_vocabulary_totally(estate: Estate) -> 
     sentence silently drops, which is how a finding becomes invisible to the person reading it."""
     estate.land_upstream()
     estate.modify_tracked()
-    sentence = summary_of(read_checkout(estate.local))
+    state = read_checkout(estate.local)
+    sentence = summary_of(state)
     estate.restore_tracked()
     clean = summary_of(read_checkout(estate.local))
 
-    # Stated as the two clauses rather than the two words, because the sentence is prose: what
-    # must be total is that each condition contributes something a reader can see, and that each
-    # clause carries its own verb so any subset of them still reads as a sentence.
+    # TOTAL over the vocabulary, not over two hardcoded clauses: a member with a branch in
+    # `conditions_of` and none in `summary_of` is a condition the record's own sentence silently
+    # drops, and a test naming the two clauses it knows about cannot see the third.
+    #
+    # The clause a member contributes is prose, so what is asserted is that removing the member
+    # from the checkout removes something from the sentence and nothing else does.
+    for condition in CONDITIONS:
+        without = {
+            BEHIND: replace(state, behind_by=0),
+            DIRTY: replace(state, tracked_modifications=0),
+        }
+        assert condition in conditions_of(state)
+        assert summary_of(without[condition]) != sentence
+        assert len(summary_of(without[condition])) < len(sentence)
     assert "is 1 behind" in sentence and "has 1 modified tracked file" in sentence
     # And the dirty clause vanishes with the condition while the behind clause survives, which a
     # sentence built by string concatenation gets wrong in exactly one direction.
     assert clean.endswith("is 1 behind origin/main")
+
+
+def _perturbed(value: object) -> object:
+    if isinstance(value, str):
+        return value + "x"
+    if isinstance(value, bool) or value is None:
+        return "perturbed"
+    if isinstance(value, int):
+        return value + 1
+    if isinstance(value, dict):
+        return {**value, "perturbed": 1}
+    return "perturbed"
+
+
+def test_every_field_the_record_composes_moves_its_reference(estate: Estate) -> None:
+    """THE DIGEST COVERS THE WHOLE RECORD, NOT JUST `facts`, and this iterates the record so a
+    field added later is covered without anybody remembering to add a case.
+
+    A first version digested `facts` alone. Because the reference is also the idempotency key,
+    the orchestrator's first lookup is by that key and compares the ENTIRE stored command -- so
+    rewording one clause of `summary_of` would have made the next sweep an `idempotency_conflict`
+    for every checkout whose git state had not moved, self-healing only when it next did. Two
+    independent adversarial reviews found it; no single-version test could, which is why this one
+    perturbs the composed record rather than the producer.
+    """
+    estate.land_upstream()
+    state = read_checkout(estate.local)
+    body = activation_observation(state)
+    record = {
+        key: value
+        for key, value in body.items()
+        if key not in {"idempotency_key", "source_reference"}
+    }
+
+    assert reference_for(state, record) == body["source_reference"]
+    # Every field, including the ones a reader would not think of: `summary`, `status`,
+    # `severity`, `source_url`, `trust_classification`.
+    assert set(record) >= {"summary", "status", "severity", "source_url", "trust_classification"}
+    for key in record:
+        moved = reference_for(state, {**record, key: _perturbed(record[key])})
+        assert moved != body["source_reference"], key
+
+
+def test_the_reference_names_the_repository_and_the_head_for_a_reader(estate: Estate) -> None:
+    state = read_checkout(estate.local)
+    body = activation_observation(state)
+
+    assert body["source_reference"].startswith(f"activation:{state.repository}@{state.head}:")
+    assert body["idempotency_key"] == body["source_reference"]
+
+
+def test_a_ten_deep_backlog_of_NON_ASCII_subjects_still_fits(estate: Estate) -> None:
+    """The bound is on UTF-8 bytes of `json.dumps`, which escapes a non-ASCII code point to six
+    bytes -- so an ASCII-only fixture proves only the row of the table that already passed. About
+    fifty-two CJK characters per subject is enough to exceed 4096, and it fires precisely on the
+    checkout that is ten or more commits behind."""
+    for index in range(12):
+        estate.land_upstream("設定ファイルの依存関係を更新しました" * 11 + str(index))
+
+    body = activation_observation(read_checkout(estate.local))
+
+    encoded = json.dumps(body["facts"], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    assert len(encoded) <= RECORD_MAX_FACT_BYTES
+    # Trimmed, and the true count stays beside the list so the trim is visible.
+    assert body["facts"]["measured"]["behind_by"] == 12
+    assert len(body["facts"]["missing"]) < 10
 
 
 def test_an_unchanged_sweep_encodes_identically(estate: Estate) -> None:

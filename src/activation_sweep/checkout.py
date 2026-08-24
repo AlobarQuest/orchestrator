@@ -7,8 +7,11 @@ course, and why the KeepAlive daemons are excluded.
 
 THE GIT SURFACE IS AN ALLOWLIST, ENFORCED HERE IN CODE. ADR-0030 stops at recording, so `pull`,
 `merge`, `reset` and `checkout` are not merely unused -- they are unreachable. `run_git` refuses
-any subcommand outside `READ_ONLY`, and `fetch` is the single member that writes anything: what it
-writes is remote-tracking refs, never HEAD, never the index, never a tracked file.
+any subcommand outside `READ_ONLY`, and `fetch` is the single member that writes anything. Be
+precise about what that is, because the short version overstates it: `fetch` writes remote-tracking
+refs, `FETCH_HEAD`, any tags reachable from what it fetched, and it can trigger an automatic `gc`.
+The load-bearing half is what it does NOT touch -- never HEAD, never the index, never a tracked
+file -- so no working copy's content changes and nothing becomes live that was not already.
 
 FETCHING IS NOT OPTIONAL. Without it `behind` is computed against stale remote-tracking refs and
 is always 0 -- the control reports clean because it never looked. `read_checkout` takes `fetch`
@@ -56,13 +59,20 @@ GIT_ENVIRONMENT = {"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"}
 
 TIMEOUT_SECONDS = 120
 
+# `git log` OBEYS the operator's global config, and `log.showSignature = true` makes it print three
+# `gpg:` lines PER COMMIT onto STDOUT before the format string. Measured on this machine against a
+# signed squash merge: the two-line HEAD read becomes five lines, so every checkout reads
+# unavailable; and the missing-commits read becomes forty entries whose `commit` field is the
+# literal `gpg:`, which the orchestrator refuses as an oversized list. Every commit GitHub squashes
+# onto `main` here is signed, so the trigger is one `git config --global` away and the failure is
+# total and silent. The suite cannot see this -- its fixtures scrub the global config, correctly --
+# so the flag is the guard.
+NO_SIGNATURE = "--no-show-signature"
+
 # How many of the commits a checkout is missing to name. The true count travels beside the list as
 # `behind_by`, the way the landing ledger keeps `files_changed` beside `files`, so a reader who
 # sees fewer entries knows the list was trimmed rather than that fewer commits are missing.
 MAX_MISSING = 10
-# Full commit hashes, never `%h`. Git sizes an abbreviation against the repository's object count,
-# so the same missing commit can render one character longer as a repository grows -- which moves
-# the fact digest, and therefore the row's identity, with nothing about reality having changed.
 MAX_SUBJECT = 200
 
 # The two conditions a sweep can report. Empty means CURRENT, which is a third state and not the
@@ -210,7 +220,11 @@ def _missing(output: str) -> tuple[MissingCommit, ...]:
         if not stripped:
             continue
         commit, _, subject = stripped.partition(" ")
-        commits.append(MissingCommit(commit=commit, subject=subject.strip()[:MAX_SUBJECT]))
+        # Truncate THEN strip. The orchestrator normalizes every stored string with
+        # `.strip()`, so a cut landing on a space would make the stored facts differ from the
+        # bytes the reference's digest was taken over, and a later reader could no longer
+        # recompute one from the other.
+        commits.append(MissingCommit(commit=commit, subject=subject.strip()[:MAX_SUBJECT].strip()))
     return tuple(commits)
 
 
@@ -226,18 +240,25 @@ def read_checkout(path: Path, *, fetch: bool = True) -> Checkout:
     if not toplevel or Path(toplevel).resolve() != resolved:
         raise GitError(f"{resolved} is not the root of a git working copy")
     repository = repository_of(run_git(resolved, "config", "--get", "remote.origin.url"))
-    upstream = run_git(
-        resolved, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
-    ).strip()
+    try:
+        # `rev-parse @{u}` EXITS 128 when there is no upstream -- a detached HEAD, a deleted
+        # remote branch, a missing remote-tracking ref -- so this is the reachable path and a
+        # truthiness check below it would be dead code. It is named here because the condition is
+        # a real one a reader will meet, and `git rev-parse exited 128` does not say what happened.
+        upstream = run_git(
+            resolved, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
+        ).strip()
+    except GitError as error:
+        raise GitError(f"{resolved} has no upstream branch to be measured against") from error
     branch = run_git(resolved, "rev-parse", "--abbrev-ref", "HEAD").strip()
-    if not upstream or not branch:
-        raise GitError(f"{resolved} has no upstream branch to be measured against")
     if fetch:
         run_git(resolved, "fetch", "--quiet")
     ahead_by, behind_by = _ahead_behind(
         run_git(resolved, "rev-list", "--left-right", "--count", "HEAD...@{u}")
     )
-    head, head_committed_at = _head(run_git(resolved, "log", "-1", "--format=%H%n%cI", "HEAD"))
+    head, head_committed_at = _head(
+        run_git(resolved, "log", NO_SIGNATURE, "-1", "--format=%H%n%cI", "HEAD")
+    )
     tracked_modifications = len(
         [
             line
@@ -250,7 +271,18 @@ def read_checkout(path: Path, *, fetch: bool = True) -> Checkout:
     missing: tuple[MissingCommit, ...] = ()
     if behind_by:
         missing = _missing(
-            run_git(resolved, "log", f"--max-count={MAX_MISSING}", "--format=%H %s", "HEAD..@{u}")
+            run_git(
+                resolved,
+                "log",
+                NO_SIGNATURE,
+                f"--max-count={MAX_MISSING}",
+                # Full hashes, never `%h`: git sizes an abbreviation against the repository's
+                # object count, so the same missing commit can render one character longer as
+                # the repository grows -- which moves the digest, and therefore the row's
+                # identity, with nothing about reality having changed.
+                "--format=%H %s",
+                "HEAD..@{u}",
+            )
         )
     return Checkout(
         path=str(resolved),
