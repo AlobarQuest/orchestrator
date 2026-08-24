@@ -12,6 +12,7 @@ from activation_sweep.checkout import (
     CONDITIONS,
     DIRTY,
     NO_SIGNATURE,
+    PARKED,
     READ_ONLY,
     ForbiddenCommandError,
     GitError,
@@ -119,6 +120,13 @@ def test_the_condition_vocabulary_is_totally_covered_by_the_classifier(estate: E
     reachable.update(conditions_of(read_checkout(estate.local)))
     estate.modify_tracked()
     reachable.update(conditions_of(read_checkout(estate.local)))
+    # Reached from a REAL read rather than a `replace()` synthetic. A parked checkout is one
+    # whose comparison fields are all None, and a hand-built state carrying a feature branch
+    # beside a measured `behind_by` is a shape no read produces -- so a synthetic would pass
+    # this guard against a Checkout git could never hand back.
+    estate.restore_tracked()
+    estate.park()
+    reachable.update(conditions_of(read_checkout(estate.local)))
 
     assert reachable == set(CONDITIONS)
 
@@ -173,6 +181,173 @@ def test_a_checkout_with_no_upstream_is_unmeasurable(estate: Estate) -> None:
 
     # And it SAYS what happened. `rev-parse @{u}` exits 128, so without this the operator gets
     # `git rev-parse exited 128` for a condition that has a name.
+    assert "no upstream branch" in str(error.value)
+
+
+def test_a_checkout_on_a_branch_with_no_upstream_is_PARKED_rather_than_unavailable(
+    estate: Estate,
+) -> None:
+    """ACCEPTANCE 1, and the defect this increment exists for, reproduced exactly.
+
+    `~/Projects/brain` sat on `chore/pin-code-standard-1.1` -- a feature branch never pushed --
+    for six days, and the sweep reported `git rev-list exited 128`, `unavailable: true`. That was
+    fail-closed and honest and the wrong category: every fact asserted below was knowable the
+    whole time, and only *behind* was unanswerable.
+    """
+    branch = estate.park()
+
+    state = read_checkout(estate.local)
+
+    assert conditions_of(state) == (PARKED,)
+    assert state.parked is True
+    assert state.branch == branch
+    assert state.default_branch == "main"
+    # Measured, not merely not-crashed: the three facts the old row threw away.
+    assert len(state.head) == 40
+    assert state.head_committed_at.tzinfo is not None
+    assert state.tracked_modifications == 0
+    # And nothing was compared, so there is no comparison to report. None, never zero -- a zero
+    # asserts the checkout has everything its upstream has, which nobody looked at.
+    assert state.upstream is None
+    assert state.behind_by is None
+    assert state.ahead_by is None
+    assert state.missing == ()
+
+
+def test_returning_to_the_default_branch_clears_the_condition(estate: Estate) -> None:
+    """ACCEPTANCE 2. The condition tracks the state rather than latching on the first sighting."""
+    estate.park()
+    assert conditions_of(read_checkout(estate.local)) == (PARKED,)
+
+    estate.return_to_default()
+
+    state = read_checkout(estate.local)
+    assert conditions_of(state) == ()
+    assert state.upstream == "origin/main"
+    assert state.behind_by == 0
+
+
+def test_a_parked_checkout_is_still_measured_for_dirt(estate: Estate) -> None:
+    """Parked bounds only what was COMPARED. An uncommitted edit is still knowable, and a row
+    that dropped it would hide an edit to code the machine runs behind a branch name."""
+    estate.park()
+    estate.modify_tracked()
+
+    state = read_checkout(estate.local)
+
+    assert conditions_of(state) == (PARKED, DIRTY)
+    assert state.tracked_modifications == 1
+
+
+def test_a_detached_head_is_parked(estate: Estate) -> None:
+    """`rev-parse --abbrev-ref HEAD` answers the literal `HEAD` when detached, which is not the
+    default branch and is parked for the same reason a feature branch is: what the working copy
+    holds is not what landed."""
+    git(estate.local, "checkout", "-q", "--detach", "HEAD")
+
+    state = read_checkout(estate.local)
+
+    assert state.branch == "HEAD"
+    assert conditions_of(state) == (PARKED,)
+
+
+def test_parked_and_unavailable_are_DIFFERENT_ANSWERS_rather_than_one_renamed(
+    estate: Estate, tmp_path: Path
+) -> None:
+    """THE CONTROL THAT MAKES THE SPLIT REAL, and it has to be the pair.
+
+    A change that merely renamed `unavailable` to `parked` would satisfy every parked assertion
+    in this file. What distinguishes them is that a genuinely unreadable checkout still raises,
+    on the same run, with `unavailable` keeping its meaning: the checkout could not be read at
+    all. So both halves are measured here rather than in two files.
+    """
+    estate.park()
+    parked = read_checkout(estate.local)
+    assert conditions_of(parked) == (PARKED,)
+
+    for unreadable in (tmp_path, estate.local / "does-not-exist"):
+        with pytest.raises(GitError):
+            read_checkout(unreadable)
+
+
+def test_a_checkout_whose_default_branch_is_unknowable_is_unavailable(estate: Estate) -> None:
+    """The one new unavailable trigger this increment introduces, named rather than discovered.
+
+    There is no read-only way to ask the remote which branch is default -- `ls-remote` is network
+    and off the allowlist, `symbolic-ref` is off it too -- so with `origin/HEAD` unset the sweep
+    cannot tell parked from not-parked. Guessing `main` would report every checkout of a `master`
+    repository as parked and a genuinely parked one as fine whenever it sat on `main`.
+
+    The message carries the repair, because the operator reading it at 07:10 otherwise has to
+    work out that a symbolic ref is missing from a row that says a checkout is unreadable.
+    """
+    estate.forget_the_default_branch()
+
+    with pytest.raises(GitError) as error:
+        read_checkout(estate.local)
+
+    assert "origin/HEAD" in str(error.value)
+    assert "git remote set-head origin -a" in str(error.value)
+
+
+def test_the_absent_default_branch_read_is_refused_on_STATUS_not_on_stdout(estate: Estate) -> None:
+    """`rev-parse --abbrev-ref origin/HEAD` prints the literal string `origin/HEAD` on STDOUT and
+    exits 128 when the ref is absent -- measured 2026-08-24. A reader that trusted the output
+    would take `origin/HEAD` for a branch name and classify EVERY checkout as parked, including
+    the six that are fine. The behaviour is pinned here because it is git's, not this program's,
+    and a git that stopped doing it would make the guard below untested rather than unnecessary.
+    """
+    estate.forget_the_default_branch()
+
+    completed = subprocess.run(
+        ["git", "-C", str(estate.local), "rev-parse", "--abbrev-ref", "origin/HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert completed.stdout.strip() == "origin/HEAD"
+
+
+def test_a_default_branch_ref_that_names_nothing_on_origin_is_refused_rather_than_stripped(
+    estate: Estate,
+) -> None:
+    """FOUND BY MUTATION, not by reading: deleting this refusal left the whole suite green.
+
+    `--abbrev-ref` answers a BARE name when `origin/HEAD` is a symbolic ref to something outside
+    `refs/remotes/origin/` -- `main` for a local branch, `v1` for a tag. Blind-stripping seven
+    characters off `v1` yields nonsense and reports every checkout as parked; blind-RETURNING it
+    reports the default branch as `v1` and does the same. Both are silent, both are wrong in the
+    direction that makes the control fire on healthy repositories.
+
+    The tag is what makes this discriminate. A symbolic ref to the LOCAL `main` answers `main`,
+    which a reader that skipped the check would return unchanged and be accidentally right --
+    so a control written with that shape passes either way. The sweep cannot tell a bare branch
+    name from a bare tag name by looking, which is why it refuses both rather than accepting the
+    one that would usually be harmless.
+    """
+    estate.point_the_default_branch_ref_outside_origin()
+
+    with pytest.raises(GitError) as error:
+        read_checkout(estate.local)
+
+    assert "does not name a branch on origin" in str(error.value)
+
+
+def test_a_checkout_ON_its_default_branch_with_no_upstream_stays_unavailable(
+    estate: Estate,
+) -> None:
+    """The boundary, from the other side. Parked means "not on the default branch"; a checkout
+    that IS on it with no upstream has a comparison to make and no way to make it, which is what
+    unavailable means. Widening parked to cover it would be inventing a third finding class
+    nobody decided -- the `ahead` precedent, one condition over.
+    """
+    git(estate.local, "branch", "--unset-upstream")
+
+    with pytest.raises(GitError) as error:
+        read_checkout(estate.local)
+
     assert "no upstream branch" in str(error.value)
 
 

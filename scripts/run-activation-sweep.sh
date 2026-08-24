@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One machine-activation sweep over the nine enrolled working copies (ADR-0030).
+# One machine-activation sweep over the six enrolled working copies (ADR-0030).
 #
 # It reads local git and files one observation per working copy. It FETCHES -- without that,
 # `behind` is measured against stale remote-tracking refs and is always zero, so the control

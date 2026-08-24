@@ -51,7 +51,7 @@ import json
 from dataclasses import asdict
 from typing import Any
 
-from activation_sweep.checkout import BEHIND, DIRTY, Checkout, conditions_of
+from activation_sweep.checkout import BEHIND, DIRTY, PARKED, Checkout, conditions_of
 
 # ADR-0030's lane, named once for the whole lane rather than once per producer -- the precedent is
 # written inside `OBSERVATION_SOURCE_SYSTEMS` itself: `source_system` names the producing LANE and
@@ -90,6 +90,12 @@ def _measured(checkout: Checkout) -> dict[str, Any]:
     """The raw numbers the conditions were classified FROM, kept beside them.
 
     `ahead_by` is here and in no condition, deliberately -- see `checkout`'s module docstring.
+
+    `behind_by` and `ahead_by` are JSON `null` on a parked checkout, and the null is the point.
+    Nothing was compared, so there is no number; a zero would assert the checkout has everything
+    its upstream has, which is the reading the whole condition exists to prevent. They are
+    emitted rather than omitted so the key set is one shape for every row and a reader who finds
+    the key can tell "not measured" from "not reported".
     """
     return {
         "behind_by": checkout.behind_by,
@@ -118,6 +124,10 @@ def activation_facts(checkout: Checkout) -> dict[str, Any]:
             "path": checkout.path,
             "repository": checkout.repository,
             "branch": checkout.branch,
+            # The branch the classification was made AGAINST, so a reader can check `parked`
+            # rather than take it -- the same reason `measured` carries the counts that produced
+            # `behind` and `dirty`.
+            "default_branch": checkout.default_branch,
             "upstream": checkout.upstream,
         },
         "head": {
@@ -133,7 +143,14 @@ def activation_facts(checkout: Checkout) -> dict[str, Any]:
 
 
 def summary_of(checkout: Checkout) -> str:
-    """One sentence, computed from the same classifier the facts carry."""
+    """One sentence, computed from the same classifier the facts carry.
+
+    A PARKED checkout is never described as current, and the guard is structural rather than a
+    clause that remembers to check: currency is asserted only when NO condition was found, and
+    parked is a condition. The sentence for one says where the working copy is and what the
+    remote calls default, and nothing about how it compares to either -- because nothing was
+    compared.
+    """
     found = conditions_of(checkout)
     head = checkout.head[:12]
     if not found:
@@ -141,6 +158,8 @@ def summary_of(checkout: Checkout) -> str:
     # Each clause carries its own verb, so any subset of them reads as a sentence. A shared verb
     # works for whichever clause was written first and is wrong for the other.
     clauses = []
+    if PARKED in found:
+        clauses.append(f"is parked on {checkout.branch} rather than {checkout.default_branch}")
     if BEHIND in found:
         clauses.append(f"is {checkout.behind_by} behind {checkout.upstream}")
     if DIRTY in found:

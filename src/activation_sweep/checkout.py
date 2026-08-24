@@ -28,6 +28,29 @@ A tracked modification is a different
 thing: somebody edited code the machine runs and never committed it, and `security-scan`'s
 `controlplane.drift` already reports exactly that condition.
 
+PARKED IS A CONDITION, NOT AN UNREADABLE CHECKOUT, and the distinction is the whole of this
+member. `~/Projects/brain` sat on a feature branch with no upstream for six days and the sweep
+reported `git rev-list exited 128` -- fail-closed and honest, and the wrong category. The checkout
+was perfectly readable: its branch, its HEAD and its cleanliness were all knowable. The single
+thing that could not be computed was *behind*, because there was no upstream to be behind. So the
+row named a git error where it should have named a condition, and `unavailable` -- which means the
+checkout could not be read AT ALL -- absorbed a state that had been measured exactly.
+
+WHEN PARKED, NOTHING IS COMPARED, so `upstream`, `behind_by` and `ahead_by` are None rather than
+zero. An absent number must never read as a good one: `behind_by: 0` asserts the checkout has
+everything its upstream has, and on a parked checkout nobody looked. `summary_of` says nothing
+about currency for the same reason.
+
+THE DEFAULT BRANCH IS READ FROM `origin/HEAD`, AND A CHECKOUT WITHOUT ONE IS UNAVAILABLE. There is
+no read-only way to ask the remote which branch is default -- `ls-remote` is network and off the
+allowlist, `symbolic-ref` is off it too -- so a checkout whose `origin/HEAD` is unset cannot be
+classified either way, and guessing `main` would be an answer nobody measured. Measured 2026-08-24:
+all six enrolled copies have it, `git clone` from a non-empty remote sets it, and the operator's
+one-line repair is `git remote set-head origin -a`. Note `rev-parse --abbrev-ref origin/HEAD`
+prints the literal string `origin/HEAD` on STDOUT when the ref is absent and exits 128 -- so the
+status is what discriminates, and a reader that trusted stdout would classify every branch as
+parked.
+
 `ahead` IS MEASURED AND DELIBERATELY NOT CLASSIFIED. A working copy with unpushed commits is
 running code that was never merged, which is arguably a condition worth reporting -- but the
 condition vocabulary was decided at two members plus current, and inventing a third finding class
@@ -79,12 +102,21 @@ NO_SIGNATURE = "--no-show-signature"
 MAX_MISSING = 10
 MAX_SUBJECT = 200
 
-# The two conditions a sweep can report. Empty means CURRENT, which is a third state and not the
-# absence of the other two: `current` says the measurement happened and found nothing, where an
+# The conditions a sweep can report. Empty means CURRENT, which is a further state and not the
+# absence of the others: `current` says the measurement happened and found nothing, where an
 # unreadable checkout says nothing at all and is reported as unavailable instead.
+#
+# PARKED is first because it is the one that bounds the others: a parked checkout is compared
+# against nothing, so BEHIND cannot arise beside it and the summary's clauses read in this order.
+PARKED = "parked"
 BEHIND = "behind"
 DIRTY = "dirty"
-CONDITIONS = (BEHIND, DIRTY)
+CONDITIONS = (PARKED, BEHIND, DIRTY)
+
+# The remote this sweep knows. Every read is already anchored to it -- `remote.origin.url` names
+# the repository and `origin/HEAD` names the default branch -- so it is spelled once here rather
+# than three times in string literals.
+ORIGIN = "origin"
 
 
 class GitError(RuntimeError):
@@ -139,18 +171,48 @@ class Checkout:
 
     `head_committed_at` is the committer date of HEAD, and it is the record's clock. See
     `record.activation_observation` for why that has to be a function of the facts.
+
+    `upstream`, `behind_by` and `ahead_by` are None on a PARKED checkout and only there. They are
+    not defaults and must not be given any: the three describe a comparison, and on a checkout
+    that is not on its default branch no comparison was made. Zero would assert one.
     """
 
     path: str
     repository: str
     branch: str
-    upstream: str
+    default_branch: str
+    upstream: str | None
     head: str
     head_committed_at: datetime
-    behind_by: int
-    ahead_by: int
+    behind_by: int | None
+    ahead_by: int | None
     tracked_modifications: int
     missing: tuple[MissingCommit, ...] = ()
+
+    @property
+    def parked(self) -> bool:
+        """Whether this working copy is somewhere other than the branch the remote calls default.
+
+        Derived rather than stored, so the classifier and the reader who checks it cannot
+        disagree, and so `default_branch` in the facts is the value the classification was
+        actually made from.
+        """
+        return is_parked(self.branch, self.default_branch)
+
+
+def is_parked(branch: str, default_branch: str) -> bool:
+    """The parked rule, in the one place both callers read it from.
+
+    `read_checkout` has to answer this BEFORE it can build a `Checkout` -- the answer decides
+    whether there is an upstream to compare against at all -- so the comparison would otherwise
+    be written twice, once there and once on the dataclass. Two spellings of one rule is where
+    this estate's drift consistently lives, and a rule with one definition is the same discipline
+    `conditions_of` already keeps for dirt.
+
+    A detached HEAD reads as the branch name `HEAD`, so it is parked -- the right answer for the
+    same reason a feature branch is: what the working copy holds is not what landed.
+    """
+    return branch != default_branch
 
 
 def conditions_of(checkout: Checkout) -> tuple[str, ...]:
@@ -159,9 +221,16 @@ def conditions_of(checkout: Checkout) -> tuple[str, ...]:
     ONE classifier, so the rule for what counts as dirty has one definition. The raw counts travel
     in the record beside the conditions they produced, which is what lets a reader check the
     classification rather than take it.
+
+    `behind_by` is tested against None EXPLICITLY rather than for truthiness. The two falsy values
+    mean opposite things here -- 0 is "measured, and it has everything" while None is "nobody
+    looked" -- and a bare `if checkout.behind_by:` is a line that reads as though they were the
+    same. They reach the same branch and must do so visibly.
     """
     found = []
-    if checkout.behind_by > 0:
+    if checkout.parked:
+        found.append(PARKED)
+    if checkout.behind_by is not None and checkout.behind_by > 0:
         found.append(BEHIND)
     if checkout.tracked_modifications > 0:
         found.append(DIRTY)
@@ -201,6 +270,36 @@ def _ahead_behind(output: str) -> tuple[int, int]:
         return int(parts[0]), int(parts[1])
     except ValueError as error:
         raise GitError("git rev-list answered with a non-numeric ahead/behind pair") from error
+
+
+def _default_branch(path: Path) -> str:
+    """The branch `origin` calls default, read from the local `origin/HEAD` symbolic ref.
+
+    FAIL CLOSED, and the reason is that there is no second way to ask. `ls-remote` would put the
+    question to the remote and is both network and off the allowlist; `symbolic-ref` is off it
+    too. So a checkout whose `origin/HEAD` is unset cannot be classified either way, and the only
+    honest answer is that it could not be measured. Defaulting to `main` would be a guess that
+    reports every checkout of a `master` repository as parked, and reports a genuinely parked one
+    as fine whenever it happens to sit on `main`.
+
+    `rev-parse --abbrev-ref origin/HEAD` prints the literal string `origin/HEAD` on STDOUT when
+    the ref is absent and exits 128. `run_git` raises on the status, so the output never reaches
+    a caller -- but a reader who trusted stdout would take `origin/HEAD` for a branch name and
+    classify every checkout as parked, so the prefix check below is a second refusal rather than
+    a formality.
+    """
+    reference = f"{ORIGIN}/HEAD"
+    prefix = f"{ORIGIN}/"
+    try:
+        answer = run_git(path, "rev-parse", "--abbrev-ref", reference).strip()
+    except GitError as error:
+        raise GitError(
+            f"{path} has no {reference}, so this sweep cannot tell which branch is the default"
+            f" -- repair it with: git remote set-head {ORIGIN} -a"
+        ) from error
+    if not answer.startswith(prefix) or answer == reference:
+        raise GitError(f"{reference} in {path} does not name a branch on {ORIGIN}")
+    return answer[len(prefix) :]
 
 
 def _head(output: str) -> tuple[str, datetime]:
@@ -243,23 +342,32 @@ def read_checkout(path: Path, *, fetch: bool = True) -> Checkout:
     toplevel = run_git(resolved, "rev-parse", "--show-toplevel").strip()
     if not toplevel or Path(toplevel).resolve() != resolved:
         raise GitError(f"{resolved} is not the root of a git working copy")
-    repository = repository_of(run_git(resolved, "config", "--get", "remote.origin.url"))
-    try:
-        # `rev-parse @{u}` EXITS 128 when there is no upstream -- a detached HEAD, a deleted
-        # remote branch, a missing remote-tracking ref -- so this is the reachable path and a
-        # truthiness check below it would be dead code. It is named here because the condition is
-        # a real one a reader will meet, and `git rev-parse exited 128` does not say what happened.
-        upstream = run_git(
-            resolved, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
-        ).strip()
-    except GitError as error:
-        raise GitError(f"{resolved} has no upstream branch to be measured against") from error
+    repository = repository_of(run_git(resolved, "config", "--get", f"remote.{ORIGIN}.url"))
     branch = run_git(resolved, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    default_branch = _default_branch(resolved)
+    parked = is_parked(branch, default_branch)
     if fetch:
         run_git(resolved, "fetch", "--quiet")
-    ahead_by, behind_by = _ahead_behind(
-        run_git(resolved, "rev-list", "--left-right", "--count", "HEAD...@{u}")
-    )
+    upstream: str | None = None
+    behind_by: int | None = None
+    ahead_by: int | None = None
+    if not parked:
+        try:
+            # `rev-parse @{u}` EXITS 128 when there is no upstream -- a deleted remote branch, a
+            # missing remote-tracking ref, an unset upstream -- so this is the reachable path and
+            # a truthiness check below it would be dead code. It is named here because the
+            # condition is a real one a reader will meet, and `git rev-parse exited 128` does not
+            # say what happened. A checkout ON its default branch with no upstream is genuinely
+            # unmeasurable rather than parked: there is a comparison to make and no way to make
+            # it, which is what `unavailable` means.
+            upstream = run_git(
+                resolved, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"
+            ).strip()
+        except GitError as error:
+            raise GitError(f"{resolved} has no upstream branch to be measured against") from error
+        ahead_by, behind_by = _ahead_behind(
+            run_git(resolved, "rev-list", "--left-right", "--count", "HEAD...@{u}")
+        )
     head, head_committed_at = _head(
         run_git(resolved, "log", NO_SIGNATURE, "-1", "--format=%H%n%cI", "HEAD")
     )
@@ -292,6 +400,7 @@ def read_checkout(path: Path, *, fetch: bool = True) -> Checkout:
         path=str(resolved),
         repository=repository,
         branch=branch,
+        default_branch=default_branch,
         upstream=upstream,
         head=head,
         head_committed_at=head_committed_at,

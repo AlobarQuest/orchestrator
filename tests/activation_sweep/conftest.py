@@ -72,6 +72,13 @@ class Estate:
         git(self.local, "add", "README.md")
         git(self.local, "commit", "-m", "first")
         git(self.local, "push", "-u", "origin", "main")
+        # `local` is cloned from an EMPTY origin, and a clone of an empty repository sets no
+        # `origin/HEAD` -- measured 2026-08-24, and it stays unset even after the first push. A
+        # real clone of a real repository always has one, so without this line the fixture would
+        # differ from every enrolled checkout in exactly the field the parked classifier reads,
+        # and every test here would measure the unavailable path instead. `other` is cloned after
+        # the push and gets its own automatically.
+        git(self.local, "remote", "set-head", "origin", "-a")
         self._clone(self.other)
 
     def _clone(self, target: Path) -> None:
@@ -104,6 +111,40 @@ class Estate:
 
     def restore_tracked(self) -> None:
         (self.local / "README.md").write_text("one\n")
+
+    def park(self, branch: str = "chore/pin-code-standard-1.1") -> str:
+        """Reproduce `~/Projects/brain`'s exact state: a feature branch with NO upstream.
+
+        `checkout -b` and nothing else -- no push, no `--set-upstream`. That is what six days of
+        `brain` looked like, and it is the state that made `rev-parse @{u}` exit 128 and the row
+        report a git error where a condition belonged.
+        """
+        git(self.local, "checkout", "-q", "-b", branch)
+        return branch
+
+    def return_to_default(self) -> None:
+        git(self.local, "checkout", "-q", "main")
+
+    def forget_the_default_branch(self) -> None:
+        """Delete `origin/HEAD`, leaving the checkout readable and unclassifiable.
+
+        The state a clone of an empty repository is born in. There is no read-only way to ask the
+        remote which branch is default, so the sweep cannot tell parked from not-parked and must
+        report that it could not measure the checkout at all.
+        """
+        git(self.local, "update-ref", "-d", "refs/remotes/origin/HEAD")
+
+    def point_the_default_branch_ref_outside_origin(self) -> None:
+        """Make `origin/HEAD` a symbolic ref to something that is not a branch on `origin`.
+
+        `--abbrev-ref` then answers a BARE name -- `v1` for a tag, `main` for a local branch --
+        rather than `origin/<branch>`, measured 2026-08-24. Neither `git clone` nor
+        `git remote set-head` produces this, so it is an anomalous ref rather than an everyday
+        one; it is reachable all the same, and a reader that stripped seven characters off a bare
+        name would report a nonsense default branch and call every checkout parked.
+        """
+        git(self.local, "tag", "-f", "v1", "HEAD")
+        git(self.local, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/tags/v1")
 
     def add_untracked(self, count: int) -> None:
         for index in range(count):
