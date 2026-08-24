@@ -2,7 +2,15 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-21
-- **Decided by:** Devon (Q1–Q4, 2026-08-21)
+- **Decided by:** Devon decided **Q1 only** ("I selected A for Q1", 2026-08-21). **Q2 (scope),
+  Q3 (reuse `ReleaseArtifactBinding`) and Q4 (ADR first) were decided by HQ**, which told him in
+  writing *"Q2, Q3, Q4 — answered, no decision needed from you."* This line previously read
+  "Devon (Q1–Q4)" and was corrected 2026-08-24 when he said the scope rule did not match his
+  memory — it did not, because he never made it. **§2's enrolment rule is HQ's, generalised one
+  step further by the build session:** HQ's actual Q2 answer was a seven-repo list (the factory
+  five plus `vps-backup` and `infraops-mcp-server`), and the rule as written admits nine, adding
+  `email-capture`, `FacelessTT` and `~/.claude`. Scope is therefore an OPEN question, not a
+  ratified one — see the note at the end of §2.
 - **Relates to:** ADR-0009 (`reach`, which already declares `operator_machine`), ADR-0022 (the
   watcher owns outcomes, and the observation discipline this ADR inherits), Phase-3 exit
   criteria 1 and 2
@@ -88,6 +96,18 @@ consumer*; factory membership answers a different question.
 
 The enrolled set remains a parameter of the rule, not the rule. Adding a consumer that begins a
 fresh process in the ordinary course enrols its repository automatically.
+
+**OPEN, 2026-08-24 — this rule was never ratified, and there is an established alternative it did
+not consider.** The estate's existing pattern for "is this repository in scope" has two aspects:
+the repository **self-identifies** in `PROJECT.md` frontmatter (ADR-0015, whose reason was that a
+declaration should be *"repo-local and self-describing, rather than a list inside the kit that the
+affected repository cannot see"*), and the SDS **determines readiness** through the conformance
+kit's admission checks. That reasoning transfers to this sweep — `FacelessTT` cannot see that it is
+being swept — and it was bypassed rather than rejected, because nobody asked. Two things weigh the
+other way and belong in the decision: ADR-0015's mechanism has **never been built**, so this sweep
+would have had to invent it; and this sweep is **read-only**, granting no authority over the
+repositories it observes, where factory membership grants write. Self-identification matters most
+when the answer confers power. Devon to rule.
 
 ### 3. Reuse `ReleaseArtifactBinding` with an explicit kind discriminator
 
