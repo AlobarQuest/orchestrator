@@ -3734,3 +3734,22 @@ style of that module.
   being off its default branch; a reader that skips the prefix check can be accidentally right when
   the symbolic ref happens to point at the local default, which is why only a symbolic-ref-to-a-TAG
   control discriminates.
+
+- **On `GET /api/v1/traceability`, ADDING `source_repository` to a `pr_number` anchor can turn a
+  real answer into `chains: []` — the two forms route through DIFFERENT TABLES, and the more
+  specific one is the one that fails.** `_resolve_pr` (`services/traceability.py`) reads
+  **`ReleaseArtifactBinding`** when `source_repository` is supplied and **`UnitPrBinding`** when it
+  is not. A factory landing writes the second and not the first, so qualifying the query with the
+  repository — the natural thing to do, and the thing that looks more careful — reports that the
+  chain does not exist at all. Measured 2026-08-24 on `infraops-mcp-server#81`:
+  `pr_number=81&source_repository=…` → `chains: []`; bare `pr_number=81` → the full chain, intent
+  through pr. **Always run the bare form too before concluding a chain is absent**, and read
+  `anchor.matched_on` in the response, which names which resolution ran.
+  **The general shape: a narrower query is not a safer query when the extra term changes the JOIN.**
+  Same family as the estate's other correct-about-the-wrong-noun defects.
+  **The discriminating control for any "the chain is empty" claim is an anchor known to be
+  populated** — `environment=production` returns two full chains
+  (`wsp28-production-deploy-verification`, `phase5-production-closeout`, both carrying
+  `commit,artifact,deployment`), which is what separates *the query is broken* from *this subject
+  has no binding*. Without it, an empty result proves nothing, exactly as a search zero does not
+  prove absence.
