@@ -733,6 +733,7 @@ class MachineActivationCandidateResponse(BaseModel):
     work_package_revision_id: UUID
     package_revision_hash: str
     unit_key: str
+    work_unit_version: int
     source_repository: str
     pr_number: int
     source_commit: str
