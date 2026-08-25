@@ -133,16 +133,27 @@ FINDING_STATUSES = frozenset({"refused", "error", "unreadable", "underivable"})
 
 # What kind of change a FACTORY pull request lands, as distinct from an update bot's.
 #
-# DELIBERATELY OUTSIDE change-manager's deploy policy, which pins `change_classes` to
-# `{"dependency-update"}` in every version to date. Two reasons, and the first is the decisive
-# one. Reusing `dependency-update` would make each factory record conform on shape and be
-# APPROVED by `_apply_policy` the instant it is proposed -- so this program would have decided,
-# silently, that a machine-written change may land unattended, which is a decision for a person
-# and not for this increment. It would also be untrue: the work unit behind a factory pull
-# request may be a dependency update, a maintenance remediation or a software delivery, and
-# nothing readable from a pull request title says which. A name that claims none of them is the
-# honest one, and it is the name a human would add to a policy version if he decided these
-# records should be pre-approved.
+# A NAME OF ITS OWN, which is what makes it possible to decide the two classes separately. The
+# work unit behind a factory pull request may be a dependency update, a maintenance remediation
+# or a software delivery, and nothing readable from a pull request title says which -- so a name
+# claiming none of them is the honest one. Reusing `dependency-update` would additionally have
+# meant this program deciding, silently and by choice of string, whether a machine-written change
+# may land unattended. That is a decision for a person, and a person has since made it.
+#
+# ADMITTED BY DEPLOY POLICY VERSION 4 SINCE 2026-08-25, so a record carrying this class for a
+# repository that policy names is APPROVED at proposal, with no per-record human approval.
+# ADR-0025, decided by Devon 2026-08-17. This comment used to end by calling that "the name a
+# human would add to a policy version if he decided these records should be pre-approved" -- it
+# was written 2026-08-16, one day before he decided exactly that, and it read as an open question
+# for the eight days the mechanism went unbuilt.
+#
+# WHAT THAT DOES NOT MEAN, because approval here is the weakest thing the estate grants: policy
+# approval is NO OBJECTION, never GO AHEAD. A conformant record attests that a human pinned this
+# repository, these acceptance criteria and this remedy, and nothing about the change -- which is
+# why the per-record approval was rejected rather than merely skipped. change-manager has no
+# GitHub egress, so a human approving a record there could not be shown what changed. The
+# judgment that reads a machine-authored diff is the human-judgment acceptance criterion on the
+# intent package, which disqualifies its unit from landing unattended.
 FACTORY_CHANGE_CLASS = "factory-delivery"
 BOT_CHANGE_CLASS = "dependency-update"
 
