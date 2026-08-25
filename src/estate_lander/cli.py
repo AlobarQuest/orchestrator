@@ -46,6 +46,7 @@ from typing import Any, Protocol
 
 from change_proposer.change_manager import DEFAULT_BASE_URL as CM_DEFAULT_BASE_URL
 from change_proposer.change_manager import ChangeManagerClient, ChangeManagerError
+from change_proposer.cli import BOT_CHANGE_CLASS
 from estate_lander.orchestrator_client import (
     DEFAULT_BASE_URL,
     LandingRefused,
@@ -67,6 +68,37 @@ SYSTEM_KEY_ID = "orchestrator-system"
 # and each would be asked about, held, and reported as a finding nobody can act on. The service
 # whose records these are warns about exactly this polarity.
 _ASK_ABOUT = frozenset({"approved"})
+
+# The change classes this lane is FOR. An allowlist, for the same reason `_ASK_ABOUT` is one, and
+# the polarity matters more here than there: excluded means not landed, so a class nobody has
+# thought of falls toward being left alone rather than toward being merged.
+#
+# WHY THIS EXISTS AT ALL. Until deploy policy version 4 (change-manager, 2026-08-25, ADR-0025) the
+# only class the policy approved was `dependency-update`, so a factory record never reached
+# `approved` and never became a subject here. Version 4 approves `factory-delivery` too, and this
+# lane selects subjects on status alone -- so without this, a factory pull request would become a
+# subject of a lane that asks NOTHING about the things a factory landing rests on: whether the work
+# unit completed, whether its acceptance criteria were decided by the verifier from observed
+# evidence, and whether a human's authority approval is bound to the envelope's exact fingerprint.
+# Those are asked by the factory lane (`estate-pr-merge` is not it; `pr_merge_admission` is), and
+# they are the whole basis of ADR-0020.
+#
+# WHAT USED TO KEEP FACTORY RECORDS OUT WAS AN ACCIDENT, WHICH IS WHY PROSE WOULD NOT DO. The
+# update-type term reads a version delta out of a title and the pattern is only END-anchored, so
+# `SDS <unit>: Reformat embedded code blocks` yields nothing while `SDS <unit>: Bump ruff from
+# 0.15.20 to 0.16.2` yields `semver-patch` -- both measured. A unit title is free text a human
+# writes, so the separation rested on wording nobody chose as a control.
+#
+# THE CONSTANTS ARE THE PRODUCER'S OWN. `change_proposer` writes these two strings onto every
+# record this lane reads, so importing them is what makes the two sides agree by construction. A
+# third spelling here would be a copy of a vocabulary that already has two, which is the defect
+# this estate keeps paying for.
+_LANE_CLASSES = frozenset({BOT_CHANGE_CLASS})
+
+# What a deferral is called in the report, keyed by the class that caused it. Named rather than
+# counted as one lump, because "it belongs to the factory lane" and "nobody has taught this program
+# what that class is" are different facts with different next steps.
+_DEFERRAL_UNREADABLE = "unreadable-class"
 
 # Refusals that mean the SUBJECT IS SETTLED rather than that a condition is unmet. Neither is
 # something a person can act on, and reporting them as findings would make one landing -- or one
@@ -331,19 +363,54 @@ def _consider(client: OrchestratorClient, repository: str, number: int, submit: 
     return Outcome(repository, number, "landed", f"status={landed.get('status')}")
 
 
-def _subjects(records: RecordSource) -> list[tuple[str, int]]:
-    """Every routed change worth asking about, in a stable order.
+@dataclass(frozen=True)
+class Selection:
+    """What one read of the listing yielded: what to act on, and what was left to another lane.
+
+    BOTH, from ONE read, because `records()` is a live request rather than a cached list -- so a
+    second call to count the deferrals would put a second network call inside the `try` in `run`,
+    where its failure discards the outcomes entirely. That is the same reason the two passes share
+    this result instead of each reading for itself.
+    """
+
+    subjects: list[tuple[str, int]]
+    deferred: dict[str, int]
+
+
+def _deferral_reason(row: dict[str, Any]) -> str | None:
+    """Why this lane is not the one for this record, or None when it is.
+
+    ONE predicate with two readers -- the subject list and the tally -- rather than two functions
+    that agree today. Read only for a record that would OTHERWISE be a subject, so the number it
+    produces means "approved records this lane declined because they belong elsewhere" rather than
+    "every row of a class we do not land", which would count records nobody was going to act on.
+    """
+    change_class = row.get("change_class")
+    if not isinstance(change_class, str) or not change_class:
+        return _DEFERRAL_UNREADABLE
+    if change_class not in _LANE_CLASSES:
+        return change_class
+    return None
+
+
+def _subjects(records: RecordSource) -> Selection:
+    """Every routed change worth asking about, in a stable order, and what was left alone.
 
     Sorted, so a pass that lands one of several is reproducible rather than dependent on whatever
     order the listing happened to answer in -- which matters because the orchestrator permits one
     landing per repository per window, so WHICH one lands is decided here.
 
     ONE function, used by both passes, so the landing pass and the branch-update pass can never
-    disagree about which pull requests this program is for. Each pass calls it for itself rather
-    than sharing a snapshot, for the same reason each re-reads the composed answer: the landing
-    pass may have changed what the second one is looking at.
+    disagree about which pull requests this program is for. Each pass is given this result rather
+    than reading for itself, because the read is a live request.
+
+    A DEFERRED RECORD GETS NO OUTCOME AND IS NOT A FINDING. It is not that this lane tried and
+    could not; it is that the record is another lane's business, the way a draft or a person's own
+    pull request is. But it is COUNTED and reported, because a subject that vanishes without a line
+    is the silent failure this program is written against everywhere else.
     """
     subjects: list[tuple[str, int]] = []
+    deferred: dict[str, int] = {}
     rows = sorted(
         (row for row in records.records() if isinstance(row, dict)),
         key=lambda row: (str(row.get("target_repository") or ""), row.get("id") or 0),
@@ -362,8 +429,12 @@ def _subjects(records: RecordSource) -> list[tuple[str, int]]:
             continue
         if row.get("status") not in _ASK_ABOUT:
             continue
+        reason = _deferral_reason(row)
+        if reason is not None:
+            deferred[reason] = deferred.get(reason, 0) + 1
+            continue
         subjects.append((repository, number))
-    return subjects
+    return Selection(subjects=subjects, deferred=deferred)
 
 
 def _pass(
@@ -470,20 +541,36 @@ def run(argv: list[str] | None = None) -> int:
             # READ ONCE, used by both passes. Reading again between them would put a second
             # network call inside the `try`, where its failure discards `outcomes` entirely and
             # returns a bare tool error -- losing the report of a landing that already happened.
-            subjects = _subjects(records)
-            outcomes = _pass(subjects, client, args.submit)
-            outcomes.extend(_branch_updates(subjects, client, args.submit))
+            selection = _subjects(records)
+            outcomes = _pass(selection.subjects, client, args.submit)
+            outcomes.extend(_branch_updates(selection.subjects, client, args.submit))
     except (ChangeManagerError, OrchestratorError) as error:
         print(str(error), file=sys.stderr)
         return EXIT_TOOL_FAILURE
 
-    return report(outcomes)
+    return report(outcomes, selection.deferred)
 
 
-def report(outcomes: list[Outcome]) -> int:
+def report(outcomes: list[Outcome], deferred: dict[str, int] | None = None) -> int:
+    """Print every act considered, then what was left to another lane, then the summary.
+
+    THE DEFERRAL LINE IS SEPARATE FROM THE SUMMARY, NOT FOLDED INTO IT. `_REPORTED` exists so the
+    summary's parts add up to what was considered, and a deferred record was never considered --
+    adding it to that total would break the one property that line has. It is printed above the
+    total, and only when there is something to say, because a standing "0 deferred" is noise on
+    every pass of a lane that will usually have none.
+
+    IT DOES NOT AFFECT THE EXIT CODE. Deferring is this program working: the record belongs to a
+    lane with its own admission, and nothing here is unmet. `deferred` defaults to nothing said so
+    that a caller reporting a list of outcomes it produced itself is not obliged to invent a tally
+    -- and `run` is held to passing the real one by its own test, since a default that quietly
+    meant "none" would be a wiring bug nothing could see.
+    """
     for outcome in outcomes:
         subject = f"{outcome.repository}#{outcome.number}"
         print(f"{subject}  {outcome.status:<12} {outcome.detail}")
+    for reason, count in sorted((deferred or {}).items()):
+        print(f"{count} {reason} record(s) not considered; they belong to another lane")
     counted = {status: sum(o.status == status for o in outcomes) for status in _REPORTED}
     findings = [o for o in outcomes if o.status not in _NOT_A_FINDING]
     print(
