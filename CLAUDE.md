@@ -3855,3 +3855,36 @@ style of that module.
   permission *is* watched, by a reader the test did not know about. **Widen such a check to the
   UNION of its readers rather than allowlisting the new member**, which would have exempted a real
   permission from the only thing watching it.
+
+- **AN ACCEPTED ADR WHOSE MECHANISM WAS NEVER BUILT DOES NOT SIT QUIETLY — IT RESURFACES AS AN OPEN
+  QUESTION AND GETS RE-LITIGATED, AND THE SECOND PASS MAY REACH THE OPPOSITE ANSWER.** Twice in one
+  week, both times costing real time and one of them nearly reversing a decision Devon had already
+  made:
+  - **ADR-0015** (2026-08-04) decided that a repository self-declares factory membership in
+    `PROJECT.md` frontmatter, *"repo-local and self-describing, rather than a list inside the kit
+    that the affected repository cannot see."* Never built. The consequence in August was that
+    `project-standards` was deliberately excluded and then re-onboarded three days later by a sweep
+    that never consulted the decision; the consequence on 2026-08-24 was six exchanges
+    reconstructing "which repos are in SDS scope" by hand, from four surfaces that disagree.
+  - **ADR-0025** (2026-08-17) decided that a `factory-delivery` change record is approved **by
+    policy, not by a click** — *"There is no per-record human approval."* Never built:
+    `change-manager`'s `deploy_policy.py` reached version 3 with all three versions pinning
+    `change_classes = frozenset({"dependency-update"})`. It was carried in the programme plan as an
+    OPEN decision, and on 2026-08-25 HQ explained it back to Devon as undecided and **recommended
+    the opposite**, on reasoning weaker than the ADR's own — the ADR kills per-record approval on a
+    structural ground (change-manager has no GitHub egress, so a record approval *cannot* show a
+    human what changed) that the second pass did not have. Devon: *"I thought we had already decided
+    this previously."*
+  **The rule: an Accepted ADR whose mechanism does not exist must appear as OUTSTANDING WORK, never
+  as an open question.** The two read identically in a planning document and are opposites — one
+  wants building, the other wants deciding, and filing the first as the second invites a
+  contradictory ruling. **Before presenting anything as an open decision, grep `docs/decisions/` for
+  its subject.** Both of these had an ADR whose *title* answered the question being asked.
+
+- **A `# not-a-vocabulary`-style comment that anticipates a future decision is not a record that the
+  decision was made.** `change_proposer/cli.py`'s `FACTORY_CHANGE_CLASS` comment ends *"it is the
+  name a human would add to a policy version if he decided these records should be pre-approved"* —
+  written 2026-08-16, one day before ADR-0025 decided exactly that. The comment still reads as
+  though the question is open, because nothing updates a comment when an ADR lands. **When an ADR
+  settles something a code comment anticipates, the comment is part of what the implementing change
+  must fix**, or the next reader takes the code's word over the decision's.
