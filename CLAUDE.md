@@ -1037,10 +1037,16 @@ style of that module.
 
 - **`deployment_observation` summaries are EXACT-key-set bounded, and the secret detector matches
   key NAMES, not just values.** `_require_keys` uses `set(payload).issubset(allowed)`, so any extra
-  key is `deployment_observation_invalid: "… contains unbounded fields"`. The allowed sets are:
-  `auth_summary` = `{missing_m2m_status, configured_m2m_status}` (and `missing_m2m_status` **must**
-  be `401`); `route_summary` = `{routes}`, each route exactly `{path, present}`;
-  `dispatch_summary` = `{dispatch_enabled}`; `status_summary` = `{status, summary}`. Separately, a
+  key is `deployment_observation_invalid: "… contains unbounded fields"`. **CORRECTED 2026-08-25:
+  there are FIVE summaries, not the four listed here — `probe_summary` was omitted — and every one
+  is validated UNCONDITIONALLY and requires NON-EMPTY content.** That last part is the load-bearing
+  half: a machine-local activation has honest values for none of them, so the record as it stands is
+  shaped for a hosted deploy only. `probe_summary` = `{probes}`, a non-empty list whose members are
+  each exactly `{endpoint, method, name, status_code, expected_status_min, expected_status_max,
+  observed_at}`; `auth_summary` = `{missing_m2m_status, configured_m2m_status}` (and
+  `missing_m2m_status` **must** be `401`); `route_summary` = `{routes}`, each route exactly
+  `{path, present}`; `dispatch_summary` = `{dispatch_enabled}`; `status_summary` =
+  `{status, summary}`. Separately, a
   key merely *called* `missing_credential_status` is rejected as
   `deployment_observation_secret_rejected` — the detector reads the JSON path, so avoid `credential`
   / `token` / `key` in key names even when the value is an integer. Every one of these is a clean
