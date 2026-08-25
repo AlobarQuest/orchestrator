@@ -36,7 +36,15 @@ ALLOWED_TOP_LEVEL = {
     "os",
     "pathlib",
     "re",
+    # `shutil.which` alone, to find `uv` on PATH before the activation check runs it. The
+    # fallback to its standard install location is what keeps a scheduled pass measuring when
+    # the plist's PATH does not carry it.
+    "shutil",
     "subprocess",
+    # `tomllib` reads `[project.scripts]` from a working copy's own manifest, which is what the
+    # console-entry-point fact is measured against. Standard library since 3.11; it is here
+    # because this guard confines THIRD-PARTY dependencies and lists every top-level name.
+    "tomllib",
     "typing",
     # `urllib.parse` only, for the base-URL shape check. `urllib.request` is an HTTP client and
     # is in the scan's own `HTTP_CLIENTS` set, so it could never arrive here unnoticed.
