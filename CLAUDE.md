@@ -1037,9 +1037,19 @@ style of that module.
 
 - **`deployment_observation` summaries are EXACT-key-set bounded, and the secret detector matches
   key NAMES, not just values.** `_require_keys` uses `set(payload).issubset(allowed)`, so any extra
-  key is `deployment_observation_invalid: "… contains unbounded fields"`. **CORRECTED 2026-08-25:
-  there are FIVE summaries, not the four listed here — `probe_summary` was omitted — and every one
-  is validated UNCONDITIONALLY and requires NON-EMPTY content.** That last part is the load-bearing
+  key is `deployment_observation_invalid: "… contains unbounded fields"`. **CORRECTED TWICE ON
+  2026-08-25. First: there are FIVE summaries, not the four originally listed — `probe_summary` was
+  omitted. Then, hours later, `deployment_observations` gained a SECOND SHAPE and this bullet now
+  describes only one of them.** The five-summaries-all-mandatory rule holds for
+  `kind = "container_image"` and is FALSE for `kind = "machine_local"`, which requires an
+  `activation_summary` and **refuses all five**. A machine-local row also carries no `base_url`, no
+  `deployment_url`, no `deployer` and **no post-deploy verification unit**, so
+  `post_deploy_work_unit_id` is nullable and `Session.get(WorkUnit, None)` is reachable — on
+  SQLAlchemy 2.0.52 that returns `None` after a `SAWarning` saying it *"may raise an error in a
+  future release"*, i.e. a warning today and a break later. Its `environment` is pinned to
+  `operator_machine` by a database CHECK, deliberately: the column is otherwise free-form under a
+  regex, and one mistaken payload naming `production` would put a working copy into the answer for
+  what is serving production. For the container shape: That last part is the load-bearing
   half: a machine-local activation has honest values for none of them, so the record as it stands is
   shaped for a hosted deploy only. `probe_summary` = `{probes}`, a non-empty list whose members are
   each exactly `{endpoint, method, name, status_code, expected_status_min, expected_status_max,
@@ -3888,3 +3898,39 @@ style of that module.
   though the question is open, because nothing updates a comment when an ADR lands. **When an ADR
   settles something a code comment anticipates, the comment is part of what the implementing change
   must fix**, or the next reader takes the code's word over the decision's.
+
+- **A CONTENT DIGEST IDENTIFIES A TREE; AN IDEMPOTENCY KEY IDENTIFIES AN OPERATION. They coincide
+  only where one tree can produce one operation.** The machine-activation check was first keyed on
+  `machine-activation-check:{digest}` — and every unit of one repository shares a digest, six of
+  `intent-packages`' candidates sitting at one HEAD. The first observation would have been written
+  and **every sibling refused as `idempotency_conflict` on the first live pass, every pass, with no
+  way to settle it** (observations have no delete route). Caught by reading, not by a test; the
+  sibling binding lane had the right shape — `machine-activation:{work_unit_id}` — all along.
+  **Before keying anything on a digest, count how many subjects share it.** Same family as the
+  ADR-0022 frozen-facts trap, one field over.
+
+- **`uv sync --check` is a measurement and `uv sync --frozen --check` is a SAFE one.** Exit 0 means
+  synchronized, exit 1 not, and anything else is uv failing rather than answering — so branch on
+  those three, never on truthiness. **`--frozen` is what keeps it read-only:** without it the
+  command may re-resolve and rewrite `uv.lock`, so a checker would mutate the repository it is
+  reading. Measured 2026-08-25 across three working copies, the tree is byte-identical before and
+  after. **Two of the three enrolled Python checkouts were out of sync on the day the check
+  shipped** — `intent-packages` at ruff 0.16.2 against a lock of 0.16.3, and `security-standards`
+  at ruff **0.15.21** against the same 0.16.3, i.e. the repository that runs the scanner and the
+  Stop hook was executing across the 0.15/0.16 boundary the estate spent a day on. Not a
+  hypothetical. **Note what it does NOT ask:** whether the lockfile matches `pyproject.toml`. A
+  repository whose lock is stale relative to its manifest answers `yes`.
+
+- **Under `launchd`, `uv` is NOT on PATH — it lives in `~/.local/bin`, and the plists name only the
+  system directories.** A producer that shells out to `uv` must resolve it with `shutil.which` and
+  fall back to that path explicitly, or **every scheduled pass reports unmeasurable while working
+  perfectly from an operator's shell** — the exact shape the `env -i PATH=… HOME=…` probe rule
+  exists to catch, and a reminder that the probe is the only thing that sees it. This generalises
+  past `uv` to any tool installed by a user-level installer rather than a system package manager.
+
+- **`orchestrator`'s own machine-activation bindings are permanently `superseded`, and that is
+  correct rather than a finding.** They were written at a HEAD the machine has since moved past, and
+  the observation asserts that THIS artifact is what the next start executes — no longer true of
+  that tree. Not curable and **cannot recur**: the lane now binds and observes in the same pass. Do
+  not treat a superseded binding on `orchestrator` as drift; it is the record of the one window in
+  which the two steps were separate.
