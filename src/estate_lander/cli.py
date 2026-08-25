@@ -41,7 +41,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -552,7 +551,7 @@ def run(argv: list[str] | None = None) -> int:
     return report(outcomes, selection.deferred)
 
 
-def report(outcomes: list[Outcome], deferred: Mapping[str, int] | None = None) -> int:
+def report(outcomes: list[Outcome], deferred: dict[str, int] | None = None) -> int:
     """Print every act considered, then what was left to another lane, then the summary.
 
     THE DEFERRAL LINE IS SEPARATE FROM THE SUMMARY, NOT FOLDED INTO IT. `_REPORTED` exists so the
