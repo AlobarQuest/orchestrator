@@ -3788,3 +3788,64 @@ style of that module.
   landing lane merges; ADR-0028's carrier registers intakes), so whether criterion 3's phrase
   "external producer" reaches them is a CLASSIFICATION question and not a test result. Do not test
   it by attempting a transition — that mutates production.
+
+- **`git merge-base --is-ancestor` is the RIGHT tool for "has this machine got that MERGE COMMIT"
+  and the WRONG one for "did this BRANCH land" — and without both halves the pair reads as a
+  contradiction.** The estate records the second half above. This is its complement: a squash-merge
+  collapses a branch into one NEW commit, so a branch tip is never an ancestor of the default
+  branch — but the **merge commit is a real commit on that branch** and is an ancestor of anything
+  pulled after it. Measured 2026-08-24 in one checkout, both directions: `ac01f838` (the landing of
+  `infraops-mcp-server#81`) **is** an ancestor of HEAD; `fcc4f881` (that pull request's own head)
+  is **not**. **Say which question you are asking, in a comment**, because the next reader will
+  arrive holding the other rule.
+
+- **`UnitPrMerge` has NO ROW for a pull request a PERSON landed, so it cannot be the estate's source
+  of "which commit landed this unit's work".** It records the orchestrator's OWN act (ADR-0020), and
+  those are a minority of landings. ADR-0030 assumed otherwise and would have made its own
+  acceptance subject permanently unreachable — PR #81 was landed by a person. The answer that covers
+  every landing route is the **landing ledger's observation** (`source_system: github`,
+  `observation_type: landing`, `subject_type: repo`,
+  `facts.what_changed.{repository, pull_request, head_commit, commit}`), derived from GitHub by an
+  independent program. **Confirm it against the orchestrator's own worker-written
+  `UnitPrBinding.head_sha` before using it** — a pull-request number alone would bind any unit that
+  shared it, and a `SDS-Unit:` trailer selects rather than answers. Note the ledger writes from
+  `src/landing_ledger`, which `src/orchestrator` cannot import; the two vocabularies are pinned by
+  `tests/contract/test_landing_fact_contract.py`, because a renamed key empties the candidate stream
+  in silence.
+
+- **Making a column of a UNIQUE constraint nullable SILENTLY SWITCHES THAT CONSTRAINT OFF.**
+  Postgres treats NULLs in a unique constraint as **distinct**, so a migration whose stated subject
+  is "these columns are now optional" also stops the constraint deduplicating every row that uses
+  the new option — invisibly. `UNIQUE NULLS NOT DISTINCT` (Postgres 15+, SQLAlchemy
+  `postgresql_nulls_not_distinct=True`) restores it; migration `0030_adr30_binding_kind` does this
+  and says so in its own header. **The test must write ROUND the service**: a service that compares
+  with `IS NULL` in Python dedupes whether or not the database would, so a service-level test
+  asserts the wrong noun — measured, by a mutation that deleted `NULLS NOT DISTINCT` and survived.
+
+- **A payload composed in one program and parsed in another crosses a boundary no unit test sees,
+  and the REQUEST MODEL is a second rule set on top of the service's.** The binding lane's first
+  live pass refused all twelve candidates with **HTTP 422, writing nothing**:
+  `CommandBase.expected_version` is `int = Field(ge=0)` — required, non-nullable — where the
+  service's dataclass is `int | None = None`. FastAPI answered before any service code ran, so no
+  named error was reachable and no service test could see it. **The request model is LOOSER than the
+  service in some places and STRICTER in others, so neither direction can be assumed.** A test may
+  import both sides: validate the composed payload against the route's own model, with a control on
+  the exact field. This is the `response_model`-drops-fields invariant in the opposite direction —
+  outbound silently loses keys, inbound loudly rejects them — and **the dry run is what makes it
+  cheap**, having reported twelve would-bind rows before anything permanent existed.
+
+- **An unkillable clause is a defect of the test suite, not a free safety margin.** A `kind`
+  comparison in `_same_binding_facts` could never differ, because the kind-conditional CHECK forces
+  the registry columns NULL for one kind and non-empty for the other, so two rows cannot share a
+  source tuple and differ in kind. It survived every mutation and was **removed rather than kept**:
+  a clause nothing can falsify sits beside clauses that can, and that is how a mutation set comes to
+  report a green it did not earn. Same family as the *allowlist entry that would read "in fact it is
+  called"* — when a check cannot fail, the predicate is wrong, not safe.
+
+- **A rot check keyed on ONE reader breaks when a SECOND reader arrives, and the failure looks like
+  the guard working.** `test_the_read_only_surface_is_what_the_reader_actually_uses` asserted that
+  `read_checkout` exercises every member of the git allowlist. Adding `merge-base` for the binding
+  lane reddened it — correct by its own predicate, wrong as a statement about the estate, since the
+  permission *is* watched, by a reader the test did not know about. **Widen such a check to the
+  UNION of its readers rather than allowlisting the new member**, which would have exempted a real
+  permission from the only thing watching it.
