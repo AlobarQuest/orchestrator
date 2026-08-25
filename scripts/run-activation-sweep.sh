@@ -4,8 +4,15 @@
 #   sweep  one observation per enrolled working copy: what it will execute at its next start,
 #          and whether that is what was merged. Six checkouts, OBSERVER credential.
 #   bind   one release artifact binding per completed work unit whose landing this machine has
-#          actually pulled. FOUR checkouts, SYSTEM credential -- see BINDABLE below for why the
-#          two hosted-application repositories are absent.
+#          actually pulled, AND the activation check that follows it: whether the artifact just
+#          bound is what the next start will execute. FOUR checkouts, SYSTEM credential -- see
+#          BINDABLE below for why the two hosted-application repositories are absent.
+#
+# THE ACTIVATION CHECK NEEDS NO NEW CREDENTIAL, and that is the answer to where it belongs. It is
+# recorded as a deployment observation, which only the SYSTEM actor may write -- and this lane
+# already holds SYSTEM because binding does. The sibling sweep's OBSERVER credential may write to
+# `/api/v1/observations` and nothing else, and that narrowness is what the estate's negative
+# tests certify, so it stays exactly as it is.
 #
 # Both read local git and neither PULLS: ADR-0030 stops at recording, and making the machine
 # self-update is a separate decision with its own authority argument. The subcommand allowlist in
@@ -19,9 +26,12 @@
 #   0  every checkout was measured and filed; the machine is current and clean, and every unit
 #      whose landing it holds is bound.
 #   1  the tool itself failed (a missing credential, a missing binary, an unusable URL).
-#   2  something was found: a checkout is behind its upstream, or carries modified tracked files.
-#      The bind lane never reports this -- a unit whose landing is not yet pulled is WAITING,
-#      which is the ordinary state between a unit completing and the next pull.
+#   2  something was found: a checkout is behind its upstream, carries modified tracked files, or
+#      holds a bound artifact that is not fully activated -- a console entry point that was never
+#      installed, or an environment that does not match its lockfile. Somebody has to act.
+#      WAITING is still not this: a unit whose landing is not yet pulled is the ordinary state
+#      between a unit completing and the next pull, and so is a SUPERSEDED artifact, whose window
+#      for being observed closed when HEAD moved past it.
 #   3  some checkout could not be measured, or a row could not be filed, so the answer is missing
 #      rather than clean. 3 outranks 2.
 #

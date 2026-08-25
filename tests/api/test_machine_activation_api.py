@@ -149,6 +149,11 @@ def test_the_served_body_carries_every_field_the_producer_reads(
         "source_commit",
         "merge_commit",
         "binding_id",
+        # The activation check's two: the digest the binding names, so the producer can tell
+        # whether HEAD has moved past that tree, and whether the check has already been filed,
+        # so a later pass replays nothing.
+        "binding_artifact_digest",
+        "observation_id",
     }
     assert body[0]["work_unit_id"] == unit_id
     assert body[0]["merge_commit"] == MERGE_COMMIT

@@ -214,8 +214,36 @@ constraint as distinct, so making three of its eight columns nullable would othe
 silently stopped it deduplicating, weakening an existing guarantee as a side effect of a change
 about something else.
 
-**What this lane does NOT fill is the `deployment` hop, and that is a recommendation for HQ rather
-than a gap.** `deployment_observations` models an independent party confirming that a URL serves a
+**SUPERSEDED 2026-08-25 — the recommendation below was made from a premise that turned out to be
+false, and the sixth hop is now filled.** The build's argument was that any machine-local check
+would be "the producer attesting to its own act". Devon's objection: the sweep already fetches
+from GitHub and compares the working copy against `origin/main`, and this lane already proves the
+landing commit is an ancestor of `HEAD` through git's object graph — that is the disk checked
+against an independent remote, not self-attestation. Two further facts are measurable on the
+machine and nowhere else, and the second has a recorded failure mode: **every declared console
+entry point is installed** (the editable install is a `.pth` pointing at the source, so an
+ordinary module change is live the moment a pull lands — console entry points are the exception,
+the launchers invoke them by absolute path, and a job whose entry point was never installed dies
+at a missing binary), and **the environment matches the lockfile** (`uv sync --frozen --check`,
+which is exactly the question a dependency-update unit turns on).
+
+So `deployment_observations` DID gain the fifth summary this section says was "deliberately not
+shipped", by the route this section itself names one paragraph earlier: a `kind` discriminator
+making the shapes conditional, rather than a second mechanism. Its members are tri-state —
+`yes` / `no` / `not_applicable` — because one enrolled working copy is a TypeScript project to
+which two of the three questions do not apply, and this estate's standing ruling is that "not
+applicable" is a distinct answer from "not met". A machine-local observation mints **no**
+post-deploy verification unit: the five generated criteria describe probing a hosted application,
+and a unit carrying criteria a working copy can never evidence would be permanently unverifiable
+debris, one row per binding. What remains unobserved is stated rather than implied: a process
+that started BEFORE the pull runs old code until it restarts, so this answers what the NEXT start
+will execute and never what is executing now.
+
+The paragraph that follows is kept because its reasoning about the four-shape bound is what made
+the discriminator the right answer rather than a relaxation.
+
+**What this lane did NOT fill at the time of writing was the `deployment` hop, and that was a
+recommendation for HQ rather than a gap.** `deployment_observations` models an independent party confirming that a URL serves a
 digest; on the operator machine the program that computes the digest is the program that read the
 working copy, so a row there would be the producer attesting to its own act — the shape ADR-0020's
 detector and the conformance anti-tautology rule both refuse. The build's recommendation is that

@@ -14,26 +14,37 @@ import pytest
 
 from activation_sweep.bind import (
     BOUND,
+    CHECKED,
+    OBSERVED,
     RECORDED,
     REFUSED,
+    SUPERSEDED,
     UNAVAILABLE,
+    UNSATISFIED,
     WAITING,
     Candidate,
     NullBinder,
     bind_checkout,
     binding_payload,
+    has_conditions,
     has_findings,
 )
 from activation_sweep.binding import BindingError, content_digest, has_activated
-from activation_sweep.binding_client import BindingCallError
+from activation_sweep.binding_client import BindingCallError, is_allowed_write
 from tests.activation_sweep.conftest import Estate, git
 
 REPOSITORY = "AlobarQuest/example"
 UNIT_ID = "eb7c36f7-4f7e-5d00-9709-779c0c1152a4"
 
 
+# A digest no working copy in these tests holds, so a row carrying it reads as an artifact HEAD
+# has moved past. Production always serves one beside a `binding_id`; a bound candidate without
+# it is a narrowed contract rather than a superseded artifact, which is its own test below.
+MOVED_DIGEST = "sha256:" + "e" * 64
+
+
 def candidate_row(commit: str, *, binding_id: str | None = None) -> dict[str, Any]:
-    return {
+    row: dict[str, Any] = {
         "work_unit_id": UNIT_ID,
         "work_package_revision_id": "11111111-2222-3333-4444-555555555555",
         "package_revision_hash": "sha256:package",
@@ -44,7 +55,11 @@ def candidate_row(commit: str, *, binding_id: str | None = None) -> dict[str, An
         "source_commit": "f" * 40,
         "merge_commit": commit,
         "binding_id": binding_id,
+        "observation_id": None,
     }
+    if binding_id is not None:
+        row["binding_artifact_digest"] = MOVED_DIGEST
+    return row
 
 
 class FakeBinder:
@@ -54,6 +69,7 @@ class FakeBinder:
         self.rows = rows
         self.refuse = refuse
         self.bound: list[tuple[str, dict[str, Any]]] = []
+        self.observed: list[tuple[str, dict[str, Any]]] = []
         self.asked: list[str] = []
 
     def candidates(self, repository: str) -> list[dict[str, Any]]:
@@ -66,12 +82,21 @@ class FakeBinder:
         self.bound.append((work_unit_id, payload))
         return {"id": "binding-1"}
 
+    def observe(self, binding_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.refuse:
+            raise BindingCallError("orchestrator rejected POST: 409")
+        self.observed.append((binding_id, payload))
+        return {"id": "observation-1"}
+
 
 class BrokenBinder:
     def candidates(self, repository: str) -> list[dict[str, Any]]:
         raise BindingCallError("orchestrator answered 401")
 
     def bind(self, work_unit_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("must not be reached")
+
+    def observe(self, binding_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise AssertionError("must not be reached")
 
 
@@ -341,3 +366,227 @@ def test_the_idempotency_key_is_a_function_of_the_unit_and_nothing_that_moves() 
     )
 
     assert first["idempotency_key"] == later["idempotency_key"] == f"machine-activation:{UNIT_ID}"
+
+
+# ---------------------------------------------------------------------------
+# The activation check: whether the bound artifact is what the next start will execute.
+# ---------------------------------------------------------------------------
+
+
+def _activation(summary: dict[str, Any]) -> dict[str, Any]:
+    return summary["units"][0]["activation"]
+
+
+def test_binding_a_unit_files_its_activation_check_in_the_same_pass(estate: Estate) -> None:
+    """The two halves happen together, which is what keeps the window from being missed. The
+    digest is computed once per pass, so the observation names the artifact just bound."""
+    head = git(estate.local, "rev-parse", "HEAD").strip()
+    binder = FakeBinder([candidate_row(head)])
+
+    summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
+
+    assert summary["units"][0]["outcome"] == RECORDED
+    assert _activation(summary)["outcome"] == OBSERVED
+    assert len(binder.observed) == 1
+    binding_id, payload = binder.observed[0]
+    assert binding_id == "binding-1"
+    assert payload["kind"] == "machine_local"
+    assert payload["environment"] == "operator_machine"
+    assert payload["observed_artifact_digest"] == binder.bound[0][1]["artifact_digest"]
+    assert payload["activation_summary"]["merge_commit_present"] == "yes"
+
+
+def test_an_already_observed_binding_is_checked_and_left_alone(estate: Estate) -> None:
+    """A second pass must replay nothing: the ingest refuses a repeat carrying different facts,
+    and a re-read at a moved HEAD would present exactly that."""
+    head = git(estate.local, "rev-parse", "HEAD").strip()
+    digest = content_digest(estate.local)
+    row = candidate_row(head, binding_id="binding-1")
+    row["binding_artifact_digest"] = digest
+    row["observation_id"] = "observation-1"
+    binder = FakeBinder([row])
+
+    summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
+
+    assert summary["units"][0]["outcome"] == BOUND
+    assert _activation(summary)["outcome"] == CHECKED
+    assert binder.observed == []
+
+
+def test_an_artifact_the_head_has_moved_past_is_superseded_rather_than_observed(
+    estate: Estate,
+) -> None:
+    """Not a finding, and this is the case that says why. The artifact IS the tree its digest was
+    taken over, so once HEAD moves past it that tree is no longer what the next start executes
+    and there is nothing left to observe -- a fact about time, not about the machine."""
+    head = git(estate.local, "rev-parse", "HEAD").strip()
+    row = candidate_row(head, binding_id="binding-1")
+    row["binding_artifact_digest"] = "sha256:" + "e" * 64
+    binder = FakeBinder([row])
+
+    summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
+
+    assert _activation(summary)["outcome"] == SUPERSEDED
+    assert binder.observed == []
+    assert not has_findings([summary])
+    assert not has_conditions([summary])
+
+
+def test_a_checkout_that_has_lost_the_landing_commit_records_nothing(
+    estate: Estate,
+) -> None:
+    """The third negative control, and the one that could not be measured any other way: the
+    binding exists, so the commit was present when it was written, and the machine has since
+    stopped holding it. The fact is MEASURED again rather than carried forward -- asserting it
+    from the binding's existence would be the producer attesting to its own act.
+    """
+    digest = content_digest(estate.local)
+    row = candidate_row("c" * 40, binding_id="binding-1")
+    row["binding_artifact_digest"] = digest
+    binder = FakeBinder([row])
+
+    summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
+
+    activation = _activation(summary)
+    assert activation["outcome"] == UNSATISFIED
+    assert activation["unsatisfied"] == ["merge_commit_present"]
+    assert activation["activation"]["merge_commit_present"] == "no"
+    assert binder.observed == []
+    # A condition of the MACHINE, not a missing answer: somebody has to act, and the check files
+    # nothing until they do.
+    assert has_conditions([summary])
+    assert not has_findings([summary])
+
+
+def test_a_repository_with_no_python_toolchain_is_still_observable(estate: Estate) -> None:
+    """The estate's own live subject is a TypeScript project. Two of the three facts do not apply
+    to it, and `not applicable` is a distinct answer from `not met`."""
+    head = git(estate.local, "rev-parse", "HEAD").strip()
+    binder = FakeBinder([candidate_row(head)])
+
+    summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
+
+    assert summary["repository_facts"] == {
+        "console_entry_points_present": "not_applicable",
+        "environment_matches_lock": "not_applicable",
+    }
+    assert _activation(summary)["outcome"] == OBSERVED
+
+
+def test_a_dry_run_shows_the_activation_it_would_file_and_writes_nothing(
+    estate: Estate,
+) -> None:
+    head = git(estate.local, "rev-parse", "HEAD").strip()
+    binder = FakeBinder([candidate_row(head)])
+
+    summary = bind_checkout(str(estate.local), NullBinder(binder), fetch=False, dry_run=True)
+
+    activation = _activation(summary)
+    assert activation["outcome"] == OBSERVED
+    assert activation["dry_run"] is True
+    assert activation["record"]["kind"] == "machine_local"
+    assert binder.bound == []
+    assert binder.observed == []
+
+
+def test_a_refused_activation_makes_the_pass_incomplete(estate: Estate) -> None:
+    head = git(estate.local, "rev-parse", "HEAD").strip()
+    row = candidate_row(head, binding_id="binding-1")
+    row["binding_artifact_digest"] = content_digest(estate.local)
+    binder = FakeBinder([row], refuse=True)
+
+    summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
+
+    assert _activation(summary)["outcome"] == REFUSED
+    assert has_findings([summary])
+
+
+def test_a_unit_still_waiting_is_not_asked_about_activation(estate: Estate) -> None:
+    """There is nothing to observe: the machine has not pulled the change at all."""
+    upstream = estate.land_upstream()
+    binder = FakeBinder([candidate_row(upstream)])
+
+    summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
+
+    assert summary["units"][0]["outcome"] == WAITING
+    assert "activation" not in summary["units"][0]
+    assert binder.observed == []
+
+
+# ---------------------------------------------------------------------------
+# The confined surface. A surface stated in a docstring is a wish; a surface stated in a matcher
+# is a property.
+# ---------------------------------------------------------------------------
+
+BINDING_ID = "0b99daeb-94d9-4210-9673-c43bec3926c2"
+
+
+def test_the_lane_may_write_exactly_the_binding_and_the_activation_check() -> None:
+    assert is_allowed_write(f"/api/v1/work-units/{UNIT_ID}/release-artifacts")
+    assert is_allowed_write(f"/api/v1/release-artifacts/{BINDING_ID}/deployment-observations")
+
+
+def test_the_lane_may_not_write_anywhere_else() -> None:
+    """Anchored with the id's shape spelled out, so a prefix, a trailing slash or a sibling verb
+    under the same id does not match."""
+    forbidden = (
+        f"/api/v1/release-artifacts/{BINDING_ID}/deployment-observations/",
+        f"/api/v1/release-artifacts/{BINDING_ID}/deployment-observations/1",
+        f"/api/v1/release-artifacts/{BINDING_ID}",
+        "/api/v1/release-artifacts/not-a-uuid/deployment-observations",
+        f"/x/api/v1/release-artifacts/{BINDING_ID}/deployment-observations",
+        f"/api/v1/work-units/{UNIT_ID}/commands/ready",
+        "/api/v1/observations",
+    )
+    for path in forbidden:
+        assert not is_allowed_write(path), path
+
+
+def test_two_units_at_one_head_each_get_their_own_activation_check(estate: Estate) -> None:
+    """EVERY UNIT OF ONE REPOSITORY SHARES A DIGEST -- six of them in `intent-packages` today.
+
+    A key derived from the digest would have the first unit's observation written and every
+    sibling refused as `idempotency_conflict`, because the stored command names a different
+    binding. The key is a function of the unit, exactly as the binding's is.
+    """
+    head = git(estate.local, "rev-parse", "HEAD").strip()
+    first = candidate_row(head)
+    second = {**candidate_row(head), "work_unit_id": "aaaaaaaa-1111-2222-3333-444444444444"}
+    second["unit_key"] = "example-ac-002"
+    binder = FakeBinder([first, second])
+
+    summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
+
+    assert [unit["activation"]["outcome"] for unit in summary["units"]] == [OBSERVED, OBSERVED]
+    keys = [payload["idempotency_key"] for _binding, payload in binder.observed]
+    assert len(set(keys)) == 2
+    assert keys == [
+        f"machine-activation-check:{first['work_unit_id']}",
+        f"machine-activation-check:{second['work_unit_id']}",
+    ]
+
+
+def test_a_bound_candidate_with_no_digest_is_a_narrowed_contract_not_a_superseded_artifact(
+    estate: Estate,
+) -> None:
+    """THE WORST FAILURE THIS LANE HAS, and it is silent unless the two cases are separated.
+
+    A `response_model` drops what it does not declare, so an orchestrator one release behind
+    serves a candidate with no `binding_artifact_digest`. Folded into the digest comparison,
+    `None != digest` is true for EVERY candidate: the whole estate reads `superseded`, the pass
+    exits 0, and nothing is ever filed. Measured against production on 2026-08-25, before the
+    release carrying the field — twelve candidates, twelve `superseded`, exit 0.
+    """
+    head = git(estate.local, "rev-parse", "HEAD").strip()
+    row = candidate_row(head, binding_id="binding-1")
+    del row["binding_artifact_digest"]
+    binder = FakeBinder([row])
+
+    summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
+
+    activation = _activation(summary)
+    assert activation["outcome"] == UNAVAILABLE
+    assert "binding_artifact_digest" in activation["reason"]
+    assert binder.observed == []
+    # Incomplete, so the pass cannot claim it found everything.
+    assert has_findings([summary])

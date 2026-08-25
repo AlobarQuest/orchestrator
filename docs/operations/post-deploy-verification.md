@@ -45,10 +45,52 @@ A deployment observation records bounded, stable facts:
 The observed artifact digest must exactly match the immutable digest recorded in
 the release artifact binding. Mutable tags are not artifact identity.
 
+## Two Activation Models
+
+The facts above describe one model: a hosted application is confirmed live by probing a URL. A
+change also becomes live when it is pulled into a working copy on the operator machine and the
+next process start picks it up (ADR-0030), and that model has no endpoint to probe, no route
+table to enumerate and no 401 to observe.
+
+The two are told apart by one field, `kind`, and the shapes are conditional on it:
+
+- `container_image`: the five probe-shaped summaries above, a canonical base URL, a deployment
+  URL and a deployer. Recording one creates the generated verification unit described in the
+  following section.
+- `machine_local`: an `activation_summary` and none of those. The environment must be
+  `operator_machine`, the URLs and the deployer are absent rather than blank, and **no
+  verification unit is created** — the generated criteria all describe probing a hosted
+  application, so a unit carrying them could never be evidenced.
+
+An observation must describe the same model as its binding
+(`deployment_observation_kind_mismatch`).
+
+### The activation summary
+
+Three facts about one working copy, each measured on its own:
+
+- `merge_commit_present`: the unit's landing commit is in the history the working copy holds.
+- `console_entry_points_present`: every `[project.scripts]` entry has a file in `.venv/bin`. The
+  editable install is a `.pth` pointing at the source tree, so an ordinary module change is live
+  the moment the pull lands — console entry points are the exception, and the scheduled jobs
+  invoke them by absolute path.
+- `environment_matches_lock`: `uv sync --frozen --check` reports the installed environment
+  matches the lockfile.
+
+Each is `yes`, `no`, or `not_applicable`. The last is for a repository the question does not
+reach — a project with no Python manifest, no lockfile and no virtual environment — and it is a
+distinct answer from `no`. `merge_commit_present` is never excused: every working copy either
+holds the commit or does not.
+
+**What this does not attest:** a process that started before the pull runs old code until it
+restarts. The summary answers what the NEXT start will execute, never what is executing now.
+
 ## Generated Work Unit
 
-Recording a valid observation creates or reuses one generated post-deploy
-verification work unit for the release binding and environment.
+Recording a valid `container_image` observation creates or reuses one generated
+post-deploy verification work unit for the release binding and environment. A
+`machine_local` observation creates none, for the reason given in the preceding
+section.
 
 The generated unit:
 

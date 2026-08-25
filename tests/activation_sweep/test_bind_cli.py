@@ -13,10 +13,12 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from activation_sweep.bind import BOUND, RECORDED, WAITING
+from activation_sweep.bind import BOUND, RECORDED, SUPERSEDED, UNSATISFIED, WAITING
+from activation_sweep.binding import content_digest
 from activation_sweep.binding_client import BindingCallError
 from activation_sweep.cli import (
     BINDING_TOKEN_VARIABLE,
+    EXIT_FINDINGS,
     EXIT_INCOMPLETE,
     EXIT_OK,
     TOKEN_VARIABLE,
@@ -33,6 +35,7 @@ class Binder:
         self.rows = rows
         self.error = error
         self.bound: list[dict[str, Any]] = []
+        self.observed: list[dict[str, Any]] = []
         self.opened: dict[str, Any] = {}
 
     def candidates(self, repository: str) -> list[dict[str, Any]]:
@@ -43,6 +46,12 @@ class Binder:
             raise self.error
         self.bound.append(payload)
         return {"id": "binding-1"}
+
+    def observe(self, binding_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.error is not None:
+            raise self.error
+        self.observed.append(payload)
+        return {"id": "observation-1"}
 
 
 def _install(monkeypatch: pytest.MonkeyPatch, binder: Binder) -> Binder:
@@ -60,6 +69,9 @@ def _install(monkeypatch: pytest.MonkeyPatch, binder: Binder) -> Binder:
         def bind(self, work_unit_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             return binder.bind(work_unit_id, payload)
 
+        def observe(self, binding_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+            return binder.observe(binding_id, payload)
+
     def opened(**kwargs: Any) -> Client:
         seen.update(kwargs)
         return Client()
@@ -70,8 +82,13 @@ def _install(monkeypatch: pytest.MonkeyPatch, binder: Binder) -> Binder:
     return binder
 
 
+# See the sibling suite: production always serves a digest beside a `binding_id`, and a row
+# carrying one no working copy holds reads as an artifact HEAD has moved past.
+MOVED_DIGEST = "sha256:" + "e" * 64
+
+
 def _row(commit: str, *, binding_id: str | None = None) -> dict[str, Any]:
-    return {
+    row: dict[str, Any] = {
         "work_unit_id": UNIT_ID,
         "work_package_revision_id": "11111111-2222-3333-4444-555555555555",
         "package_revision_hash": "sha256:package",
@@ -82,7 +99,11 @@ def _row(commit: str, *, binding_id: str | None = None) -> dict[str, Any]:
         "source_commit": "f" * 40,
         "merge_commit": commit,
         "binding_id": binding_id,
+        "observation_id": None,
     }
+    if binding_id is not None:
+        row["binding_artifact_digest"] = MOVED_DIGEST
+    return row
 
 
 def _invoke(*args: str) -> Any:
@@ -196,3 +217,48 @@ def test_an_unusable_orchestrator_url_is_the_tool_failing(
     result = _invoke("--checkout", str(estate.local), "--orchestrator-url", "https://host..example")
 
     assert result.exit_code == 1
+
+
+def test_an_unsatisfied_activation_exits_with_findings(
+    estate: Estate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A NEW exit code for this lane, and the asymmetry it replaces was deliberate. Binding alone
+    had no machine condition to report -- a unit was bound or waiting, and neither is anyone's
+    problem. An artifact that is bound and NOT fully activated is: somebody has to act, and it
+    outranks nothing while an incomplete pass outranks it."""
+    row = _row("c" * 40, binding_id="binding-1")
+    row["binding_artifact_digest"] = content_digest(estate.local)
+    binder = _install(monkeypatch, Binder([row]))
+
+    result = _invoke("--checkout", str(estate.local))
+
+    assert result.exit_code == EXIT_FINDINGS
+    assert json.loads(result.stdout)[0]["units"][0]["activation"]["outcome"] == UNSATISFIED
+    assert binder.observed == []
+
+
+def test_an_incomplete_pass_outranks_a_finding(
+    estate: Estate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An incomplete pass cannot claim it found everything, so 3 wins over 2."""
+    row = _row("c" * 40, binding_id="binding-1")
+    row["binding_artifact_digest"] = content_digest(estate.local)
+    _install(monkeypatch, Binder([row]))
+
+    result = _invoke("--checkout", "/nonexistent/checkout", "--checkout", str(estate.local))
+
+    assert result.exit_code == EXIT_INCOMPLETE
+
+
+def test_a_superseded_artifact_exits_zero(estate: Estate, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Neither a finding nor incomplete: the window for observing that artifact has closed and
+    no action reopens it."""
+    row = _row("c" * 40, binding_id="binding-1")
+    row["binding_artifact_digest"] = "sha256:" + "e" * 64
+    binder = _install(monkeypatch, Binder([row]))
+
+    result = _invoke("--checkout", str(estate.local))
+
+    assert result.exit_code == EXIT_OK
+    assert json.loads(result.stdout)[0]["units"][0]["activation"]["outcome"] == SUPERSEDED
+    assert binder.observed == []

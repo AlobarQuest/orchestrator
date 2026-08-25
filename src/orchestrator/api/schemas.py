@@ -154,18 +154,30 @@ class ReleaseArtifactCommandModel(CommandBase):
 
 
 class DeploymentObservationCommandModel(CommandBase):
+    """The wire shape of both activation models, LOOSER than either one on its own.
+
+    Every field a machine-local observation cannot carry is optional here and conditional in the
+    service, which is the authority: a hosted observation requires the URLs and the five
+    probe-shaped summaries, a machine-local one refuses them and requires the activation summary.
+    Loosening the wire while the service still refuses keeps one rule in one place -- and this
+    model is a SECOND rule set the service's own tests never traverse, so a producer's composed
+    payload is validated against it directly by `tests/contract`.
+    """
+
     environment: str = Field(min_length=1)
-    base_url: str = Field(min_length=1)
+    base_url: str | None = None
     observed_artifact_digest: str = Field(min_length=1)
     deployment_ref: str = Field(min_length=1)
-    deployment_url: str = Field(min_length=1)
-    deployer: str = Field(min_length=1)
+    deployment_url: str | None = None
+    deployer: str | None = None
     observed_at: datetime
-    probe_summary: dict[str, Any]
-    route_summary: dict[str, Any]
-    auth_summary: dict[str, Any]
-    dispatch_summary: dict[str, Any]
-    status_summary: dict[str, Any]
+    kind: str = "container_image"
+    probe_summary: dict[str, Any] = Field(default_factory=dict)
+    route_summary: dict[str, Any] = Field(default_factory=dict)
+    auth_summary: dict[str, Any] = Field(default_factory=dict)
+    dispatch_summary: dict[str, Any] = Field(default_factory=dict)
+    status_summary: dict[str, Any] = Field(default_factory=dict)
+    activation_summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class ObservationCommandModel(CommandBase):
@@ -739,6 +751,8 @@ class MachineActivationCandidateResponse(BaseModel):
     source_commit: str
     merge_commit: str
     binding_id: UUID | None
+    binding_artifact_digest: str | None
+    observation_id: UUID | None
 
 
 class DeploymentObservationResponse(BaseModel):
@@ -749,23 +763,25 @@ class DeploymentObservationResponse(BaseModel):
     implementation_work_unit_id: UUID
     work_package_revision_id: UUID
     package_revision_hash: str
-    post_deploy_work_unit_id: UUID
+    kind: str
+    post_deploy_work_unit_id: UUID | None
     environment: str
-    base_url: str
+    base_url: str | None
     observed_artifact_digest: str
     deployment_ref: str
-    deployment_url: str
-    deployer: str
+    deployment_url: str | None
+    deployer: str | None
     observed_at: datetime
     probe_summary: dict[str, Any]
     route_summary: dict[str, Any]
     auth_summary: dict[str, Any]
     dispatch_summary: dict[str, Any]
     status_summary: dict[str, Any]
+    activation_summary: dict[str, Any]
     recorded_by: str
     recorded_at: datetime
     event_id: UUID
-    post_deploy_event_id: UUID
+    post_deploy_event_id: UUID | None
     evidence_ids: list[str]
     idempotency_key: str
 
@@ -1749,15 +1765,24 @@ class TraceabilityArtifactHop(BaseModel):
 
 
 class TraceabilityDeploymentHop(BaseModel):
+    """One observation of an artifact being live, in whichever of the two activation models.
+
+    `kind` is the single field that separates them: a hosted deployment carries the URL and the
+    probe summary, a machine-local activation carries neither and reports the activation summary
+    instead. A reader can tell which without knowing anything about the repository.
+    """
+
     environment: str
+    kind: str
     observed_artifact_digest: str
     digest_matches: bool
     deployment_ref: str
-    deployment_url: str
-    deployer: str
+    deployment_url: str | None
+    deployer: str | None
     observed_at: datetime
     status_summary: dict[str, Any]
     probe_summary: dict[str, Any]
+    activation_summary: dict[str, Any]
 
 
 class TraceabilityConditionHop(BaseModel):

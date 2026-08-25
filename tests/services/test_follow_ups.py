@@ -904,6 +904,9 @@ def test_the_release_observation_criteria_still_refuse_public_adjudication(
         migrated_session, observation_command(binding, key="wsp28-asymmetry-observation")
     )
     assert isinstance(observation, DeploymentObservation)
+    # A HOSTED observation always mints one; the column is nullable because a machine-local
+    # activation has none, and narrowing here says which case this test is about.
+    assert observation.post_deploy_work_unit_id is not None
 
     result = record_adjudication(
         migrated_session,
