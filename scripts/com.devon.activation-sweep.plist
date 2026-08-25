@@ -37,8 +37,12 @@
 
     <key>EnvironmentVariables</key>
     <dict>
+        <!-- `__HOME__/.local/bin` is where `uv` lives, and the bind lane's activation check
+             runs it to ask whether each working copy's environment matches its lockfile. The
+             producer also falls back to that exact path when PATH does not carry it, so a plist
+             that has not been reinstalled still measures rather than reporting unmeasurable. -->
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
         <string>__HOME__</string>
     </dict>

@@ -2,7 +2,9 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+import pytest
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -19,8 +21,10 @@ from orchestrator.services.release_artifacts import record_release_artifact
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from tests.services.test_release_artifacts import (
     DIGEST,
+    MACHINE_DIGEST,
     OTHER_DIGEST,
     completed_unit,
+    machine_local_command,
 )
 from tests.services.test_release_artifacts import (
     command as release_command,
@@ -343,6 +347,9 @@ def test_generated_post_deploy_unit_rejects_direct_public_adjudication(
         observation_command(binding, key="direct-adjudication-observation"),
     )
     assert isinstance(observation, DeploymentObservation)
+    # A HOSTED observation always mints one; the column is nullable because a machine-local
+    # activation has none, and narrowing here says which case this test is about.
+    assert observation.post_deploy_work_unit_id is not None
 
     result = record_adjudication(
         migrated_session,
@@ -492,3 +499,394 @@ def test_list_deployment_observations(migrated_session: Session) -> None:
     assert [row.id for row in rows] == [observation.id]
     assert isinstance(missing, DomainError)
     assert missing.code == "release_artifact_not_found"
+
+
+# ---------------------------------------------------------------------------
+# ADR-0030: a machine-local activation is a deployment too, and its record is shaped
+# differently. The five probe-shaped summaries describe probing a URL; a working copy on the
+# operator machine has none, so the shapes are conditional on `kind` -- the same answer the
+# release-artifact table reached one migration earlier, rather than a second mechanism.
+# ---------------------------------------------------------------------------
+
+ACTIVATED = {
+    "merge_commit_present": "yes",
+    "console_entry_points_present": "yes",
+    "environment_matches_lock": "yes",
+}
+
+
+def machine_local_binding(session: Session, *, key: str = "machine-activation"):
+    unit = completed_unit(session, key=key)
+    binding = record_release_artifact(
+        session,
+        machine_local_command(unit, key=f"{key}-binding"),
+    )
+    assert not isinstance(binding, DomainError)
+    return unit, binding
+
+
+def activation_command(binding, *, key: str = "machine-activation-check"):
+    """The machine-local shape: no URLs, no deployer, no probe-shaped summaries."""
+    return DeploymentObservationCommand(
+        release_artifact_binding_id=binding.id,
+        actor=SYSTEM,
+        environment="operator_machine",
+        base_url=None,
+        observed_artifact_digest=MACHINE_DIGEST,
+        deployment_ref="b" * 40,
+        deployment_url=None,
+        deployer=None,
+        observed_at=OBSERVED_AT,
+        probe_summary={},
+        route_summary={},
+        auth_summary={},
+        dispatch_summary={},
+        status_summary={},
+        idempotency_key=key,
+        expected_version=0,
+        kind="machine_local",
+        activation_summary=dict(ACTIVATED),
+    )
+
+
+def test_a_machine_local_activation_is_recorded_with_no_url_and_no_verification_unit(
+    migrated_session: Session,
+) -> None:
+    unit, binding = machine_local_binding(migrated_session)
+    # The binding itself records one evidence row; what must not move is that count.
+    before = migrated_session.scalar(select(func.count()).select_from(Evidence))
+
+    observation = record_deployment_observation(migrated_session, activation_command(binding))
+
+    assert isinstance(observation, DeploymentObservation)
+    assert observation.kind == "machine_local"
+    assert observation.implementation_work_unit_id == unit.id
+    assert observation.activation_summary == ACTIVATED
+    # Absent rather than blanked: a NULL says nobody probed a URL.
+    assert observation.base_url is None
+    assert observation.deployment_url is None
+    assert observation.deployer is None
+    # No verification unit and no evidence. The five post-deploy criteria describe probing a
+    # hosted application; a unit carrying criteria a working copy can never evidence would be
+    # permanently unverifiable, one row per binding.
+    assert observation.post_deploy_work_unit_id is None
+    assert observation.post_deploy_event_id is None
+    assert observation.evidence_ids == []
+    assert migrated_session.scalar(select(func.count()).select_from(Evidence)) == before
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(WorkUnit)
+            .where(WorkUnit.unit_key.like("post-deploy:%"))
+        )
+        == 0
+    )
+
+
+def test_the_two_activation_models_are_told_apart_by_one_field(
+    migrated_session: Session,
+) -> None:
+    """Acceptance: a reader distinguishes them without knowing which repository is which."""
+    _, hosted = release_binding(migrated_session, key="hosted-side")
+    _, machine = machine_local_binding(migrated_session, key="machine-side")
+
+    hosted_row = record_deployment_observation(
+        migrated_session, observation_command(hosted, key="hosted-observation")
+    )
+    machine_row = record_deployment_observation(
+        migrated_session, activation_command(machine, key="machine-observation")
+    )
+
+    assert not isinstance(hosted_row, DomainError)
+    assert not isinstance(machine_row, DomainError)
+    assert {hosted_row.kind, machine_row.kind} == {"container_image", "machine_local"}
+    assert hosted_row.activation_summary == {}
+    assert machine_row.probe_summary == {}
+
+
+def test_a_machine_local_activation_refuses_an_environment_other_than_the_machine(
+    migrated_session: Session,
+) -> None:
+    """One mistaken payload naming `production` would put a working copy into the answer for
+    what is serving production -- the collapse the discriminator exists to prevent, arriving
+    through the one column the discriminator does not cover."""
+    _, binding = machine_local_binding(migrated_session, key="wrong-environment")
+
+    error = record_deployment_observation(
+        migrated_session,
+        replace(activation_command(binding), environment="production"),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "deployment_observation_invalid"
+
+
+def test_an_observation_must_describe_the_same_activation_model_as_its_binding(
+    migrated_session: Session,
+) -> None:
+    _, container = release_binding(migrated_session, key="kind-disagreement")
+
+    error = record_deployment_observation(
+        migrated_session,
+        replace(activation_command(container), observed_artifact_digest=DIGEST),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "deployment_observation_kind_mismatch"
+
+
+def test_a_machine_local_activation_refuses_a_digest_its_binding_does_not_name(
+    migrated_session: Session,
+) -> None:
+    """The digest tie is what makes the observation about THIS artifact rather than merely
+    about this repository."""
+    _, binding = machine_local_binding(migrated_session, key="digest-tie")
+
+    error = record_deployment_observation(
+        migrated_session,
+        replace(activation_command(binding), observed_artifact_digest=OTHER_DIGEST),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "deployment_observation_digest_mismatch"
+
+
+def test_a_machine_local_activation_refuses_a_probe_shaped_summary(
+    migrated_session: Session,
+) -> None:
+    """Refused rather than ignored: an empty probe summary on a hosted row and a populated one
+    on a machine-local row must not both be storable, or the models are not distinguishable."""
+    _, binding = machine_local_binding(migrated_session, key="hosted-summary-on-machine")
+
+    error = record_deployment_observation(
+        migrated_session,
+        replace(
+            activation_command(binding),
+            dispatch_summary={"dispatch_enabled": False},
+        ),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "deployment_observation_invalid"
+
+
+def test_a_hosted_observation_refuses_an_activation_summary(
+    migrated_session: Session,
+) -> None:
+    _, binding = release_binding(migrated_session, key="activation-summary-on-hosted")
+
+    error = record_deployment_observation(
+        migrated_session,
+        replace(
+            observation_command(binding, key="hosted-with-activation"),
+            activation_summary=dict(ACTIVATED),
+        ),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "deployment_observation_invalid"
+
+
+def test_an_activation_summary_missing_a_fact_is_refused(
+    migrated_session: Session,
+) -> None:
+    """EXACT membership: a missing member would read as a fact nobody thought to check, which
+    is the shape a reader would take for a clean answer."""
+    _, binding = machine_local_binding(migrated_session, key="partial-activation")
+    partial = dict(ACTIVATED)
+    del partial["environment_matches_lock"]
+
+    error = record_deployment_observation(
+        migrated_session,
+        replace(activation_command(binding), activation_summary=partial),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "deployment_observation_invalid"
+
+
+def test_an_activation_fact_outside_the_vocabulary_is_refused(
+    migrated_session: Session,
+) -> None:
+    _, binding = machine_local_binding(migrated_session, key="bad-activation-value")
+
+    error = record_deployment_observation(
+        migrated_session,
+        replace(
+            activation_command(binding),
+            activation_summary={**ACTIVATED, "console_entry_points_present": True},
+        ),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "deployment_observation_invalid"
+
+
+def test_the_commit_fact_may_not_be_excused_as_not_applicable(
+    migrated_session: Session,
+) -> None:
+    """Every working copy either holds the commit in its history or does not. The other two
+    facts genuinely do not apply to a repository with no Python toolchain."""
+    _, binding = machine_local_binding(migrated_session, key="commit-not-applicable")
+
+    error = record_deployment_observation(
+        migrated_session,
+        replace(
+            activation_command(binding),
+            activation_summary={**ACTIVATED, "merge_commit_present": "not_applicable"},
+        ),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "deployment_observation_invalid"
+
+
+def test_the_two_toolchain_facts_may_be_not_applicable(
+    migrated_session: Session,
+) -> None:
+    """One of the four enrolled working copies is a TypeScript project with no `pyproject.toml`,
+    no lockfile and no virtual environment."""
+    _, binding = machine_local_binding(migrated_session, key="typescript-repository")
+
+    observation = record_deployment_observation(
+        migrated_session,
+        replace(
+            activation_command(binding),
+            activation_summary={
+                "merge_commit_present": "yes",
+                "console_entry_points_present": "not_applicable",
+                "environment_matches_lock": "not_applicable",
+            },
+        ),
+    )
+
+    assert isinstance(observation, DeploymentObservation)
+    assert observation.activation_summary["console_entry_points_present"] == "not_applicable"
+
+
+def test_recording_the_same_activation_twice_replays_rather_than_duplicating(
+    migrated_session: Session,
+) -> None:
+    _, binding = machine_local_binding(migrated_session, key="activation-replay")
+
+    first = record_deployment_observation(migrated_session, activation_command(binding))
+    second = record_deployment_observation(migrated_session, activation_command(binding))
+
+    assert isinstance(first, DeploymentObservation)
+    assert isinstance(second, DeploymentObservation)
+    assert first.id == second.id
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(DeploymentObservation)
+            .where(DeploymentObservation.release_artifact_binding_id == binding.id)
+        )
+        == 1
+    )
+
+
+def _insert_observation(session: Session, row: DeploymentObservation, **overrides: object) -> None:
+    """Write a second observation ROUND the service, which is the only reader that sees the
+    database's own constraints. The service compares in Python and would dedupe either way."""
+    values = {
+        "id": uuid.uuid4(),
+        "binding_id": row.release_artifact_binding_id,
+        "unit_id": row.implementation_work_unit_id,
+        "revision_id": row.work_package_revision_id,
+        "package_revision_hash": row.package_revision_hash,
+        "environment": row.environment,
+        "digest": row.observed_artifact_digest,
+        "deployment_ref": row.deployment_ref,
+        "event_id": row.event_id,
+        "activation_summary": '{"merge_commit_present": "yes"}',
+        "idempotency_key": "a-second-key-entirely",
+        **overrides,
+    }
+    session.execute(
+        text(
+            """
+            INSERT INTO deployment_observations (
+                id, release_artifact_binding_id, implementation_work_unit_id,
+                work_package_revision_id, package_revision_hash, kind, environment,
+                observed_artifact_digest, deployment_ref, observed_at, activation_summary,
+                recorded_by, recorded_at, event_id, evidence_ids, idempotency_key
+            ) VALUES (
+                :id, :binding_id, :unit_id, :revision_id, :package_revision_hash,
+                'machine_local', :environment, :digest, :deployment_ref, now(),
+                CAST(:activation_summary AS jsonb),
+                'system', now(), :event_id, '[]'::jsonb, :idempotency_key
+            )
+            """
+        ),
+        values,
+    )
+
+
+def test_the_binding_environment_constraint_still_refuses_a_second_activation(
+    migrated_session: Session,
+) -> None:
+    """The unique constraint gained NO `NULLS NOT DISTINCT`, and this is what says that was
+    right rather than forgotten.
+
+    The sibling table needed that flag because three columns OF ITS UNIQUE TUPLE became
+    nullable. Here neither `release_artifact_binding_id` nor `environment` is nullable under
+    either kind, so the constraint keeps deduplicating -- measured at the DATABASE, because the
+    service does its own comparison and would dedupe whatever the database did.
+    """
+    _, binding = machine_local_binding(migrated_session, key="db-dedup")
+    row = record_deployment_observation(migrated_session, activation_command(binding))
+    assert isinstance(row, DeploymentObservation)
+
+    # The CONSTRAINT NAME, not merely that something was refused: this insert satisfies every
+    # other rule on the table, so a refusal blamed on anything else would be the test passing
+    # for the wrong reason.
+    with pytest.raises(IntegrityError) as refusal:
+        _insert_observation(migrated_session, row)
+    assert "uq_deployment_observation_binding_environment" in str(refusal.value)
+    migrated_session.rollback()
+
+
+def test_the_database_refuses_a_machine_local_row_naming_a_url(
+    migrated_session: Session,
+) -> None:
+    """The kind-conditional CHECK, measured round the service for the same reason. A machine-local
+    row carrying a URL would make the two models indistinguishable in the columns a reader
+    separates them by, whatever the service happens to validate today."""
+    _, binding = machine_local_binding(migrated_session, key="db-kind-check")
+    row = record_deployment_observation(migrated_session, activation_command(binding))
+    assert isinstance(row, DeploymentObservation)
+    migrated_session.execute(
+        text("DELETE FROM deployment_observations WHERE id = :id"), {"id": row.id}
+    )
+
+    with pytest.raises(IntegrityError) as refusal:
+        migrated_session.execute(
+            text(
+                """
+                INSERT INTO deployment_observations (
+                    id, release_artifact_binding_id, implementation_work_unit_id,
+                    work_package_revision_id, package_revision_hash, kind, environment,
+                    base_url, observed_artifact_digest, deployment_ref, observed_at,
+                    activation_summary, recorded_by, recorded_at, event_id, evidence_ids,
+                    idempotency_key
+                ) VALUES (
+                    :id, :binding_id, :unit_id, :revision_id, :package_revision_hash,
+                    'machine_local', 'operator_machine', 'https://example.invalid', :digest,
+                    :deployment_ref, now(), '{"merge_commit_present": "yes"}'::jsonb,
+                    'system', now(), :event_id, '[]'::jsonb, 'url-on-a-machine-row'
+                )
+                """
+            ),
+            {
+                "id": uuid.uuid4(),
+                "binding_id": row.release_artifact_binding_id,
+                "unit_id": row.implementation_work_unit_id,
+                "revision_id": row.work_package_revision_id,
+                "package_revision_hash": row.package_revision_hash,
+                "digest": row.observed_artifact_digest,
+                "deployment_ref": row.deployment_ref,
+                "event_id": row.event_id,
+            },
+        )
+    assert "ck_deployment_observations_by_kind" in str(refusal.value)
+    migrated_session.rollback()

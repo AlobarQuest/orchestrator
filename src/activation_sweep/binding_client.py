@@ -5,16 +5,24 @@ nothing. This lane binds a release artifact, which `record_release_artifact` adm
 SYSTEM actor, and it must read first to know which units to ask about. Two lanes, two credentials,
 two confined surfaces -- kept in separate modules so neither can quietly acquire the other's reach.
 
-TWO PATHS AND NO MORE, enforced here in code:
+THREE PATHS AND NO MORE, enforced here in code:
 
 * `GET /api/v1/machine-activation-candidates` -- which completed units this repository could bind
   an artifact for, and what a binding would have to carry.
 * `POST /api/v1/work-units/{id}/release-artifacts` -- the binding itself.
+* `POST /api/v1/release-artifacts/{id}/deployment-observations` -- the activation check that
+  follows it, which is the sixth traceability hop.
 
-The POST path is matched against an anchored pattern with the unit id's shape spelled out, so a
+Both POST paths are matched against anchored patterns with the id's shape spelled out, so a
 prefix, a trailing slash, or `…/{id}/anything-else` does not match. That is the same bound the
 landing ledger keeps on its own reads and for the same reason: a surface stated in a docstring is
 a wish, and a surface stated in a matcher is a property.
+
+THE ACTIVATION CHECK NEEDS NO NEW CREDENTIAL, which is the answer to the obvious question about
+where it should live. `record_deployment_observation` admits only the SYSTEM actor, and this lane
+already holds SYSTEM because binding does. The sibling staleness sweep holds OBSERVER, whose write
+allowlist is `{/api/v1/observations}` alone -- and that narrowness is what the estate's negative
+tests certify, so it stays exactly as it is.
 """
 
 from __future__ import annotations
@@ -28,6 +36,7 @@ import httpx
 CANDIDATES_ENDPOINT = "/api/v1/machine-activation-candidates"
 WORK_UNIT_ID = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 _BIND = re.compile(rf"^/api/v1/work-units/{WORK_UNIT_ID}/release-artifacts$")
+_OBSERVE = re.compile(rf"^/api/v1/release-artifacts/{WORK_UNIT_ID}/deployment-observations$")
 
 # See the sibling client: a DNS label over 63 octets and an empty one both CONSTRUCT fine and
 # raise `UnicodeError` at REQUEST time from IDNA encoding, so the guard has to be explicit.
@@ -53,11 +62,15 @@ def is_allowed_read(path: str) -> bool:
 
 
 def is_allowed_write(path: str) -> bool:
-    return _BIND.match(path) is not None
+    return _BIND.match(path) is not None or _OBSERVE.match(path) is not None
 
 
 def bind_path(work_unit_id: str) -> str:
     return f"/api/v1/work-units/{work_unit_id}/release-artifacts"
+
+
+def observe_path(binding_id: str) -> str:
+    return f"/api/v1/release-artifacts/{binding_id}/deployment-observations"
 
 
 def _validate_base_url(base_url: str) -> None:
@@ -133,6 +146,12 @@ class BindingClient:
         body = self._request("POST", bind_path(work_unit_id), json=payload)
         if not isinstance(body, dict):
             raise BindingCallError("the orchestrator did not answer with a binding")
+        return body
+
+    def observe(self, binding_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        body = self._request("POST", observe_path(binding_id), json=payload)
+        if not isinstance(body, dict):
+            raise BindingCallError("the orchestrator did not answer with an observation")
         return body
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:

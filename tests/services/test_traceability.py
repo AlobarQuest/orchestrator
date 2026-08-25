@@ -25,7 +25,12 @@ from orchestrator.services.traceability import (
     resolve_anchors,
     traceability_response,
 )
-from tests.services.test_deployment_observations import observation_command, release_binding
+from tests.services.test_deployment_observations import (
+    activation_command,
+    machine_local_binding,
+    observation_command,
+    release_binding,
+)
 from tests.services.test_package_registration import AUTHORITY
 from tests.services.test_release_artifacts import (
     DIGEST,
@@ -391,3 +396,23 @@ def test_deployment_digest_matches_flag(migrated_session: Session):
 
     mismatched_chain = build_chain(migrated_session, unit.id)
     assert mismatched_chain.deployment[0].digest_matches is False
+
+
+def test_a_machine_local_activation_lights_the_deployment_hop(migrated_session: Session) -> None:
+    """The sixth link, for a target that has no URL to probe. `kind` is the one field a reader
+    needs to tell the two activation models apart."""
+    unit, binding = machine_local_binding(migrated_session, key="traceability-activation")
+    observation = record_deployment_observation(migrated_session, activation_command(binding))
+    assert not isinstance(observation, DomainError)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert len(chain.deployment) == 1
+    hop = chain.deployment[0]
+    assert hop.kind == "machine_local"
+    assert hop.environment == "operator_machine"
+    assert hop.digest_matches is True
+    assert hop.deployment_url is None
+    assert hop.deployer is None
+    assert hop.activation_summary["merge_commit_present"] == "yes"
+    assert hop.probe_summary == {}

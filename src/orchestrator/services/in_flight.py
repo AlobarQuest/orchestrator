@@ -8,6 +8,14 @@ is `COMPLETED` -- the deployment-ingest path requires it -- and therefore not "i
 these, the runner would be structurally blind to the deploy-nobody-reported case: a binding with
 no `DeploymentObservation` and thus no post-deploy verification unit at all. `has_post_deploy_unit
 = False` in this payload IS that signal, and it is the case ADR-0002 rejects Alternative A over.
+
+READ THAT FIELD LITERALLY, because since ADR-0030's activation check it no longer implies the
+absence of an observation. A machine-local activation is observed and mints no verification unit,
+so a binding can carry an observation and still report `has_post_deploy_unit = False`. The signal
+the detector actually keys on is the ABSENCE OF AN OBSERVATION, which it reads for itself
+(`reconciliation_detection._detect_unreported_deploys`); nothing consumes this field to act, and
+`tests/services/test_in_flight.py` pins both halves so a future consumer cannot inherit the older
+reading by accident.
 """
 
 from dataclasses import dataclass
@@ -127,9 +135,13 @@ def _release_bindings(
             .where(DeploymentObservation.release_artifact_binding_id == binding.id)
             .limit(1)
         )
+        # BOTH conditions, and the second is not paranoia: a machine-local observation carries
+        # no post-deploy verification unit at all (there is nothing on a working copy for a
+        # verifier to probe), so this id is legitimately NULL, and `Session.get` with a None
+        # primary key is an error rather than a miss.
         post_deploy = (
             session.get(WorkUnit, observation.post_deploy_work_unit_id)
-            if observation is not None
+            if observation is not None and observation.post_deploy_work_unit_id is not None
             else None
         )
         views.append(

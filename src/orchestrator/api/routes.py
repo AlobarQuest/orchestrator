@@ -1046,6 +1046,8 @@ def create_deployment_observation(
             deployment_url=body.deployment_url,
             deployer=body.deployer,
             observed_at=body.observed_at,
+            kind=body.kind,
+            activation_summary=body.activation_summary,
             probe_summary=body.probe_summary,
             route_summary=body.route_summary,
             auth_summary=body.auth_summary,

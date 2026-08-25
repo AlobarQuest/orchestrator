@@ -756,20 +756,72 @@ class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
     idempotency_key: Mapped[str] = mapped_column(String)
 
 
+# What the two activation models look like once they are OBSERVED, mirroring the discriminator
+# `ReleaseArtifactBinding` already carries. A hosted application is confirmed by probing a URL; a
+# working copy on the operator machine has no URL to probe, and the facts that ARE checkable there
+# -- the landing commit is in its history, its console entry points are installed, its environment
+# matches its lockfile -- fit none of the five hosted summaries. Rather than invent values for
+# five shapes that do not apply, the shapes become conditional on kind.
+CONTAINER_IMAGE_OBSERVATION = CONTAINER_IMAGE_KIND
+MACHINE_LOCAL_OBSERVATION = MACHINE_LOCAL_KIND
+DEPLOYMENT_OBSERVATION_KINDS = (CONTAINER_IMAGE_OBSERVATION, MACHINE_LOCAL_OBSERVATION)
+
+# The one environment a machine-local observation may name. Pinned in the database rather than
+# left to the producer: `environment` is otherwise free-form under a regex, so a single mistaken
+# payload naming `production` would put a working copy into the answer for "what is serving
+# production", which is the collapse the discriminator exists to prevent.
+OPERATOR_MACHINE_ENVIRONMENT = "operator_machine"
+
+_HOSTED_SUMMARIES = (
+    "probe_summary",
+    "route_summary",
+    "auth_summary",
+    "dispatch_summary",
+    "status_summary",
+)
+_HOSTED_SUMMARIES_EMPTY = " AND ".join(f"{column} = '{{}}'::jsonb" for column in _HOSTED_SUMMARIES)
+
+
 class DeploymentObservation(UUIDPrimaryKey, Base):
     __tablename__ = "deployment_observations"
     __table_args__ = (
         UniqueConstraint("idempotency_key"),
+        # NOT `postgresql_nulls_not_distinct`, and the omission is deliberate rather than
+        # forgotten. That flag is what the sibling table needed when three columns OF ITS UNIQUE
+        # TUPLE became nullable; here neither `release_artifact_binding_id` nor `environment` is
+        # nullable under either kind, so the constraint keeps deduplicating exactly as before.
+        # `tests/persistence` proves it by writing round the service.
         UniqueConstraint(
             "release_artifact_binding_id",
             "environment",
             name="uq_deployment_observation_binding_environment",
         ),
         CheckConstraint(
-            "package_revision_hash <> '' AND environment <> '' AND base_url <> '' "
-            "AND observed_artifact_digest <> '' AND deployment_ref <> '' "
-            "AND deployment_url <> '' AND deployer <> ''",
+            "kind IN ({})".format(", ".join(f"'{kind}'" for kind in DEPLOYMENT_OBSERVATION_KINDS)),
+            name="ck_deployment_observations_kind",
+        ),
+        CheckConstraint(
+            "package_revision_hash <> '' AND environment <> '' "
+            "AND observed_artifact_digest <> '' AND deployment_ref <> ''",
             name="ck_deployment_observations_required_text",
+        ),
+        # Everything that differs between the two models, in one place. FORBIDDEN rather than
+        # merely optional on each side: a NULL says nobody probed a URL, where an empty string
+        # would say somebody probed one and it was this. The five hosted summaries are held empty
+        # for a machine-local row for the same reason, and `activation_summary` is held empty for
+        # a hosted one -- so neither model can quietly acquire the other's shape.
+        CheckConstraint(
+            f"(kind = '{CONTAINER_IMAGE_OBSERVATION}' AND base_url <> '' "
+            "AND deployment_url <> '' AND deployer <> '' "
+            "AND post_deploy_work_unit_id IS NOT NULL AND post_deploy_event_id IS NOT NULL "
+            "AND activation_summary = '{}'::jsonb) "
+            f"OR (kind = '{MACHINE_LOCAL_OBSERVATION}' "
+            f"AND environment = '{OPERATOR_MACHINE_ENVIRONMENT}' "
+            "AND base_url IS NULL AND deployment_url IS NULL AND deployer IS NULL "
+            "AND post_deploy_work_unit_id IS NULL AND post_deploy_event_id IS NULL "
+            "AND activation_summary <> '{}'::jsonb "
+            f"AND {_HOSTED_SUMMARIES_EMPTY})",
+            name="ck_deployment_observations_by_kind",
         ),
     )
 
@@ -781,13 +833,16 @@ class DeploymentObservation(UUIDPrimaryKey, Base):
         ForeignKey("work_package_revisions.id")
     )
     package_revision_hash: Mapped[str] = mapped_column(String)
-    post_deploy_work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
+    kind: Mapped[str] = mapped_column(
+        String, server_default=text(f"'{CONTAINER_IMAGE_OBSERVATION}'")
+    )
+    post_deploy_work_unit_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("work_units.id"))
     environment: Mapped[str] = mapped_column(String)
-    base_url: Mapped[str] = mapped_column(Text)
+    base_url: Mapped[str | None] = mapped_column(Text)
     observed_artifact_digest: Mapped[str] = mapped_column(String)
     deployment_ref: Mapped[str] = mapped_column(Text)
-    deployment_url: Mapped[str] = mapped_column(Text)
-    deployer: Mapped[str] = mapped_column(String)
+    deployment_url: Mapped[str | None] = mapped_column(Text)
+    deployer: Mapped[str | None] = mapped_column(String)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     probe_summary: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
@@ -814,12 +869,17 @@ class DeploymentObservation(UUIDPrimaryKey, Base):
         default=dict,
         server_default=text("'{}'::jsonb"),
     )
+    activation_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
     recorded_by: Mapped[str] = mapped_column(String)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
-    post_deploy_event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
+    post_deploy_event_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("events.id"))
     evidence_ids: Mapped[list[str]] = mapped_column(
         JSONB,
         default=list,

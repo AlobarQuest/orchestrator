@@ -21,6 +21,7 @@ import typer
 from activation_sweep.bind import (
     NullBinder,
     bind_checkout,
+    has_conditions,
     has_findings,
 )
 from activation_sweep.binding_client import (
@@ -257,7 +258,15 @@ def bind_command(
         binder = NullBinder(client) if dry_run else client
         summaries = [bind_checkout(path, binder, fetch=fetch, dry_run=dry_run) for path in checkout]
     typer.echo(json.dumps(summaries, indent=2, sort_keys=True))
-    # No `EXIT_FINDINGS` here, and the asymmetry with `sweep` is the point. The sweep's findings
-    # are conditions of the MACHINE -- behind, dirty -- which a person should act on. This lane's
-    # only non-clean answers are missing ones, so an incomplete pass is the only thing to report.
-    raise typer.Exit(code=EXIT_INCOMPLETE if has_findings(summaries) else EXIT_OK)
+    # THIS LANE REPORTS FINDINGS TOO, since the activation check joined it. Binding alone had no
+    # machine condition to report -- a unit was bound or waiting, and neither is anyone's problem
+    # -- but an artifact that is bound and NOT fully activated is: the console entry point was
+    # never installed, or the environment does not match its lockfile, and a person has to sync.
+    # That is exit 2, the same meaning the staleness sweep gives it, while a missing answer stays
+    # exit 3 and outranks it.
+    raise typer.Exit(
+        code=_exit_code(
+            findings=has_conditions(summaries),
+            incomplete=has_findings(summaries),
+        )
+    )

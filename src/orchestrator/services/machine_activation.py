@@ -41,6 +41,7 @@ from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import (
     MACHINE_LOCAL_KIND,
+    DeploymentObservation,
     Observation,
     ReleaseArtifactBinding,
     UnitPrBinding,
@@ -70,6 +71,13 @@ class MachineActivationCandidate:
     rather than filtered out so the producer can say it skipped a unit and why -- and it is scoped
     to `machine_local` deliberately: a container-image binding on the same unit describes the other
     model entirely and must neither suppress this one nor stand in for it.
+
+    `binding_artifact_digest` and `observation_id` exist for the activation check that follows the
+    binding. The digest is what the producer compares its working copy against: the artifact is
+    the tree the binding named, so once `HEAD` moves past it that tree is no longer what the next
+    start executes and there is nothing left to observe -- which is a fact about time, not a
+    fault. `observation_id` says the check has already been filed, so a later pass replays nothing
+    and cannot present a moved clock as a changed fact.
     """
 
     work_unit_id: uuid.UUID
@@ -88,6 +96,8 @@ class MachineActivationCandidate:
     source_commit: str
     merge_commit: str
     binding_id: uuid.UUID | None
+    binding_artifact_digest: str | None
+    observation_id: uuid.UUID | None
 
 
 def machine_activation_candidates(
@@ -116,11 +126,13 @@ def machine_activation_candidates(
     ).all()
 
     bound = _existing_machine_local_bindings(session)
+    observed = _existing_activation_observations(session)
     candidates = []
     for unit, binding, revision in rows:
         target = normalize_authority(unit.authority or {}).target_repository.strip().lower()
         if target != wanted:
             continue
+        existing = bound.get(unit.id)
         landing = landings.get(binding.pr_number)
         # The confirmation. GitHub's observed head must be the head this unit's own binding names,
         # or the landing being read is some other change that shared a pull request number.
@@ -137,10 +149,18 @@ def machine_activation_candidates(
                 pr_number=binding.pr_number,
                 source_commit=binding.head_sha,
                 merge_commit=landing.commit,
-                binding_id=bound.get(unit.id),
+                binding_id=None if existing is None else existing.binding_id,
+                binding_artifact_digest=None if existing is None else existing.artifact_digest,
+                observation_id=(None if existing is None else observed.get(existing.binding_id)),
             )
         )
     return tuple(candidates)
+
+
+@dataclass(frozen=True)
+class _ExistingBinding:
+    binding_id: uuid.UUID
+    artifact_digest: str
 
 
 @dataclass(frozen=True)
@@ -200,8 +220,9 @@ def _landing_of(facts: Any, repository: str) -> tuple[int, _Landing] | None:
     return pull_request, _Landing(head_commit=head_commit.strip(), commit=commit.strip())
 
 
-def _existing_machine_local_bindings(session: Session) -> dict[uuid.UUID, uuid.UUID]:
-    """Machine-local bindings by unit. Kind-scoped, and that scoping is the point.
+def _existing_machine_local_bindings(session: Session) -> dict[uuid.UUID, _ExistingBinding]:
+    """Machine-local bindings by unit, with the digest each one names. Kind-scoped, and that
+    scoping is the point.
 
     A unit can legitimately carry both kinds -- the same change can reach a registry image and a
     working copy -- so keying this on "has any binding" would let a container image suppress the
@@ -209,8 +230,33 @@ def _existing_machine_local_bindings(session: Session) -> dict[uuid.UUID, uuid.U
     only binding describes the other model.
     """
     rows = session.execute(
-        select(ReleaseArtifactBinding.work_unit_id, ReleaseArtifactBinding.id)
+        select(
+            ReleaseArtifactBinding.work_unit_id,
+            ReleaseArtifactBinding.id,
+            ReleaseArtifactBinding.artifact_digest,
+        )
         .where(ReleaseArtifactBinding.kind == MACHINE_LOCAL_KIND)
         .order_by(ReleaseArtifactBinding.recorded_at, ReleaseArtifactBinding.id)
     ).all()
-    return {unit_id: binding_id for unit_id, binding_id in rows}
+    return {
+        unit_id: _ExistingBinding(binding_id=binding_id, artifact_digest=digest)
+        for unit_id, binding_id, digest in rows
+    }
+
+
+def _existing_activation_observations(session: Session) -> dict[uuid.UUID, uuid.UUID]:
+    """The activation checks already filed, by binding. Kind-scoped for the same reason.
+
+    A container-image observation on the same binding cannot exist -- the ingest refuses a kind
+    that disagrees with its binding -- but scoping this read anyway keeps the two models from
+    standing in for one another wherever a future kind is added.
+    """
+    rows = session.execute(
+        select(
+            DeploymentObservation.release_artifact_binding_id,
+            DeploymentObservation.id,
+        )
+        .where(DeploymentObservation.kind == MACHINE_LOCAL_KIND)
+        .order_by(DeploymentObservation.recorded_at, DeploymentObservation.id)
+    ).all()
+    return {binding_id: observation_id for binding_id, observation_id in rows}
