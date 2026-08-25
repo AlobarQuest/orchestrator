@@ -430,6 +430,19 @@ def _activation_phase(
     """
     if candidate.observed:
         return {"outcome": CHECKED, "observed_before": True}
+    if candidate.bound and candidate.binding_artifact_digest is None:
+        # A NARROWED CONTRACT, NOT A SUPERSEDED ARTIFACT, and separating the two is what keeps
+        # this lane's worst failure loud. A bound candidate always has a digest, so an absent one
+        # means the orchestrator is not serving the field -- and a `response_model` drops what it
+        # does not declare, in silence. Folded into the comparison below, `None != digest` is
+        # true for EVERY candidate, so a server one release behind would report the whole estate
+        # superseded and exit 0 with nothing filed, forever. Measured against production on
+        # 2026-08-25, before the release carrying the field: twelve candidates, twelve
+        # `superseded`, exit 0.
+        return {
+            "outcome": UNAVAILABLE,
+            "reason": "the orchestrator's candidate is missing binding_artifact_digest",
+        }
     if candidate.bound and candidate.binding_artifact_digest != pass_state.digest:
         return {"outcome": SUPERSEDED, "binding_artifact_digest": candidate.binding_artifact_digest}
     if pass_state.facts is None:

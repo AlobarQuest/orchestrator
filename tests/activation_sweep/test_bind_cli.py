@@ -82,8 +82,13 @@ def _install(monkeypatch: pytest.MonkeyPatch, binder: Binder) -> Binder:
     return binder
 
 
+# See the sibling suite: production always serves a digest beside a `binding_id`, and a row
+# carrying one no working copy holds reads as an artifact HEAD has moved past.
+MOVED_DIGEST = "sha256:" + "e" * 64
+
+
 def _row(commit: str, *, binding_id: str | None = None) -> dict[str, Any]:
-    return {
+    row: dict[str, Any] = {
         "work_unit_id": UNIT_ID,
         "work_package_revision_id": "11111111-2222-3333-4444-555555555555",
         "package_revision_hash": "sha256:package",
@@ -94,7 +99,11 @@ def _row(commit: str, *, binding_id: str | None = None) -> dict[str, Any]:
         "source_commit": "f" * 40,
         "merge_commit": commit,
         "binding_id": binding_id,
+        "observation_id": None,
     }
+    if binding_id is not None:
+        row["binding_artifact_digest"] = MOVED_DIGEST
+    return row
 
 
 def _invoke(*args: str) -> Any:
