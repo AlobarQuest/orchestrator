@@ -135,10 +135,13 @@ def _release_bindings(
             .where(DeploymentObservation.release_artifact_binding_id == binding.id)
             .limit(1)
         )
-        # BOTH conditions, and the second is not paranoia: a machine-local observation carries
-        # no post-deploy verification unit at all (there is nothing on a working copy for a
-        # verifier to probe), so this id is legitimately NULL, and `Session.get` with a None
-        # primary key is an error rather than a miss.
+        # BOTH conditions. A machine-local observation carries no post-deploy verification unit
+        # at all -- there is nothing on a working copy for a verifier to probe -- so this id is
+        # legitimately NULL. Measured rather than assumed (SQLAlchemy 2.0.52): `Session.get`
+        # with a None primary key does NOT raise; it returns None after emitting
+        # `SAWarning: fully NULL primary key identity cannot load any object. This condition may
+        # raise an error in a future release.` So the second clause buys a clean read today and
+        # a working one when that release arrives, and the warning is what a control can see.
         post_deploy = (
             session.get(WorkUnit, observation.post_deploy_work_unit_id)
             if observation is not None and observation.post_deploy_work_unit_id is not None

@@ -1,5 +1,8 @@
 """WS-P2.1 Task 14: the runner's read surface (AC-009)."""
 
+import warnings
+
+from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -109,7 +112,14 @@ def test_a_machine_local_activation_reports_no_verification_unit_and_no_split_br
     assert not isinstance(observation, DomainError)
     migrated_session.commit()
 
-    snapshot = in_flight_snapshot(migrated_session)
+    with warnings.catch_warnings(record=True) as raised:
+        warnings.simplefilter("always")
+        snapshot = in_flight_snapshot(migrated_session)
+
+    # The read must not ASK for a unit that is legitimately absent. SQLAlchemy answers a NULL
+    # primary key with None and a warning saying it may raise in a future release, so this is
+    # the control that can see the guard: without it the warning appears here.
+    assert not [w for w in raised if issubclass(w.category, SAWarning)]
 
     views = [v for v in snapshot.release_bindings if v.binding_id == binding.id]
     assert len(views) == 1
