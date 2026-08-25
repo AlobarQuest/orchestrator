@@ -530,3 +530,27 @@ def test_the_lane_may_not_write_anywhere_else() -> None:
     )
     for path in forbidden:
         assert not is_allowed_write(path), path
+
+
+def test_two_units_at_one_head_each_get_their_own_activation_check(estate: Estate) -> None:
+    """EVERY UNIT OF ONE REPOSITORY SHARES A DIGEST -- six of them in `intent-packages` today.
+
+    A key derived from the digest would have the first unit's observation written and every
+    sibling refused as `idempotency_conflict`, because the stored command names a different
+    binding. The key is a function of the unit, exactly as the binding's is.
+    """
+    head = git(estate.local, "rev-parse", "HEAD").strip()
+    first = candidate_row(head)
+    second = {**candidate_row(head), "work_unit_id": "aaaaaaaa-1111-2222-3333-444444444444"}
+    second["unit_key"] = "example-ac-002"
+    binder = FakeBinder([first, second])
+
+    summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
+
+    assert [unit["activation"]["outcome"] for unit in summary["units"]] == [OBSERVED, OBSERVED]
+    keys = [payload["idempotency_key"] for _binding, payload in binder.observed]
+    assert len(set(keys)) == 2
+    assert keys == [
+        f"machine-activation-check:{first['work_unit_id']}",
+        f"machine-activation-check:{second['work_unit_id']}",
+    ]

@@ -226,6 +226,7 @@ def binding_payload(candidate: Candidate, *, path: str, head: str, digest: str) 
 
 def activation_payload(
     *,
+    work_unit_id: str,
     digest: str,
     head_committed_at: str,
     head: str,
@@ -242,9 +243,17 @@ def activation_payload(
     immutable, so there is no unit version to guard here. It is sent explicitly rather than
     omitted: the route's own model requires the field, which is a second rule set the service's
     tests never traverse, and omitting it 422s before any named error can be raised.
+
+    THE KEY IS A FUNCTION OF THE UNIT, exactly as the binding's is, and keying it on the DIGEST
+    instead is a defect that reads as correct. Every unit of one repository shares a digest -- six
+    of them in `intent-packages` today -- so a digest-keyed key would have the first unit's
+    observation written and every sibling refused as `idempotency_conflict`, because the stored
+    command names a different binding. One unit has at most one machine-local binding, and a
+    moved HEAD is superseded rather than re-observed, so the unit alone identifies this check for
+    as long as it can be filed.
     """
     return {
-        "idempotency_key": f"machine-activation-check:{digest}",
+        "idempotency_key": f"machine-activation-check:{work_unit_id}",
         "expected_version": 0,
         "kind": MACHINE_LOCAL_KIND,
         "environment": OPERATOR_MACHINE_ENVIRONMENT,
@@ -441,6 +450,7 @@ def _activation_phase(
     return _file_activation(
         binding_id,
         activation_payload(
+            work_unit_id=candidate.work_unit_id,
             digest=pass_state.digest,
             head_committed_at=pass_state.state.head_committed_at.isoformat(),
             head=pass_state.state.head,

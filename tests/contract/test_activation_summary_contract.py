@@ -30,6 +30,7 @@ from orchestrator.services.deployment_observations import (
     ACTIVATION_RESULTS,
 )
 
+UNIT_ID = "eb7c36f7-4f7e-5d00-9709-779c0c1152a4"
 HEAD = "6bb63470bdd3c3fa6df1feacf65ce25709590730"
 HEAD_COMMITTED_AT = "2026-08-23T10:34:10+00:00"
 DIGEST = "sha256:" + "d" * 64
@@ -51,6 +52,7 @@ def _facts(**overrides: str) -> activation.ActivationFacts:
 
 def _payload(**overrides: str) -> dict[str, Any]:
     return activation_payload(
+        work_unit_id=UNIT_ID,
         digest=DIGEST,
         head_committed_at=HEAD_COMMITTED_AT,
         head=HEAD,
