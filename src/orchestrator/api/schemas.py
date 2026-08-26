@@ -15,6 +15,21 @@ class CommandBase(BaseModel):
     expected_version: int = Field(ge=0)
 
 
+class ChangeWindowOverrideModel(BaseModel):
+    """A supervised act's statement that it may start outside the hours policy declares.
+
+    `reason` is deliberately UNCONSTRAINED here, against this module's habit of `min_length=1`.
+    A constrained field would answer `{}` and `{"reason": null}` with a 422 listing a field
+    location, where the requirement is a named refusal a caller can act on -- and the requirement
+    itself belongs to the type that carries the override, so it holds for a caller reaching the
+    services directly as well as for this one. Presence is what declares the override; the reason
+    is what makes the record worth reading, and the two are separable only if this model lets an
+    override arrive without one.
+    """
+
+    reason: str | None = None
+
+
 class ClaimCommand(CommandBase):
     standing_context: dict[str, Any] | None = None
 
@@ -104,6 +119,9 @@ class PreflightCommandModel(CommandBase):
 
 class DispatchCommandModel(CommandBase):
     runner_attempt: int = Field(gt=0)
+    # ADR-0031. Suppresses `outside_change_window` and nothing else, and grants nothing to the
+    # act that lands the pull request the run produces -- that act carries its own.
+    change_window_override: ChangeWindowOverrideModel | None = None
 
 
 class InfraLaneLinkCommandModel(CommandBase):
@@ -522,7 +540,14 @@ class PrMergeCommandModel(CommandBase):
     and stating the version it read is what makes "nothing moved in between" the caller's claim
     rather than an assumption. The act re-evaluates every term regardless, so this is a second
     guard rather than the only one.
+
+    `change_window_override` (ADR-0031) suppresses `merge_outside_change_window` and nothing else.
+    It is this act's own: an override supplied when the run was started grants nothing here, and
+    the reverse holds too. The asymmetry is the point -- the run produced a pull request that
+    changed nothing outside a repository, and landing it changes what is already serving.
     """
+
+    change_window_override: ChangeWindowOverrideModel | None = None
 
 
 class PrMergeResponse(BaseModel):
@@ -1657,12 +1682,19 @@ class EvidencePackEventPublicationResponse(BaseModel):
 
 
 class EvidencePackEventResponse(BaseModel):
+    """One event, projected. A key this model does not declare is silently dropped, so a payload
+    field a reader needs has to be named here as well as written there."""
+
     occurred_at: datetime
     action: str
     actor_id: str
     from_state: str | None = None
     to_state: str | None = None
     reason: str | None = None
+    # ADR-0031, on the two acts that can carry one. Full fidelity in this JSON, which is
+    # authenticated; the markdown renderer relays onto a possibly-public pull request comment and
+    # deliberately does not interpolate the operator's words.
+    change_window_override: dict[str, Any] | None = None
 
 
 class EvidencePackResponse(BaseModel):

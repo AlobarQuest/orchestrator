@@ -228,3 +228,112 @@ def test_dispatch_api_mints_with_the_credentials_the_admission_gate_attested(
 
     # `cGVt` decodes to b"pem", which is not a usable key — but it IS the injected one.
     assert excinfo.value.code == "private_key_invalid"
+
+
+# ---------------------------------------------------------------------------------------------
+# ADR-0031: a supervised run may start outside the hours policy declares.
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{}, {"reason": None}, {"reason": ""}, {"reason": "   "}],
+    ids=["absent", "null", "empty", "whitespace"],
+)
+def test_an_override_with_no_stated_reason_is_refused_by_name(
+    dispatch_client: TestClient, override: dict[str, object]
+) -> None:
+    """A named `DomainError`, never a 422 naming a field location and never a 500.
+
+    The `reason` field is deliberately unconstrained in the request model, so all four of these
+    shapes reach the type that carries the override and are refused by it. A constrained field
+    would answer three of them with a validation error listing a location, which tells an
+    operator less about what to do next -- and would leave the fourth, an override object with
+    nothing in it, indistinguishable from having sent no override at all.
+    """
+    unit_id = register_ready_unit(dispatch_client, key=f"reasonless-{len(override)}-{override}")
+
+    response = dispatch_client.post(
+        f"/api/v1/work-units/{unit_id}/dispatch",
+        headers=SYSTEM,
+        json={
+            "idempotency_key": f"reasonless-{unit_id}",
+            "expected_version": 2,
+            "runner_attempt": 1,
+            "change_window_override": override,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "change_window_override_reason_required"
+    assert FakeGitHubActionsDispatcher.calls == []
+
+
+def test_a_reasonless_override_is_refused_before_an_idempotent_replay_can_answer_it(
+    dispatch_client: TestClient,
+) -> None:
+    """The refusal happens in the route, before either service is entered.
+
+    A guard placed inside the service would sit BELOW the idempotency lookup, so a malformed
+    request reusing a spent key would be answered with the earlier record at HTTP 200 -- shaped
+    exactly like a successful run.
+    """
+    unit_id = register_ready_unit(dispatch_client, key="reasonless-after-success")
+    body = {
+        "idempotency_key": "reasonless-after-success",
+        "expected_version": 2,
+        "runner_attempt": 1,
+    }
+    first = dispatch_client.post(
+        f"/api/v1/work-units/{unit_id}/dispatch", headers=SYSTEM, json=body
+    )
+    assert first.status_code == 200
+
+    replay = dispatch_client.post(
+        f"/api/v1/work-units/{unit_id}/dispatch",
+        headers=SYSTEM,
+        json={**body, "change_window_override": {"reason": ""}},
+    )
+
+    assert replay.status_code == 409
+    assert replay.json()["error"]["code"] == "change_window_override_reason_required"
+
+
+def test_the_served_request_models_carry_the_override(client: TestClient) -> None:
+    """A field the deployed image does not declare makes the override silently unsendable while
+    every other post-release check passes, so the served document is what is asserted."""
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    assert "change_window_override" in schemas["DispatchCommandModel"]["properties"]
+    assert "change_window_override" in schemas["PrMergeCommandModel"]["properties"]
+    assert "reason" in schemas["ChangeWindowOverrideModel"]["properties"]
+
+
+def test_a_reasoned_override_reaches_the_record_through_the_route(
+    dispatch_client: TestClient,
+) -> None:
+    """End to end over HTTP, so the wire shape is proven rather than the service's."""
+    unit_id = register_ready_unit(dispatch_client, key="reasoned-over-http")
+
+    response = dispatch_client.post(
+        f"/api/v1/work-units/{unit_id}/dispatch",
+        headers=SYSTEM,
+        json={
+            "idempotency_key": "reasoned-over-http",
+            "expected_version": 2,
+            "runner_attempt": 1,
+            "change_window_override": {"reason": "supervised build session"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "dispatched"
+    record_id = response.json()["id"]
+    listed = dispatch_client.get(
+        f"/api/v1/work-units/{unit_id}/evidence-pack", headers=SYSTEM
+    ).json()
+    started = [event for event in listed["events"] if event["action"] == "dispatch.dispatched"]
+    assert record_id
+    assert [event["change_window_override"]["reason"] for event in started] == [
+        "supervised build session"
+    ]

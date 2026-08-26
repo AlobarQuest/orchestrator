@@ -162,3 +162,30 @@ def test_the_target_repository_is_the_units_own(merge_client: TestClient) -> Non
     ).json()
 
     assert body["target_repository"] == TARGET_REPOSITORY
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{}, {"reason": None}, {"reason": "  "}],
+    ids=["absent", "null", "whitespace"],
+)
+def test_a_landing_override_with_no_stated_reason_is_refused_by_name(
+    merge_client: TestClient, override: dict[str, object]
+) -> None:
+    """ADR-0031, on the act that changes what is already serving. The same named refusal both
+    acts raise, because both build the same type from the same shape."""
+    unit_id = _register_ready_unit(merge_client, f"reasonless-landing-{len(override)}-{override}")
+
+    response = merge_client.post(
+        f"/api/v1/work-units/{unit_id}/pr-merge",
+        headers=SYSTEM,
+        json={
+            "idempotency_key": f"reasonless-landing-{unit_id}",
+            "expected_version": 2,
+            "change_window_override": override,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "change_window_override_reason_required"
+    assert FakeGateway.calls == []

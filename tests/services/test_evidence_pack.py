@@ -4,7 +4,13 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import Adjudication, Approval, EventPublication, Evidence
+from orchestrator.persistence.models import (
+    Adjudication,
+    Approval,
+    Event,
+    EventPublication,
+    Evidence,
+)
 from orchestrator.services.budget import BREACH_ACTION
 from orchestrator.services.evidence_pack import (
     evidence_pack_projection,
@@ -413,3 +419,69 @@ def test_render_markdown_omits_a_breach_when_none_was_recorded(migrated_session:
     )
 
     assert BREACH_ACTION not in markdown
+
+
+def test_a_change_window_override_reaches_the_json_and_is_not_quoted_in_the_markdown(
+    migrated_session: Session,
+) -> None:
+    """ADR-0031, and the asymmetry is deliberate rather than an omission.
+
+    The JSON is authenticated and full-fidelity. The markdown is relayed onto a pull request
+    comment that may be public, so it reports that an override happened and never the operator's
+    own words -- the same hand-redaction every other free-text field in that renderer gets.
+    """
+    _revision, unit = _build_unit(migrated_session, "evidence-pack-override")
+    words = "supervised build session, watched throughout"
+    # Written at INSERT: `events` is append-only at the database level, so a payload set
+    # afterwards is refused by the trigger rather than stored.
+    _override_event(
+        migrated_session,
+        unit.id,
+        {
+            "reason": words,
+            "applied": True,
+            "authority_approval_id": str(uuid.uuid4()),
+            "authority_fingerprint": unit.authority_fingerprint,
+        },
+    )
+
+    pack = evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
+    markdown = render_evidence_pack_markdown(pack)
+
+    carried = [row for row in pack.events if row.change_window_override is not None]
+    assert [row.change_window_override["reason"] for row in carried] == [words]
+    assert "Change window overridden" in markdown
+    assert words not in markdown
+
+
+def test_an_override_the_window_never_needed_is_reported_as_carried(
+    migrated_session: Session,
+) -> None:
+    """The control for the line above: the two states are distinguishable in the markdown, so a
+    reader cannot infer a suppression from an override having been offered."""
+    _revision, unit = _build_unit(migrated_session, "evidence-pack-override-carried")
+    _override_event(migrated_session, unit.id, {"reason": "watched", "applied": False})
+
+    markdown = render_evidence_pack_markdown(
+        evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
+    )
+
+    assert "Change window override carried, not applied" in markdown
+
+
+def _override_event(session: Session, unit_id: uuid.UUID, override: dict[str, object]) -> Event:
+    event = Event(
+        occurred_at=datetime(2026, 8, 26, 13, 50, tzinfo=UTC),
+        actor_id="orchestrator-system",
+        action="dispatch.dispatched",
+        subject_type="work_unit",
+        subject_id=unit_id,
+        from_state="ready",
+        to_state="ready",
+        payload={"change_window_override": override},
+        correlation_id=uuid.uuid4(),
+        idempotency_key=f"override-evt-{uuid.uuid4()}",
+    )
+    session.add(event)
+    session.commit()
+    return event
