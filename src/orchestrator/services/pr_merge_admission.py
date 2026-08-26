@@ -470,7 +470,7 @@ def _change_window_term(
     landing act's reach, which no revision declares. The other reader of a loaded policy -- the
     route that reports what this process is enforcing -- does not consult it either.
 
-    **A supervised override suppresses ONE of the three refusals below (ADR-0031), and it is the
+    **A supervised override suppresses ONE of the three refusals below (ADR-0032), and it is the
     one about the hour.** A policy artifact that declares no hours at all, and one this process
     could not read, are faults somebody has to fix; an operator saying a landing is watched has
     answered neither, and treating the override as an answer to all three would turn a broken read

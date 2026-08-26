@@ -172,7 +172,7 @@ def test_the_target_repository_is_the_units_own(merge_client: TestClient) -> Non
 def test_a_landing_override_with_no_stated_reason_is_refused_by_name(
     merge_client: TestClient, override: dict[str, object]
 ) -> None:
-    """ADR-0031, on the act that changes what is already serving. The same named refusal both
+    """ADR-0032, on the act that changes what is already serving. The same named refusal both
     acts raise, because both build the same type from the same shape."""
     unit_id = _register_ready_unit(merge_client, f"reasonless-landing-{len(override)}-{override}")
 

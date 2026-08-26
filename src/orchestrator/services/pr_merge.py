@@ -148,7 +148,7 @@ class MergeCommand:
     # argument was corrected for one module over. The caller has just read an admission answer;
     # stating the version it read is what makes "nothing moved in between" its claim.
     expected_version: int
-    # A supervised landing may happen outside the hours policy declares (ADR-0031). It suppresses
+    # A supervised landing may happen outside the hours policy declares (ADR-0032). It suppresses
     # `merge_outside_change_window` and NOTHING else, and it is this act's alone: whatever was
     # said about starting the run that produced this pull request grants nothing here.
     change_window_override: ChangeWindowOverride | None = None

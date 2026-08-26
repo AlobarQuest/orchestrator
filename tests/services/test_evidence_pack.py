@@ -424,7 +424,7 @@ def test_render_markdown_omits_a_breach_when_none_was_recorded(migrated_session:
 def test_a_change_window_override_reaches_the_json_and_is_not_quoted_in_the_markdown(
     migrated_session: Session,
 ) -> None:
-    """ADR-0031, and the asymmetry is deliberate rather than an omission.
+    """ADR-0032, and the asymmetry is deliberate rather than an omission.
 
     The JSON is authenticated and full-fidelity. The markdown is relayed onto a pull request
     comment that may be public, so it reports that an override happened and never the operator's
@@ -448,8 +448,10 @@ def test_a_change_window_override_reaches_the_json_and_is_not_quoted_in_the_mark
     pack = evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
     markdown = render_evidence_pack_markdown(pack)
 
-    carried = [row for row in pack.events if row.change_window_override is not None]
-    assert [row.change_window_override["reason"] for row in carried] == [words]
+    carried = [
+        row.change_window_override for row in pack.events if row.change_window_override is not None
+    ]
+    assert [override["reason"] for override in carried] == [words]
     assert "Change window overridden" in markdown
     assert words not in markdown
 

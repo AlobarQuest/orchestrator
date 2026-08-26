@@ -231,7 +231,7 @@ def test_dispatch_api_mints_with_the_credentials_the_admission_gate_attested(
 
 
 # ---------------------------------------------------------------------------------------------
-# ADR-0031: a supervised run may start outside the hours policy declares.
+# ADR-0032: a supervised run may start outside the hours policy declares.
 # ---------------------------------------------------------------------------------------------
 
 

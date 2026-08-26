@@ -24,7 +24,7 @@ reading later. The invalid shape is therefore unrepresentable: construction rais
 including one written later against the command objects directly -- can hand a service an override
 nobody justified.
 
-**Attribution is INHERITED, not captured (ADR-0031).** The flag rides a machine-credentialed call,
+**Attribution is INHERITED, not captured (ADR-0032).** The flag rides a machine-credentialed call,
 so the record shows a machine. What makes it honest is that no unit reaches either act without a
 named human having approved its authority envelope -- bound to the exact fingerprint, naming the
 target repository, the capabilities, the change class and the budget. The override does not decide

@@ -1,4 +1,4 @@
-"""ADR-0031: a supervised act may start outside the hours policy declares.
+"""ADR-0032: a supervised act may start outside the hours policy declares.
 
 Every proof here is a PAIR. A single out-of-hours assertion passes for the wrong reason whenever
 the real clock also happens to be outside the window -- which is most of the day -- so a term that

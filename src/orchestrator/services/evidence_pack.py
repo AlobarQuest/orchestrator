@@ -506,7 +506,7 @@ def _render_event_history_section(pack: EvidencePackResponse) -> list[str]:
     """Omits `actor_id` (identity) -- the payload `reason` (an operational code, e.g.
     `budget_exceeded`) is kept.
 
-    An override of the change window (ADR-0031) is reported as having happened and NOT quoted:
+    An override of the change window (ADR-0032) is reported as having happened and NOT quoted:
     the reason is an operator's own words, this rendering is relayed onto a pull request comment
     that may be public, and free text is what every other section here redacts by hand. The JSON
     is authenticated and carries the whole record, which is where a reader goes for the words.

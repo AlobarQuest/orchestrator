@@ -119,7 +119,7 @@ class PreflightCommandModel(CommandBase):
 
 class DispatchCommandModel(CommandBase):
     runner_attempt: int = Field(gt=0)
-    # ADR-0031. Suppresses `outside_change_window` and nothing else, and grants nothing to the
+    # ADR-0032. Suppresses `outside_change_window` and nothing else, and grants nothing to the
     # act that lands the pull request the run produces -- that act carries its own.
     change_window_override: ChangeWindowOverrideModel | None = None
 
@@ -529,6 +529,12 @@ class PrMergeAdmissionResponse(BaseModel):
     target_repository: str
     pr_number: int | None
     verified_head_sha: str | None
+    # Always false on THIS route, and declared rather than hidden. The read surface carries no
+    # override of its own (ADR-0032), so what it reports is the true statement that nothing
+    # suppressed a term in the answer being read -- which is what a reader of a report needs to
+    # know. A field a response model does not declare is dropped in silence, and the repo-wide
+    # guard that this model answers with every field the service does is what caught the omission.
+    change_window_override_applied: bool
 
 
 class PrMergeCommandModel(CommandBase):
@@ -541,7 +547,7 @@ class PrMergeCommandModel(CommandBase):
     rather than an assumption. The act re-evaluates every term regardless, so this is a second
     guard rather than the only one.
 
-    `change_window_override` (ADR-0031) suppresses `merge_outside_change_window` and nothing else.
+    `change_window_override` (ADR-0032) suppresses `merge_outside_change_window` and nothing else.
     It is this act's own: an override supplied when the run was started grants nothing here, and
     the reverse holds too. The asymmetry is the point -- the run produced a pull request that
     changed nothing outside a repository, and landing it changes what is already serving.
@@ -1691,7 +1697,7 @@ class EvidencePackEventResponse(BaseModel):
     from_state: str | None = None
     to_state: str | None = None
     reason: str | None = None
-    # ADR-0031, on the two acts that can carry one. Full fidelity in this JSON, which is
+    # ADR-0032, on the two acts that can carry one. Full fidelity in this JSON, which is
     # authenticated; the markdown renderer relays onto a possibly-public pull request comment and
     # deliberately does not interpolate the operator's words.
     change_window_override: dict[str, Any] | None = None

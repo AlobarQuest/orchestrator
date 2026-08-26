@@ -57,7 +57,7 @@ class DispatchCommand:
     actor: ActorContext
     idempotency_key: str
     expected_version: int | None = None
-    # A supervised run may start outside the hours policy declares (ADR-0031). Carrying one
+    # A supervised run may start outside the hours policy declares (ADR-0032). Carrying one
     # suppresses `outside_change_window` and NOTHING else, and it is per act: an override on this
     # call says nothing about landing the pull request the run produces.
     change_window_override: ChangeWindowOverride | None = None
