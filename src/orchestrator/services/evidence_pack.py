@@ -290,6 +290,9 @@ def evidence_pack_response(projection: dict[str, Any]) -> EvidencePackResponse:
                 from_state=row.from_state,
                 to_state=row.to_state,
                 reason=row.payload.get("reason") if row.payload else None,
+                change_window_override=(
+                    row.payload.get("change_window_override") if row.payload else None
+                ),
             )
             for row in projection["events"]
         ],
@@ -501,15 +504,37 @@ def _render_event_publications_section(pack: EvidencePackResponse) -> list[str]:
 
 def _render_event_history_section(pack: EvidencePackResponse) -> list[str]:
     """Omits `actor_id` (identity) -- the payload `reason` (an operational code, e.g.
-    `budget_exceeded`) is kept."""
+    `budget_exceeded`) is kept.
+
+    An override of the change window (ADR-0032) is reported as having happened and NOT quoted:
+    the reason is an operator's own words, this rendering is relayed onto a pull request comment
+    that may be public, and free text is what every other section here redacts by hand. The JSON
+    is authenticated and carries the whole record, which is where a reader goes for the words.
+    """
     lines = ["## Event history"]
     if pack.events:
         for index, row in enumerate(pack.events, start=1):
             reason = f" -- Reason: {row.reason}" if row.reason else ""
+            override = _override_note(row.change_window_override)
             lines.append(
                 f"{index}. {row.occurred_at.isoformat()} -- {row.action} -- "
-                f"{row.from_state or 'none'} to {row.to_state or 'none'}{reason}"
+                f"{row.from_state or 'none'} to {row.to_state or 'none'}{reason}{override}"
             )
     else:
         lines.append("1. No events recorded.")
     return lines
+
+
+def _override_note(override: dict[str, Any] | None) -> str:
+    """Whether a change-window override was carried, and whether it changed the answer. No words.
+
+    Carried-and-unused is reported rather than hidden: an act inside the declared hours needed no
+    override, and saying so is what stops a reader inferring one from the other.
+    """
+    if not override:
+        return ""
+    return (
+        " -- Change window overridden"
+        if override.get("applied")
+        else " -- Change window override carried, not applied"
+    )

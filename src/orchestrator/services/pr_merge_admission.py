@@ -51,6 +51,7 @@ from typing import Final
 
 from sqlalchemy.orm import Session
 
+from orchestrator.change_window_override import ChangeWindowOverride, suppressed
 from orchestrator.clock import Clock, TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
@@ -207,6 +208,7 @@ class MergeAdmission:
     target_repository: str
     pr_number: int | None
     verified_head_sha: str | None
+    change_window_override_applied: bool = False
 
 
 def pr_merge_admission(
@@ -233,6 +235,7 @@ def admission_for(
     landing_source: EstateLandingSource,
     record_source: ChangeRecordSource,
     clock: Clock | None = None,
+    change_window_override: ChangeWindowOverride | None = None,
 ) -> MergeAdmission:
     """Every term, over a unit the caller already holds.
 
@@ -271,7 +274,13 @@ def admission_for(
     binding = session.get(UnitPrBinding, unit.id)
     head = _head_terms(binding, unit)
     estate = _landing_terms(
-        session, target_repository, binding, landing_source, record_source, clock
+        session,
+        target_repository,
+        binding,
+        landing_source,
+        record_source,
+        clock,
+        change_window_override,
     )
 
     refusals: list[str] = []
@@ -305,6 +314,7 @@ def admission_for(
         target_repository=target_repository,
         pr_number=binding.pr_number if binding is not None else None,
         verified_head_sha=binding.verification_read_head_sha if binding is not None else None,
+        change_window_override_applied=estate.change_window_override_applied,
     )
 
 
@@ -312,6 +322,11 @@ def admission_for(
 class _Term:
     met: bool
     refusals: tuple[str, ...]
+    # Set only by the term that reads the hour, and only when an override actually suppressed its
+    # refusal. Composed terms carry it upward so the act can record what the override DID rather
+    # than that one was offered -- a landing inside the declared hours, or onto a repository where
+    # landing changes nothing already serving, never reaches that term at all.
+    change_window_override_applied: bool = False
 
 
 def _head_terms(binding: UnitPrBinding | None, unit: WorkUnit) -> _Term:
@@ -345,6 +360,7 @@ def _landing_terms(
     landing_source: EstateLandingSource,
     record_source: ChangeRecordSource,
     clock: Clock | None,
+    change_window_override: ChangeWindowOverride | None = None,
 ) -> _Term:
     """Does landing on this repository's default branch change something already serving, and if
     it does, has this particular change been routed and is it the hour for it?
@@ -365,7 +381,9 @@ def _landing_terms(
     if answer.landing == LANDING_INERT:
         return _Term(True, ())
     if answer.landing == LANDING_REDEPLOYS:
-        return _routed_terms(session, target_repository, binding, record_source, clock)
+        return _routed_terms(
+            session, target_repository, binding, record_source, clock, change_window_override
+        )
     if answer.landing is not None:
         return _Term(False, (MERGE_TARGET_ESTATE_UNKNOWN,))
     if answer.reason == SOURCE_UNCONFIGURED:
@@ -379,6 +397,7 @@ def _routed_terms(
     binding: UnitPrBinding | None,
     record_source: ChangeRecordSource,
     clock: Clock | None,
+    change_window_override: ChangeWindowOverride | None = None,
 ) -> _Term:
     """Both halves of ADR-0019's condition, both asked, both reported.
 
@@ -395,8 +414,12 @@ def _routed_terms(
     if binding is None:
         return _Term(False, ())
     record = _change_record_term(target_repository, binding.pr_number, record_source)
-    window = _change_window_term(session, clock)
-    return _Term(record.met and window.met, record.refusals + window.refusals)
+    window = _change_window_term(session, clock, change_window_override)
+    return _Term(
+        record.met and window.met,
+        record.refusals + window.refusals,
+        window.change_window_override_applied,
+    )
 
 
 def _change_record_term(
@@ -422,7 +445,11 @@ def _change_record_term(
     return _Term(True, ())
 
 
-def _change_window_term(session: Session, clock: Clock | None) -> _Term:
+def _change_window_term(
+    session: Session,
+    clock: Clock | None,
+    change_window_override: ChangeWindowOverride | None = None,
+) -> _Term:
     """Is this an hour in which policy raises no objection to changing something already serving?
 
     **The reach asked about is the LANDING's, never the package's.** A package declares what its
@@ -442,6 +469,14 @@ def _change_window_term(session: Session, clock: Clock | None) -> _Term:
     still has a subject, which is about a revision's own reach declaration; this term reads the
     landing act's reach, which no revision declares. The other reader of a loaded policy -- the
     route that reports what this process is enforcing -- does not consult it either.
+
+    **A supervised override suppresses ONE of the three refusals below (ADR-0032), and it is the
+    one about the hour.** A policy artifact that declares no hours at all, and one this process
+    could not read, are faults somebody has to fix; an operator saying a landing is watched has
+    answered neither, and treating the override as an answer to all three would turn a broken read
+    into permission. **The override reaching here is the one supplied on THIS act.** Nothing about
+    starting the run that produced this pull request is carried into it -- that run changed nothing
+    outside a repository, and this changes what is already serving.
     """
     try:
         policy = load_factory_policy()
@@ -451,6 +486,7 @@ def _change_window_term(session: Session, clock: Clock | None) -> _Term:
         refusal = policy.window_refusal((LIVE_ESTATE,), (clock or TransactionClock()).now(session))
     except DomainError:
         return _Term(False, (MERGE_POLICY_UNREADABLE,))
-    if refusal is not None:
+    hour, overridden = suppressed(refusal, change_window_override)
+    if hour is not None:
         return _Term(False, (MERGE_OUTSIDE_CHANGE_WINDOW,))
-    return _Term(True, ())
+    return _Term(True, (), overridden)

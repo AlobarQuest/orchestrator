@@ -19,6 +19,7 @@ from orchestrator.api.schemas import (
     ApprovalCommand,
     ApprovalResponse,
     ChangeRecordWorkResponse,
+    ChangeWindowOverrideModel,
     ClaimCommand,
     ConsistencyReportResponse,
     ContextSnapshotResponse,
@@ -106,6 +107,7 @@ from orchestrator.api.schemas import (
     VerifyCommandModel,
     VerifyResponse,
 )
+from orchestrator.change_window_override import ChangeWindowOverride
 from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
@@ -819,6 +821,26 @@ def estate_pr_branch_update_route(
     )
 
 
+def _change_window_override(
+    body: ChangeWindowOverrideModel | None,
+) -> ChangeWindowOverride | None:
+    """Turn what a caller sent into the type the acts honour, or refuse it by name.
+
+    Absent means no override, which is the default and stays fail-closed. Present with nothing to
+    say is the shape this refuses: `ChangeWindowOverride` cannot be constructed without a reason,
+    so the `DomainError` is raised by the type rather than here, and it is raised for every caller
+    rather than for this one. The refusal reaches the caller as a named error because that is what
+    has a registered handler; a constrained pydantic field would have answered the same request
+    with a 422 naming a field location, which tells an operator less about what to do next.
+
+    It happens HERE, before either service is entered, so a malformed request can never be
+    answered by an idempotent replay of an earlier record.
+    """
+    if body is None:
+        return None
+    return ChangeWindowOverride(reason=body.reason or "")
+
+
 @router.post("/work-units/{unit_id}/pr-merge", response_model=PrMergeResponse)
 def pr_merge_route(
     unit_id: UUID,
@@ -850,6 +872,7 @@ def pr_merge_route(
             actor=actor,
             idempotency_key=body.idempotency_key,
             expected_version=body.expected_version,
+            change_window_override=_change_window_override(body.change_window_override),
         ),
         GitHubPullRequests(token_provider_for(credentials)),
         landing_source,
@@ -890,6 +913,7 @@ def dispatch_route(
             actor=actor,
             idempotency_key=body.idempotency_key,
             expected_version=body.expected_version,
+            change_window_override=_change_window_override(body.change_window_override),
         ),
         dispatch_settings,
         dispatcher,

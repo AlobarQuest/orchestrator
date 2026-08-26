@@ -66,6 +66,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from orchestrator.change_window_override import ChangeWindowOverride, override_record
 from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
@@ -147,6 +148,10 @@ class MergeCommand:
     # argument was corrected for one module over. The caller has just read an admission answer;
     # stating the version it read is what makes "nothing moved in between" its claim.
     expected_version: int
+    # A supervised landing may happen outside the hours policy declares (ADR-0032). It suppresses
+    # `merge_outside_change_window` and NOTHING else, and it is this act's alone: whatever was
+    # said about starting the run that produced this pull request grants nothing here.
+    change_window_override: ChangeWindowOverride | None = None
 
 
 def land_unit_pull_request(
@@ -231,7 +236,15 @@ def _land_unit_pull_request(
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
 
-    admission = admission_for(session, unit, revision, landing_source, record_source, clock)
+    admission = admission_for(
+        session,
+        unit,
+        revision,
+        landing_source,
+        record_source,
+        clock,
+        command.change_window_override,
+    )
     if not admission.satisfied:
         # No record: this unit was never acted on, and consuming its one row here would refuse
         # every later legitimate attempt. The reasons are already served by the read surface.
@@ -454,6 +467,16 @@ def _record(
             "reason_code": reason_code,
             "merge_commit_sha": merge_commit_sha,
             "authority_fingerprint": unit.authority_fingerprint,
+            # Beside the fingerprint on purpose: the override's attribution is inherited from the
+            # human approval bound to it, so the reason and the approval it rests on belong in one
+            # row. `unit_pr_merge` carries no free-form column and this act writes a row only when
+            # it acted, so every recordable moment has this event.
+            "change_window_override": override_record(
+                command.change_window_override,
+                applied=admission.change_window_override_applied,
+                authority_approval_id=unit.authority_approval_id,
+                authority_fingerprint=unit.authority_fingerprint,
+            ),
         },
         correlation_id=uuid.uuid4(),
         idempotency_key=f"{command.idempotency_key}:event",
