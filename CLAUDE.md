@@ -3934,3 +3934,65 @@ style of that module.
   that tree. Not curable and **cannot recur**: the lane now binds and observes in the same pass. Do
   not treat a superseded binding on `orchestrator` as drift; it is the record of the one window in
   which the two steps were separate.
+
+- **`factory create` SCAFFOLDS AC-002 AS `human_review` / `approver: devon`, AND THAT ONE LINE MAKES
+  THE UNIT PERMANENTLY UNLANDABLE BY THE FACTORY.** Confirmed 2026-08-26 for
+  **`maintenance-remediation`**, not only `dependency-update` as this file previously recorded — the
+  scaffold carries it for both. `verifier_decided_completion`'s fifth disqualifier throws out a unit
+  where a human decided **anything at all**, including a criterion merely **RETAINED** rather than
+  mapped to the unit, because the condition is *"no human adjudication"* and not *"none among the
+  required criteria"*. **The refusal does not appear until `pr-merge-admission` refuses a unit that
+  has ALREADY COMPLETED** — after the write-once envelope and both human approvals are spent, costing
+  a whole package revision. **Model a landing package on `intent-packages-packaging-bump`** (the
+  first autonomous landing, ADR-0020) or `change-manager-resolved-state-display` (the first into a
+  deploying repository): each carries **exactly one** criterion, `automated_check`,
+  `approver: policy`.
+
+- **`intent_packages transition` RE-SNAPSHOTS the revision hash; `factory validate` does NOT CHECK
+  IT.** A package assembled by hand into a scaffolded directory validates **clean** while its
+  `lineage.yaml` still carries the scaffold's hash for a different document — measured 2026-08-26,
+  `bec9f9fe…` recorded against a package hashing to `4e3d22c0…`. The `transition` to
+  `ready_for_review` corrects it, so the normal path self-heals; a package that skipped the
+  transition would carry a lineage attesting a document nobody approved. Check with
+  `python -m intent_packages hash <dir>` against the lineage before approving anything hand-edited.
+
+- **A machine may register an intake ONLY BY NAMING THE APPROVED CHANGE RECORD THAT CAUSED IT.**
+  ADR-0027 removed `_require_human` so the CARRIER could complete a signal→record→package→intake
+  lane; it did **not** make every intake machine-registrable. A POST without a cause is
+  `409 intake_change_record_required` — *"register it with the change record id, or register it as a
+  human"*. So a package HQ authors from a backlog item has no such record and **the human paste is
+  the provenance**, not ceremony: it is the asymmetric registrar guard preserving the escape hatch
+  the `orchestrator-intake-human` router's deletion was checked against. `factory submit` stopping
+  at a printed payload is CORRECT for that path, and reading its "human gate (ADR-0006)" message as
+  stale is the mistake — HQ made it on 2026-08-26 and the guard caught it.
+
+- **`constraints.work_unit_id` must be OMITTED from a hand-authored envelope** —
+  `authority_work_unit_id_forbidden`, *"assigned by the orchestrator at proposal time"*. The pinned
+  cross-repo fixtures carry `"work_unit_id": "__WORK_UNIT_ID__"` as a placeholder, so copying a
+  fixture verbatim is a named refusal. Everything else in
+  `tests/fixtures/runner_authority_envelope_edit.json` IS the shape to copy for edit-shaped work.
+
+- **The dispatch route requires `runner_attempt` and it is NOT reusable — a skipped dispatch spends
+  the ordinal.** Omitting it is a FastAPI 422 before any service code runs. Worse, `dispatch_unit`
+  looks up by `(work_unit_id, runner_attempt)` and **returns the existing record** for a reused
+  ordinal: HTTP 200, byte-shaped like a real dispatch, having fired nothing. A dispatch refused by
+  an admission term still WRITES A RECORD at that ordinal, so a refusal consumes it. Measured
+  2026-08-26 on one unit: attempt 1 skipped (`outside_change_window`), attempt 2 skipped (control),
+  attempt 3 dispatched. **Verify a dispatch by a NEW record id, never by `status` alone.**
+
+- **`work_units.version` is not served by any read surface a client can rely on, so probing is the
+  documented client contract — and the `version_conflict` error carries NO `current_version`.**
+  `in-flight-units` excludes DRAFT and terminal units; the evidence pack projects `version: null`;
+  the status ledger does not carry it. Measured 2026-08-26: the error's `details` is `null`, so this
+  file's advice to *"read `current_version` off the error"* does not work. Probe upward from a
+  plausible value — a wrong guess is a harmless 409 — and note that **recording evidence bumps the
+  version too**, so a value read before one POST is stale for the next.
+
+- **Merge admission refuses on FOUR terms while a unit is merely SUBMITTED, and three of them clear
+  by running the verifier rather than by waiting.** Reading `pr-merge-admission` (a GET, mutating
+  nothing) before attempting a merge is the cheap way to see which. Measured 2026-08-26:
+  `work_unit_not_completed`, `criteria_not_verifier_decided`, `criteria_evidence_not_observed`,
+  `merge_outside_change_window` → after `verifier-evidence/named-check` + `/verify`, exactly
+  `merge_outside_change_window` remained. **Nothing runs the verifier automatically** — HQ drives it
+  with the VERIFIER credential, and `check_name` must be the JOB name
+  (`Lint, type-check, and test` in `change-manager`, whose WORKFLOW is called `Quality`).
