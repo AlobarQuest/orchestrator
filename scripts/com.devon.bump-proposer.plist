@@ -18,11 +18,15 @@
      and the bearer this job holds is propose-scoped: it cannot approve the record it writes.
      change-manager refuses every status-moving route for that scope whatever the client sends.
 
-     06:50, AND THE ORDERING IS THE REASON. The wrapper argues for daily rather than hourly:
-     every writing pass commits to a checkout on this machine, so a pass that finds something is
-     a commit somebody has to notice. 06:50 leaves the existing slots intact -- 07:05 carry,
-     07:10 sweep, 07:30 ledger -- and puts a record in front of a person before the carry runs,
-     so a bump proposed in the morning is carryable the same day once they approve it.
+     06:50, AND THE SLOT BUYS LESS THAN THE WRAPPER'S HEADER CLAIMS. Daily rather than hourly
+     is the wrapper's argument and it holds: every writing pass commits to a checkout on this
+     machine, so a pass that proposes something is a commit somebody has to notice. What does
+     NOT hold is the same-day-carry clause. The carry is a single daily firing at 07:05 and it
+     reads only APPROVED records; a record this job proposes is pending, so it is carried the
+     same day only if a person approves it inside a fifteen-minute window, and otherwise waits
+     for 07:05 tomorrow whatever hour this job runs. 06:50 is chosen because it is daily, it is
+     early, and it leaves the existing slots intact -- 07:05 carry, 07:10 sweep, 07:30 ledger.
+     Moving it later would cost nothing a reader should expect it to cost.
 
      THE PASS COMMITS ON THE CHECKOUT'S CURRENT BRANCH AND NEVER PUSHES. That is the producer's
      existing behaviour, kept rather than changed, and it is the whole design content of this
@@ -46,10 +50,15 @@
      RunAtLoad is false. A missed firing needs no catch-up: the next pass reads the same open
      pull requests and proposes whatever is still unproposed.
 
-     The exit code is the report. launchd discards it, so read the log -- 0 everything was
-     measured and nothing was found, 1 the tool failed on a credential, 2 it ran but could not
-     use its inputs (no standing packages, a dirty checkout), 3 something was found and needs a
-     person.
+     THE EXIT CODE IS THE REPORT, AND 0 DOES NOT MEAN THE PASS DID NOTHING. launchd discards
+     it, so read the log -- 0 nothing arose that needs a person for an anomalous reason, WHICH
+     INCLUDES a pass that revised a package, committed it and proposed a record; 1 the tool
+     failed on a credential; 2 it ran but could not use its inputs (no standing packages, a
+     dirty checkout); 3 a finding -- an untranscribed gate, a title and trailer that disagree, a
+     stranded record, a refused proposal. `proposed` is deliberately not a finding: it is this
+     job's ordinary output, and the person it needs is the one who approves the record in
+     change-manager rather than the one who reads this log. Read the lines, not the code, to
+     learn whether anything was written.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

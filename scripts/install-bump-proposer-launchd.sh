@@ -24,7 +24,13 @@
 #
 # Verify afterwards with:
 #   launchctl list | grep bump-proposer
-#   scripts/run-bump-proposer.sh          # dry run; writes nothing, touches no credential
+#   scripts/run-bump-proposer.sh          # dry run: reports, and cannot write
+#
+# A DRY RUN STILL NEEDS TWO CREDENTIALS, and the wrapper's own comment is the precise one: what
+# `--submit` gates is "the credential that could write". A bare run reads the Keychain bootstrap
+# token and a GitHub token unconditionally and exits 1 without either, so an operator running
+# this check on a machine where `gh` is not logged in gets a FATAL that is about their login and
+# not about this installation. Only the propose-scoped change-manager bearer is withheld.
 #
 # Uninstall with:
 #   launchctl bootout "gui/$(id -u)/com.devon.bump-proposer"
@@ -60,6 +66,29 @@ fi
 
 mkdir -p "$HOME/Library/LaunchAgents"
 sed -e "s|__REPO_ROOT__|$REPO_ROOT|g" -e "s|__HOME__|$HOME|g" "$TEMPLATE" > "$TARGET"
+
+# THE JOB DEPENDS ON A SECOND TREE, and until this block existed nothing checked it. The pass
+# runs `$BUMP_PROPOSER_PACKAGES_CHECKOUT/.venv/bin/python` for every intent-packages lifecycle
+# command and reads `packages/` there to find the standing packages at all. A checkout that was
+# cloned but never synced installs fine, dry-runs fine, and exits 0 on every day there is
+# nothing to do -- surfacing only on the first day there IS a bump, as a per-pull-request
+# `error` in a log launchd discards. That is the failure class the block above exists to move
+# to install time, so it is moved for this dependency too.
+#
+# The path is READ BACK OUT OF THE PLIST just written rather than restated here: the plist is
+# where the answer lives, and a second copy is a second thing to forget.
+PACKAGES_CHECKOUT="$(plutil -extract EnvironmentVariables.BUMP_PROPOSER_PACKAGES_CHECKOUT raw \
+  -o - "$TARGET")"
+if [ ! -d "$PACKAGES_CHECKOUT/packages" ]; then
+  echo "FATAL: $PACKAGES_CHECKOUT/packages is missing. The pass reads the standing packages" \
+       "there; check BUMP_PROPOSER_PACKAGES_CHECKOUT in $TEMPLATE." >&2
+  exit 1
+fi
+if [ ! -x "$PACKAGES_CHECKOUT/.venv/bin/python" ]; then
+  echo "FATAL: $PACKAGES_CHECKOUT/.venv/bin/python is missing. Every intent-packages lifecycle" \
+       "command runs through it. Run: uv sync --frozen in $PACKAGES_CHECKOUT" >&2
+  exit 1
+fi
 
 # `bootout` first so a reinstall replaces rather than layering. It fails when nothing is loaded,
 # which is the ordinary first-install case, so its status is deliberately ignored.
