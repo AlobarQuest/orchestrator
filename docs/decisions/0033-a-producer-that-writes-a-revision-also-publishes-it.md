@@ -72,13 +72,38 @@ would be minted and then refused at approval — not its trigger. So this ADR is
 of the widening; it is taken now because the scheduler already severed the commit from the push,
 and every pass that ever does commit from here leaves work half-done.
 
-## Blast radius, and the control that already exists
+## Blast radius — and the control is weaker than this ADR first claimed
 
-An unattended commit can turn `intent-packages` `main` red. Two things bound it. `strict: false`
-means required checks bind a pull request's own head, so a red default branch does not block other
-merges. And that repository carries the daily scheduled `Quality` run added 2026-08-15 — verified
-green on five consecutive days at this decision — so a bad push is reported within a day by a
-control nobody has to build.
+An unattended commit can turn `intent-packages` `main` red. One thing genuinely bounds it:
+`strict: false` means required checks bind a pull request's own head, so a red default branch does
+not block other merges.
+
+**A first draft of this section also rested on the daily scheduled `Quality` run, and a measurement
+taken hours later removed that comfort. The measurement is recorded here rather than the comfort.**
+
+On 2026-08-26 at 13:31Z, commit `62fcfdb` added a package to `intent-packages` and did not re-pin
+`tests/fixtures/package_hashes.json`. It was a **direct push to `main` with no pull request** — the
+same act this ADR grants a machine, performed by a person. Two of the three required checks
+reported **failure within minutes**. `main` then stayed red for **31 hours**, until a scheduled run
+reported the identical failure again and somebody happened to be reading.
+
+**So detection was never the constraint, and the daily run is not what would save this.** The push
+check is an order of magnitude faster than the daily one and it made no difference: nothing
+subscribes anyone to the result. The gap is **subscription, not detection**, and no control in this
+estate closes it today.
+
+**Read the effect on this decision precisely, because it cuts both ways and the net is unchanged.**
+It removes a reassurance this ADR should not have offered. It does not weaken the case for (a): a
+machine push would be detected exactly as fast as that human one was, and read exactly as slowly,
+so (a) adds no unmonitored risk that (c) did not already carry — the same commit, the same checks,
+the same silence. What it does establish is that "a bad push is reported" is true and "somebody
+finds out" is not, and the second is a real gap this ADR names rather than closes.
+
+(Measured while writing this: the scheduled run that caught it fired ~10 hours later than its
+`23 10 * * *` cron, estate-wide across all four repositories that carry one. And `change-manager`
+and `brain` — the two that redeploy on merge — carry no scheduled gate at all, against a CLAUDE.md
+claim of six. Neither changes this decision; both bear on any future argument that leans on that
+control.)
 
 ## Consequences
 
