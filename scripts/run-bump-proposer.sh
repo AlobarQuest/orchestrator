@@ -14,11 +14,16 @@
 #
 # WHY HOURLY IS WRONG FOR THIS ONE, unlike the deploy producer. Every writing pass commits to
 # a checkout on this machine, so a pass that finds nothing to do is free and a pass that finds
-# something is a commit somebody has to notice. Daily, and before the carry's own 07:05 run,
-# so a record proposed in the morning is carryable the same day once a person approves it.
+# something is a commit somebody has to notice. Daily, and before the carry's own 07:05 run
+# -- though be precise about what that ordering buys, because it is less than it reads:
+# the carry fires once, at 07:05, and reads only APPROVED records, so a record proposed
+# here is carried the same day only if a person approves it within fifteen minutes.
 #
 # EXIT CODES, the whole interface a scheduled run has:
-#   0  everything was measured and nothing was found.
+#   0  nothing arose that needs a person for an anomalous reason. NOT "the pass did
+#      nothing": a pass that revised a package, committed it and proposed a record also
+#      exits 0, because `proposed` is this program's ordinary output rather than a
+#      finding. Read the lines to learn whether anything was written.
 #   1  the tool itself failed (a missing or unreadable credential).
 #   2  the tool ran but could not use its inputs (no standing packages, a dirty checkout).
 #   3  something was found -- an untranscribed auto-merge gate, a pull request whose title and
