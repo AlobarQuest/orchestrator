@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the bump-proposer LaunchAgent (ADR-0028). Install with
+     scripts/install-bump-proposer-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
+     writes ~/Library/LaunchAgents/com.devon.bump-proposer.plist.
+
+     No secrets live here: the wrapper fetches the propose-scoped change-manager bearer from BWS
+     at runtime under the broad machine account, and falls back to `gh auth token` for GitHub.
+
+     THIS JOB WRITES, AND IT WRITES MORE THAN ITS SIBLINGS DO. It passes --submit, so a pass
+     edits two lines of a standing package in the intent-packages checkout, takes the revision
+     through that repository's audited lifecycle, approves it by conformance to
+     approval-policy.toml, re-pins the hash fixture, COMMITS those three files, and proposes a
+     work record in change-manager. The bare command is a dry run and the wrapper refuses to
+     supply --submit itself, so the flag lives here where an operator reads it -- the same
+     arrangement work-carrier's --register and change-proposer's --submit already use.
+
+     THE HUMAN GATE DOES NOT MOVE. ADR-0028 keeps it at record approval, downstream of the mint,
+     and the bearer this job holds is propose-scoped: it cannot approve the record it writes.
+     change-manager refuses every status-moving route for that scope whatever the client sends.
+
+     06:50, AND THE ORDERING IS THE REASON. The wrapper argues for daily rather than hourly:
+     every writing pass commits to a checkout on this machine, so a pass that finds something is
+     a commit somebody has to notice. 06:50 leaves the existing slots intact -- 07:05 carry,
+     07:10 sweep, 07:30 ledger -- and puts a record in front of a person before the carry runs,
+     so a bump proposed in the morning is carryable the same day once they approve it.
+
+     THE PASS COMMITS ON THE CHECKOUT'S CURRENT BRANCH AND NEVER PUSHES. That is the producer's
+     existing behaviour, kept rather than changed, and it is the whole design content of this
+     increment: `standing.commit` says the branch is somebody else's to move. So a pass that
+     proposes work leaves `~/Projects/intent-packages` one commit ahead of its upstream, which
+     the activation sweep records in every row as `ahead_by` and deliberately does not classify.
+     A person pushes it. Nothing waits on that push -- the carry reads the checkout's working
+     files, so the revision is carryable the moment it is committed -- but until it happens the
+     revision has had no CI run and its `source_commit` names a commit only this machine holds.
+     Measured precedent: change record 62's intake registered against 10b13d47, a revision this
+     producer committed to local `main` on 2026-08-19, and the lane completed end to end.
+
+     A SECOND PASS OVER AN UNCHANGED QUEUE WRITES NOTHING. The producer advances a package only
+     when it does not already carry the bump in an approved revision; otherwise it replays, and
+     change-manager answers 200 for an identical proposal keyed on the package revision.
+
+     SCOPE IS THE AUTHORED SET, not a list in this file. A repository is in this lane because
+     somebody authored a standing package targeting it, so widening the lane is an authoring act
+     in intent-packages and never an edit here.
+
+     RunAtLoad is false. A missed firing needs no catch-up: the next pass reads the same open
+     pull requests and proposes whatever is still unproposed.
+
+     The exit code is the report. launchd discards it, so read the log -- 0 everything was
+     measured and nothing was found, 1 the tool failed on a credential, 2 it ran but could not
+     use its inputs (no standing packages, a dirty checkout), 3 something was found and needs a
+     person.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.bump-proposer</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-bump-proposer.sh</string>
+        <string>--submit</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>50</integer></dict>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Homebrew is on this list because `gh` and `bws` live there, and the wrapper needs
+             both: `bws` for the propose-scoped change-manager bearer, `gh` for the GitHub token
+             it has no BWS record for. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <!-- The checkout this pass revises and commits into. The wrapper defaults to the same
+             path; it is stated here because it IS the answer to where the pass writes, and the
+             carry at 07:05 reads this same working copy. -->
+        <key>BUMP_PROPOSER_PACKAGES_CHECKOUT</key>
+        <string>__HOME__/Projects/intent-packages</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/bump-proposer.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/bump-proposer.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
