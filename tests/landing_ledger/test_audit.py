@@ -20,6 +20,7 @@ from landing_ledger.audit import (
     DRIFT_RULE_DID_NOT_SUCCEED,
     DRIFT_RULE_MISSING,
     DRIFT_RULE_UNKNOWN,
+    EXCEPTION_UPDATE_TYPE_UNPARSEABLE,
     FACTORY_CLAIM_UNREADABLE,
     FACTORY_FINGERPRINT_MISMATCH,
     FACTORY_HUMAN_ADJUDICATION,
@@ -43,7 +44,7 @@ from landing_ledger.audit import (
 from landing_ledger.model import Check, PendingUpdate, UpdateMetadata
 from landing_ledger.orchestrator_client import LedgerWriteError
 from landing_ledger.record import BASIS_FACTORY
-from landing_ledger.rules import GATE_PATH, REGISTRY
+from landing_ledger.rules import GATE_PATH, REGISTRY, rule_for
 
 REPO = "AlobarQuest/factory-runner"
 PATCH_AND_MINOR = "77ab867d1080d18baea3a2b230655c2729716970"
@@ -64,6 +65,7 @@ def landing(
     outcome: str = "success",
     update_type: str | None = MINOR,
     ecosystem: str | None = "uv",
+    metadata: bool = True,
     checks: list[dict[str, Any]] | None = None,
     files: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -85,8 +87,13 @@ def landing(
         }
         if revision is None:
             del permitted["rule_revision"]
-        if update_type is None:
-            del permitted["update_type"]
+        if not metadata:
+            # `permitted_by` writes the three update keys together or not at all, so a landing
+            # whose trailer could not be read drops all three. That is a DIFFERENT record from
+            # one whose `update_type` is present and null, which says the bot declared no delta
+            # -- and `audit_landing` gives the two different answers.
+            for key in ("dependency", "ecosystem", "update_type"):
+                del permitted[key]
     return {
         "what_changed": {
             "repository": REPO,
@@ -295,7 +302,7 @@ def test_absent_update_metadata_FIRES_rather_than_being_read_as_ineligible() -> 
     """The rule's own job-level condition is "the update bot raised this", and the trailer is the
     only proxy the ledger holds for it. Absent, the condition cannot be re-read -- which is a
     finding, not a quiet pass and not a rule violation."""
-    findings, _ = audit_landing(landing(update_type=None))
+    findings, _ = audit_landing(landing(metadata=False))
 
     assert kinds(findings) == [DRIFT_METADATA_MISSING]
 
@@ -359,6 +366,20 @@ def test_a_landing_that_changed_the_gate_is_flagged_as_judged_by_its_own_change(
 # ---------------------------------------------------------------------------------------------
 
 
+# The default title STATES A SINGLE DELTA, and that is load-bearing rather than decoration. From
+# 2026-08-23 the title is what separates an open update nothing can classify from one the gate
+# should have been able to decide, so a fixture whose title stated no delta would make every
+# metadata-unreadable case an exception and leave the finding untested.
+CLASSIFIABLE_TITLE = "chore(deps): bump ruff from 0.15.20 to 0.15.21"
+
+# The two shapes that state no single delta, both measured on live subjects: a requirement range
+# (orchestrator#174, and the same setuptools bump open on three more repositories) and a docker
+# tag that is not semver (orchestrator#3). A grouped bump is the third and is covered in the
+# parser's own corpus.
+RANGE_TITLE = "chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0"
+DOCKER_TITLE = "chore(deps): bump python from 3.12-slim to 3.14-slim"
+
+
 def pending(
     *,
     number: int = 31,
@@ -367,6 +388,8 @@ def pending(
     ecosystem: str = "uv",
     conclusions: tuple[str, ...] = ("success",),
     concluded_at: datetime | None = NOW - timedelta(days=1),
+    title: str = CLASSIFIABLE_TITLE,
+    metadata: bool = True,
 ) -> PendingUpdate:
     return PendingUpdate(
         repository=REPO,
@@ -374,15 +397,19 @@ def pending(
         head_commit="a" * 40,
         opened_at=NOW - timedelta(days=8),
         armed=armed,
-        title="chore(deps): bump ruff",
+        title=title,
         checks=tuple(
             Check(name=f"job{index}", conclusion=value, run=index)
             for index, value in enumerate(conclusions)
         ),
+        # `metadata` and `update_type` are two switches because the reader draws two lines. A
+        # requirement range carries a dependency name and no update type, so it arrives as
+        # metadata whose `update_type` is None; only a head commit with no readable trailer at
+        # all arrives as no metadata. Before 2026-08-28 the reader collapsed them.
         update=(
-            None
-            if update_type is None
-            else UpdateMetadata(dependency="ruff", ecosystem=ecosystem, update_type=update_type)
+            UpdateMetadata(dependency="ruff", ecosystem=ecosystem, update_type=update_type)
+            if metadata
+            else None
         ),
         last_concluded_at=concluded_at,
     )
@@ -394,13 +421,16 @@ def test_eligible_green_and_unarmed_FIRES() -> None:
     identically, which is why one detector covers both."""
     rule = REGISTRY[UNDERSCORED]
 
-    assert kinds(audit_pending(pending(), rule, NOW)) == [STALL_ELIGIBLE_NOT_ARMED]
+    findings, exceptions = audit_pending(pending(), rule, NOW)
+
+    assert kinds(findings) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert exceptions == ()
 
 
 def test_eligible_but_red_is_the_checks_doing_their_job() -> None:
     rule = REGISTRY[UNDERSCORED]
 
-    assert audit_pending(pending(conclusions=("success", "failure")), rule, NOW) == ()
+    assert audit_pending(pending(conclusions=("success", "failure")), rule, NOW) == ((), ())
 
 
 def test_a_package_major_left_unarmed_is_the_rule_declining_to_act() -> None:
@@ -410,15 +440,18 @@ def test_a_package_major_left_unarmed_is_the_rule_declining_to_act() -> None:
 
     result = audit_pending(pending(update_type=MAJOR, ecosystem="npm_and_yarn"), rule, NOW)
 
-    assert result == ()
+    assert result == ((), ())
 
 
 def test_an_actions_major_left_unarmed_FIRES_under_the_rule_that_permits_it() -> None:
     rule = REGISTRY[UNDERSCORED]
 
-    result = audit_pending(pending(update_type=MAJOR, ecosystem="github_actions"), rule, NOW)
+    findings, exceptions = audit_pending(
+        pending(update_type=MAJOR, ecosystem="github_actions"), rule, NOW
+    )
 
-    assert kinds(result) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert kinds(findings) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert exceptions == ()
 
 
 def test_armed_and_green_but_only_just_is_a_landing_about_to_happen() -> None:
@@ -426,27 +459,73 @@ def test_armed_and_green_but_only_just_is_a_landing_about_to_happen() -> None:
 
     result = audit_pending(pending(armed=True, concluded_at=NOW - timedelta(seconds=5)), rule, NOW)
 
-    assert result == ()
+    assert result == ((), ())
 
 
 def test_armed_and_green_for_an_hour_and_still_open_FIRES() -> None:
     """The purest form of the question: nothing is stopping it and it is not landing."""
     rule = REGISTRY[UNDERSCORED]
 
-    result = audit_pending(pending(armed=True, concluded_at=NOW - timedelta(hours=6)), rule, NOW)
+    findings, exceptions = audit_pending(
+        pending(armed=True, concluded_at=NOW - timedelta(hours=6)), rule, NOW
+    )
 
-    assert kinds(result) == [STALL_ARMED_NOT_LANDED]
+    assert kinds(findings) == [STALL_ARMED_NOT_LANDED]
+    assert exceptions == ()
 
 
-def test_an_unreadable_update_FIRES_rather_than_being_classified_as_ineligible() -> None:
+def test_an_unreadable_update_whose_title_STATES_a_delta_FIRES() -> None:
+    """THE DISCRIMINATOR for the exception below, and without it that change is a suppression.
+
+    The bot names a version delta this gate could have decided, and its metadata trailer is
+    missing anyway -- so the audit genuinely cannot say whether the gate should have armed it,
+    and that is a finding a person can act on. It is exactly the condition
+    `update_metadata_unreadable` was named for.
+    """
     rule = REGISTRY[UNDERSCORED]
 
-    assert kinds(audit_pending(pending(update_type=None), rule, NOW)) == [STALL_METADATA_UNREADABLE]
+    findings, exceptions = audit_pending(pending(metadata=False), rule, NOW)
+
+    assert kinds(findings) == [STALL_METADATA_UNREADABLE]
+    assert exceptions == ()
+
+
+@pytest.mark.parametrize("title", [RANGE_TITLE, DOCKER_TITLE])
+def test_a_title_stating_no_single_delta_is_an_EXCEPTION_rather_than_a_finding(title) -> None:
+    """The seven subjects that made this detector exit non-zero every night.
+
+    A requirement range states two ranges rather than a delta; a docker tag is not semver at all.
+    Neither states something any rule about update types could be applied to, which is a property
+    of the subject and not a defect anywhere -- the landing lane already classifies the identical
+    condition as an exception, and this is the second control looking at the same pull requests.
+    """
+    rule = REGISTRY[UNDERSCORED]
+
+    findings, exceptions = audit_pending(pending(metadata=False, title=title), rule, NOW)
+
+    assert findings == ()
+    assert kinds(exceptions) == [EXCEPTION_UPDATE_TYPE_UNPARSEABLE]
+    assert exceptions[0].subject == f"{REPO}#31"
+
+
+def test_the_title_is_not_consulted_when_the_METADATA_is_readable() -> None:
+    """The bound on the new question, and it is the one that keeps this detector about the GATE.
+
+    The gate reads the metadata trailer and never the title. So an update whose trailer says
+    `semver-minor` is decided in the gate's own terms however its title reads -- here it is
+    permitted, green and unarmed, which is a stall and stays one.
+    """
+    rule = REGISTRY[UNDERSCORED]
+
+    findings, exceptions = audit_pending(pending(title=RANGE_TITLE), rule, NOW)
+
+    assert kinds(findings) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert exceptions == ()
 
 
 def test_a_head_with_nothing_concluded_is_not_green() -> None:
     assert not is_green(pending(conclusions=()))
-    assert audit_pending(pending(conclusions=()), REGISTRY[UNDERSCORED], NOW) == ()
+    assert audit_pending(pending(conclusions=()), REGISTRY[UNDERSCORED], NOW) == ((), ())
 
 
 # ---------------------------------------------------------------------------------------------
@@ -737,6 +816,45 @@ def test_a_finding_raises_the_severity_the_row_is_filed_under() -> None:
     assert audit.severity == "warning"
 
 
+def test_an_exception_reaches_the_repositorys_own_list_and_not_its_findings() -> None:
+    """The whole change, at the level the caller reads. A repository whose entire open queue is
+    unclassifiable is QUIET -- it says so in its own list, not in its severity and not in the
+    exit code the caller computes from `findings`.
+    """
+    audit = audit_repository(
+        repository=REPO,
+        landings=[],
+        pending=(
+            pending(metadata=False, title=RANGE_TITLE),
+            pending(number=32, metadata=False, title=DOCKER_TITLE),
+        ),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+    )
+
+    assert audit.findings == ()
+    assert kinds(audit.exceptions) == [EXCEPTION_UPDATE_TYPE_UNPARSEABLE] * 2
+    assert audit.severity == "info"
+
+
+def test_an_exception_does_NOT_silence_a_real_finding_beside_it() -> None:
+    """The over-general version of this rule would make a repository quiet once one of its open
+    updates could not be classified. Both are reported, each under its own category."""
+    audit = audit_repository(
+        repository=REPO,
+        landings=[],
+        pending=(pending(metadata=False, title=RANGE_TITLE), pending(number=32)),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+    )
+
+    assert kinds(audit.findings) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert kinds(audit.exceptions) == [EXCEPTION_UPDATE_TYPE_UNPARSEABLE]
+    assert audit.severity == "warning"
+
+
 # ---------------------------------------------------------------------------------------------
 # The record the pass files.
 # ---------------------------------------------------------------------------------------------
@@ -835,6 +953,50 @@ def test_a_flood_of_findings_is_trimmed_to_fit_with_its_true_count_beside_it() -
     assert len(encoded) <= 4096
 
 
+def test_an_exception_is_recorded_in_the_row_with_its_own_count() -> None:
+    """A quiet category still has to be written down, or it is a category that was suppressed."""
+    audit = audit_repository(
+        repository=REPO,
+        landings=[],
+        pending=(pending(metadata=False, title=RANGE_TITLE),),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+    )
+
+    body = audit_observation(audit, "20260808T120000Z", NOW)
+
+    assert body["facts"]["exceptions_found"] == 1
+    assert body["facts"]["exceptions"][0]["kind"] == EXCEPTION_UPDATE_TYPE_UNPARSEABLE
+    assert body["facts"]["findings_found"] == 0
+    assert body["severity"] == "info"
+    assert "0 finding(s) and 1 exception(s)" in body["summary"]
+
+
+def test_exceptions_are_dropped_before_caveats_when_the_record_will_not_fit() -> None:
+    """Least urgent first: an exception is permanent, so it says the same thing tomorrow.
+
+    Enough long-named exceptions to blow the byte bound on their own, beside one caveat that must
+    survive them.
+    """
+    audit = audit_repository(
+        repository=REPO,
+        landings=[landing(files=[GATE_PATH], ecosystem="e" * 200)],
+        pending=tuple(
+            pending(number=index, metadata=False, title=RANGE_TITLE) for index in range(60)
+        ),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+    )
+
+    body = audit_observation(audit, "20260808T120000Z", NOW)
+
+    assert body["facts"]["exceptions_found"] == 60
+    assert body["facts"]["caveats"], "the caveat was trimmed before the exceptions"
+    assert len(body["facts"]["exceptions"]) < MAX_LIST
+
+
 def test_caveats_are_dropped_before_findings_when_the_record_will_not_fit() -> None:
     """A caveat qualifies evidence; a finding asserts a violation. The violation must survive."""
     audit = audit_repository(
@@ -853,3 +1015,106 @@ def test_caveats_are_dropped_before_findings_when_the_record_will_not_fit() -> N
 
     assert body["facts"]["findings"], "the finding was trimmed before the caveats"
     assert len(body["facts"]["caveats"]) < len(body["facts"]["findings"]) + MAX_LIST
+
+
+# ---------------------------------------------------------------------------------------------
+# ADR-0034. Two records that used to look identical, and the detector must answer them apart.
+# ---------------------------------------------------------------------------------------------
+
+OUTCOME_RULE = "3457db3cee85ffa054dee8b434ac25238a81f425"
+
+
+def test_a_landing_stating_no_delta_is_not_a_landing_nobody_could_read() -> None:
+    """The distinction the reader started drawing on 2026-08-28, read back at the far end.
+
+    `update_type` PRESENT and null says the update bot declared no version delta, which is the
+    ordinary shape of a requirement range and exactly what revision 3457db3c permits. Keyed on
+    the VALUE rather than the key, this detector would raise `metadata_missing` against every
+    landing the new rule exists to make -- a finding about the ledger, aimed at the population
+    the change was for, arriving on the first night it ran.
+    """
+    findings, _ = audit_landing(landing(revision=OUTCOME_RULE, update_type=None))
+
+    assert kinds(findings) == []
+
+
+def test_a_landing_with_no_readable_trailer_still_FIRES_under_the_outcome_rule() -> None:
+    """The other side, so the first test is not just the finding being switched off. All three
+    update keys absent means nothing here could read what the gate read, and no rule's condition
+    can be re-run against it -- whatever that rule turns out to be."""
+    findings, _ = audit_landing(landing(revision=OUTCOME_RULE, metadata=False))
+
+    assert kinds(findings) == [DRIFT_METADATA_MISSING]
+
+
+def test_a_docker_landing_under_the_outcome_rule_still_violates_it() -> None:
+    """CONTROL 3 at the landing end. The one exclusion survives the widening: a base image is
+    refused whatever it declares, so a docker landing recorded as rule-permitted is drift."""
+    findings, _ = audit_landing(
+        landing(revision=OUTCOME_RULE, update_type=None, ecosystem="docker")
+    )
+
+    assert kinds(findings) == [DRIFT_NOT_SATISFIED]
+
+
+def test_a_requirement_range_is_now_CLASSIFIED_rather_than_excepted() -> None:
+    """Detector B, and the interim state this change creates deliberately.
+
+    A range is permitted by the installed rule from 2026-08-28, so it stops being a permanent
+    exception and becomes an ordinary subject -- and a green one that nothing armed is the
+    quiet-gate finding, which is precisely what an already-open pull request is after a gate
+    edit that fires no event. The report is right and the remedy is a synchronize event.
+    """
+    rule = rule_for(OUTCOME_RULE)
+    assert rule is not None
+
+    findings, exceptions = audit_pending(
+        pending(update_type=None, title=RANGE_TITLE, armed=False), rule, NOW
+    )
+
+    assert kinds(findings) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert exceptions == ()
+    # A person reads this line. An absent intent is said, not interpolated: `None of ruff is
+    # permitted` names a value the update bot never wrote.
+    assert "no version delta stated" in findings[0].detail
+    assert "None" not in findings[0].detail
+
+
+def test_a_docker_tag_stating_no_delta_stays_quiet_under_the_outcome_rule() -> None:
+    """The rule declining to act is the rule working, and produces neither a finding nor an
+    exception. `python 3.12-slim -> 3.14-slim` is this case: excluded, not merely undeclared."""
+    rule = rule_for(OUTCOME_RULE)
+    assert rule is not None
+
+    findings, exceptions = audit_pending(
+        pending(update_type=None, ecosystem="docker", title=DOCKER_TITLE), rule, NOW
+    )
+
+    assert findings == () and exceptions == ()
+
+
+def test_the_no_verdict_vocabulary_matches_the_lane_that_owns_it() -> None:
+    """A mirror, pinned by importing both -- the arrangement `titles.py` already uses.
+
+    `bump_proposer` and this module may not import the orchestrator, so the set is duplicated
+    rather than shared. A duplicate nobody checks is how two vocabularies drift into disagreeing
+    about the same word, which this estate has now found four times.
+    """
+    from landing_ledger.audit import NO_VERDICT_CONCLUSIONS as MIRROR
+    from orchestrator.services.estate_landing_admission import (
+        NO_VERDICT_CONCLUSIONS as OWNED,
+    )
+
+    assert MIRROR == OWNED
+
+
+def test_a_conclusion_nobody_enumerated_is_read_as_a_verdict() -> None:
+    """The polarity that makes the split safe. A word the platform has not yet invented must
+    fail toward "the checks refused this", never toward "no answer yet"."""
+    from landing_ledger.audit import NO_VERDICT_CONCLUSIONS, REFUSING_CONCLUSIONS
+
+    assert "failure" in REFUSING_CONCLUSIONS
+    assert not (REFUSING_CONCLUSIONS & NO_VERDICT_CONCLUSIONS)
+    from landing_ledger.audit import FAILING_CONCLUSIONS
+
+    assert REFUSING_CONCLUSIONS == FAILING_CONCLUSIONS - NO_VERDICT_CONCLUSIONS

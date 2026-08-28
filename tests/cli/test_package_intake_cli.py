@@ -25,6 +25,54 @@ def _verified_approval() -> VerifiedApproval:
     )
 
 
+def test_the_payload_carries_the_change_record_when_one_caused_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0026. The one field here that is NOT derived from the package.
+
+    A package cannot know what caused the work, so this value is supplied by whoever invokes the
+    emitter -- the carry, from the approved change-manager record it is carrying. Without this
+    the whole join is emitted by nothing: every other test of the join builds a
+    `PackageIntakeCommand` directly and never runs the emitter.
+    """
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+        raising=False,
+    )
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef", raising=False)
+    payload = load_package_intake_payload(
+        Path("tests/fixtures/intent-packages/ws32-approved-software"),
+        source_repository="AlobarQuest/intent-packages",
+        change_record_id=4321,
+    )
+    assert payload["change_record_id"] == 4321
+
+
+def test_the_payload_OMITS_the_key_when_nothing_caused_the_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absent, not null -- and the difference is pinned here or it is pinned nowhere.
+
+    Absent means nobody named a cause, which is every payload emitted before ADR-0026. Emitting
+    `null` would work at the schema (the field defaults to None) and would change the bytes of
+    every payload this command has ever produced, which is a larger claim than the one intended.
+    """
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+        raising=False,
+    )
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef", raising=False)
+    payload = load_package_intake_payload(
+        Path("tests/fixtures/intent-packages/ws32-approved-software"),
+        source_repository="AlobarQuest/intent-packages",
+    )
+    assert "change_record_id" not in payload
+
+
 def test_package_source_reader_builds_intake_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         package_sources,

@@ -47,7 +47,16 @@ def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
             "named_check_observation_unavailable",
         }:
             status = 503
-        if error.code in {"role_forbidden", "human_actor_required", "csrf_rejected"}:
+        # ADR-0027 split intake's role refusal out of `human_actor_required`, and a refusal that
+        # left this set would have regressed 403 -> 409 -- telling a worker credential to change
+        # its request rather than that it may not make one. `intake_change_record_required` is
+        # deliberately NOT here: that actor MAY register, and what is wrong is the request.
+        if error.code in {
+            "role_forbidden",
+            "human_actor_required",
+            "csrf_rejected",
+            "intake_registrar_invalid",
+        }:
             status = 403
         detail = {"code": error.code, "message": error.message}
         if error.recovery is not None:

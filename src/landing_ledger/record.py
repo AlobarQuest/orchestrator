@@ -209,6 +209,13 @@ def permitted_by(landing: Landing) -> dict[str, Any]:
     record["rule_run"] = landing.rule.run
     record["rule_outcome"] = landing.rule.outcome
     if landing.update is not None:
+        # THE KEY BEING PRESENT AND NULL IS A DIFFERENT ASSERTION FROM THE KEY BEING ABSENT, and
+        # `audit_landing` keys on exactly that difference. Present with `None` says the update
+        # bot declared no version delta -- which is the ordinary shape of a requirement range,
+        # and which revision 3457db3c permits deliberately. All three keys ABSENT says this
+        # program could not read the trailer at all, so no rule's condition can be re-read and
+        # the landing is a finding. Before 2026-08-28 the reader collapsed the two, and every
+        # no-delta landing arrived looking unreadable.
         record["dependency"] = landing.update.dependency
         record["ecosystem"] = landing.update.ecosystem
         record["update_type"] = landing.update.update_type

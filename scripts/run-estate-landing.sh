@@ -58,6 +58,25 @@ ORCHESTRATOR_SYSTEM_UUID="221a48d5-3f29-4898-b300-b4820140c880"
 CHANGE_MANAGER_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
+# Dependabot cascade stops at the merge, which is complete for a repository whose landing redeploys
+# a hosted application and incomplete for this one, whose code runs from a working copy here
+# (orchestrator ADR-0031). Best-effort by construction: the helper prints one `[activation]` line
+# and returns 0 whatever it finds, so this job is never gated on being able to update itself. It
+# re-execs this script when HEAD moves, because bash reads a script incrementally by byte offset
+# and the file it just rewrote is this one.
+_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
+if [ -r "$_SDS_ACTIVATE" ]; then
+    # shellcheck source=/dev/null
+    . "$_SDS_ACTIVATE"
+else
+    activate_checkout() {
+        echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
+             "this run is not activated"
+    }
+fi
+activate_checkout "$REPO_ROOT" "$0" "$@"
+
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,

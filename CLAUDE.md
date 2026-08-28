@@ -512,7 +512,14 @@ style of that module.
   the authority approval as a **GUI click**, not a devtools `fetch()`. Use that form, NOT the
   generic "approve" button. Package **intake** is done by a browser `fetch()` to `POST
   /api/v1/package-intakes` through the `orchestrator-intake-human` forward-auth router (also
-  verified 2026-07-22). The earlier "no authority-approval form; pasted `fetch()` in devtools"
+  verified 2026-07-22).
+  **SUPERSEDED 2026-08-19 (ADR-0027): that router is DELETED and intake is no longer human-only.**
+  `POST /api/v1/package-intakes` now falls through to the M2M `orchestrator-api` router, so the
+  carrier registers as `orchestrator-system`. The human path is unaffected and was checked before
+  the deletion: the `/review` form posts to **`/review/intakes`**, not the API route, and keeps its
+  own forward-auth chain. Had it posted to the API route, deleting the router would have removed
+  the human escape hatch the asymmetric registrar guard exists to preserve.
+  The earlier "no authority-approval form; pasted `fetch()` in devtools"
   claim here is obsolete.
 
 - **Authority approval does NOT move the unit's state — `DRAFT → READY` is a separate SYSTEM
@@ -537,8 +544,8 @@ style of that module.
   `POST /review/decomposition-proposals/{id}/approve` (`web.py`, `_human` + CSRF) under the
   `orchestrator-review` router, which *does* carry the forward-auth chain. This is unlike intake
   and authority approval, which each have their own dedicated forward-auth `/api` router
-  (`orchestrator-intake-human`, `orchestrator-authority-approval-human`) and so *are* done by
-  browser `fetch`. A browser `401` on any orchestrator `/api` route means the endpoint is
+  (`orchestrator-authority-approval-human`; `orchestrator-intake-human` **existed until 2026-08-19
+  and was deleted under ADR-0027**) and so *are* done by browser `fetch`. A browser `401` on any orchestrator `/api` route means the endpoint is
   M2M-only, not that auth is down. (Verified 2026-07-17.)
 
 - **Driving a dispatch needs the M2M bearer tokens — fetch them, don't hunt.** The two
@@ -1030,10 +1037,26 @@ style of that module.
 
 - **`deployment_observation` summaries are EXACT-key-set bounded, and the secret detector matches
   key NAMES, not just values.** `_require_keys` uses `set(payload).issubset(allowed)`, so any extra
-  key is `deployment_observation_invalid: "… contains unbounded fields"`. The allowed sets are:
-  `auth_summary` = `{missing_m2m_status, configured_m2m_status}` (and `missing_m2m_status` **must**
-  be `401`); `route_summary` = `{routes}`, each route exactly `{path, present}`;
-  `dispatch_summary` = `{dispatch_enabled}`; `status_summary` = `{status, summary}`. Separately, a
+  key is `deployment_observation_invalid: "… contains unbounded fields"`. **CORRECTED TWICE ON
+  2026-08-25. First: there are FIVE summaries, not the four originally listed — `probe_summary` was
+  omitted. Then, hours later, `deployment_observations` gained a SECOND SHAPE and this bullet now
+  describes only one of them.** The five-summaries-all-mandatory rule holds for
+  `kind = "container_image"` and is FALSE for `kind = "machine_local"`, which requires an
+  `activation_summary` and **refuses all five**. A machine-local row also carries no `base_url`, no
+  `deployment_url`, no `deployer` and **no post-deploy verification unit**, so
+  `post_deploy_work_unit_id` is nullable and `Session.get(WorkUnit, None)` is reachable — on
+  SQLAlchemy 2.0.52 that returns `None` after a `SAWarning` saying it *"may raise an error in a
+  future release"*, i.e. a warning today and a break later. Its `environment` is pinned to
+  `operator_machine` by a database CHECK, deliberately: the column is otherwise free-form under a
+  regex, and one mistaken payload naming `production` would put a working copy into the answer for
+  what is serving production. For the container shape: That last part is the load-bearing
+  half: a machine-local activation has honest values for none of them, so the record as it stands is
+  shaped for a hosted deploy only. `probe_summary` = `{probes}`, a non-empty list whose members are
+  each exactly `{endpoint, method, name, status_code, expected_status_min, expected_status_max,
+  observed_at}`; `auth_summary` = `{missing_m2m_status, configured_m2m_status}` (and
+  `missing_m2m_status` **must** be `401`); `route_summary` = `{routes}`, each route exactly
+  `{path, present}`; `dispatch_summary` = `{dispatch_enabled}`; `status_summary` =
+  `{status, summary}`. Separately, a
   key merely *called* `missing_credential_status` is rejected as
   `deployment_observation_secret_rejected` — the detector reads the JSON path, so avoid `credential`
   / `token` / `key` in key names even when the value is an integer. Every one of these is a clean
@@ -1135,6 +1158,16 @@ style of that module.
   would have left **two** calls for a second attempt and killed the unit permanently. An envelope
   is write-once and its approval cannot be taken back, so this number is one of the few that
   genuinely cannot be fixed later.
+  **CLOSED 2026-08-19 for the dependency-update lane, and the shape of the defect is the durable
+  part.** `intent-packages`' `approval-policy.toml` granted `max_llm_calls = 120` and its own
+  comment said so — *"120 rather than the profile default of 4"*. But the grant is a **CEILING on
+  what a package may DECLARE**, while the unit envelope is stamped from
+  `profiles/dependency_update.py::BUDGETS`, and that constant was **4**. Nothing compared them, so
+  every unit this lane emitted carried a thirtieth of the budget its own package had been approved
+  for. **A comment that NAMES a divergence is not a check**, and this one had named it for weeks.
+  The constant is 120 now and a test asserts the stamped envelope's budgets EQUAL the grant's
+  ceilings — equality rather than ordering, because `<=` passes against the very defect it would
+  exist to catch (intent-packages #72).
 
 - **Coolify stores an `is_literal` env value wrapped in single quotes and injects the STRIPPED
   form — so a write must send the RAW value, and `is_build_time` is rejected outright.** Two
@@ -1572,11 +1605,20 @@ style of that module.
   fragment left behind blocks **whoever stops next**, not its author. On 2026-08-14 one such file
   blocked two sessions on work neither had written.
   **(2) Remove the worktree and drop the test database** — `git worktree remove … --force` +
-  `dropdb`. **(3) Leave the branch and the pull request**; HQ merges, so the branch must survive.
-  **The objection to answer, because a session will raise it: "leave it up in case CI sends me
-  back."** Recreating is fully scripted and takes about three minutes, HQ owns the merge and
-  therefore owns any CI failure, and a genuine second attempt wants a fresh tree from current `main`
-  anyway. Standing by is the exception and needs to be asked for, not assumed. Note the Agent tool's `isolation: "worktree"` covers subagents a session
+  `dropdb`. **(3) DELETE THE BRANCH ONCE YOUR PULL REQUEST IS MERGED — locally as well as on the
+  remote.** **CORRECTED 2026-08-24; this step used to read "Leave the branch and the pull request;
+  HQ merges, so the branch must survive."** That was written when HQ did the merging. Sessions now
+  merge their own pull requests, so the session that merges is the one place that knows the branch
+  is finished, and leaving it stranded the branch forever. The cost was measured: **79
+  landed-but-undeleted local branches across the six SDS targets** on 2026-08-24, 39 of them in
+  `orchestrator` — every one correct behaviour under the old instruction, which is what made it
+  invisible. `delete_branch_on_merge` is now `true` on all six repositories, so the REMOTE branch
+  goes on merge; **the local one is yours** (`git branch -D`, since `-d` uses ancestry and
+  squash-merge defeats it). If your pull request is NOT merged when you finish, leave both and say
+  so. **The objection to answer, because a session will raise it: "leave it up in case CI sends me
+  back."** Recreating is fully scripted and takes about three minutes, and a genuine second attempt
+  wants a fresh tree from current `main` anyway. Standing by is the exception and needs to be asked
+  for, not assumed. Note the Agent tool's `isolation: "worktree"` covers subagents a session
   spawns and does nothing for a session opened in a terminal, which is the case that was hurting.
 
 - **A claim is NOT released when a unit COMPLETES — only on failure and cancellation — so
@@ -2105,14 +2147,45 @@ style of that module.
   finalize step then correctly refused (the clean-clone control identified it as pre-existing in
   one step).
 
-- **`allowed_commands` is ADVISORY to the coding agent and MANDATORY at finalize.** It reaches the
-  agent only as prompt text (`cli.py` `_prompt`, `"\n".join(f"- {command}" …)`) — nothing blocks the
-  agent from running something else — and it becomes `verification_commands` at finalize
-  (`cli.py:839`), which re-executes the ordered list before checking `git status`. Two consequences:
-  an unlisted command the agent improvises may make a run *appear* to work, and a listed command
-  that cannot run makes finalize fail **however well the coding phase went**. Read this together
-  with the ordering rule (mutators first, verifier last) — the ordering matters because of the
-  re-execution, and every listed command must therefore be idempotent.
+- **`allowed_commands` is the coding agent's ENTIRE Bash vocabulary, ENFORCED — and it is also
+  re-executed at finalize. A command absent from the envelope is a command the agent CANNOT RUN.**
+  **CORRECTED 2026-08-20. This bullet said "ADVISORY to the coding agent … nothing blocks the agent
+  from running something else", and that is false; believing it cost a work unit.** The prompt half
+  is real and is probably how the error arose — the list does reach the agent as text (`cli.py:215`,
+  `"\n".join(f"- {command}" …)`) — but tracing the prompt and stopping there misses the second
+  consumer. `cli.py:495` calls `write_tool_policy(permissions.allowed_commands,
+  brief.authority.fingerprint, edit_allowed=…)`, whose docstring is *"Write the RUNNER-OWNED hook
+  policy and Claude settings outside the checkout"*: it writes `policy.json` (chmod 0400, outside
+  the checkout so the agent cannot reach it) plus a `settings.json`, and the reusable workflow hands
+  that to the Claude Code action as `settings: ${{ steps.prepare.outputs.settings_file }}`. The
+  authorizer is `command_policy.py::authorize_tool` — *"Return an allow decision only for an EXACT
+  Bash command or contained Edit path"* — matched per Bash call, failing closed on an unreadable
+  policy. Everything it enforces is derived from the envelope: the command list verbatim, the
+  authority fingerprint, and `edit_allowed` from `capabilities["repo.edit"]`. Nothing else feeds it,
+  and **this is not a dev-machine safety net** — the failure below happened on a GitHub-hosted
+  `ubuntu-latest`.
+  **The consequence the old bullet named does not exist, and the real one is its opposite.** There
+  is no hazard of "an unlisted command the agent improvises makes a run appear to work" — an
+  unlisted command cannot run. The hazard is that **an envelope which omits a command the work needs
+  makes the work impossible**, quietly: the agent reports being blocked and does what it still can.
+  Measured 2026-08-19 on zod 3.25.76 → 4.4.3 into `infraops-mcp-server`, a real migration where the
+  MCP SDK's `server.tool()` signature shifts under zod 4's types. The envelope omitted
+  `npm run build`; the agent attempted it, was refused by the hook, said so in its own summary, and
+  moved the pin — a two-file pull request whose three checks all failed, 35 turns, $0.32, and a
+  spent attempt on a write-once envelope that can never be given the missing command.
+  **So an envelope must be COMPLETE for the work it authorises**, which collides with the fact that
+  `factory decompose` proves a bump is possible by running the envelope's commands against a tree no
+  agent has touched. A command that can only pass AFTER the coding phase must therefore be granted
+  and excluded from authoring's dry run — `intent-packages`'
+  `dependency_update.py::commands_deferred_to_coding`, keyed on what a failure MEANS: `npm ci`
+  failing means the dependency graph cannot resolve, which no in-scope source change fixes, so
+  authoring runs it; a build failing is the assignment, so authoring does not. Deferring is not
+  exempting: finalize re-executes the whole list regardless.
+  **The finalize half of the old bullet stands unchanged.** `allowed_commands` becomes
+  `verification_commands` at finalize (`cli.py:839`), which re-executes the ordered list before
+  checking `git status` — so a listed command that cannot run makes finalize fail **however well the
+  coding phase went**, the ordering rule (mutators first, verifier last) matters because of that
+  re-execution, and every listed command must be idempotent.
 
 - **The reusable workflow syncs the RUNNER CLI, never the TARGET repository — so any envelope whose
   verifier needs project dependencies must authorize the sync itself.** `factory-runner.yml` runs
@@ -2511,6 +2584,29 @@ style of that module.
   on `push:` that checks out with the secret and pushes a commit **touching
   `.github/workflows/**`**, which is the exact operation a token without Workflows:
   Read-and-write is rejected for. (Rewired and probed for all four, 2026-08-04, WS-P2.34.)
+  **THOSE TWO COUNTS WERE NEVER RECONCILED, AND THAT IS EXACTLY HOW A DEAD COPY SURVIVED TWO
+  WEEKS.** The bullet said seven repos hold it and, one line later, that the rewire covered "all
+  four". The three it did not name were `project-standards` (re-set at onboarding 2026-08-07) and
+  **`infraops-mcp-server` and `orchestrator`, both left on the 2026-07-14 token, which had been
+  revoked**. It surfaced on 2026-08-19 as the first dispatch to `infraops-mcp-server` since
+  2026-07-23 — i.e. the first since the rotation — dying at `actions/checkout` with
+  `fatal: could not read Username for 'https://github.com': terminal prompts disabled`. **Read that
+  message as an invalid credential, never as a missing permission**: a token that authenticates but
+  lacks repository access answers `403`, while a revoked or expired one is refused outright and git
+  falls back to prompting. Nothing was lost — checkout precedes the claim, so the unit never left
+  `ready` — but a run and a diagnosis were. Both were re-synced from BWS on 2026-08-19 and **all
+  seven now carry the current token**. When a bullet states a population and a smaller action over
+  it, reconcile the two numbers or the difference is invisible until it fails.
+  **Two probe traps, both hit that day.** (1) **`gh secret set --body -` writes the LITERAL string
+  `-`; stdin is read only when `--body` is omitted entirely** (`… | gh secret set NAME --repo R`).
+  The clobber was visible only because GitHub then masked every `-` in the job log, rendering
+  `astral-sh/setup-uv` as `astral***sh/setup***uv`. (2) **Since the repositories went public on
+  2026-08-17, `GET /repos/{owner}/{repo}` answers 200 unauthenticated, so a status-code sweep proves
+  nothing about a token's reach.** Read `.permissions.push` instead and run the unauthenticated and
+  garbage-token controls beside it — both answer "no permissions block", which is what makes
+  `push=true` mean something. So measured, the current token reaches all eight factory-adjacent
+  repositories with write, **`project-standards` included** — correcting this file's claim that it
+  was the one repository the PAT could not reach.
 
 - **The named-check evidence lane is closed to any criterion not declared `automated_check` — at
   INGESTION, not only in intent-packages' `factory verify` pre-check.** `record_named_check_evidence`
@@ -2774,11 +2870,15 @@ style of that module.
   must not move.
 
 - **Adding a source file under `src/` adds THREE parametrized cases to
-  `tests/architecture/test_wsp21_invariant_scan.py`, not two** — `test_no_tracked_source_carries_a_secret`,
+  `tests/architecture/test_wsp21_invariant_scan.py`, and a new `scripts/*.sh` adds TWO** —
+  `test_no_tracked_source_carries_a_secret`,
   `test_nothing_in_the_repo_calls_a_merge_method` and `test_nothing_in_the_repo_merges_a_pull_request`.
   The existing bullet above says two; measured 2026-08-13, two new `src/deploy_watcher/` modules
   added exactly six. The reconciliation method it prescribes (diff node ids between `main` and the
   branch) is right and is what produced this correction.
+  **The shell figure was measured 2026-08-24: the merge-method scan is Python-only, so a script
+  draws two cases rather than three.** That day 5 Python files plus 2 shell scripts added exactly
+  19. Use the multiplier only as a cross-check — the node-id diff remains the answer.
 
 - **`scripts/sds-token.sh` RESPECTS an already-set `BWS_ACCESS_TOKEN`, so a launcher that needs TWO
   BWS identities must not source it alongside a `${BWS_ACCESS_TOKEN:-…}` default.** One ambient
@@ -2796,10 +2896,28 @@ style of that module.
   MACHINE.** `com.devon.deploy-watcher` (and its siblings) invoke
   `~/Projects/orchestrator/scripts/run-*.sh`, whose `REPO_ROOT` resolves off `BASH_SOURCE`, and the
   program is `$REPO_ROOT/.venv/bin/<name>`. The step that is easy to forget is `git pull` in the
-  main tree; **no `uv sync` is needed for a new module**, because the editable install is a bare
+  main tree; **no `uv sync` is needed for a new MODULE**, because the editable install is a bare
   `.pth` path append. The failure of forgetting is silent in the worst direction: the old launcher
   sets no new environment variable, the old CLI requires none, and the job keeps exiting 0 while
   the thing you shipped never runs.
+  **CORRECTED 2026-08-21: a new CONSOLE SCRIPT is the opposite case, and the original wording is
+  incomplete in the direction that bites.** A `[project.scripts]` entry does NOT appear from a
+  `git pull` — `uv sync` is mandatory — and the launchers invoke it by absolute path
+  (`$REPO_ROOT/.venv/bin/<name>`), so the pass hits a missing binary rather than an import error.
+  Measured on `work-watcher` (ADR-0029): after pulling `d5afa9b` the entry was declared in
+  `pyproject.toml` and absent from `.venv/bin` until a sync. Read the rule as **module → no sync,
+  bin entry → sync**, and check `[project.scripts]` in the diff rather than inferring from whether
+  files were added. The blast radius is now smaller than it was: the launchers' exit-code fold
+  surfaces a missing binary as 127 instead of folding it to 0, and the installer refuses at install
+  time — but only for lanes that have an installer.
+  **SHARPENED 2026-08-21: in a FRESH WORKTREE, `uv sync --frozen` is necessary and NOT SUFFICIENT.**
+  Measured building item 150's fix: `work-carrier` and `work-watcher` were declared in
+  `pyproject.toml` and absent from the new worktree's `.venv/bin` after a clean `uv sync --frozen`;
+  `uv sync --reinstall-package orchestrator` installed both. So the rule has two halves — **a pull
+  into an existing tree needs a sync; a fresh worktree may need a reinstall on top of one** — and the
+  failure is the same either way: the launchers invoke by absolute path, so it dies at a missing
+  binary rather than at an import error. Check `.venv/bin` against `[project.scripts]` directly
+  rather than trusting that a sync did it.
 
 - **The deploy-change-record population is DEPENDABOT BY CONSTRUCTION, so anything keyed on a
   change record can never see factory work.** `src/change_proposer/` is the only writer of
@@ -2848,7 +2966,19 @@ style of that module.
   sixteen live in `.worktrees/deploy-policy-actor/`, an untracked stale worktree carrying its OWN
   `pyproject.toml` — so ruff resolves config from it and never sees the repo-root exclusion, and CI,
   which checks out a fresh tree, never sees any of it. **Measure this class of thing on a clean
-  clone (`git archive HEAD`), not a working tree**, or you are counting scaffolding. Every repo
+  clone (`git archive HEAD`), not a working tree**, or you are counting scaffolding.
+  **That worktree is GONE as of 2026-08-23 — do not go looking for it, and do not read its absence
+  as the hazard being gone.** Removed after checking what removal would cost: branch
+  `adr0019-deploy-policy-actor` at `9dd6847`, clean, twelve days old, and **both** its commits'
+  content byte-identical to `origin/main` — landed via PR #35's SQUASH merge, which is why
+  `git merge-base --is-ancestor` said "not in main" and was the wrong test. **Ancestry is always the
+  wrong test in this estate**: squash-merging guarantees a branch commit is never an ancestor of
+  `main` even when its content is there. Compare the FILES.
+  The hazard itself was already narrower than this bullet implies: `make check` prunes `.worktrees`
+  via `PRUNE_DIRS`, and ruff skips it via gitignore, so the repo's own gate was never distorted.
+  What a stale worktree distorts is **ad-hoc** measurement — a bare `find`, a `grep`, a hand-run
+  ruff — which is exactly how it produced the wrong count corrected above. 707 Python and 37
+  Markdown files sat there for anything that walked the filesystem without pruning. Every repo
   pinned at `0.15.20` is green today and goes red the moment Dependabot bumps it; `change-manager#51`
   is the first of **five**, not six — `infraops-mcp-server` has no ruff dependency at all, no pin and
   no lockfile entry, so nothing can bump it and it could never have gone red. `intent-packages` reads
@@ -2991,11 +3121,19 @@ style of that module.
   `attests=revision_confirmed` and no human acting. What remains open in that repository is `#48`
   alone, the permanent requirement-range exception. **A caveat worth carrying, because the counters
   say so: the freshness-update rule shipped in `#167` has fired ZERO times in production**
-  (`0 updated, 0 would-update` on every run). `#49` was current because HQ had run `update-branch`
-  by hand while probing the mechanism, and `#48` is correctly excluded as an exception — so the rule
-  is live, correct on the subjects it has seen, and **unexercised on a real qualifying subject**. Its
-  first true test is the next landing that stales a sibling which can still land, which on current
-  queues means after the policy admits a second repository.
+  (`0 updated, 0 would-update` on every run).
+  **CORRECTED 2026-08-16, and the first word was the wrong one: the rule is NOT LIVE. It is merged
+  and UNDEPLOYED.** Production's `EstateLandingAdmissionResponse` serves exactly seven keys —
+  `change_record_id`, `head_sha`, `policy_version`, `pr_number`, `refusals`, `repository`,
+  `satisfied` — and none of Increment 6's. The lander reads `branch_update_qualifies`, gets nothing,
+  and **skips every record in its branch-update pass**. So `0 updated, 0 would-update` was never
+  evidence about the rule's behaviour; it was the field being absent. `brain#33`–`#35` qualify
+  today and are not being freshened.
+  This is the estate's own **MERGED IS NOT DEPLOYED** invariant, walked past by HQ while reading
+  those very log lines every morning and reasoning from them. The check is one command and it is
+  the same one that bullet already prescribes:
+  `curl -s https://sds.alobar.net/openapi.json | python3 -c "import sys,json; print(sorted(json.load(sys.stdin)['components']['schemas']['EstateLandingAdmissionResponse']['properties']))"`.
+  **A log line reporting zero is not evidence the code that would report non-zero is running.**
 
 - **Landing into `brain` deploys the service the landing lane CONSULTS — and the self-reference is
   safe, measured, in one direction only.** `estate_landing_admission.py` asks the estate what
@@ -3137,3 +3275,724 @@ style of that module.
   from the default branch — the confirming check is
   `gh run list --workflow=quality.yml --event=schedule` the following morning, and a first run
   arriving ~26 minutes late is GitHub's scheduler rather than a broken cron.
+
+- **BEING BEHIND BASE CAUSES A CONDITION THAT DISQUALIFIES A PULL REQUEST FROM BEING BROUGHT UP TO
+  DATE. That is a deadlock, and it is blocking every `brain` landing right now.** Found 2026-08-16,
+  the morning after policy v3 admitted `brain`. The chain:
+  `_rollout_term` reads the pinned rollout workflow's blob on **both** the base and the head — and
+  the head read is load-bearing, because a pull request whose own diff edits the rollout workflow
+  passes a base-only check by construction. `brain#31`–`#35` were opened before `brain#47` changed
+  `ci.yml`, so their heads carry the OLD blob `6cad4cf9` against a pin of `c5c08871`, and every one
+  refuses with `landing_rollout_moved`. Measured: base blob **matches** the pin, head blob differs,
+  nothing has touched `ci.yml` since 08-14.
+  **`landing_rollout_moved` is not a deliberate refusal and not an exception, so it is a real
+  condition — and the freshness rule updates only a pull request whose SOLE remaining obstacle is
+  freshness.** So the five are behind base, refused for being behind base, and ineligible for the
+  one mechanism that would bring them up to date. `update-branch` would merge `main` into each head,
+  carrying `c5c08871` with it, and the pin would then match.
+  **The fix is narrow and the guard survives it:** when the BASE blob matches the pin and the head
+  is behind, the mismatch is staleness rather than divergence, so `landing_rollout_moved` is
+  self-clearing and must not block freshening. A pull request whose own diff edits the rollout
+  workflow still differs after the update and is still correctly refused.
+  Generalise: **when a refusal can be CAUSED by the condition another rule exists to clear, the two
+  rules deadlock.** The eligibility test must be written against refusals that are genuinely
+  independent of freshness, not merely against the ones that were live when it was written.
+
+- **A post-deploy check that asks whether production is HEALTHY, or which IMAGE it runs, cannot see
+  that the served surface is missing a field a consumer needs. Ask what it SERVES.** Two days were
+  lost to this on 2026-08-16: `#167` (the freshness rule) and `#177` (the deadlock fix) were merged
+  and undeployed, production's `EstateLandingAdmissionResponse` carried only its seven pre-Increment-6
+  keys, and the lander read `branch_update_qualifies`, got nothing, and **skipped every record**. The
+  recurring `0 updated, 0 would-update` was the field being absent — not the rule finding nothing to
+  do — and HQ read those lines each morning and reasoned from them. Production had been on
+  `4cb6dd8-adr0019inc5b-amd64` since ~2026-08-12, which predates Increment 6 entirely.
+  **The check is one command and belongs in every deploy verification alongside the digest:**
+  `curl -s https://sds.alobar.net/openapi.json | python3 -c "import sys,json;
+  print(sorted(json.load(sys.stdin)['components']['schemas']['<ResponseModel>']['properties']))"`.
+  Confirmed working after the 2026-08-16 swap to `6e47adb-adr0024-amd64`: the served properties are
+  now `branch_update_qualifies, change_record_id, head_sha, policy_version, pr_number, refusals,
+  repository, rollout_base_matches_pin, satisfied`.
+  Note the pairing with the existing `response_model` invariant: that one says a field the model
+  does not declare is silently dropped **in the code**; this one says a field the deployed image does
+  not carry is silently absent **in production**. Both fail the same way — the consumer reads a key
+  that is not there and continues — and neither is visible to a green test suite.
+
+- **Pointing Coolify at a new tag is HQ's mechanic, not Devon's gate.** The paved road's *"pointing
+  Coolify at the new tag stays a separate, manual gate"* means **the workflow does not do it**, not
+  that Devon does. His gate is deciding what and how a change may happen; the execution is HQ's, via
+  `infraops` (`coolify_update_application` + `coolify_deploy`), which is the sanctioned path and
+  which this session's infra-separation waiver permits. Misreading it cost a round-trip on
+  2026-08-16 and it is the same conflation as assigning him a merge. **Record the outgoing tag
+  before the write** — here `4cb6dd8-adr0019inc5b-amd64` — because the derivable `sha-<full>` tag
+  can be re-pointed by a later build and the digest is the only immutable identity.
+
+- **ADR-0022's unit-scoped observation needs the change record to EXIST, not to carry a unit id —
+  and HQ's handoff asserted the opposite.** Corrected 2026-08-16 by the build session that
+  implemented it. `deploy_watcher/cli.py::_observe_unit` derives the unit from the merge commit's
+  **`SDS-Unit:` trailer** (`deploy_watcher/units.py::claimed_unit`) and confirms it against the
+  orchestrator's own `pr_merge` history; the change record contributes only
+  `(target_repository, pull_request_number)`, i.e. **which pull request to watch at all**. Verified
+  independently: factory-runner emits `SDS-Unit: {id}` in the commit message
+  (`src/factory_runner/cli.py:441`, `:454`), and the eight ledger repositories are
+  `squash_merge_commit_message = COMMIT_MESSAGES`, so a landing commit carries it.
+  **And the watcher reads every deploy record whatever its status** —
+  `deploy_watcher/change_manager.py::deploy_changes` applies no status filter — so a **pending**
+  factory record is sufficient. Phase-3 criterion 1's second half therefore does **not** wait on
+  the approval decision below. Storing the work-unit id on the record is still right, because
+  parsing the title is how the pull request is recognised at all; it is simply not what unblocks
+  the criterion.
+
+- **A factory pull request's change record is `change_class: factory-delivery` and sits OUTSIDE
+  deploy policy v3, deliberately.** Shipped 2026-08-16 (`#179`). Reusing `dependency-update` would
+  have had `_apply_policy` approve every factory record the instant it was proposed — a standing
+  grant that machine-written changes may land unattended into a redeploying repository, made
+  silently by a program rather than decided. So a factory record is created **pending**, and the
+  ADR-0020 landing lane now refuses at **`change_record_not_approved`** rather than
+  `change_record_absent`: P1 `6a98cb85fbae`'s blocker is closed and a different, deliberate gate is
+  what remains. The estate lander does not see these records at all (`_ASK_ABOUT = {"approved"}`),
+  so no new nightly findings. **The open decision is whether that approval is a policy version
+  admitting `factory-delivery` or a human click per record** — and it is a decision about standing
+  authority, not a configuration gap.
+  Note the population was empty when this shipped: no open factory pull requests in either
+  redeploying repository, so the branch is proven by controls, the cross-repo pin and a
+  byte-identical live differential for the bot population — not yet by a live factory pull request.
+
+- **"Is this a factory target?" had THREE answers that disagreed pairwise, and ADR-0015 already
+  ruled which one is authoritative — the ruling was simply never implemented.** Measured 2026-08-17:
+  `delivery_profile` in `PROJECT.md` says orchestrator/intent-packages/security-standards/
+  infraops-mcp-server/change-manager/brain; the orchestrator's
+  `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` said intent-packages/security-standards/
+  change-manager/brain/**project-standards**/infraops-mcp-server; and the presence of
+  `.github/workflows/factory-runner-pilot.yml` said a third thing. `factory-runner` is the only
+  repository all three agreed on. `orchestrator` declares itself a target and cannot be dispatched
+  to; `project-standards` was **deliberately excluded by ADR-0015 on 2026-08-04** and was allowlisted
+  and given a caller on **2026-08-07** — by HQ, in commit `6aeff6f`, three days later, in a sweep
+  that never consulted the decision sitting in the repository it was working in. The episode was then
+  written into this file as a lesson about fine-grained PAT scopes, with the contradiction unnoticed.
+  **ADR-0015 names the single source of truth and the reason: the declaration belongs in `PROJECT.md`
+  frontmatter, "repo-local and self-describing, rather than a list inside the kit that the affected
+  repository cannot see."** That mechanism has never been built, which is exactly why the
+  contradiction survived — an env var cannot refuse an onboarding sweep, and a repository declaring
+  `factory_target: false` can. Reversed 2026-08-17 (Devon reaffirmed ADR-0015): caller removed
+  (`project-standards#23`), allowlist cut to five, verified from inside the container.
+  **The unbuilt half now has two independent reasons to exist**, and a design question ADR-0015 did
+  not face: the orchestrator has no checkout, so a repo-local declaration has to reach admission
+  somehow — a build-time bundle like the actor registry, App Brain, or a sync job.
+
+- **THE SEVEN FACTORY REPOSITORIES ARE PUBLIC as of 2026-08-17, and the trigger was Actions minutes,
+  not a change of posture.** GitHub bills Actions only on private repositories. The estate ran out
+  mid-afternoon and every private repository's CI began failing in **2–5 seconds** at "Set up
+  Python" — before any repository content is read — while the two public ones
+  (`infraops-mcp-server`, `factory-runner`) passed CLEAN. That correlation IS the diagnosis: a
+  workflow failing at environment setup, split exactly along visibility, is quota rather than code.
+  **HQ first misread it as a GitHub outage**, because `githubstatus.com` genuinely reported a
+  Partial System Outage at the same time and the Actions API was 404ing estate-wide. Both were true
+  and unrelated; the 404s cleared on their own, the quota did not.
+  Consequence to know: with branch protection requiring a check that cannot run, **no private-repo
+  pull request can merge and the autonomous landing lane stops** (it refuses on
+  `landing_checks_not_clean`). Publishing restored all of it at once.
+  **Before publishing, the estate's own scanner is the gate, and read the ALLOWLIST rather than
+  trusting its reasons.** Four repositories scanned zero findings. `security-standards` carried 12
+  allowlisted BLOCKs — 6 tracked-file fixtures, 5 pinned git-history commits, 1 the write-guard
+  hook's own detection pattern. What settles it is that every one, tracked and historical, carries
+  the fixture prefix `0.45eb08` while the live bootstrap token is `0.838d18`: a different token, so
+  no credential was ever committed. The allowlist pins each finding's exact redacted match INCLUDING
+  LENGTH, so a different token in the same file still BLOCKs — it fails closed. Note what this does
+  **not** establish: that every commit in history was read. The scanner's detection is the basis,
+  which is sound for the repository that IS the scanner and is not an exhaustive audit.
+  **Revisit anything sized against Actions minutes.** The 2026-08-15 scheduled `main` checks were
+  costed at ~850 min/month against 3000 included, with `orchestrator` 89% of it — that constraint no
+  longer exists, so the cadence should be re-decided on its merits rather than left sized for a
+  limit that is gone.
+
+- **`POST /api/v1/package-intakes` was M2M-UNREACHABLE, so the merged code change alone was inert
+  until a Traefik router was deleted.** Measured 2026-08-19 with a control:
+  `GET /api/v1/status-ledger` answered **200** with the SYSTEM bearer while
+  `POST /api/v1/package-intakes` answered **302** to Authentik, because `orchestrator-intake-human`
+  (priority 230, exact `Path` + `Method`) forced that one route through the forward-auth chain.
+  ADR-0027 falsified that router's stated premise — its own comment said intake *"requires a
+  registered HUMAN actor"* — so the merge, the deletion and this correction are ONE operation.
+  **Check where the human form actually posts before deleting a human router.** Deleting this one
+  sends the path to the identity-stripping M2M router, which would have removed the human escape
+  hatch had the form used it. It does not: `templates/intake_new.html` posts to `/review/intakes`,
+  covered by `orchestrator-review`. That check is the difference between a safe deletion and
+  silently removing a fallback nobody notices is gone.
+  Pre-deletion backup: `/data/coolify/proxy/dynamic/.orchestrator.yaml.bak-adr0027`.
+
+- **A DEPLOY VERIFICATION THAT CHECKS HEALTH, DIGEST, REVISION LABEL AND SERVED SCHEMA STILL CANNOT
+  SEE THAT THE DATABASE IS BEHIND.** On 2026-08-19 HQ deployed three images (`#181`, `#182`, `#183`)
+  and ran **zero** migrations; production sat at `0026_adr19_estate_merge` while head was
+  `0028_adr26_change_record`, serving code that expected a column the database did not have. It
+  surfaced as a **bare HTTP 500** from `POST /api/v1/package-intakes` — because only `DomainError`
+  and `APIAuthenticationError` have registered handlers, a schema mismatch reaches the wire with no
+  diagnosis, and only the container log named it:
+  `psycopg.errors.UndefinedColumn: column work_package_revisions.change_record_id does not exist`.
+  **Add `alembic current` vs `alembic heads` to every deploy verification.** It is one command and
+  it is the only one of the five that can see this:
+  `docker exec <container> sh -c 'cd /app && .venv/bin/alembic current; .venv/bin/alembic heads'`.
+  The ordering rule already recorded here — migrate BEFORE the image swap, because the old container
+  tolerates the new schema and the new one does not tolerate the old — was skipped three times in one
+  afternoon without anything noticing. Earlier deploys were fine only because nothing needed a
+  migration; that is luck, not a working practice.
+
+- **`factory decompose` NEEDS TWO BWS IDENTITIES IN ONE INVOCATION, and setting one ambient
+  `BWS_ACCESS_TOKEN` for both fails as a bare `http_error: HTTP 400` that names nothing.** Measured
+  2026-08-19. The orchestrator bearer lives in the `SDS Operator` project (narrow `sds-operator`
+  account, Keychain `BWS_ACCESS_TOKEN_SDS`); the Code/Infra Brain keys the enrichment step needs
+  live in the `brains` project, readable only by the broad account (Keychain
+  `BWS_ACCESS_TOKEN_VPS_BACKUP`). Export the narrow one for the whole run — the obvious thing to do,
+  since the API token needs it — and `bws secret get 750f737f…` answers **`404 Not Found`**, which
+  surfaces through the factory client as an HTTP 400 with no error envelope.
+  **The diagnosis cost six probes because every plausible cause was eliminated first:** the
+  orchestrator's own log showed only a 201 and two 200s and never the failing request; the
+  decomposition-proposals GET answers 200 by hand; `orchestrator conformance-claim` returns green;
+  and the brain API answers **401** for a missing, empty *or* garbage key — so an empty key was not
+  the mechanism either. The call sequence is `api.get_intake` → `client.conformance_claim` →
+  `enrichment_for_profile(..., client=brain_client)` → (only with `--submit`)
+  `api.propose_decomposition`, so a DRY run that fails has failed in the enrichment step.
+  **The fix is the shape `scripts/run-estate-landing.sh` already uses**: read each Keychain item
+  directly and give each override a distinct variable name, never one ambient `BWS_ACCESS_TOKEN`
+  serving both. This file already carried the two-identity rule for launchers; it applies to
+  interactive `factory decompose` too, and reading it in one context did not prevent violating it in
+  another an hour later.
+
+- **`npm install` and `npm ci` DISAGREE, and the target repository's named check runs the second —
+  so proving the mutator works is not proving the gate passes.** `npm install` resolves a workable
+  tree and writes a lockfile; `npm ci` installs that lockfile **strictly** and refuses it when a
+  peer range is unsatisfied. Measured on one tree seconds apart, 2026-08-19: `npm install` rc=0,
+  `npm ci` rc=1. So the dependency-update dry run — which proves a real diff, idempotency, moved pin
+  sites and a runner-honest verifier — passed on a tree the gate refuses, and the failure surfaced
+  only after two human approvals and a spent work-unit attempt. The subject was typescript
+  5.9.3 → 7.0.2 into `infraops-mcp-server`, refused by
+  `peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.67.0`; **no published
+  `typescript-eslint` lifts that ceiling, the `canary` tag included**, so the bump is unadoptable
+  rather than merely hard. TypeScript 7 itself compiles that codebase clean — the blocker was the
+  eslint toolchain, which is why the compiler-shaped checks all passed.
+  **Closed by naming `npm ci` in the npm verifier** (intent-packages #73): `dry_run_mutation`
+  executes the whole ordered list, so the refusal moved to authoring time — proven against the real
+  checkout, `mutation command failed: 'npm ci' exited 1`, with a positive control (typescript
+  5.9.2, inside the peer range) still ACCEPTED so the change is not one that refuses everything.
+  **Generalise past npm: the estate's dry-run rule says prove the mutator yields a diff and prove
+  the verifier executes tools. It does not say prove the TARGET REPOSITORY'S OWN GATE would pass,
+  and those are different commands.** Before trusting a dependency-update envelope, read the target
+  repo's named-check workflow and ask which command it installs with.
+
+- **A `work`-source change record's status is human-only, and no producer credential can move it.**
+  `src/bump_proposer/change_manager.py` is propose-and-read by construction — `/api/work-changes`
+  and `/api/items`, anchored so no `/api/items/{id}/…` verb matches — and change-manager's
+  `propose` scope refuses every status-moving route server-side whatever the client sends. That is
+  ADR-0028's human decision, not an oversight. The `deploy` source is different: it has a
+  `deploy-retirement` route whose closed vocabulary has exactly one member
+  (`pull_request_closed_unmerged`), because its outcome cannot be chosen — it takes a fact and lets
+  the server decide. **So retiring a `work` record whose bump turned out to be unadoptable is a
+  human click, and there is no machine path to it.** Verified 2026-08-19 on records 59/60/61.
+  Note also the credential lives in a BWS project the narrow `sds-operator` identity cannot read —
+  `bws` answers `404 Resource not found`, which reads like a missing secret rather than a denied
+  one. Use the broad identity for it; this is the two-identity rule again, in a third place.
+
+- **`commands/fail` is the VERIFIER's edge, and `revision_required` is a cul-de-sac for a unit you
+  intend to retire.** `(submitted → failed)` and `(verifying → failed)` are VERIFIER edges;
+  `(failed → cancelled)` is HUMAN; and **`(revision_required → cancelled)` is not a legal edge at
+  all** — from `revision_required` the only way out is `→ ready` under SYSTEM. So a unit whose work
+  is genuinely unachievable must be driven to `failed`, not left where a normal `/verify` on failing
+  deterministic evidence would put it. Record the observed named-check evidence FIRST — the
+  ingestion route accepts `expected_conclusion: "failure"` and records what GitHub actually
+  concluded under `observation` — then `commands/fail` with the reason, so the terminal state cites
+  an observation rather than an assertion. The cancel is the human's. (Verified 2026-08-19 on unit
+  `6bc89d79`, read from `kernel/transitions.py` and `api/routes.py::COMMAND_TARGETS` rather than
+  guessed.)
+
+- **A full `--register` pass of the work lane exits 3 on change record 62, and that is NOT the
+  retirement lane failing.** Two defects wear the same `409 idempotency key belongs to a different
+  operation`, and only one is closed. **61's** — work done, nothing retired the record — is fixed by
+  ADR-0029. **62's** is different and cannot be fixed by it: the record was already carried, its work
+  is NOT complete, and `intent-packages`' `main` moved underneath it, so the fixed key
+  `work-carry-62-2` now carries a different `source_commit` than the intake it registered
+  (`10b13d47…` against a `main` of `155c50d…`). The retirement rule is keyed on COMPLETION, so the
+  watcher correctly reports 62 as `[WAITING]` and not as a finding — the acting pass touches only
+  records whose work is built. Backlog item **150** is the open half. Written down because a red
+  signal needs its reason beside it: without this, the next reader sees exit 3 the morning after the
+  fix shipped and concludes the lane is broken. Note the cause is new rather than incidental — it
+  exists *because* the lane now runs fast enough that `main` moves between a carry and its
+  completion (record 61's unit went registration → completed in **5m33s**).
+
+- **In `change-manager`, no test can see a missing `db.commit()`, and the estate's usual advice does
+  not save you.** This repository's standing rule is that a persistence assertion must re-read
+  through a DIFFERENT session, because `expire_all()` only defeats the identity map. That is correct
+  here and **insufficient in change-manager**: its `db` fixture hands the application the same
+  session the test asserts through, and its in-memory engine behind a `StaticPool` gives every
+  session ONE connection — so a flushed-but-uncommitted row is visible to a second `Session` as
+  well. The discriminating control there is a **file-backed** database plus a second session; only
+  that separates the connections. Found 2026-08-21 building ADR-0029's retirement route. Generalise
+  past this repo: before trusting "re-read through a different session", check what the fixture's
+  engine and pool actually give two sessions — the advice assumes connection isolation the fixture
+  may not provide.
+
+- **`emit-intake-payload` cannot verify a package approval from a git WORKTREE, and it fails with a
+  message that reads like a package fault.** It resolves the sibling `intent-packages` checkout by a
+  fixed relative path from its own module file, so from `~/Projects/orchestrator/.worktrees/<ws>/` it
+  lands at `.worktrees/intent-packages/src` — which does not exist — and refuses with
+  `package_not_intakeable — approval verification failed`. Nothing in that message says "wrong
+  directory". **Every build session works in a worktree by convention, so this is the DEFAULT
+  environment for the carry and for `factory decompose`**, and it nearly cost item 150's live
+  differential: the worktree's first pass returned a plausible and alarming answer about record 62's
+  package, and only re-running from the main tree settled it. Backlogged P2 `3c6f2330fa37`; the fix
+  is an environment override of the kind `SECURITY_STANDARDS_DIR` already provides one function over.
+  Until then: **run anything that verifies a package approval from a MAIN tree**, and treat an
+  approval-verification refusal seen from a worktree as unproven rather than as a finding about the
+  package.
+
+- **DECISION (Devon, 2026-08-21): `resolved` is TERMINAL BY DESIGN in change-manager, and is not
+  going to be made recoverable.** It was considered and declined, so do not re-open it.
+  `resolved` means what it says — the issue is resolved, outside of any automation — and its whole
+  job is to tell change-manager the work is done and there is nothing further to worry about.
+  `reactivate` is guarded to `wontfix` (`app/transitions.py`) because reversing a *decline* is
+  natural and reversing a *thing that happened* is not.
+  **The recovery model is the world, not the machine.** In Devon's words: worst case something is
+  marked resolved in error, and *"whatever raised the signal raises it again, because it was not
+  resolved."* Read **signal** as the underlying condition — an outdated dependency is still
+  outdated, a drift is still drifted — not as the producer re-proposing. The condition persists and
+  resurfaces; a closed record does not make the world forget.
+  **Record 59 is NOT a counter-example, and an agent finding it will think it is.** It was
+  `resolved` by a mis-click during the window when `/review` offered no Approve button — a build-
+  session-identified defect, remediated in change-manager#65 — not a mode of operation. Recovering
+  it cost a hand-authored package revision 2 plus fresh approvals, which is the price of a defect
+  that no longer exists, not the standing cost of this design. Do not cite it to argue for
+  recoverability; that argument was made from it on 2026-08-21 and was wrong on both counts.
+  What IS true and worth knowing: because a `work`-lane record's identity is the package revision,
+  a re-proposal of the same bump replays onto the existing record (200) rather than minting a new
+  pending one. That is a fact about the producer's idempotency, not about whether the underlying
+  problem recurs.
+
+- **`mergeable_state` is ONE WORD covering FOUR causes, and only one of them means the change is
+  bad.** A genuinely failing check, a run abandoned mid-flight, a run still going, and a required
+  context that never reported **all answer `blocked`**; only a green head answers `clean`. Measured
+  2026-08-22 on a disposable repository, one variable at a time. So any consumer that needs the
+  *cause* must read the workflow runs at the head — and specifically the **workflow-run listing**,
+  not the check-runs API, which answers **403** because the `Alobar SDS Dispatch` App holds no
+  `checks` permission. The landing lane collapsed all four into `landing_checks_not_clean` and
+  therefore held three clean Dependabot bumps for four days on the strength of runs GitHub had
+  cancelled when the estate's Actions quota ran out. It now separates them:
+  `landing_checks_not_clean` (a real failure), `landing_checks_awaiting_verdict` (abandoned — does
+  NOT disqualify the branch update, because updating is what produces the verdict), and
+  `landing_checks_in_flight` (still running — DOES disqualify, because freshening would abandon the
+  run being waited on).
+
+- **A disposable control repository must be PUBLIC, or this estate's Actions quota answers the
+  experiment for you.** A private repo with the quota spent fails **every** job in seconds at
+  environment setup, and the job carries **zero steps** — which reads as whatever failure the
+  control was built to produce. Compounding it: a workflow with no `actions/checkout` runs its
+  assertions against an empty directory, so a gate meant to fail on a file cannot see the file.
+  Both were live in one control on 2026-08-22 and it returned the expected answer for two
+  independent wrong reasons. **Before believing a red control, check `jobs[].steps` is non-empty.**
+  This is the estate's own *a probe must discriminate* rule with a specific, cheap check attached.
+
+- **A refusal excused for ACTING is not automatically excused for REPORTING, and the two consumers
+  read different criteria.** In the landing lane, `qualifies_for_branch_update` excuses
+  `landing_checks_awaiting_verdict` — the update is exactly the remedy. `freshness_derived_refusals`
+  deliberately does NOT, because it asks whether the head's *position* caused the refusal, and an
+  abandoned run is not a position. **Folding a code into a shared criterion to excuse it for one
+  consumer silently excuses it for the other**, which is how a suppression written for a report
+  becomes a permission to act. Related and already recorded: the deliberate-refusal categories are
+  tested with SUBSET semantics for the same reason a shared set would be wrong.
+
+- **A backgrounded gate inherits the session's DRIFTED cwd, and a green `make check` over the wrong
+  tree is success-shaped — read pytest's `rootdir:` line before believing a gate verified your
+  branch.** A build session works in a worktree, but any `cd` to another tree for an unrelated read
+  moves the shell, and a later backgrounded `make check` runs *there*. Observed 2026-08-23, the
+  ledger-exception build: the session's second gate reported
+  `rootdir: /Users/devon/Projects/orchestrator` — HQ's main tree, on `main` — ran **17m42s**, and
+  passed. **The danger is that it is GREEN**, so nothing about the output invites suspicion; the
+  only tell is one line of pytest's header, and the collected count differs only if the branch
+  changed the test count. That run was a legitimate `main` baseline and worthless as evidence about
+  the branch. Put an **absolute `cd` inside the backgrounded command itself**, and read `rootdir:`
+  beside the collected count. The header survives where the summary does not: `rootdir:` prints in
+  the first six lines, so it outlives the output truncation that eats trailing summary lines.
+  **BUT `-q` SUPPRESSES THE ENTIRE HEADER, INCLUDING `rootdir:` — so the compact form everyone uses
+  for counting is exactly the form that hides the only tell.** Measured 2026-08-24: `--collect-only`
+  prints `rootdir:` on line 3; `--collect-only -q` prints node ids and a bare count and no header at
+  all. If a count matters, run without `-q`, or read `rootdir:` from a separate non-quiet run.
+  **This is the best explanation for an otherwise undetermined observation** (WS parked-checkout,
+  2026-08-24): a hooked `uv run pytest` reported **66 collected / 66 passed against a true 83**,
+  with per-file counts of 31/14/16/5 — *`main`'s shape exactly* — while a direct
+  `.venv/bin/python -m pytest` answered 83 from the same tree seconds later. A drifted cwd reading
+  the MAIN tree while the worktree held the edits produces precisely that, and `-q` would have
+  hidden it. **Stated as the leading hypothesis, not as fact:** HQ could not reproduce a
+  hook-caching effect — from the repo root, hooked and direct agreed at 83 three times running —
+  and the build session was right to refuse to name a mechanism its evidence did not carry. Take
+  any count that matters from the direct form, non-quiet.
+  This is the existing "absolute `cd` every Bash call" rule with the specific tell attached — and
+  it is a *third* way `make check` reports a green it did not earn, beside exit-5-no-tests-collected
+  and tool-guarded skips.
+
+- **A single `export A=x B="$A"` expands `$A` to its PRIOR value, never to `x`.** Argument expansion
+  happens before any assignment in the same command takes effect. **This is not a shell-specific
+  quirk** — measured identically in `zsh` and `bash` 2026-08-24, so do not "fix" it by assuming the
+  other shell differs. It bites hardest in the worktree recipe, where `export
+  TEST_DATABASE_URL=… ORCHESTRATOR_DATABASE_URL="$TEST_DATABASE_URL"` silently sets the second to
+  empty and produces `sqlalchemy.exc.ArgumentError: Could not parse SQLAlchemy URL` across every
+  collection target — which reads as a broken environment rather than as a typo one line up. Use
+  separate `export` statements.
+
+- **`git log` obeys the OPERATOR'S GLOBAL config, and `log.showSignature` puts `gpg:` lines on
+  STDOUT — so a parse that works on every machine in this estate today is one
+  `git config --global` away from breaking on all of them at once.** Measured 2026-08-24 against
+  a signed squash merge: `git -c log.showSignature=true log -1 --format=%H%n%cI <sha>` emits
+  **three** `gpg:` lines *before* the format output, on stdout, not stderr — so anything counting
+  lines or splitting fields silently reads a signature warning as data. Every commit GitHub
+  squashes onto `main` here is signed, so the trigger is real rather than exotic. Pass
+  **`--no-show-signature`** on any programmatic `git log`; verified to restore exact output.
+  **Note the class, which is the durable part: a test suite that scrubs the global git config —
+  which it should — is STRUCTURALLY BLIND to every defect of this shape.** The control can only be
+  a shape assertion plus a measurement recorded outside the suite.
+
+- **`git remote get-url` applies `url.<base>.insteadOf` and answers with the URL git will TALK to;
+  only `git config --get remote.origin.url` answers with the URL the repository is CONFIGURED
+  with.** Measured 2026-08-24 — `remote -v` rewrites too. What *identifies* a repository is the
+  configured value; the rewrite is a transport detail of one machine, so a producer keying identity
+  on `get-url` reports a different name on a machine with a rewrite rule. Consequence for a
+  read-only git allowlist: `config` must be **on** it, and because `git config a b` *sets* a value,
+  the subcommand name alone is not a permission — require the `--get` form explicitly.
+
+- **A `plistlib` failure on a plist TEMPLATE is not evidence the template is broken: launchd is
+  more permissive than expat about `--` inside an XML comment.** `scripts/com.devon.landing-ledger.plist`
+  raises `ExpatError: not well-formed (invalid token)` under `plistlib.load` and is loaded and
+  running under launchd right now (`launchctl list` confirms it). Verified 2026-08-24. **Do not
+  "fix" a template on the strength of a `plistlib` failure, and do not add a `plistlib` gate
+  expecting it to mean anything.** This also explains a note left open in the 2026-08-21
+  cascade-activation spec, which recorded that four orchestrator plists "would not parse with
+  `plistlib`" and treated it as an unknown.
+
+- **A script that installs a LaunchAgent must REFUSE to run from a linked worktree.** `REPO_ROOT`
+  resolves from `BASH_SOURCE` and is written into the plist verbatim, so installing from a build
+  worktree pins the scheduled job to a path that session tears down — after which it fails every
+  morning with **nothing reporting it**, which is the silent-quiet twin of a permanently-red
+  control. The discriminator is `git rev-parse --git-dir` versus `--git-common-dir`: they differ in
+  a linked worktree and are equal in a main tree, measured both ways 2026-08-24.
+  `install-activation-sweep-launchd.sh` enforces it; copy that guard into any future installer.
+
+- **FOUR tests for "did this branch land?" all have blind spots in this estate — the GitHub one
+  included. Only a NAMED ARTIFACT settles it.** (This bullet said "three" and called the GitHub
+  lookup reliable when written on 2026-08-24; the fourth was measured hours later, against the
+  residue the first three could not classify.) Squash-merge is the root cause of the first three,
+  and each was measured wrong on real branches within 24 hours of 2026-08-24:
+  1. **`git merge-base --is-ancestor`** — a squashed branch commit is *never* an ancestor of `main`,
+     even when its content is fully landed. This is also why **`git branch -d` refuses these
+     branches and `-D` is required**; `-d` runs the same test.
+  2. **`git cherry`** (patch-id) — survives a one-commit squash and fails on a multi-commit one.
+     `brain`'s `ci/verify-revision` had two commits collapsed into one squash; cherry reported `+`
+     (unlanded) while **all four touched files were byte-identical to `main`**. It had landed as
+     PR #47 on 2026-08-14.
+  3. **Content comparison** — the fix for (1) and (2), and *too conservative* on its own: once
+     `main` changes the same file again, a landed branch's tip differs anyway. Applied across the
+     six SDS targets it reported **61 of 79 branches as possibly-unlanded**, which is useless.
+     It remains the right test for a SINGLE branch you are about to delete (it is safe in the
+     conservative direction), and the wrong one for a population.
+  **Ask GitHub instead: `gh pr list --repo <r> --head <branch> --state merged`.** GitHub records
+  that a pull request merged regardless of how it was merged. On the same population it answered
+  **74 merged, 5 without a merged pull request.** But:
+  **4. `gh pr list --head <branch>` is authoritative about the branch NAME, and the name is the weak
+  link.** It asks *"was there a merged pull request from this exact head?"*, so a rebase, a rename
+  or a cleaned redo breaks the association though the work landed. **All 5 of that residue had in
+  fact landed, under a different name** — an earlier version of this bullet called them "genuine"
+  and was wrong. Every one had a near-twin in the merged list: `deliberate-refusals` beside the
+  merged `deliberate-refusals-rebased`, `wsp37-inc4b-act-clean` beside the merged
+  `wsp37-inc4b-act`, two `worktree-agent-<hex>` scaffolds whose work landed under proper names, and
+  one branch called `backup/local-main-superseded-20260811`. **A near-twin in the merged list is
+  the tell.**
+  **What settles it is a NAMED ARTIFACT the branch introduced — look for that, never for a diff.**
+  A migration file is close to ideal: its name is unique and it either exists on `main` or does
+  not. `0022_wsp36_landing_type.py`, `0023_wsp36_landing_audit.py` and `0025_wsp37_pr_merge.py`
+  resolved three of the five outright. Failing a migration, a new module or a distinctive constant
+  does the same — `_DELIBERATE`/`_EXCEPTION` in `estate_lander/cli.py` resolved a fourth. The fifth
+  was **superseded**: `main` carried a *more developed* version of the same reasoning, which no
+  equality test could ever have shown.
+  **Working order for this estate: (a) `gh pr list --head`, which classified 74 of 79; (b) for the
+  residue, name the artifact and check `main` for it.** Content diffing is the wrong tool at both
+  steps. With one human on this machine and otherwise only agents, the residue's shape is
+  predictable — a session rebases, renames or redoes a branch, the tidy version merges, and the
+  original lingers with a broken pull-request link.
+  Generalise past branches: **when a local heuristic and the system of record can both answer a
+  question, ask the system of record — then check what its answer is KEYED ON, because that key is
+  its blind spot.**
+
+- **`delete_branch_on_merge` converts an unanswerable question into a trivial one, and is now `true`
+  on all six SDS targets** (it was already true on four; `orchestrator` and `intent-packages` were
+  set 2026-08-24). Once the remote branch is deleted on merge, `git fetch --prune` makes the local
+  branch report `[origin/<name>: gone]` — a reliable local prune signal needing neither a pull-request
+  lookup nor content guessing. The difference is measurable: `brain`, which already had the setting,
+  showed `gone` for 10 of 10 local branches, while `orchestrator` showed it for only 14 of 39.
+  **No git setting deletes a LOCAL branch**, which is why the teardown step above had to change
+  rather than being automated away.
+
+
+- **A mutation harness must restore from GIT, not from memory — a timeout is not a clean exit.**
+  A command timeout sends `SIGTERM`, Python's default handling does not run `finally`, and the
+  mutation is left on disk, surfacing later as an edit nobody made. Measured 2026-08-24: a killed
+  run left one deleted line in a `cli.py` that read as a source defect an hour later and cost a real
+  diagnosis. Restore with `git checkout <ref> -- <path>` and **assert the restore landed** before
+  the next mutation. Pairs with the existing rule that a mutation harness must set
+  `PYTHONDONTWRITEBYTECODE=1`: both are ways a harness silently reports about a tree that is not the
+  one you think you are testing.
+
+- **`git clone` of an EMPTY repository sets no `origin/HEAD`, and pushing to it never creates one.**
+  Only a clone from a non-empty remote, or an explicit `git remote set-head origin -a`, does.
+  Measured 2026-08-24. So a fixture built the obvious way — `init --bare` → clone → commit → push —
+  **differs from every real checkout in exactly that ref**, and a classifier that reads
+  `origin/HEAD` then measures the wrong path in every test while looking thoroughly covered. This is
+  the fixture-shaped twin of *validate the classifier against the population*.
+
+- **`git rev-parse --abbrev-ref origin/HEAD` prints the literal string `origin/HEAD` on STDOUT and
+  exits 128 when the ref is absent — so only the EXIT STATUS discriminates absence.** And when
+  `origin/HEAD` is a symbolic ref pointing outside `refs/remotes/origin/`, it answers a **bare**
+  name (`main`, `v1`), so only a prefix check discriminates that case. Measured 2026-08-24 while
+  building the sweep's default-branch read. A reader that trusts stdout classifies every checkout as
+  being off its default branch; a reader that skips the prefix check can be accidentally right when
+  the symbolic ref happens to point at the local default, which is why only a symbolic-ref-to-a-TAG
+  control discriminates.
+
+- **On `GET /api/v1/traceability`, ADDING `source_repository` to a `pr_number` anchor can turn a
+  real answer into `chains: []` — the two forms route through DIFFERENT TABLES, and the more
+  specific one is the one that fails.** `_resolve_pr` (`services/traceability.py`) reads
+  **`ReleaseArtifactBinding`** when `source_repository` is supplied and **`UnitPrBinding`** when it
+  is not. A factory landing writes the second and not the first, so qualifying the query with the
+  repository — the natural thing to do, and the thing that looks more careful — reports that the
+  chain does not exist at all. Measured 2026-08-24 on `infraops-mcp-server#81`:
+  `pr_number=81&source_repository=…` → `chains: []`; bare `pr_number=81` → the full chain, intent
+  through pr. **Always run the bare form too before concluding a chain is absent**, and read
+  `anchor.matched_on` in the response, which names which resolution ran.
+  **The general shape: a narrower query is not a safer query when the extra term changes the JOIN.**
+  Same family as the estate's other correct-about-the-wrong-noun defects.
+  **The discriminating control for any "the chain is empty" claim is an anchor known to be
+  populated** — `environment=production` returns two full chains
+  (`wsp28-production-deploy-verification`, `phase5-production-closeout`, both carrying
+  `commit,artifact,deployment`), which is what separates *the query is broken* from *this subject
+  has no binding*. Without it, an empty result proves nothing, exactly as a search zero does not
+  prove absence.
+
+- **A NEGATIVE-AUTHORIZATION PROBE THAT FOLLOWS REDIRECTS REPORTS A SECURITY CONTROL AS ABSENT.**
+  Measured 2026-08-24 running criterion 3's negative tests. `POST /api/v1/work-units/{id}/approvals`
+  sits behind the `orchestrator-authority-approval-human` forward-auth Traefik router, so an M2M
+  bearer gets **302 to `id.alobar.net`** and never reaches the app. `urllib` (and `curl -L`, and
+  `requests` by default) **follows that redirect**, lands on Authentik's authorize page, and returns
+  **200** — which a harness scoring "did this succeed?" reads as *the OBSERVER credential just
+  approved a work unit*. It had not; the evidence pack showed the unit's only approval was still
+  Devon's original one. **Disable redirect following in any authorization probe** and treat 3xx as
+  its own outcome, because the redirect IS the refusal. Re-run with redirects off: 403 on seven
+  routes, 302 on the eighth, **0 not refused**.
+  Two things this makes concrete. **A 200 in an authorization test is only meaningful if you know
+  WHICH SERVER produced it** — read the final URL, or don't follow. And **the estate refuses at two
+  different layers**: `_confine_observer` (app, `role_forbidden`) and the proxy's forward-auth
+  routing (302). A route protected only by the second would fall through to the M2M router if that
+  Traefik entry were ever deleted — as `orchestrator-intake-human` was on 2026-08-19 under ADR-0027.
+  `/approvals` is protected by BOTH (`_require_human` and the observer confinement also refuse it),
+  so it is defence in depth rather than a single point; **check that property before deleting any
+  human router**, which is the same check ADR-0027 required and passed.
+
+- **Criterion 3's negative tests, re-established 2026-08-24 and the population is now FOUR
+  producers, not one.** The 2026-08-07 proof covered `orchestrator-drift-reporter` alone. The
+  observe-and-report producers now share ONE credential by design — `orchestrator-observer`
+  (`f793576f-…`) is used by the **activation sweep, the deploy watcher and the landing ledger** —
+  so a single negative test covers all of them, which is the payoff of the deliberate
+  one-credential decision. Re-proven against production: `commands/ready`, `commands/fail`,
+  `pr-merge`, `estate-pr-merge`, `dispatch`, `verify` and `release-artifacts` all **403
+  `role_forbidden`**; `approvals` **302**; `GET /observations` **200** as the positive control that
+  the credential is live and the refusals are authorization rather than a dead token.
+  **Separately, and NOT covered by that test: five scheduled producers hold the SYSTEM bearer** —
+  `estate-landing`, `work-carrier`, `follow-up-mint`, `run-tracker-projection` and
+  `run-tracker-reconciliation`. SYSTEM *can* transition a unit and merge, by design (ADR-0020's
+  landing lane merges; ADR-0028's carrier registers intakes), so whether criterion 3's phrase
+  "external producer" reaches them is a CLASSIFICATION question and not a test result. Do not test
+  it by attempting a transition — that mutates production.
+
+- **`git merge-base --is-ancestor` is the RIGHT tool for "has this machine got that MERGE COMMIT"
+  and the WRONG one for "did this BRANCH land" — and without both halves the pair reads as a
+  contradiction.** The estate records the second half above. This is its complement: a squash-merge
+  collapses a branch into one NEW commit, so a branch tip is never an ancestor of the default
+  branch — but the **merge commit is a real commit on that branch** and is an ancestor of anything
+  pulled after it. Measured 2026-08-24 in one checkout, both directions: `ac01f838` (the landing of
+  `infraops-mcp-server#81`) **is** an ancestor of HEAD; `fcc4f881` (that pull request's own head)
+  is **not**. **Say which question you are asking, in a comment**, because the next reader will
+  arrive holding the other rule.
+
+- **`UnitPrMerge` has NO ROW for a pull request a PERSON landed, so it cannot be the estate's source
+  of "which commit landed this unit's work".** It records the orchestrator's OWN act (ADR-0020), and
+  those are a minority of landings. ADR-0030 assumed otherwise and would have made its own
+  acceptance subject permanently unreachable — PR #81 was landed by a person. The answer that covers
+  every landing route is the **landing ledger's observation** (`source_system: github`,
+  `observation_type: landing`, `subject_type: repo`,
+  `facts.what_changed.{repository, pull_request, head_commit, commit}`), derived from GitHub by an
+  independent program. **Confirm it against the orchestrator's own worker-written
+  `UnitPrBinding.head_sha` before using it** — a pull-request number alone would bind any unit that
+  shared it, and a `SDS-Unit:` trailer selects rather than answers. Note the ledger writes from
+  `src/landing_ledger`, which `src/orchestrator` cannot import; the two vocabularies are pinned by
+  `tests/contract/test_landing_fact_contract.py`, because a renamed key empties the candidate stream
+  in silence.
+
+- **Making a column of a UNIQUE constraint nullable SILENTLY SWITCHES THAT CONSTRAINT OFF.**
+  Postgres treats NULLs in a unique constraint as **distinct**, so a migration whose stated subject
+  is "these columns are now optional" also stops the constraint deduplicating every row that uses
+  the new option — invisibly. `UNIQUE NULLS NOT DISTINCT` (Postgres 15+, SQLAlchemy
+  `postgresql_nulls_not_distinct=True`) restores it; migration `0030_adr30_binding_kind` does this
+  and says so in its own header. **The test must write ROUND the service**: a service that compares
+  with `IS NULL` in Python dedupes whether or not the database would, so a service-level test
+  asserts the wrong noun — measured, by a mutation that deleted `NULLS NOT DISTINCT` and survived.
+
+- **A payload composed in one program and parsed in another crosses a boundary no unit test sees,
+  and the REQUEST MODEL is a second rule set on top of the service's.** The binding lane's first
+  live pass refused all twelve candidates with **HTTP 422, writing nothing**:
+  `CommandBase.expected_version` is `int = Field(ge=0)` — required, non-nullable — where the
+  service's dataclass is `int | None = None`. FastAPI answered before any service code ran, so no
+  named error was reachable and no service test could see it. **The request model is LOOSER than the
+  service in some places and STRICTER in others, so neither direction can be assumed.** A test may
+  import both sides: validate the composed payload against the route's own model, with a control on
+  the exact field. This is the `response_model`-drops-fields invariant in the opposite direction —
+  outbound silently loses keys, inbound loudly rejects them — and **the dry run is what makes it
+  cheap**, having reported twelve would-bind rows before anything permanent existed.
+
+- **An unkillable clause is a defect of the test suite, not a free safety margin.** A `kind`
+  comparison in `_same_binding_facts` could never differ, because the kind-conditional CHECK forces
+  the registry columns NULL for one kind and non-empty for the other, so two rows cannot share a
+  source tuple and differ in kind. It survived every mutation and was **removed rather than kept**:
+  a clause nothing can falsify sits beside clauses that can, and that is how a mutation set comes to
+  report a green it did not earn. Same family as the *allowlist entry that would read "in fact it is
+  called"* — when a check cannot fail, the predicate is wrong, not safe.
+
+- **A rot check keyed on ONE reader breaks when a SECOND reader arrives, and the failure looks like
+  the guard working.** `test_the_read_only_surface_is_what_the_reader_actually_uses` asserted that
+  `read_checkout` exercises every member of the git allowlist. Adding `merge-base` for the binding
+  lane reddened it — correct by its own predicate, wrong as a statement about the estate, since the
+  permission *is* watched, by a reader the test did not know about. **Widen such a check to the
+  UNION of its readers rather than allowlisting the new member**, which would have exempted a real
+  permission from the only thing watching it.
+
+- **AN ACCEPTED ADR WHOSE MECHANISM WAS NEVER BUILT DOES NOT SIT QUIETLY — IT RESURFACES AS AN OPEN
+  QUESTION AND GETS RE-LITIGATED, AND THE SECOND PASS MAY REACH THE OPPOSITE ANSWER.** Twice in one
+  week, both times costing real time and one of them nearly reversing a decision Devon had already
+  made:
+  - **ADR-0015** (2026-08-04) decided that a repository self-declares factory membership in
+    `PROJECT.md` frontmatter, *"repo-local and self-describing, rather than a list inside the kit
+    that the affected repository cannot see."* Never built. The consequence in August was that
+    `project-standards` was deliberately excluded and then re-onboarded three days later by a sweep
+    that never consulted the decision; the consequence on 2026-08-24 was six exchanges
+    reconstructing "which repos are in SDS scope" by hand, from four surfaces that disagree.
+  - **ADR-0025** (2026-08-17) decided that a `factory-delivery` change record is approved **by
+    policy, not by a click** — *"There is no per-record human approval."* Never built:
+    `change-manager`'s `deploy_policy.py` reached version 3 with all three versions pinning
+    `change_classes = frozenset({"dependency-update"})`. It was carried in the programme plan as an
+    OPEN decision, and on 2026-08-25 HQ explained it back to Devon as undecided and **recommended
+    the opposite**, on reasoning weaker than the ADR's own — the ADR kills per-record approval on a
+    structural ground (change-manager has no GitHub egress, so a record approval *cannot* show a
+    human what changed) that the second pass did not have. Devon: *"I thought we had already decided
+    this previously."*
+  **The rule: an Accepted ADR whose mechanism does not exist must appear as OUTSTANDING WORK, never
+  as an open question.** The two read identically in a planning document and are opposites — one
+  wants building, the other wants deciding, and filing the first as the second invites a
+  contradictory ruling. **Before presenting anything as an open decision, grep `docs/decisions/` for
+  its subject.** Both of these had an ADR whose *title* answered the question being asked.
+
+- **A `# not-a-vocabulary`-style comment that anticipates a future decision is not a record that the
+  decision was made.** `change_proposer/cli.py`'s `FACTORY_CHANGE_CLASS` comment ends *"it is the
+  name a human would add to a policy version if he decided these records should be pre-approved"* —
+  written 2026-08-16, one day before ADR-0025 decided exactly that. The comment still reads as
+  though the question is open, because nothing updates a comment when an ADR lands. **When an ADR
+  settles something a code comment anticipates, the comment is part of what the implementing change
+  must fix**, or the next reader takes the code's word over the decision's.
+
+- **A CONTENT DIGEST IDENTIFIES A TREE; AN IDEMPOTENCY KEY IDENTIFIES AN OPERATION. They coincide
+  only where one tree can produce one operation.** The machine-activation check was first keyed on
+  `machine-activation-check:{digest}` — and every unit of one repository shares a digest, six of
+  `intent-packages`' candidates sitting at one HEAD. The first observation would have been written
+  and **every sibling refused as `idempotency_conflict` on the first live pass, every pass, with no
+  way to settle it** (observations have no delete route). Caught by reading, not by a test; the
+  sibling binding lane had the right shape — `machine-activation:{work_unit_id}` — all along.
+  **Before keying anything on a digest, count how many subjects share it.** Same family as the
+  ADR-0022 frozen-facts trap, one field over.
+
+- **`uv sync --check` is a measurement and `uv sync --frozen --check` is a SAFE one.** Exit 0 means
+  synchronized, exit 1 not, and anything else is uv failing rather than answering — so branch on
+  those three, never on truthiness. **`--frozen` is what keeps it read-only:** without it the
+  command may re-resolve and rewrite `uv.lock`, so a checker would mutate the repository it is
+  reading. Measured 2026-08-25 across three working copies, the tree is byte-identical before and
+  after. **Two of the three enrolled Python checkouts were out of sync on the day the check
+  shipped** — `intent-packages` at ruff 0.16.2 against a lock of 0.16.3, and `security-standards`
+  at ruff **0.15.21** against the same 0.16.3, i.e. the repository that runs the scanner and the
+  Stop hook was executing across the 0.15/0.16 boundary the estate spent a day on. Not a
+  hypothetical. **Note what it does NOT ask:** whether the lockfile matches `pyproject.toml`. A
+  repository whose lock is stale relative to its manifest answers `yes`.
+
+- **Under `launchd`, `uv` is NOT on PATH — it lives in `~/.local/bin`, and the plists name only the
+  system directories.** A producer that shells out to `uv` must resolve it with `shutil.which` and
+  fall back to that path explicitly, or **every scheduled pass reports unmeasurable while working
+  perfectly from an operator's shell** — the exact shape the `env -i PATH=… HOME=…` probe rule
+  exists to catch, and a reminder that the probe is the only thing that sees it. This generalises
+  past `uv` to any tool installed by a user-level installer rather than a system package manager.
+
+- **`orchestrator`'s own machine-activation bindings are permanently `superseded`, and that is
+  correct rather than a finding.** They were written at a HEAD the machine has since moved past, and
+  the observation asserts that THIS artifact is what the next start executes — no longer true of
+  that tree. Not curable and **cannot recur**: the lane now binds and observes in the same pass. Do
+  not treat a superseded binding on `orchestrator` as drift; it is the record of the one window in
+  which the two steps were separate.
+
+- **`factory create` SCAFFOLDS AC-002 AS `human_review` / `approver: devon`, AND THAT ONE LINE MAKES
+  THE UNIT PERMANENTLY UNLANDABLE BY THE FACTORY.** Confirmed 2026-08-26 for
+  **`maintenance-remediation`**, not only `dependency-update` as this file previously recorded — the
+  scaffold carries it for both. `verifier_decided_completion`'s fifth disqualifier throws out a unit
+  where a human decided **anything at all**, including a criterion merely **RETAINED** rather than
+  mapped to the unit, because the condition is *"no human adjudication"* and not *"none among the
+  required criteria"*. **The refusal does not appear until `pr-merge-admission` refuses a unit that
+  has ALREADY COMPLETED** — after the write-once envelope and both human approvals are spent, costing
+  a whole package revision. **Model a landing package on `intent-packages-packaging-bump`** (the
+  first autonomous landing, ADR-0020) or `change-manager-resolved-state-display` (the first into a
+  deploying repository): each carries **exactly one** criterion, `automated_check`,
+  `approver: policy`.
+
+- **`intent_packages transition` RE-SNAPSHOTS the revision hash; `factory validate` does NOT CHECK
+  IT.** A package assembled by hand into a scaffolded directory validates **clean** while its
+  `lineage.yaml` still carries the scaffold's hash for a different document — measured 2026-08-26,
+  `bec9f9fe…` recorded against a package hashing to `4e3d22c0…`. The `transition` to
+  `ready_for_review` corrects it, so the normal path self-heals; a package that skipped the
+  transition would carry a lineage attesting a document nobody approved. Check with
+  `python -m intent_packages hash <dir>` against the lineage before approving anything hand-edited.
+
+- **A machine may register an intake ONLY BY NAMING THE APPROVED CHANGE RECORD THAT CAUSED IT.**
+  ADR-0027 removed `_require_human` so the CARRIER could complete a signal→record→package→intake
+  lane; it did **not** make every intake machine-registrable. A POST without a cause is
+  `409 intake_change_record_required` — *"register it with the change record id, or register it as a
+  human"*. So a package HQ authors from a backlog item has no such record and **the human paste is
+  the provenance**, not ceremony: it is the asymmetric registrar guard preserving the escape hatch
+  the `orchestrator-intake-human` router's deletion was checked against. `factory submit` stopping
+  at a printed payload is CORRECT for that path, and reading its "human gate (ADR-0006)" message as
+  stale is the mistake — HQ made it on 2026-08-26 and the guard caught it.
+
+- **`constraints.work_unit_id` must be OMITTED from a hand-authored envelope** —
+  `authority_work_unit_id_forbidden`, *"assigned by the orchestrator at proposal time"*. The pinned
+  cross-repo fixtures carry `"work_unit_id": "__WORK_UNIT_ID__"` as a placeholder, so copying a
+  fixture verbatim is a named refusal. Everything else in
+  `tests/fixtures/runner_authority_envelope_edit.json` IS the shape to copy for edit-shaped work.
+
+- **The dispatch route requires `runner_attempt` and it is NOT reusable — a skipped dispatch spends
+  the ordinal.** Omitting it is a FastAPI 422 before any service code runs. Worse, `dispatch_unit`
+  looks up by `(work_unit_id, runner_attempt)` and **returns the existing record** for a reused
+  ordinal: HTTP 200, byte-shaped like a real dispatch, having fired nothing. A dispatch refused by
+  an admission term still WRITES A RECORD at that ordinal, so a refusal consumes it. Measured
+  2026-08-26 on one unit: attempt 1 skipped (`outside_change_window`), attempt 2 skipped (control),
+  attempt 3 dispatched. **Verify a dispatch by a NEW record id, never by `status` alone.**
+
+- **`work_units.version` is not served by any read surface a client can rely on, so probing is the
+  documented client contract — and the `version_conflict` error carries NO `current_version`.**
+  `in-flight-units` excludes DRAFT and terminal units; the evidence pack projects `version: null`;
+  the status ledger does not carry it. Measured 2026-08-26: the error's `details` is `null`, so this
+  file's advice to *"read `current_version` off the error"* does not work. Probe upward from a
+  plausible value — a wrong guess is a harmless 409 — and note that **recording evidence bumps the
+  version too**, so a value read before one POST is stale for the next.
+
+- **Merge admission refuses on FOUR terms while a unit is merely SUBMITTED, and three of them clear
+  by running the verifier rather than by waiting.** Reading `pr-merge-admission` (a GET, mutating
+  nothing) before attempting a merge is the cheap way to see which. Measured 2026-08-26:
+  `work_unit_not_completed`, `criteria_not_verifier_decided`, `criteria_evidence_not_observed`,
+  `merge_outside_change_window` → after `verifier-evidence/named-check` + `/verify`, exactly
+  `merge_outside_change_window` remained. **Nothing runs the verifier automatically** — HQ drives it
+  with the VERIFIER credential, and `check_name` must be the JOB name
+  (`Lint, type-check, and test` in `change-manager`, whose WORKFLOW is called `Quality`).

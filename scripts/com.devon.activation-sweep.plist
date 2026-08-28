@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the daily machine-activation sweep LaunchAgent (ADR-0030). Install with
+     scripts/install-activation-sweep-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__
+     and writes ~/Library/LaunchAgents/com.devon.activation-sweep.plist.
+
+     No secrets live here: the wrapper fetches the OBSERVER bearer from BWS at runtime.
+
+     RunAtLoad is false. The sweep answers a question about the machine's disk, which does not
+     change at login in a way a scheduled pass will miss, and a login-time run would only add
+     load.
+
+     StartCalendarInterval is 07:10 local: after the overnight landings, and twenty minutes
+     before the landing ledger's own 07:30 pass, so a morning's reading of the log runs from the
+     machine outwards.
+
+     The exit code is the report. launchd discards it, so read the log: 0 clean, 2 findings,
+     3 something could not be measured. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.activation-sweep</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-activation-sweep.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>10</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- `__HOME__/.local/bin` is where `uv` lives, and the bind lane's activation check
+             runs it to ask whether each working copy's environment matches its lockfile. The
+             producer also falls back to that exact path when PATH does not carry it, so a plist
+             that has not been reinstalled still measures rather than reporting unmeasurable. -->
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/activation-sweep.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/activation-sweep.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

@@ -10,6 +10,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.capability_vocabulary import RUNNER_CAPABILITIES
+from orchestrator.change_window_override import (
+    ChangeWindowOverride,
+    override_record,
+    suppressed,
+)
 from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import OUTSIDE_CHANGE_WINDOW
@@ -52,6 +57,10 @@ class DispatchCommand:
     actor: ActorContext
     idempotency_key: str
     expected_version: int | None = None
+    # A supervised run may start outside the hours policy declares (ADR-0032). Carrying one
+    # suppresses `outside_change_window` and NOTHING else, and it is per act: an override on this
+    # call says nothing about landing the pull request the run produces.
+    change_window_override: ChangeWindowOverride | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +72,11 @@ class AdmissionDecision:
     # a decision blocked before that term never consulted it, so citing it would record a
     # suppression that was never used.
     authority_recognised_by: tuple[str, ...] = ()
+    # Whether an override actually suppressed the window refusal, as opposed to being carried and
+    # not needed. `_record` cannot write that truthfully unless the composition reports it: a run
+    # inside the declared hours, and one refused by a term ordered above the window, both leave
+    # the window's answer either irrelevant or unread.
+    change_window_override_applied: bool = False
 
 
 class WorkflowDispatcher(Protocol):
@@ -194,8 +208,18 @@ def _dispatch_work_unit(
         reach_admission_refusal(session, revision),
         change_window_refusal(session, revision, clock),
         landing_source,
+        command.change_window_override,
     )
     repository = admission.target_repository
+    # Written down on every outcome, including the ones where it suppressed nothing: the question
+    # a record has to answer is why this run started when it did, and "an override was offered and
+    # was not needed" is one of the answers.
+    override = override_record(
+        command.change_window_override,
+        applied=admission.change_window_override_applied,
+        authority_approval_id=unit.authority_approval_id,
+        authority_fingerprint=unit.authority_fingerprint,
+    )
     if admission.authority_recognised_by:
         _record_authority_gate_not_required(session, command, unit, gate)
     if admission.reason is not None:
@@ -208,10 +232,11 @@ def _dispatch_work_unit(
             repository=repository,
             status="skipped" if _is_skipped_reason(admission.reason) else "blocked",
             reason_code=admission.reason,
-            payload=_payload(unit, settings, repository),
+            payload=_payload(unit, settings, repository, override),
+            change_window_override=override,
         )
 
-    payload = _payload(unit, settings, repository)
+    payload = _payload(unit, settings, repository, override)
     try:
         result = dispatcher.dispatch_workflow(
             repository=repository,
@@ -240,6 +265,7 @@ def _dispatch_work_unit(
             reason_code="failure_signature_circuit_open" if status == "blocked" else error.code,
             failure_signature=signature,
             payload=payload | {"failure_code": error.code},
+            change_window_override=override,
         )
 
     return _record_dispatch(
@@ -253,6 +279,7 @@ def _dispatch_work_unit(
         payload=payload,
         github_run_id=result.get("workflow_run_id"),
         github_run_url=result.get("workflow_run_url"),
+        change_window_override=override,
     )
 
 
@@ -302,6 +329,7 @@ def _blocked_reason(
     reach_refusal: str | None,
     window_refusal: str | None,
     landing_source: EstateLandingSource,
+    change_window_override: ChangeWindowOverride | None = None,
 ) -> AdmissionDecision:
     """Why this unit may not run, in the order the terms are cheapest to answer.
 
@@ -349,12 +377,18 @@ def _blocked_reason(
         return AdmissionDecision(estate_reason, target_repository)
     if unit.authority_approval_id is None and gate.refusals:
         return AdmissionDecision("authority_approval_missing", target_repository)
+    envelope_reason = _envelope_reason(unit, settings, envelope, target_repository)
+    window, overridden = suppressed(window_refusal, change_window_override)
     return AdmissionDecision(
-        _envelope_reason(unit, settings, envelope, target_repository) or window_refusal,
+        envelope_reason or window,
         target_repository,
         # Cited only where it was USED: a unit carrying a human's approval passed the term on that
         # approval, whatever policy would also have said about it.
         () if unit.authority_approval_id is not None else gate.recognised_by,
+        # Likewise USED rather than offered, and the envelope terms are asked first: a unit the
+        # envelope refuses never reached the window, so an override on that call suppressed
+        # nothing and must not be recorded as though it had.
+        overridden and envelope_reason is None,
     )
 
 
@@ -439,8 +473,7 @@ def _target_repository(envelope: AuthorityEnvelope) -> str:
     The runner refuses to act unless the workflow it runs in IS the unit's target repo,
     so a process-global target would misroute every fan-out unit rather than fail.
     """
-    repository = envelope.constraints.get("target_repository")
-    return repository if isinstance(repository, str) else ""
+    return envelope.target_repository
 
 
 def _conformance_blocked_reason(envelope: AuthorityEnvelope) -> str | None:
@@ -512,10 +545,18 @@ def _next_runner_attempt(session: Session, unit: WorkUnit) -> int:
     return max(unit.attempt_count, latest or 0) + 1
 
 
-def _payload(unit: WorkUnit, settings: DispatchSettings, repository: str) -> dict[str, Any]:
+def _payload(
+    unit: WorkUnit,
+    settings: DispatchSettings,
+    repository: str,
+    override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     # Only inputs the caller workflow declares: GitHub rejects the whole dispatch with 422
     # `Unexpected inputs provided` otherwise. The callback URL is not one of them — the
     # caller workflow passes it to the reusable workflow itself.
+    #
+    # The override sits OUTSIDE `workflow_dispatch`, deliberately: everything under that key is
+    # what was sent to the remote, and the remote is told nothing about it.
     inputs = {"work_unit_id": str(unit.id)}
     return {
         "workflow_dispatch": {
@@ -530,6 +571,7 @@ def _payload(unit: WorkUnit, settings: DispatchSettings, repository: str) -> dic
             "sds_unit": str(unit.id),
             "sds_package_rev": str(unit.work_package_revision_id),
         },
+        "change_window_override": override,
     }
 
 
@@ -585,6 +627,7 @@ def _record_dispatch(
     failure_signature: str | None = None,
     github_run_id: str | None = None,
     github_run_url: str | None = None,
+    change_window_override: dict[str, Any] | None = None,
 ) -> DispatchRecord:
     record = DispatchRecord(
         work_unit_id=unit.id,
@@ -619,6 +662,7 @@ def _record_dispatch(
             "workflow_ref": settings.workflow_ref,
             "github_run_id": github_run_id,
             "failure_signature": failure_signature,
+            "change_window_override": change_window_override,
         },
         correlation_id=uuid.uuid4(),
         idempotency_key=f"{command.idempotency_key}:event",

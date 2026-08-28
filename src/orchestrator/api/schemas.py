@@ -15,6 +15,21 @@ class CommandBase(BaseModel):
     expected_version: int = Field(ge=0)
 
 
+class ChangeWindowOverrideModel(BaseModel):
+    """A supervised act's statement that it may start outside the hours policy declares.
+
+    `reason` is deliberately UNCONSTRAINED here, against this module's habit of `min_length=1`.
+    A constrained field would answer `{}` and `{"reason": null}` with a 422 listing a field
+    location, where the requirement is a named refusal a caller can act on -- and the requirement
+    itself belongs to the type that carries the override, so it holds for a caller reaching the
+    services directly as well as for this one. Presence is what declares the override; the reason
+    is what makes the record worth reading, and the two are separable only if this model lets an
+    override arrive without one.
+    """
+
+    reason: str | None = None
+
+
 class ClaimCommand(CommandBase):
     standing_context: dict[str, Any] | None = None
 
@@ -104,6 +119,9 @@ class PreflightCommandModel(CommandBase):
 
 class DispatchCommandModel(CommandBase):
     runner_attempt: int = Field(gt=0)
+    # ADR-0032. Suppresses `outside_change_window` and nothing else, and grants nothing to the
+    # act that lands the pull request the run produces -- that act carries its own.
+    change_window_override: ChangeWindowOverrideModel | None = None
 
 
 class InfraLaneLinkCommandModel(CommandBase):
@@ -129,9 +147,14 @@ class ReleaseArtifactCommandModel(CommandBase):
     implementation_pr_number: int | None = Field(default=None, gt=0)
     source_commit: str = Field(min_length=1)
     merge_commit: str = Field(min_length=1)
-    artifact_registry: str = Field(min_length=1)
-    artifact_repository: str = Field(min_length=1)
-    artifact_name: str = Field(min_length=1)
+    # Defaulted so every existing caller keeps its meaning. The registry three below are
+    # OPTIONAL here and conditional in the service, which is the authority: a container image
+    # requires them and a machine-local activation refuses them. Loosening the wire while the
+    # service still refuses keeps one rule in one place.
+    kind: str = "container_image"
+    artifact_registry: str | None = None
+    artifact_repository: str | None = None
+    artifact_name: str | None = None
     artifact_digest: str = Field(min_length=1)
     artifact_tag: str | None = None
     workflow_run_id: str | None = None
@@ -149,18 +172,30 @@ class ReleaseArtifactCommandModel(CommandBase):
 
 
 class DeploymentObservationCommandModel(CommandBase):
+    """The wire shape of both activation models, LOOSER than either one on its own.
+
+    Every field a machine-local observation cannot carry is optional here and conditional in the
+    service, which is the authority: a hosted observation requires the URLs and the five
+    probe-shaped summaries, a machine-local one refuses them and requires the activation summary.
+    Loosening the wire while the service still refuses keeps one rule in one place -- and this
+    model is a SECOND rule set the service's own tests never traverse, so a producer's composed
+    payload is validated against it directly by `tests/contract`.
+    """
+
     environment: str = Field(min_length=1)
-    base_url: str = Field(min_length=1)
+    base_url: str | None = None
     observed_artifact_digest: str = Field(min_length=1)
     deployment_ref: str = Field(min_length=1)
-    deployment_url: str = Field(min_length=1)
-    deployer: str = Field(min_length=1)
+    deployment_url: str | None = None
+    deployer: str | None = None
     observed_at: datetime
-    probe_summary: dict[str, Any]
-    route_summary: dict[str, Any]
-    auth_summary: dict[str, Any]
-    dispatch_summary: dict[str, Any]
-    status_summary: dict[str, Any]
+    kind: str = "container_image"
+    probe_summary: dict[str, Any] = Field(default_factory=dict)
+    route_summary: dict[str, Any] = Field(default_factory=dict)
+    auth_summary: dict[str, Any] = Field(default_factory=dict)
+    dispatch_summary: dict[str, Any] = Field(default_factory=dict)
+    status_summary: dict[str, Any] = Field(default_factory=dict)
+    activation_summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class ObservationCommandModel(CommandBase):
@@ -494,6 +529,12 @@ class PrMergeAdmissionResponse(BaseModel):
     target_repository: str
     pr_number: int | None
     verified_head_sha: str | None
+    # Always false on THIS route, and declared rather than hidden. The read surface carries no
+    # override of its own (ADR-0032), so what it reports is the true statement that nothing
+    # suppressed a term in the answer being read -- which is what a reader of a report needs to
+    # know. A field a response model does not declare is dropped in silence, and the repo-wide
+    # guard that this model answers with every field the service does is what caught the omission.
+    change_window_override_applied: bool
 
 
 class PrMergeCommandModel(CommandBase):
@@ -505,7 +546,14 @@ class PrMergeCommandModel(CommandBase):
     and stating the version it read is what makes "nothing moved in between" the caller's claim
     rather than an assumption. The act re-evaluates every term regardless, so this is a second
     guard rather than the only one.
+
+    `change_window_override` (ADR-0032) suppresses `merge_outside_change_window` and nothing else.
+    It is this act's own: an override supplied when the run was started grants nothing here, and
+    the reverse holds too. The asymmetry is the point -- the run produced a pull request that
+    changed nothing outside a repository, and landing it changes what is already serving.
     """
+
+    change_window_override: ChangeWindowOverrideModel | None = None
 
 
 class PrMergeResponse(BaseModel):
@@ -605,6 +653,12 @@ class EstateLandingAdmissionResponse(BaseModel):
     # field added to the service alone would pass every service-level assertion and reach no
     # caller. This estate has already shipped that exact defect once, on the runner brief.
     branch_update_qualifies: bool
+    # ADR-0024, and it is here under the same hazard as the line above. The reporting agent
+    # classifies a rollout-pin refusal by whether the BASE carries the pinned bytes -- a fact it
+    # cannot observe for itself, because it reads no repository and this is the only surface that
+    # could tell it. Undeclared, the answer carries the field on the service object and nothing on
+    # the wire, and the agent falls back to its fail-toward-a-finding default forever.
+    rollout_base_matches_pin: bool
 
 
 class EstateBranchUpdateCommandModel(BaseModel):
@@ -684,9 +738,10 @@ class ReleaseArtifactResponse(BaseModel):
     implementation_pr_number: int | None
     source_commit: str
     merge_commit: str
-    artifact_registry: str
-    artifact_repository: str
-    artifact_name: str
+    kind: str
+    artifact_registry: str | None
+    artifact_repository: str | None
+    artifact_name: str | None
     artifact_digest: str
     artifact_tag: str | None
     workflow_run_id: str | None
@@ -708,6 +763,29 @@ class ReleaseArtifactResponse(BaseModel):
     idempotency_key: str
 
 
+class MachineActivationCandidateResponse(BaseModel):
+    """One completed unit a machine-local working copy could bind a release artifact for.
+
+    Everything here is the ORCHESTRATOR's half of the answer. Whether the working copy actually
+    holds `merge_commit`, and what its content digest is, are facts only the machine has.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    work_unit_id: UUID
+    work_package_revision_id: UUID
+    package_revision_hash: str
+    unit_key: str
+    work_unit_version: int
+    source_repository: str
+    pr_number: int
+    source_commit: str
+    merge_commit: str
+    binding_id: UUID | None
+    binding_artifact_digest: str | None
+    observation_id: UUID | None
+
+
 class DeploymentObservationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -716,23 +794,25 @@ class DeploymentObservationResponse(BaseModel):
     implementation_work_unit_id: UUID
     work_package_revision_id: UUID
     package_revision_hash: str
-    post_deploy_work_unit_id: UUID
+    kind: str
+    post_deploy_work_unit_id: UUID | None
     environment: str
-    base_url: str
+    base_url: str | None
     observed_artifact_digest: str
     deployment_ref: str
-    deployment_url: str
-    deployer: str
+    deployment_url: str | None
+    deployer: str | None
     observed_at: datetime
     probe_summary: dict[str, Any]
     route_summary: dict[str, Any]
     auth_summary: dict[str, Any]
     dispatch_summary: dict[str, Any]
     status_summary: dict[str, Any]
+    activation_summary: dict[str, Any]
     recorded_by: str
     recorded_at: datetime
     event_id: UUID
-    post_deploy_event_id: UUID
+    post_deploy_event_id: UUID | None
     evidence_ids: list[str]
     idempotency_key: str
 
@@ -985,6 +1065,10 @@ class PackageIntakeRegistration(CommandBase):
     acceptance_criteria: list[PackageAcceptanceCriterionCommand] = Field(min_length=1)
     intake_purpose: Literal["executable", "protocol_fixture"] = "executable"
     follow_up: dict[str, Any] | None = None
+    # ADR-0026: the change-manager record a human approved to cause this work. Bounded by int4
+    # because the column is an Integer, and `strict` because pydantic's lax mode reads `true`
+    # as 1 -- which would attribute a revision to change record 1 rather than refusing.
+    change_record_id: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
 
 
 class PackageAcceptanceCriterionResponse(BaseModel):
@@ -1000,6 +1084,7 @@ class PackageAcceptanceCriterionResponse(BaseModel):
 
 class PackageIntakeResponse(BaseModel):
     id: UUID
+    change_record_id: int | None = None
     package_id: str
     source_repository: str
     revision: int
@@ -1603,12 +1688,19 @@ class EvidencePackEventPublicationResponse(BaseModel):
 
 
 class EvidencePackEventResponse(BaseModel):
+    """One event, projected. A key this model does not declare is silently dropped, so a payload
+    field a reader needs has to be named here as well as written there."""
+
     occurred_at: datetime
     action: str
     actor_id: str
     from_state: str | None = None
     to_state: str | None = None
     reason: str | None = None
+    # ADR-0032, on the two acts that can carry one. Full fidelity in this JSON, which is
+    # authenticated; the markdown renderer relays onto a possibly-public pull request comment and
+    # deliberately does not interpolate the operator's words.
+    change_window_override: dict[str, Any] | None = None
 
 
 class EvidencePackResponse(BaseModel):
@@ -1666,6 +1758,11 @@ class TraceabilityIntentHop(BaseModel):
     source_path: str
     source_commit: str
     registered_by: str
+    # ADR-0026. The chain could already answer what a work unit caused; this is the half that
+    # says what caused the work. It belongs on the intent hop because the revision is where the
+    # link is stored -- an observation would not do, because the observation hop filters on
+    # `subject_type="work_unit"`, so a revision-scoped observation never reaches any chain.
+    change_record_id: int | None = None
 
 
 class TraceabilityUnitHop(BaseModel):
@@ -1692,9 +1789,12 @@ class TraceabilityCommitHop(BaseModel):
 
 class TraceabilityArtifactHop(BaseModel):
     artifact_digest: str
-    artifact_registry: str
-    artifact_repository: str
-    artifact_name: str
+    # The ONE field that separates the estate's two activation models. A reader who does not know
+    # which repository is hosted and which is machine-local reads this and knows anyway.
+    kind: str
+    artifact_registry: str | None = None
+    artifact_repository: str | None = None
+    artifact_name: str | None = None
     artifact_tag: str | None = None
     workflow_run_url: str | None = None
     builder_id: str | None = None
@@ -1703,15 +1803,24 @@ class TraceabilityArtifactHop(BaseModel):
 
 
 class TraceabilityDeploymentHop(BaseModel):
+    """One observation of an artifact being live, in whichever of the two activation models.
+
+    `kind` is the single field that separates them: a hosted deployment carries the URL and the
+    probe summary, a machine-local activation carries neither and reports the activation summary
+    instead. A reader can tell which without knowing anything about the repository.
+    """
+
     environment: str
+    kind: str
     observed_artifact_digest: str
     digest_matches: bool
     deployment_ref: str
-    deployment_url: str
-    deployer: str
+    deployment_url: str | None
+    deployer: str | None
     observed_at: datetime
     status_summary: dict[str, Any]
     probe_summary: dict[str, Any]
+    activation_summary: dict[str, Any]
 
 
 class TraceabilityConditionHop(BaseModel):
@@ -1747,3 +1856,30 @@ class TraceabilityChainResponse(BaseModel):
 class TraceabilityResponse(BaseModel):
     anchor: TraceabilityAnchorResponse
     chains: list[TraceabilityChainResponse]
+
+
+class ChangeRecordUnitResponse(BaseModel):
+    """One unit the change record caused, and the state the verdict below was computed from."""
+
+    unit_id: UUID
+    unit_key: str
+    revision_id: UUID
+    state: str
+
+
+class ChangeRecordWorkResponse(BaseModel):
+    """What a change record caused, and whether it is done (ADR-0029).
+
+    `all_units_completed` is named for the narrow rule rather than for anything that reads as a
+    synonym for "settled": it is true when there is at least one unit and every one of them is
+    `completed`, and false for every other shape including a record nothing has carried yet.
+
+    The units are served ALONGSIDE the verdict rather than instead of it. A response model drops
+    every key it does not declare, so a consumer reading a field this model omits gets silence --
+    which is why the evidence for the verdict has to be declared here to travel at all.
+    """
+
+    change_record_id: int
+    revision_ids: list[UUID]
+    units: list[ChangeRecordUnitResponse]
+    all_units_completed: bool

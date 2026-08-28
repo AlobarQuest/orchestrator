@@ -168,3 +168,87 @@ def test_a_digest_mismatch_is_rejected_and_the_condition_survives_the_rollback(
         assert [row.condition_type for row in rows] == ["digest_divergence"]
         assert rows[0].observed_state["observed_artifact_digest"] == "sha256:" + "f" * 64
         assert rows[0].stored_state["artifact_digest"] == DIGEST
+
+
+MACHINE_DIGEST = "sha256:" + "9" * 64
+
+
+def machine_local_artifact(db_client: TestClient, migrated_engine: Engine) -> str:
+    """A machine-local binding through the real route, so its observation meets the real gates."""
+    revision_id, unit_id = completed_unit(db_client, migrated_engine, key="activation-api")
+    body = release_body(revision_id, key="activation-api-binding")
+    body.update(
+        kind="machine_local",
+        artifact_registry=None,
+        artifact_repository=None,
+        artifact_name=None,
+        artifact_digest=MACHINE_DIGEST,
+    )
+    response = db_client.post(
+        f"/api/v1/work-units/{unit_id}/release-artifacts",
+        headers=SYSTEM,
+        json=body,
+    )
+    assert response.status_code == 201
+    return response.json()["id"]
+
+
+def activation_body(*, key: str = "activation-api-observation") -> dict[str, object]:
+    """The producer's shape: no URLs, no deployer, no probe-shaped summaries."""
+    return {
+        "idempotency_key": key,
+        "expected_version": 0,
+        "kind": "machine_local",
+        "environment": "operator_machine",
+        "observed_artifact_digest": MACHINE_DIGEST,
+        "deployment_ref": "b" * 40,
+        "observed_at": datetime(2026, 8, 23, 10, 34, 10, tzinfo=UTC).isoformat(),
+        "activation_summary": {
+            "merge_commit_present": "yes",
+            "console_entry_points_present": "yes",
+            "environment_matches_lock": "not_applicable",
+        },
+    }
+
+
+def test_the_route_serves_a_machine_local_activation_with_its_summary(
+    db_client: TestClient,
+    migrated_engine: Engine,
+) -> None:
+    """A field the response model does not declare is silently dropped, so the assertion that
+    matters is made against the SERVED body rather than against the service's return value."""
+    binding_id = machine_local_artifact(db_client, migrated_engine)
+
+    response = db_client.post(
+        f"/api/v1/release-artifacts/{binding_id}/deployment-observations",
+        headers=SYSTEM,
+        json=activation_body(),
+    )
+
+    assert response.status_code == 201
+    served = response.json()
+    assert served["kind"] == "machine_local"
+    assert served["activation_summary"]["console_entry_points_present"] == "yes"
+    assert served["base_url"] is None
+    assert served["deployment_url"] is None
+    assert served["deployer"] is None
+    assert served["post_deploy_work_unit_id"] is None
+    assert served["post_deploy_event_id"] is None
+
+
+def test_the_route_refuses_an_activation_whose_binding_describes_a_hosted_image(
+    db_client: TestClient,
+    migrated_engine: Engine,
+) -> None:
+    binding_id = release_artifact(db_client, migrated_engine)
+    body = activation_body(key="activation-on-a-hosted-binding")
+    body["observed_artifact_digest"] = DIGEST
+
+    response = db_client.post(
+        f"/api/v1/release-artifacts/{binding_id}/deployment-observations",
+        headers=SYSTEM,
+        json=body,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "deployment_observation_kind_mismatch"
