@@ -43,10 +43,21 @@ delta, so `update_type_of` returns nothing — its own docstring calls such a bu
 unlandable by this lane"*. Ten of thirteen are that shape, so no tuning of a type-based rule
 reaches any of them, ever. They are permanently stuck by construction rather than by policy.
 
-Under the type rule, those ten would each travel a standing package, a revision, a change record, a
-human approval, an intake, a decomposition, a second human approval, a dispatch, a coding agent,
-CI a second time, a verifier and a merge — to land a diff that was correct when Dependabot opened
-it. That is the toil ADR-0028 set out to remove, arriving by a longer road.
+**CORRECTED 2026-08-28, during the build, and the truth is a stronger argument than the draft.**
+This paragraph originally said those ten would each travel a standing package, a revision, a change
+record, two human approvals, a dispatch and a coding agent. **They would not, and never could.**
+`bump_proposer._consider` refuses a title stating no single delta — `unclassifiable` — *before*
+`rule.permits` is consulted, and `bump_of` returns `None` for every requirement range (measured
+against all ten real titles: `_version(">=83.0.0")` fails on `isdigit`).
+
+So the ten were reachable by **neither** mechanism: not the cascade, whose rule keys on a delta they
+do not state, and not the factory, which discards them one guard earlier. They were stuck in the gap
+*between* two lanes, which is why they have simply accumulated. The change's value is that it makes
+ten permanently-unreachable bumps landable — not that it saves them an expensive trip.
+
+**The factory's live queue today is therefore ONE, not the two or three an earlier draft of this ADR
+said:** `zod` #71. `fetch-metadata` parses but is already permitted by `major_ecosystems`, and the
+docker bump is `unclassifiable` for the same reason the ranges are.
 
 ## What the update-type rule was actually doing
 
@@ -102,7 +113,13 @@ coverage, and it is not new; what changes is how much of it is reached.
   argues for — a bump that changes the rollout workflow is exercised for the first time during the
   rollout it is meant to gate. That is deploy policy version 5, taken after this has run.
 - **The factory keeps exactly what it was built for.** Its queue becomes the bumps whose checks
-  fail: `zod`, where the MCP SDK's `server.tool()` signature shifts under zod 4, is the archetype.
-  Two or three, not thirteen. Standing-package coverage stops being the bottleneck it appeared to
+  fail: `zod`, where the MCP SDK's `server.tool()` signature shifts under zod 4, is the archetype —
+  and today it is the whole of that queue.
+  **`_consider` must move with this rule or the queue becomes ZERO.** Its skip condition is
+  `rule.permits(...)`, which under the new rule is true of nearly everything, so the one bump the
+  factory exists for would be handed to a cascade that cannot merge it. The predicate must also ask
+  whether the checks have CONCLUDED in failure — never merely "not green", since `PendingUpdate.checks`
+  holds only jobs that have concluded, so an empty set means *not yet judged* and treating that as a
+  failure would sweep every Dependabot pull request into the factory the minute it opened. Standing-package coverage stops being the bottleneck it appeared to
   be on 2026-08-27, and the scaffolding decision taken that day is held rather than reversed —
   nothing about it was wrong except its urgency.
