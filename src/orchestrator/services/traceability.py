@@ -175,6 +175,7 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
             deployment_hops.append(
                 TraceabilityDeploymentHop(
                     environment=obs.environment,
+                    kind=obs.kind,
                     observed_artifact_digest=obs.observed_artifact_digest,
                     # The deployment-observation writer enforces this equality at write time
                     # (`deployment_observation_digest_mismatch`), so through any public writer
@@ -188,6 +189,7 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
                     observed_at=obs.observed_at,
                     status_summary=obs.status_summary,
                     probe_summary=obs.probe_summary,
+                    activation_summary=obs.activation_summary,
                 )
             )
 
@@ -223,6 +225,7 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
             source_path=revision.source_path,
             source_commit=revision.source_commit,
             registered_by=revision.registered_by,
+            change_record_id=revision.change_record_id,
         ),
         unit=TraceabilityUnitHop(
             id=unit.id,
@@ -250,6 +253,7 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
         artifact=[
             TraceabilityArtifactHop(
                 artifact_digest=b.artifact_digest,
+                kind=b.kind,
                 artifact_registry=b.artifact_registry,
                 artifact_repository=b.artifact_repository,
                 artifact_name=b.artifact_name,

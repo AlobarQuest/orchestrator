@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,6 +24,10 @@ _PROTOCOL_FIXTURE_SOURCE = "protocol_fixture"
 _VALID_STATUSES = frozenset({"approved"})
 _VALID_PROTOCOL_FIXTURE_STATUSES = frozenset({"closed"})
 _VERIFICATION_MODE = "caller_attested_cli_verified"
+# ADR-0027. The roles that may register an intake. `register_revision` defaults to
+# `HUMAN_REGISTRARS` and this is the only caller that widens it -- having first applied the
+# asymmetric rule below, which is stricter than membership in this set.
+INTAKE_REGISTRAR_ROLES: Final = frozenset({ActorRole.HUMAN, ActorRole.SYSTEM})
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,15 @@ class PackageIntakeCommand:
     expected_version: int
     intake_purpose: str = "executable"
     follow_up: dict[str, Any] | None = None
+    # ADR-0026: the change-manager record a human approved to cause this work. Optional,
+    # because most intakes have no originating record and every intake before ADR-0026 had
+    # none. Recorded on trust: change-manager is the authority on its own records, the carry
+    # verifies the locator against the real package checkout before it prepares a payload, and
+    # a human gate that could not be completed while a foreign service was unreachable would be
+    # a worse failure than the one this would prevent. `EstatePrMerge.change_record_id` is the
+    # same trade against the same service -- the permission, written down at the moment it was
+    # exercised.
+    change_record_id: int | None = None
 
 
 def register_package_intake(
@@ -66,7 +79,7 @@ def register_package_intake(
     command: PackageIntakeCommand,
     actor: ActorContext,
 ) -> WorkPackageRevision:
-    _require_human(actor)
+    _require_intake_registrar(actor, command.change_record_id)
     if command.expected_version != 0:
         raise DomainError(
             "version_conflict",
@@ -129,8 +142,10 @@ def register_package_intake(
             verification_mode=command.verification_mode,
             verification_limitations=command.verification_limitations,
             follow_up=follow_up,
+            change_record_id=command.change_record_id,
             actor_id=actor.actor_id,
             actor_role=actor.role,
+            admitted_registrar_roles=INTAKE_REGISTRAR_ROLES,
             expected_version=command.expected_version,
         )
     except DomainError as error:
@@ -185,12 +200,46 @@ def _protocol_fixture_error(command: PackageIntakeCommand) -> DomainError | None
     return None
 
 
-def _require_human(actor: ActorContext) -> None:
-    if not actor.actor_id or actor.role is not ActorRole.HUMAN:
+def _require_intake_registrar(actor: ActorContext, change_record_id: int | None) -> None:
+    """Who may register an intake, and what a machine must name when it does. ADR-0027.
+
+    THE ASYMMETRY IS THE WHOLE GUARD, so it is one function rather than two checks that could
+    drift apart. `_require_human` used to stand here and was protecting a transcription: every
+    intake in production was authored by an AI and typed into a form by a person, so the gate
+    asked a human to retype a machine's work. What replaces it is attribution.
+
+    - HUMAN: admitted, and `change_record_id` stays optional. The hand-registration escape hatch
+      must not break, and every intake before ADR-0026 names no record at all.
+    - SYSTEM: admitted, and `change_record_id` is REQUIRED. The fail-open this closes is a
+      machine-registered intake with no reference -- canonical work with no decision behind it,
+      which is the one thing the human act weakly prevented.
+    - Any other role, or no actor at all: refused. ADR-0026 gave OBSERVER leave to propose;
+      registering is a different verb, and the worker and verifier credentials were never
+      offered this and do not gain it here.
+
+    THE REFERENCE IS RECORDED ON TRUST, NOT VERIFIED. Nothing here asks change-manager whether
+    that record exists or was approved, and nothing should: it would put a synchronous read of a
+    foreign service inside the transaction that writes canonical work, so a service outage would
+    become a refusal to record work a person had already approved. The carrier reads only
+    approved items and is the component that already holds that answer, so the check belongs
+    there, before the call. A reader must not take this guard for validation of the record.
+
+    The requirement is blanket across `intake_purpose` rather than scoped to the executable
+    lane. A protocol fixture cannot create work units, so it is not the canonical work the rule
+    is about -- but nothing registers one by machine today, and a machine that ever does can
+    name its cause like any other.
+    """
+    if not actor.actor_id or actor.role not in INTAKE_REGISTRAR_ROLES:
         raise DomainError(
-            "human_actor_required",
-            "registration requires a registered human actor",
+            "intake_registrar_invalid",
+            "an intake is registered by a human or by the system actor",
             None,
+        )
+    if actor.role is not ActorRole.HUMAN and not change_record_id:
+        raise DomainError(
+            "intake_change_record_required",
+            "a machine-registered intake must name the approved change record that caused it",
+            "register it with the change record id, or register it as a human",
         )
 
 
@@ -265,12 +314,16 @@ def _legacy_identity_matches(
       intake did not exist before intake_purpose did, so a protocol_fixture event has always
       carried it and never needs this exemption. The `verification_limitations` normalization
       that goes with it is scoped the same way, for the same reason.
+    - `change_record_id` (ADR-0026) applies to every intake_purpose, like `follow_up`, and for
+      the same reason: both lanes could have been registered before the key existed.
     """
     if not isinstance(observed, dict):
         return False
     legacy = dict(expected)
     if command.follow_up is None and "follow_up" not in observed:
         legacy.pop("follow_up", None)
+    if command.change_record_id is None and "change_record_id" not in observed:
+        legacy.pop("change_record_id", None)
     if command.intake_purpose == "executable" and "intake_purpose" not in observed:
         legacy.pop("intake_purpose", None)
         expected_limitations = legacy.get("verification_limitations")
@@ -306,6 +359,11 @@ def _command_identity(
         "verification_mode": command.verification_mode,
         "verification_limitations": _normalize_json(command.verification_limitations),
         "follow_up": _normalize_json(command.follow_up),
+        # ADR-0026. IN the identity, deliberately: two intakes of one package revision that name
+        # different change records are two different registrations, and leaving it out would
+        # make the second a silent replay of the first -- which defeats recording a cause at all.
+        # It therefore needs the legacy exemption below, exactly as `follow_up` does.
+        "change_record_id": command.change_record_id,
         "enforcement_snapshot": _normalize_json(command.enforcement_snapshot),
         "authority": command.authority.normalized(),
         "registry_version": command.registry_version,

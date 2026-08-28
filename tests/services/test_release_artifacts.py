@@ -2,7 +2,9 @@ import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+import pytest
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -12,6 +14,7 @@ from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import register_approved_unit, register_revision
 from orchestrator.services.release_artifacts import (
     ReleaseArtifactCommand,
+    _stored_command,
     list_release_artifacts,
     record_release_artifact,
 )
@@ -271,3 +274,290 @@ def test_release_artifact_lists_bindings_for_work_unit(migrated_session: Session
     assert [row.id for row in rows] == [first.id, second.id]
     assert isinstance(missing, DomainError)
     assert missing.code == "work_unit_not_found"
+
+
+# ---------------------------------------------------------------------------
+# ADR-0030: the machine-local kind.
+#
+# The subject is the estate's SECOND activation model -- a change becomes live on the operator
+# machine when the code is pulled into a working copy. It reuses this table with an explicit kind
+# discriminator, and every test below exists because a placeholder in one of the registry columns
+# would make the two models indistinguishable in exactly the columns a reader separates them by.
+# ---------------------------------------------------------------------------
+
+MACHINE_DIGEST = "sha256:" + "9" * 64
+
+
+def machine_local_command(
+    unit: WorkUnit, *, key: str = "machine-activation-1"
+) -> ReleaseArtifactCommand:
+    """A machine-local binding, with the registry three ABSENT rather than blanked."""
+    return replace(
+        command(unit, key=key),
+        kind="machine_local",
+        artifact_registry=None,
+        artifact_repository=None,
+        artifact_name=None,
+        artifact_digest=MACHINE_DIGEST,
+        artifact_tag=None,
+        workflow_run_id=None,
+        workflow_run_attempt=None,
+        workflow_path=None,
+        workflow_ref=None,
+        workflow_run_url=None,
+        builder_id=None,
+        builder_class=None,
+        provenance_ref=None,
+        provenance_digest=None,
+        sbom_ref=None,
+        sbom_digest=None,
+        summary={"activation": {"path": "/Users/x/Projects/orchestrator", "head": "a" * 40}},
+    )
+
+
+def test_a_machine_local_binding_is_recorded_with_no_registry_coordinates(
+    migrated_session: Session,
+) -> None:
+    unit = completed_unit(migrated_session, key="machine-local-unit")
+
+    binding = record_release_artifact(migrated_session, machine_local_command(unit))
+
+    assert isinstance(binding, ReleaseArtifactBinding)
+    assert binding.kind == "machine_local"
+    assert binding.artifact_registry is None
+    assert binding.artifact_repository is None
+    assert binding.artifact_name is None
+    assert binding.artifact_digest == MACHINE_DIGEST
+
+
+def test_a_container_binding_and_a_machine_local_binding_differ_in_one_readable_field(
+    migrated_session: Session,
+) -> None:
+    """Acceptance 3: told apart by reading ONE field, without knowing which repository is which.
+
+    Both bindings are recorded against the SAME unit deliberately. A unit can legitimately reach a
+    registry image and a working copy, so the discriminator has to separate them where nothing
+    else does -- not merely where the repositories happen to differ.
+    """
+    unit = completed_unit(migrated_session, key="both-kinds-unit")
+
+    container = record_release_artifact(migrated_session, command(unit, key="container-1"))
+    machine = record_release_artifact(migrated_session, machine_local_command(unit))
+
+    assert isinstance(container, ReleaseArtifactBinding)
+    assert isinstance(machine, ReleaseArtifactBinding)
+    assert {container.kind, machine.kind} == {"container_image", "machine_local"}
+    rows = list_release_artifacts(migrated_session, unit.id)
+    assert isinstance(rows, tuple)
+    assert len(rows) == 2
+
+
+def test_a_machine_local_binding_refuses_a_registry_placeholder(
+    migrated_session: Session,
+) -> None:
+    """REFUSED, not ignored. Silently dropping "local" would let the caller believe it landed."""
+    unit = completed_unit(migrated_session, key="placeholder-unit")
+
+    error = record_release_artifact(
+        migrated_session,
+        replace(machine_local_command(unit), artifact_registry="local"),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "release_artifact_invalid"
+    assert "artifact_registry" in error.message
+
+
+def test_a_container_binding_still_requires_its_registry_coordinates(
+    migrated_session: Session,
+) -> None:
+    """The control for the test above: relaxing the columns must not relax the container path."""
+    unit = completed_unit(migrated_session, key="container-required-unit")
+
+    error = record_release_artifact(
+        migrated_session, replace(command(unit), artifact_registry="  ")
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "release_artifact_invalid"
+    assert "artifact_registry" in error.message
+
+
+def test_an_unknown_kind_is_refused(migrated_session: Session) -> None:
+    unit = completed_unit(migrated_session, key="unknown-kind-unit")
+
+    error = record_release_artifact(migrated_session, replace(command(unit), kind="working_copy"))
+
+    assert isinstance(error, DomainError)
+    assert error.code == "release_artifact_kind_invalid"
+
+
+def test_a_machine_local_binding_still_refuses_a_bare_commit_sha(
+    migrated_session: Session,
+) -> None:
+    """Acceptance 4: `_validate_digests` is unchanged and still refuses a commit.
+
+    This is the control for the whole design. ADR-0030 reused this table rather than relaxing the
+    validator, precisely because a digest column silently holding a commit is what would make the
+    two models indistinguishable in the data. A machine-local binding therefore supplies a real
+    content digest, and a commit is refused for it exactly as for a container image.
+    """
+    unit = completed_unit(migrated_session, key="bare-commit-unit")
+
+    error = record_release_artifact(
+        migrated_session,
+        replace(machine_local_command(unit), artifact_digest=MERGE_COMMIT),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "release_artifact_digest_invalid"
+
+
+def test_recording_a_machine_local_binding_twice_replays_rather_than_duplicating(
+    migrated_session: Session,
+) -> None:
+    """Acceptance 6, the deliberate replay path."""
+    unit = completed_unit(migrated_session, key="replay-unit")
+
+    first = record_release_artifact(migrated_session, machine_local_command(unit))
+    second = record_release_artifact(migrated_session, machine_local_command(unit))
+
+    assert isinstance(first, ReleaseArtifactBinding)
+    assert isinstance(second, ReleaseArtifactBinding)
+    assert first.id == second.id
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(ReleaseArtifactBinding)
+            .where(ReleaseArtifactBinding.work_unit_id == unit.id)
+        )
+        == 1
+    )
+
+
+def test_a_stored_command_recorded_before_kind_existed_reads_as_a_container_image() -> None:
+    """A stored payload with no `kind` must not turn an honest replay into a conflict.
+
+    Every command payload written before ADR-0030 omits the key, and `_validate_idempotent_replay`
+    compares the stored payload against the command being replayed -- so without this the
+    idempotency guarantee breaks for exactly the historical rows nobody can rewrite.
+
+    ASSERTED ON THE RULE RATHER THAN END TO END, and the reason is a property of the database:
+    `events` is append-only (`reject_append_only_mutation`), so no test can age a real event's
+    payload into the historical shape. The rule is what a mutation would have to delete, and this
+    is what would red.
+    """
+    modern = {"command": {"artifact_digest": DIGEST, "kind": "machine_local"}}
+    historical = {"command": {"artifact_digest": DIGEST}}
+
+    assert _stored_command(modern) == {"artifact_digest": DIGEST, "kind": "machine_local"}
+    assert _stored_command(historical) == {
+        "artifact_digest": DIGEST,
+        "kind": "container_image",
+    }
+    # A payload that is not a command at all is passed through untouched, so the comparison
+    # against a real command fails and the conflict is raised -- never quietly repaired.
+    assert _stored_command({"command": "not-a-mapping"}) == "not-a-mapping"
+    assert _stored_command({}) is None
+
+
+def test_the_service_deduplicates_a_repeated_source_tuple_carrying_nulls(
+    migrated_session: Session,
+) -> None:
+    """The SERVICE's source-tuple branch, reached under a different idempotency key.
+
+    THIS DOES NOT MEASURE `NULLS NOT DISTINCT`, and the docstring said it did until a mutation
+    proved otherwise: `_existing_source_tuple` compares with `IS NULL` in Python, so the service
+    finds the row whether or not the database constraint would. The constraint is the backstop
+    beneath this, and it has its own test below. Two claims, two tests -- the merged version was
+    correct about the wrong noun.
+    """
+    unit = completed_unit(migrated_session, key="null-tuple-unit")
+    first = record_release_artifact(migrated_session, machine_local_command(unit))
+    assert isinstance(first, ReleaseArtifactBinding)
+
+    same = record_release_artifact(
+        migrated_session, machine_local_command(unit, key="machine-activation-2")
+    )
+    conflicting = record_release_artifact(
+        migrated_session,
+        replace(
+            machine_local_command(unit, key="machine-activation-3"),
+            artifact_digest=OTHER_DIGEST,
+        ),
+    )
+
+    assert isinstance(same, ReleaseArtifactBinding)
+    assert same.id == first.id
+    assert isinstance(conflicting, DomainError)
+    assert conflicting.code == "release_artifact_conflict"
+
+
+def test_a_machine_local_binding_names_the_repository_rather_than_a_registry_path(
+    migrated_session: Session,
+) -> None:
+    """The evidence `stable_ref`.
+
+    Interpolating the three absent columns would render `None/None/None@sha256:...`, which reads
+    as a registry reference and is not one.
+    """
+    unit = completed_unit(migrated_session, key="stable-ref-unit")
+
+    binding = record_release_artifact(migrated_session, machine_local_command(unit))
+
+    assert isinstance(binding, ReleaseArtifactBinding)
+    evidence = migrated_session.get(Evidence, binding.evidence_id)
+    assert evidence is not None
+    assert evidence.stable_ref is not None
+    assert evidence.stable_ref == f"machine_local:AlobarQuest/orchestrator@{MACHINE_DIGEST}"
+    assert "None" not in evidence.stable_ref
+
+
+def test_the_source_tuple_constraint_itself_refuses_a_duplicate_carrying_nulls(
+    migrated_session: Session,
+) -> None:
+    """NULLS NOT DISTINCT, measured at the DATABASE by writing round the service.
+
+    Postgres treats NULLs in a unique constraint as distinct by DEFAULT, so making three of this
+    tuple's eight columns nullable would silently stop it deduplicating every machine-local row --
+    an existing guarantee weakened as a side effect of a migration about something else. The
+    service cannot show that: it does the `IS NULL` comparison itself and dedupes either way. So
+    this inserts the second row directly, which is the only reader that sees the constraint.
+
+    `release_artifact_bindings` carries no append-only trigger, so the insert is possible; the FK
+    columns are reused from the row the service wrote, since neither is part of the tuple.
+    """
+    unit = completed_unit(migrated_session, key="db-constraint-unit")
+    row = record_release_artifact(migrated_session, machine_local_command(unit))
+    assert isinstance(row, ReleaseArtifactBinding)
+
+    with pytest.raises(IntegrityError):
+        migrated_session.execute(
+            text(
+                """
+                INSERT INTO release_artifact_bindings (
+                    id, work_unit_id, work_package_revision_id, package_revision_hash,
+                    source_repository, source_commit, merge_commit, kind, artifact_digest,
+                    summary, recorded_by, recorded_at, event_id, evidence_id, idempotency_key
+                ) VALUES (
+                    :id, :work_unit_id, :revision_id, :package_revision_hash,
+                    :source_repository, :source_commit, :merge_commit, 'machine_local', :digest,
+                    '{}'::jsonb, 'system', now(), :event_id, :evidence_id, :idempotency_key
+                )
+                """
+            ),
+            {
+                "id": uuid.uuid4(),
+                "work_unit_id": row.work_unit_id,
+                "revision_id": row.work_package_revision_id,
+                "package_revision_hash": row.package_revision_hash,
+                "source_repository": row.source_repository,
+                "source_commit": row.source_commit,
+                "merge_commit": row.merge_commit,
+                "digest": OTHER_DIGEST,
+                "event_id": row.event_id,
+                "evidence_id": row.evidence_id,
+                "idempotency_key": "a-second-key-entirely",
+            },
+        )
+    migrated_session.rollback()

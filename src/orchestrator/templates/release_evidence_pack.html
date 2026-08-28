@@ -23,8 +23,8 @@
 
 <h2>Release artifacts</h2>
 <table><caption>Immutable build artifacts bound to this release</caption>
-<thead><tr><th scope="col">Digest</th><th scope="col">Registry / repository / name</th><th scope="col">PR</th><th scope="col">Source commit</th><th scope="col">Merge commit</th><th scope="col">Workflow</th><th scope="col">Builder</th></tr></thead>
-<tbody>{% for row in pack.release_artifacts %}<tr><td>{{ row.artifact_digest }}</td><td>{{ row.artifact_registry }}/{{ row.artifact_repository }}/{{ row.artifact_name }}</td><td>{{ row.implementation_pr_number or "—" }}</td><td>{{ row.source_commit }}</td><td>{{ row.merge_commit }}</td><td>{{ row.workflow_run_url or "—" }}</td><td>{{ row.builder_id or "—" }}</td></tr>{% else %}<tr><td colspan="7">No release artifacts recorded.</td></tr>{% endfor %}</tbody></table>
+<thead><tr><th scope="col">Kind</th><th scope="col">Digest</th><th scope="col">Registry / repository / name</th><th scope="col">PR</th><th scope="col">Source commit</th><th scope="col">Merge commit</th><th scope="col">Workflow</th><th scope="col">Builder</th></tr></thead>
+<tbody>{% for row in pack.release_artifacts %}<tr><td>{{ row.kind }}</td><td>{{ row.artifact_digest }}</td><td>{% if row.artifact_registry %}{{ row.artifact_registry }}/{{ row.artifact_repository }}/{{ row.artifact_name }}{% else %}—{% endif %}</td><td>{{ row.implementation_pr_number or "—" }}</td><td>{{ row.source_commit }}</td><td>{{ row.merge_commit }}</td><td>{{ row.workflow_run_url or "—" }}</td><td>{{ row.builder_id or "—" }}</td></tr>{% else %}<tr><td colspan="8">No release artifacts recorded.</td></tr>{% endfor %}</tbody></table>
 
 <h2>Deployments</h2>
 <table><caption>Deployment and health observations for this release</caption>

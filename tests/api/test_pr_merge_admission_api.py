@@ -117,7 +117,10 @@ def test_the_route_serves_the_composed_answer(db_client: TestClient) -> None:
         "target_repository",
         "pr_number",
         "verified_head_sha",
+        "change_window_override_applied",
     }
+    # The read surface takes no override, so this is false for every answer it can produce.
+    assert body["change_window_override_applied"] is False
     assert body["satisfied"] is False
     assert body["target_repository"] == TARGET_REPOSITORY
 

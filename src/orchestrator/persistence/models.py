@@ -68,6 +68,22 @@ OBSERVATION_SOURCE_SYSTEMS = (
     "uptime_monitor",
     "github",
     "drift_digest",
+    # ADR-0021's four scheduled jobs -- the estate's recovery and tamper-evidence floor:
+    # `com.devon.vps-backup` (four independent scripts), `com.devon.vps-backup-verify`,
+    # `com.devon.hetzner-snapshot` and `com.devon.factory-events`. One member for the whole
+    # lane rather than one per job, following `drift_digest`: `source_system` names the
+    # producing LANE and `subject_reference` names the individual run's subject. None of the
+    # members above fits -- `healthchecks` is a specific external service, `watchtower` a
+    # specific tool, `ops_dashboard` a specific application -- and reusing one would write
+    # false provenance into rows that have no supersession model and no delete route.
+    "recovery_floor",
+    # ADR-0030's routine staleness sweep -- the second deployment model, where a change becomes
+    # live when the code is pulled into a working copy on the operator machine and the next
+    # process start picks it up. One member for the whole lane, following `drift_digest` and
+    # `recovery_floor`: `source_system` names the producing LANE and `subject_reference` names
+    # the individual run's subject. None of the members above fits, and reusing a near-miss would
+    # write false provenance into rows that have no supersession model and no delete route.
+    "machine_activation",
 )
 OBSERVATION_TRUST_CLASSIFICATIONS = ("orchestrator", "delivery_system", "monitor", "external")
 OBSERVATION_SUBJECT_TYPES = (
@@ -106,6 +122,20 @@ OBSERVATION_TYPES = (
     # a record, and a row is written every pass whether or not anything was found -- so its
     # ABSENCE is the signal that the audit stopped running.
     "landing_audit",
+    # A recovery artifact was produced or proven: a backup run, a restore verification, a VPS
+    # snapshot (ADR-0021). Deliberately not `health` -- these jobs do not probe a running
+    # service, they either wrote a recoverable copy or did not.
+    "backup",
+    # An append-only, tamper-evident chain verified itself against its anchor. A separate type
+    # from `backup` because the claim is different in kind: a backup asserts that a copy exists,
+    # this asserts that a record has not been altered. Today's only producer is the nightly
+    # factory-events pass.
+    "chain_integrity",
+    # What one enrolled working copy on the operator machine will execute at its next start
+    # (ADR-0030). Deliberately neither `drift`, which is the infrastructure drift digest's, nor
+    # `inventory`, which asserts nothing: this says a named checkout is at a named commit, and
+    # whether that is what was merged.
+    "activation",
 )
 OBSERVATION_STATUSES = (
     "passed",
@@ -190,6 +220,18 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
     # column -- distinguishable from a declaration that says `required: false`, which matters
     # because the first can never be recovered and the second is a real answer.
     follow_up: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # ADR-0026: WHAT CAUSED THIS WORK -- the change-manager record a human approved. The
+    # revision is the first durable artifact a human approves here and the thing revisioning
+    # creates, so a new revision inherits the originating reference EXPLICITLY, by carrying it
+    # in its own intake payload, rather than by any mechanism that could quietly lose it.
+    #
+    # An integer belonging to a FOREIGN system, so deliberately no foreign key: this database
+    # cannot enforce it and a constraint that cannot be enforced is a claim rather than a
+    # guarantee. `EstatePrMerge.change_record_id` is the same shape against the same service.
+    #
+    # NULL means "nothing recorded a cause", which is every revision registered before this
+    # column and every revision a human intakes without one. It never means "no cause exists".
+    change_record_id: Mapped[int | None] = mapped_column(Integer)
     work_package: Mapped[WorkPackage] = relationship()
 
 
@@ -600,10 +642,39 @@ class InfraLaneLink(UUIDPrimaryKey, Base):
     idempotency_key: Mapped[str] = mapped_column(String)
 
 
+# What KIND of thing a release artifact binding names, and it is the one field a reader consults
+# to tell the estate's two activation models apart (ADR-0030).
+#
+# `container_image` is the model this table was shaped for: an image with a registry digest, built
+# and pushed, swapped in by the hosting platform. `machine_local` is the second model, which had
+# been running the whole time and which nothing recorded: a change becomes live on the operator
+# machine when the code is pulled into a working copy and the next process start picks it up.
+#
+# THE THREE REGISTRY COLUMNS ARE CONDITIONAL ON THIS VALUE, and that is the point of introducing
+# it. A working copy has no registry, no registry repository and no image name, and writing
+# "local" into those columns because a CHECK insisted would make the two models look IDENTICAL in
+# exactly the columns a reader would use to separate them -- the collapse ADR-0030 exists to
+# prevent, arriving through the back door. So they are required for one kind and forbidden for the
+# other, and the constraint below says so.
+#
+# `artifact_digest` is required for BOTH and its validator is untouched. A machine-local binding
+# supplies a real content digest -- `git archive HEAD` hashed -- so the invariant that this table
+# refuses a bare commit sha stays literally true rather than being relaxed for a second case.
+CONTAINER_IMAGE_KIND = "container_image"
+MACHINE_LOCAL_KIND = "machine_local"
+RELEASE_ARTIFACT_KINDS = (CONTAINER_IMAGE_KIND, MACHINE_LOCAL_KIND)
+
+
 class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
     __tablename__ = "release_artifact_bindings"
     __table_args__ = (
         UniqueConstraint("idempotency_key"),
+        # NULLS NOT DISTINCT, and it is load-bearing rather than tidy. Postgres treats NULLs in a
+        # unique constraint as distinct by default, so the moment the three registry columns
+        # became nullable for `machine_local` this constraint would have stopped deduplicating
+        # every machine-local row -- an existing guarantee silently weakened by a migration whose
+        # stated subject was something else. Requires Postgres 15 or later; this estate runs 16
+        # locally, in CI and in production.
         UniqueConstraint(
             "work_package_revision_id",
             "work_unit_id",
@@ -614,6 +685,11 @@ class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
             "artifact_repository",
             "artifact_name",
             name="uq_release_artifact_source_tuple",
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint(
+            "kind IN ({})".format(", ".join(f"'{kind}'" for kind in RELEASE_ARTIFACT_KINDS)),
+            name="ck_release_artifact_kind",
         ),
         CheckConstraint(
             "implementation_pr_number IS NULL OR implementation_pr_number > 0",
@@ -625,10 +701,18 @@ class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
         ),
         CheckConstraint(
             "package_revision_hash <> '' AND source_repository <> '' "
-            "AND source_commit <> '' AND merge_commit <> '' "
-            "AND artifact_registry <> '' AND artifact_repository <> '' "
-            "AND artifact_name <> '' AND artifact_digest <> ''",
+            "AND source_commit <> '' AND merge_commit <> '' AND artifact_digest <> ''",
             name="ck_release_artifact_required_text",
+        ),
+        # The registry three, conditional on kind. FORBIDDEN rather than merely optional for a
+        # machine-local row: a NULL says nobody wrote a registry, where an empty string or a
+        # placeholder would say somebody wrote one and it was this.
+        CheckConstraint(
+            f"(kind = '{CONTAINER_IMAGE_KIND}' AND artifact_registry <> '' "
+            "AND artifact_repository <> '' AND artifact_name <> '') "
+            f"OR (kind = '{MACHINE_LOCAL_KIND}' AND artifact_registry IS NULL "
+            "AND artifact_repository IS NULL AND artifact_name IS NULL)",
+            name="ck_release_artifact_registry_by_kind",
         ),
     )
 
@@ -641,9 +725,10 @@ class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
     implementation_pr_number: Mapped[int | None] = mapped_column(Integer)
     source_commit: Mapped[str] = mapped_column(String)
     merge_commit: Mapped[str] = mapped_column(String)
-    artifact_registry: Mapped[str] = mapped_column(String)
-    artifact_repository: Mapped[str] = mapped_column(String)
-    artifact_name: Mapped[str] = mapped_column(String)
+    kind: Mapped[str] = mapped_column(String, server_default=text(f"'{CONTAINER_IMAGE_KIND}'"))
+    artifact_registry: Mapped[str | None] = mapped_column(String)
+    artifact_repository: Mapped[str | None] = mapped_column(String)
+    artifact_name: Mapped[str | None] = mapped_column(String)
     artifact_digest: Mapped[str] = mapped_column(String)
     artifact_tag: Mapped[str | None] = mapped_column(String)
     workflow_run_id: Mapped[str | None] = mapped_column(String)
@@ -671,20 +756,72 @@ class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
     idempotency_key: Mapped[str] = mapped_column(String)
 
 
+# What the two activation models look like once they are OBSERVED, mirroring the discriminator
+# `ReleaseArtifactBinding` already carries. A hosted application is confirmed by probing a URL; a
+# working copy on the operator machine has no URL to probe, and the facts that ARE checkable there
+# -- the landing commit is in its history, its console entry points are installed, its environment
+# matches its lockfile -- fit none of the five hosted summaries. Rather than invent values for
+# five shapes that do not apply, the shapes become conditional on kind.
+CONTAINER_IMAGE_OBSERVATION = CONTAINER_IMAGE_KIND
+MACHINE_LOCAL_OBSERVATION = MACHINE_LOCAL_KIND
+DEPLOYMENT_OBSERVATION_KINDS = (CONTAINER_IMAGE_OBSERVATION, MACHINE_LOCAL_OBSERVATION)
+
+# The one environment a machine-local observation may name. Pinned in the database rather than
+# left to the producer: `environment` is otherwise free-form under a regex, so a single mistaken
+# payload naming `production` would put a working copy into the answer for "what is serving
+# production", which is the collapse the discriminator exists to prevent.
+OPERATOR_MACHINE_ENVIRONMENT = "operator_machine"
+
+_HOSTED_SUMMARIES = (
+    "probe_summary",
+    "route_summary",
+    "auth_summary",
+    "dispatch_summary",
+    "status_summary",
+)
+_HOSTED_SUMMARIES_EMPTY = " AND ".join(f"{column} = '{{}}'::jsonb" for column in _HOSTED_SUMMARIES)
+
+
 class DeploymentObservation(UUIDPrimaryKey, Base):
     __tablename__ = "deployment_observations"
     __table_args__ = (
         UniqueConstraint("idempotency_key"),
+        # NOT `postgresql_nulls_not_distinct`, and the omission is deliberate rather than
+        # forgotten. That flag is what the sibling table needed when three columns OF ITS UNIQUE
+        # TUPLE became nullable; here neither `release_artifact_binding_id` nor `environment` is
+        # nullable under either kind, so the constraint keeps deduplicating exactly as before.
+        # `tests/persistence` proves it by writing round the service.
         UniqueConstraint(
             "release_artifact_binding_id",
             "environment",
             name="uq_deployment_observation_binding_environment",
         ),
         CheckConstraint(
-            "package_revision_hash <> '' AND environment <> '' AND base_url <> '' "
-            "AND observed_artifact_digest <> '' AND deployment_ref <> '' "
-            "AND deployment_url <> '' AND deployer <> ''",
+            "kind IN ({})".format(", ".join(f"'{kind}'" for kind in DEPLOYMENT_OBSERVATION_KINDS)),
+            name="ck_deployment_observations_kind",
+        ),
+        CheckConstraint(
+            "package_revision_hash <> '' AND environment <> '' "
+            "AND observed_artifact_digest <> '' AND deployment_ref <> ''",
             name="ck_deployment_observations_required_text",
+        ),
+        # Everything that differs between the two models, in one place. FORBIDDEN rather than
+        # merely optional on each side: a NULL says nobody probed a URL, where an empty string
+        # would say somebody probed one and it was this. The five hosted summaries are held empty
+        # for a machine-local row for the same reason, and `activation_summary` is held empty for
+        # a hosted one -- so neither model can quietly acquire the other's shape.
+        CheckConstraint(
+            f"(kind = '{CONTAINER_IMAGE_OBSERVATION}' AND base_url <> '' "
+            "AND deployment_url <> '' AND deployer <> '' "
+            "AND post_deploy_work_unit_id IS NOT NULL AND post_deploy_event_id IS NOT NULL "
+            "AND activation_summary = '{}'::jsonb) "
+            f"OR (kind = '{MACHINE_LOCAL_OBSERVATION}' "
+            f"AND environment = '{OPERATOR_MACHINE_ENVIRONMENT}' "
+            "AND base_url IS NULL AND deployment_url IS NULL AND deployer IS NULL "
+            "AND post_deploy_work_unit_id IS NULL AND post_deploy_event_id IS NULL "
+            "AND activation_summary <> '{}'::jsonb "
+            f"AND {_HOSTED_SUMMARIES_EMPTY})",
+            name="ck_deployment_observations_by_kind",
         ),
     )
 
@@ -696,13 +833,16 @@ class DeploymentObservation(UUIDPrimaryKey, Base):
         ForeignKey("work_package_revisions.id")
     )
     package_revision_hash: Mapped[str] = mapped_column(String)
-    post_deploy_work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
+    kind: Mapped[str] = mapped_column(
+        String, server_default=text(f"'{CONTAINER_IMAGE_OBSERVATION}'")
+    )
+    post_deploy_work_unit_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("work_units.id"))
     environment: Mapped[str] = mapped_column(String)
-    base_url: Mapped[str] = mapped_column(Text)
+    base_url: Mapped[str | None] = mapped_column(Text)
     observed_artifact_digest: Mapped[str] = mapped_column(String)
     deployment_ref: Mapped[str] = mapped_column(Text)
-    deployment_url: Mapped[str] = mapped_column(Text)
-    deployer: Mapped[str] = mapped_column(String)
+    deployment_url: Mapped[str | None] = mapped_column(Text)
+    deployer: Mapped[str | None] = mapped_column(String)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     probe_summary: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
@@ -729,12 +869,17 @@ class DeploymentObservation(UUIDPrimaryKey, Base):
         default=dict,
         server_default=text("'{}'::jsonb"),
     )
+    activation_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
     recorded_by: Mapped[str] = mapped_column(String)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
-    post_deploy_event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
+    post_deploy_event_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("events.id"))
     evidence_ids: Mapped[list[str]] = mapped_column(
         JSONB,
         default=list,

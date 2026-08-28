@@ -40,6 +40,25 @@ REPOSITORIES=(
 )
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
+# Dependabot cascade stops at the merge, which is complete for a repository whose landing redeploys
+# a hosted application and incomplete for this one, whose code runs from a working copy here
+# (orchestrator ADR-0031). Best-effort by construction: the helper prints one `[activation]` line
+# and returns 0 whatever it finds, so this job is never gated on being able to update itself. It
+# re-execs this script when HEAD moves, because bash reads a script incrementally by byte offset
+# and the file it just rewrote is this one.
+_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
+if [ -r "$_SDS_ACTIVATE" ]; then
+    # shellcheck source=/dev/null
+    . "$_SDS_ACTIVATE"
+else
+    activate_checkout() {
+        echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
+             "this run is not activated"
+    }
+fi
+activate_checkout "$REPO_ROOT" "$0" "$@"
+
 
 # Load BWS_ACCESS_TOKEN from the Keychain via the approved helper (never a plaintext file).
 # shellcheck disable=SC1091

@@ -1,7 +1,7 @@
 import json
 import re
 import uuid
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -15,6 +15,10 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
+    CONTAINER_IMAGE_OBSERVATION,
+    DEPLOYMENT_OBSERVATION_KINDS,
+    MACHINE_LOCAL_OBSERVATION,
+    OPERATOR_MACHINE_ENVIRONMENT,
     DeploymentObservation,
     Event,
     Evidence,
@@ -46,17 +50,48 @@ MAX_FACT_BYTES = 4096
 MAX_PROBES = 10
 MAX_ROUTES = 30
 
+# THE MACHINE-LOCAL SUMMARY: three facts about one working copy, kept separate.
+#
+# They are separate members rather than one verdict because "not current" for three different
+# reasons is exactly the state-collapse this estate has repeatedly paid for. Each names what was
+# MEASURED rather than what it implies. The second is the one with a recorded failure mode: the
+# editable install is a `.pth` pointing at the source tree, so an ordinary module change is live
+# the moment a pull lands -- console entry points are the exception, which is why "the code is at
+# the right commit" is not the same statement as "the program that will run is the new one".
+#
+# This vocabulary CROSSES A PROCESS BOUNDARY. `src/activation_sweep` composes the summary and
+# cannot import this module (it is a separate program, and `tests/architecture` enforces that),
+# so it carries a transcription that `tests/contract/test_activation_summary_contract.py` holds
+# to these names. A rename here without one there would empty the lane in silence.
+ACTIVATION_MERGE_COMMIT = "merge_commit_present"
+ACTIVATION_ENTRY_POINTS = "console_entry_points_present"
+ACTIVATION_ENVIRONMENT = "environment_matches_lock"
+ACTIVATION_FACTS = (ACTIVATION_MERGE_COMMIT, ACTIVATION_ENTRY_POINTS, ACTIVATION_ENVIRONMENT)
+
+# Tri-state, not boolean, and `not_applicable` is the load-bearing member. One of the four
+# enrolled working copies is a TypeScript project with no `pyproject.toml`, no lockfile and no
+# virtual environment, so two of the three questions genuinely do not apply to it -- and this
+# estate's standing ruling is that "not applicable" is a distinct answer from "not met".
+ACTIVATION_YES = "yes"
+ACTIVATION_NO = "no"
+ACTIVATION_NOT_APPLICABLE = "not_applicable"
+ACTIVATION_RESULTS = (ACTIVATION_YES, ACTIVATION_NO, ACTIVATION_NOT_APPLICABLE)
+
+# The one fact that can never be `not_applicable`: every working copy either holds the commit in
+# its history or does not, whatever it is written in.
+ALWAYS_ANSWERABLE = (ACTIVATION_MERGE_COMMIT,)
+
 
 @dataclass(frozen=True)
 class DeploymentObservationCommand:
     release_artifact_binding_id: uuid.UUID
     actor: ActorContext
     environment: str
-    base_url: str
+    base_url: str | None
     observed_artifact_digest: str
     deployment_ref: str
-    deployment_url: str
-    deployer: str
+    deployment_url: str | None
+    deployer: str | None
     observed_at: datetime
     probe_summary: dict[str, Any]
     route_summary: dict[str, Any]
@@ -65,6 +100,12 @@ class DeploymentObservationCommand:
     status_summary: dict[str, Any]
     idempotency_key: str
     expected_version: int | None = None
+    # Defaulted so every existing caller keeps its meaning. `kind` decides which of the two
+    # activation models this row describes, and the shapes above are conditional on it: a hosted
+    # observation carries the five probe-shaped summaries and no activation summary, a
+    # machine-local one carries the reverse.
+    kind: str = CONTAINER_IMAGE_OBSERVATION
+    activation_summary: dict[str, Any] = field(default_factory=dict)
 
 
 def record_deployment_observation(
@@ -153,17 +194,32 @@ def _record_deployment_observation(
 
     now = TransactionClock().now(session)
     observation_id = uuid.uuid4()
-    generated_unit = _post_deploy_work_unit(session, binding, command, now)
-    evidence_ids = _deployment_evidence(
-        session,
-        command,
-        binding,
-        generated_unit,
-        observation_id,
-        now,
+    # NO VERIFICATION UNIT FOR A MACHINE-LOCAL ROW, and it is a decision rather than an omission.
+    # The generated unit exists to carry five acceptance criteria a verifier evaluates about a
+    # hosted deployment -- health, routes, auth posture, dispatch posture -- none of which a
+    # working copy can evidence. Minting one anyway would produce a unit whose required criteria
+    # can never be met: permanently unverifiable debris in the review queue, one row per binding,
+    # growing daily. What the observation measured is already in its own summary, so there is
+    # nothing left for a verifier to decide.
+    generated_unit = (
+        None
+        if command.kind == MACHINE_LOCAL_OBSERVATION
+        else _post_deploy_work_unit(session, binding, command, now)
+    )
+    evidence_ids = (
+        []
+        if generated_unit is None
+        else _deployment_evidence(
+            session,
+            command,
+            binding,
+            generated_unit,
+            observation_id,
+            now,
+        )
     )
     observed_event_id = uuid.uuid4()
-    created_event_id = uuid.uuid4()
+    created_event_id = None if generated_unit is None else uuid.uuid4()
     session.add(
         Event(
             id=observed_event_id,
@@ -179,25 +235,26 @@ def _record_deployment_observation(
             idempotency_key=command.idempotency_key,
         )
     )
-    session.add(
-        Event(
-            id=created_event_id,
-            occurred_at=now,
-            actor_id=command.actor.actor_id,
-            action="post_deploy_verification.created",
-            subject_type="work_unit",
-            subject_id=generated_unit.id,
-            from_state=None,
-            to_state=generated_unit.state,
-            payload={
-                "deployment_observation_id": str(observation_id),
-                "release_artifact_binding_id": str(binding.id),
-                "environment": command.environment,
-            },
-            correlation_id=uuid.uuid4(),
-            idempotency_key=f"{command.idempotency_key}:post-deploy-unit",
+    if generated_unit is not None:
+        session.add(
+            Event(
+                id=created_event_id,
+                occurred_at=now,
+                actor_id=command.actor.actor_id,
+                action="post_deploy_verification.created",
+                subject_type="work_unit",
+                subject_id=generated_unit.id,
+                from_state=None,
+                to_state=generated_unit.state,
+                payload={
+                    "deployment_observation_id": str(observation_id),
+                    "release_artifact_binding_id": str(binding.id),
+                    "environment": command.environment,
+                },
+                correlation_id=uuid.uuid4(),
+                idempotency_key=f"{command.idempotency_key}:post-deploy-unit",
+            )
         )
-    )
     session.flush()
     row = DeploymentObservation(
         id=observation_id,
@@ -205,7 +262,8 @@ def _record_deployment_observation(
         implementation_work_unit_id=implementation_unit.id,
         work_package_revision_id=revision.id,
         package_revision_hash=binding.package_revision_hash,
-        post_deploy_work_unit_id=generated_unit.id,
+        kind=command.kind,
+        post_deploy_work_unit_id=None if generated_unit is None else generated_unit.id,
         environment=command.environment,
         base_url=command.base_url,
         observed_artifact_digest=command.observed_artifact_digest,
@@ -218,6 +276,7 @@ def _record_deployment_observation(
         auth_summary=command.auth_summary,
         dispatch_summary=command.dispatch_summary,
         status_summary=command.status_summary,
+        activation_summary=command.activation_summary,
         recorded_by=command.actor.actor_id,
         recorded_at=now,
         event_id=observed_event_id,
@@ -419,6 +478,12 @@ def _validated_subject(
             "release binding package hash does not match approved revision",
             None,
         )
+    if binding.kind != command.kind:
+        raise DomainError(
+            "deployment_observation_kind_mismatch",
+            "observation kind does not match the release artifact binding",
+            "observe the activation model the binding actually describes",
+        )
     if command.observed_artifact_digest != binding.artifact_digest:
         raise DomainError(
             "deployment_observation_digest_mismatch",
@@ -448,12 +513,87 @@ def _validate_command_shape(command: DeploymentObservationCommand) -> None:
             f"deployment observation contains secret-shaped content at {secret_path}",
             "store only bounded non-secret references",
         )
+    if command.kind == MACHINE_LOCAL_OBSERVATION:
+        _validate_machine_local_shape(command)
+    else:
+        _validate_hosted_shape(command)
+    _validate_bounded_json_size(command)
+
+
+def _validate_hosted_shape(command: DeploymentObservationCommand) -> None:
+    if command.activation_summary:
+        raise DomainError(
+            "deployment_observation_invalid",
+            "a hosted observation carries no activation summary",
+            None,
+        )
     _validate_probe_summary(command.probe_summary)
     _validate_route_summary(command.route_summary)
     _validate_auth_summary(command.auth_summary)
     _validate_dispatch_summary(command.dispatch_summary)
     _validate_status_summary(command.status_summary)
-    _validate_bounded_json_size(command)
+
+
+def _validate_machine_local_shape(command: DeploymentObservationCommand) -> None:
+    """The five probe-shaped summaries are REFUSED here, not merely unused.
+
+    An empty one would be indistinguishable from a hosted observation whose probe list nobody
+    filled in, and the whole point of the discriminator is that the two models cannot be mistaken
+    for one another in the data.
+    """
+    for name, value in _hosted_summaries(command).items():
+        if value:
+            raise DomainError(
+                "deployment_observation_invalid",
+                f"a machine-local observation carries no {name}",
+                None,
+            )
+    if command.environment != OPERATOR_MACHINE_ENVIRONMENT:
+        raise DomainError(
+            "deployment_observation_invalid",
+            f"a machine-local observation names environment {OPERATOR_MACHINE_ENVIRONMENT}",
+            None,
+        )
+    _validate_activation_summary(command.activation_summary)
+
+
+def _hosted_summaries(command: DeploymentObservationCommand) -> dict[str, dict[str, Any]]:
+    return {
+        "probe_summary": command.probe_summary,
+        "route_summary": command.route_summary,
+        "auth_summary": command.auth_summary,
+        "dispatch_summary": command.dispatch_summary,
+        "status_summary": command.status_summary,
+    }
+
+
+def _validate_activation_summary(payload: dict[str, Any]) -> None:
+    """Every fact present, every value in the vocabulary, and one of them never excused.
+
+    EXACT membership rather than a subset: a missing member would read as a fact nobody thought
+    to check, which is the shape a reader would take for a clean answer.
+    """
+    _require_keys(payload, set(ACTIVATION_FACTS), "activation summary")
+    if set(payload) != set(ACTIVATION_FACTS):
+        raise DomainError(
+            "deployment_observation_invalid",
+            "activation summary is missing a fact",
+            None,
+        )
+    for fact in ACTIVATION_FACTS:
+        value = payload[fact]
+        if value not in ACTIVATION_RESULTS:
+            raise DomainError(
+                "deployment_observation_invalid",
+                f"activation summary fact {fact} is malformed",
+                None,
+            )
+        if value == ACTIVATION_NOT_APPLICABLE and fact in ALWAYS_ANSWERABLE:
+            raise DomainError(
+                "deployment_observation_invalid",
+                f"activation summary fact {fact} always applies",
+                None,
+            )
 
 
 def _validate_command_envelope(command: DeploymentObservationCommand) -> None:
@@ -469,14 +609,30 @@ def _validate_command_envelope(command: DeploymentObservationCommand) -> None:
 
 
 def _validate_required_text_and_urls(command: DeploymentObservationCommand) -> None:
+    if command.kind not in DEPLOYMENT_OBSERVATION_KINDS:
+        raise DomainError("deployment_observation_invalid", "kind is invalid", None)
     if not ENVIRONMENT.fullmatch(command.environment):
         raise DomainError("deployment_observation_invalid", "environment is invalid", None)
-    for field, value in {
-        "deployment_ref": command.deployment_ref,
+    if not command.deployment_ref.strip():
+        raise DomainError("deployment_observation_invalid", "deployment_ref is required", None)
+    # The three a working copy has no honest value for. ABSENT for a machine-local row rather
+    # than blank: a NULL says nobody probed a URL, where an empty string says somebody probed
+    # one and it was this.
+    hosted_only = {
+        "base_url": command.base_url,
+        "deployment_url": command.deployment_url,
         "deployer": command.deployer,
-    }.items():
-        if not value.strip():
-            raise DomainError("deployment_observation_invalid", f"{field} is required", None)
+    }
+    for name, value in hosted_only.items():
+        if command.kind == MACHINE_LOCAL_OBSERVATION:
+            if value is not None:
+                raise DomainError(
+                    "deployment_observation_invalid",
+                    f"a machine-local observation carries no {name}",
+                    None,
+                )
+        elif value is None or not value.strip():
+            raise DomainError("deployment_observation_invalid", f"{name} is required", None)
 
 
 def _validate_observed_at_and_digest(command: DeploymentObservationCommand) -> None:
@@ -591,13 +747,7 @@ def _valid_status_code(value: object) -> bool:
 
 
 def _validate_bounded_json_size(command: DeploymentObservationCommand) -> None:
-    payload = {
-        "probe_summary": command.probe_summary,
-        "route_summary": command.route_summary,
-        "auth_summary": command.auth_summary,
-        "dispatch_summary": command.dispatch_summary,
-        "status_summary": command.status_summary,
-    }
+    payload = {**_hosted_summaries(command), "activation_summary": command.activation_summary}
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     if len(encoded.encode("utf-8")) > MAX_FACT_BYTES:
         raise DomainError(
@@ -608,10 +758,20 @@ def _validate_bounded_json_size(command: DeploymentObservationCommand) -> None:
 
 
 def _normalized_command(command: DeploymentObservationCommand) -> DeploymentObservationCommand:
+    """Canonicalise the two URLs a hosted observation carries, and leave a machine-local row be.
+
+    Called before shape validation, so it must tolerate the absence rather than assume the kind
+    has already been checked: a machine-local command legitimately has neither URL, and a hosted
+    one missing them is refused a moment later by name.
+    """
     return replace(
         command,
-        base_url=_canonical_base_url(command.base_url),
-        deployment_url=_canonical_https_url(command.deployment_url, "deployment_url"),
+        base_url=(_canonical_base_url(command.base_url) if command.base_url is not None else None),
+        deployment_url=(
+            _canonical_https_url(command.deployment_url, "deployment_url")
+            if command.deployment_url is not None
+            else None
+        ),
     )
 
 
@@ -660,7 +820,9 @@ def _same_observation_facts(
     command: DeploymentObservationCommand,
 ) -> bool:
     return (
-        row.base_url == command.base_url
+        row.kind == command.kind
+        and row.activation_summary == command.activation_summary
+        and row.base_url == command.base_url
         and row.observed_artifact_digest == command.observed_artifact_digest
         and row.deployment_ref == command.deployment_ref
         and row.deployment_url == command.deployment_url

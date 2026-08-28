@@ -152,6 +152,7 @@ def test_production_get_route_inventory_is_explicit() -> None:
     }
 
     assert observed == {
+        "/api/v1/change-records/{change_record_id}/work",
         "/api/v1/consistency-check",
         "/api/v1/dead-letter",
         "/api/v1/in-flight-units",
@@ -183,5 +184,9 @@ def test_production_get_route_inventory_is_explicit() -> None:
         "/api/v1/work-units/{unit_id}/infra-lane-links",
         "/api/v1/work-units/{unit_id}/readiness",
         "/api/v1/work-units/{unit_id}/release-artifacts",
+        # ADR-0030: which completed units a machine-local working copy could bind a release
+        # artifact for. Read-only, and it asserts nothing about any machine -- it reports the
+        # orchestrator's half of an answer whose other half only the operator machine has.
+        "/api/v1/machine-activation-candidates",
         "/api/v1/work-units/{unit_id}/runner-brief",
     }

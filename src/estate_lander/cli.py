@@ -21,10 +21,11 @@ finding -- somebody has to decide whether to act on the condition it names -- wh
 a pull request the orchestrator has already acted on, are not. Nor are the two kinds of refusal
 below, which the report still prints and which drive no exit code: a DELIBERATE refusal, which is
 the system working and clears itself, and an EXCEPTION, which current policy can never clear and
-which waits on a person. **And nor, CONDITIONALLY, is a pull request being behind its base when an
-exception sits beside it** -- there and only there, being behind is this program's own deliberate
-declining rather than a condition; see `_FRESHNESS`. Every refusal is printed either way, so the
-line always says what was missed.
+which waits on a person. **And nor, CONDITIONALLY, is a refusal caused by the head being behind its
+base when an exception sits beside it** -- there and only there, being behind is this program's own
+deliberate declining rather than a condition; see `_FRESHNESS` for the condition and
+`_freshness_derived` for which refusals are caused by the position. Every refusal is printed either
+way, so the line always says what was missed.
 
 **THERE ARE TWO ACTS, and the second one is new in ADR-0019 Increment 6.** After the landing pass,
 the program asks the orchestrator to bring up to date any branch whose ONLY remaining obstacle is
@@ -45,6 +46,7 @@ from typing import Any, Protocol
 
 from change_proposer.change_manager import DEFAULT_BASE_URL as CM_DEFAULT_BASE_URL
 from change_proposer.change_manager import ChangeManagerClient, ChangeManagerError
+from change_proposer.cli import BOT_CHANGE_CLASS
 from estate_lander.orchestrator_client import (
     DEFAULT_BASE_URL,
     LandingRefused,
@@ -66,6 +68,37 @@ SYSTEM_KEY_ID = "orchestrator-system"
 # and each would be asked about, held, and reported as a finding nobody can act on. The service
 # whose records these are warns about exactly this polarity.
 _ASK_ABOUT = frozenset({"approved"})
+
+# The change classes this lane is FOR. An allowlist, for the same reason `_ASK_ABOUT` is one, and
+# the polarity matters more here than there: excluded means not landed, so a class nobody has
+# thought of falls toward being left alone rather than toward being merged.
+#
+# WHY THIS EXISTS AT ALL. Until deploy policy version 4 (change-manager, 2026-08-25, ADR-0025) the
+# only class the policy approved was `dependency-update`, so a factory record never reached
+# `approved` and never became a subject here. Version 4 approves `factory-delivery` too, and this
+# lane selects subjects on status alone -- so without this, a factory pull request would become a
+# subject of a lane that asks NOTHING about the things a factory landing rests on: whether the work
+# unit completed, whether its acceptance criteria were decided by the verifier from observed
+# evidence, and whether a human's authority approval is bound to the envelope's exact fingerprint.
+# Those are asked by the factory lane (`estate-pr-merge` is not it; `pr_merge_admission` is), and
+# they are the whole basis of ADR-0020.
+#
+# WHAT USED TO KEEP FACTORY RECORDS OUT WAS AN ACCIDENT, WHICH IS WHY PROSE WOULD NOT DO. The
+# update-type term reads a version delta out of a title and the pattern is only END-anchored, so
+# `SDS <unit>: Reformat embedded code blocks` yields nothing while `SDS <unit>: Bump ruff from
+# 0.15.20 to 0.16.2` yields `semver-patch` -- both measured. A unit title is free text a human
+# writes, so the separation rested on wording nobody chose as a control.
+#
+# THE CONSTANTS ARE THE PRODUCER'S OWN. `change_proposer` writes these two strings onto every
+# record this lane reads, so importing them is what makes the two sides agree by construction. A
+# third spelling here would be a copy of a vocabulary that already has two, which is the defect
+# this estate keeps paying for.
+_LANE_CLASSES = frozenset({BOT_CHANGE_CLASS})
+
+# What a deferral is called in the report, keyed by the class that caused it. Named rather than
+# counted as one lump, because "it belongs to the factory lane" and "nobody has taught this program
+# what that class is" are different facts with different next steps.
+_DEFERRAL_UNREADABLE = "unreadable-class"
 
 # Refusals that mean the SUBJECT IS SETTLED rather than that a condition is unmet. Neither is
 # something a person can act on, and reporting them as findings would make one landing -- or one
@@ -106,6 +139,18 @@ _EXCEPTION = frozenset({"landing_update_type_unparseable"})
 # permanently, not to touch it. A refusal the system produced by deliberately declining to act
 # carries no information a reader could act on. (Devon's third refusal ruling, 2026-08-14.)
 _FRESHNESS = "landing_head_not_current_with_base"
+
+
+# ADR-0024. A rollout pin that differs BECAUSE the head is stale -- the same code the orchestrator
+# raises when a workflow genuinely moved, which is why the base comparison below has to arrive with
+# the answer rather than being guessed from the code.
+_ROLLOUT_MOVED = "landing_rollout_moved"
+
+# The key on the orchestrator's answer carrying that comparison. Named once, because reading it by
+# a name the server does not serve fails SILENTLY and in the flattering direction: `.get` returns
+# `None`, the criterion below excuses nothing, and every affected pull request is a finding again
+# with nothing saying why.
+_BASE_MATCHES_PIN = "rollout_base_matches_pin"
 
 # ADR-0019 Increment 6. Refusals the BRANCH-UPDATE act raises that say only *the answer moved
 # between the read and the request*, which the next pass re-decides on its own.
@@ -187,7 +232,43 @@ def _update_key(repository: str, number: int, head_sha: str) -> str:
     return f"estate-branch-update:{repository}:{number}:{head_sha[:12]}"
 
 
-def _held_status(refusals: list[str]) -> str:
+def _freshness_derived(refusals: set[str], *, rollout_base_matches_pin: bool) -> frozenset[str]:
+    """Which of these refusals are produced by the head's POSITION relative to its base, and say
+    nothing about the change itself? ADR-0024.
+
+    **THE SECOND COPY OF ONE CRITERION, and it is a copy because this program may not import the
+    orchestrator** -- the isolation is the property that makes a scheduled caller acceptable here.
+    The other copy is `orchestrator.services.estate_landing_admission.freshness_derived_refusals`,
+    which reads it to decide whether the lane may ACT; this one reads it to decide whether a line
+    is a FINDING. They are held equal from outside, by a test that may import both, exactly as
+    `_DELIBERATE` is -- because this estate's standing lesson is that wherever two vocabularies
+    must agree they do not, until something checks.
+
+    Being behind IS the position. A rollout pin that differs is derived only when the BASE carries
+    the pinned bytes: then the head merely predates a workflow change, and bringing the base in
+    carries those bytes with it. Where the base does not carry them the workflow genuinely moved,
+    freshening cannot put that right, and it must still report.
+
+    **`landing_checks_not_clean` is deliberately not a member** -- freshening re-runs checks and
+    might turn one green, so "would freshening clear it?" is too loose a test and would silence a
+    red build. The discriminator is *does this say anything about the change?*, and a failing check
+    does.
+
+    **The head-behind conjunct is load-bearing HERE in a way it is not on the other side.** There,
+    the caller's own return already requires the head to be behind; here nothing does, and without
+    it a pull request whose OWN DIFF edits the pinned rollout workflow -- base carrying the pinned
+    bytes, head current, head blob differing -- would read as merely stale and go quiet beside an
+    exception. That is the case the pin exists to catch, so it must always report.
+    """
+    if _FRESHNESS not in refusals:
+        return frozenset()
+    derived = {_FRESHNESS}
+    if rollout_base_matches_pin:
+        derived.add(_ROLLOUT_MOVED)
+    return frozenset(derived & refusals)
+
+
+def _held_status(refusals: list[str], *, rollout_base_matches_pin: bool) -> str:
     """SUBSET, never intersection -- and that is the whole of this function.
 
     `_SETTLED` above is tested with intersection, correctly: a settled subject's other refusals are
@@ -208,19 +289,39 @@ def _held_status(refusals: list[str]) -> str:
     An exception outranks a deliberate refusal when both are present, because the exception is the
     durable fact: the pace resets tonight and the record still cannot land.
 
-    FRESHNESS IS SUPPRESSED WHEN, AND ONLY WHEN, AN EXCEPTION IS PRESENT -- see `_FRESHNESS` for why
-    the condition is the exception and not the declining. Conditional, never unconditional: an
+    A FRESHNESS-DERIVED refusal IS SUPPRESSED WHEN, AND ONLY WHEN, AN EXCEPTION IS PRESENT -- see
+    `_FRESHNESS` for why the condition is the exception and not the declining, and
+    `_freshness_derived` for which refusals qualify. Conditional, never unconditional: an
     unconditional subtraction would make a branch that is merely behind read as quiet, and an
     unconditional early return would do that AND silence `{behind, checks_not_clean}`. Both are the
     over-general version of this rule, which is the shape every fix in this family has taken.
+
+    AN UNANSWERED CHECK (`landing_checks_awaiting_verdict`) IS DELIBERATELY IN NO SET, so it is a
+    finding like any code this program does not enumerate. The orchestrator excuses it for ACTING
+    -- bringing the branch up to date is what re-runs an abandoned check -- and a suppression here
+    was written, measured, and removed: it can never fire. Qualifying requires the head to be
+    behind, being behind is itself unexplained, so the line is held whatever this rule says about
+    the other code. An inert suppression is worse than none, because a later change to the
+    freshness rule would switch it on with nobody re-deciding it. The mechanism is what makes the
+    refusal transient; the label would have added nothing.
+
+    **WHAT IS SUBTRACTED IS A CRITERION, NOT A LIST** (ADR-0024). The enumeration this rule used to
+    carry was one member deep and grew a second the moment a permanent exception acquired a second
+    position-caused refusal -- `brain#31`/`#32`, behind their base with a rollout pin that differs
+    because they are behind, held and reported every night forever. A fifth member arrives the same
+    way, and is answered here by construction rather than by another edit.
     """
     present = set(refusals)
     unexplained = present - _DELIBERATE - _EXCEPTION
     if _EXCEPTION & present:
-        unexplained -= {_FRESHNESS}
+        unexplained -= _freshness_derived(
+            present, rollout_base_matches_pin=rollout_base_matches_pin
+        )
     if unexplained or not refusals:
         return "held"
-    return "exception" if _EXCEPTION & present else "deliberate"
+    if _EXCEPTION & present:
+        return "exception"
+    return "deliberate"
 
 
 def _consider(client: OrchestratorClient, repository: str, number: int, submit: bool) -> Outcome:
@@ -233,7 +334,14 @@ def _consider(client: OrchestratorClient, repository: str, number: int, submit: 
     if _SETTLED & set(refusals):
         return Outcome(repository, number, "settled", ", ".join(refusals))
     if not answer.get("satisfied"):
-        return Outcome(repository, number, _held_status(refusals), ", ".join(refusals))
+        # A MISSING key reads as False, which withholds the criterion's one conditional member and
+        # leaves the line a finding. That is the direction to fail in, and it is not hypothetical:
+        # the answer comes from a deployed orchestrator, and a release that has not reached
+        # production yet serves an answer with no such key.
+        status = _held_status(
+            refusals, rollout_base_matches_pin=answer.get(_BASE_MATCHES_PIN) is True
+        )
+        return Outcome(repository, number, status, ", ".join(refusals))
 
     head = answer.get("head_sha")
     if not isinstance(head, str) or not head:
@@ -255,19 +363,54 @@ def _consider(client: OrchestratorClient, repository: str, number: int, submit: 
     return Outcome(repository, number, "landed", f"status={landed.get('status')}")
 
 
-def _subjects(records: RecordSource) -> list[tuple[str, int]]:
-    """Every routed change worth asking about, in a stable order.
+@dataclass(frozen=True)
+class Selection:
+    """What one read of the listing yielded: what to act on, and what was left to another lane.
+
+    BOTH, from ONE read, because `records()` is a live request rather than a cached list -- so a
+    second call to count the deferrals would put a second network call inside the `try` in `run`,
+    where its failure discards the outcomes entirely. That is the same reason the two passes share
+    this result instead of each reading for itself.
+    """
+
+    subjects: list[tuple[str, int]]
+    deferred: dict[str, int]
+
+
+def _deferral_reason(row: dict[str, Any]) -> str | None:
+    """Why this lane is not the one for this record, or None when it is.
+
+    ONE predicate with two readers -- the subject list and the tally -- rather than two functions
+    that agree today. Read only for a record that would OTHERWISE be a subject, so the number it
+    produces means "approved records this lane declined because they belong elsewhere" rather than
+    "every row of a class we do not land", which would count records nobody was going to act on.
+    """
+    change_class = row.get("change_class")
+    if not isinstance(change_class, str) or not change_class:
+        return _DEFERRAL_UNREADABLE
+    if change_class not in _LANE_CLASSES:
+        return change_class
+    return None
+
+
+def _subjects(records: RecordSource) -> Selection:
+    """Every routed change worth asking about, in a stable order, and what was left alone.
 
     Sorted, so a pass that lands one of several is reproducible rather than dependent on whatever
     order the listing happened to answer in -- which matters because the orchestrator permits one
     landing per repository per window, so WHICH one lands is decided here.
 
     ONE function, used by both passes, so the landing pass and the branch-update pass can never
-    disagree about which pull requests this program is for. Each pass calls it for itself rather
-    than sharing a snapshot, for the same reason each re-reads the composed answer: the landing
-    pass may have changed what the second one is looking at.
+    disagree about which pull requests this program is for. Each pass is given this result rather
+    than reading for itself, because the read is a live request.
+
+    A DEFERRED RECORD GETS NO OUTCOME AND IS NOT A FINDING. It is not that this lane tried and
+    could not; it is that the record is another lane's business, the way a draft or a person's own
+    pull request is. But it is COUNTED and reported, because a subject that vanishes without a line
+    is the silent failure this program is written against everywhere else.
     """
     subjects: list[tuple[str, int]] = []
+    deferred: dict[str, int] = {}
     rows = sorted(
         (row for row in records.records() if isinstance(row, dict)),
         key=lambda row: (str(row.get("target_repository") or ""), row.get("id") or 0),
@@ -286,8 +429,12 @@ def _subjects(records: RecordSource) -> list[tuple[str, int]]:
             continue
         if row.get("status") not in _ASK_ABOUT:
             continue
+        reason = _deferral_reason(row)
+        if reason is not None:
+            deferred[reason] = deferred.get(reason, 0) + 1
+            continue
         subjects.append((repository, number))
-    return subjects
+    return Selection(subjects=subjects, deferred=deferred)
 
 
 def _pass(
@@ -394,20 +541,36 @@ def run(argv: list[str] | None = None) -> int:
             # READ ONCE, used by both passes. Reading again between them would put a second
             # network call inside the `try`, where its failure discards `outcomes` entirely and
             # returns a bare tool error -- losing the report of a landing that already happened.
-            subjects = _subjects(records)
-            outcomes = _pass(subjects, client, args.submit)
-            outcomes.extend(_branch_updates(subjects, client, args.submit))
+            selection = _subjects(records)
+            outcomes = _pass(selection.subjects, client, args.submit)
+            outcomes.extend(_branch_updates(selection.subjects, client, args.submit))
     except (ChangeManagerError, OrchestratorError) as error:
         print(str(error), file=sys.stderr)
         return EXIT_TOOL_FAILURE
 
-    return report(outcomes)
+    return report(outcomes, selection.deferred)
 
 
-def report(outcomes: list[Outcome]) -> int:
+def report(outcomes: list[Outcome], deferred: dict[str, int] | None = None) -> int:
+    """Print every act considered, then what was left to another lane, then the summary.
+
+    THE DEFERRAL LINE IS SEPARATE FROM THE SUMMARY, NOT FOLDED INTO IT. `_REPORTED` exists so the
+    summary's parts add up to what was considered, and a deferred record was never considered --
+    adding it to that total would break the one property that line has. It is printed above the
+    total, and only when there is something to say, because a standing "0 deferred" is noise on
+    every pass of a lane that will usually have none.
+
+    IT DOES NOT AFFECT THE EXIT CODE. Deferring is this program working: the record belongs to a
+    lane with its own admission, and nothing here is unmet. `deferred` defaults to nothing said so
+    that a caller reporting a list of outcomes it produced itself is not obliged to invent a tally
+    -- and `run` is held to passing the real one by its own test, since a default that quietly
+    meant "none" would be a wiring bug nothing could see.
+    """
     for outcome in outcomes:
         subject = f"{outcome.repository}#{outcome.number}"
         print(f"{subject}  {outcome.status:<12} {outcome.detail}")
+    for reason, count in sorted((deferred or {}).items()):
+        print(f"{count} {reason} record(s) not considered; they belong to another lane")
     counted = {status: sum(o.status == status for o in outcomes) for status in _REPORTED}
     findings = [o for o in outcomes if o.status not in _NOT_A_FINDING]
     print(

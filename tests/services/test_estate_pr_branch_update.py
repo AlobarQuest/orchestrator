@@ -34,12 +34,18 @@ from orchestrator.persistence.models import Event
 from orchestrator.services import estate_pr_merge
 from orchestrator.services.estate_landing_admission import (
     DELIBERATE_REFUSALS,
+    LANDING_CHECKS_AWAITING_VERDICT,
+    LANDING_CHECKS_IN_FLIGHT,
     LANDING_CHECKS_NOT_CLEAN,
+    LANDING_CHECKS_VERDICT_UNREADABLE,
     LANDING_HEAD_NOT_CURRENT_WITH_BASE,
     LANDING_OUTSIDE_CHANGE_WINDOW,
     LANDING_PACE_EXHAUSTED,
+    LANDING_ROLLOUT_MOVED,
     LANDING_UPDATE_TYPE_UNPARSEABLE,
     EstateGatewayError,
+    EstateLandingAdmission,
+    freshness_derived_refusals,
     qualifies_for_branch_update,
 )
 from orchestrator.services.estate_pr_branch_update import (
@@ -131,8 +137,15 @@ def _behind(**kwargs) -> FakeEstateGateway:
 # --------------------------------------------------------------------------------------------
 
 
-def test_freshness_alone_qualifies() -> None:
-    assert qualifies_for_branch_update((LANDING_HEAD_NOT_CURRENT_WITH_BASE,))
+@pytest.mark.parametrize("base_matches", [False, True])
+def test_freshness_alone_qualifies(base_matches: bool) -> None:
+    """Pinned over BOTH values of the carve-out's fact, because it is irrelevant here and must
+    stay so: no rollout refusal was raised, so nothing is being excused either way. A predicate
+    that conditioned its whole answer on the base comparison rather than its one carve-out would
+    pass a single-value assertion and fail this."""
+    assert qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE,), rollout_base_matches_pin=base_matches
+    )
 
 
 @pytest.mark.parametrize("deliberate", sorted(DELIBERATE_REFUSALS))
@@ -140,11 +153,16 @@ def test_freshness_beside_a_refusal_that_clears_itself_qualifies(deliberate: str
     """The pace resets and the clock moves. Neither says anything about the branch, so neither is
     a reason to leave it behind -- and both co-occur constantly, the pace on every sibling once a
     landing has happened, which is precisely the population this lane exists to unstick."""
-    assert qualifies_for_branch_update((LANDING_HEAD_NOT_CURRENT_WITH_BASE, deliberate))
+    assert qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, deliberate), rollout_base_matches_pin=False
+    )
 
 
 def test_every_deliberate_refusal_together_with_freshness_still_qualifies() -> None:
-    assert qualifies_for_branch_update((LANDING_HEAD_NOT_CURRENT_WITH_BASE, *DELIBERATE_REFUSALS))
+    assert qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, *DELIBERATE_REFUSALS),
+        rollout_base_matches_pin=False,
+    )
 
 
 @pytest.mark.parametrize(
@@ -155,7 +173,9 @@ def test_freshness_beside_a_real_condition_does_NOT_qualify(real: str) -> None:
     """THE MUTANT THIS KILLS is "any refusal set containing freshness qualifies". Each of these
     pull requests is behind its base and cannot land whatever is done to its branch, so a build
     spent on it buys nothing and reads as progress to whoever sees it running."""
-    assert not qualifies_for_branch_update((LANDING_HEAD_NOT_CURRENT_WITH_BASE, real))
+    assert not qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, real), rollout_base_matches_pin=False
+    )
 
 
 def test_the_remainder_is_a_CATEGORY_and_not_a_COUNT() -> None:
@@ -166,10 +186,12 @@ def test_the_remainder_is_a_CATEGORY_and_not_a_COUNT() -> None:
     these backwards.
     """
     assert qualifies_for_branch_update(
-        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_PACE_EXHAUSTED, LANDING_OUTSIDE_CHANGE_WINDOW)
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_PACE_EXHAUSTED, LANDING_OUTSIDE_CHANGE_WINDOW),
+        rollout_base_matches_pin=False,
     )
     assert not qualifies_for_branch_update(
-        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_NOT_CLEAN)
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_NOT_CLEAN),
+        rollout_base_matches_pin=False,
     )
 
 
@@ -177,7 +199,8 @@ def test_a_refusal_NOBODY_HAS_CLASSIFIED_does_not_qualify() -> None:
     """The polarity the whole lane argues for: a code a later increment invents and forgets to
     classify must fail toward leaving the branch alone, never toward touching it."""
     assert not qualifies_for_branch_update(
-        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, "landing_something_nobody_has_thought_of")
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, "landing_something_nobody_has_thought_of"),
+        rollout_base_matches_pin=False,
     )
 
 
@@ -198,7 +221,179 @@ def test_without_freshness_there_is_NOTHING_TO_DO_and_it_does_not_qualify(
     An empty refusal set is the sharpest case -- that is a pull request about to LAND, and a rule
     that acted on it would push a commit onto a branch seconds before squashing it.
     """
-    assert not qualifies_for_branch_update(refusals)
+    assert not qualifies_for_branch_update(refusals, rollout_base_matches_pin=False)
+
+
+# --------------------------------------------------------------------------------------------
+# The carve-out: a rollout pin that differs BECAUSE the head is stale.
+#
+# A single positive case cannot tell this narrow rule apart from suppressing the refusal
+# unconditionally, so each of the three below denies a different half of it.
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_rollout_pin_that_differs_BECAUSE_THE_HEAD_IS_STALE_qualifies() -> None:
+    """THE DEADLOCK, in the shape it had in production on 2026-08-16.
+
+    `brain#33`, `#34` and `#35` were opened before `brain#47` changed `ci.yml`, so each head still
+    carried the previous bytes while the base carried the pinned ones. The pin term refused them
+    for a difference that being behind had caused, and the freshness rule -- reading that refusal
+    as an obstacle like any other -- declined to clear the very staleness producing it. Neither
+    would ever have moved on its own.
+    """
+    assert qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_ROLLOUT_MOVED),
+        rollout_base_matches_pin=True,
+    )
+
+
+def test_a_rollout_pin_that_GENUINELY_MOVED_does_not_qualify() -> None:
+    """THE HALF THE POSITIVE CASE CANNOT PROVE, and the reason the fact is an argument at all.
+
+    Identical refusals; only the base comparison differs. Here the base does NOT carry the pinned
+    bytes, so the workflow this record was written about is not the one that would run -- a
+    condition no amount of freshening touches, since the head would simply be brought up to date
+    with the wrong bytes. Suppressing the refusal unconditionally passes the case above and fails
+    this one, which is the whole distinction between a rule and a suppression list.
+    """
+    assert not qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_ROLLOUT_MOVED),
+        rollout_base_matches_pin=False,
+    )
+
+
+def test_a_pull_request_that_EDITS_the_workflow_AND_IS_CURRENT_does_not_qualify() -> None:
+    """The other half: the base matches, and the head is NOT behind.
+
+    So the difference cannot be staleness -- this pull request's own diff is what moved the bytes,
+    which is `_rollout_term`'s founding case. There is also nothing to do: a head already current
+    with its base gains nothing from being brought up to date. This is the control that keeps the
+    return's own freshness condition load-bearing; drop it and this exact shape qualifies, and the
+    lane spends a build on a pull request it has just declined to land.
+    """
+    assert not qualifies_for_branch_update((LANDING_ROLLOUT_MOVED,), rollout_base_matches_pin=True)
+
+
+@pytest.mark.parametrize(
+    "other",
+    [LANDING_CHECKS_NOT_CLEAN, LANDING_UPDATE_TYPE_UNPARSEABLE, "landing_something_unclassified"],
+)
+def test_the_carve_out_excuses_ONE_refusal_and_nothing_beside_it(other: str) -> None:
+    """A carve-out that widened to "a stale pin means stop reading the rest" would pass every case
+    above. `brain#31` and `#32` are exactly this shape in production -- behind, stale pin, AND a
+    requirement-range title -- and they are permanent exceptions that must never be touched."""
+    assert not qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_ROLLOUT_MOVED, other),
+        rollout_base_matches_pin=True,
+    )
+
+
+# --------------------------------------------------------------------------------------------
+# The criterion itself (ADR-0024), read directly rather than through either consumer.
+#
+# `qualifies_for_branch_update` cannot see the head-behind conjunct at all -- its own return
+# requires the same fact -- so the criterion needs controls of its own or half of it is pinned by
+# nothing on this side of the boundary.
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_stale_rollout_pin_is_freshness_derived_when_the_base_carries_the_pinned_bytes() -> None:
+    assert freshness_derived_refusals(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_ROLLOUT_MOVED), rollout_base_matches_pin=True
+    ) == frozenset({LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_ROLLOUT_MOVED})
+
+
+def test_a_rollout_pin_whose_base_DIFFERS_is_not_freshness_derived() -> None:
+    """The workflow genuinely moved. Identical refusals; only the base comparison differs, which is
+    the whole reason that fact is an argument."""
+    assert freshness_derived_refusals(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_ROLLOUT_MOVED), rollout_base_matches_pin=False
+    ) == frozenset({LANDING_HEAD_NOT_CURRENT_WITH_BASE})
+
+
+def test_nothing_is_freshness_derived_when_the_head_is_NOT_BEHIND() -> None:
+    """THE CONJUNCT, and this is the only control on this side that sees it.
+
+    A refusal cannot be caused by a position the head is not in. Here the base carries the pinned
+    bytes and the head is current, so the pin differs because THIS PULL REQUEST'S OWN DIFF edits
+    the workflow -- `_rollout_term`'s founding case. `qualifies_for_branch_update` is blind to the
+    conjunct because its return already requires the head to be behind; the reporting consumer has
+    no such guard, and dropping it there silences exactly this shape.
+    """
+    assert (
+        freshness_derived_refusals((LANDING_ROLLOUT_MOVED,), rollout_base_matches_pin=True)
+        == frozenset()
+    )
+
+
+def test_a_FAILING_CHECK_is_never_freshness_derived() -> None:
+    """The case that keeps the criterion narrow. Freshening re-runs checks and might turn one
+    green, so "would freshening clear it?" would admit it; "does it say anything about the change?"
+    does not. This also pins the intersection with what was actually raised: without it the answer
+    would name a rollout refusal nobody raised."""
+    assert freshness_derived_refusals(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_NOT_CLEAN),
+        rollout_base_matches_pin=True,
+    ) == frozenset({LANDING_HEAD_NOT_CURRENT_WITH_BASE})
+
+
+def test_an_UNANSWERED_CHECK_does_not_disqualify_a_stale_branch() -> None:
+    """The deadlock this change exists to break. Nothing else in the estate re-runs an abandoned
+    check, so a pull request holding one waits forever -- and bringing the branch up to date is the
+    act that answers it."""
+    assert qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_AWAITING_VERDICT),
+        rollout_base_matches_pin=False,
+    )
+
+
+def test_an_UNANSWERED_CHECK_ALONE_does_not_qualify_anything() -> None:
+    """THE OTHER HALF OF THE PAIR, and it is the one that catches an excuse written too widely.
+    A head that is current with its base is not stale, so there is nothing to bring up to date and
+    no act this refusal could be excused by. Both cases are needed: a subtraction that ignored the
+    head's position would pass the case above and fail here."""
+    assert not qualifies_for_branch_update(
+        (LANDING_CHECKS_AWAITING_VERDICT,), rollout_base_matches_pin=False
+    )
+
+
+def test_a_FAILING_CHECK_still_disqualifies_a_stale_branch() -> None:
+    """The boundary that makes the split worth having. Freshening cannot turn a red verdict green,
+    so offering it a build spends one to re-learn the same answer -- and a build running reads as
+    progress. A subtraction that took the whole checks family rather than the one code would pass
+    every test above and lose this."""
+    assert not qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_NOT_CLEAN),
+        rollout_base_matches_pin=False,
+    )
+
+
+def test_a_check_STILL_RUNNING_disqualifies_a_stale_branch() -> None:
+    """Bringing the branch up to date would abandon the very run whose verdict is awaited, turning
+    a question that answers itself in minutes into one that needs another build."""
+    assert not qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_IN_FLIGHT),
+        rollout_base_matches_pin=False,
+    )
+
+
+def test_runs_that_could_not_be_read_disqualify_a_stale_branch() -> None:
+    """Which of the three holds is unknown, so acting would be acting on a question nobody asked."""
+    assert not qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_VERDICT_UNREADABLE),
+        rollout_base_matches_pin=False,
+    )
+
+
+def test_an_unanswered_check_is_NOT_a_member_of_the_freshness_criterion() -> None:
+    """It is excused for ACTING and not for REPORTING, which is why it is a separate subtraction
+    rather than a fifth member here. The criterion asks whether the head's POSITION caused the
+    refusal; an abandoned run is not a position, and folding it in would also make it quiet beside
+    a permanent exception, where it is still worth saying."""
+    assert freshness_derived_refusals(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_AWAITING_VERDICT),
+        rollout_base_matches_pin=True,
+    ) == frozenset({LANDING_HEAD_NOT_CURRENT_WITH_BASE})
 
 
 def test_the_deliberate_refusals_are_exactly_the_landers_own() -> None:
@@ -227,6 +422,35 @@ def test_the_freshness_refusal_the_lander_classifies_on_is_exactly_the_one_compo
     assert LANDING_HEAD_NOT_CURRENT_WITH_BASE == _FRESHNESS
 
 
+def test_the_rollout_refusal_the_lander_classifies_on_is_exactly_the_one_composed_here() -> None:
+    """The second lone string, added by ADR-0024 and pinned for the reason above."""
+    from estate_lander.cli import _ROLLOUT_MOVED
+
+    assert LANDING_ROLLOUT_MOVED == _ROLLOUT_MOVED
+
+
+def test_the_WIRE_KEY_the_lander_reads_the_base_comparison_from_is_a_field_this_side_SERVES() -> (
+    None
+):
+    """THE FOURTH CROSS-BOUNDARY STRING, and the only one whose drift both suites would applaud.
+
+    A coordinated rename on THIS side -- dataclass field, response model, construction keyword --
+    is exactly what a sweep guided by the served-shape pin produces, and every gate stays green:
+    that pin compares a renamed model to a renamed dataclass, and the lander's own tests pass
+    because its double serves the lander's literal. Only production sees it, where `.get` returns
+    `None` on a key nobody serves, the criterion excuses nothing, and `brain#31`/`#32` are held
+    forever with nothing saying why -- the flattering direction the constant's own comment warns
+    about.
+
+    Asserted against the SERVICE dataclass rather than the response model: the model is pinned to
+    the dataclass one test over, so this is the shorter chain, and it is the dataclass the route
+    serializes.
+    """
+    from estate_lander.cli import _BASE_MATCHES_PIN
+
+    assert _BASE_MATCHES_PIN in EstateLandingAdmission.__dataclass_fields__
+
+
 def test_the_exception_the_lander_suppresses_beside_is_exactly_the_one_composed_here() -> None:
     """The CONDITION of the suppression, which this increment made load-bearing twice over.
 
@@ -243,6 +467,44 @@ def test_the_exception_the_lander_suppresses_beside_is_exactly_the_one_composed_
     from estate_lander.cli import _EXCEPTION
 
     assert _EXCEPTION == frozenset({LANDING_UPDATE_TYPE_UNPARSEABLE})
+
+
+def test_the_two_copies_of_the_freshness_criterion_AGREE_POINTWISE() -> None:
+    """ADR-0024's "one concept, two consumers", held together from outside.
+
+    Set equality would not do here: the criterion is a FUNCTION of two arguments, not a list, so
+    what has to agree is every answer it gives. This walks the whole cross product of the refusal
+    vocabulary and both values of the base comparison -- 64 subsets by two -- so a copy that drifts
+    on any single input reddens, including the conjunct that only one input can see.
+
+    The lander may not import the orchestrator; a test may import both. Same mechanism as
+    `_DELIBERATE` above, one function rather than one set.
+    """
+    from itertools import combinations
+
+    from estate_lander.cli import _freshness_derived
+
+    vocabulary = (
+        LANDING_HEAD_NOT_CURRENT_WITH_BASE,
+        LANDING_ROLLOUT_MOVED,
+        LANDING_CHECKS_NOT_CLEAN,
+        LANDING_CHECKS_AWAITING_VERDICT,
+        LANDING_UPDATE_TYPE_UNPARSEABLE,
+        LANDING_PACE_EXHAUSTED,
+        "landing_something_nobody_has_thought_of",
+    )
+    subsets = [
+        subset for size in range(len(vocabulary) + 1) for subset in combinations(vocabulary, size)
+    ]
+
+    for subset in subsets:
+        for base_matches in (False, True):
+            assert freshness_derived_refusals(
+                subset, rollout_base_matches_pin=base_matches
+            ) == _freshness_derived(set(subset), rollout_base_matches_pin=base_matches), (
+                subset,
+                base_matches,
+            )
 
 
 # --------------------------------------------------------------------------------------------
@@ -351,6 +613,82 @@ def test_without_credentials_nothing_is_asked_of_the_remote(migrated_session: Se
     with pytest.raises(DomainError):
         _update(migrated_session, gateway=gateway, credentials=False)
 
+    assert gateway.branch_updates == []
+
+
+# --------------------------------------------------------------------------------------------
+# The carve-out, through the surface that actually writes to a repository.
+#
+# The predicate cases above pass a refusal tuple and a fact directly. These compose both from
+# blobs, so they also cover the wiring: a correct predicate reading a fact nobody carried, or
+# carrying one that was never observed, is invisible to every case above.
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_branch_whose_STALE_HEAD_moved_the_rollout_pin_is_brought_up_to_date(
+    migrated_session: Session,
+) -> None:
+    """The five `brain` pull requests, composed from the blobs rather than asserted.
+
+    The base carries the pinned bytes and the head carries the previous ones -- measured
+    2026-08-16 as base `c5c08871`, head `6cad4cf9` on all five, twelve commits behind.
+    """
+    gateway = _behind(head_blob="6cad4cf9f03d816ce8bf8fb87fa67d8634486ef1")
+
+    _update(migrated_session, gateway=gateway)
+
+    assert gateway.branch_updates == [(REPOSITORY, PR, HEAD)]
+
+
+def test_a_branch_whose_BASE_no_longer_carries_the_pinned_bytes_is_never_touched(
+    migrated_session: Session,
+) -> None:
+    """THE WIRING CONTROL. Behind its base, exactly as above, and the workflow genuinely moved.
+
+    A predicate that reads the fact correctly but is handed a hardcoded `True`, or a term that
+    reports the base as matching whatever it read, passes every other case in this module and
+    fails this one. The assertion is on the empty call list rather than on the error.
+    """
+    gateway = _behind(blob="0" * 40, head_blob="0" * 40)
+
+    with pytest.raises(DomainError) as raised:
+        _update(migrated_session, gateway=gateway)
+
+    assert raised.value.code == BRANCH_UPDATE_NOT_QUALIFIED
+    assert gateway.branch_updates == []
+
+
+def test_a_branch_that_EDITS_the_rollout_workflow_and_is_current_is_never_touched(
+    migrated_session: Session,
+) -> None:
+    """`_rollout_term`'s founding case, and what the carve-out must leave standing."""
+    gateway = FakeEstateGateway(behind=0, head_blob="f" * 40)
+
+    with pytest.raises(DomainError) as raised:
+        _update(migrated_session, gateway=gateway)
+
+    assert raised.value.code == BRANCH_UPDATE_NOT_QUALIFIED
+    assert gateway.branch_updates == []
+
+
+def test_a_STALE_branch_that_can_never_land_ANYWAY_is_never_touched(
+    migrated_session: Session,
+) -> None:
+    """`brain#31` and `#32`: behind, a stale pin, AND a requirement-range title.
+
+    They are permanent exceptions -- no update makes a range bump classifiable -- and the standing
+    instruction about their production twins is that they must not be touched. The carve-out
+    excuses the pin refusal and this pull request still has one the lane cannot clear.
+    """
+    gateway = _behind(
+        pull=pull_request(title=RANGE_TITLE),
+        head_blob="6cad4cf9f03d816ce8bf8fb87fa67d8634486ef1",
+    )
+
+    with pytest.raises(DomainError) as raised:
+        _update(migrated_session, gateway=gateway)
+
+    assert raised.value.code == BRANCH_UPDATE_NOT_QUALIFIED
     assert gateway.branch_updates == []
 
 

@@ -192,3 +192,181 @@ def test_a_major_outside_that_ecosystem_is_still_refused_by_the_cascade() -> Non
     assert cascade is not None
     assert cascade.permits(SEMVER_MAJOR, "uv") is False
     assert cascade.permits(SEMVER_MAJOR, "docker") is False
+
+
+# ---------------------------------------------------------------------------------------------
+# ADR-0034: the fourth shape, and the history it must not rewrite.
+# ---------------------------------------------------------------------------------------------
+
+OUTCOME = "3457db3cee85ffa054dee8b434ac25238a81f425"
+DOCKER_CASCADE = "72391c0f7343477193b5c896680a083500c45227"
+
+PATCH, MINOR, MAJOR = SEMVER_PATCH, SEMVER_MINOR, SEMVER_MAJOR
+UNKNOWN = "version-update:semver-unknown"
+UPDATE_TYPES = (PATCH, MINOR, MAJOR, None, UNKNOWN)
+# `github-actions` with a HYPHEN is in the grid on purpose: one revision compares against it and
+# `fetch-metadata` never reports it, which is the defect 4d87d9b7 preserves. `None` is the
+# ledger failing to read an ecosystem the gate always has.
+ECOSYSTEMS = ("uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None)
+
+# EVERY ANSWER EVERY REVISION BEFORE 3457db3c GIVES, as a literal, MEASURED FROM THE UNMODIFIED
+# CODE on 2026-08-28 before the fourth shape was added.
+#
+# It is here because ADR-0034 changes the SHAPE of `Rule` rather than only its values, and the
+# registry's whole worth is that a landing can be re-judged years later by the rule that actually
+# armed it. A widening that reached backwards would rewrite the audit silently -- every affected
+# landing would simply stop being a finding -- so this is written as data rather than derived
+# from the rules it checks. A table computed FROM `permits` would agree with `permits` by
+# construction and could pin nothing.
+HISTORICAL_ANSWERS: dict[str, dict[str | None, list[str | None]]] = {
+    # The first cut: patch and minor, every ecosystem, no major anywhere.
+    "77ab867d1080d18baea3a2b230655c2729716970": {
+        PATCH: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MINOR: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MAJOR: [],
+        None: [],
+        UNKNOWN: [],
+    },
+    # The hyphenated literal, which the reported value never matches. The widening it describes
+    # reaches only a spelling nothing produces -- transcribed, never corrected.
+    "4d87d9b7465e3b59bd9bdee2086de18eb1cab1dd": {
+        PATCH: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MINOR: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MAJOR: ["github-actions"],
+        None: ["github-actions"],
+        UNKNOWN: ["github-actions"],
+    },
+    # The corrected literal, as a disjunction: the named ecosystem is permitted at ANY intent.
+    "12880ce77ab97c3f4d9281195041eed8c5d52609": {
+        PATCH: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MINOR: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MAJOR: ["github_actions"],
+        None: ["github_actions"],
+        UNKNOWN: ["github_actions"],
+    },
+    "43e37ed97823aec25cc5bac63f636914637e219c": {
+        PATCH: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MINOR: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MAJOR: ["github_actions"],
+        None: ["github_actions"],
+        UNKNOWN: ["github_actions"],
+    },
+    # ADR-0018 restated the disjunction as a cascade: a major only where the check exercises it.
+    "e849b3a8411fabeff1dedd138e6e3e3a2f535319": {
+        PATCH: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MINOR: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MAJOR: ["github_actions"],
+        None: [],
+        UNKNOWN: [],
+    },
+    "a4a4b8da035292fe434badd007607d8a69bc54e2": {
+        PATCH: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MINOR: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None],
+        MAJOR: ["github_actions"],
+        None: [],
+        UNKNOWN: [],
+    },
+    # ADR-0023, the docker column withdrawn.
+    "72391c0f7343477193b5c896680a083500c45227": {
+        PATCH: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", None],
+        MINOR: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions", None],
+        MAJOR: ["github_actions"],
+        None: [],
+        UNKNOWN: [],
+    },
+}
+
+
+@pytest.mark.parametrize("revision", sorted(HISTORICAL_ANSWERS))
+def test_a_revision_the_estate_has_already_run_answers_exactly_as_it_did(revision: str) -> None:
+    """Adding a shape must not move a rule that already decided landings."""
+    rule = rule_for(revision)
+    assert rule is not None
+    for update_type, permitted in HISTORICAL_ANSWERS[revision].items():
+        for ecosystem in ECOSYSTEMS:
+            assert rule.permits(update_type, ecosystem) == (ecosystem in permitted), (
+                f"{revision[:12]} changed its answer for {update_type} / {ecosystem}"
+            )
+
+
+def test_every_revision_is_either_pinned_as_history_or_is_the_current_one() -> None:
+    """Both directions, so a revision cannot join the registry without somebody deciding which
+    it is. A new gate transcribed with no answer table would otherwise be pinned by nothing, and
+    a historical entry deleted from the table would stop being held to what it did."""
+    assert set(HISTORICAL_ANSWERS) | {OUTCOME} == set(REGISTRY)
+    assert OUTCOME not in HISTORICAL_ANSWERS
+
+
+def test_the_outcome_rule_permits_every_update_type_outside_the_excluded_ecosystem() -> None:
+    """ADR-0034: a pull request whose required checks pass is routine whatever it declares. The
+    absent update type is the cell this revision exists for -- ten of the estate's thirteen open
+    updates on 2026-08-28 stated no delta, and no rule keyed on update types could reach one."""
+    rule = rule_for(OUTCOME)
+    assert rule is not None
+
+    for update_type in UPDATE_TYPES:
+        for ecosystem in ("uv", "pip", "npm_and_yarn", "github_actions", "github-actions"):
+            assert rule.permits(update_type, ecosystem) is True, f"{update_type} / {ecosystem}"
+
+
+def test_the_outcome_rule_still_refuses_docker_at_every_update_type() -> None:
+    """The one exclusion, and the control that must not move: `python 3.12-slim -> 3.14-slim`
+    states no delta, so a rule permitting everything undeclared would arm a language replacement
+    that removes standard-library modules and that no check in this estate runs."""
+    rule = rule_for(OUTCOME)
+    assert rule is not None
+
+    for update_type in UPDATE_TYPES:
+        assert rule.permits(update_type, "docker") is False, update_type
+
+
+def test_the_outcome_rule_refuses_an_ecosystem_this_program_could_not_read() -> None:
+    """FAIL-CLOSED RATHER THAN FAITHFUL, and deliberately so.
+
+    The gate always has an ecosystem -- it is the second segment of the branch name -- so `None`
+    never means the gate saw nothing; it means the ledger could not read what the gate read. The
+    three shapes before this one refused that input anyway, at Q1, for want of a declared intent.
+    Here the exclusion is the only question asked, so permitting an unreadable ecosystem would
+    bless a landing whose one condition nobody can re-check.
+    """
+    rule = rule_for(OUTCOME)
+    assert rule is not None
+
+    for update_type in UPDATE_TYPES:
+        assert rule.permits(update_type, None) is False, update_type
+
+
+def test_the_outcome_rule_differs_from_its_predecessor_in_three_named_groups() -> None:
+    """The differential over the whole grid, so a change nobody intended shows up as one.
+
+    TWO WIDENINGS AND ONE NARROWING, and the narrowing is the one a first draft of this test
+    denied. It permits a major outside `github_actions`, which ADR-0018 refused on purpose; it
+    permits an update stating no delta, which every earlier shape refused merely for want of
+    one; and it REFUSES a declared patch or minor whose ecosystem the ledger could not read,
+    which its predecessor permitted. That last is the fail-closed guard: the earlier shapes
+    could answer from the update type alone, and this one has nothing to ask but the ecosystem,
+    so an unreadable one has to refuse. Unreachable in practice -- a landing the gate armed came
+    from a branch this reader parses -- but a real difference, and stating it as an absence
+    would be the assertion, not the code, being wrong.
+    """
+    outcome, cascade = rule_for(OUTCOME), rule_for(DOCKER_CASCADE)
+    assert outcome is not None and cascade is not None
+
+    changed = {
+        (update_type, ecosystem)
+        for update_type in UPDATE_TYPES
+        for ecosystem in ECOSYSTEMS
+        if outcome.permits(update_type, ecosystem) != cascade.permits(update_type, ecosystem)
+    }
+    known = {"uv", "pip", "npm_and_yarn", "github_actions", "github-actions"}
+    widened = (
+        {(MAJOR, e) for e in known if e != "github_actions"}
+        | {(UNKNOWN, e) for e in known}
+        | {(None, e) for e in known}
+    )
+    narrowed = {(PATCH, None), (MINOR, None)}
+
+    assert changed == widened | narrowed
+    assert {cell for cell in changed if cascade.permits(*cell)} == narrowed
+    # The docker column is where the two AGREE, and it is the control ADR-0034 must not move.
+    assert not [cell for cell in changed if cell[1] == "docker"]
