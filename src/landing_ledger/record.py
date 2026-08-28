@@ -212,7 +212,7 @@ def permitted_by(landing: Landing) -> dict[str, Any]:
         # THE KEY BEING PRESENT AND NULL IS A DIFFERENT ASSERTION FROM THE KEY BEING ABSENT, and
         # `audit_landing` keys on exactly that difference. Present with `None` says the update
         # bot declared no version delta -- which is the ordinary shape of a requirement range,
-        # and which revision 311aaa1d permits deliberately. All three keys ABSENT says this
+        # and which revision 3457db3c permits deliberately. All three keys ABSENT says this
         # program could not read the trailer at all, so no rule's condition can be re-read and
         # the landing is a finding. Before 2026-08-28 the reader collapsed the two, and every
         # no-delta landing arrived looking unreadable.

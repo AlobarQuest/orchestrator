@@ -154,6 +154,16 @@ def update_metadata(message: str, head_ref: str | None) -> UpdateMetadata | None
     gate itself had. Present-with-`None` and absent are therefore two different answers now, and
     consumers must read them as two: `None` means the update bot declared no delta, while no
     metadata at all means nothing here could be read.
+
+    `None` IS WHAT DEPENDABOT DECLARED, NOT NECESSARILY WHAT THE GATE SAW. From `fetch-metadata`
+    v3.1.0 -- the revision blob 3457db3c pins -- the action DERIVES an update type when the
+    trailer states none, by scraping a version pair out of `update <name> requirement from A to B`
+    and passing it to `calculateUpdateType`. v2 had no such regex. So on a requirement range the
+    gate may report `semver-patch` while this reader honestly reports nothing, because it reads
+    the commit the bot wrote rather than a title. That divergence is INERT under 3457db3c, whose
+    condition reads no update type at all -- and it is exactly what a future revision keyed on
+    update types would be transcribed against wrongly. Read the pinned action before writing such
+    a transcription.
     """
     name = DEPENDENCY_NAME.search(message)
     if name is None:

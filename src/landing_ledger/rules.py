@@ -78,7 +78,7 @@ class Rule:
         # unless it declares an intent.
         if ecosystem in self.excluded_ecosystems:
             return False
-        # From 311aaa1d there is nothing after Q0: the condition names no update type, so
+        # From 3457db3c there is nothing after Q0: the condition names no update type, so
         # everything Q0 did not exclude is permitted and the required checks decide the rest
         # (ADR-0034). The `ecosystem is not None` guard is FAIL-CLOSED RATHER THAN FAITHFUL,
         # deliberately. The gate always has an ecosystem -- `package-ecosystem` is the second
@@ -180,7 +180,7 @@ _CASCADE_WITHOUT_DOCKER = Rule(
 # It is also the first revision SIX repositories carry, byte-identical. The three it replaces
 # differed in one clause and in a pinned action version, and needed three entries between them.
 _OUTCOME_NOT_UPDATE_TYPE = Rule(
-    revision="311aaa1dc0fb50bd9cb2350fe2d358e8ff973ccd",
+    revision="3457db3cee85ffa054dee8b434ac25238a81f425",
     update_types=frozenset(),
     permits_any_update_type=True,
     excluded_ecosystems=frozenset({"docker"}),

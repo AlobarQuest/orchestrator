@@ -134,7 +134,7 @@ def test_a_trailer_stating_no_update_type_keeps_the_two_values_it_does_state() -
     Until 2026-08-28 this returned None wholesale, discarding an ecosystem the trailer never
     carried in the first place -- the branch does -- and which the gate itself therefore always
     has. That was harmless only while every transcribed rule refused an absent update type at
-    Q1. Revision 311aaa1d reads the ecosystem and nothing else, so the conflation would have
+    Q1. Revision 3457db3c reads the ecosystem and nothing else, so the conflation would have
     reported `python 3.12-slim -> 3.14-slim` as permitted by a rule that excludes `docker`.
 
     The update type is still never GUESSED. It is the value the gate's condition is written

@@ -99,6 +99,25 @@ FAILING_CONCLUSIONS = frozenset(
     {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
 )
 
+# A conclusion that is NOT A VERDICT ABOUT THE CHANGE. A cancelled run was stopped, a stale one
+# superseded, a skipped one never asked -- none of them says the change is bad, and the estate has
+# already paid for reading them as though they did: the landing lane held three clean bumps for
+# four days on the strength of runs GitHub cancelled when the Actions quota ran out.
+#
+# A DELIBERATE MIRROR of `orchestrator.services.estate_landing_admission.NO_VERDICT_CONCLUSIONS`,
+# which this program may not import -- the isolation test says so -- and pinned to it by a test
+# that imports both, the same arrangement `titles.py` uses. Its polarity is the safety: anything
+# NOT named here is read as a verdict, so a conclusion the platform has not yet invented fails
+# toward refusing rather than toward calling itself absent.
+NO_VERDICT_CONCLUSIONS = frozenset({"cancelled", "skipped", "stale"})
+
+# The subset of the above that a CONSUMER MAY ACT ON. `FAILING_CONCLUSIONS` is deliberately wider
+# because it feeds `is_green`, where over-counting is conservative: a reporting predicate that
+# calls a cancelled run not-green merely stays quiet. A predicate that drives an irreversible act
+# needs the narrower question -- did the checks decide AGAINST this change -- and the two must not
+# share a name, because the same word would let one be tuned for the other's cost.
+REFUSING_CONCLUSIONS = FAILING_CONCLUSIONS - NO_VERDICT_CONCLUSIONS
+
 # How long a pull request must have been green before "armed and still open" is worth reporting.
 # GitHub lands an armed pull request within seconds of its last required check, so anything above
 # a few minutes is generous -- but a pass that ran inside that window would report a race as a
@@ -321,7 +340,7 @@ def audit_landing(facts: Any) -> tuple[tuple[Finding, ...], tuple[Finding, ...]]
     # ABSENT, NOT NULL. `permitted_by` writes the three update keys together or not at all, so
     # the key's presence answers "was the trailer readable?" while its VALUE answers "what did
     # the update bot declare?". Testing the value would report every no-delta landing revision
-    # 311aaa1d permits as metadata this program failed to read -- a finding about the ledger,
+    # 3457db3c permits as metadata this program failed to read -- a finding about the ledger,
     # raised against the landings the new rule exists to make. One key is tested because all
     # three arrive together; `test_record.py` pins that they do.
     if rule.requires_upstream_author and "update_type" not in permitted:
@@ -592,7 +611,7 @@ def audit_pending(
 
     ITS SUBJECT SHRANK ON 2026-08-28 AND THE BRANCH IS KEPT ANYWAY. Requirement ranges were the
     bulk of it, and they no longer arrive here at all: the reader keeps the ecosystem a range
-    states even though it states no delta, and revision 311aaa1d classifies one on that alone.
+    states even though it states no delta, and revision 3457db3c classifies one on that alone.
     What still reaches this branch is a head commit whose trailer could not be read, which is a
     genuine and fail-closed state rather than a residue -- it just stopped being the common one.
 
@@ -626,7 +645,7 @@ def audit_pending(
         return (), ()
     if not pending.armed:
         # The declared intent may legitimately be absent -- a requirement range states none, and
-        # revision 311aaa1d permits one on its ecosystem alone -- so this says so rather than
+        # revision 3457db3c permits one on its ecosystem alone -- so this says so rather than
         # interpolating `None` into a sentence a person has to read. It is the line this detector
         # emits for every already-open update after a gate edit, which fires no `pull_request`
         # event and so arms nothing that already exists.

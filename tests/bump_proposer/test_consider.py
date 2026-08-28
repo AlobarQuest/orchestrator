@@ -24,7 +24,7 @@ FIVE_REPO_GATE = "e849b3a8411fabeff1dedd138e6e3e3a2f535319"
 NEWER_METADATA_GATE = "a4a4b8da035292fe434badd007607d8a69bc54e2"
 # The one revision all six carry from 2026-08-28 (ADR-0034): it excludes `docker` and asks
 # nothing else, so what the checks concluded is the only thing left separating the two lanes.
-OUTCOME_GATE = "311aaa1dc0fb50bd9cb2350fe2d358e8ff973ccd"
+OUTCOME_GATE = "3457db3cee85ffa054dee8b434ac25238a81f425"
 
 NOW = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
 SETTLED = NOW - timedelta(seconds=FAILURE_SETTLE_SECONDS + 1)
@@ -54,7 +54,7 @@ def _pending(
     A requirement-range bump carries a dependency name and no update type, so it arrives as
     metadata whose `update_type` is None rather than as no metadata at all: the gate reads the
     ecosystem from the BRANCH and always has one, so discarding it with the missing update type
-    threw away the only value revision 311aaa1d reads. An earlier version of this helper passed
+    threw away the only value revision 3457db3c reads. An earlier version of this helper passed
     `str(None)` to satisfy a type checker and turned every such row into a classification
     disagreement -- a fixture that no longer described the estate.
 
@@ -303,7 +303,7 @@ def test_a_classifiable_title_with_no_trailer_is_ambiguous() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# ADR-0034. Under revision 311aaa1d the cascade permits anything it does not exclude, so
+# ADR-0034. Under revision 3457db3c the cascade permits anything it does not exclude, so
 # `permits` alone no longer separates the lanes -- what the required checks concluded does.
 # These are the acceptance controls for that change, stated as the questions they answer.
 # ---------------------------------------------------------------------------------------------
@@ -329,7 +329,7 @@ def test_a_settled_failure_is_still_this_lanes_subject_under_the_outcome_rule() 
     """CONTROL 1. The factory's queue must not empty when the cascade stops refusing on type.
 
     zod #71 is the archetype ADR-0034 names: the MCP SDK's `server.tool()` signature shifts
-    under zod 4, so the bump needs a code change before its diff is correct. Revision 311aaa1d
+    under zod 4, so the bump needs a code change before its diff is correct. Revision 3457db3c
     PERMITS it -- there is no update-type arm left to refuse it with -- and GitHub will never
     land it, because two required checks concluded failure on 2026-08-23. A producer reading
     `permits` alone would report it as the cascade's business and propose nothing, leaving the
@@ -386,7 +386,7 @@ def test_the_old_and_new_gates_take_zod_for_DIFFERENT_reasons() -> None:
     """The differential that shows the change is real rather than coincidental.
 
     Under the cascade the bump was this lane's subject because a package major was refused on
-    its DECLARATION, whatever CI said -- so a green zod was a candidate too. Under 311aaa1d only
+    its DECLARATION, whatever CI said -- so a green zod was a candidate too. Under 3457db3c only
     the failure keeps it here. Asserting the candidate case alone would pass under both and
     prove nothing about which question is being asked.
     """
@@ -417,3 +417,25 @@ def test_a_requirement_range_stays_unclassifiable_under_the_outcome_rule() -> No
     package, _, detail = _consider(pending, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
 
     assert package is None and detail.startswith("unclassifiable"), detail
+
+
+CANCELLED = (Check(name="Quality", conclusion="cancelled", run=1),)
+STALE = (Check(name="Quality", conclusion="stale", run=1),)
+
+
+@pytest.mark.parametrize("checks", [CANCELLED, STALE], ids=["cancelled", "stale"])
+def test_a_conclusion_that_is_no_verdict_does_not_hand_the_bump_to_the_factory(checks) -> None:
+    """A cancelled run was STOPPED and a stale one SUPERSEDED. Neither says the change is bad.
+
+    The estate has paid for reading them as failures once already -- the landing lane held three
+    clean bumps for four days on runs GitHub cancelled when the Actions quota ran out -- and here
+    the cost is worse than a delay: the gate's arming stays live, so treating a cancelled job as
+    the cascade's answer mints a package revision that cannot be unminted, and the bump lands by
+    itself the moment somebody re-runs the job green.
+    """
+    package, _, detail = _consider(
+        _zod(checks=checks, concluded_at=SETTLED), REGISTRY[OUTCOME_GATE], PACKAGES, NOW
+    )
+
+    assert package is None
+    assert "have not concluded against it" in detail, detail

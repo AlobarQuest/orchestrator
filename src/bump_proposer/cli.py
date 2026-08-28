@@ -61,7 +61,7 @@ from bump_proposer.standing import (
     require_clean,
     snapshot_hash,
 )
-from landing_ledger.audit import FAILING_CONCLUSIONS, is_green
+from landing_ledger.audit import REFUSING_CONCLUSIONS, is_green
 from landing_ledger.github import (
     GitHubReader,
     LedgerError,
@@ -141,12 +141,24 @@ def _refused_by_the_checks(pending: PendingUpdate, now: datetime) -> bool:
     mints a package revision that cannot be unminted and spends a human approval on a bump that
     was about to land by itself; answering "not refused" wrongly costs a pass, and the next pass
     picks it up. So an unreadable or unsettled state waits.
+
+    THAT IS WHY IT ASKS `REFUSING_CONCLUSIONS` AND NOT `FAILING_CONCLUSIONS`. The wider set exists
+    for `is_green`, where calling a cancelled run not-green is conservative. Here it would be
+    fail-OPEN: a required job cancelled by hand, or gone `stale` because the Actions quota ran
+    out, is no verdict about the change at all -- and reading it as one mints a revision while the
+    gate's arming stays live, so the bump lands the moment somebody re-runs the job green.
+
+    IT DOES NOT KNOW WHICH JOBS WERE REQUIRED, and `Check`'s own docstring says as much. Every
+    `pull_request` job in all six lane repositories is a required context today, measured, so a
+    non-required failure cannot reach this yet; adding one advisory job anywhere makes it
+    reachable, with no signal. Answering it needs the branch's protection settings, which the
+    ledger deliberately does not reconstruct.
     """
     if pending.last_concluded_at is None:
         return False
     if (now - pending.last_concluded_at).total_seconds() < FAILURE_SETTLE_SECONDS:
         return False
-    return any(check.conclusion in FAILING_CONCLUSIONS for check in pending.checks)
+    return any(check.conclusion in REFUSING_CONCLUSIONS for check in pending.checks)
 
 
 def _consider(
@@ -183,7 +195,7 @@ def _consider(
     # PERMITTED IS NOT THE SAME QUESTION AS LANDED, and it stopped being a usable proxy for it on
     # 2026-08-28. While the gate's condition was a cascade over update types, "the cascade
     # permits this" and "the cascade lands this" picked out the same set, because everything it
-    # refused it refused on the declaration alone. Revision 311aaa1d permits anything it does not
+    # refused it refused on the declaration alone. Revision 3457db3c permits anything it does not
     # exclude and leaves the rest to the required checks (ADR-0034), so a bump whose checks FAIL
     # is now permitted and unlandable at once -- and this lane's subject is the second half.
     # Reading `permits` alone here would EMPTY the factory's queue rather than narrow it to the

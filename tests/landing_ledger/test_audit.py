@@ -1021,14 +1021,14 @@ def test_caveats_are_dropped_before_findings_when_the_record_will_not_fit() -> N
 # ADR-0034. Two records that used to look identical, and the detector must answer them apart.
 # ---------------------------------------------------------------------------------------------
 
-OUTCOME_RULE = "311aaa1dc0fb50bd9cb2350fe2d358e8ff973ccd"
+OUTCOME_RULE = "3457db3cee85ffa054dee8b434ac25238a81f425"
 
 
 def test_a_landing_stating_no_delta_is_not_a_landing_nobody_could_read() -> None:
     """The distinction the reader started drawing on 2026-08-28, read back at the far end.
 
     `update_type` PRESENT and null says the update bot declared no version delta, which is the
-    ordinary shape of a requirement range and exactly what revision 311aaa1d permits. Keyed on
+    ordinary shape of a requirement range and exactly what revision 3457db3c permits. Keyed on
     the VALUE rather than the key, this detector would raise `metadata_missing` against every
     landing the new rule exists to make -- a finding about the ledger, aimed at the population
     the change was for, arriving on the first night it ran.
@@ -1091,3 +1091,30 @@ def test_a_docker_tag_stating_no_delta_stays_quiet_under_the_outcome_rule() -> N
     )
 
     assert findings == () and exceptions == ()
+
+
+def test_the_no_verdict_vocabulary_matches_the_lane_that_owns_it() -> None:
+    """A mirror, pinned by importing both -- the arrangement `titles.py` already uses.
+
+    `bump_proposer` and this module may not import the orchestrator, so the set is duplicated
+    rather than shared. A duplicate nobody checks is how two vocabularies drift into disagreeing
+    about the same word, which this estate has now found four times.
+    """
+    from landing_ledger.audit import NO_VERDICT_CONCLUSIONS as MIRROR
+    from orchestrator.services.estate_landing_admission import (
+        NO_VERDICT_CONCLUSIONS as OWNED,
+    )
+
+    assert MIRROR == OWNED
+
+
+def test_a_conclusion_nobody_enumerated_is_read_as_a_verdict() -> None:
+    """The polarity that makes the split safe. A word the platform has not yet invented must
+    fail toward "the checks refused this", never toward "no answer yet"."""
+    from landing_ledger.audit import NO_VERDICT_CONCLUSIONS, REFUSING_CONCLUSIONS
+
+    assert "failure" in REFUSING_CONCLUSIONS
+    assert not (REFUSING_CONCLUSIONS & NO_VERDICT_CONCLUSIONS)
+    from landing_ledger.audit import FAILING_CONCLUSIONS
+
+    assert REFUSING_CONCLUSIONS == FAILING_CONCLUSIONS - NO_VERDICT_CONCLUSIONS

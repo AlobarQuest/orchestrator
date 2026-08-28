@@ -198,7 +198,7 @@ def test_a_major_outside_that_ecosystem_is_still_refused_by_the_cascade() -> Non
 # ADR-0034: the fourth shape, and the history it must not rewrite.
 # ---------------------------------------------------------------------------------------------
 
-OUTCOME = "311aaa1dc0fb50bd9cb2350fe2d358e8ff973ccd"
+OUTCOME = "3457db3cee85ffa054dee8b434ac25238a81f425"
 DOCKER_CASCADE = "72391c0f7343477193b5c896680a083500c45227"
 
 PATCH, MINOR, MAJOR = SEMVER_PATCH, SEMVER_MINOR, SEMVER_MAJOR
@@ -209,7 +209,7 @@ UPDATE_TYPES = (PATCH, MINOR, MAJOR, None, UNKNOWN)
 # ledger failing to read an ecosystem the gate always has.
 ECOSYSTEMS = ("uv", "pip", "npm_and_yarn", "github_actions", "github-actions", "docker", None)
 
-# EVERY ANSWER EVERY REVISION BEFORE 311aaa1d GIVES, as a literal, MEASURED FROM THE UNMODIFIED
+# EVERY ANSWER EVERY REVISION BEFORE 3457db3c GIVES, as a literal, MEASURED FROM THE UNMODIFIED
 # CODE on 2026-08-28 before the fourth shape was added.
 #
 # It is here because ADR-0034 changes the SHAPE of `Rule` rather than only its values, and the

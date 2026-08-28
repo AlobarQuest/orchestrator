@@ -26,11 +26,27 @@ name: Dependabot auto-merge
 #
 #   Until that date the condition was a cascade over update types — patch and minor in any
 #   ecosystem, a major only in `github_actions`. It refused ten of the estate's thirteen open
-#   updates, and every one of those ten was a REQUIREMENT RANGE (`>=83.0.0`), which states no
-#   single version delta at all. No rule about update types can admit one, ever; and the
-#   producer that feeds the factory drops a title stating no single delta a guard earlier still.
-#   So those ten were reachable by NEITHER lane and simply accumulated, which is a stronger case
-#   for this change than the one first written for it.
+#   updates on that day, and every one of those ten was a REQUIREMENT RANGE (`>=83.0.0`), which
+#   Dependabot's own trailer states no version delta for. They were reachable by NEITHER lane —
+#   not this one, and not the producer that feeds the factory, which drops a title stating no
+#   single delta a guard earlier still — so they simply accumulated.
+#
+#   BE PRECISE ABOUT WHY, because the obvious sentence is false at the pin below, and a first
+#   draft of this file asserted it. "No rule about update types could ever admit a range" was
+#   measured against `fetch-metadata` v2. **v3.1.0 DERIVES an update type where the trailer
+#   states none**: it added a regex over `update <name> requirement from A to B` and hands the
+#   scraped pair to `calculateUpdateType`. So under v3.1.0 a type-keyed cascade admits
+#   `>=0.52.0 → >=0.52.1` as a patch and refuses `>=83.0.0 → >=84.0.0` as a major — arithmetic
+#   over two strings lifted out of a title, which no version number promised and nobody here
+#   decided. Measured rather than read off the source: one of the two repositories already on
+#   v3.1.0 carries exactly that second case as its open `setuptools` range, and it is correctly
+#   unarmed today — under v2 it would have been unarmed for want of any declared type at all,
+#   which is the same answer reached by a different route.
+#
+#   The condition below reads no update type at all, so it is indifferent to which version of
+#   the action is pinned. What survives of the argument above is the part that never depended on
+#   the version: both mechanisms already gate on the checks passing, and the type condition sat
+#   on top of that gate saying nothing about whether the bump works.
 #
 #   The residual, stated so that it is decided rather than inherited: `semver-major` means the
 #   author DECLARES a breaking change, while green checks mean THIS repository's tests do not
@@ -79,6 +95,16 @@ name: Dependabot auto-merge
 #     — a wider rule drains the queue faster, so the gap between landing and verification
 #     matters more than it did — and deliberately did not settle it. A known residual, not an
 #     oversight.
+#   * THE PINNED ACTION MOVED for four of the six, and that is a second variable in one change,
+#     stated rather than buried. `e849b3a8` and `72391c0f` ran v2; `a4a4b8da` already ran v3.1.0,
+#     and one blob means one pin. Forward rather than back, because the update bot would
+#     re-propose v3.1.0 within the week — which is also the standing hazard worth naming: a
+#     `fetch-metadata` bump here is a `github_actions` update this rule permits, so it can land
+#     unattended, change this file's blob, and leave `rules.py` not knowing the revision. The
+#     audit then fails closed until somebody transcribes it, and the landing that did it carries
+#     the caveat `rule_pinned_after_this_landing_changed_it`. It is not new — the cascade
+#     permitted Actions majors too — but it is a reason to read this file's blob after any week
+#     in which the bot has been busy.
 #   * The literal below is the value `fetch-metadata` REPORTS, not the one `dependabot.yml`
 #     spells. `update_metadata.ts` sets `packageEcosystem: chunks[1]` — the second segment of
 #     the BRANCH NAME (`dependabot/github_actions/…`), the update bot's normalized identifier —

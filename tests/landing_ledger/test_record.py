@@ -386,7 +386,7 @@ def test_a_landing_stating_no_delta_records_the_key_as_present_and_null() -> Non
 
     A requirement range carries a dependency name and no update type. Recording that as
     `update_type: null` asserts something -- the update bot declared no delta -- where omitting
-    the key asserts that this program could not read the trailer at all. Revision 311aaa1d
+    the key asserts that this program could not read the trailer at all. Revision 3457db3c
     permits the first and the audit reports the second, so the two must not encode alike.
 
     The three keys arriving TOGETHER is the other half, and it is what lets the audit test one
