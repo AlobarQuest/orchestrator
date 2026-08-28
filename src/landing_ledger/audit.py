@@ -625,12 +625,18 @@ def audit_pending(
     if not green:
         return (), ()
     if not pending.armed:
+        # The declared intent may legitimately be absent -- a requirement range states none, and
+        # revision 311aaa1d permits one on its ecosystem alone -- so this says so rather than
+        # interpolating `None` into a sentence a person has to read. It is the line this detector
+        # emits for every already-open update after a gate edit, which fires no `pull_request`
+        # event and so arms nothing that already exists.
+        declared = pending.update.update_type or "no version delta stated"
         return (
             Finding(
                 STALL_ELIGIBLE_NOT_ARMED,
                 subject,
-                f"{pending.update.update_type} of {pending.update.dependency} is permitted by the "
-                f"installed rule and every concluded check passed, but nothing armed it",
+                f"{pending.update.dependency} ({declared}) is permitted by the installed rule "
+                "and every concluded check passed, but nothing armed it",
             ),
         ), ()
     if pending.last_concluded_at is None:

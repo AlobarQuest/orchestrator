@@ -1074,6 +1074,10 @@ def test_a_requirement_range_is_now_CLASSIFIED_rather_than_excepted() -> None:
 
     assert kinds(findings) == [STALL_ELIGIBLE_NOT_ARMED]
     assert exceptions == ()
+    # A person reads this line. An absent intent is said, not interpolated: `None of ruff is
+    # permitted` names a value the update bot never wrote.
+    assert "no version delta stated" in findings[0].detail
+    assert "None" not in findings[0].detail
 
 
 def test_a_docker_tag_stating_no_delta_stays_quiet_under_the_outcome_rule() -> None:
