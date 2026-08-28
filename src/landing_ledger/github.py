@@ -147,14 +147,25 @@ def update_metadata(message: str, head_ref: str | None) -> UpdateMetadata | None
     The ecosystem is the second segment of the branch name because that is where fetch-metadata
     takes it from -- which is why it reads `github_actions` with an underscore while
     `dependabot.yml` spells it with a hyphen.
+
+    AN ABSENT `update-type` NO LONGER DISCARDS THE REST, and that is the substantive half of this
+    function. The gate reads three outputs independently; a requirement range omits one of them
+    and carries the other two, so returning None for the whole structure lost an ecosystem the
+    gate itself had. Present-with-`None` and absent are therefore two different answers now, and
+    consumers must read them as two: `None` means the update bot declared no delta, while no
+    metadata at all means nothing here could be read.
     """
     name = DEPENDENCY_NAME.search(message)
-    kind = UPDATE_TYPE.search(message)
-    if name is None or kind is None:
+    if name is None:
         return None
+    kind = UPDATE_TYPE.search(message)
     segments = (head_ref or "").split("/")
     ecosystem = segments[1] if len(segments) > 2 and segments[0] == "dependabot" else None
-    return UpdateMetadata(dependency=name.group(1), ecosystem=ecosystem, update_type=kind.group(1))
+    return UpdateMetadata(
+        dependency=name.group(1),
+        ecosystem=ecosystem,
+        update_type=kind.group(1) if kind is not None else None,
+    )
 
 
 def factory_claim(message: str) -> FactoryClaim | None:

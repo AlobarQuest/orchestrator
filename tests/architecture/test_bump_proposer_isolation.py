@@ -28,6 +28,10 @@ ALLOWED_TOP_LEVEL = {
     "argparse",
     "bump_proposer",
     "dataclasses",
+    # ADR-0034. The producer now needs a clock: it takes a bump only once the required checks
+    # have settled against it, because "the cascade permits this" stopped meaning "the cascade
+    # lands this" and a concluded failure is only final once nothing more is still running.
+    "datetime",
     "httpx",
     "json",
     "landing_ledger",

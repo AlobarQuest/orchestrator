@@ -44,7 +44,7 @@ from landing_ledger.audit import (
 from landing_ledger.model import Check, PendingUpdate, UpdateMetadata
 from landing_ledger.orchestrator_client import LedgerWriteError
 from landing_ledger.record import BASIS_FACTORY
-from landing_ledger.rules import GATE_PATH, REGISTRY
+from landing_ledger.rules import GATE_PATH, REGISTRY, rule_for
 
 REPO = "AlobarQuest/factory-runner"
 PATCH_AND_MINOR = "77ab867d1080d18baea3a2b230655c2729716970"
@@ -65,6 +65,7 @@ def landing(
     outcome: str = "success",
     update_type: str | None = MINOR,
     ecosystem: str | None = "uv",
+    metadata: bool = True,
     checks: list[dict[str, Any]] | None = None,
     files: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -86,8 +87,13 @@ def landing(
         }
         if revision is None:
             del permitted["rule_revision"]
-        if update_type is None:
-            del permitted["update_type"]
+        if not metadata:
+            # `permitted_by` writes the three update keys together or not at all, so a landing
+            # whose trailer could not be read drops all three. That is a DIFFERENT record from
+            # one whose `update_type` is present and null, which says the bot declared no delta
+            # -- and `audit_landing` gives the two different answers.
+            for key in ("dependency", "ecosystem", "update_type"):
+                del permitted[key]
     return {
         "what_changed": {
             "repository": REPO,
@@ -296,7 +302,7 @@ def test_absent_update_metadata_FIRES_rather_than_being_read_as_ineligible() -> 
     """The rule's own job-level condition is "the update bot raised this", and the trailer is the
     only proxy the ledger holds for it. Absent, the condition cannot be re-read -- which is a
     finding, not a quiet pass and not a rule violation."""
-    findings, _ = audit_landing(landing(update_type=None))
+    findings, _ = audit_landing(landing(metadata=False))
 
     assert kinds(findings) == [DRIFT_METADATA_MISSING]
 
@@ -383,6 +389,7 @@ def pending(
     conclusions: tuple[str, ...] = ("success",),
     concluded_at: datetime | None = NOW - timedelta(days=1),
     title: str = CLASSIFIABLE_TITLE,
+    metadata: bool = True,
 ) -> PendingUpdate:
     return PendingUpdate(
         repository=REPO,
@@ -395,10 +402,14 @@ def pending(
             Check(name=f"job{index}", conclusion=value, run=index)
             for index, value in enumerate(conclusions)
         ),
+        # `metadata` and `update_type` are two switches because the reader draws two lines. A
+        # requirement range carries a dependency name and no update type, so it arrives as
+        # metadata whose `update_type` is None; only a head commit with no readable trailer at
+        # all arrives as no metadata. Before 2026-08-28 the reader collapsed them.
         update=(
-            None
-            if update_type is None
-            else UpdateMetadata(dependency="ruff", ecosystem=ecosystem, update_type=update_type)
+            UpdateMetadata(dependency="ruff", ecosystem=ecosystem, update_type=update_type)
+            if metadata
+            else None
         ),
         last_concluded_at=concluded_at,
     )
@@ -473,7 +484,7 @@ def test_an_unreadable_update_whose_title_STATES_a_delta_FIRES() -> None:
     """
     rule = REGISTRY[UNDERSCORED]
 
-    findings, exceptions = audit_pending(pending(update_type=None), rule, NOW)
+    findings, exceptions = audit_pending(pending(metadata=False), rule, NOW)
 
     assert kinds(findings) == [STALL_METADATA_UNREADABLE]
     assert exceptions == ()
@@ -490,7 +501,7 @@ def test_a_title_stating_no_single_delta_is_an_EXCEPTION_rather_than_a_finding(t
     """
     rule = REGISTRY[UNDERSCORED]
 
-    findings, exceptions = audit_pending(pending(update_type=None, title=title), rule, NOW)
+    findings, exceptions = audit_pending(pending(metadata=False, title=title), rule, NOW)
 
     assert findings == ()
     assert kinds(exceptions) == [EXCEPTION_UPDATE_TYPE_UNPARSEABLE]
@@ -814,8 +825,8 @@ def test_an_exception_reaches_the_repositorys_own_list_and_not_its_findings() ->
         repository=REPO,
         landings=[],
         pending=(
-            pending(update_type=None, title=RANGE_TITLE),
-            pending(number=32, update_type=None, title=DOCKER_TITLE),
+            pending(metadata=False, title=RANGE_TITLE),
+            pending(number=32, metadata=False, title=DOCKER_TITLE),
         ),
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
@@ -833,7 +844,7 @@ def test_an_exception_does_NOT_silence_a_real_finding_beside_it() -> None:
     audit = audit_repository(
         repository=REPO,
         landings=[],
-        pending=(pending(update_type=None, title=RANGE_TITLE), pending(number=32)),
+        pending=(pending(metadata=False, title=RANGE_TITLE), pending(number=32)),
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
@@ -947,7 +958,7 @@ def test_an_exception_is_recorded_in_the_row_with_its_own_count() -> None:
     audit = audit_repository(
         repository=REPO,
         landings=[],
-        pending=(pending(update_type=None, title=RANGE_TITLE),),
+        pending=(pending(metadata=False, title=RANGE_TITLE),),
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
@@ -972,7 +983,7 @@ def test_exceptions_are_dropped_before_caveats_when_the_record_will_not_fit() ->
         repository=REPO,
         landings=[landing(files=[GATE_PATH], ecosystem="e" * 200)],
         pending=tuple(
-            pending(number=index, update_type=None, title=RANGE_TITLE) for index in range(60)
+            pending(number=index, metadata=False, title=RANGE_TITLE) for index in range(60)
         ),
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
@@ -1004,3 +1015,75 @@ def test_caveats_are_dropped_before_findings_when_the_record_will_not_fit() -> N
 
     assert body["facts"]["findings"], "the finding was trimmed before the caveats"
     assert len(body["facts"]["caveats"]) < len(body["facts"]["findings"]) + MAX_LIST
+
+
+# ---------------------------------------------------------------------------------------------
+# ADR-0034. Two records that used to look identical, and the detector must answer them apart.
+# ---------------------------------------------------------------------------------------------
+
+OUTCOME_RULE = "311aaa1dc0fb50bd9cb2350fe2d358e8ff973ccd"
+
+
+def test_a_landing_stating_no_delta_is_not_a_landing_nobody_could_read() -> None:
+    """The distinction the reader started drawing on 2026-08-28, read back at the far end.
+
+    `update_type` PRESENT and null says the update bot declared no version delta, which is the
+    ordinary shape of a requirement range and exactly what revision 311aaa1d permits. Keyed on
+    the VALUE rather than the key, this detector would raise `metadata_missing` against every
+    landing the new rule exists to make -- a finding about the ledger, aimed at the population
+    the change was for, arriving on the first night it ran.
+    """
+    findings, _ = audit_landing(landing(revision=OUTCOME_RULE, update_type=None))
+
+    assert kinds(findings) == []
+
+
+def test_a_landing_with_no_readable_trailer_still_FIRES_under_the_outcome_rule() -> None:
+    """The other side, so the first test is not just the finding being switched off. All three
+    update keys absent means nothing here could read what the gate read, and no rule's condition
+    can be re-run against it -- whatever that rule turns out to be."""
+    findings, _ = audit_landing(landing(revision=OUTCOME_RULE, metadata=False))
+
+    assert kinds(findings) == [DRIFT_METADATA_MISSING]
+
+
+def test_a_docker_landing_under_the_outcome_rule_still_violates_it() -> None:
+    """CONTROL 3 at the landing end. The one exclusion survives the widening: a base image is
+    refused whatever it declares, so a docker landing recorded as rule-permitted is drift."""
+    findings, _ = audit_landing(
+        landing(revision=OUTCOME_RULE, update_type=None, ecosystem="docker")
+    )
+
+    assert kinds(findings) == [DRIFT_NOT_SATISFIED]
+
+
+def test_a_requirement_range_is_now_CLASSIFIED_rather_than_excepted() -> None:
+    """Detector B, and the interim state this change creates deliberately.
+
+    A range is permitted by the installed rule from 2026-08-28, so it stops being a permanent
+    exception and becomes an ordinary subject -- and a green one that nothing armed is the
+    quiet-gate finding, which is precisely what an already-open pull request is after a gate
+    edit that fires no event. The report is right and the remedy is a synchronize event.
+    """
+    rule = rule_for(OUTCOME_RULE)
+    assert rule is not None
+
+    findings, exceptions = audit_pending(
+        pending(update_type=None, title=RANGE_TITLE, armed=False), rule, NOW
+    )
+
+    assert kinds(findings) == [STALL_ELIGIBLE_NOT_ARMED]
+    assert exceptions == ()
+
+
+def test_a_docker_tag_stating_no_delta_stays_quiet_under_the_outcome_rule() -> None:
+    """The rule declining to act is the rule working, and produces neither a finding nor an
+    exception. `python 3.12-slim -> 3.14-slim` is this case: excluded, not merely undeclared."""
+    rule = rule_for(OUTCOME_RULE)
+    assert rule is not None
+
+    findings, exceptions = audit_pending(
+        pending(update_type=None, ecosystem="docker", title=DOCKER_TITLE), rule, NOW
+    )
+
+    assert findings == () and exceptions == ()

@@ -42,6 +42,13 @@ class Rule:
     only field that can REFUSE what another field permits. It records the leading
     `package-ecosystem != '...'` a revision may carry (ADR-0023).
 
+    `permits_any_update_type` records a revision whose condition names NO update type at all
+    (ADR-0034): what decides is whether the required checks pass, which this gate never
+    evaluates -- it arms GitHub's auto-merge and GitHub does the waiting. It is a fourth SHAPE
+    rather than a wider set, because there is no set of update types that means "every one,
+    including the absence of one": `update_types` is asked with `in`, and a revision naming
+    none cannot be transcribed as a revision naming all.
+
     `requires_upstream_author` is the job-level condition (`pull_request.user.login ==
     'dependabot[bot]'`). The ledger does not record the pull request's author, so the honest
     proxy is the `updated-dependencies` trailer -- the same text the gate's own metadata step
@@ -53,6 +60,7 @@ class Rule:
     ecosystems: frozenset[str] = field(default_factory=frozenset)
     major_ecosystems: frozenset[str] = field(default_factory=frozenset)
     excluded_ecosystems: frozenset[str] = field(default_factory=frozenset)
+    permits_any_update_type: bool = False
     requires_upstream_author: bool = True
 
     def permits(self, update_type: str | None, ecosystem: str | None) -> bool:
@@ -70,6 +78,17 @@ class Rule:
         # unless it declares an intent.
         if ecosystem in self.excluded_ecosystems:
             return False
+        # From 311aaa1d there is nothing after Q0: the condition names no update type, so
+        # everything Q0 did not exclude is permitted and the required checks decide the rest
+        # (ADR-0034). The `ecosystem is not None` guard is FAIL-CLOSED RATHER THAN FAITHFUL,
+        # deliberately. The gate always has an ecosystem -- `package-ecosystem` is the second
+        # segment of the branch name, which every branch the update bot opens carries -- so
+        # `None` here never means "the gate saw nothing". It means THIS PROGRAM could not read
+        # what the gate read, and permitting on that would bless a landing whose exclusion
+        # nobody can re-check. Under the three shapes below the same input was refused anyway,
+        # by Q1 for want of a declared intent; here it is the only thing left to ask.
+        if self.permits_any_update_type:
+            return ecosystem is not None
         # Q1 -- is the declared intent sufficient on its own?
         if update_type in self.update_types:
             return True
@@ -147,6 +166,26 @@ _CASCADE_WITHOUT_DOCKER = Rule(
     excluded_ecosystems=frozenset({"docker"}),
 )
 
+# ADR-0034, and the first revision that asks nothing about the version number. A Dependabot pull
+# request whose required checks pass is routine whatever delta it declares or fails to declare,
+# so the condition is Q0 alone -- and what decides the rest is an outcome this workflow never
+# evaluates, because `--auto` hands the waiting to GitHub.
+#
+# It WIDENS _CASCADE_WITHOUT_DOCKER in two ways, and only the second is what it was written for.
+# It permits a major outside `github_actions`, which the cascade refused deliberately; and it
+# permits an update stating NO delta, which every shape before it refused merely for want of a
+# declared intent. The second was ten of the estate's thirteen open updates on 2026-08-28, and
+# no rule keyed on update types could ever have reached one of them.
+#
+# It is also the first revision SIX repositories carry, byte-identical. The three it replaces
+# differed in one clause and in a pinned action version, and needed three entries between them.
+_OUTCOME_NOT_UPDATE_TYPE = Rule(
+    revision="311aaa1dc0fb50bd9cb2350fe2d358e8ff973ccd",
+    update_types=frozenset(),
+    permits_any_update_type=True,
+    excluded_ecosystems=frozenset({"docker"}),
+)
+
 REGISTRY: dict[str, Rule] = {
     rule.revision: rule
     for rule in (
@@ -157,6 +196,7 @@ REGISTRY: dict[str, Rule] = {
         _CASCADE,
         _CASCADE_NEWER_METADATA,
         _CASCADE_WITHOUT_DOCKER,
+        _OUTCOME_NOT_UPDATE_TYPE,
     )
 }
 
