@@ -170,7 +170,7 @@ def test_intake_package_loads_fixture_payload_and_posts_registration(
 
     monkeypatch.setattr(
         "orchestrator.cli.load_package_intake_payload",
-        lambda path, *, source_repository: {
+        lambda path, *, source_repository, change_record_id=None: {
             "package_id": "pkg-ws32",
             "source_repository": source_repository,
             "source_path": str(path),

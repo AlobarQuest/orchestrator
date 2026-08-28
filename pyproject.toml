@@ -15,7 +15,7 @@ dependencies = [
   "psycopg[binary]>=3.3.4",
   "pydantic>=2.6",
   "pyjwt[crypto]>=2.8",
-  "pydantic-settings>=2.2",
+  "pydantic-settings>=2.15.0",
   "python-multipart>=0.0.9",
   "pyyaml>=6.0",
   "sqlalchemy>=2.0",
@@ -37,9 +37,24 @@ deploy-watcher = "deploy_watcher.cli:app"
 # ADR-0019 increment 5a. Shipped in increment 4 with a `main()` and no entry point, so
 # nothing could invoke it but `python -m`; "the producer gets a caller" starts here.
 change-proposer = "change_proposer.cli:main"
+# ADR-0028. The producer at the head of the work lane: a dependency bump the auto-merge
+# cascade refuses becomes a revision of a standing package and a work record for a person.
+bump-proposer = "bump_proposer.cli:main"
 # ADR-0019 increment 5b. The caller that asks the orchestrator to land what the estate has
 # routed and approved. It composes nothing: every term lives inside the orchestrator.
 estate-landing = "estate_lander.cli:main"
+# ADR-0026, completed by ADR-0027. The carry: an approved change-manager work proposal becomes
+# a registered orchestrator package intake. It writes nothing to change-manager, and registers
+# only after asking the orchestrator whether the record has already caused work.
+work-carrier = "work_carrier.cli:main"
+# ADR-0029. The work lane's watcher: an approved record whose work was built is retired.
+# Runs in the carry's pass and BEFORE it, so a finished record leaves the approved queue
+# before the carry reads that queue.
+work-watcher = "work_watcher.cli:main"
+# ADR-0030. The machine-activation sweep: what each enrolled working copy on the operator
+# machine will execute at its next start, and whether that is what was merged. It is also
+# the only control over ADR-0031, whose activation helper returns 0 whatever it finds.
+activation-sweep = "activation_sweep.cli:app"
 
 [dependency-groups]
 dev = [
@@ -47,7 +62,7 @@ dev = [
   "pytest-xdist>=3.6",
   "ruff==0.16.2",
   "pyright==1.1.411",
-  "httpx2>=2.9.1",
+  "httpx2>=2.10.0",
 ]
 
 [tool.pytest.ini_options]

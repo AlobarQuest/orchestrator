@@ -47,6 +47,8 @@ about to happen).
 Findings: `eligible_green_and_not_armed`, `armed_green_and_still_open`,
 `update_metadata_unreadable`, `current_rule_revision_unknown`.
 
+Exceptions: `update_type_unparseable`.
+
 ## The third generator is not in B
 
 A recorder that silently covers less than it claims is a property of the recorder, not of landing.
@@ -55,7 +57,36 @@ producer produced — a check that consumes the thing it is meant to detect. It 
 happens: `landing-ledger record` no longer exits 0 on a pass that could not read a repository or
 dropped a landing it did read.
 
-## Caveats are not findings
+## Three categories, and only findings drive the exit status
+
+A **finding** asserts that something is wrong and that a person can act on it. A **caveat**
+qualifies the audit's own evidence. An **exception** is a subject current policy can never decide,
+for a reason that is a fact about the subject rather than a defect anywhere. All three are recorded
+and printed; only findings raise the severity and the exit status.
+
+The categories are kept apart rather than folded into one quiet set: *which* one a line is IS the
+information. A caveat may resolve when the evidence improves; an exception never will.
+
+## Exceptions — subjects nothing can classify
+
+- `update_type_unparseable` — the pull request's title states no single version delta, so no rule
+  about update types can be applied to it. A **requirement range** (`from >=0.51.0 to >=0.52.1`)
+  states two ranges rather than a delta; a **docker tag** (`from 3.12-slim to 3.14-slim`) is not
+  semver at all; a **grouped bump** names several. Measured 2026-08-23: seven of the estate's open
+  updates were this shape, and reporting them as findings made this detector exit 2 every night on
+  conditions that will never clear — which is how a control stops being read.
+
+  The classification is not a second opinion. `landing_ledger.titles.bump_of` is the same parser
+  the landing lane's `update_type_of` is, pinned to it by a test that imports both, and the landing
+  lane already treats the identical condition as an exception (`landing_update_type_unparseable`).
+  The two spellings differ because neither program reads the other's codes; the answer is one
+  answer because the parser is one parser.
+
+  The title is consulted **only** where the metadata trailer is absent. The gate itself reads the
+  trailer and never the title, so an update whose trailer is readable is decided in the gate's own
+  terms — which is what keeps this detector's answer a statement about the gate.
+
+## Caveats — doubts about the audit's own evidence
 
 A caveat qualifies the audit's own evidence; it does not assert that anything is wrong, and it does
 not raise the exit status. It is still recorded, so it cannot be lost by being quiet.

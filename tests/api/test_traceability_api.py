@@ -39,6 +39,7 @@ def test_traceability_response_is_json_serializable():
         deployment=[
             TraceabilityDeploymentHop(
                 environment="prod",
+                kind="container_image",
                 observed_artifact_digest="sha256:d",
                 digest_matches=True,
                 deployment_ref="ref",
@@ -47,6 +48,7 @@ def test_traceability_response_is_json_serializable():
                 observed_at=datetime(2026, 7, 25, tzinfo=UTC),
                 status_summary={"code": 200},
                 probe_summary={},
+                activation_summary={},
             )
         ],
         conditions=[],

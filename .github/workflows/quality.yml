@@ -21,6 +21,22 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A daily run of this same gate against the default branch, added 2026-08-15.
+  # The Dependabot cascade arms with the token the CI platform supplies, and a landing
+  # made with that token fires no `push` event -- so a bump can reach `main` with this
+  # gate never having run on the result. Asking the question on a clock closes that
+  # hole without changing which identity lands the pull request.
+  #
+  # It does NOT attribute a failure to the commit that caused it: a red scheduled run
+  # means bisecting the day's landings. That is the accepted cost of leaving the
+  # arming identity alone; the tightening that would remove it is a separate decision.
+  #
+  # The minute is off the hour on purpose -- runs queued at :00 are delayed -- and is
+  # staggered against the other five lane repositories. Times are UTC: 10:23 is after
+  # the 02:00-06:00 window in which this estate lands changes unattended, so an
+  # overnight landing is checked the same morning.
+  schedule:
+    - cron: "23 10 * * *"
 
 # A superseded run has nothing to say. Cancel in-progress runs for a PR branch when a new
 # commit lands -- but NEVER on `main`, where each commit's result is a record of that commit
@@ -41,15 +57,15 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Install pinned uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           version: "0.5.31"
           enable-cache: true
@@ -83,6 +99,28 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python -m scripts.check_capability_consumer_compatibility
 
+      # The THIRD surface, and the first that points the other way: a convention the consumer
+      # PRODUCES and this repo consumes. `change_proposer` recognises a factory pull request by
+      # the title the runner stamps on it, and if that format moves the recognition silently
+      # stops matching -- no change record, no landing lane, no unit-scoped observation, and
+      # nothing red. Same job as its two siblings for the same reason: the required status check
+      # already protecting them protects this one too, and the job NAME stays as it is because
+      # it is the protected context string.
+      #
+      # A consumer-side pin on a producer-side convention cannot fire the moment the runner
+      # changes. It fires here on every pull request and on the daily scheduled run of this
+      # workflow, so the drift window is at most a day.
+      #
+      # THE WORDING IS CONSTRAINED, and that is worth saying rather than leaving to be
+      # rediscovered: two architecture guards scan every file in this directory with separate
+      # vocabularies and separate allowlists, and between them the bare words for shipping and
+      # for the runner's own repository name are both refused HERE, in prose, whatever a comment
+      # means by them. Reword; never take an exemption.
+      - name: Check the factory's pull request marking against the pinned consumer
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .venv/bin/python -m scripts.check_pr_title_marking_compatibility
+
   quality:
     name: Quality
     runs-on: ubuntu-latest
@@ -105,15 +143,15 @@ jobs:
       SECURITY_STANDARDS_DIR: ${{ github.workspace }}/tests/fixtures/security-standards
       TEST_DATABASE_URL: postgresql+psycopg://postgres@127.0.0.1:5432/orchestrator_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Install pinned uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           version: "0.5.31"
           enable-cache: true

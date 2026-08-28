@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from change_proposer.change_manager import ChangeManagerError
+from change_proposer.cli import BOT_CHANGE_CLASS, FACTORY_CHANGE_CLASS
 from estate_lander.cli import (
     _NOT_A_FINDING,
     _REPORTED,
@@ -22,6 +23,7 @@ from estate_lander.cli import (
     EXIT_TOOL_FAILURE,
     Outcome,
     _branch_updates,
+    _deferral_reason,
     _key,
     _pass,
     _subjects,
@@ -97,13 +99,42 @@ class FakeOrchestrator:
         }
 
 
-def _row(number: int, *, status: str = "approved", item_id: int = 50) -> dict[str, Any]:
-    return {
+def _row(
+    number: int,
+    *,
+    status: str = "approved",
+    item_id: int = 50,
+    change_class: str | None = BOT_CHANGE_CLASS,
+) -> dict[str, Any]:
+    """A record as change-manager serves one.
+
+    `change_class` is present by DEFAULT because the real listing always carries it -- verified
+    against the live schema. Defaulting it absent would have made every test here exercise the
+    unreadable-class path while reading as though it exercised the landing one.
+
+    `None` omits the key, which is the shape a listing from a service that did not serve the field
+    would have.
+    """
+    row: dict[str, Any] = {
         "id": item_id,
         "target_repository": REPOSITORY,
         "pull_request_number": number,
         "status": status,
     }
+    if change_class is not None:
+        row["change_class"] = change_class
+    return row
+
+
+def _subjects_of(records: Any) -> list[tuple[str, int]]:
+    """Just the subject list, for the many tests that are about what happens to one.
+
+    `_subjects` answers two things from one read of the listing -- what to act on and what was
+    left to another lane -- because that read is a live request and cannot be repeated. Tests
+    about a landing want the first half; the tests that are about the second half call
+    `_subjects` directly and assert on `deferred`.
+    """
+    return _subjects(records).subjects
 
 
 def _admissible() -> dict[str, Any]:
@@ -114,7 +145,7 @@ def test_a_dry_run_asks_the_question_and_requests_nothing() -> None:
     """The default. An operator reaching for "just show me what would happen" must not land."""
     client = FakeOrchestrator({(REPOSITORY, 49): _admissible()})
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49)])), client, submit=False)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=False)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["would-land"]
     assert client.asked == [(REPOSITORY, 49)]
@@ -126,7 +157,7 @@ def test_an_admissible_pull_request_is_landed_on_the_head_the_answer_was_about()
     a tree nobody evaluated -- the orchestrator refuses any other."""
     client = FakeOrchestrator({(REPOSITORY, 49): _admissible()})
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["landed"]
     assert client.landed[0][2] == HEAD
@@ -145,7 +176,7 @@ def test_a_held_pull_request_names_the_condition_it_misses_and_is_a_FINDING() ->
         }
     )
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["held"]
     assert "landing_head_not_current_with_base" in outcomes[0].detail
@@ -172,7 +203,7 @@ def test_only_an_APPROVED_record_is_asked_about(status: str) -> None:
     the wrong place."""
     client = FakeOrchestrator()
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49, status=status)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49, status=status)])), client, submit=True)  # type: ignore[arg-type]
 
     assert outcomes == [] and client.asked == [] and client.landed == []
 
@@ -180,7 +211,7 @@ def test_only_an_APPROVED_record_is_asked_about(status: str) -> None:
 def test_a_refused_landing_is_reported_rather_than_retried() -> None:
     client = FakeOrchestrator({(REPOSITORY, 49): _admissible()}, land_error=LandingRefused("no"))
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["held"]
     assert len(client.landed) == 1
@@ -189,7 +220,7 @@ def test_a_refused_landing_is_reported_rather_than_retried() -> None:
 def test_an_unreadable_admission_answer_lands_nothing() -> None:
     client = FakeOrchestrator(admission_error=OrchestratorError("unreachable"))
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["unreadable"]
     assert client.landed == []
@@ -202,7 +233,7 @@ def test_an_admissible_answer_with_no_head_lands_nothing() -> None:
         {(REPOSITORY, 49): {"satisfied": True, "refusals": [], "head_sha": ""}}
     )
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["unreadable"]
     assert client.landed == []
@@ -222,7 +253,7 @@ def test_the_pass_is_ordered_so_which_one_lands_is_reproducible() -> None:
     client = FakeOrchestrator({(REPOSITORY, n): _admissible() for n in (48, 49, 50)})
     rows = [_row(50, item_id=52), _row(48, item_id=50), _row(49, item_id=51)]
 
-    _pass(_subjects(FakeRecords(rows)), client, submit=False)  # type: ignore[arg-type]
+    _pass(_subjects_of(FakeRecords(rows)), client, submit=False)  # type: ignore[arg-type]
 
     assert client.asked == [(REPOSITORY, 48), (REPOSITORY, 49), (REPOSITORY, 50)]
 
@@ -243,7 +274,7 @@ def test_a_record_naming_no_subject_is_skipped_rather_than_asked_about() -> None
         },
     ]
 
-    assert _pass(_subjects(FakeRecords(rows)), client, submit=True) == []  # type: ignore[arg-type]
+    assert _pass(_subjects_of(FakeRecords(rows)), client, submit=True) == []  # type: ignore[arg-type]
     assert client.asked == []
 
 
@@ -266,7 +297,7 @@ def test_a_pull_request_whose_subject_has_SETTLED_is_not_a_finding(refusals: lis
         {(REPOSITORY, 49): {"satisfied": False, "refusals": refusals, "head_sha": HEAD}}
     )
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["settled"]
     assert client.landed == []
@@ -285,7 +316,7 @@ def test_a_genuinely_unmet_condition_is_still_a_finding() -> None:
         }
     )
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["held"]
     assert report(outcomes) == EXIT_FINDINGS
@@ -315,7 +346,7 @@ def test_SETTLED_is_read_with_INTERSECTION_and_ahead_of_every_other_classificati
         }
     )
 
-    outcomes = _pass(_subjects(FakeRecords([_row(50)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(50)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["settled"]
     assert report(outcomes) == EXIT_OK
@@ -333,11 +364,52 @@ def test_a_DELIBERATE_refusal_alone_is_not_a_finding(refusal: str) -> None:
         {(REPOSITORY, 49): {"satisfied": False, "refusals": [refusal], "head_sha": HEAD}}
     )
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["deliberate"]
     assert client.landed == []
     assert report(outcomes) == EXIT_OK
+
+
+@pytest.mark.parametrize(
+    "refusals",
+    [
+        ["landing_checks_awaiting_verdict"],
+        ["landing_checks_awaiting_verdict", "landing_head_not_current_with_base"],
+        ["landing_checks_in_flight"],
+    ],
+)
+def test_a_check_that_reached_no_verdict_is_a_finding(refusals: list[str]) -> None:
+    """THE POLARITY, and the non-membership is deliberate rather than an omission.
+
+    The orchestrator excuses `landing_checks_awaiting_verdict` for ACTING -- bringing the branch up
+    to date is what re-runs an abandoned check -- and it is excused for nothing here. A suppression
+    keyed on the qualification was written and then measured out: qualifying requires the head to
+    be behind, and being behind is itself unexplained, so the line is held whichever way this rule
+    goes. The mechanism makes the refusal transient; a label saying so would have been inert, and
+    an inert suppression is a fail-open waiting for the freshness rule to be refactored.
+
+    A check STILL RUNNING is a finding for a stronger reason: the lane must not touch it at all,
+    because bringing the branch up to date would abandon the very run being waited on.
+
+    The detail line still names the code, so an operator reads the right cause -- which is what
+    the split bought -- without this program having to know it.
+    """
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 60): {
+                "satisfied": False,
+                "refusals": refusals,
+                "branch_update_qualifies": True,
+                "head_sha": HEAD,
+            }
+        }
+    )
+
+    outcomes = _pass(_subjects_of(FakeRecords([_row(60)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["held"]
+    assert report(outcomes) == EXIT_FINDINGS
 
 
 def test_an_EXCEPTION_alone_is_not_a_finding_and_is_NOT_called_deliberate() -> None:
@@ -354,7 +426,7 @@ def test_an_EXCEPTION_alone_is_not_a_finding_and_is_NOT_called_deliberate() -> N
         }
     )
 
-    outcomes = _pass(_subjects(FakeRecords([_row(48)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(48)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["exception"]
     assert report(outcomes) == EXIT_OK
@@ -373,7 +445,7 @@ def test_an_EXCEPTION_beside_a_DELIBERATE_refusal_is_reported_as_the_EXCEPTION()
         }
     )
 
-    outcomes = _pass(_subjects(FakeRecords([_row(48)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(48)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["exception"]
     assert report(outcomes) == EXIT_OK
@@ -407,7 +479,7 @@ def test_a_DELIBERATE_refusal_does_NOT_silence_a_real_condition_beside_it() -> N
     )
     rows = [_row(49, item_id=51), _row(51, item_id=53)]
 
-    outcomes = _pass(_subjects(FakeRecords(rows)), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords(rows)), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["deliberate", "held"]
     assert report(outcomes) == EXIT_FINDINGS
@@ -457,7 +529,7 @@ def test_being_behind_is_SUPPRESSED_BESIDE_AN_EXCEPTION_and_is_a_finding_everywh
         {(REPOSITORY, 48): {"satisfied": False, "refusals": refusals, "head_sha": HEAD}}
     )
 
-    outcomes = _pass(_subjects(FakeRecords([_row(48)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(48)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == [verdict]
 
@@ -487,7 +559,108 @@ def test_an_EXCEPTION_silences_being_behind_WITHOUT_silencing_a_failing_check_be
     )
     rows = [_row(48, item_id=51), _row(51, item_id=53)]
 
-    outcomes = _pass(_subjects(FakeRecords(rows)), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords(rows)), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["exception", "held"]
+    assert report(outcomes) == EXIT_FINDINGS
+
+
+_ROLLOUT = "landing_rollout_moved"
+
+
+def _answer(refusals: list[str], **extra: Any) -> dict[str, Any]:
+    return {"satisfied": False, "refusals": refusals, "head_sha": HEAD, **extra}
+
+
+@pytest.mark.parametrize(
+    ("refusals", "base_matches", "verdict"),
+    [
+        # `brain#31`/`#32` as production carries them on 2026-08-16: behind their base, a rollout
+        # pin that differs BECAUSE they are behind, and a requirement-range title no rule can ever
+        # classify. Held and reported every night, forever, until this.
+        ([_BEHIND, _ROLLOUT, _UNPARSEABLE], True, "exception"),
+        # THE HALF A POSITIVE CASE CANNOT PROVE. Identical refusals, opposite base comparison: the
+        # workflow genuinely moved, freshening cannot put that right, and it must still report.
+        # Without this row the rule is indistinguishable from suppressing the code unconditionally.
+        ([_BEHIND, _ROLLOUT, _UNPARSEABLE], False, "held"),
+        # THE CONJUNCT. The base carries the pinned bytes and the head is NOT behind, so the pin
+        # differs because this pull request's own diff edits the workflow -- the founding case of
+        # the guard, which no exception beside it may silence.
+        ([_ROLLOUT, _UNPARSEABLE], True, "held"),
+        # A failing check is a fact about the change and is never position-caused.
+        ([_BEHIND, _ROLLOUT, _CHECKS, _UNPARSEABLE], True, "held"),
+        # Suppression is only ever BESIDE AN EXCEPTION. Alone, being behind is transient and the
+        # branch-update pass clears it, so it stays a finding until it does.
+        ([_BEHIND, _ROLLOUT], True, "held"),
+        # #168 preserved unchanged: the enumeration this criterion replaced still answers the case
+        # it was written for.
+        ([_BEHIND, _UNPARSEABLE], True, "exception"),
+    ],
+)
+def test_a_refusal_CAUSED_BY_BEING_BEHIND_is_suppressed_beside_an_exception(
+    refusals: list[str], base_matches: bool, verdict: str
+) -> None:
+    """ADR-0024, and the table is the rule -- the criterion cannot be shown by any single row.
+
+    The previous ruling suppressed ONE code beside an exception. `brain#31`/`#32` produced a
+    second the same way: the lane deliberately never freshens a pull request it can never land, so
+    the head never acquires the pinned rollout workflow and the pin refusal persists forever --
+    rebuilding the permanently-red control the first ruling exists to prevent, out of the third
+    ruling's own correctness.
+
+    So what is suppressed is a CATEGORY: a refusal produced by the head's position relative to its
+    base that says nothing about the change. Rows two, three and four are the ones that carry the
+    load, and each denies a different over-general reading.
+    """
+    client = FakeOrchestrator(
+        {(REPOSITORY, 31): _answer(refusals, rollout_base_matches_pin=base_matches)}
+    )
+
+    outcomes = _pass(_subjects_of(FakeRecords([_row(31)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == [verdict]
+    # THE LINE STILL PRINTS EVERY REFUSAL. Suppression governs the exit code and never the report:
+    # a reader must be able to see what was missed on a night nothing was a finding.
+    assert all(refusal in outcomes[0].detail for refusal in refusals)
+
+
+def test_an_answer_that_DOES_NOT_CARRY_the_base_comparison_leaves_the_line_a_FINDING() -> None:
+    """THE DEPLOYMENT-SKEW CONTROL, and it is a live state rather than a hypothetical one.
+
+    This program runs on a schedule against whatever orchestrator production is serving, and a
+    field is on the wire only once a release carrying it has been deployed. In that window the
+    answer has no such key -- and a missing key must withhold the criterion's conditional member,
+    never supply it. Reading `None` as permission would silence `brain#31` on an answer that never
+    said the base matched anything.
+    """
+    client = FakeOrchestrator({(REPOSITORY, 31): _answer([_BEHIND, _ROLLOUT, _UNPARSEABLE])})
+
+    outcomes = _pass(_subjects_of(FakeRecords([_row(31)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["held"]
+    assert report(outcomes) == EXIT_FINDINGS
+
+
+def test_a_GENUINELY_MOVED_workflow_still_reports_while_a_STALE_PIN_beside_it_goes_quiet() -> None:
+    """THE DISCRIMINATING CONTROL, both rows in ONE pass, like its two siblings above.
+
+    Were the rollout refusal suppressed unconditionally beside an exception, both of these would be
+    non-findings and the pass would exit clean -- so the exit code is what this asserts, not only
+    the statuses. The rows differ in exactly one fact, and it is the fact the orchestrator serves.
+    """
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 31): _answer(
+                [_BEHIND, _ROLLOUT, _UNPARSEABLE], rollout_base_matches_pin=True
+            ),
+            (REPOSITORY, 32): _answer(
+                [_BEHIND, _ROLLOUT, _UNPARSEABLE], rollout_base_matches_pin=False
+            ),
+        }
+    )
+    rows = [_row(31, item_id=61), _row(32, item_id=62)]
+
+    outcomes = _pass(_subjects_of(FakeRecords(rows)), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["exception", "held"]
     assert report(outcomes) == EXIT_FINDINGS
@@ -507,7 +680,7 @@ def test_an_UNCLASSIFIED_refusal_alone_is_a_finding() -> None:
         }
     )
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["held"]
     assert report(outcomes) == EXIT_FINDINGS
@@ -521,7 +694,7 @@ def test_an_unsatisfied_answer_that_names_NO_refusal_is_a_finding() -> None:
         {(REPOSITORY, 49): {"satisfied": False, "refusals": [], "head_sha": HEAD}}
     )
 
-    outcomes = _pass(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["held"]
     assert report(outcomes) == EXIT_FINDINGS
@@ -592,7 +765,7 @@ def test_a_dry_run_reports_what_it_would_update_and_asks_for_nothing() -> None:
     do without touching a branch. A program that had to POST to find out could not have one."""
     client = FakeOrchestrator({(REPOSITORY, 49): _qualifies()})
 
-    outcomes = _branch_updates(_subjects(FakeRecords([_row(49)])), client, submit=False)  # type: ignore[arg-type]
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=False)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["would-update"]
     assert client.updated == []
@@ -601,7 +774,7 @@ def test_a_dry_run_reports_what_it_would_update_and_asks_for_nothing() -> None:
 def test_a_branch_the_orchestrator_says_qualifies_is_brought_up_to_date() -> None:
     client = FakeOrchestrator({(REPOSITORY, 49): _qualifies()})
 
-    outcomes = _branch_updates(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["updated"]
     assert client.updated == [(REPOSITORY, 49, HEAD, _update_key(REPOSITORY, 49, HEAD))]
@@ -613,7 +786,7 @@ def test_a_branch_that_does_not_qualify_is_NOT_ASKED_ABOUT_and_gets_no_line() ->
     printed one naming every condition it misses."""
     client = FakeOrchestrator({(REPOSITORY, 48): _does_not_qualify()})
 
-    outcomes = _branch_updates(_subjects(FakeRecords([_row(48)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(48)])), client, submit=True)  # type: ignore[arg-type]
 
     assert outcomes == []
     assert client.updated == []
@@ -627,7 +800,7 @@ def test_the_MATCHED_PAIR_is_separated_in_ONE_pass() -> None:
     )
     records = FakeRecords([_row(48, item_id=48), _row(49, item_id=49)])
 
-    outcomes = _branch_updates(_subjects(records), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _branch_updates(_subjects_of(records), client, submit=True)  # type: ignore[arg-type]
 
     assert [(o.number, o.status) for o in outcomes] == [(49, "updated")]
     assert [number for _, number, _, _ in client.updated] == [49]
@@ -648,7 +821,7 @@ def test_an_orchestrator_refusal_is_reported_rather_than_retried() -> None:
         {(REPOSITORY, 49): _qualifies()}, update_error=LandingRefused("no longer qualifies")
     )
 
-    outcomes = _branch_updates(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["held"]
 
@@ -656,7 +829,7 @@ def test_an_orchestrator_refusal_is_reported_rather_than_retried() -> None:
 def test_an_unreadable_answer_updates_nothing() -> None:
     client = FakeOrchestrator(admission_error=OrchestratorError("unreachable"))
 
-    outcomes = _branch_updates(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["unreadable"]
     assert client.updated == []
@@ -668,7 +841,7 @@ def test_an_answer_with_no_verdict_at_all_updates_nothing() -> None:
         {(REPOSITORY, 49): {"satisfied": False, "refusals": ["x"], "head_sha": HEAD}}
     )
 
-    outcomes = _branch_updates(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert outcomes == []
     assert client.updated == []
@@ -679,7 +852,7 @@ def test_a_record_nobody_routed_is_not_asked_about_by_either_pass() -> None:
     this program is for."""
     client = FakeOrchestrator({(REPOSITORY, 49): _qualifies()})
 
-    subjects = _subjects(FakeRecords([_row(49, status="pending")]))  # type: ignore[arg-type]
+    subjects = _subjects_of(FakeRecords([_row(49, status="pending")]))
 
     outcomes = _branch_updates(subjects, client, submit=True)  # type: ignore[arg-type]
 
@@ -771,7 +944,7 @@ def test_a_refusal_that_only_says_THE_ANSWER_MOVED_is_not_a_finding(code: str) -
         {(REPOSITORY, 49): _qualifies()}, update_error=LandingRefused("moved", code)
     )
 
-    outcomes = _branch_updates(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["deliberate"]
     assert report(outcomes) == EXIT_OK
@@ -789,7 +962,7 @@ def test_EVERY_OTHER_refusal_is_still_a_finding(code: str) -> None:
         {(REPOSITORY, 49): _qualifies()}, update_error=LandingRefused("no", code)
     )
 
-    outcomes = _branch_updates(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["held"]
     assert report(outcomes) == EXIT_FINDINGS
@@ -805,7 +978,7 @@ def test_a_REPLAY_means_the_branch_never_moved_and_is_a_finding() -> None:
     """
     client = FakeOrchestrator({(REPOSITORY, 49): _qualifies()}, replayed=True)
 
-    outcomes = _branch_updates(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["held"]
     assert "still behind" in outcomes[0].detail
@@ -817,7 +990,7 @@ def test_a_FRESH_act_is_reported_as_an_update_and_is_not_a_finding() -> None:
     one -- reddens."""
     client = FakeOrchestrator({(REPOSITORY, 49): _qualifies()}, replayed=False)
 
-    outcomes = _branch_updates(_subjects(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["updated"]
     assert report(outcomes) == EXIT_OK
@@ -924,3 +1097,174 @@ def test_a_body_this_program_cannot_read_yields_NO_CODE_rather_than_a_guess(body
         client.update_branch("owner/repo", 49, head_sha="a" * 40, idempotency_key="k")
 
     assert raised.value.code == ""
+
+
+# ---------------------------------------------------------------------------
+# Whose lane is this? (deploy policy v4 / ADR-0025)
+# ---------------------------------------------------------------------------
+#
+# Until change-manager's deploy policy version 4 the only class it approved was
+# `dependency-update`, so a factory record never reached `approved` and never reached this
+# program. Version 4 approves `factory-delivery` too. These tests pin the consequence.
+
+
+def test_a_factory_record_is_never_asked_about() -> None:
+    """THE POINT OF THE GUARD. A factory pull request belongs to the lane that adjudicated the
+    work behind it -- the one that asks whether the unit completed, whether its criteria were
+    decided by the verifier from observed evidence, and whether a human's authority approval is
+    bound to the envelope. This lane asks none of that, so it must not be the one to land it.
+
+    Asserting `client.asked == []` rather than only the empty subject list, because the harm is
+    the REQUEST: a subject that reaches the orchestrator can be landed by it.
+    """
+    client = FakeOrchestrator({(REPOSITORY, 49): _admissible()})
+
+    selection = _subjects(FakeRecords([_row(49, change_class=FACTORY_CHANGE_CLASS)]))
+    outcomes = _pass(selection.subjects, client, submit=True)  # type: ignore[arg-type]
+
+    assert selection.subjects == []
+    assert outcomes == []
+    assert client.asked == []
+    assert client.landed == []
+
+
+def test_a_deferred_record_is_counted_rather_than_silently_dropped() -> None:
+    """The other half, and the reason this is not a bare filter. A subject that disappears without
+    a line is the silent failure this program is written against everywhere else."""
+    selection = _subjects(FakeRecords([_row(49, change_class=FACTORY_CHANGE_CLASS)]))
+
+    assert selection.deferred == {FACTORY_CHANGE_CLASS: 1}
+
+
+def test_the_deferral_is_reported_and_is_not_a_finding(capsys) -> None:
+    """Deferring is this program working, not a condition anybody must act on -- so it prints and
+    the exit code stays clean. A deferred record was never CONSIDERED, so it is deliberately not
+    added to that total: `_REPORTED` exists so the summary's parts add up to what was."""
+    code = report([], {FACTORY_CHANGE_CLASS: 2})
+
+    out = capsys.readouterr().out
+    assert code == EXIT_OK
+    assert f"2 {FACTORY_CHANGE_CLASS} record(s) not considered" in out
+    assert "0 considered" in out
+
+
+def test_nothing_is_said_when_nothing_was_deferred(capsys) -> None:
+    """A standing "0 deferred" on every pass of a lane that will usually have none is noise, and
+    this program's log is read by a person every morning."""
+    report([], {})
+
+    assert "not considered" not in capsys.readouterr().out
+
+
+def test_run_passes_the_real_tally_rather_than_the_default(monkeypatch, capsys) -> None:
+    """`report`'s `deferred` defaults to nothing said, so a `run` that forgot to pass it would
+    print a clean log while dropping records -- a wiring bug no other test here could see."""
+    monkeypatch.setenv("ESTATE_LANDING_CHANGE_MANAGER_TOKEN", "cm")
+    monkeypatch.setenv("ESTATE_LANDING_ORCHESTRATOR_TOKEN", "orch")
+
+    class Records(FakeRecords):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    class Orchestrator(FakeOrchestrator):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    records = Records([_row(49, change_class=FACTORY_CHANGE_CLASS)])
+    client = Orchestrator({})
+    monkeypatch.setattr("estate_lander.cli.ChangeManagerClient", lambda *a, **k: records)
+    monkeypatch.setattr("estate_lander.cli.OrchestratorClient", lambda *a, **k: client)
+
+    code = run([])
+
+    assert code == EXIT_OK
+    assert f"1 {FACTORY_CHANGE_CLASS} record(s) not considered" in capsys.readouterr().out
+
+
+def test_a_dependency_update_record_is_still_this_lanes_business() -> None:
+    """The control on every test above. A guard that excluded everything would satisfy all of
+    them and land nothing, which is the failure mode a filter is most likely to have."""
+    client = FakeOrchestrator({(REPOSITORY, 49): _admissible()})
+
+    selection = _subjects(FakeRecords([_row(49, change_class=BOT_CHANGE_CLASS)]))
+    outcomes = _pass(selection.subjects, client, submit=True)  # type: ignore[arg-type]
+
+    assert selection.subjects == [(REPOSITORY, 49)]
+    assert selection.deferred == {}
+    assert [o.status for o in outcomes] == ["landed"]
+
+
+def test_a_class_nobody_has_taught_this_program_is_deferred_rather_than_landed() -> None:
+    """An ALLOWLIST, for the reason `_ASK_ABOUT` is one, and the polarity matters more here:
+    excluded means not landed, so a class shipped on the authoring side after this was written
+    falls toward being left alone rather than toward being merged."""
+    client = FakeOrchestrator({(REPOSITORY, 49): _admissible()})
+
+    selection = _subjects(FakeRecords([_row(49, change_class="infrastructure-change")]))
+
+    assert selection.subjects == []
+    assert selection.deferred == {"infrastructure-change": 1}
+    assert _pass(selection.subjects, client, submit=True) == []  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("value", [None, "", 4, True, ["dependency-update"]])
+def test_a_class_that_cannot_be_read_is_deferred_under_its_own_name(value: Any) -> None:
+    """Fail closed on shape, and say WHICH failure it was. "it belongs to the factory lane" and
+    "nobody taught this program what that class is" have different next steps, so one lump would
+    lose the difference. `None` omits the key entirely, which is what a listing from a service
+    that did not serve the field would look like."""
+    rows = [_row(49, change_class=value) if value is not None else _row(49, change_class=None)]
+
+    selection = _subjects(FakeRecords(rows))
+
+    assert selection.subjects == []
+    assert selection.deferred == {"unreadable-class": 1}
+
+
+def test_a_record_this_lane_would_not_have_acted_on_anyway_is_not_counted() -> None:
+    """The tally means "APPROVED records this lane declined because they belong elsewhere". A
+    pending factory record was never going to be a subject, so counting it would report a number
+    that grows with the queue rather than with what was declined."""
+    selection = _subjects(
+        FakeRecords([_row(49, status="pending", change_class=FACTORY_CHANGE_CLASS)])
+    )
+
+    assert selection.subjects == []
+    assert selection.deferred == {}
+
+
+def test_a_deferred_record_is_not_freshened_either() -> None:
+    """Both passes are given ONE selection, so they cannot disagree about whose business a record
+    is. Freshening a factory branch would spend a real build on somebody else's subject."""
+    client = FakeOrchestrator({(REPOSITORY, 49): _qualifies()})
+
+    selection = _subjects(FakeRecords([_row(49, change_class=FACTORY_CHANGE_CLASS)]))
+    outcomes = _branch_updates(selection.subjects, client, submit=True)  # type: ignore[arg-type]
+
+    assert outcomes == []
+    assert client.asked == []
+
+
+def test_the_lane_classes_are_the_producers_own_constants() -> None:
+    """The two sides agree by CONSTRUCTION rather than by two people spelling a string the same
+    way. `change_proposer` writes these onto every record this program reads, so a rename there
+    moves this with it -- and a third spelling here would be the vocabulary-mismatch defect this
+    estate keeps paying for, in a place where the cost is landing somebody else's pull request."""
+    from estate_lander.cli import _LANE_CLASSES
+
+    assert _LANE_CLASSES == {BOT_CHANGE_CLASS}
+    assert FACTORY_CHANGE_CLASS not in _LANE_CLASSES
+
+
+def test_the_predicate_has_one_definition_used_by_both_readers() -> None:
+    """`_deferral_reason` answers for the subject list and for the tally. Two functions that
+    agree today is how a lane comes to land what it counted as deferred."""
+    assert _deferral_reason({"change_class": BOT_CHANGE_CLASS}) is None
+    assert _deferral_reason({"change_class": FACTORY_CHANGE_CLASS}) == FACTORY_CHANGE_CLASS
+    assert _deferral_reason({}) == "unreadable-class"

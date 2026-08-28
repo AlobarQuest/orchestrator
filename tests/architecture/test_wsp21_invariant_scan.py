@@ -228,6 +228,36 @@ OUTBOUND_ALLOWLIST = {
     # answer obtained outside the transaction that records the decision is an answer about a
     # moment that has passed.
     Path("src/orchestrator/services/estate_pr_merge.py"),
+    # ADR-0026. `work_carrier` is a SEPARATE program (ADR-0002's shape), out of process and on a
+    # schedule, so this is not the orchestrator speaking HTTP. It makes ONE request here -- a
+    # listing of the work proposals a human approved in change-manager -- and holds no write
+    # path to that service at all, which is what keeps a carry from approving the proposal it is
+    # carrying.
+    Path("src/work_carrier/change_manager.py"),
+    # ADR-0028. `bump_proposer` is likewise a SEPARATE, scheduled program. It makes exactly two
+    # kinds of request here -- a listing of the work records it has already made, and one
+    # proposal -- and its own allowlist refuses every other path, including every route that
+    # could move a record's status. That bound is what keeps the producer on the far side of
+    # the human decision it exists to prompt.
+    Path("src/bump_proposer/change_manager.py"),
+    # ADR-0027. The other half of the same program: the intake registration that completes the
+    # carry. ONE write, `POST /api/v1/package-intakes`, enforced in code by `is_allowed_write`
+    # and in tests by test_work_carrier_isolation.py. It composes no decision -- every rule about
+    # what may be registered is evaluated inside the orchestrator, in the transaction that
+    # records it -- and the payload it sends is the emitter's own bytes, unedited.
+    Path("src/work_carrier/orchestrator_client.py"),
+    # ADR-0029. `work_watcher` is the work lane's watcher, a SEPARATE program that shares the
+    # carry's invocation and runs before it. TWO files, one route each. The change-manager
+    # one is the only MUTATING egress either work-lane program has, and it is one-directional
+    # by construction: its single route can reach `resolved` and no other status, so a bug
+    # here stops work a person approved and cannot cause any. Its scope permits more than its
+    # allowlist does -- `POST /api/deploy-changes` among it -- and
+    # test_work_watcher_isolation.py is the control for that gap.
+    Path("src/work_watcher/change_manager.py"),
+    # The other half: the read that establishes the fact. The completion rule is derived
+    # inside the orchestrator (ADR-0029) and relayed here, so this program composes nothing
+    # and writes nothing to the system that owns the work.
+    Path("src/work_watcher/orchestrator_client.py"),
     # ADR-0019 Increment 5b. `estate_lander` is a SEPARATE program (ADR-0002's shape), and its
     # egress is not the orchestrator's. It reads which changes the estate routed, asks the
     # orchestrator whether each may be landed, and relays the answer -- composing nothing, because
@@ -279,6 +309,21 @@ OUTBOUND_ALLOWLIST = {
     # that bound is enforced twice over: by the credential's scope at change-manager, and here in
     # code before a request is built. Its egress is not the orchestrator's.
     Path("src/change_proposer/change_manager.py"),
+    # ADR-0030. The machine-activation sweep is a SEPARATE program (ADR-0002's shape), out of
+    # process and on a clock. Its subject is local git on the operator machine, which it reads
+    # through a subcommand allowlist that makes `pull` unreachable rather than merely unused --
+    # so the ONLY thing it speaks HTTP to is the orchestrator, and only to file what it found.
+    # One endpoint, the OBSERVER role's whole write surface, and no read surface at all;
+    # enforced in code by `is_allowed_write` and pinned by test_activation_sweep_isolation.py.
+    # Its egress is not the orchestrator's.
+    Path("src/activation_sweep/orchestrator_client.py"),
+    # ADR-0030's OTHER lane, in the same program and deliberately not in the same module. Binding
+    # a release artifact for a unit this machine has activated needs the SYSTEM credential and a
+    # read, where the sweep above needs OBSERVER and no read at all -- so a second confined
+    # surface rather than a widening of the first, which is what keeps either from quietly
+    # acquiring the other's reach. Two paths, one GET and one POST, enforced in code by
+    # `is_allowed_read` / `is_allowed_write`. Its egress is not the orchestrator's.
+    Path("src/activation_sweep/binding_client.py"),
 }
 
 

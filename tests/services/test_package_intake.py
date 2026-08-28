@@ -370,7 +370,9 @@ def test_package_intake_rejects_executable_status(migrated_session: Session) -> 
     assert error.value.code == "package_intake_status_invalid"
 
 
-def test_package_intake_requires_human_actor(migrated_session: Session) -> None:
+def test_package_intake_refuses_a_worker(migrated_session: Session) -> None:
+    """ADR-0027 admitted the system actor and nothing else. The worker credential is held by an
+    interactive agent and by the runner, and neither was ever offered this."""
     with pytest.raises(DomainError) as error:
         register_package_intake(
             migrated_session,
@@ -378,7 +380,7 @@ def test_package_intake_requires_human_actor(migrated_session: Session) -> None:
             ActorContext("worker-1", ActorRole.WORKER),
         )
 
-    assert error.value.code == "human_actor_required"
+    assert error.value.code == "intake_registrar_invalid"
 
 
 def test_package_intake_rejects_missing_verification_mode(migrated_session: Session) -> None:

@@ -18,6 +18,8 @@ from orchestrator.api.schemas import (
     AdjudicationResponse,
     ApprovalCommand,
     ApprovalResponse,
+    ChangeRecordWorkResponse,
+    ChangeWindowOverrideModel,
     ClaimCommand,
     ConsistencyReportResponse,
     ContextSnapshotResponse,
@@ -64,6 +66,7 @@ from orchestrator.api.schemas import (
     KnowledgePromotionSubmitCommandModel,
     LeaseResponse,
     LifecycleCommand,
+    MachineActivationCandidateResponse,
     ObservationCommandModel,
     ObservationResponse,
     PackageAcceptanceCriterionResponse,
@@ -104,6 +107,7 @@ from orchestrator.api.schemas import (
     VerifyCommandModel,
     VerifyResponse,
 )
+from orchestrator.change_window_override import ChangeWindowOverride
 from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
@@ -123,6 +127,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.change_record import ChangeRecordSource, HttpChangeRecordSource
+from orchestrator.services.change_record_work import work_for_change_record
 from orchestrator.services.claims import (
     authorize_retry,
     claim_unit,
@@ -214,6 +219,7 @@ from orchestrator.services.lifecycle import (
     transition_unit,
     unit_history,
 )
+from orchestrator.services.machine_activation import machine_activation_candidates
 from orchestrator.services.observations import (
     ObservationCommand,
     ObservationFilters,
@@ -433,6 +439,7 @@ def package_intake_command(body: PackageIntakeRegistration) -> PackageIntakeComm
         expected_version=body.expected_version,
         intake_purpose=body.intake_purpose,
         follow_up=body.follow_up,
+        change_record_id=body.change_record_id,
     )
 
 
@@ -814,6 +821,26 @@ def estate_pr_branch_update_route(
     )
 
 
+def _change_window_override(
+    body: ChangeWindowOverrideModel | None,
+) -> ChangeWindowOverride | None:
+    """Turn what a caller sent into the type the acts honour, or refuse it by name.
+
+    Absent means no override, which is the default and stays fail-closed. Present with nothing to
+    say is the shape this refuses: `ChangeWindowOverride` cannot be constructed without a reason,
+    so the `DomainError` is raised by the type rather than here, and it is raised for every caller
+    rather than for this one. The refusal reaches the caller as a named error because that is what
+    has a registered handler; a constrained pydantic field would have answered the same request
+    with a 422 naming a field location, which tells an operator less about what to do next.
+
+    It happens HERE, before either service is entered, so a malformed request can never be
+    answered by an idempotent replay of an earlier record.
+    """
+    if body is None:
+        return None
+    return ChangeWindowOverride(reason=body.reason or "")
+
+
 @router.post("/work-units/{unit_id}/pr-merge", response_model=PrMergeResponse)
 def pr_merge_route(
     unit_id: UUID,
@@ -845,6 +872,7 @@ def pr_merge_route(
             actor=actor,
             idempotency_key=body.idempotency_key,
             expected_version=body.expected_version,
+            change_window_override=_change_window_override(body.change_window_override),
         ),
         GitHubPullRequests(token_provider_for(credentials)),
         landing_source,
@@ -885,6 +913,7 @@ def dispatch_route(
             actor=actor,
             idempotency_key=body.idempotency_key,
             expected_version=body.expected_version,
+            change_window_override=_change_window_override(body.change_window_override),
         ),
         dispatch_settings,
         dispatcher,
@@ -962,6 +991,7 @@ def create_release_artifact(
                 implementation_pr_number=body.implementation_pr_number,
                 source_commit=body.source_commit,
                 merge_commit=body.merge_commit,
+                kind=body.kind,
                 artifact_registry=body.artifact_registry,
                 artifact_repository=body.artifact_repository,
                 artifact_name=body.artifact_name,
@@ -998,6 +1028,25 @@ def release_artifacts(
     return _raise_error(list_release_artifacts(session, unit_id))
 
 
+@router.get(
+    "/machine-activation-candidates",
+    response_model=list[MachineActivationCandidateResponse],
+)
+def machine_activation_candidates_route(
+    repository: str,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """ADR-0030: which completed units a machine-local working copy could bind an artifact for.
+
+    Authentication-only, matching the other read surfaces. Read-only: it writes nothing and
+    asserts nothing about the machine. A repository with no confirmed landings answers with an
+    empty list rather than a 404 -- the ordinary state of a repository the factory has not landed
+    into yet, which a 404 would make indistinguishable from a misspelled name.
+    """
+    return list(machine_activation_candidates(session, repository))
+
+
 @router.post(
     "/release-artifacts/{binding_id}/deployment-observations",
     response_model=DeploymentObservationResponse,
@@ -1021,6 +1070,8 @@ def create_deployment_observation(
             deployment_url=body.deployment_url,
             deployer=body.deployer,
             observed_at=body.observed_at,
+            kind=body.kind,
+            activation_summary=body.activation_summary,
             probe_summary=body.probe_summary,
             route_summary=body.route_summary,
             auth_summary=body.auth_summary,
@@ -1900,6 +1951,41 @@ def history(
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
+@router.get(
+    "/change-records/{change_record_id}/work",
+    response_model=ChangeRecordWorkResponse,
+)
+def change_record_work_route(
+    change_record_id: int,
+    _actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """ADR-0029: what work a change record caused, and whether all of it is done.
+
+    Authentication-only, no role gate, matching the other read surfaces. Read-only: it writes
+    nothing and decides nothing about the record, which lives in another service entirely.
+
+    A record with no revision answers 200 with an empty list and a false verdict rather than 404.
+    That is the ordinary state of every record a person has approved and the carry has not yet
+    reached, so a 404 would make the common case indistinguishable from a broken identifier.
+    """
+    answer = work_for_change_record(session, change_record_id)
+    return {
+        "change_record_id": answer.change_record_id,
+        "revision_ids": list(answer.revision_ids),
+        "units": [
+            {
+                "unit_id": unit.unit_id,
+                "unit_key": unit.unit_key,
+                "revision_id": unit.revision_id,
+                "state": unit.state,
+            }
+            for unit in answer.units
+        ],
+        "all_units_completed": answer.all_units_completed,
+    }
+
+
 @router.get("/traceability", response_model=TraceabilityResponse)
 def traceability_route(
     _actor: ActorDep,
@@ -2090,6 +2176,7 @@ def _package_intake_payload(
         "authority_fingerprint": revision.authority_fingerprint,
         "authority": command.get("authority"),
         "follow_up": revision.follow_up,
+        "change_record_id": revision.change_record_id,
         "registry_version": revision.registry_version,
         "registered_by": revision.registered_by,
         "registered_at": revision.registered_at,

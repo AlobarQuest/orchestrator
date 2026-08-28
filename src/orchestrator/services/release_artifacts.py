@@ -12,6 +12,9 @@ from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
+    CONTAINER_IMAGE_KIND,
+    MACHINE_LOCAL_KIND,
+    RELEASE_ARTIFACT_KINDS,
     Event,
     Evidence,
     ReleaseArtifactBinding,
@@ -37,9 +40,9 @@ class ReleaseArtifactCommand:
     implementation_pr_number: int | None
     source_commit: str
     merge_commit: str
-    artifact_registry: str
-    artifact_repository: str
-    artifact_name: str
+    artifact_registry: str | None
+    artifact_repository: str | None
+    artifact_name: str | None
     artifact_digest: str
     artifact_tag: str | None
     workflow_run_id: str | None
@@ -56,6 +59,9 @@ class ReleaseArtifactCommand:
     summary: dict[str, Any] | None
     idempotency_key: str
     expected_version: int | None = None
+    # Defaulted, so every existing caller and every stored command payload keeps its meaning.
+    # The two models it separates are described on `RELEASE_ARTIFACT_KINDS`.
+    kind: str = CONTAINER_IMAGE_KIND
 
 
 def record_release_artifact(
@@ -159,9 +165,10 @@ def _record_release_artifact(
         implementation_pr_number=command.implementation_pr_number,
         source_commit=command.source_commit,
         merge_commit=command.merge_commit,
-        artifact_registry=command.artifact_registry,
-        artifact_repository=command.artifact_repository,
-        artifact_name=command.artifact_name,
+        kind=command.kind,
+        artifact_registry=_optional_text(command.artifact_registry),
+        artifact_repository=_optional_text(command.artifact_repository),
+        artifact_name=_optional_text(command.artifact_name),
         artifact_digest=command.artifact_digest,
         artifact_tag=_optional_text(command.artifact_tag),
         workflow_run_id=_optional_text(command.workflow_run_id),
@@ -203,9 +210,10 @@ def _release_evidence(
         "implementation_pr_number": command.implementation_pr_number,
         "source_commit": command.source_commit,
         "merge_commit": command.merge_commit,
-        "artifact_registry": command.artifact_registry,
-        "artifact_repository": command.artifact_repository,
-        "artifact_name": command.artifact_name,
+        "kind": command.kind,
+        "artifact_registry": _optional_text(command.artifact_registry),
+        "artifact_repository": _optional_text(command.artifact_repository),
+        "artifact_name": _optional_text(command.artifact_name),
         "artifact_digest": command.artifact_digest,
         "artifact_tag": _optional_text(command.artifact_tag),
         "workflow": {
@@ -281,7 +289,9 @@ def _release_evidence(
 
 
 def _validate_command_shape(command: ReleaseArtifactCommand) -> None:
+    _validate_kind(command)
     _validate_required_text(command)
+    _validate_registry_by_kind(command)
     _validate_digests(command)
     _validate_commits(command)
     _validate_positive_numbers(command)
@@ -342,15 +352,22 @@ def _validate_unit_version_and_state(
         )
 
 
+def _validate_kind(command: ReleaseArtifactCommand) -> None:
+    if command.kind not in RELEASE_ARTIFACT_KINDS:
+        raise DomainError(
+            "release_artifact_kind_invalid",
+            f"kind must be one of {', '.join(RELEASE_ARTIFACT_KINDS)}",
+            None,
+        )
+
+
 def _validate_required_text(command: ReleaseArtifactCommand) -> None:
+    """The five fields BOTH kinds must carry. The registry three are handled by kind, next."""
     required_text = {
         "package_revision_hash": command.package_revision_hash,
         "source_repository": command.source_repository,
         "source_commit": command.source_commit,
         "merge_commit": command.merge_commit,
-        "artifact_registry": command.artifact_registry,
-        "artifact_repository": command.artifact_repository,
-        "artifact_name": command.artifact_name,
         "artifact_digest": command.artifact_digest,
     }
     for field, value in required_text.items():
@@ -358,6 +375,33 @@ def _validate_required_text(command: ReleaseArtifactCommand) -> None:
             if field == "artifact_digest":
                 raise _digest_error()
             raise DomainError("release_artifact_invalid", f"{field} is required", None)
+
+
+def _validate_registry_by_kind(command: ReleaseArtifactCommand) -> None:
+    """Required for a container image, REFUSED for a machine-local activation.
+
+    Refused rather than ignored. A working copy has no registry, and a caller that supplies one
+    has either mis-set `kind` or is about to write a placeholder into the columns a reader uses to
+    tell the two models apart -- which is the collapse ADR-0030 exists to prevent. Silently
+    dropping the value would let that caller believe it had been recorded.
+    """
+    registry_fields = {
+        "artifact_registry": command.artifact_registry,
+        "artifact_repository": command.artifact_repository,
+        "artifact_name": command.artifact_name,
+    }
+    if command.kind == CONTAINER_IMAGE_KIND:
+        for field, value in registry_fields.items():
+            if not _text(value):
+                raise DomainError("release_artifact_invalid", f"{field} is required", None)
+        return
+    for field, value in registry_fields.items():
+        if _text(value):
+            raise DomainError(
+                "release_artifact_invalid",
+                f"{field} must be absent for a {MACHINE_LOCAL_KIND} binding",
+                "a working copy has no registry, registry repository or image name",
+            )
 
 
 def _validate_digests(command: ReleaseArtifactCommand) -> None:
@@ -420,15 +464,25 @@ def _existing_source_tuple(
             ReleaseArtifactBinding.source_repository == command.source_repository,
             ReleaseArtifactBinding.merge_commit == command.merge_commit,
             ReleaseArtifactBinding.source_commit == command.source_commit,
-            ReleaseArtifactBinding.artifact_registry == command.artifact_registry,
-            ReleaseArtifactBinding.artifact_repository == command.artifact_repository,
-            ReleaseArtifactBinding.artifact_name == command.artifact_name,
+            # `== None` renders `IS NULL`, which is what finds a machine-local row. Normalized
+            # first so a command carrying "" and the row carrying NULL are the same lookup.
+            ReleaseArtifactBinding.artifact_registry == _optional_text(command.artifact_registry),
+            ReleaseArtifactBinding.artifact_repository
+            == _optional_text(command.artifact_repository),
+            ReleaseArtifactBinding.artifact_name == _optional_text(command.artifact_name),
         )
         .with_for_update()
     )
 
 
 def _same_binding_facts(row: ReleaseArtifactBinding, command: ReleaseArtifactCommand) -> bool:
+    # `kind` is deliberately NOT compared, and its absence is a conclusion rather than an
+    # oversight. The source tuple this is reached through includes the three registry columns,
+    # which the kind-conditional CHECK forces to be NULL for one kind and non-empty for the
+    # other -- so two rows can never share a source tuple and differ in kind. A comparison
+    # nothing can make differ is untestable, and an untestable clause beside testable ones is
+    # how a mutation set comes to report a false green. Measured: adding it survived every
+    # control.
     return (
         row.package_revision_hash == command.package_revision_hash
         and row.implementation_pr_number == command.implementation_pr_number
@@ -459,9 +513,23 @@ def _validate_idempotent_replay(
         event is None
         or event.action != "release_artifact.bound"
         or event.subject_id != row.id
-        or event.payload.get("command") != payload
+        or _stored_command(event.payload) != payload
     ):
         raise _idempotency_conflict()
+
+
+def _stored_command(event_payload: dict[str, Any]) -> object:
+    """The stored command, read so a binding written before `kind` existed still replays.
+
+    Every payload written before ADR-0030 omits the key, and comparing it against a command that
+    now always carries one would turn an honest replay into `idempotency_conflict` -- the
+    idempotency guarantee broken for exactly the historical rows nobody can rewrite. A missing key
+    means the only kind that existed, which is what the column's own server default says too.
+    """
+    stored = event_payload.get("command")
+    if not isinstance(stored, dict) or "kind" in stored:
+        return stored
+    return {**stored, "kind": CONTAINER_IMAGE_KIND}
 
 
 def _command_payload(command: ReleaseArtifactCommand) -> dict[str, object]:
@@ -476,6 +544,14 @@ def _command_payload(command: ReleaseArtifactCommand) -> dict[str, object]:
 
 
 def _artifact_ref(command: ReleaseArtifactCommand) -> str:
+    """The evidence row's `stable_ref`: how a reader names this artifact.
+
+    A machine-local activation has no registry coordinates to compose, so it is named by the
+    repository whose content the digest was taken over. Interpolating the three absent columns
+    would render `None/None/None@sha256:...`, which reads as a registry reference and is not one.
+    """
+    if command.kind == MACHINE_LOCAL_KIND:
+        return f"{MACHINE_LOCAL_KIND}:{command.source_repository}@{command.artifact_digest}"
     return (
         f"{command.artifact_registry}/{command.artifact_repository}/"
         f"{command.artifact_name}@{command.artifact_digest}"

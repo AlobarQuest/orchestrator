@@ -2,7 +2,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -60,6 +60,20 @@ class DependencySpec:
     @classmethod
     def external(cls, reference: str, condition: str) -> "DependencySpec":
         return cls("external_system", condition, external_ref=reference)
+
+
+# Who may register a package revision. A SET per entry point rather than one rule, because the
+# two entry points genuinely differ and ADR-0027 narrowed exactly one of them.
+#
+# `POST /api/v1/revisions` -- the WS-3.1 bootstrap lane -- keeps the default and stays
+# human-only, which on the M2M-only router means no principal can reach it at all. That is its
+# state today and this change does not alter it: widening the default here would make a lane
+# that skips every intake validation reachable by a machine, which nobody decided.
+#
+# The intake path passes the wider set (`package_intake.INTAKE_REGISTRAR_ROLES`) having already
+# applied ADR-0027's stricter asymmetric rule, so the wider set is a consequence of that
+# admission rather than a second, laxer way in.
+HUMAN_REGISTRARS: Final = frozenset({ActorRole.HUMAN})
 
 
 def record_approval(
@@ -191,13 +205,15 @@ def register_revision(
     verification_mode: str | None = None,
     verification_limitations: Mapping[str, Any] | list[Any] | None = None,
     follow_up: Mapping[str, Any] | None = None,
+    change_record_id: int | None = None,
     acceptance_criteria: Sequence[Mapping[str, Any]] | None = None,
     actor_id: str,
     actor_role: ActorRole,
+    admitted_registrar_roles: frozenset[ActorRole] = HUMAN_REGISTRARS,
     idempotency_key: str | None = None,
     expected_version: int | None = None,
 ) -> WorkPackageRevision:
-    _require_human(actor_id, actor_role)
+    _require_registrar(actor_id, actor_role, admitted_registrar_roles)
     _validate_declared_criteria(acceptance_criteria, enforcement_snapshot)
     if expected_version not in {None, 0}:
         raise DomainError(
@@ -261,6 +277,19 @@ def register_revision(
         # that path is ever wired to reachable production traffic, it needs the same exemption
         # treatment `_legacy_identity_matches` gives the intake path.
         "follow_up": _normalize_json(follow_up),
+        # ADR-0026. In `candidate`, so it joins both the stored row and the
+        # `revision.registered` event identity. That means a re-registration of one revision
+        # naming a DIFFERENT change record is a `revision_conflict` rather than a silent
+        # overwrite, which is the answer this field wants: the cause of a piece of work is not
+        # something a later caller gets to revise.
+        #
+        # It takes no legacy exemption, and unlike `follow_up` above it cannot rely on reason 2
+        # -- a change record id is not inside `canonical_package_hash`, so it cannot
+        # self-differentiate a revision. Reason 1 is what carries it: the only caller that
+        # passes `idempotency_key` here is `POST /api/v1/revisions`, unreachable by any
+        # principal in production. The intake path's own replay comparison is one layer up and
+        # DOES carry an exemption, in `package_intake._legacy_identity_matches`.
+        "change_record_id": change_record_id,
         "registered_by": actor_id,
     }
     command = {
@@ -940,6 +969,31 @@ def evaluate_readiness(
             authority_recognised_by_policy=not human_authority_gate(unit, revision).refusals,
             dependencies=dependencies,
         )
+    )
+
+
+def _require_registrar(
+    actor_id: str, actor_role: ActorRole, admitted: frozenset[ActorRole]
+) -> None:
+    """Refuse a revision registration by a role the calling entry point does not admit.
+
+    SPLIT from `_require_human` rather than a loosening of it: `record_approval` and
+    `register_approved_unit` still call that one and still mean a person, and this function is
+    reachable only from `register_revision`. The default `admitted` reproduces the old
+    behaviour byte for byte, error code included, so the bootstrap lane's refusal is unchanged.
+    """
+    if actor_id and actor_role in admitted:
+        return
+    if admitted == HUMAN_REGISTRARS:
+        raise DomainError(
+            "human_actor_required",
+            "registration requires a registered human actor",
+            None,
+        )
+    raise DomainError(
+        "revision_registrar_invalid",
+        "the actor may not register a package revision",
+        None,
     )
 
 

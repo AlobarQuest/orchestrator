@@ -58,6 +58,14 @@ produced -- which is the shape of a check that consumes the thing it is meant to
 **What a rule arm cannot be evidence of.** A landing's own gate run says the gate EXECUTED; it
 never says the change is sound. So neither detector counts the gate's run as a check, and B's
 notion of green excludes it.
+
+**THREE CATEGORIES, and only one of them drives the exit status.** A FINDING asserts that
+something is wrong and that a person can act on it. A CAVEAT qualifies the audit's own evidence.
+An EXCEPTION is a subject current policy can never decide, for a reason that is a fact about the
+subject rather than a defect -- it is recorded, printed, and quiet, because a control that is
+permanently non-zero on conditions that will never clear is one nobody reads. The categories are
+kept apart rather than folded: WHICH one a line is IS the information, and a single quiet set
+would say "quiet" about all of them while losing which is which.
 """
 
 from __future__ import annotations
@@ -76,6 +84,7 @@ from landing_ledger.model import PendingUpdate, is_work_unit_id
 from landing_ledger.orchestrator_client import LedgerWriteError as LedgerReadError
 from landing_ledger.record import BASIS_FACTORY, BASIS_RULE
 from landing_ledger.rules import GATE_PATH, Rule, rule_for
+from landing_ledger.titles import bump_of
 
 # `BASIS_RULE` and `BASIS_FACTORY` are IMPORTED, not restated. Until WS-P3.7 Increment 5 this
 # module defined `BASIS_RULE = "auto_merge_rule"` independently of `record.py`, with nothing
@@ -89,6 +98,25 @@ from landing_ledger.rules import GATE_PATH, Rule, rule_for
 FAILING_CONCLUSIONS = frozenset(
     {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
 )
+
+# A conclusion that is NOT A VERDICT ABOUT THE CHANGE. A cancelled run was stopped, a stale one
+# superseded, a skipped one never asked -- none of them says the change is bad, and the estate has
+# already paid for reading them as though they did: the landing lane held three clean bumps for
+# four days on the strength of runs GitHub cancelled when the Actions quota ran out.
+#
+# A DELIBERATE MIRROR of `orchestrator.services.estate_landing_admission.NO_VERDICT_CONCLUSIONS`,
+# which this program may not import -- the isolation test says so -- and pinned to it by a test
+# that imports both, the same arrangement `titles.py` uses. Its polarity is the safety: anything
+# NOT named here is read as a verdict, so a conclusion the platform has not yet invented fails
+# toward refusing rather than toward calling itself absent.
+NO_VERDICT_CONCLUSIONS = frozenset({"cancelled", "skipped", "stale"})
+
+# The subset of the above that a CONSUMER MAY ACT ON. `FAILING_CONCLUSIONS` is deliberately wider
+# because it feeds `is_green`, where over-counting is conservative: a reporting predicate that
+# calls a cancelled run not-green merely stays quiet. A predicate that drives an irreversible act
+# needs the narrower question -- did the checks decide AGAINST this change -- and the two must not
+# share a name, because the same word would let one be tuned for the other's cost.
+REFUSING_CONCLUSIONS = FAILING_CONCLUSIONS - NO_VERDICT_CONCLUSIONS
 
 # How long a pull request must have been green before "armed and still open" is worth reporting.
 # GitHub lands an armed pull request within seconds of its last required check, so anything above
@@ -120,6 +148,22 @@ STALL_ELIGIBLE_NOT_ARMED = "eligible_green_and_not_armed"
 STALL_ARMED_NOT_LANDED = "armed_green_and_still_open"
 STALL_METADATA_UNREADABLE = "update_metadata_unreadable"
 STALL_RULE_UNKNOWN = "current_rule_revision_unknown"
+
+# An EXCEPTION is a subject that current policy can never decide, for a reason that is a property
+# of the subject rather than a defect anywhere. It is recorded and printed, and it drives no exit
+# status: a reader cannot act on it and no pass will ever clear it.
+#
+# NOT A CAVEAT, and the distinction is the whole of this category. A caveat is a doubt about the
+# AUDIT'S OWN EVIDENCE -- something the audit is unsure of. An exception is a certainty about the
+# SUBJECT. Filing one as the other would put a fact where doubts go to be ignored, and this module
+# already says in as many words that a caveat is where a doubt goes to be ignored.
+#
+# THE LANDING LANE ALREADY CLASSIFIES THESE SUBJECTS THIS WAY, and this is the same ruling reaching
+# the second control that looks at them: `estate_lander._EXCEPTION` holds the lander's refusal code
+# for the identical condition. The two vocabularies are NOT pinned to each other and must not be --
+# neither program reads the other's codes, and the thing they genuinely share is the classifier
+# (`titles.bump_of`), which IS pinned. What agrees is the answer, not the spelling.
+EXCEPTION_UPDATE_TYPE_UNPARSEABLE = "update_type_unparseable"
 
 # A caveat qualifies the audit's own evidence; it is not an assertion that anything is wrong, and
 # it does not drive the exit status. It is still recorded, so it cannot be lost by being quiet.
@@ -191,10 +235,17 @@ class RepoAudit:
     factory_landings: int = 0
     findings: tuple[Finding, ...] = ()
     caveats: tuple[Finding, ...] = ()
+    exceptions: tuple[Finding, ...] = ()
     unavailable: bool = False
 
     @property
     def severity(self) -> str:
+        """Exceptions alone leave a repository `info`, exactly as caveats do.
+
+        They are recorded facts about subjects nothing can decide, not assertions that something
+        is wrong -- so a repository whose whole open queue is unclassifiable is quiet here, and
+        says so in its own list rather than in its severity.
+        """
         return "warning" if self.findings or self.unavailable else "info"
 
 
@@ -286,7 +337,13 @@ def audit_landing(facts: Any) -> tuple[tuple[Finding, ...], tuple[Finding, ...]]
 
     update_type = permitted.get("update_type")
     ecosystem = permitted.get("ecosystem")
-    if rule.requires_upstream_author and update_type is None:
+    # ABSENT, NOT NULL. `permitted_by` writes the three update keys together or not at all, so
+    # the key's presence answers "was the trailer readable?" while its VALUE answers "what did
+    # the update bot declare?". Testing the value would report every no-delta landing revision
+    # 3457db3c permits as metadata this program failed to read -- a finding about the ledger,
+    # raised against the landings the new rule exists to make. One key is tested because all
+    # three arrive together; `test_record.py` pins that they do.
+    if rule.requires_upstream_author and "update_type" not in permitted:
         findings.append(
             Finding(
                 DRIFT_METADATA_MISSING,
@@ -299,7 +356,8 @@ def audit_landing(facts: Any) -> tuple[tuple[Finding, ...], tuple[Finding, ...]]
             Finding(
                 DRIFT_NOT_SATISFIED,
                 subject,
-                f"{update_type} of a {ecosystem} dependency is outside rule {revision[:12]}",
+                f"{update_type or 'an update stating no version delta'} in the {ecosystem} "
+                f"ecosystem is outside rule {revision[:12]}",
             )
         )
 
@@ -534,47 +592,83 @@ def is_green(pending: PendingUpdate) -> bool:
 
 def audit_pending(
     pending: PendingUpdate, rule: Rule, now: datetime, settle_seconds: int = SETTLE_SECONDS
-) -> tuple[Finding, ...]:
+) -> tuple[tuple[Finding, ...], tuple[Finding, ...]]:
     """Classify one open update against the rule currently installed.
 
-    Three outcomes are HEALTHY and produce nothing: ineligible and unarmed (the rule declining to
-    act, which is the rule working), eligible but not green (the required checks doing their job),
-    and eligible, green, armed and freshly settled (a landing about to happen).
+    Returns (findings, exceptions). Three outcomes are HEALTHY and produce neither: ineligible and
+    unarmed (the rule declining to act, which is the rule working), eligible but not green (the
+    required checks doing their job), and eligible, green, armed and freshly settled (a landing
+    about to happen).
+
+    A FOURTH outcome is neither healthy nor a finding, and separating it out is the whole of this
+    function's 2026-08-23 change. When the head commit carries no update metadata, two very
+    different subjects arrive at the same place: one the gate SHOULD be able to decide and this
+    audit cannot, which is a finding; and one nothing here can decide, because neither the
+    trailer nor the title states anything a rule could be applied to. Reporting the second kind
+    as findings made this detector exit non-zero every night on seven subjects that would never
+    clear -- which is how a control stops being read, and how a real stall arrives as an eighth
+    line in a report already known to be noise.
+
+    ITS SUBJECT SHRANK ON 2026-08-28 AND THE BRANCH IS KEPT ANYWAY. Requirement ranges were the
+    bulk of it, and they no longer arrive here at all: the reader keeps the ecosystem a range
+    states even though it states no delta, and revision 3457db3c classifies one on that alone.
+    What still reaches this branch is a head commit whose trailer could not be read, which is a
+    genuine and fail-closed state rather than a residue -- it just stopped being the common one.
+
+    THE TITLE IS CONSULTED ONLY WHERE THE METADATA IS ABSENT, and that bound is deliberate. The
+    gate itself reads the metadata trailer, never the title, so a subject whose trailer IS
+    readable is decided in the gate's own terms -- which is what makes this detector's answer a
+    statement about the gate rather than a second opinion about the pull request.
     """
     subject = f"{pending.repository}#{pending.number}"
     green = is_green(pending)
     if pending.update is None:
+        if bump_of(pending.title) is None:
+            return (), (
+                Finding(
+                    EXCEPTION_UPDATE_TYPE_UNPARSEABLE,
+                    subject,
+                    "no update metadata on the head commit and no single version delta in the "
+                    "title, so there is nothing here for any rule to be applied to",
+                ),
+            )
         return (
             Finding(
                 STALL_METADATA_UNREADABLE,
                 subject,
                 "no update metadata on the head commit, so eligibility cannot be decided",
             ),
-        )
+        ), ()
     if not rule.permits(pending.update.update_type, pending.update.ecosystem):
-        return ()
+        return (), ()
     if not green:
-        return ()
+        return (), ()
     if not pending.armed:
+        # The declared intent may legitimately be absent -- a requirement range states none, and
+        # revision 3457db3c permits one on its ecosystem alone -- so this says so rather than
+        # interpolating `None` into a sentence a person has to read. It is the line this detector
+        # emits for every already-open update after a gate edit, which fires no `pull_request`
+        # event and so arms nothing that already exists.
+        declared = pending.update.update_type or "no version delta stated"
         return (
             Finding(
                 STALL_ELIGIBLE_NOT_ARMED,
                 subject,
-                f"{pending.update.update_type} of {pending.update.dependency} is permitted by the "
-                f"installed rule and every concluded check passed, but nothing armed it",
+                f"{pending.update.dependency} ({declared}) is permitted by the installed rule "
+                "and every concluded check passed, but nothing armed it",
             ),
-        )
+        ), ()
     if pending.last_concluded_at is None:
-        return ()
+        return (), ()
     if (now - pending.last_concluded_at).total_seconds() < settle_seconds:
-        return ()
+        return (), ()
     return (
         Finding(
             STALL_ARMED_NOT_LANDED,
             subject,
             f"armed and green since {pending.last_concluded_at.isoformat()}, still open",
         ),
-    )
+    ), ()
 
 
 def audit_repository(
@@ -595,6 +689,7 @@ def audit_repository(
     """
     findings: list[Finding] = []
     caveats: list[Finding] = []
+    exceptions: list[Finding] = []
     permitted = 0
     factory = 0
     unreadable = False
@@ -644,7 +739,11 @@ def audit_repository(
         )
     else:
         for candidate in pending:
-            findings.extend(audit_pending(candidate, rule, now, settle_seconds))
+            pending_findings, pending_exceptions = audit_pending(
+                candidate, rule, now, settle_seconds
+            )
+            findings.extend(pending_findings)
+            exceptions.extend(pending_exceptions)
 
     return RepoAudit(
         repository=repository,
@@ -655,19 +754,21 @@ def audit_repository(
         pending_audited=len(pending),
         findings=tuple(findings),
         caveats=tuple(caveats),
+        exceptions=tuple(exceptions),
         unavailable=unreadable,
     )
 
 
 def _fit(facts: dict[str, Any]) -> dict[str, Any]:
-    """Trim the two variable-length lists until the record fits the orchestrator's byte bound.
+    """Trim the three variable-length lists until the record fits the orchestrator's byte bound.
 
-    Caveats go before findings -- a caveat qualifies evidence, a finding asserts a violation, and
-    the violation is the thing that must survive. Both keep their true counts beside them, so a
-    trim is visible rather than silent.
+    LEAST URGENT FIRST. An exception is a permanent property of a subject, so it says the same
+    thing tomorrow and is the cheapest thing to lose. A caveat qualifies evidence. A finding
+    asserts a violation, and the violation is the thing that must survive. All three keep their
+    true counts beside them, so a trim is visible rather than silent.
     """
     while len(json.dumps(facts, sort_keys=True, separators=(",", ":"))) > MAX_FACT_BYTES:
-        for entries in (facts["caveats"], facts["findings"]):
+        for entries in (facts["exceptions"], facts["caveats"], facts["findings"]):
             if entries:
                 entries.pop()
                 break
@@ -695,8 +796,10 @@ def audit_observation(audit: RepoAudit, pass_id: str, observed_at: datetime) -> 
             "pending_audited": audit.pending_audited,
             "findings_found": len(audit.findings),
             "caveats_found": len(audit.caveats),
+            "exceptions_found": len(audit.exceptions),
             "findings": [finding.as_fact() for finding in audit.findings[:MAX_LIST]],
             "caveats": [caveat.as_fact() for caveat in audit.caveats[:MAX_LIST]],
+            "exceptions": [entry.as_fact() for entry in audit.exceptions[:MAX_LIST]],
         }
     )
     reference = f"landing-audit:{audit.repository}@{pass_id}"
@@ -720,7 +823,8 @@ def audit_observation(audit: RepoAudit, pass_id: str, observed_at: datetime) -> 
         "severity": audit.severity,
         "observed_at": observed_at.isoformat(),
         "summary": (
-            f"{audit.repository}: {len(audit.findings)} finding(s) over "
+            f"{audit.repository}: {len(audit.findings)} finding(s) and "
+            f"{len(audit.exceptions)} exception(s) over "
             f"{audit.permitted_landings} rule-permitted landing(s), "
             f"{audit.factory_landings} factory landing(s) and "
             f"{audit.pending_audited} open update(s)"

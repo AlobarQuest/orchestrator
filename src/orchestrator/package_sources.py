@@ -3,12 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import yaml
 
@@ -18,6 +19,11 @@ class PackageSourceError(Exception):
 
 
 _HUMAN_OPERATOR_PROFILE = "human-operator-v1"
+
+# The approver a package revision carries when a standing policy approved it rather than
+# a person (ADR-0028). Written by `intent_packages.approval_policy`, one repository over;
+# the version it carries is the schema version of the artifact that decided.
+_POLICY_APPROVER_RE: Final = re.compile(r"^policy:[a-z0-9][a-z0-9-]*@v[1-9][0-9]*$")
 _CHAIN_VERIFY_TIMEOUT_SECONDS = 30
 _EXECUTABLE_INTAKE_STATE = "approved"
 _PROTOCOL_FIXTURE_STATE = "closed"
@@ -190,6 +196,24 @@ def _is_human_operator(agent_id: str) -> bool:
     return data.get("authority_profile") == _HUMAN_OPERATOR_PROFILE
 
 
+def _is_recognised_approver(approver: str) -> bool:
+    """A human operator, or a standing approval policy (ADR-0028).
+
+    THE POLICY ARM RECOGNISES A SHAPE; IT PROVES NOTHING BY ITSELF. Everything that
+    actually establishes the approval happened is unchanged and still required below: the
+    sibling `intent_packages verify-approval` run against the checkout, the factory-events
+    chain verifying, and a `package.approved` event carrying this exact hash and revision.
+    A lineage entry naming a policy that never approved anything fails all three.
+
+    The literal is spelled here rather than imported, for the reason every cross-repo
+    literal in this repository is: the writer lives in `AlobarQuest/intent-packages`
+    (`intent_packages.approval_policy`) and nothing here may import it. Both sides carry a
+    test naming the shape, so a rename on one side reddens a test rather than silently
+    refusing every policy-approved intake.
+    """
+    return _is_human_operator(approver) or _POLICY_APPROVER_RE.match(approver) is not None
+
+
 def _security_standards_dir() -> Path | None:
     env_dir = os.environ.get("SECURITY_STANDARDS_DIR")
     if env_dir:
@@ -346,7 +370,7 @@ def _verify_current_approval(
     event_id = approval.get("event_id")
     if not isinstance(revision, int):
         return None
-    if not isinstance(approver, str) or not _is_human_operator(approver):
+    if not isinstance(approver, str) or not _is_recognised_approver(approver):
         return None
     if not isinstance(commit, str) or not commit:
         return None
@@ -450,7 +474,18 @@ def _validate_current_state(
         raise PackageSourceError(error)
 
 
-def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[str, object]:
+def load_package_intake_payload(
+    path: Path,
+    *,
+    source_repository: str,
+    change_record_id: int | None = None,
+) -> dict[str, object]:
+    """The intake payload for an approved package.
+
+    `change_record_id` (ADR-0026) is the one field here that is NOT derived from the package:
+    it says what caused the work, and a package cannot know that. It is supplied by whoever
+    invokes the emitter -- the carry, from the approved change-manager record it is carrying.
+    """
     resolved_path = _resolve_source_path(path)
     package = _read_yaml(resolved_path / "package.yaml")
     lineage = _read_yaml(resolved_path / "lineage.yaml")
@@ -462,6 +497,7 @@ def load_package_intake_payload(path: Path, *, source_repository: str) -> dict[s
         source_repository=source_repository,
         intake_purpose="executable",
         protocol_fixture_only=False,
+        change_record_id=change_record_id,
     )
 
 
@@ -492,6 +528,7 @@ def _load_intake_payload(
     source_repository: str,
     intake_purpose: str,
     protocol_fixture_only: bool,
+    change_record_id: int | None = None,
 ) -> dict[str, object]:
     acceptance_criteria = _acceptance_criteria(package.get("acceptance"))
     revision = package.get("revision")
@@ -535,7 +572,7 @@ def _load_intake_payload(
     # field existed is that nobody said. Membership is validated at intake, not here.
     if "reach" in package:
         enforcement_snapshot["reach"] = package["reach"]
-    return {
+    payload: dict[str, object] = {
         "package_id": package["package_id"],
         "source_repository": source_repository,
         "revision": revision,
@@ -557,3 +594,11 @@ def _load_intake_payload(
         "registry_version": 1,
         "acceptance_criteria": acceptance_criteria,
     }
+    # OMITTED rather than emitted as null when there is none, for the reason `reach` above is:
+    # absent means nobody named a cause, and every payload emitted before ADR-0026 was absent.
+    # The intake replay's legacy exemption keys on the key being missing from the stored event,
+    # so an unconditional `null` would work too -- but a payload that is byte-identical to what
+    # it used to be is a smaller claim than one that is merely equivalent.
+    if change_record_id is not None:
+        payload["change_record_id"] = change_record_id
+    return payload

@@ -379,3 +379,37 @@ def test_the_reason_says_only_what_stays_true() -> None:
     assert "no detector re-evaluates it here" in reason
     for forbidden in ("2026", "today", "verified", "checked against"):
         assert forbidden not in reason
+
+
+def test_a_landing_stating_no_delta_records_the_key_as_present_and_null() -> None:
+    """ADR-0034, and the pin `audit_landing` names when it tests the KEY rather than the value.
+
+    A requirement range carries a dependency name and no update type. Recording that as
+    `update_type: null` asserts something -- the update bot declared no delta -- where omitting
+    the key asserts that this program could not read the trailer at all. Revision 3457db3c
+    permits the first and the audit reports the second, so the two must not encode alike.
+
+    The three keys arriving TOGETHER is the other half, and it is what lets the audit test one
+    of them: a landing that records an ecosystem and no update type, or the reverse, would make
+    the detector's single-key test wrong without changing what it reads.
+    """
+    landing = gate_landing(
+        update=UpdateMetadata(dependency="setuptools", ecosystem="uv", update_type=None)
+    )
+
+    permitted = landing_observation(landing)["facts"]["permitted_by"]
+
+    assert permitted["update_type"] is None
+    assert "update_type" in permitted
+    assert permitted["dependency"] == "setuptools"
+    assert permitted["ecosystem"] == "uv"
+
+
+def test_a_landing_whose_trailer_could_not_be_read_records_none_of_the_three() -> None:
+    """The other side of the same pin. All three or none -- never one without the others."""
+    permitted = landing_observation(gate_landing(update=None))["facts"]["permitted_by"]
+
+    assert not {"dependency", "ecosystem", "update_type"} & set(permitted)
+    # Still a rule-basis landing: the gate ran and a machine landed it. What is absent is what
+    # the update was, not what permitted it.
+    assert permitted["basis"] == BASIS_RULE

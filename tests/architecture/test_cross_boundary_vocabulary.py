@@ -127,6 +127,15 @@ VOCABULARY_REGISTRY: dict[str, str] = {
         "intent-packages package.yaml `reach`; membership owned solely by this module, "
         "shape-checked on the authoring side"
     ),
+    # GitHub's own words for a workflow run that finished without reaching a verdict about the
+    # change. The producer is the platform, so this side can only ever be a reader of a vocabulary
+    # somebody else owns and may extend. Registered rather than exempted BECAUSE it is exactly
+    # that: a set whose members must agree with a system this estate does not run. It is safe to
+    # be behind on -- a member the platform adds and this set lacks reads as a verdict the lane
+    # may not land on, which refuses rather than admits.
+    "services/estate_landing_admission.py:NO_VERDICT_CONCLUSIONS": (
+        "GitHub REST `GET /repos/{owner}/{repo}/actions/runs` -> workflow_runs[].conclusion"
+    ),
 }
 
 

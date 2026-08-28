@@ -96,6 +96,11 @@ UPDATE_BOT_LOGIN: Final = "dependabot[bot]"
 # behind.
 MERGEABLE_CLEAN: Final = "clean"
 
+# The platform's word for "a required check has not passed" -- which covers a check that FAILED, a
+# check that was abandoned, a check still running, and a required context that never reported at
+# all. One word, four causes; see `_checks_term` for the second read that separates them.
+MERGEABLE_BLOCKED: Final = "blocked"
+
 # This deployment has not been told it may land anything. Default false, unconfigured refusing.
 LANDING_NOT_ENABLED: Final = "landing_not_enabled"
 
@@ -164,7 +169,33 @@ LANDING_PULL_REQUEST_UNREADABLE: Final = "landing_pull_request_unreadable"
 LANDING_PULL_REQUEST_NOT_OPEN: Final = "landing_pull_request_not_open"
 LANDING_BASE_NOT_DEFAULT_BRANCH: Final = "landing_base_not_default_branch"
 LANDING_AUTHOR_NOT_THE_UPDATE_BOT: Final = "landing_author_not_the_update_bot"
+# A required check REPORTED SOMETHING THIS LANE MAY NOT LAND ON. Kept for exactly that, and
+# narrowed: it used to be raised for every `mergeable_state` that was not `clean`, which collapsed
+# "a check said no" into "a check said nothing yet" and named the first as the cause of the second.
 LANDING_CHECKS_NOT_CLEAN: Final = "landing_checks_not_clean"
+
+# NO CHECK AT THIS HEAD HAS REACHED A VERDICT -- every run that could hold the landing was
+# abandoned, was passed over, or never happened. Its own refusal because its remedy is its own:
+# a failing check is answered by a person changing something, and a missing one is answered by
+# running it, which is what bringing the branch up to date does.
+#
+# **The platform's composite answer CANNOT tell these apart, and that was measured rather than
+# assumed.** One repository, one required check, four head states: a genuinely failing gate, a
+# gate abandoned mid-run, a gate still running, and a green gate. The first three all answer
+# `blocked` and only the last answers `clean` -- so the composite is a single string covering
+# three causes with three different remedies, and reading it alone reports the wrong one for two
+# of them. Hence the second read below.
+LANDING_CHECKS_AWAITING_VERDICT: Final = "landing_checks_awaiting_verdict"
+
+# A check at this head is STILL RUNNING. Deliberately not the refusal above, because the remedy is
+# opposite: bringing the branch up to date would abandon the very run whose verdict is awaited, and
+# the next pass gets the answer for free by waiting.
+LANDING_CHECKS_IN_FLIGHT: Final = "landing_checks_in_flight"
+
+# The runs at this head could not be read, so which of the three above holds is unknown. A question
+# that was not asked is not an answer, and it is certainly not permission -- same polarity as every
+# other unreadable in this module.
+LANDING_CHECKS_VERDICT_UNREADABLE: Final = "landing_checks_verdict_unreadable"
 
 # The remote has not finished computing mergeability. GitHub answers `unknown` while it works, and
 # reporting that as "the checks are not clean" names the wrong cause to whoever reads the report --
@@ -172,6 +203,21 @@ LANDING_CHECKS_NOT_CLEAN: Final = "landing_checks_not_clean"
 # every other one's is not. Both refuse; only the name differs, which is the whole point.
 LANDING_MERGEABILITY_UNKNOWN: Final = "landing_mergeability_unknown"
 MERGEABLE_UNKNOWN: Final = "unknown"
+
+# The platform's own words for a workflow run that has finished, and for the finishing states that
+# are NOT a verdict about the change. Both are read from the workflow-run listing, which is the
+# only check-shaped surface this estate's App may read at all: it holds no `checks` permission, so
+# the check-runs API answers 403 and the runs listing is what remains.
+#
+# **`success` is deliberately absent, and every other string is deliberately absent.** A run that
+# passed cannot be what holds a landing, so it is neither a verdict to refuse on nor a missing one
+# to wait for. Anything else -- `failure`, `timed_out`, `action_required`, and any word the
+# platform has not yet invented -- is read as a verdict this lane may not land on. That polarity is
+# the whole safety of the split: a conclusion nobody enumerated fails toward refusing, never toward
+# calling itself absent and inviting the branch to be freshened.
+RUN_COMPLETED: Final = "completed"
+RUN_SUCCEEDED: Final = "success"
+NO_VERDICT_CONCLUSIONS: Final = frozenset({"cancelled", "skipped", "stale"})
 
 # The head is behind the base it would be squashed onto, so the tree that would land is one no
 # check has ever run against -- and on a repository where landing changes something already
@@ -224,6 +270,21 @@ SEMVER_PATCH: Final = "semver-patch"
 
 
 @dataclass(frozen=True)
+class HeadCheckRun:
+    """One workflow run at a head, as the classification below needs it.
+
+    Run-level rather than job-level, and that is the right grain HERE rather than a simplification.
+    The question is *what does this head currently report*, and a re-run supersedes its
+    predecessor: the run carries the latest attempt's answer, which is the answer branch protection
+    is reading too. Job-level granularity matters where the question is what a PARTICULAR attempt
+    did, and this is not that question.
+    """
+
+    status: str
+    conclusion: str | None
+
+
+@dataclass(frozen=True)
 class EstatePullRequest:
     """What the remote says about the pull request, as this module needs it."""
 
@@ -257,6 +318,8 @@ class EstateReadGateway(Protocol):
 
     def blob_sha(self, *, repository: str, path: str, ref: str) -> str | None: ...
 
+    def head_check_runs(self, *, repository: str, head_sha: str) -> tuple[HeadCheckRun, ...]: ...
+
 
 @dataclass(frozen=True)
 class EstateLandingAdmission:
@@ -274,9 +337,65 @@ class EstateLandingAdmission:
     # can report what a live pass would do without anything acting -- the acting path recomposes
     # this from scratch and never trusts a caller's copy of it.
     branch_update_qualifies: bool
+    # ADR-0024. The fact the freshness-derived criterion below takes as an argument, served so the
+    # OTHER consumer -- the out-of-process reporting agent, which cannot import this module -- can
+    # ask the same question this process asks. It is a fact rather than a verdict: what to do with
+    # it differs between the two, and only the term that read the blobs knows it.
+    rollout_base_matches_pin: bool
 
 
-def qualifies_for_branch_update(refusals: tuple[str, ...]) -> bool:
+def freshness_derived_refusals(
+    refusals: tuple[str, ...] | frozenset[str] | set[str],
+    *,
+    rollout_base_matches_pin: bool,
+) -> frozenset[str]:
+    """Which of these refusals are produced by the head's POSITION relative to its base, and say
+    nothing about the change itself? ADR-0024.
+
+    **ONE CONCEPT, TWO CONSUMERS, AND THEY ASK DIFFERENT QUESTIONS OF IT.**
+    `qualifies_for_branch_update` below asks *may the lane act on this* -- yes when every obstacle
+    is either freshness-derived or deliberate. The reporting agent asks *is this a finding* --
+    no, beside a refusal current policy can never clear, when what remains is freshness-derived.
+    Expressed once so a fifth member is answered in both places by construction, which is the
+    whole reason ADR-0024 rules on the class rather than on the case.
+
+    ## The criterion, and the discriminator that keeps it narrow
+
+    Being behind IS the position, so it is derived whenever it is present. A rollout pin that
+    differs is derived only when the BASE carries the pinned bytes: under that condition the head
+    simply predates a workflow change and bringing the base's commits in carries the pinned bytes
+    with it, while a base that does not carry them means the workflow genuinely moved and no
+    amount of freshening puts that right.
+
+    **A failing check is deliberately NOT a member, and it is the case that keeps this honest.**
+    Freshening re-runs checks and might turn one green, so *would freshening clear it?* is too
+    loose a test and would silence a red build. The discriminator is *does this say anything about
+    the change?* -- and a failing check does.
+
+    ## The head-behind conjunct, which is not decoration
+
+    A refusal cannot be caused by a position the head is not in. `qualifies_for_branch_update`
+    supplies that fact through its own return condition, so adding it here changes nothing for
+    that caller -- but the reporting consumer has no such guard, and without it a pull request
+    whose OWN DIFF edits the pinned rollout workflow (base carrying the pinned bytes, head current
+    with its base, head blob differing) would be classed as merely stale. That is `_rollout_term`'s
+    founding case and it must always report.
+
+    Returned members are intersected with what was actually raised, so the answer describes THESE
+    refusals rather than a vocabulary.
+    """
+    present = set(refusals)
+    if LANDING_HEAD_NOT_CURRENT_WITH_BASE not in present:
+        return frozenset()
+    derived = {LANDING_HEAD_NOT_CURRENT_WITH_BASE}
+    if rollout_base_matches_pin:
+        derived.add(LANDING_ROLLOUT_MOVED)
+    return frozenset(derived & present)
+
+
+def qualifies_for_branch_update(
+    refusals: tuple[str, ...], *, rollout_base_matches_pin: bool
+) -> bool:
     """May the lane bring this pull request's head up to date with its base?
 
     **ONLY WHEN FRESHNESS IS THE SOLE REMAINING OBSTACLE**, and that rule is the whole design
@@ -295,10 +414,71 @@ def qualifies_for_branch_update(refusals: tuple[str, ...]) -> bool:
     freshness alone qualifies; so does one also refused because the day's pace is spent or the hour
     is outside the window, because each of those clears itself and neither says anything about the
     branch. Any other refusal -- present or future, named or not yet invented -- disqualifies,
-    which is the polarity this lane argues for everywhere else: an unclassified code must fail
+    save the single carve-out below, which is keyed on two FACTS rather than on membership of a
+    set. That polarity is what this lane argues for everywhere else: an unclassified code must fail
     toward refusing rather than toward acting.
+
+    ## The carve-out: a rollout pin that differs BECAUSE the head is stale
+
+    `_rollout_term` compares the pinned workflow's bytes at the base and at the head, so a head
+    opened before that file last changed reports `landing_rollout_moved` -- a refusal CAUSED by
+    being behind, which is the very condition this rule exists to clear. Read as an obstacle it is
+    a deadlock, and it was one: the five `alobarquest/brain` pull requests open on 2026-08-16 were
+    each refused for being behind their base and disqualified from the one mechanism that would
+    bring them up to date.
+
+    **That carve-out is no longer stated here.** ADR-0024 found the same question being asked by a
+    second consumer and made it a criterion -- `freshness_derived_refusals` above -- of which this
+    is now one reader. What that function excuses, and why a genuinely moved workflow is not
+    excused, is stated there.
+
+    Note what this DID cost, since an earlier version of this docstring argued the opposite:
+    the criterion carries the "head is behind" conjunct itself, where this function had left it to
+    the return below on the grounds that restating it would give one fact two sources. That
+    reasoning held only while this was the sole reader. The two are equivalent HERE -- the return
+    requires the same thing -- so nothing about this answer moved.
+
+    **The carve-out is self-limiting rather than trusted.** After an update the term re-evaluates
+    against the NEW head: a pull request that does not touch the workflow then carries the pinned
+    bytes and proceeds, while one whose own diff edits that file still differs and is still refused
+    -- `_rollout_term`'s founding case, untouched. The cost of that ambiguity is one build on a
+    pull request that will not land; nothing in the cascade can see a pull request's changed files,
+    so no narrower reading is available here.
+
+    ## The third subtraction: a head whose checks reached no verdict
+
+    `landing_checks_awaiting_verdict` does not disqualify, and it is the only refusal here that is
+    excused because bringing the branch up to date is what ANSWERS it rather than what tolerates
+    it. The two above clear on their own and this one does not: nothing else in the estate re-runs
+    a check that was abandoned, so a pull request holding one waits forever while its own report
+    says the checks are not clean.
+
+    **It is not folded into the freshness criterion**, though it would qualify at a glance. That
+    criterion asks *is this refusal produced by the head's POSITION?* and this one is not -- it is
+    produced by what happened to the runs. Folding it in would also excuse it for the reporting
+    consumer, which reads the same criterion to decide what is a finding, and there the answer is
+    different: an unanswered check beside a permanent exception is still worth saying.
+
+    **A failing check remains disqualifying, and that boundary is the whole value of the split.**
+    Freshening cannot turn a red verdict green, so offering it one spends a build to re-learn the
+    same answer -- and a build running is indistinguishable from progress to whoever reads the
+    report. `_checks_term` is where the two are told apart, and it does so by reading the runs
+    rather than by trusting a word that covers both.
+
+    ## The shape, because it will recur
+
+    **When a refusal can be CAUSED by the condition another rule exists to clear, the two rules
+    deadlock.** This test must be keyed on refusals that are genuinely independent of freshness --
+    not merely on the ones that happened to be live when it was written.
     """
-    remainder = set(refusals) - {LANDING_HEAD_NOT_CURRENT_WITH_BASE} - DELIBERATE_REFUSALS
+    # `False` withholds the carve-out, so every path that did not positively observe a matching
+    # base leaves the refusal standing.
+    remainder = (
+        set(refusals)
+        - freshness_derived_refusals(refusals, rollout_base_matches_pin=rollout_base_matches_pin)
+        - DELIBERATE_REFUSALS
+        - {LANDING_CHECKS_AWAITING_VERDICT}
+    )
     return LANDING_HEAD_NOT_CURRENT_WITH_BASE in refusals and not remainder
 
 
@@ -417,7 +597,10 @@ def estate_landing_admission(
         head_sha=remote.head_sha,
         change_record_id=record.record_id,
         policy_version=record.policy_version,
-        branch_update_qualifies=qualifies_for_branch_update(tuple(refusals)),
+        branch_update_qualifies=qualifies_for_branch_update(
+            tuple(refusals), rollout_base_matches_pin=remote.rollout_base_matches_pin
+        ),
+        rollout_base_matches_pin=remote.rollout_base_matches_pin,
     )
 
 
@@ -563,6 +746,8 @@ def _pace_term(session: Session, repository: str, now) -> _Term:
 class _RemoteTerms:
     term: _Term
     head_sha: str | None
+    # Carried up rather than recomputed: the blobs were read once, by the term that owns them.
+    rollout_base_matches_pin: bool
 
 
 def _remote_terms(
@@ -580,7 +765,7 @@ def _remote_terms(
     try:
         pull = gateway.read_pull_request(repository=repository, number=pr_number)
     except EstateGatewayError:
-        return _RemoteTerms(_Term(False, (LANDING_PULL_REQUEST_UNREADABLE,)), None)
+        return _RemoteTerms(_Term(False, (LANDING_PULL_REQUEST_UNREADABLE,)), None, False)
 
     refusals: list[str] = []
     if pull.landed or not pull.open:
@@ -591,20 +776,22 @@ def _remote_terms(
         refusals.append(LANDING_AUTHOR_NOT_THE_UPDATE_BOT)
     if pull.mergeable_state == MERGEABLE_UNKNOWN:
         refusals.append(LANDING_MERGEABILITY_UNKNOWN)
-    elif pull.mergeable_state != MERGEABLE_CLEAN:
-        refusals.append(LANDING_CHECKS_NOT_CLEAN)
+        checks = _Term(False, ())
+    else:
+        checks = _checks_term(repository, pull, gateway)
+        refusals.extend(checks.refusals)
 
     if conditions is None:
         # Already reported by the record term. Everything below is a condition this process was
         # not told, so it cannot be met and there is nothing further to say about it.
-        return _RemoteTerms(_Term(False, tuple(refusals)), pull.head_sha)
+        return _RemoteTerms(_Term(False, tuple(refusals)), pull.head_sha, False)
 
     fresh = _freshness_term(repository, pull, conditions, gateway)
     kind = _update_type_term(pull, conditions)
     rollout = _rollout_term(repository, pull, conditions, gateway)
     refusals.extend(fresh.refusals)
     refusals.extend(kind.refusals)
-    refusals.extend(rollout.refusals)
+    refusals.extend(rollout.term.refusals)
 
     met = (
         pull.open
@@ -612,12 +799,73 @@ def _remote_terms(
         and pull.base_ref == pull.default_branch
         and pull.author_login == UPDATE_BOT_LOGIN
         and pull.author_is_bot
-        and pull.mergeable_state == MERGEABLE_CLEAN
+        and pull.mergeable_state != MERGEABLE_UNKNOWN
+        and checks.met
         and fresh.met
         and kind.met
-        and rollout.met
+        and rollout.term.met
     )
-    return _RemoteTerms(_Term(met, tuple(refusals)), pull.head_sha)
+    return _RemoteTerms(_Term(met, tuple(refusals)), pull.head_sha, rollout.base_matches_pin)
+
+
+def _checks_term(
+    repository: str,
+    pull: EstatePullRequest,
+    gateway: EstateReadGateway,
+) -> _Term:
+    """Do the checks at this head say NO, say NOTHING YET, or say nothing AT ALL?
+
+    Three answers where the platform's composite offers one word. `clean` is the only value that
+    permits, and every other value used to raise a single refusal naming a failing check -- which
+    is true of one cause and false of the other two, and false in the direction that matters: the
+    remedy for a check that never reported is to run it, and this lane owns the act that does so.
+
+    ## The second read, and why it is not optional
+
+    `mergeable_state` is a scalar. Measured against one repository with one required check, a
+    genuinely failing gate, a gate abandoned mid-run and a gate still running ALL answer `blocked`,
+    and three live pull requests in this estate's own ledger repositories answer `blocked` with
+    every run at their head abandoned. No amount of care with the composite recovers the
+    difference, so the runs at the head are read.
+
+    ## Only `blocked` is inquired into
+
+    Every other unpermitted value is a statement about the branch rather than about a verdict --
+    a conflict, a draft, a check that failed without being required -- and none is made right by
+    a fresher base. They keep the original refusal untouched, and a conflicted branch is thereby
+    never offered to an update that would fail at the remote anyway.
+
+    ## The order of the three questions is the safety
+
+    A failing run outranks one still going, which outranks the absence of any verdict: a head
+    carrying one red run and one still running has said no, whatever else is pending. Reading
+    those in the other order would let an in-flight sibling excuse a failure.
+
+    ## Residual, named rather than implied
+
+    This reads every run at the head, not the REQUIRED ones -- the required-context list needs a
+    permission this estate's App does not hold. So an unrelated failing workflow holds a pull
+    request that branch protection would have let through. That is the conservative direction and
+    it is the same residual the composite's own note already carries.
+    """
+    if pull.mergeable_state == MERGEABLE_CLEAN:
+        return _Term(True, ())
+    if pull.mergeable_state != MERGEABLE_BLOCKED:
+        return _Term(False, (LANDING_CHECKS_NOT_CLEAN,))
+    try:
+        runs = gateway.head_check_runs(repository=repository, head_sha=pull.head_sha)
+    except EstateGatewayError:
+        return _Term(False, (LANDING_CHECKS_VERDICT_UNREADABLE,))
+    if any(
+        run.status == RUN_COMPLETED
+        and run.conclusion != RUN_SUCCEEDED
+        and run.conclusion not in NO_VERDICT_CONCLUSIONS
+        for run in runs
+    ):
+        return _Term(False, (LANDING_CHECKS_NOT_CLEAN,))
+    if any(run.status != RUN_COMPLETED for run in runs):
+        return _Term(False, (LANDING_CHECKS_IN_FLIGHT,))
+    return _Term(False, (LANDING_CHECKS_AWAITING_VERDICT,))
 
 
 def _freshness_term(
@@ -668,12 +916,34 @@ def _update_type_term(pull: EstatePullRequest, conditions: LandingConditions) ->
     return _Term(True, ())
 
 
+@dataclass(frozen=True)
+class _RolloutTerm:
+    term: _Term
+    # DID THE BASE CARRY THE PINNED BYTES? Reported beside the refusal because the refusal itself
+    # cannot tell "this head is stale" from "this workflow moved", and only the comparison below
+    # can. False wherever the question was not reached or not answered -- an unpinned repository
+    # and an unreadable blob are both merely *not known* to match, and a reader that treats
+    # not-known as matching would waive a condition on the strength of a failed read.
+    base_matches_pin: bool
+
+
+def _blob_matches(observed: str | None, expected: str) -> bool:
+    """One comparison, so the refusal and the fact beside it can never disagree.
+
+    Case-folded, for the reason the pin's own test gives: GitHub serves object names lower-cased
+    and a human transcribing one may not. Computing the fact with a second, raw comparison would
+    withhold the carve-out for an upper-cased pin alone -- refusing, but for a reason nobody could
+    read off either value.
+    """
+    return observed is not None and observed.lower() == expected.lower()
+
+
 def _rollout_term(
     repository: str,
     pull: EstatePullRequest,
     conditions: LandingConditions,
     gateway: EstateReadGateway,
-) -> _Term:
+) -> _RolloutTerm:
     """Is the rollout this landing would cause still the one the record's criteria describe?
 
     The record says what a green rollout attests. Nothing else in the estate checks that the
@@ -697,18 +967,32 @@ def _rollout_term(
     Nothing in the cascade can see a pull request's changed files -- the gateway has no method for
     it, deliberately -- so this is the whole of the protection, and it is why the head read is not
     an optimisation to be skipped when the base already matches.
+
+    **The two sides answer DIFFERENT questions once the answer leaves here**, which is why the base
+    comparison is carried out as well as the refusal. A head that differs while the base matches is
+    a head that predates the file's last change, and that is curable by bringing the base's commits
+    into it; a base that differs is a workflow this record was not written about, which nothing
+    about the branch can put right. `qualifies_for_branch_update` is the only reader, and this term
+    is the only party that can tell them apart -- the refusal is one string for both.
+
+    A `None` is the pinned path naming no file at that ref. A renamed or removed rollout is a moved
+    rollout; reading it as "nothing to compare" would waive the condition exactly when it matters
+    most.
     """
     pin = conditions.pin_for(repository)
     if pin is None:
-        return _Term(False, (LANDING_ROLLOUT_UNPINNED,))
-    for ref in (pull.base_ref, pull.head_sha):
-        try:
-            observed = gateway.blob_sha(repository=repository, path=pin.path, ref=ref)
-        except EstateGatewayError:
-            return _Term(False, (LANDING_ROLLOUT_UNREADABLE,))
-        # `None` is the pinned path naming no file at that ref. A renamed or deleted rollout is a
-        # moved rollout; reading it as "nothing to compare" would waive the condition exactly when
-        # it matters most.
-        if observed is None or observed.lower() != pin.blob_sha.lower():
-            return _Term(False, (LANDING_ROLLOUT_MOVED,))
-    return _Term(True, ())
+        return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_UNPINNED,)), False)
+    try:
+        at_base = gateway.blob_sha(repository=repository, path=pin.path, ref=pull.base_ref)
+        if not _blob_matches(at_base, pin.blob_sha):
+            return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_MOVED,)), False)
+        at_head = gateway.blob_sha(repository=repository, path=pin.path, ref=pull.head_sha)
+    except EstateGatewayError:
+        # False even when the BASE read succeeded and matched: a term that could not finish
+        # answering has not established the pair the carve-out rests on. Unobservable today --
+        # `landing_rollout_unreadable` disqualifies on its own -- so it is stated rather than
+        # left to whichever value happened to be in hand.
+        return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_UNREADABLE,)), False)
+    if not _blob_matches(at_head, pin.blob_sha):
+        return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_MOVED,)), True)
+    return _RolloutTerm(_Term(True, ()), True)

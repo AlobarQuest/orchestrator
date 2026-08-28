@@ -25,6 +25,11 @@ or brain authority through this route.
 
 ## Accepted Sources
 
+`OBSERVATION_SOURCE_SYSTEMS` in `src/orchestrator/persistence/models.py` is the source of truth,
+and it is CHECK-pinned in the database; the list here is a reader's copy and had already drifted
+once, missing `recovery_floor` from the day ADR-0021 added it. Read the constant before relying
+on this list.
+
 WS-6.1 accepts already-normalized observations from:
 
 - `deployment_observation`
@@ -34,6 +39,8 @@ WS-6.1 accepts already-normalized observations from:
 - `uptime_monitor`
 - `github`
 - `drift_digest`
+- `recovery_floor` — ADR-0021's four scheduled recovery jobs
+- `machine_activation` — ADR-0030's sweep of the operator machine's enrolled working copies
 
 It does not poll those systems and does not mutate their configuration.
 
