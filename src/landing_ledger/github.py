@@ -147,14 +147,35 @@ def update_metadata(message: str, head_ref: str | None) -> UpdateMetadata | None
     The ecosystem is the second segment of the branch name because that is where fetch-metadata
     takes it from -- which is why it reads `github_actions` with an underscore while
     `dependabot.yml` spells it with a hyphen.
+
+    AN ABSENT `update-type` NO LONGER DISCARDS THE REST, and that is the substantive half of this
+    function. The gate reads three outputs independently; a requirement range omits one of them
+    and carries the other two, so returning None for the whole structure lost an ecosystem the
+    gate itself had. Present-with-`None` and absent are therefore two different answers now, and
+    consumers must read them as two: `None` means the update bot declared no delta, while no
+    metadata at all means nothing here could be read.
+
+    `None` IS WHAT DEPENDABOT DECLARED, NOT NECESSARILY WHAT THE GATE SAW. From `fetch-metadata`
+    v3.1.0 -- the revision blob 3457db3c pins -- the action DERIVES an update type when the
+    trailer states none, by scraping a version pair out of `update <name> requirement from A to B`
+    and passing it to `calculateUpdateType`. v2 had no such regex. So on a requirement range the
+    gate may report `semver-patch` while this reader honestly reports nothing, because it reads
+    the commit the bot wrote rather than a title. That divergence is INERT under 3457db3c, whose
+    condition reads no update type at all -- and it is exactly what a future revision keyed on
+    update types would be transcribed against wrongly. Read the pinned action before writing such
+    a transcription.
     """
     name = DEPENDENCY_NAME.search(message)
-    kind = UPDATE_TYPE.search(message)
-    if name is None or kind is None:
+    if name is None:
         return None
+    kind = UPDATE_TYPE.search(message)
     segments = (head_ref or "").split("/")
     ecosystem = segments[1] if len(segments) > 2 and segments[0] == "dependabot" else None
-    return UpdateMetadata(dependency=name.group(1), ecosystem=ecosystem, update_type=kind.group(1))
+    return UpdateMetadata(
+        dependency=name.group(1),
+        ecosystem=ecosystem,
+        update_type=kind.group(1) if kind is not None else None,
+    )
 
 
 def factory_claim(message: str) -> FactoryClaim | None:

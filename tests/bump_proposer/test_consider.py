@@ -8,20 +8,29 @@ repository, which this estate has already paid for once.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from bump_proposer.cli import _consider
+from bump_proposer.cli import FAILURE_SETTLE_SECONDS, _consider
 from bump_proposer.standing import StandingPackage
-from landing_ledger.model import PendingUpdate, UpdateMetadata
+from landing_ledger.model import Check, PendingUpdate, UpdateMetadata
 from landing_ledger.rules import REGISTRY
 
 # The gate blob each repository carried, measured 2026-08-19 by reading the contents API.
 ORCHESTRATOR_GATE = "72391c0f7343477193b5c896680a083500c45227"
 FIVE_REPO_GATE = "e849b3a8411fabeff1dedd138e6e3e3a2f535319"
 NEWER_METADATA_GATE = "a4a4b8da035292fe434badd007607d8a69bc54e2"
+# The one revision all six carry from 2026-08-28 (ADR-0034): it excludes `docker` and asks
+# nothing else, so what the checks concluded is the only thing left separating the two lanes.
+OUTCOME_GATE = "3457db3cee85ffa054dee8b434ac25238a81f425"
+
+NOW = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
+SETTLED = NOW - timedelta(seconds=FAILURE_SETTLE_SECONDS + 1)
+JUST_CONCLUDED = NOW - timedelta(seconds=FAILURE_SETTLE_SECONDS - 1)
+FAILED = (Check(name="Quality", conclusion="failure", run=1),)
+PASSED = (Check(name="Quality", conclusion="success", run=1),)
 
 MAJOR = "version-update:semver-major"
 MINOR = "version-update:semver-minor"
@@ -35,14 +44,23 @@ def _pending(
     dependency: str | None,
     ecosystem: str | None,
     update_type: str | None,
+    checks: tuple[Check, ...] = (),
+    concluded_at: datetime | None = None,
 ) -> PendingUpdate:
     """One open pull request as the ledger's own reader would return it.
 
-    `update` is None WHOLESALE when the bot declared no update type, because that is what
-    `landing_ledger.github.update_metadata` does: it needs both a dependency name and an update
-    type, and a requirement-range bump carries the first without the second. An earlier version
-    of this helper passed `str(None)` to satisfy a type checker and turned every one of those
-    rows into a classification disagreement -- a fixture that no longer described the estate.
+    `update` is None exactly when the commit carries no `dependency-name`, which is what
+    `landing_ledger.github.update_metadata` returns None for -- and ONLY that, since 2026-08-28.
+    A requirement-range bump carries a dependency name and no update type, so it arrives as
+    metadata whose `update_type` is None rather than as no metadata at all: the gate reads the
+    ecosystem from the BRANCH and always has one, so discarding it with the missing update type
+    threw away the only value revision 3457db3c reads. An earlier version of this helper passed
+    `str(None)` to satisfy a type checker and turned every such row into a classification
+    disagreement -- a fixture that no longer described the estate.
+
+    `checks` and `concluded_at` are what the producer now reads to tell a bump the cascade WILL
+    NOT land from one it is about to. They default to the state of a pull request whose checks
+    have not concluded, which is fail-closed: neither lane acts.
     """
     return PendingUpdate(
         repository=repository,
@@ -53,13 +71,15 @@ def _pending(
         title=title,
         update=(
             UpdateMetadata(
-                dependency=dependency or "",
+                dependency=dependency,
                 ecosystem=ecosystem,
                 update_type=update_type,
             )
-            if update_type is not None
+            if dependency is not None
             else None
         ),
+        checks=checks,
+        last_concluded_at=concluded_at,
     )
 
 
@@ -225,7 +245,7 @@ def test_the_live_population_is_classified_as_measured(case) -> None:
         ecosystem=ecosystem,
         update_type=update_type,
     )
-    package, bump, detail = _consider(pending, REGISTRY[gate], PACKAGES)
+    package, bump, detail = _consider(pending, REGISTRY[gate], PACKAGES, NOW)
     if expected == "candidate":
         assert package is not None and bump is not None, detail
     elif expected == "permitted":
@@ -244,7 +264,7 @@ def test_a_bump_with_no_standing_package_is_unlaned() -> None:
         ecosystem="npm_and_yarn",
         update_type=MAJOR,
     )
-    package, bump, detail = _consider(pending, REGISTRY[NEWER_METADATA_GATE], PACKAGES)
+    package, bump, detail = _consider(pending, REGISTRY[NEWER_METADATA_GATE], PACKAGES, NOW)
     assert package is None and detail.startswith("unlaned")
 
 
@@ -263,7 +283,7 @@ def test_a_title_and_a_trailer_that_disagree_are_ambiguous() -> None:
         ecosystem="npm_and_yarn",
         update_type=MINOR,
     )
-    package, bump, detail = _consider(pending, REGISTRY[NEWER_METADATA_GATE], PACKAGES)
+    package, bump, detail = _consider(pending, REGISTRY[NEWER_METADATA_GATE], PACKAGES, NOW)
     assert package is None and detail.startswith("ambiguous"), detail
 
 
@@ -278,5 +298,144 @@ def test_a_classifiable_title_with_no_trailer_is_ambiguous() -> None:
         ecosystem=None,
         update_type=None,
     )
-    package, bump, detail = _consider(pending, REGISTRY[NEWER_METADATA_GATE], PACKAGES)
+    package, bump, detail = _consider(pending, REGISTRY[NEWER_METADATA_GATE], PACKAGES, NOW)
     assert package is None and detail.startswith("ambiguous"), detail
+
+
+# ---------------------------------------------------------------------------------------------
+# ADR-0034. Under revision 3457db3c the cascade permits anything it does not exclude, so
+# `permits` alone no longer separates the lanes -- what the required checks concluded does.
+# These are the acceptance controls for that change, stated as the questions they answer.
+# ---------------------------------------------------------------------------------------------
+
+
+def _zod(*, checks: tuple[Check, ...] = (), concluded_at: datetime | None = None) -> PendingUpdate:
+    """infraops-mcp-server #71, which ADR-0034 names as the factory's archetype: the MCP SDK's
+    `server.tool()` signature shifts under zod 4, so the bump needs a code change before its
+    diff is correct. Only its check state varies below -- that is the axis the split moved to."""
+    return _pending(
+        "AlobarQuest/infraops-mcp-server",
+        71,
+        "build(deps): bump zod from 3.25.76 to 4.4.3",
+        dependency="zod",
+        ecosystem="npm_and_yarn",
+        update_type=MAJOR,
+        checks=checks,
+        concluded_at=concluded_at,
+    )
+
+
+def test_a_settled_failure_is_still_this_lanes_subject_under_the_outcome_rule() -> None:
+    """CONTROL 1. The factory's queue must not empty when the cascade stops refusing on type.
+
+    zod #71 is the archetype ADR-0034 names: the MCP SDK's `server.tool()` signature shifts
+    under zod 4, so the bump needs a code change before its diff is correct. Revision 3457db3c
+    PERMITS it -- there is no update-type arm left to refuse it with -- and GitHub will never
+    land it, because two required checks concluded failure on 2026-08-23. A producer reading
+    `permits` alone would report it as the cascade's business and propose nothing, leaving the
+    one bump the factory exists for in neither lane.
+    """
+    pending = _zod(checks=FAILED, concluded_at=SETTLED)
+
+    package, bump, detail = _consider(pending, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+
+    assert package is not None and bump is not None, detail
+    assert bump.kind == "semver-major"
+
+
+def test_the_same_bump_passing_its_checks_is_left_to_the_cascade() -> None:
+    """The other half of control 1, and the reason it is not simply "always take a major".
+
+    Nothing about the bump changes here except what CI concluded, which is precisely the axis
+    ADR-0034 moved the split onto. Sending the factory at a pull request GitHub is about to land
+    would mint a package revision for a diff that was already correct.
+    """
+    pending = _zod(checks=PASSED, concluded_at=SETTLED)
+
+    package, _, detail = _consider(pending, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+
+    assert package is None
+    assert "permits" in detail and "have passed" in detail, detail
+
+
+def test_a_failure_that_has_not_settled_belongs_to_neither_lane_yet() -> None:
+    """`PendingUpdate.checks` holds only jobs that have CONCLUDED, so one failure among several
+    still-running jobs is indistinguishable from a final verdict except by how recently the last
+    conclusion arrived. Taking it early mints a package revision that cannot be unminted, and a
+    re-run that then goes green strands the record as superseded with a human approval spent."""
+    pending = _zod(checks=FAILED, concluded_at=JUST_CONCLUDED)
+
+    package, _, detail = _consider(pending, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+
+    assert package is None
+    assert "have not concluded against it" in detail, detail
+
+
+def test_a_pull_request_whose_checks_have_not_concluded_at_all_is_not_taken() -> None:
+    """The state every Dependabot pull request is in for its first minutes. Fail-closed here
+    means waiting: a pass that skips it costs a pass, and the next one picks it up."""
+    pending = _zod()
+
+    package, _, detail = _consider(pending, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+
+    assert package is None
+    assert "have not concluded against it" in detail, detail
+
+
+def test_the_old_and_new_gates_take_zod_for_DIFFERENT_reasons() -> None:
+    """The differential that shows the change is real rather than coincidental.
+
+    Under the cascade the bump was this lane's subject because a package major was refused on
+    its DECLARATION, whatever CI said -- so a green zod was a candidate too. Under 3457db3c only
+    the failure keeps it here. Asserting the candidate case alone would pass under both and
+    prove nothing about which question is being asked.
+    """
+    green = _zod(checks=PASSED, concluded_at=SETTLED)
+
+    cascade_package, _, _ = _consider(green, REGISTRY[NEWER_METADATA_GATE], PACKAGES, NOW)
+    outcome_package, _, _ = _consider(green, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+
+    assert cascade_package is not None
+    assert outcome_package is None
+
+
+def test_a_requirement_range_stays_unclassifiable_under_the_outcome_rule() -> None:
+    """CONTROL 2, the producer's half. The cascade now PERMITS these -- that is the whole point
+    of ADR-0034 -- but this lane still cannot describe one: a range states no single delta, so
+    there are no two versions for a package revision to carry. Unchanged, and not a finding."""
+    pending = _pending(
+        "AlobarQuest/infraops-mcp-server",
+        69,
+        "chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0",
+        dependency="setuptools",
+        ecosystem="uv",
+        update_type=None,
+        checks=PASSED,
+        concluded_at=SETTLED,
+    )
+
+    package, _, detail = _consider(pending, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+
+    assert package is None and detail.startswith("unclassifiable"), detail
+
+
+CANCELLED = (Check(name="Quality", conclusion="cancelled", run=1),)
+STALE = (Check(name="Quality", conclusion="stale", run=1),)
+
+
+@pytest.mark.parametrize("checks", [CANCELLED, STALE], ids=["cancelled", "stale"])
+def test_a_conclusion_that_is_no_verdict_does_not_hand_the_bump_to_the_factory(checks) -> None:
+    """A cancelled run was STOPPED and a stale one SUPERSEDED. Neither says the change is bad.
+
+    The estate has paid for reading them as failures once already -- the landing lane held three
+    clean bumps for four days on runs GitHub cancelled when the Actions quota ran out -- and here
+    the cost is worse than a delay: the gate's arming stays live, so treating a cancelled job as
+    the cascade's answer mints a package revision that cannot be unminted, and the bump lands by
+    itself the moment somebody re-runs the job green.
+    """
+    package, _, detail = _consider(
+        _zod(checks=checks, concluded_at=SETTLED), REGISTRY[OUTCOME_GATE], PACKAGES, NOW
+    )
+
+    assert package is None
+    assert "have not concluded against it" in detail, detail

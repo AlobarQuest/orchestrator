@@ -64,11 +64,21 @@ class UpdateMetadata:
     is what `dependabot/fetch-metadata` itself parses -- not from the pull request title. The
     ecosystem is the second segment of the branch name, which is where fetch-metadata gets it and
     why it spells it `github_actions` with an underscore.
+
+    `update_type` IS OPTIONAL AND THE OTHER TWO ARE NOT, because the gate reads three independent
+    outputs and only one of them can be absent. Dependabot omits `update-type` for a requirement
+    range and for a tag it cannot parse as semver; it never omits the branch, so the gate always
+    has an ecosystem. Until 2026-08-28 this was one all-or-nothing structure -- no update type,
+    no metadata at all -- which was harmless only while every rule refused an absent update type
+    anyway. Under ADR-0034 the ecosystem is the ONLY thing the rule reads, so conflating the two
+    threw away the answer exactly when it became load-bearing: `python 3.12-slim -> 3.14-slim`
+    states no delta, and dropping its `docker` with it would read as permitted by a rule that
+    excludes docker.
     """
 
     dependency: str
     ecosystem: str | None
-    update_type: str
+    update_type: str | None
 
 
 @dataclass(frozen=True)

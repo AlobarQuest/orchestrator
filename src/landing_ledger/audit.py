@@ -99,6 +99,25 @@ FAILING_CONCLUSIONS = frozenset(
     {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
 )
 
+# A conclusion that is NOT A VERDICT ABOUT THE CHANGE. A cancelled run was stopped, a stale one
+# superseded, a skipped one never asked -- none of them says the change is bad, and the estate has
+# already paid for reading them as though they did: the landing lane held three clean bumps for
+# four days on the strength of runs GitHub cancelled when the Actions quota ran out.
+#
+# A DELIBERATE MIRROR of `orchestrator.services.estate_landing_admission.NO_VERDICT_CONCLUSIONS`,
+# which this program may not import -- the isolation test says so -- and pinned to it by a test
+# that imports both, the same arrangement `titles.py` uses. Its polarity is the safety: anything
+# NOT named here is read as a verdict, so a conclusion the platform has not yet invented fails
+# toward refusing rather than toward calling itself absent.
+NO_VERDICT_CONCLUSIONS = frozenset({"cancelled", "skipped", "stale"})
+
+# The subset of the above that a CONSUMER MAY ACT ON. `FAILING_CONCLUSIONS` is deliberately wider
+# because it feeds `is_green`, where over-counting is conservative: a reporting predicate that
+# calls a cancelled run not-green merely stays quiet. A predicate that drives an irreversible act
+# needs the narrower question -- did the checks decide AGAINST this change -- and the two must not
+# share a name, because the same word would let one be tuned for the other's cost.
+REFUSING_CONCLUSIONS = FAILING_CONCLUSIONS - NO_VERDICT_CONCLUSIONS
+
 # How long a pull request must have been green before "armed and still open" is worth reporting.
 # GitHub lands an armed pull request within seconds of its last required check, so anything above
 # a few minutes is generous -- but a pass that ran inside that window would report a race as a
@@ -318,7 +337,13 @@ def audit_landing(facts: Any) -> tuple[tuple[Finding, ...], tuple[Finding, ...]]
 
     update_type = permitted.get("update_type")
     ecosystem = permitted.get("ecosystem")
-    if rule.requires_upstream_author and update_type is None:
+    # ABSENT, NOT NULL. `permitted_by` writes the three update keys together or not at all, so
+    # the key's presence answers "was the trailer readable?" while its VALUE answers "what did
+    # the update bot declare?". Testing the value would report every no-delta landing revision
+    # 3457db3c permits as metadata this program failed to read -- a finding about the ledger,
+    # raised against the landings the new rule exists to make. One key is tested because all
+    # three arrive together; `test_record.py` pins that they do.
+    if rule.requires_upstream_author and "update_type" not in permitted:
         findings.append(
             Finding(
                 DRIFT_METADATA_MISSING,
@@ -331,7 +356,8 @@ def audit_landing(facts: Any) -> tuple[tuple[Finding, ...], tuple[Finding, ...]]
             Finding(
                 DRIFT_NOT_SATISFIED,
                 subject,
-                f"{update_type} of a {ecosystem} dependency is outside rule {revision[:12]}",
+                f"{update_type or 'an update stating no version delta'} in the {ecosystem} "
+                f"ecosystem is outside rule {revision[:12]}",
             )
         )
 
@@ -577,12 +603,17 @@ def audit_pending(
     A FOURTH outcome is neither healthy nor a finding, and separating it out is the whole of this
     function's 2026-08-23 change. When the head commit carries no update metadata, two very
     different subjects arrive at the same place: one the gate SHOULD be able to decide and this
-    audit cannot, which is a finding; and one NOTHING can decide, because the title states no
-    single version delta for any rule about update types to apply to. Requirement ranges and
-    grouped bumps are the second kind, they are permanent, and reporting them as findings made
-    this detector exit non-zero every night on seven subjects that will never clear -- which is
-    how a control stops being read, and how a real stall would arrive as an eighth line in a
-    report already known to be noise.
+    audit cannot, which is a finding; and one nothing here can decide, because neither the
+    trailer nor the title states anything a rule could be applied to. Reporting the second kind
+    as findings made this detector exit non-zero every night on seven subjects that would never
+    clear -- which is how a control stops being read, and how a real stall arrives as an eighth
+    line in a report already known to be noise.
+
+    ITS SUBJECT SHRANK ON 2026-08-28 AND THE BRANCH IS KEPT ANYWAY. Requirement ranges were the
+    bulk of it, and they no longer arrive here at all: the reader keeps the ecosystem a range
+    states even though it states no delta, and revision 3457db3c classifies one on that alone.
+    What still reaches this branch is a head commit whose trailer could not be read, which is a
+    genuine and fail-closed state rather than a residue -- it just stopped being the common one.
 
     THE TITLE IS CONSULTED ONLY WHERE THE METADATA IS ABSENT, and that bound is deliberate. The
     gate itself reads the metadata trailer, never the title, so a subject whose trailer IS
@@ -597,8 +628,8 @@ def audit_pending(
                 Finding(
                     EXCEPTION_UPDATE_TYPE_UNPARSEABLE,
                     subject,
-                    "the title states no single version delta, so no rule about update types "
-                    "applies to it and no pass of this detector will ever classify it",
+                    "no update metadata on the head commit and no single version delta in the "
+                    "title, so there is nothing here for any rule to be applied to",
                 ),
             )
         return (
@@ -613,12 +644,18 @@ def audit_pending(
     if not green:
         return (), ()
     if not pending.armed:
+        # The declared intent may legitimately be absent -- a requirement range states none, and
+        # revision 3457db3c permits one on its ecosystem alone -- so this says so rather than
+        # interpolating `None` into a sentence a person has to read. It is the line this detector
+        # emits for every already-open update after a gate edit, which fires no `pull_request`
+        # event and so arms nothing that already exists.
+        declared = pending.update.update_type or "no version delta stated"
         return (
             Finding(
                 STALL_ELIGIBLE_NOT_ARMED,
                 subject,
-                f"{pending.update.update_type} of {pending.update.dependency} is permitted by the "
-                f"installed rule and every concluded check passed, but nothing armed it",
+                f"{pending.update.dependency} ({declared}) is permitted by the installed rule "
+                "and every concluded check passed, but nothing armed it",
             ),
         ), ()
     if pending.last_concluded_at is None:

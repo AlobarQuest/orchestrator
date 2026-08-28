@@ -40,6 +40,7 @@ import argparse
 import os
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
@@ -60,6 +61,7 @@ from bump_proposer.standing import (
     require_clean,
     snapshot_hash,
 )
+from landing_ledger.audit import REFUSING_CONCLUSIONS, is_green
 from landing_ledger.github import (
     GitHubReader,
     LedgerError,
@@ -78,14 +80,33 @@ EXIT_FINDINGS: Final = 3
 ACTOR: Final = "bump-proposer"
 RISK: Final = "caution"
 
+# How long a concluded failure must stand before this producer reads it as the cascade's answer.
+#
+# IT GUARDS AN IRREVERSIBLE ACT, which is why it exists at all and why it is not borrowed from
+# `landing_ledger.audit.SETTLE_SECONDS` despite the two sharing a magnitude. That one bounds how
+# long an armed-and-green pull request may sit before the fact is worth REPORTING, where a wrong
+# answer is a noisy line. This one decides whether to mint a package revision, and a package
+# revision cannot be unminted: take a failure that a re-run then clears and the record is
+# stranded as superseded, having spent a human approval. Two questions with two costs, and one
+# name would let either be tuned for the other.
+#
+# `PendingUpdate.checks` holds only jobs that have CONCLUDED, so a pull request whose checks are
+# still running is indistinguishable from one whose checks are finished except by how recently
+# the last of them concluded. That makes this interval the only instrument available for "has
+# the gate finished deciding?", rather than a nicety on top of one.
+FAILURE_SETTLE_SECONDS: Final = 3600
+
 # What makes a pass a FINDING rather than a clean run.
 #
 # `unclassifiable` and `unlaned` are deliberately ABSENT. A requirement-range bump states no
-# single delta and can never be classified by any rule about update types -- the estate has
-# already ruled that a refusal nothing can ever clear is an exception rather than a finding,
-# and the control that reports it forever stops being read. `unlaned` is the same shape one
-# level up: a bump for a dependency nobody has authored a standing package for is outside this
-# lane by construction, and authoring one is the act that changes it.
+# single delta -- the estate has already ruled that a refusal nothing can ever clear is an
+# exception rather than a finding, and the control that reports it forever stops being read.
+# NOTE WHY it cannot be cleared, because that reason changed on 2026-08-28 and the outcome did
+# not: the cascade now PERMITS a range (ADR-0034), so it is no longer refused there -- but a
+# revision of a standing package carries two versions, and a range names none, so this producer
+# still cannot describe one. `unlaned` is the same shape one level up: a bump for a dependency
+# nobody has authored a standing package for is outside this lane by construction, and authoring
+# one is the act that changes it.
 FINDING_STATUSES: Final = frozenset(
     {
         "error",
@@ -107,10 +128,44 @@ class Outcome:
     detail: str
 
 
+def _refused_by_the_checks(pending: PendingUpdate, now: datetime) -> bool:
+    """Whether the required checks have finished deciding, and decided against this update.
+
+    THREE STATES ARRIVE HERE AND ONLY ONE OF THEM IS THIS LANE'S SUBJECT. Nothing concluded yet,
+    or something concluded a moment ago with more still to come: the gate has not answered, so
+    neither lane acts. Everything concluded and none of it failed: the cascade lands it. Settled,
+    with at least one failure: the cascade will not land it, and that remainder is what ADR-0016
+    assigns to the factory.
+
+    FAIL-CLOSED MEANS `False` HERE, and the asymmetry is the point. Answering "refused" wrongly
+    mints a package revision that cannot be unminted and spends a human approval on a bump that
+    was about to land by itself; answering "not refused" wrongly costs a pass, and the next pass
+    picks it up. So an unreadable or unsettled state waits.
+
+    THAT IS WHY IT ASKS `REFUSING_CONCLUSIONS` AND NOT `FAILING_CONCLUSIONS`. The wider set exists
+    for `is_green`, where calling a cancelled run not-green is conservative. Here it would be
+    fail-OPEN: a required job cancelled by hand, or gone `stale` because the Actions quota ran
+    out, is no verdict about the change at all -- and reading it as one mints a revision while the
+    gate's arming stays live, so the bump lands the moment somebody re-runs the job green.
+
+    IT DOES NOT KNOW WHICH JOBS WERE REQUIRED, and `Check`'s own docstring says as much. Every
+    `pull_request` job in all six lane repositories is a required context today, measured, so a
+    non-required failure cannot reach this yet; adding one advisory job anywhere makes it
+    reachable, with no signal. Answering it needs the branch's protection settings, which the
+    ledger deliberately does not reconstruct.
+    """
+    if pending.last_concluded_at is None:
+        return False
+    if (now - pending.last_concluded_at).total_seconds() < FAILURE_SETTLE_SECONDS:
+        return False
+    return any(check.conclusion in REFUSING_CONCLUSIONS for check in pending.checks)
+
+
 def _consider(
     pending: PendingUpdate,
     rule: Rule,
     packages: dict[tuple[str, str], StandingPackage],
+    now: datetime,
 ) -> tuple[StandingPackage, Bump, str] | tuple[None, None, str]:
     """Decide what this open pull request is, or say why it is nothing to do here."""
     bump = bump_of(pending.title)
@@ -137,8 +192,22 @@ def _consider(
 
     assert pending.update is not None  # implied by declared_by_bot == declared_by_title != None
     ecosystem = pending.update.ecosystem
-    if rule.permits(bump.declared, ecosystem):
-        return None, None, f"the installed gate permits a {bump.kind} of a {ecosystem} dependency"
+    # PERMITTED IS NOT THE SAME QUESTION AS LANDED, and it stopped being a usable proxy for it on
+    # 2026-08-28. While the gate's condition was a cascade over update types, "the cascade
+    # permits this" and "the cascade lands this" picked out the same set, because everything it
+    # refused it refused on the declaration alone. Revision 3457db3c permits anything it does not
+    # exclude and leaves the rest to the required checks (ADR-0034), so a bump whose checks FAIL
+    # is now permitted and unlandable at once -- and this lane's subject is the second half.
+    # Reading `permits` alone here would EMPTY the factory's queue rather than narrow it to the
+    # failures ADR-0034 assigns to it, which is the opposite of what that decision says.
+    if rule.permits(bump.declared, ecosystem) and not _refused_by_the_checks(pending, now):
+        answer = "have passed" if is_green(pending) else "have not concluded against it"
+        return (
+            None,
+            None,
+            f"the installed gate permits a {bump.kind} of a {ecosystem} dependency "
+            f"and its checks {answer}",
+        )
 
     key = (pending.repository.lower(), pending.update.dependency)
     package = packages.get(key)
@@ -259,6 +328,7 @@ def _repository_pass(
     client: ChangeManagerClient | None,
     records: list[dict[str, Any]],
     root: Path,
+    now: datetime,
 ) -> list[Outcome]:
     try:
         base = default_branch(reader, repository)
@@ -300,7 +370,7 @@ def _repository_pass(
 
     outcomes: list[Outcome] = []
     for pending in sorted(pending_updates, key=lambda p: p.number):
-        package, bump, detail = _consider(pending, rule, packages)
+        package, bump, detail = _consider(pending, rule, packages, now)
         if package is None or bump is None:
             status = "ambiguous" if detail.startswith("ambiguous") else "skipped"
             outcomes.append(Outcome(repository, pending.number, status, detail))
@@ -380,6 +450,7 @@ def run(argv: list[str] | None = None) -> int:
 
     client = None
     outcomes: list[Outcome] = []
+    now = datetime.now(UTC)
     try:
         if args.submit:
             client = ChangeManagerClient(cm_token, base_url=cm_url or DEFAULT_BASE_URL)
@@ -387,7 +458,7 @@ def run(argv: list[str] | None = None) -> int:
         with GitHubReader(token=github_token) as reader:
             for repository in scope:
                 outcomes.extend(
-                    _repository_pass(reader, repository, packages, client, records, root)
+                    _repository_pass(reader, repository, packages, client, records, root, now)
                 )
     except ChangeManagerError as error:
         print(str(error), file=sys.stderr)

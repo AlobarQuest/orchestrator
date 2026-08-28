@@ -127,16 +127,40 @@ def test_a_commit_with_no_trailer_yields_no_metadata_rather_than_a_guess() -> No
     assert update_metadata("chore: bump ruff from 0.15.22 to 0.16.1", "feat/x") is None
 
 
-def test_a_half_written_trailer_yields_nothing_rather_than_a_derived_update_type() -> None:
-    """The update type is the value the gate's condition is written against, so guessing it from
-    a title would let the ledger say the rule permitted something on a value the rule never saw.
+def test_a_trailer_stating_no_update_type_keeps_the_two_values_it_does_state() -> None:
+    """A REQUIREMENT RANGE IS THIS SHAPE, and it is the ordinary one rather than a half-written
+    anything: Dependabot omits `update-type` whenever the bump states no single version delta.
 
-    Dependabot's own fields cannot be trusted to agree either: intent-packages #50 carries
-    `dependency-version: 0.16.0` in the same message whose subject says 0.16.1.
+    Until 2026-08-28 this returned None wholesale, discarding an ecosystem the trailer never
+    carried in the first place -- the branch does -- and which the gate itself therefore always
+    has. That was harmless only while every transcribed rule refused an absent update type at
+    Q1. Revision 3457db3c reads the ecosystem and nothing else, so the conflation would have
+    reported `python 3.12-slim -> 3.14-slim` as permitted by a rule that excludes `docker`.
+
+    The update type is still never GUESSED. It is the value the gate's condition is written
+    against, and deriving it from a title would let the ledger say the rule permitted something
+    on a value the rule never saw -- Dependabot's own fields do not agree with each other either
+    (intent-packages #50 carries `dependency-version: 0.16.0` in the message whose subject says
+    0.16.1). `None` here asserts that the bot declared none, which is a fact, not a fallback.
     """
-    partial = "chore: bump ruff\n\nupdated-dependencies:\n- dependency-name: ruff\n"
+    ranged = (
+        "chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0\n\n"
+        "updated-dependencies:\n- dependency-name: setuptools\n"
+    )
 
-    assert update_metadata(partial, "dependabot/uv/ruff-0.16.1") is None
+    metadata = update_metadata(ranged, "dependabot/uv/setuptools-gte-84.0.0")
+
+    assert metadata is not None
+    assert metadata.dependency == "setuptools"
+    assert metadata.ecosystem == "uv"
+    assert metadata.update_type is None
+
+
+def test_a_commit_with_no_dependency_name_yields_no_metadata_at_all() -> None:
+    """The other side of the distinction the reader now draws. No `dependency-name` means
+    nothing here could read the trailer, which `audit_landing` reports as a finding -- as
+    against a trailer that states no delta, which several revisions permit deliberately."""
+    assert update_metadata("chore: unrelated\n\nupdated-dependencies:\n", "dependabot/uv/x") is None
 
 
 # ---------------------------------------------------------------------------------------------
