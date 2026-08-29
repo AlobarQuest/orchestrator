@@ -506,6 +506,34 @@ def test_a_landing_commit_with_no_trailer_at_all_still_falls_back_to_the_head() 
     assert landing.update.dependency == "setuptools"
 
 
+def test_the_update_arm_reaches_for_the_head_even_when_the_other_two_are_answered() -> None:
+    """Each of the three arms asks its OWN question, and this is the case that proves it.
+
+    The condition guarding the fetch is a disjunction, so an arm dropped from it is invisible
+    whenever some other arm happens to be unanswered -- which every other fixture here is, because
+    a Dependabot landing carries no SDS trailers. This one carries BOTH, which is the shape an
+    ADR-0025 factory-delivery landing has: a work unit landed under a change record. Only here does
+    dropping `update is None` from the disjunction change the answer.
+    """
+    landing_message = (
+        "chore(deps-dev): update setuptools requirement (#50)\n\n"
+        "SDS-Unit: 0c0002c6-9869-59bc-84c6-654e6fc57d9e\n"
+        "SDS-Package-Rev: 1\n"
+        "SDS-Change-Record: 61\n"
+        "SDS-Policy-Version: 3\n"
+    )
+    routes = range_routes(
+        landing_message, RANGE_LANDING_MESSAGE, "dependabot/uv/setuptools-gte-84.0.0"
+    )
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.claim is not None
+    assert landing.policy is not None
+    assert landing.update is not None
+    assert landing.update.dependency == "setuptools"
+
+
 def test_a_landing_neither_message_describes_records_no_metadata() -> None:
     """Fail-closed in the direction that matters: nothing is invented from a title."""
     routes = range_routes(

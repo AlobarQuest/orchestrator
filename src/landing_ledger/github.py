@@ -330,6 +330,13 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
     # own freshness lane created, carrying no trailers, and all three update keys were dropped.
     # `update_metadata` returning None IS the question this arm means: it is None exactly when no
     # `dependency-name` could be read. A message that already answers is never replaced.
+    #
+    # THE INNER GUARD IS THE ONE THAT CARRIES THE CORRECTNESS; the outer condition only decides
+    # whether the head is worth FETCHING. Measured by mutation: keying the outer disjunct on an
+    # absent `update-type` again is behaviourally inert, because the inner guard then declines the
+    # replacement anyway -- it costs one wasted request and nothing else. Deleting or widening the
+    # inner guard reds a test. Both are kept: the outer one avoids a request nobody needs and
+    # states the same question the other two arms state, and the inner one is the rule.
     head_ref = detail["head"].get("ref")
     claim = factory_claim(message)
     policy = policy_permission(message)
