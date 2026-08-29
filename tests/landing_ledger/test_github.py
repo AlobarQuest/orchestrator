@@ -321,6 +321,78 @@ def test_only_pull_request_runs_that_concluded_before_the_landing_are_checks() -
     assert all(check.name != "late" for check in landing.checks)
 
 
+def test_the_gate_is_found_when_it_runs_on_pull_request_target() -> None:
+    """ADR-0035 moved the gate's trigger, and this reader was keyed on the old one.
+
+    The failure is silent and total: no gate run found means `rule is None`, which means
+    `basis_of` can never return `auto_merge_rule`, which means `audit_landing` returns empty
+    tuples and Detector A stops auditing the native lane -- with nothing raised anywhere. Every
+    other assertion in this file passes while that is true, which is why it needs its own case.
+
+    Only the event differs from `test_a_gate_landing_is_read_whole`; the run is otherwise the same
+    row, so a failure here is about the event and nothing else.
+    """
+    routes = gate_routes(
+        **{
+            f"/repos/{REPO}/actions/runs": {
+                "workflow_runs": [
+                    _run(
+                        31179223805,
+                        GATE,
+                        "pull_request_target",
+                        "2026-08-07T12:41:11Z",
+                        "success",
+                    ),
+                    _run(31179223856, "q.yml", "pull_request", "2026-08-07T12:42:02Z", "success"),
+                ]
+            }
+        }
+    )
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.rule is not None
+    assert (landing.rule.run, landing.rule.revision) == (31179223805, "77ab867d")
+
+
+def test_a_check_is_still_never_counted_from_anything_but_a_pull_request_run() -> None:
+    """The other half, and the reason the two event sets are separate rather than one.
+
+    Widening the gate's events must not widen the CHECKS' events: the same head carries a `push`
+    run of the same workflow, and admitting it would report every check twice. A single shared set
+    would pass the test above and silently double every check name here.
+    """
+    routes = gate_routes(
+        **{
+            f"/repos/{REPO}/actions/runs": {
+                "workflow_runs": [
+                    _run(
+                        31179223805,
+                        GATE,
+                        "pull_request_target",
+                        "2026-08-07T12:41:11Z",
+                        "success",
+                    ),
+                    _run(31179223856, "q.yml", "pull_request", "2026-08-07T12:42:02Z", "success"),
+                    _run(31179220691, "q.yml", "push", "2026-08-07T12:41:49Z", "success"),
+                    # A check workflow on the gate's own new trigger: still not a check, because
+                    # `pull_request_target` is admitted for the GATE PATH only.
+                    _run(
+                        31179220777, "q.yml", "pull_request_target", "2026-08-07T12:41:50Z", "ok"
+                    ),
+                ]
+            },
+            f"/repos/{REPO}/actions/runs/31179220777/jobs": {
+                "jobs": [{"name": "Lint, type-check, and test", "conclusion": "success"}]
+            },
+        }
+    )
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.rule is not None
+    assert [check.name for check in landing.checks] == ["Lint, type-check, and test"]
+    assert [check.run for check in landing.checks] == [31179223856]
+
+
 def test_the_record_takes_the_full_sha_from_github_not_the_argument() -> None:
     """An abbreviated argument would otherwise become the landing's identity, and two spellings
     of one landing are two rows that never dedup."""

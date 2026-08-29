@@ -40,6 +40,15 @@ API = "https://api.github.com"
 # The pull-request author the gate's own job-level condition names.
 UPSTREAM_AUTHOR = "dependabot[bot]"
 
+# Which workflow-run events this reader will read, and they are deliberately NOT the same set for
+# the two things it collects. See `_checks_and_gate` for why: a check counted from a `push` run
+# would be counted twice, while the gate is matched by path and recorded rather than counted, so
+# admitting its second trigger cannot double anything. `pull_request_target` is the gate's trigger
+# from ADR-0035 onward; `pull_request` is every revision before it, and both must keep working
+# because the ledger re-reads landings from any point in the estate's history.
+CHECK_EVENTS = frozenset({"pull_request"})
+GATE_EVENTS = frozenset({"pull_request", "pull_request_target"})
+
 # The `updated-dependencies` block Dependabot writes into its commit message. This is the same
 # text `dependabot/fetch-metadata` parses, so reading it here reads what the gate read.
 DEPENDENCY_NAME = re.compile(r"^\s*-?\s*dependency-name:\s*(\S+)\s*$", re.MULTILINE)
@@ -241,10 +250,26 @@ def _checks_and_gate(
 ) -> tuple[tuple[Check, ...], dict[str, Any] | None]:
     """Every job that had CONCLUDED at the head before the landing, plus the gate's own run.
 
-    Two filters, each load-bearing. Only `pull_request` runs count: the same head also carries
-    `push` runs of the same workflows, and counting both would double every name. Only runs whose
-    last update precedes the landing count: a run that concluded afterwards cannot have informed
-    it, and saying so is the difference between "what had concluded" and a reconstruction.
+    Two filters, each load-bearing. Only runs whose last update precedes the landing count: a run
+    that concluded afterwards cannot have informed it, and saying so is the difference between
+    "what had concluded" and a reconstruction. And the event must be one this reader expects --
+    but WHICH events those are differs between the two things being collected, which is why
+    `CHECK_EVENTS` and `GATE_EVENTS` are separate rather than one set.
+
+    A CHECK may only come from a `pull_request` run: the same head also carries `push` runs of the
+    same workflows, and counting both would double every name.
+
+    THE GATE MAY ALSO COME FROM A `pull_request_target` RUN, and that is not a loosening of the
+    rule above -- it is the same rule applied to a workflow that changed its trigger. The gate
+    moved to `pull_request_target` under ADR-0035, so that it can reach the arming credential;
+    keyed on `pull_request` alone this reader stops finding the gate's own run at all, `rule`
+    becomes None for every landing, and `basis_of` can never return `auto_merge_rule` again --
+    silently, since `audit_landing` returns empty rather than raising. The doubling hazard does
+    not apply here because the gate is matched by PATH and recorded rather than counted.
+
+    Measured 2026-08-29 on the ADR-0035 probe runs: a `pull_request_target` run is filed under the
+    PULL REQUEST'S head sha, not the base branch's, so the `head_sha` query above still returns it.
+    That was the open question about whether this filter was the only thing in the way.
 
     Job names, not workflow names -- branch protection matches jobs, and in intent-packages the
     workflow is `Quality` while the job is `Lint, type-check, and test`.
@@ -254,12 +279,13 @@ def _checks_and_gate(
     checks: list[Check] = []
     gate: dict[str, Any] | None = None
     for run in runs:
-        if run.get("event") != "pull_request":
+        is_gate = run.get("path") == GATE_PATH
+        if run.get("event") not in (GATE_EVENTS if is_gate else CHECK_EVENTS):
             continue
         updated = run.get("updated_at")
         if updated is None or datetime.fromisoformat(updated) > landed_at:
             continue
-        if run.get("path") == GATE_PATH:
+        if is_gate:
             gate = run
             continue
         jobs = reader.get(f"/repos/{repository}/actions/runs/{run['id']}/jobs", per_page=100)
