@@ -85,7 +85,7 @@ activate_checkout "$REPO_ROOT" "$0" "$@"
 # a lane that half-stopped, which is the thing worth hearing about.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-sds_deadman_arm sds-estate-landing
+sds_deadman_arm sds-estate-landing "$@"
 
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /

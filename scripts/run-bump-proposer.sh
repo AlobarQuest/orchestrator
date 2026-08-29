@@ -58,7 +58,7 @@ export BUMP_PROPOSER_PACKAGES_CHECKOUT="${BUMP_PROPOSER_PACKAGES_CHECKOUT:-$HOME
 # satisfy -- or corrupt -- the fetch below.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-sds_deadman_arm sds-bump-proposer
+sds_deadman_arm sds-bump-proposer "$@"
 
 # The change-manager tokens live in a BWS project the narrow `sds-operator` account behind
 # scripts/sds-token.sh cannot read, so this launcher bootstraps with the broad machine account

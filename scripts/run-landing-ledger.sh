@@ -65,7 +65,7 @@ activate_checkout "$REPO_ROOT" "$0" "$@"
 # It reports and never gates -- every failure inside it logs a line and returns 0.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-sds_deadman_arm sds-landing-ledger
+sds_deadman_arm sds-landing-ledger "$@"
 
 
 # Load BWS_ACCESS_TOKEN from the Keychain via the approved helper (never a plaintext file).

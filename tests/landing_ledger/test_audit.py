@@ -1357,6 +1357,43 @@ def test_the_quiet_branch_answers_are_RECORDED_even_though_they_are_not_findings
     assert "default branch in_flight" in facts["summary"]
 
 
+def test_a_huge_branch_block_is_trimmed_BEFORE_the_findings_it_would_otherwise_evict() -> None:
+    """`_fit`'s contract, against the block this increment added to its fixed portion.
+
+    A block the trim loop cannot reach evicts findings on its own behalf -- the inversion `_fit`'s
+    docstring forbids -- and, once the entry lists empty, falls out of the loop still oversized,
+    which the orchestrator refuses. Both halves are asserted: the record fits, and the finding is
+    still in it.
+    """
+    audit = audit_repository(
+        repository=REPO,
+        landings=[landing(revision=PATCH_AND_MINOR, update_type=MAJOR)],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+        branch=BranchStatus(
+            commit=TIP,
+            state=BRANCH_FAILING,
+            failing=tuple(
+                f".github/workflows/{'w' * 200}-{index}.yml" for index in range(MAX_LIST)
+            ),
+            passing=tuple(
+                f".github/workflows/{'p' * 200}-{index}.yml" for index in range(MAX_LIST)
+            ),
+        ),
+    )
+    facts = audit_observation(audit, "20260808T120000Z", NOW)
+
+    assert len(json.dumps(facts["facts"], sort_keys=True, separators=(",", ":"))) <= 4096
+    assert kinds(audit.findings) == [BRANCH_NOT_GREEN, DRIFT_NOT_SATISFIED]
+    assert [entry["kind"] for entry in facts["facts"]["findings"]] == [
+        BRANCH_NOT_GREEN,
+        DRIFT_NOT_SATISFIED,
+    ]
+    assert facts["facts"]["default_branch"]["state"] == BRANCH_FAILING
+
+
 def test_an_unread_branch_records_null_rather_than_an_answer() -> None:
     audit = audit_repository(
         repository=REPO,

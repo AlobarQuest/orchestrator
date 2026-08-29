@@ -74,20 +74,32 @@ sds_deadman_resolve() {
         SDS_DEADMAN_REASON="the Healthchecks API key could not be read"
         return 0
     fi
-    # The check is matched on its EXACT name. A near-miss must resolve to nothing rather than to
-    # some other lane's check: pinging the wrong check would report a lane as alive that has not
-    # run, which is worse than reporting nothing.
-    SDS_DEADMAN_PING_URL="$(curl -fsS --max-time 15 "$SDS_DEADMAN_API" \
-        -H "X-Api-Key: $key" 2>/dev/null \
-        | SDS_DEADMAN_WANTED="$name" python3 -c 'import os, sys, json
+    local listing answer
+    listing="$(curl -fsS --max-time 15 "$SDS_DEADMAN_API" -H "X-Api-Key: $key" 2>/dev/null)"
+    if [ -z "$listing" ]; then
+        SDS_DEADMAN_REASON="Healthchecks could not be reached"
+        return 0
+    fi
+    # THREE OUTCOMES, NAMED SEPARATELY, because they all produce an empty ping url and only one
+    # of them is "somebody forgot to create the check". The third is the one that would waste a
+    # morning: the Management API omits `ping_url` for a READ-ONLY key, so a rotation to a
+    # read-only key disables every lane's alerting at once while the log blames a missing check.
+    # The check is matched on its EXACT name -- pinging a near-miss would report a lane as alive
+    # that has not run, which is worse than reporting nothing.
+    answer="$(printf '%s' "$listing" | SDS_DEADMAN_WANTED="$name" python3 -c 'import os, sys, json
 wanted = os.environ["SDS_DEADMAN_WANTED"]
 for check in json.load(sys.stdin).get("checks", []):
     if check.get("name") == wanted:
-        print(check.get("ping_url", ""))
-        break' 2>/dev/null || true)"
-    if [ -z "$SDS_DEADMAN_PING_URL" ]; then
-        SDS_DEADMAN_REASON="no check named '$name' (or Healthchecks could not be reached)"
-    fi
+        print("URL " + check["ping_url"] if check.get("ping_url") else "NOPING")
+        break
+else:
+    print("NONAME")' 2>/dev/null || true)"
+    case "$answer" in
+        "URL "*) SDS_DEADMAN_PING_URL="${answer#URL }" ;;
+        NOPING) SDS_DEADMAN_REASON="check '$name' exposes no ping url (a read-only API key?)" ;;
+        NONAME) SDS_DEADMAN_REASON="no check named '$name'" ;;
+        *) SDS_DEADMAN_REASON="the Healthchecks listing could not be read" ;;
+    esac
     return 0
 }
 
@@ -115,8 +127,32 @@ sds_deadman_finish() {
     exit "$rc"
 }
 
+# A DRY RUN MUST NOT COUNT AS A PASS, and this is the one argument the helper reads. Every lane
+# documents a dry run as writing nothing, and `run-activation-sweep.sh` goes so far as to suppress
+# its own activation step under `--dry-run` for exactly that reason. A ping is a write to the one
+# thing that watches the lane: an operator inspecting a lane by hand would reset the timer of a
+# schedule that has in fact stopped, which is precisely the condition the switch exists to detect.
+#
+# THE RESIDUAL IS NAMED RATHER THAN PAPERED OVER. Two lanes spell their reporting mode as the BARE
+# invocation and their scheduled mode as `--submit` (`run-bump-proposer.sh`,
+# `run-estate-landing.sh`), so a bare operator run of those two still pings. Keying on `--submit`
+# instead would need per-launcher knowledge, and getting that wrong disables a lane's switch
+# silently -- the quiet failure this whole file exists to end.
+sds_deadman_is_dry_run() {
+    for argument in "$@"; do
+        [ "$argument" = "--dry-run" ] && return 0
+    done
+    return 1
+}
+
+# `$1` is the check name; everything after it is the pass's own arguments.
 sds_deadman_arm() {
     SDS_DEADMAN_NAME="$1"
+    shift
+    if sds_deadman_is_dry_run "$@"; then
+        sds_deadman_log "--dry-run: not arming, so this run cannot mask a schedule that stopped"
+        return 0
+    fi
     sds_deadman_resolve "$SDS_DEADMAN_NAME"
     if [ -n "$SDS_DEADMAN_PING_URL" ]; then
         sds_deadman_log "armed ($SDS_DEADMAN_NAME)"
