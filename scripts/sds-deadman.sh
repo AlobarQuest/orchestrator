@@ -45,6 +45,10 @@ SDS_DEADMAN_API="https://healthchecks.io/api/v3/checks/"
 # Resolved at arm time. Empty means alerting is disabled for this run, which every ping honours.
 SDS_DEADMAN_PING_URL=""
 SDS_DEADMAN_NAME=""
+# Why it is empty, when it is. Carried rather than logged where it happens, so a run that could
+# not read the API key says THAT and does not also say the check is missing -- two lines naming
+# two causes for one failure is how a reader is sent after the wrong one.
+SDS_DEADMAN_REASON=""
 
 sds_deadman_log() {
     echo "[deadman] $*"
@@ -56,7 +60,7 @@ sds_deadman_resolve() {
     broad="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
         -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
     if [ -z "$broad" ]; then
-        sds_deadman_log "no broad BWS identity — alerting disabled this run"
+        SDS_DEADMAN_REASON="no broad BWS identity"
         return 0
     fi
     # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
@@ -67,7 +71,7 @@ sds_deadman_resolve() {
         bws secret get "$SDS_DEADMAN_API_KEY_UUID" --output json --color no 2>/dev/null \
         | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])' 2>/dev/null || true)"
     if [ -z "$key" ]; then
-        sds_deadman_log "could not read the Healthchecks API key — alerting disabled this run"
+        SDS_DEADMAN_REASON="the Healthchecks API key could not be read"
         return 0
     fi
     # The check is matched on its EXACT name. A near-miss must resolve to nothing rather than to
@@ -81,6 +85,9 @@ for check in json.load(sys.stdin).get("checks", []):
     if check.get("name") == wanted:
         print(check.get("ping_url", ""))
         break' 2>/dev/null || true)"
+    if [ -z "$SDS_DEADMAN_PING_URL" ]; then
+        SDS_DEADMAN_REASON="no check named '$name' (or Healthchecks could not be reached)"
+    fi
     return 0
 }
 
@@ -114,7 +121,7 @@ sds_deadman_arm() {
     if [ -n "$SDS_DEADMAN_PING_URL" ]; then
         sds_deadman_log "armed ($SDS_DEADMAN_NAME)"
     else
-        sds_deadman_log "check '$SDS_DEADMAN_NAME' not found — alerting disabled this run"
+        sds_deadman_log "$SDS_DEADMAN_REASON — alerting disabled this run"
     fi
     # Installed WHETHER OR NOT the check resolved, so there is one code path rather than two. Every
     # ping is a no-op on an empty URL.
