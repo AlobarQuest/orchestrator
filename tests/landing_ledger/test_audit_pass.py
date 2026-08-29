@@ -92,10 +92,29 @@ def _routes(
         f"/repos/{REPO}/commits/{HEAD}": {"commit": {"message": message}},
         f"/repos/{REPO}/actions/runs": {
             "workflow_runs": [
-                {"id": 1, "path": ".github/workflows/quality.yml", "event": "pull_request"},
+                # THESE TWO CARRY A FULL RUN SHAPE, and that is what makes the exclusions
+                # testable. Without `status`/`conclusion`/`updated_at` they are dropped by
+                # `workflow_runs_at`'s structural filter instead, so a test asserting the branch
+                # read skips them passes whether or not the event and path exclusions exist --
+                # measured by mutation, which survived both until these fields were added.
+                {
+                    "id": 1,
+                    "path": ".github/workflows/quality.yml",
+                    "event": "pull_request",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "updated_at": "2026-08-01T00:00:00Z",
+                },
                 # The gate's own run. It says the gate EXECUTED; it never says the change is
                 # sound, so it must not count towards green.
-                {"id": 2, "path": GATE_PATH, "event": "pull_request"},
+                {
+                    "id": 2,
+                    "path": GATE_PATH,
+                    "event": "pull_request",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "updated_at": "2026-08-01T00:00:00Z",
+                },
                 # A `push` run of the same workflow, which would double every name here and is
                 # detector C's whole subject one route over -- the mock matches on path alone, so
                 # this listing answers both `head_sha=<pull request head>` and `head_sha=<tip>`.
