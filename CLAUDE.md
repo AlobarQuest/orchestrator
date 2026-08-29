@@ -3996,3 +3996,38 @@ style of that module.
   `merge_outside_change_window` remained. **Nothing runs the verifier automatically** — HQ drives it
   with the VERIFIER credential, and `check_name` must be the JOB name
   (`Lint, type-check, and test` in `change-manager`, whose WORKFLOW is called `Quality`).
+
+- **The seven scheduled launchers do NOT share an exit-code vocabulary: `2` and `3` mean OPPOSITE
+  things in two groups, and anything wired to those codes must be keyed per launcher.** Measured
+  2026-08-29 by reading all seven headers, after HQ nearly shipped a universal rule that would have
+  inverted the signal for three of them.
+  `run-landing-ledger.sh`, `run-deploy-watcher.sh` and `run-activation-sweep.sh`: **2 = something
+  was FOUND**, 3 = it could not be read or measured ("3 outranks 2: an incomplete pass cannot claim
+  it found everything there was to find").
+  `run-estate-landing.sh`, `run-change-proposer.sh`, `run-work-carrier.sh` and
+  `run-bump-proposer.sh`: **2 = could not use its INPUTS**, 3 = something was found.
+  0 and 1 agree everywhere (nothing found; the tool itself failed). So a consumer that treats
+  non-zero as failure collapses "the tool broke" with "the lane found something" — which is exactly
+  the collision each header exists to prevent, and which the first dead-man switch shipped with.
+  Read the header of the launcher you are wiring; a table like this one is for checking yourself
+  against, never for keying on. Note also the `for rc in 1 3 2` fold several of them end with lets
+  any code outside `{0,1,2,3}` — 127 for a missing binary — fall through to `exit 0`.
+
+- **Dependabot secret treatment follows the TRIGGERING ACTOR, not the pull request's author — and
+  `pull_request_target` resolves secrets from the ACTIONS store even when Dependabot triggers it.**
+  Measured 2026-08-29 on `orchestrator#3` with a probe that read a real Actions secret beside a name
+  present in no store, so it could report absence.
+  Run `33265327300`, `triggering_actor=dependabot[bot]`, head `69c7d38a` (a genuine
+  `@dependabot rebase`): **`FACTORY_PR_TOKEN` RESOLVED**, control EMPTY. Run `33265253593`,
+  `triggering_actor=AlobarQuest`: also RESOLVED — and that first run is the cautionary half, because
+  HQ triggered it by REOPENING the pull request and briefly read it as an answer. A human-triggered
+  event on a Dependabot pull request is not a Dependabot-triggered event, and `github.actor` in the
+  run's own output is the tell.
+  **Consequence:** the auto-merge cascade, which runs `on: pull_request` where a Dependabot-triggered
+  event sees the (empty) Dependabot store, can arm with an identity other than `GITHUB_TOKEN` by
+  moving to `pull_request_target` — no credential copied into a second store, which was the whole
+  cost the 2026-08-25 ruling declined. Safe for this workflow specifically because it checks nothing
+  out and executes no pull-request content; it reads metadata through the API and calls
+  `gh pr merge --auto`. Note the change moves each gate's blob sha, so `landing_ledger/rules.py` must
+  be re-transcribed in the SAME operation or `bump_proposer` refuses every repository with
+  `gate-not-transcribed` and the ledger loses the `auto_merge_rule` basis.
