@@ -894,13 +894,28 @@ def audit_repository(
 def _fit(facts: dict[str, Any]) -> dict[str, Any]:
     """Trim the three variable-length lists until the record fits the orchestrator's byte bound.
 
-    LEAST URGENT FIRST. An exception is a permanent property of a subject, so it says the same
-    thing tomorrow and is the cheapest thing to lose. A caveat qualifies evidence. A finding
-    asserts a violation, and the violation is the thing that must survive. All three keep their
-    true counts beside them, so a trim is visible rather than silent.
+    LEAST URGENT FIRST. The branch's workflow-path lists go before anything else: the `state`
+    beside them is the verdict and is a scalar that always survives, so the paths are detail in a
+    way an exception is not. Then an exception, a permanent property of a subject that says the
+    same thing tomorrow. Then a caveat, which qualifies evidence. A finding asserts a violation,
+    and the violation is the thing that must survive. All the entry lists keep their true counts
+    beside them, so a trim is visible rather than silent.
+
+    THE BRANCH LISTS ARE IN THE LOOP RATHER THAN OUTSIDE IT, and that is what keeps this
+    function's guarantee. A fixed block added to `facts` that this loop cannot reach would be
+    evicting findings on its behalf -- the exact inversion the paragraph above forbids -- and,
+    once the three entry lists emptied, would fall out of the `else` still over the bound.
     """
+    branch = facts.get("default_branch") or {}
     while len(json.dumps(facts, sort_keys=True, separators=(",", ":"))) > MAX_FACT_BYTES:
-        for entries in (facts["exceptions"], facts["caveats"], facts["findings"]):
+        for entries in (
+            branch.get("passing") or [],
+            branch.get("in_flight") or [],
+            branch.get("failing") or [],
+            facts["exceptions"],
+            facts["caveats"],
+            facts["findings"],
+        ):
             if entries:
                 entries.pop()
                 break
