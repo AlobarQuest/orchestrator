@@ -61,6 +61,14 @@ else
 fi
 activate_checkout "$REPO_ROOT" "$0" "$@"
 
+# THE DEAD-MAN SWITCH. `launchd` discards this script's exit code, so the codes documented above
+# reach nobody: a pass that stops running, or that fails every hour, is silent. Armed AFTER
+# activation, because `activate_checkout` may `exec` and an `exec` does not fire an EXIT handler.
+# It reports and never gates -- every failure inside it logs a line and returns 0.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-deadman.sh"
+sds_deadman_arm sds-deploy-watcher
+
 
 # TWO BWS IDENTITIES, AND NEITHER CAN DO THE OTHER'S HALF. Measured 2×2 with controls on
 # 2026-08-13: the change-manager bearer lives in a project only the BROAD machine account can read,
@@ -140,6 +148,19 @@ watch_rc=$?
 
 "$REPO_ROOT/.venv/bin/deploy-watcher" recheck
 recheck_rc=$?
+
+# AN OUT-OF-VOCABULARY CODE IS REPORTED VERBATIM, and this branch must come FIRST. The fold below
+# ranks the four codes this program can return; anything else -- 126 for a program that is not
+# executable, 127 for one that is missing, 137 for one that was killed -- matches none of them and
+# used to fall through to `exit 0`, turning the loudest possible failure into the quietest possible
+# answer. That was survivable while nothing subscribed to the exit code. It is not survivable now
+# that the dead-man switch reports on it: a missing binary would ping success.
+for rc in "$watch_rc" "$recheck_rc"; do
+  case "$rc" in
+    0 | 1 | 2 | 3) ;;
+    *) exit "$rc" ;;
+  esac
+done
 
 # The worst answer wins, and "could not measure" is worse than "found something".
 for rc in 1 3 2; do

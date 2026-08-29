@@ -1,4 +1,4 @@
-"""The two detectors: each shown to FIRE on a constructed condition, and not to on a healthy one.
+"""The three detectors: each shown to FIRE on a constructed condition, and not to on a healthy one.
 
 Every landing fixture below is shaped like the rows the production ledger actually holds -- the
 six rule-permitted landings of 2026-08-07, whose facts were read back through
@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from landing_ledger.audit import (
+    BRANCH_NOT_GREEN,
     CAVEAT_NO_RULE_INSTALLED,
     CAVEAT_RULE_SELF_MODIFIED,
     DRIFT_CHECK_NOT_GREEN,
@@ -34,14 +35,26 @@ from landing_ledger.audit import (
     STALL_ELIGIBLE_NOT_ARMED,
     STALL_METADATA_UNREADABLE,
     STALL_RULE_UNKNOWN,
+    audit_branch,
     audit_factory_landing,
     audit_landing,
     audit_observation,
     audit_pending,
     audit_repository,
+    branch_status,
     is_green,
 )
-from landing_ledger.model import Check, PendingUpdate, UpdateMetadata
+from landing_ledger.model import (
+    BRANCH_FAILING,
+    BRANCH_IN_FLIGHT,
+    BRANCH_PASSING,
+    BRANCH_UNVERIFIED,
+    BranchStatus,
+    Check,
+    PendingUpdate,
+    UpdateMetadata,
+    WorkflowRun,
+)
 from landing_ledger.orchestrator_client import LedgerWriteError
 from landing_ledger.record import BASIS_FACTORY
 from landing_ledger.rules import GATE_PATH, REGISTRY, rule_for
@@ -56,6 +69,10 @@ MAJOR = "version-update:semver-major"
 MINOR = "version-update:semver-minor"
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
+
+# A green default branch, so every detector-A and detector-B test below states that it is not about
+# detector C. `audit_repository` takes no default for `branch` precisely so this has to be said.
+GREEN = BranchStatus(commit="f" * 40, state=BRANCH_PASSING, passing=(".github/workflows/ci.yml",))
 
 
 def landing(
@@ -746,6 +763,7 @@ def test_a_factory_landing_is_counted_under_its_own_denominator() -> None:
         rule_revision=UNDERSCORED,
         units=units(),
         now=NOW,
+        branch=GREEN,
     )
 
     assert audit.findings == ()
@@ -763,6 +781,7 @@ def test_a_repository_with_an_untranscribed_installed_rule_FIRES_once_for_the_re
         rule_revision="e" * 40,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     assert kinds(audit.findings) == [STALL_RULE_UNKNOWN]
@@ -781,6 +800,7 @@ def test_a_repository_with_no_rule_installed_is_a_caveat_with_its_numbers() -> N
         rule_revision=None,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     assert audit.findings == ()
@@ -796,6 +816,7 @@ def test_the_denominators_are_carried_so_nothing_found_is_never_bare() -> None:
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     assert audit.findings == ()
@@ -811,6 +832,7 @@ def test_a_finding_raises_the_severity_the_row_is_filed_under() -> None:
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     assert audit.severity == "warning"
@@ -831,6 +853,7 @@ def test_an_exception_reaches_the_repositorys_own_list_and_not_its_findings() ->
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     assert audit.findings == ()
@@ -848,6 +871,7 @@ def test_an_exception_does_NOT_silence_a_real_finding_beside_it() -> None:
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     assert kinds(audit.findings) == [STALL_ELIGIBLE_NOT_ARMED]
@@ -871,6 +895,7 @@ def test_the_heartbeat_row_is_written_even_when_nothing_was_found() -> None:
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     body = audit_observation(audit, "20260808T120000Z", NOW)
@@ -889,6 +914,7 @@ def test_one_pass_answering_its_own_id_twice_the_same_way_replays() -> None:
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     first = audit_observation(audit, "20260808T120000Z", NOW)
@@ -907,6 +933,7 @@ def test_one_pass_answering_its_own_id_DIFFERENTLY_is_loud_rather_than_a_second_
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
     drifted = audit_repository(
         repository=REPO,
@@ -915,6 +942,7 @@ def test_one_pass_answering_its_own_id_DIFFERENTLY_is_loud_rather_than_a_second_
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     first = audit_observation(clean, "20260808T120000Z", NOW)
@@ -943,6 +971,7 @@ def test_a_flood_of_findings_is_trimmed_to_fit_with_its_true_count_beside_it() -
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     body = audit_observation(audit, "20260808T120000Z", NOW)
@@ -962,6 +991,7 @@ def test_an_exception_is_recorded_in_the_row_with_its_own_count() -> None:
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     body = audit_observation(audit, "20260808T120000Z", NOW)
@@ -988,6 +1018,7 @@ def test_exceptions_are_dropped_before_caveats_when_the_record_will_not_fit() ->
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     body = audit_observation(audit, "20260808T120000Z", NOW)
@@ -1009,6 +1040,7 @@ def test_caveats_are_dropped_before_findings_when_the_record_will_not_fit() -> N
         rule_revision=UNDERSCORED,
         units=NO_UNITS,
         now=NOW,
+        branch=GREEN,
     )
 
     body = audit_observation(audit, "20260808T120000Z", NOW)
@@ -1118,3 +1150,225 @@ def test_a_conclusion_nobody_enumerated_is_read_as_a_verdict() -> None:
     from landing_ledger.audit import FAILING_CONCLUSIONS
 
     assert REFUSING_CONCLUSIONS == FAILING_CONCLUSIONS - NO_VERDICT_CONCLUSIONS
+
+
+# ---------------------------------------------------------------------------------------------
+# Detector C: is the default branch green NOW? The whole of it is the three-state distinction --
+# a red tip is a finding, and a tip nothing has decided on yet is the ordinary state.
+# ---------------------------------------------------------------------------------------------
+
+TIP = "d" * 40
+QUALITY = ".github/workflows/quality.yml"
+RELEASE = ".github/workflows/release.yml"
+AT = datetime(2026, 8, 8, 9, 0, tzinfo=UTC)
+
+
+def run(
+    *,
+    path: str = QUALITY,
+    identifier: int = 1,
+    status: str = "completed",
+    conclusion: str | None = "success",
+    at: datetime = AT,
+) -> WorkflowRun:
+    return WorkflowRun(
+        path=path, run=identifier, status=status, conclusion=conclusion, updated_at=at
+    )
+
+
+def test_a_tip_whose_workflow_decided_against_it_is_FAILING() -> None:
+    status = branch_status(TIP, (run(conclusion="failure"),))
+
+    assert (status.state, status.failing) == (BRANCH_FAILING, (QUALITY,))
+
+
+def test_a_tip_every_workflow_passed_is_PASSING() -> None:
+    assert branch_status(TIP, (run(),)).state == BRANCH_PASSING
+
+
+def test_a_tip_with_a_run_still_going_and_nothing_decided_is_IN_FLIGHT() -> None:
+    """NOT a finding. Under the current arming identity a landing fires no `push` run at all, so
+    an undecided tip is the ordinary state for hours -- reporting it would red this control
+    permanently, which is the failure mode this estate has already paid for twice."""
+    status = branch_status(TIP, (run(status="in_progress", conclusion=None),))
+
+    assert (status.state, status.in_flight, status.failing) == (BRANCH_IN_FLIGHT, (QUALITY,), ())
+
+
+def test_a_DECIDED_failure_outranks_a_run_still_going() -> None:
+    """One workflow red while another is still running is a red branch, not an undecided one.
+
+    The states are ordered, and this is the pair that pins the order: a tip that has already been
+    decided against does not become quiet because something else has not finished.
+    """
+    status = branch_status(
+        TIP,
+        (
+            run(path=QUALITY, identifier=1, conclusion="failure"),
+            run(path=RELEASE, identifier=2, status="in_progress", conclusion=None),
+        ),
+    )
+
+    assert status.state == BRANCH_FAILING
+    assert (status.failing, status.in_flight) == ((QUALITY,), (RELEASE,))
+
+
+def test_a_tip_nothing_ran_on_at_all_is_UNVERIFIED() -> None:
+    """A repository with no workflows answers this, and so does one whose only runs were
+    cancelled. Nothing measured the tip, so nothing can say it is green."""
+    assert branch_status(TIP, ()).state == BRANCH_UNVERIFIED
+    assert branch_status(TIP, (run(conclusion="cancelled"),)).state == BRANCH_UNVERIFIED
+
+
+def test_a_newer_GREEN_workflow_cannot_hide_an_older_RED_one() -> None:
+    """The reason the reduction is per workflow and then across workflows. "The newest concluded
+    run at the tip" reads as one run, and one run is the wrong unit: a repository runs several
+    workflows over one commit, so a single-run reading reports a broken branch as healthy."""
+    status = branch_status(
+        TIP,
+        (
+            run(path=QUALITY, identifier=1, conclusion="failure", at=AT),
+            run(path=RELEASE, identifier=2, conclusion="success", at=AT + timedelta(hours=1)),
+        ),
+    )
+
+    assert status.state == BRANCH_FAILING
+    assert (status.failing, status.passing) == ((QUALITY,), (RELEASE,))
+
+
+def test_a_workflow_re_run_to_green_is_green() -> None:
+    """Is this commit green NOW is the question, and a re-run is the answer to it. A record of
+    every attempt would be the answer to a different one."""
+    status = branch_status(
+        TIP,
+        (
+            run(identifier=1, conclusion="failure", at=AT),
+            run(identifier=2, conclusion="success", at=AT + timedelta(minutes=5)),
+        ),
+    )
+
+    assert status.state == BRANCH_PASSING
+
+
+def test_a_CANCELLED_run_cannot_bury_the_verdict_it_superseded() -> None:
+    """THE PAIR IS THE CONTROL, and the failure case is the half that discriminates.
+
+    A cancelled run must not become a workflow's current answer. Over a SUCCESS that reads the
+    same either way -- a cancelled newest lands in `passing` too -- so a test written only that
+    way cannot see the skip being deleted. Over a FAILURE the two answers differ: skipped, the
+    branch is still red; counted, the branch reports as fine, which is exactly what held three
+    clean bumps for four days when the Actions quota ran out.
+    """
+    over_success = branch_status(
+        TIP,
+        (
+            run(identifier=1, conclusion="success", at=AT),
+            run(identifier=2, conclusion="cancelled", at=AT + timedelta(hours=1)),
+        ),
+    )
+    over_failure = branch_status(
+        TIP,
+        (
+            run(identifier=1, conclusion="failure", at=AT),
+            run(identifier=2, conclusion="cancelled", at=AT + timedelta(hours=1)),
+        ),
+    )
+
+    assert over_success.state == BRANCH_PASSING
+    assert over_failure.state == BRANCH_FAILING
+
+
+def test_a_conclusion_neither_vocabulary_knows_leaves_the_tip_unaccused() -> None:
+    """Fail toward quiet, which is the right direction for a finding a person acts on. A word the
+    platform has not yet invented must not become an assertion that `main` is broken."""
+    status = branch_status(TIP, (run(conclusion="a_word_github_has_not_invented"),))
+
+    assert status.state == BRANCH_PASSING and status.failing == ()
+
+
+def test_only_a_FAILING_tip_produces_a_finding() -> None:
+    red = BranchStatus(commit=TIP, state=BRANCH_FAILING, failing=(QUALITY,))
+
+    assert kinds(audit_branch(REPO, red)) == [BRANCH_NOT_GREEN]
+    assert audit_branch(REPO, BranchStatus(commit=TIP, state=BRANCH_PASSING)) == ()
+    assert audit_branch(REPO, BranchStatus(commit=TIP, state=BRANCH_IN_FLIGHT)) == ()
+    assert audit_branch(REPO, BranchStatus(commit=TIP, state=BRANCH_UNVERIFIED)) == ()
+
+
+def test_a_red_default_branch_reaches_the_repositorys_findings_and_its_severity() -> None:
+    audit = audit_repository(
+        repository=REPO,
+        landings=[],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+        branch=BranchStatus(commit=TIP, state=BRANCH_FAILING, failing=(QUALITY,)),
+    )
+
+    assert kinds(audit.findings) == [BRANCH_NOT_GREEN]
+    assert audit.severity == "warning"
+    assert not audit.unavailable
+
+
+def test_a_branch_nobody_could_ask_about_is_UNAVAILABLE_and_never_a_pass() -> None:
+    """The measurement did not happen, so the repository's answer is missing rather than clean.
+    Everything the same pass DID measure survives -- the landings and open updates needed no
+    branch read at all, and discarding them would make one unreadable question cost four."""
+    audit = audit_repository(
+        repository=REPO,
+        landings=[landing(revision=PATCH_AND_MINOR, update_type=MAJOR)],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+        branch=None,
+    )
+
+    assert audit.unavailable
+    assert audit.severity == "warning"
+    assert kinds(audit.findings) == [DRIFT_NOT_SATISFIED]
+    assert audit.branch is None
+
+
+def test_the_quiet_branch_answers_are_RECORDED_even_though_they_are_not_findings() -> None:
+    """A caveat prints a line every night for every repository whose tip nothing has decided on,
+    which is a report known to be noise and therefore a report a real finding arrives inside. The
+    observation carries the state instead, so a reader can still see which quiet answer it was."""
+    audit = audit_repository(
+        repository=REPO,
+        landings=[],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+        branch=BranchStatus(commit=TIP, state=BRANCH_IN_FLIGHT, in_flight=(QUALITY,)),
+    )
+    facts = audit_observation(audit, "20260808T120000Z", NOW)
+
+    assert audit.findings == () and audit.caveats == ()
+    assert facts["facts"]["default_branch"] == {
+        "commit": TIP,
+        "state": BRANCH_IN_FLIGHT,
+        "failing": [],
+        "passing": [],
+        "in_flight": [QUALITY],
+    }
+    assert "default branch in_flight" in facts["summary"]
+
+
+def test_an_unread_branch_records_null_rather_than_an_answer() -> None:
+    audit = audit_repository(
+        repository=REPO,
+        landings=[],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+        branch=None,
+    )
+    facts = audit_observation(audit, "20260808T120000Z", NOW)
+
+    assert facts["facts"]["default_branch"] is None
+    assert "default branch unread" in facts["summary"]
+    assert "[UNAVAILABLE]" in facts["summary"]

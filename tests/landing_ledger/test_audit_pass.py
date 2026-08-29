@@ -12,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from landing_ledger.audit import (
+    BRANCH_NOT_GREEN,
     EXCEPTION_UPDATE_TYPE_UNPARSEABLE,
     STALL_ELIGIBLE_NOT_ARMED,
     STALL_METADATA_UNREADABLE,
@@ -30,6 +31,7 @@ from landing_ledger.github import (
     _gate_revision,
     current_rule_revision,
     read_pending_updates,
+    workflow_runs_at,
 )
 from landing_ledger.orchestrator_client import LedgerWriteError
 from landing_ledger.rules import GATE_PATH
@@ -47,6 +49,7 @@ from tests.landing_ledger.test_github import REPO, reader_for
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
 HEAD = "b" * 40
+TIP = "d" * 40
 
 # The 2026-08-10 factory landing, as `test_audit` shapes it from production. Reused rather than
 # restated so the pass-level test and the detector-level tests cannot drift into two landings.
@@ -72,6 +75,9 @@ def _routes(
     gate: str | None = UNDERSCORED,
     title: str = "chore(actions): bump astral-sh/setup-uv from 5 to 7",
     message: str = TRAILER,
+    tip_status: str = "completed",
+    tip_conclusion: str | None = "success",
+    tip: bool = True,
 ) -> dict[str, Any]:
     routes: dict[str, Any] = {
         f"/repos/{REPO}": {"default_branch": "main"},
@@ -90,8 +96,17 @@ def _routes(
                 # The gate's own run. It says the gate EXECUTED; it never says the change is
                 # sound, so it must not count towards green.
                 {"id": 2, "path": GATE_PATH, "event": "pull_request"},
-                # A `push` run of the same workflow, which would double every name.
-                {"id": 3, "path": ".github/workflows/quality.yml", "event": "push"},
+                # A `push` run of the same workflow, which would double every name here and is
+                # detector C's whole subject one route over -- the mock matches on path alone, so
+                # this listing answers both `head_sha=<pull request head>` and `head_sha=<tip>`.
+                {
+                    "id": 3,
+                    "path": ".github/workflows/quality.yml",
+                    "event": "push",
+                    "status": tip_status,
+                    "conclusion": tip_conclusion,
+                    "updated_at": "2026-08-01T00:00:00Z",
+                },
             ]
         },
         f"/repos/{REPO}/actions/runs/1/jobs": {
@@ -124,6 +139,8 @@ def _routes(
     }
     if gate is not None:
         routes[f"/repos/{REPO}/contents/{GATE_PATH}"] = {"sha": gate}
+    if tip:
+        routes[f"/repos/{REPO}/branches/main"] = {"commit": {"sha": TIP}}
     return routes
 
 
@@ -539,3 +556,70 @@ def test_a_recording_pass_that_read_NOTHING_does_not_exit_zero(
 
     assert '"unavailable": true' in result.output
     assert result.exit_code == EXIT_INCOMPLETE
+
+
+# ---------------------------------------------------------------------------------------------
+# Detector C at the surface a launcher reads: a red default branch is a finding, an undecided one
+# is not, and a branch nobody could ask about is missing rather than clean.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_the_branch_read_skips_the_pull_request_runs_and_the_gates_own_run() -> None:
+    """A pull-request run is a verdict about a PROPOSAL, and the gate's run says only that the
+    gate executed. Neither is evidence about the branch."""
+    runs = workflow_runs_at(reader_for(_routes()), REPO, TIP)
+
+    assert [(run.run, run.path, run.conclusion) for run in runs] == [
+        (3, ".github/workflows/quality.yml", "success")
+    ]
+
+
+def test_the_branch_read_carries_an_UNFINISHED_run_rather_than_dropping_it() -> None:
+    """`status` and `conclusion` both reach the judge verbatim. Dropping a run with no conclusion
+    here would erase the difference between in-flight and unverified before anything could read
+    it, which is the distinction the whole detector is."""
+    runs = workflow_runs_at(
+        reader_for(_routes(tip_status="in_progress", tip_conclusion=None)), REPO, TIP
+    )
+
+    assert [(run.status, run.conclusion) for run in runs] == [("in_progress", None)]
+
+
+def test_a_pass_over_a_RED_default_branch_exits_with_findings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _drive(
+        monkeypatch, ["audit", "--repository", REPO], routes=_routes(tip_conclusion="failure")
+    )
+
+    assert result.exit_code == EXIT_FINDINGS
+    assert BRANCH_NOT_GREEN in result.output
+
+
+def test_a_pass_over_an_IN_FLIGHT_default_branch_does_NOT_report_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The discriminator for the test above. Without it the detector could be keyed on "not
+    green" rather than on "decided against", and would red this control every night -- an
+    undecided tip is the ordinary state under the current arming identity."""
+    result = _drive(
+        monkeypatch,
+        ["audit", "--repository", REPO],
+        routes=_routes(tip_status="in_progress", tip_conclusion=None),
+    )
+
+    assert BRANCH_NOT_GREEN not in result.output
+    assert '"state": "in_flight"' in result.output
+
+
+def test_a_branch_that_could_not_be_read_is_INCOMPLETE_and_keeps_what_was_measured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The nested catch, at the surface. Only the branch read fails here -- the tip is missing
+    while every other route answers -- so the pass must reach the incomplete code without
+    discarding the open-update finding it had already computed."""
+    result = _drive(monkeypatch, ["audit", "--repository", REPO], routes=_routes(tip=False))
+
+    assert result.exit_code == EXIT_INCOMPLETE
+    assert '"branch": null' in result.output
+    assert STALL_ELIGIBLE_NOT_ARMED in result.output

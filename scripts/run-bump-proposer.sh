@@ -46,6 +46,20 @@ CHANGE_MANAGER_PROPOSE_UUID="${BUMP_PROPOSER_BWS_UUID:-acccb346-4baa-43ec-a1d4-b
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export BUMP_PROPOSER_PACKAGES_CHECKOUT="${BUMP_PROPOSER_PACKAGES_CHECKOUT:-$HOME/Projects/intent-packages}"
 
+# THE DEAD-MAN SWITCH. `launchd` discards this script's exit code, so the codes documented above
+# reach nobody -- and this is the lane that proves it: it sat UNSCHEDULED for eight days with
+# nothing saying so. There is no `activate_checkout` here to arm after, so this is the first thing
+# the pass does. It reports and never gates -- every failure inside it logs a line and returns 0.
+#
+# ARMED BEFORE THE BWS BLOCK BELOW, deliberately. That block can `exit 1` on a Keychain item this
+# machine does not have, which is exactly the silent morning this switch exists to report; arming
+# after it would report only the failures the credential fetch survived. The helper reads its own
+# broad identity into a local variable rather than exporting `BWS_ACCESS_TOKEN`, so it cannot
+# satisfy -- or corrupt -- the fetch below.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-deadman.sh"
+sds_deadman_arm sds-bump-proposer
+
 # The change-manager tokens live in a BWS project the narrow `sds-operator` account behind
 # scripts/sds-token.sh cannot read, so this launcher bootstraps with the broad machine account
 # -- named rather than silently different, exactly as the deploy producer's launcher names it.

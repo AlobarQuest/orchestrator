@@ -29,16 +29,20 @@ from landing_ledger.audit import (
     RepoAudit,
     audit_observation,
     audit_repository,
+    branch_status,
 )
 from landing_ledger.github import (
     GitHubReader,
     LedgerError,
+    branch_tip,
     current_rule_revision,
     default_branch,
     landing_shas,
     read_landing,
     read_pending_updates,
+    workflow_runs_at,
 )
+from landing_ledger.model import BranchStatus
 from landing_ledger.orchestrator_client import LedgerWriteError, OrchestratorClient
 from landing_ledger.record import landing_observation
 
@@ -180,6 +184,17 @@ def audit_pass(
     """
     try:
         base_ref = default_branch(reader, repository)
+        # DETECTOR C'S READ IS CAUGHT SEPARATELY, and the nesting is the point. A branch this pass
+        # could not ask about must reach `unavailable` -- never a pass -- but it must not discard
+        # the landings and open updates the same pass already measured. `branch=None` carries the
+        # first without costing the second; `audit_repository` turns it into `unavailable`.
+        try:
+            tip = branch_tip(reader, repository, base_ref)
+            branch: BranchStatus | None = branch_status(
+                tip, workflow_runs_at(reader, repository, tip)
+            )
+        except RECOVERABLE:
+            branch = None
         audit = audit_repository(
             repository=repository,
             landings=[row.get("facts") for row in ledger.read_landings(repository)],
@@ -187,6 +202,7 @@ def audit_pass(
             rule_revision=current_rule_revision(reader, repository, base_ref),
             units=ledger,
             now=now,
+            branch=branch,
             settle_seconds=settle_seconds,
         )
     except RECOVERABLE:

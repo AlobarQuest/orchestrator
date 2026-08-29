@@ -31,6 +31,7 @@ from landing_ledger.model import (
     PolicyPermission,
     RuleApplication,
     UpdateMetadata,
+    WorkflowRun,
 )
 from landing_ledger.rules import GATE_PATH
 
@@ -434,6 +435,44 @@ def _concluded_checks(
                 finished = datetime.fromisoformat(completed)
                 latest = finished if latest is None or finished > latest else latest
     return tuple(sorted(checks, key=lambda c: (c.name, c.run))), latest
+
+
+def workflow_runs_at(reader: GitHubReader, repository: str, commit: str) -> tuple[WorkflowRun, ...]:
+    """Every workflow run at one commit, verbatim. Judging them is `audit.branch_status`'s job.
+
+    NOT THE CHECKS API. `GET /commits/{sha}/check-runs` answers 403 to this estate's GitHub App,
+    which holds no `checks` permission -- `services/github_checks.py` reads Actions runs for
+    exactly that reason and documents it. This reads the same surface.
+
+    `pull_request` runs are excluded on the same reasoning `_concluded_checks` gives for excluding
+    them: a pull-request run is a verdict about a PROPOSAL, not about the branch. In practice none
+    appears here anyway, because a pull-request run's `head_sha` is the pull request's own head
+    rather than the branch tip -- but relying on that staying true is a coincidence, not a design.
+
+    The gate's own run is excluded for the reason it is excluded everywhere else in this program:
+    it reports that the gate EXECUTED, never that the change is sound, so counting it as evidence
+    of health would let a repository look green on the strength of the very workflow under audit.
+    """
+    payload = reader.get(f"/repos/{repository}/actions/runs", head_sha=commit, per_page=100)
+    runs = (payload or {}).get("workflow_runs", []) if payload else []
+    collected: list[WorkflowRun] = []
+    for run in runs:
+        path = run.get("path")
+        if run.get("event") == "pull_request" or path == GATE_PATH or not path:
+            continue
+        updated = run.get("updated_at")
+        if updated is None:
+            continue
+        collected.append(
+            WorkflowRun(
+                path=str(path),
+                run=int(run["id"]),
+                status=str(run.get("status") or ""),
+                conclusion=run.get("conclusion"),
+                updated_at=datetime.fromisoformat(updated),
+            )
+        )
+    return tuple(sorted(collected, key=lambda entry: (entry.path, entry.run)))
 
 
 def read_pending_updates(

@@ -151,6 +151,75 @@ class PendingUpdate:
 
 
 @dataclass(frozen=True)
+class WorkflowRun:
+    """One workflow run at one commit, as GitHub reports it and before anything judges it.
+
+    RUN-LEVEL, NOT JOB-LEVEL, and this is the one place in this program where that is the right
+    unit. `_checks_and_gate` reads jobs because it must record WHICH check concluded what beside a
+    landing; the branch question is only whether anything failed, which is exactly what a run's own
+    conclusion composes over its jobs. It also costs one request per repository rather than one per
+    run, against an API budget the recording pass has already spent most of.
+
+    THE RUN, NOT THE ATTEMPT. A re-run keeps the run id and rewrites the conclusion, so a workflow
+    that failed and was re-run to green answers `success` here -- the correct answer to "is this
+    commit green NOW" and the wrong answer to "did every attempt pass". This is the first question.
+
+    `path` is the workflow FILE, which is what identifies a workflow across re-runs and across the
+    `push` and `schedule` events that both exercise it. A name can be edited in the file, and two
+    runs of one workflow must not read as two workflows.
+
+    `conclusion` is `None` while `status` is not `completed`. Both are carried verbatim: which
+    conclusions count as a verdict, and which as a failure, is a judgment and does not belong in
+    the module that reads.
+    """
+
+    path: str
+    run: int
+    status: str
+    conclusion: str | None
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class BranchStatus:
+    """Whether a default branch is green AT ITS TIP, in the three states that are worth telling
+    apart.
+
+    `failing` is the subject: a workflow's newest decided run at the tip decided against it. That
+    is the case ADR-0034 newly creates -- several updates each green on their own head, landing in
+    one evening, breaking `main` in combination with nothing verifying the combination. It is the
+    hazard `strict: true` would prevent and which this estate deliberately declined.
+
+    `in_flight` and `unverified` ARE NOT FINDINGS, and keeping them apart from `failing` is the
+    whole of this shape. Under the current arming identity a landing fires no `push` run at all
+    (a `GITHUB_TOKEN`-armed auto-merge triggers none), so a tip with nothing concluded is the
+    ORDINARY state for hours at a time. Reporting it would red the control permanently, which is
+    the failure this estate has now paid for twice -- `mergeable_state: blocked` covering four
+    causes, and the landing lane holding three clean bumps for four days on runs GitHub had
+    cancelled. They are still recorded, because a reader wants to know WHICH quiet answer it is.
+
+    `unverified` is also what a repository with no workflows at all answers, and that is honest:
+    nothing measured this tip, so nothing can say it is green.
+    """
+
+    commit: str
+    state: str
+    failing: tuple[str, ...] = ()
+    passing: tuple[str, ...] = ()
+    in_flight: tuple[str, ...] = ()
+
+
+# The tip's workflows decided against it. The only one of the four that is a finding.
+BRANCH_FAILING = "failing"
+# Every workflow that decided decided in favour, and at least one did.
+BRANCH_PASSING = "passing"
+# Nothing has decided yet and something is still running.
+BRANCH_IN_FLIGHT = "in_flight"
+# Nothing has decided and nothing is running: no workflow, or none that produced a verdict.
+BRANCH_UNVERIFIED = "unverified"
+
+
+@dataclass(frozen=True)
 class Landing:
     """One commit on the default branch, with everything observable about how it got there.
 
