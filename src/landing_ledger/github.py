@@ -318,18 +318,29 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
     # A squash carries both sets of trailers through verbatim, so the landing commit almost always
     # has them. A true merge commit does not, and neither does a squash in a repository configured
     # to write a different body -- and the authority in both cases is the pull request's own head,
-    # which is what `fetch-metadata` read and where the runner wrote its own. Fetched ONCE for both,
-    # and only when something is actually missing.
+    # which is what `fetch-metadata` read and where the runner wrote its own. Fetched ONCE for all
+    # three, and only when something is actually missing.
+    #
+    # EACH ARM ASKS ITS OWN QUESTION, AND THE UPDATE ARM'S USED TO ASK A DIFFERENT ONE. It was
+    # keyed on an absent `update-type`, which spells "no version delta stated" and was being read
+    # as "the trailer block is not here". Those coincide for a `bump X from A to B` and diverge for
+    # a requirement range, where Dependabot states a `dependency-name` and no `update-type` at all
+    # -- so every range landing discarded a message that DID yield metadata in favour of a head
+    # that yielded less. On orchestrator#174 that head is a 60-byte branch-update merge commit our
+    # own freshness lane created, carrying no trailers, and all three update keys were dropped.
+    # `update_metadata` returning None IS the question this arm means: it is None exactly when no
+    # `dependency-name` could be read. A message that already answers is never replaced.
+    head_ref = detail["head"].get("ref")
     claim = factory_claim(message)
     policy = policy_permission(message)
-    metadata_message = message
-    if claim is None or policy is None or UPDATE_TYPE.search(message) is None:
+    update = update_metadata(message, head_ref)
+    if claim is None or policy is None or update is None:
         head = reader.get(f"/repos/{repository}/commits/{head_sha}")
         head_message = head["commit"]["message"] if head else ""
         claim = claim or factory_claim(head_message)
         policy = policy or policy_permission(head_message)
-        if head_message and UPDATE_TYPE.search(message) is None:
-            metadata_message = head_message
+        if update is None:
+            update = update_metadata(head_message, head_ref)
     return Landing(
         repository=repository,
         base_ref=base_ref,
@@ -345,7 +356,7 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
         landed_by=(detail.get("merged_by") or {}).get("login"),
         checks=checks,
         rule=rule,
-        update=update_metadata(metadata_message, detail["head"].get("ref")),
+        update=update,
         claim=claim,
         policy=policy,
     )

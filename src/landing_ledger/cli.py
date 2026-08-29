@@ -44,7 +44,7 @@ from landing_ledger.github import (
 )
 from landing_ledger.model import BranchStatus
 from landing_ledger.orchestrator_client import LedgerWriteError, OrchestratorClient
-from landing_ledger.record import landing_observation
+from landing_ledger.record import is_known_defective_metadata_landing, landing_observation
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -102,6 +102,10 @@ def record_landings(
         "landings": 0,
         "recorded": 0,
         "skipped": 0,
+        # NOT a skip, and the difference is the exit code. A skip means this pass could not do
+        # something it should have done, so it reaches `incomplete`. An exempt landing is one this
+        # pass deliberately did not attempt, for a reason that is permanent -- so it must not.
+        "exempt": 0,
         "unavailable": False,
     }
     # A dry run's whole purpose is to show WHAT would be written -- the permission basis in
@@ -118,6 +122,18 @@ def record_landings(
         return summary
     summary["landings"] = len(shas)
     for sha in shas:
+        # THE SIX ROWS OF THE KNOWN-DEFECTIVE WINDOW ARE NOT RE-READ AND NOT RE-WRITTEN, and this
+        # is the consumer of that list which is easy to miss. Their stored `permitted_by` lacks
+        # the three update keys because the reader could not read a requirement range's trailer;
+        # the fixed reader now derives them. That is a different fact digest at a
+        # `source_reference` which is deliberately immutable, so the write is an
+        # `observation_conflict` -- caught below as a skip, which makes the pass incomplete and
+        # exits 3 every night for as long as they sit inside the window. There is no route to
+        # correcting the rows and none is wanted, so the honest act is not to attempt the write.
+        # Skipped under `--dry-run` too: a dry run must describe what a real pass would do.
+        if is_known_defective_metadata_landing(repository, sha):
+            summary["exempt"] += 1
+            continue
         try:
             body = landing_observation(read_landing(reader, repository, base_ref, sha))
             if dry_run:

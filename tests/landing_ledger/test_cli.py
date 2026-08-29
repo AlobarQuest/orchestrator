@@ -63,6 +63,7 @@ def test_a_pass_records_every_landing_it_can_read() -> None:
         "landings": 1,
         "recorded": 1,
         "skipped": 0,
+        "exempt": 0,
         "unavailable": False,
     }
     assert len(recorder.bodies) == 1
@@ -144,6 +145,79 @@ def test_the_orchestrator_being_unreachable_is_counted_not_raised() -> None:
 class _Explodes:
     def record_observation(self, payload: dict[str, Any]) -> dict[str, Any]:
         raise AssertionError("dry run must not record observations")
+
+
+# ---------------------------------------------------------------------------------------------
+# The six rows recorded while the reader could not read a requirement range's trailer.
+# ---------------------------------------------------------------------------------------------
+
+EXEMPT = "870e5c718ba68dd5057b7e8e7bc72f1fba885a3e"
+
+
+def _exempt_routes() -> dict[str, object]:
+    """A window containing one exempt landing and one ordinary one.
+
+    Deliberately gives the exempt sha NO commit route at all: if the pass ever reads it, the read
+    404s and it is counted as a skip, so this fixture cannot pass by accident.
+    """
+    routes = _pass_routes()
+    routes[f"/repos/{REPO}/branches/main"] = {"commit": {"sha": EXEMPT}}
+    routes[f"/repos/{REPO}/commits"] = [
+        {"sha": EXEMPT, "parents": [{"sha": "e931db8d31debfb08fd8f8410a4778f33c437fc1"}]},
+        {"sha": "e931db8d31debfb08fd8f8410a4778f33c437fc1", "parents": []},
+    ]
+    return routes
+
+
+def test_a_known_defective_landing_is_not_re_recorded() -> None:
+    """THE CONSEQUENCE THE SPEC DID NOT NAME, and the reason this list has two consumers.
+
+    The fixed reader now derives the three update keys those six stored rows lack. That is a
+    DIFFERENT fact digest at a `source_reference` which is deliberately immutable, so the write
+    reaches the orchestrator's same-source/different-facts branch: `observation_conflict`, a
+    skipped landing, an incomplete pass, exit 3 every night for as long as the row sits inside the
+    30-day window -- and there is no route to correcting the row and none is wanted.
+
+    Counted as `exempt` rather than as `skipped`, because a skip means the pass could not do
+    something it should have and must reach the incomplete exit code, while this is something the
+    pass deliberately did not attempt.
+    """
+    recorder = _Recorder()
+
+    summary = _run(reader_for(_exempt_routes()), recorder)
+
+    assert (summary["landings"], summary["recorded"]) == (2, 1)
+    assert (summary["exempt"], summary["skipped"]) == (1, 0)
+    assert summary["unavailable"] is False
+    assert len(recorder.bodies) == 1
+    assert recorder.bodies[0]["source_reference"] != f"landing:{REPO}@{EXEMPT}"
+
+
+def test_an_ordinary_landing_at_the_same_repository_is_still_recorded() -> None:
+    """The control. The exemption is keyed on the exact pair, so the sibling landing in the same
+    window and the same repository goes through untouched -- an exemption that quietly stopped a
+    repository being recorded would look identical without this."""
+    recorder = _Recorder()
+
+    summary = _run(reader_for(_pass_routes()), recorder)
+
+    assert (summary["recorded"], summary["exempt"]) == (1, 0)
+
+
+def test_an_exempt_landing_does_not_reach_the_incomplete_exit_code() -> None:
+    """`exempt` must not feed `incomplete`, or the fix reproduces the exit-3 it exists to end."""
+    summary = _run(reader_for(_exempt_routes()), _Recorder())
+
+    assert not (summary["unavailable"] or summary["skipped"])
+
+
+def test_a_dry_run_reports_the_exemption_too() -> None:
+    """A dry run must describe what a real pass would do; one that recorded the exempt landing
+    would be describing a pass that conflicts."""
+    summary = _run(reader_for(_exempt_routes()), _Explodes(), dry_run=True)
+
+    assert (summary["recorded"], summary["exempt"]) == (1, 1)
+    assert len(summary["records"]) == 1
 
 
 def test_a_dry_run_writes_nothing() -> None:

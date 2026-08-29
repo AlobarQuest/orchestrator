@@ -76,7 +76,7 @@ activate_checkout "$REPO_ROOT" "$0" "$@"
 # It reports and never gates -- every failure inside it logs a line and returns 0.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-sds_deadman_arm sds-change-proposer "$@"
+sds_deadman_arm sds-change-proposer --finding 3 "$@"
 
 
 # The change-manager tokens live in a BWS project the narrow `sds-operator` account behind

@@ -115,7 +115,7 @@ activate_checkout "$REPO_ROOT" "$0" "$@"
 # It reports and never gates -- every failure inside it logs a line and returns 0.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-sds_deadman_arm sds-work-carrier "$@"
+sds_deadman_arm sds-work-carrier --finding 3 "$@"
 
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /

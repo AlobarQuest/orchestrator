@@ -113,7 +113,11 @@ from landing_ledger.model import (
 # the client had only a write surface when it was written -- and is left alone rather than churned
 # through two modules and their tests for a word.
 from landing_ledger.orchestrator_client import LedgerWriteError as LedgerReadError
-from landing_ledger.record import BASIS_FACTORY, BASIS_RULE
+from landing_ledger.record import (
+    BASIS_FACTORY,
+    BASIS_RULE,
+    is_known_defective_metadata_landing,
+)
 from landing_ledger.rules import GATE_PATH, Rule, rule_for
 from landing_ledger.titles import bump_of
 
@@ -198,6 +202,12 @@ STALL_RULE_UNKNOWN = "current_rule_revision_unknown"
 # neither program reads the other's codes, and the thing they genuinely share is the classifier
 # (`titles.bump_of`), which IS pinned. What agrees is the answer, not the spelling.
 EXCEPTION_UPDATE_TYPE_UNPARSEABLE = "update_type_unparseable"
+
+# Detector A's exception, and the only one it has. A landing recorded during the window in which
+# the reader discarded a requirement range's own trailer: the row is immutable and content-
+# addressed, so the three update keys it lacks can never arrive and the finding it would otherwise
+# raise can never clear. A certainty about the subject, which is what separates it from a caveat.
+EXCEPTION_METADATA_UNREADABLE_AT_RECORDING = "update_metadata_unreadable_at_recording"
 
 # A caveat qualifies the audit's own evidence; it is not an assertion that anything is wrong, and
 # it does not drive the exit status. It is still recorded, so it cannot be lost by being quiet.
@@ -320,20 +330,29 @@ def _failing(checks: Any) -> list[str]:
     ]
 
 
-def audit_landing(facts: Any) -> tuple[tuple[Finding, ...], tuple[Finding, ...]]:
+def audit_landing(
+    facts: Any,
+) -> tuple[tuple[Finding, ...], tuple[Finding, ...], tuple[Finding, ...]]:
     """Re-evaluate one recorded landing against the rule that was pinned to it.
 
-    Returns (findings, caveats). A landing whose basis is not the rule is not this detector's
-    subject and yields neither -- the caller counts it, so "nothing found" always arrives with a
-    denominator.
+    Returns (findings, caveats, exceptions). A landing whose basis is not the rule is not this
+    detector's subject and yields none of the three -- the caller counts it, so "nothing found"
+    always arrives with a denominator.
+
+    The third slot exists for exactly one subject and arrived with it: the six rows recorded while
+    the reader could not read a requirement range's trailer. It is an EXCEPTION rather than a
+    caveat because a caveat is a doubt about this audit's own evidence, and this is a certainty
+    about the subject -- the row is immutable, the metadata it lacks can never arrive, and the
+    finding it would otherwise raise can never clear.
     """
     permitted = _permitted_by(facts)
     if permitted is None or permitted.get("basis") != BASIS_RULE:
-        return (), ()
+        return (), (), ()
     changed = _what_changed(facts)
     subject = f"{changed.get('repository')}@{str(changed.get('commit'))[:12]}"
     findings: list[Finding] = []
     caveats: list[Finding] = []
+    exceptions: list[Finding] = []
 
     if GATE_PATH in (changed.get("files") or []):
         caveats.append(
@@ -350,7 +369,7 @@ def audit_landing(facts: Any) -> tuple[tuple[Finding, ...], tuple[Finding, ...]]
         findings.append(
             Finding(DRIFT_RULE_MISSING, subject, "recorded as rule-permitted with no rule pinned")
         )
-        return tuple(findings), tuple(caveats)
+        return tuple(findings), tuple(caveats), tuple(exceptions)
 
     rule = rule_for(str(revision))
     if rule is None:
@@ -361,7 +380,7 @@ def audit_landing(facts: Any) -> tuple[tuple[Finding, ...], tuple[Finding, ...]]
                 f"rule revision {revision} is not transcribed, so what it permitted is unknown",
             )
         )
-        return tuple(findings), tuple(caveats)
+        return tuple(findings), tuple(caveats), tuple(exceptions)
 
     if permitted.get("rule_outcome") != "success":
         findings.append(
@@ -381,13 +400,29 @@ def audit_landing(facts: Any) -> tuple[tuple[Finding, ...], tuple[Finding, ...]]
     # raised against the landings the new rule exists to make. One key is tested because all
     # three arrive together; `test_record.py` pins that they do.
     if rule.requires_upstream_author and "update_type" not in permitted:
-        findings.append(
-            Finding(
-                DRIFT_METADATA_MISSING,
-                subject,
-                "no update metadata was recorded, so the rule's own condition cannot be re-read",
+        # THE SIX ROWS OF THE KNOWN-DEFECTIVE WINDOW ARE EXEMPT, BY IDENTITY, AND ONLY HERE. The
+        # exemption withholds this one finding and nothing else: every other check above and below
+        # still runs against these rows, so a rule that did not succeed, or a check that did not
+        # pass, is still reported for them. Silencing the class outright would be worse than the
+        # defect -- a genuine absence on any other landing must still be a finding.
+        if is_known_defective_metadata_landing(changed.get("repository"), changed.get("commit")):
+            exceptions.append(
+                Finding(
+                    EXCEPTION_METADATA_UNREADABLE_AT_RECORDING,
+                    subject,
+                    "recorded while the reader could not read a requirement range's trailer; the "
+                    "row is immutable, so the metadata it lacks can never arrive",
+                )
             )
-        )
+        else:
+            findings.append(
+                Finding(
+                    DRIFT_METADATA_MISSING,
+                    subject,
+                    "no update metadata was recorded, so the rule's own condition cannot be "
+                    "re-read",
+                )
+            )
     elif not rule.permits(update_type, ecosystem):
         findings.append(
             Finding(
@@ -403,7 +438,7 @@ def audit_landing(facts: Any) -> tuple[tuple[Finding, ...], tuple[Finding, ...]]
         findings.append(
             Finding(DRIFT_CHECK_NOT_GREEN, subject, "; ".join(sorted(failing)[:MAX_LIST]))
         )
-    return tuple(findings), tuple(caveats)
+    return tuple(findings), tuple(caveats), tuple(exceptions)
 
 
 class UnitRecordReader(Protocol):
@@ -825,7 +860,7 @@ def audit_repository(
     if branch is not None:
         findings.extend(audit_branch(repository, branch))
     for facts in landings:
-        landing_findings, landing_caveats = audit_landing(facts)
+        landing_findings, landing_caveats, landing_exceptions = audit_landing(facts)
         try:
             factory_findings, factory_caveats = audit_factory_landing(facts, units)
         except LedgerReadError:
@@ -844,6 +879,7 @@ def audit_repository(
         factory += basis == BASIS_FACTORY
         findings.extend(landing_findings + factory_findings)
         caveats.extend(landing_caveats + factory_caveats)
+        exceptions.extend(landing_exceptions)
 
     rule = rule_for(rule_revision)
     if rule_revision is None:

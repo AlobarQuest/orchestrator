@@ -67,7 +67,7 @@ activate_checkout "$REPO_ROOT" "$0" "$@"
 # It reports and never gates -- every failure inside it logs a line and returns 0.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-sds_deadman_arm sds-deploy-watcher "$@"
+sds_deadman_arm sds-deploy-watcher --finding 2 "$@"
 
 
 # TWO BWS IDENTITIES, AND NEITHER CAN DO THE OTHER'S HALF. Measured 2×2 with controls on

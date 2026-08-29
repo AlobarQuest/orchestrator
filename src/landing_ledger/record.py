@@ -105,6 +105,59 @@ CHANGE_RECORD_REASON = (
 )
 
 
+# THE SIX LANDINGS RECORDED WHILE THE READER COULD NOT READ A REQUIREMENT RANGE'S TRAILER.
+#
+# Until 2026-08-29 `read_landing` keyed its metadata fall-back on an absent `update-type` rather
+# than on an absent trailer block, so a requirement-range landing discarded its own message -- which
+# states a `dependency-name` -- for the pull request's head, which on a branch-update merge commit
+# states nothing. All three update keys were then absent from `permitted_by`, and the audit
+# correctly reported that the rule's own condition could not be re-read.
+#
+# NAMED BY IDENTITY, NEVER BY DATE. ADR-0014: a cutoff laid down while a defect is live certifies
+# the population after it, and looks like diligence while doing so. These are the exact rows,
+# verified against production on 2026-08-29 by reading every recorded landing across all eight
+# repositories -- six of 671, every one an `auto_merge_rule` landing of a requirement range.
+#
+# THIS LIST CAN NEVER BE SPENT, and that is a property rather than an oversight. An observation is
+# immutable, content-addressed, and has no supersession path or delete route, so these six rows
+# assert what they assert forever. Unlike a grandfathering table keyed on live subjects, nothing
+# here can ever go stale enough to delete itself; it is a permanent record of a known-defective
+# window, and it must be read as one rather than as something temporary awaiting cleanup.
+#
+# IT HAS TWO CONSUMERS, and the second is the one that is easy to miss. `audit.py` withholds the
+# metadata finding for these rows. `cli.py` declines to RE-RECORD them: the fixed reader now derives
+# the three keys the stored rows lack, which is a different fact digest at an identity that cannot
+# move, so a re-record is an `observation_conflict` -- a skipped landing, an incomplete pass, and a
+# lane that reports exit 3 every night for as long as they sit inside its window.
+KNOWN_DEFECTIVE_METADATA_LANDINGS = frozenset(
+    {
+        ("AlobarQuest/orchestrator", "b0150834bd6d42950b4fe3ca65582e05af2aae3f"),
+        ("AlobarQuest/orchestrator", "b58bc4e2d8d2a56ff37cb70950a9ee87a29320d9"),
+        ("AlobarQuest/orchestrator", "a9a85bf6a350a09d931306b522ffc89234b3eb40"),
+        ("AlobarQuest/intent-packages", "870e5c718ba68dd5057b7e8e7bc72f1fba885a3e"),
+        ("AlobarQuest/factory-runner", "c70bea752c93c11dbe698bd592958f7ee16697da"),
+        ("AlobarQuest/security-standards", "3a60adc6af3d42b0045bd6fb2b5222719bfb1f31"),
+    }
+)
+
+
+def is_known_defective_metadata_landing(repository: Any, commit: Any) -> bool:
+    """Whether this exact landing is one of the six recorded under the metadata defect.
+
+    Takes `Any` because both consumers read from a stored record whose shape they cannot assume --
+    the audit's own convention (`_permitted_by`) is that an unexpected shape must reach a finding
+    rather than raise. A non-string pair simply matches nothing.
+
+    THE `isinstance` PAIR IS NOT DEFENSIVE CLUTTER: an UNHASHABLE value in a membership test raises
+    `TypeError`, so `(["a"], {}) in <frozenset>` is an exception rather than a False -- which would
+    take down a pass over a stored shape nobody promised. This estate has already paid for that
+    exact line once, one subsystem over.
+    """
+    if not isinstance(repository, str) or not isinstance(commit, str):
+        return False
+    return (repository, commit) in KNOWN_DEFECTIVE_METADATA_LANDINGS
+
+
 def is_machine(login: str | None) -> bool:
     return login is not None and login.endswith("[bot]")
 
