@@ -144,7 +144,7 @@ fi
 # It reports and never gates -- every failure inside it logs a line and returns 0.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-sds_deadman_arm sds-activation-sweep "$@"
+sds_deadman_arm sds-activation-sweep --finding 2 "$@"
 
 # Load BWS_ACCESS_TOKEN from the Keychain via the approved helper (never a plaintext file). ONE
 # identity: the three secrets this sweep's siblings juggle are not needed here, because it reads

@@ -44,7 +44,7 @@ from landing_ledger.github import (
 )
 from landing_ledger.model import BranchStatus
 from landing_ledger.orchestrator_client import LedgerWriteError, OrchestratorClient
-from landing_ledger.record import landing_observation
+from landing_ledger.record import is_known_defective_metadata_landing, landing_observation
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -102,6 +102,10 @@ def record_landings(
         "landings": 0,
         "recorded": 0,
         "skipped": 0,
+        # NOT a skip, and the difference is the exit code. A skip means this pass could not do
+        # something it should have done, so it reaches `incomplete`. An exempt landing is one this
+        # pass deliberately did not attempt, for a reason that is permanent -- so it must not.
+        "exempt": 0,
         "unavailable": False,
     }
     # A dry run's whole purpose is to show WHAT would be written -- the permission basis in
@@ -118,6 +122,29 @@ def record_landings(
         return summary
     summary["landings"] = len(shas)
     for sha in shas:
+        # THE SIX ROWS OF THE KNOWN-DEFECTIVE WINDOW ARE NOT RE-READ AND NOT RE-WRITTEN, and this
+        # is the consumer of that list which is easy to miss. Their stored `permitted_by` lacks
+        # the three update keys because the reader could not read a requirement range's trailer;
+        # the fixed reader now derives them. That is a different fact digest at a
+        # `source_reference` which is deliberately immutable, so the write is an
+        # `observation_conflict` -- caught below as a skip, which makes the pass incomplete and
+        # exits 3 every night for as long as they sit inside the window. There is no route to
+        # correcting the rows and none is wanted, so the honest act is not to attempt the write.
+        # Skipped under `--dry-run` too: a dry run must describe what a real pass would do.
+        #
+        # THE PREMISE IS "ALREADY STORED", AND IT WAS MEASURED RATHER THAN ASSUMED. Skipping a row
+        # that is NOT stored would suppress a write that would have succeeded, so the premise is
+        # load-bearing: all six were read back from production on 2026-08-29 with their stored
+        # `permitted_by` contents, and an observation has no delete route, so nothing can unmake
+        # them. What could falsify it is a database restored from before 2026-08-28 -- and only
+        # while these commits remain inside the pass's `--days` lookback, which for landings of
+        # 2026-08-28 ends around 2026-09-27, after which `landing_shas` never yields them and this
+        # branch matches nothing ever again. In that world the ledger has lost its whole history
+        # and six rows are the least of what is missing, so the check is deliberately not built:
+        # it would make "audit this repository" assert a global property of the ledger.
+        if is_known_defective_metadata_landing(repository, sha):
+            summary["exempt"] += 1
+            continue
         try:
             body = landing_observation(read_landing(reader, repository, base_ref, sha))
             if dry_run:

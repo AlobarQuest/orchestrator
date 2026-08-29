@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from landing_ledger import audit as audit_module
 from landing_ledger.audit import (
     BRANCH_NOT_GREEN,
     CAVEAT_NO_RULE_INSTALLED,
@@ -21,6 +22,7 @@ from landing_ledger.audit import (
     DRIFT_RULE_DID_NOT_SUCCEED,
     DRIFT_RULE_MISSING,
     DRIFT_RULE_UNKNOWN,
+    EXCEPTION_METADATA_UNREADABLE_AT_RECORDING,
     EXCEPTION_UPDATE_TYPE_UNPARSEABLE,
     FACTORY_CLAIM_UNREADABLE,
     FACTORY_FINGERPRINT_MISMATCH,
@@ -56,7 +58,11 @@ from landing_ledger.model import (
     WorkflowRun,
 )
 from landing_ledger.orchestrator_client import LedgerWriteError
-from landing_ledger.record import BASIS_FACTORY
+from landing_ledger.record import (
+    BASIS_FACTORY,
+    KNOWN_DEFECTIVE_METADATA_LANDINGS,
+    is_known_defective_metadata_landing,
+)
 from landing_ledger.rules import GATE_PATH, REGISTRY, rule_for
 
 REPO = "AlobarQuest/factory-runner"
@@ -85,6 +91,8 @@ def landing(
     metadata: bool = True,
     checks: list[dict[str, Any]] | None = None,
     files: list[str] | None = None,
+    repository: str = REPO,
+    commit: str = "d5e31dc1164f9d0a" + "0" * 24,
 ) -> dict[str, Any]:
     permitted: dict[str, Any] = {
         "basis": basis,
@@ -113,9 +121,9 @@ def landing(
                 del permitted[key]
     return {
         "what_changed": {
-            "repository": REPO,
+            "repository": repository,
             "base_ref": "main",
-            "commit": "d5e31dc1164f9d0a" + "0" * 24,
+            "commit": commit,
             "files": files if files is not None else ["uv.lock"],
             "files_changed": 1,
             "pull_request": 30,
@@ -273,14 +281,14 @@ def units(
 
 
 def test_a_landing_within_its_own_pinned_rule_is_not_a_finding() -> None:
-    findings, caveats = audit_landing(landing())
+    findings, caveats, _ = audit_landing(landing())
 
     assert (findings, caveats) == ((), ())
 
 
 def test_a_major_bump_under_the_patch_and_minor_rule_FIRES() -> None:
     """The plain permissive drift: the gate landed something its own rule excluded."""
-    findings, _ = audit_landing(landing(revision=PATCH_AND_MINOR, update_type=MAJOR))
+    findings, _, _ = audit_landing(landing(revision=PATCH_AND_MINOR, update_type=MAJOR))
 
     assert kinds(findings) == [DRIFT_NOT_SATISFIED]
 
@@ -292,10 +300,10 @@ def test_the_SAME_facts_pass_or_fail_on_the_pinned_revision_alone() -> None:
     about the landing distinguishes the two cases except which revision was pinned to it. A
     detector that judged every landing against today's rule would report the second as fine.
     """
-    within, _ = audit_landing(
+    within, _, _ = audit_landing(
         landing(revision=UNDERSCORED, update_type=MAJOR, ecosystem="github_actions")
     )
-    outside, _ = audit_landing(
+    outside, _, _ = audit_landing(
         landing(revision=HYPHENATED, update_type=MAJOR, ecosystem="github_actions")
     )
 
@@ -304,13 +312,13 @@ def test_the_SAME_facts_pass_or_fail_on_the_pinned_revision_alone() -> None:
 
 
 def test_an_untranscribed_rule_revision_FIRES_rather_than_passing() -> None:
-    findings, _ = audit_landing(landing(revision="f" * 40))
+    findings, _, _ = audit_landing(landing(revision="f" * 40))
 
     assert kinds(findings) == [DRIFT_RULE_UNKNOWN]
 
 
 def test_a_rule_basis_with_no_rule_pinned_FIRES() -> None:
-    findings, _ = audit_landing(landing(revision=None))
+    findings, _, _ = audit_landing(landing(revision=None))
 
     assert kinds(findings) == [DRIFT_RULE_MISSING]
 
@@ -319,13 +327,137 @@ def test_absent_update_metadata_FIRES_rather_than_being_read_as_ineligible() -> 
     """The rule's own job-level condition is "the update bot raised this", and the trailer is the
     only proxy the ledger holds for it. Absent, the condition cannot be re-read -- which is a
     finding, not a quiet pass and not a rule violation."""
-    findings, _ = audit_landing(landing(metadata=False))
+    findings, _, _ = audit_landing(landing(metadata=False))
 
     assert kinds(findings) == [DRIFT_METADATA_MISSING]
 
 
+# ---------------------------------------------------------------------------------------------
+# The six rows recorded while the reader could not read a requirement range's trailer.
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("repository", "commit"), sorted(KNOWN_DEFECTIVE_METADATA_LANDINGS))
+def test_a_known_defective_row_is_an_exception_rather_than_a_finding(
+    repository: str, commit: str
+) -> None:
+    """Every one of the six, named individually rather than as a count.
+
+    They are immutable and content-addressed with no supersession path, so the metadata they lack
+    can never arrive and the finding would never clear. That is a certainty about the SUBJECT,
+    which is what makes it an exception rather than a caveat -- and exceptions do not drive the
+    exit status, so the control stops being permanently non-zero on something nobody can fix.
+    """
+    findings, _, exceptions = audit_landing(
+        landing(metadata=False, repository=repository, commit=commit)
+    )
+
+    assert kinds(findings) == []
+    assert kinds(exceptions) == [EXCEPTION_METADATA_UNREADABLE_AT_RECORDING]
+
+
+def test_the_exemption_silences_one_row_and_not_the_finding_class() -> None:
+    """AN EXEMPTION THAT SILENCED THE CLASS WOULD BE WORSE THAN THE DEFECT. Three controls, and
+    the first two are the ones that discriminate: the same repository at a different commit, and
+    the same commit in a different repository, both still FIRE."""
+    same_repository = landing(
+        metadata=False,
+        repository="AlobarQuest/orchestrator",
+        commit="0" * 40,
+    )
+    same_commit = landing(
+        metadata=False,
+        repository="AlobarQuest/change-manager",
+        commit="b0150834bd6d42950b4fe3ca65582e05af2aae3f",
+    )
+
+    assert kinds(audit_landing(same_repository)[0]) == [DRIFT_METADATA_MISSING]
+    assert kinds(audit_landing(same_commit)[0]) == [DRIFT_METADATA_MISSING]
+    assert kinds(audit_landing(landing(metadata=False))[0]) == [DRIFT_METADATA_MISSING]
+
+
+def test_an_exempt_row_is_still_audited_for_everything_else() -> None:
+    """The exemption withholds ONE finding, not the audit. A landing whose gate run did not
+    succeed, or whose checks did not pass, is still reported however it was recorded."""
+    findings, _, exceptions = audit_landing(
+        landing(
+            metadata=False,
+            outcome="failure",
+            checks=[{"name": "Quality", "conclusion": "failure"}],
+            repository="AlobarQuest/orchestrator",
+            commit="b0150834bd6d42950b4fe3ca65582e05af2aae3f",
+        )
+    )
+
+    assert kinds(findings) == [DRIFT_RULE_DID_NOT_SUCCEED, DRIFT_CHECK_NOT_GREEN]
+    assert kinds(exceptions) == [EXCEPTION_METADATA_UNREADABLE_AT_RECORDING]
+
+
+def test_the_exempt_population_is_exactly_six_named_landings() -> None:
+    """A LITERAL ASSERTION, because the list IS the judgment. Every fixture above derives itself
+    from the constant, so a member silently added to it would be exempted by tests that grew to
+    match. Six rows, verified against production on 2026-08-29."""
+    assert len(KNOWN_DEFECTIVE_METADATA_LANDINGS) == 6
+    assert KNOWN_DEFECTIVE_METADATA_LANDINGS == frozenset(
+        {
+            ("AlobarQuest/orchestrator", "b0150834bd6d42950b4fe3ca65582e05af2aae3f"),
+            ("AlobarQuest/orchestrator", "b58bc4e2d8d2a56ff37cb70950a9ee87a29320d9"),
+            ("AlobarQuest/orchestrator", "a9a85bf6a350a09d931306b522ffc89234b3eb40"),
+            ("AlobarQuest/intent-packages", "870e5c718ba68dd5057b7e8e7bc72f1fba885a3e"),
+            ("AlobarQuest/factory-runner", "c70bea752c93c11dbe698bd592958f7ee16697da"),
+            ("AlobarQuest/security-standards", "3a60adc6af3d42b0045bd6fb2b5222719bfb1f31"),
+        }
+    )
+
+
+def test_no_reported_kind_is_a_substring_of_another() -> None:
+    """THE REPORT IS READ BY SUBSTRING, so a kind that CONTAINS another is a broken discriminator.
+
+    `test_audit_pass.py` proves the sibling exception is not a suppression with a PAIR of
+    assertions over one `json.dumps` report -- the stall kind absent on one pass, present on the
+    next -- and an operator greps the nightly report the same way. A first draft spelled this
+    increment's exception `update_metadata_unreadable_at_recording`, which contains
+    `STALL_METADATA_UNREADABLE` verbatim: it would satisfy the second assertion on its own name and
+    break the first for a reason that has nothing to do with what it tests. Asserted over the whole
+    vocabulary rather than the one pair, because the next collision will be somewhere else.
+
+    ONE PAIR IS EXEMPT AND IT IS DEBT, NOT A JUSTIFICATION. `rule_revision_unknown` (detector A)
+    is contained in `current_rule_revision_unknown` (detector B), which predates this change and
+    was found BY this control on its first run. Renaming a reported kind changes what an operator
+    greps for, so it is outside this change's subject and is reported rather than done. The
+    exemption is a named pair: any OTHER collision, including a new one involving either of these
+    two, still reds.
+    """
+    known_debt = ("rule_revision_unknown", "current_rule_revision_unknown")
+    kinds_reported = sorted(
+        value
+        for name, value in vars(audit_module).items()
+        if isinstance(value, str)
+        and name.isupper()
+        and name.split("_")[0] in {"DRIFT", "STALL", "EXCEPTION", "CAVEAT", "FACTORY", "BRANCH"}
+        and not name.endswith(("_CONCLUSIONS", "_ROLE", "_STATUSES"))
+    )
+
+    assert len(kinds_reported) == len(set(kinds_reported))
+    collisions = sorted(
+        (kind, other)
+        for kind in kinds_reported
+        for other in kinds_reported
+        if kind != other and kind in other
+    )
+
+    assert collisions == [known_debt]
+
+
+def test_a_non_string_subject_matches_nothing_rather_than_raising() -> None:
+    """The audit's own convention: an unexpected shape must reach a finding, never an exception
+    the pass cannot survive."""
+    assert not is_known_defective_metadata_landing(None, None)
+    assert not is_known_defective_metadata_landing(["a"], {"b": 1})
+
+
 def test_a_recorded_failing_check_FIRES() -> None:
-    findings, _ = audit_landing(landing(checks=[{"name": "Quality", "conclusion": "failure"}]))
+    findings, _, _ = audit_landing(landing(checks=[{"name": "Quality", "conclusion": "failure"}]))
 
     assert kinds(findings) == [DRIFT_CHECK_NOT_GREEN]
 
@@ -334,7 +466,7 @@ def test_a_skipped_check_is_not_a_failing_check() -> None:
     """A conditional job that did not run is neither pass nor failure. Counting it as red would
     make every repository with a conditional job a permanent finding -- and a permanently red
     signal is one nobody reads."""
-    findings, _ = audit_landing(
+    findings, _, _ = audit_landing(
         landing(
             checks=[
                 {"name": "deploy", "conclusion": "skipped"},
@@ -347,13 +479,13 @@ def test_a_skipped_check_is_not_a_failing_check() -> None:
 
 
 def test_a_rule_run_that_did_not_succeed_FIRES() -> None:
-    findings, _ = audit_landing(landing(outcome="failure"))
+    findings, _, _ = audit_landing(landing(outcome="failure"))
 
     assert kinds(findings) == [DRIFT_RULE_DID_NOT_SUCCEED]
 
 
 def test_a_landing_a_person_decided_is_not_this_detectors_subject() -> None:
-    findings, caveats = audit_landing(landing(basis="human"))
+    findings, caveats, _ = audit_landing(landing(basis="human"))
 
     assert (findings, caveats) == ((), ())
 
@@ -362,9 +494,9 @@ def test_a_row_with_no_permission_record_at_all_is_skipped_rather_than_crashing(
     """The production ledger holds one such row -- an acceptance probe from the 0022 migration --
     and observations are append-only, so a detector that cannot read it is a detector that cannot
     run."""
-    assert audit_landing({"probe": "landing-type-acceptance"}) == ((), ())
-    assert audit_landing(None) == ((), ())
-    assert audit_landing({"permitted_by": "not a mapping"}) == ((), ())
+    assert audit_landing({"probe": "landing-type-acceptance"}) == ((), (), ())
+    assert audit_landing(None) == ((), (), ())
+    assert audit_landing({"permitted_by": "not a mapping"}) == ((), (), ())
 
 
 def test_a_landing_that_changed_the_gate_is_flagged_as_judged_by_its_own_change() -> None:
@@ -372,7 +504,7 @@ def test_a_landing_that_changed_the_gate_is_flagged_as_judged_by_its_own_change(
     pinned to the rule it installed rather than the one that armed it. That is a caveat on the
     audit's own evidence, not a violation -- and it is real: factory-runner#42 is exactly this.
     """
-    findings, caveats = audit_landing(landing(revision=NEWER_METADATA, files=[GATE_PATH]))
+    findings, caveats, _ = audit_landing(landing(revision=NEWER_METADATA, files=[GATE_PATH]))
 
     assert kinds(findings) == []
     assert kinds(caveats) == [CAVEAT_RULE_SELF_MODIFIED]
@@ -1065,7 +1197,7 @@ def test_a_landing_stating_no_delta_is_not_a_landing_nobody_could_read() -> None
     landing the new rule exists to make -- a finding about the ledger, aimed at the population
     the change was for, arriving on the first night it ran.
     """
-    findings, _ = audit_landing(landing(revision=OUTCOME_RULE, update_type=None))
+    findings, _, _ = audit_landing(landing(revision=OUTCOME_RULE, update_type=None))
 
     assert kinds(findings) == []
 
@@ -1074,7 +1206,7 @@ def test_a_landing_with_no_readable_trailer_still_FIRES_under_the_outcome_rule()
     """The other side, so the first test is not just the finding being switched off. All three
     update keys absent means nothing here could read what the gate read, and no rule's condition
     can be re-run against it -- whatever that rule turns out to be."""
-    findings, _ = audit_landing(landing(revision=OUTCOME_RULE, metadata=False))
+    findings, _, _ = audit_landing(landing(revision=OUTCOME_RULE, metadata=False))
 
     assert kinds(findings) == [DRIFT_METADATA_MISSING]
 
@@ -1082,7 +1214,7 @@ def test_a_landing_with_no_readable_trailer_still_FIRES_under_the_outcome_rule()
 def test_a_docker_landing_under_the_outcome_rule_still_violates_it() -> None:
     """CONTROL 3 at the landing end. The one exclusion survives the widening: a base image is
     refused whatever it declares, so a docker landing recorded as rule-permitted is drift."""
-    findings, _ = audit_landing(
+    findings, _, _ = audit_landing(
         landing(revision=OUTCOME_RULE, update_type=None, ecosystem="docker")
     )
 

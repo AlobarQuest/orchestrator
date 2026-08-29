@@ -8,9 +8,28 @@
 # `main` sat red for 31 hours with its failure reported within minutes and nobody subscribed.
 # Detection has never been this estate's problem; SUBSCRIPTION has.
 #
-# Source this (don't execute it) and arm once, immediately after `activate_checkout`:
+# Source this (don't execute it) and arm once, immediately after `activate_checkout`, declaring
+# the exit code THIS launcher uses for "something was found":
 #     source "$(dirname "${BASH_SOURCE[0]}")/sds-deadman.sh"
-#     sds_deadman_arm sds-landing-ledger
+#     sds_deadman_arm sds-landing-ledger --finding 2 "$@"
+#
+# A FINDING IS NOT A LIVENESS FAILURE, AND THE FINDING CODE IS NOT SHARED. This switch answers one
+# question -- did this lane run and report -- so a pass that worked and found something is a pass,
+# and only a pass that could not do its job is a failure. Collapsing the two is what the switch was
+# added to prevent: while a check sits failed on a standing finding, a lane that STOPS causes no
+# state change at the alert channel, which is exactly the silence being watched for.
+#
+# The code that means "found" is DIFFERENT IN THE TWO GROUPS OF LAUNCHERS, and 2 and 3 mean
+# opposite things between them: the ledger, the deploy watcher and the activation sweep read 2 as
+# found and 3 as could-not-be-read, while the estate lander, the change proposer, the work carrier
+# and the bump proposer read 2 as could-not-use-its-inputs and 3 as found. A universal rule here
+# would invert the signal for three of the seven -- a finding paging, and a blind pass reading as
+# healthy. So each launcher DECLARES its own code, from its own header, and this file holds no
+# table: a table here would be an eighth copy of a vocabulary that already lives in seven headers,
+# and it would be the copy nobody edits.
+# `tests/scripts/test_sds_deadman.py` reads each launcher's `EXIT CODES` block and asserts the
+# declared code is the one that block calls a finding, so the declaration cannot drift from the
+# prose it restates.
 #
 # WHY IT LOOKS UP THE CHECK BY NAME RATHER THAN READING A PING URL FROM AN ENV FILE. Two patterns
 # exist in this estate and the difference matters at seven checks. `infraops-mcp-server`'s
@@ -45,6 +64,11 @@ SDS_DEADMAN_API="https://healthchecks.io/api/v3/checks/"
 # Resolved at arm time. Empty means alerting is disabled for this run, which every ping honours.
 SDS_DEADMAN_PING_URL=""
 SDS_DEADMAN_NAME=""
+# The exit code THIS launcher uses for "something was found", declared by the launcher at arm time.
+# Empty means none was declared, which falls back to the pre-2026-08-29 behaviour: every non-zero
+# exit pings `/fail`. That direction is deliberate -- it is loud and wrong rather than quiet and
+# wrong, and the architecture test above makes the omission a red build rather than a surprise.
+SDS_DEADMAN_FINDING_CODE=""
 # Why it is empty, when it is. Carried rather than logged where it happens, so a run that could
 # not read the API key says THAT and does not also say the check is missing -- two lines naming
 # two causes for one failure is how a reader is sent after the wrong one.
@@ -118,6 +142,12 @@ sds_deadman_finish() {
     local rc=$?
     if [ "$rc" -eq 0 ]; then
         sds_deadman_ping ""
+    elif [ -n "$SDS_DEADMAN_FINDING_CODE" ] && [ "$rc" -eq "$SDS_DEADMAN_FINDING_CODE" ]; then
+        # The pass ran and reported. Logged rather than left silent: Healthchecks is told the lane
+        # is alive and nothing else, so without this line an operator reading the launchd log
+        # cannot tell a clean pass from one that found something.
+        sds_deadman_log "exit $rc is this lane's finding code — the pass ran and reported"
+        sds_deadman_ping ""
     else
         sds_deadman_ping "/fail"
     fi
@@ -145,10 +175,29 @@ sds_deadman_is_dry_run() {
     return 1
 }
 
-# `$1` is the check name; everything after it is the pass's own arguments.
+# `$1` is the check name, optionally followed by `--finding <code>`; everything after that is the
+# pass's own arguments.
+#
+# THE CODE IS VALIDATED, AND `1` IS REFUSED ALONG WITH `0`. Every launcher reserves 1 for "the tool
+# itself failed", so accepting `--finding 1` would map a broken lane to a healthy ping -- the exact
+# inversion this whole change exists to prevent, arriving through the mechanism meant to prevent
+# it. A malformed or reserved value logs a line and leaves the mapping unset, so the pass falls
+# back to pinging `/fail` on every non-zero exit rather than to trusting a number nobody can read.
 sds_deadman_arm() {
     SDS_DEADMAN_NAME="$1"
     shift
+    SDS_DEADMAN_FINDING_CODE=""
+    if [ "${1:-}" = "--finding" ]; then
+        local declared="${2:-}"
+        shift 2
+        case "$declared" in
+            ''|*[!0-9]*) sds_deadman_log "'--finding $declared' is not a number — ignored" ;;
+            0|1) sds_deadman_log "'--finding $declared' is a reserved code — ignored" ;;
+            *) SDS_DEADMAN_FINDING_CODE="$declared" ;;
+        esac
+    else
+        sds_deadman_log "no --finding code declared — every non-zero exit will report a failure"
+    fi
     if sds_deadman_is_dry_run "$@"; then
         sds_deadman_log "--dry-run: not arming, so this run cannot mask a schedule that stopped"
         return 0

@@ -396,6 +396,156 @@ def test_an_open_pull_request_touching_the_commit_does_not_make_it_a_landing() -
 
 
 # ---------------------------------------------------------------------------------------------
+# A requirement range keeps the metadata its OWN message states (2026-08-29).
+# ---------------------------------------------------------------------------------------------
+
+# From `AlobarQuest/orchestrator` #174, landed 2026-08-28. The TRAILER is verbatim -- it is the
+# part that is read -- and one prose line of the body is abridged to fit. It states a
+# `dependency-name` and NO `update-type`, which is the ordinary shape of a requirement range.
+RANGE_LANDING_MESSAGE = (
+    "chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0 (#174)\n"
+    "\n"
+    "Updates the requirements on setuptools to permit the latest version.\n"
+    "\n"
+    "---\n"
+    "updated-dependencies:\n"
+    "- dependency-name: setuptools\n"
+    "  dependency-version: 84.0.0\n"
+    "  dependency-type: direct:development\n"
+    "...\n"
+    "\n"
+    "Signed-off-by: dependabot[bot] <support@github.com>\n"
+)
+
+# That pull request's own head, verbatim and entire: 60 bytes, no trailers of any kind. It is a
+# branch-update merge commit -- created by this estate's OWN freshness lane calling `update-branch`
+# -- so the defect was the interaction of two mechanisms, neither wrong alone.
+RANGE_HEAD_MESSAGE = "Merge branch 'main' into dependabot/uv/setuptools-gte-84.0.0"
+
+# The contrast case: `AlobarQuest/orchestrator` #190, whose trailer states an update type.
+BUMP_LANDING_MESSAGE = """chore(deps): bump sqlalchemy from 2.0.51 to 2.0.52 (#190)
+
+---
+updated-dependencies:
+- dependency-name: sqlalchemy
+  dependency-version: 2.0.52
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+...
+"""
+
+
+def range_routes(landing_message: str, head_message: str, head_ref: str) -> dict[str, object]:
+    """One landing whose pull-request head carries a different message from the landing commit."""
+    routes = gate_routes()
+    routes[f"/repos/{REPO}/commits/e931db8d"] = {
+        "sha": "e931db8d31debfb08fd8f8410a4778f33c437fc1",
+        "commit": {"message": landing_message, "committer": {"date": MERGED_AT}},
+        "files": [{"filename": "pyproject.toml"}],
+    }
+    routes[f"/repos/{REPO}/pulls/50"] = {
+        "number": 50,
+        "merged_at": MERGED_AT,
+        "merged_by": {"login": "github-actions[bot]"},
+        "head": {"sha": "4437bc98", "ref": head_ref},
+    }
+    routes[f"/repos/{REPO}/commits/4437bc98"] = {"commit": {"message": head_message}}
+    return routes
+
+
+def test_a_requirement_range_records_the_metadata_its_own_message_states() -> None:
+    """PROOF, THROUGH `read_landing` RATHER THAN THE PARSER. `update_metadata` has answered this
+    correctly since 2026-08-28; what was wrong was which message `read_landing` handed it.
+
+    The fall-back used to be keyed on an absent `update-type`, which is spelled "no version delta
+    stated" and was being read as "the trailer block is not here". Those coincide for a
+    `bump X from A to B` and diverge for exactly this shape -- so the reader discarded a message
+    carrying `dependency-name` in favour of a 60-byte merge commit carrying nothing, and all three
+    update keys went missing. Which is the class ADR-0034 exists to land.
+    """
+    routes = range_routes(
+        RANGE_LANDING_MESSAGE, RANGE_HEAD_MESSAGE, "dependabot/uv/setuptools-gte-84.0.0"
+    )
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.update is not None
+    assert landing.update.dependency == "setuptools"
+    assert landing.update.ecosystem == "uv"
+    # Present and None: the bot declared no delta, which is a fact rather than a failure to read.
+    assert landing.update.update_type is None
+
+
+def test_a_bump_landing_is_unchanged_by_the_range_fix() -> None:
+    """THE CONTRAST CASE. `bump X from A to B` states an update type, records all three keys today
+    and must still -- a fix that widened the fall-back rather than re-keying it could have taken
+    the head's message here too."""
+    routes = range_routes(
+        BUMP_LANDING_MESSAGE, RANGE_HEAD_MESSAGE, "dependabot/uv/sqlalchemy-2.0.52"
+    )
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.update is not None
+    assert landing.update.dependency == "sqlalchemy"
+    assert landing.update.ecosystem == "uv"
+    assert landing.update.update_type == "version-update:semver-patch"
+
+
+def test_a_landing_commit_with_no_trailer_at_all_still_falls_back_to_the_head() -> None:
+    """The fall-back is re-keyed, not removed. A squash in a repository whose
+    `squash_merge_commit_message` writes a different body carries no trailer block, and the
+    authority is then the pull request's own head -- which is what `fetch-metadata` read."""
+    routes = range_routes(
+        "chore(deps): a body this repository composed itself (#50)",
+        RANGE_LANDING_MESSAGE,
+        "dependabot/uv/setuptools-gte-84.0.0",
+    )
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.update is not None
+    assert landing.update.dependency == "setuptools"
+
+
+def test_the_update_arm_reaches_for_the_head_even_when_the_other_two_are_answered() -> None:
+    """Each of the three arms asks its OWN question, and this is the case that proves it.
+
+    The condition guarding the fetch is a disjunction, so an arm dropped from it is invisible
+    whenever some other arm happens to be unanswered -- which every other fixture here is, because
+    a Dependabot landing carries no SDS trailers. This one carries BOTH, which is the shape an
+    ADR-0025 factory-delivery landing has: a work unit landed under a change record. Only here does
+    dropping `update is None` from the disjunction change the answer.
+    """
+    landing_message = (
+        "chore(deps-dev): update setuptools requirement (#50)\n\n"
+        "SDS-Unit: 0c0002c6-9869-59bc-84c6-654e6fc57d9e\n"
+        "SDS-Package-Rev: 1\n"
+        "SDS-Change-Record: 61\n"
+        "SDS-Policy-Version: 3\n"
+    )
+    routes = range_routes(
+        landing_message, RANGE_LANDING_MESSAGE, "dependabot/uv/setuptools-gte-84.0.0"
+    )
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.claim is not None
+    assert landing.policy is not None
+    assert landing.update is not None
+    assert landing.update.dependency == "setuptools"
+
+
+def test_a_landing_neither_message_describes_records_no_metadata() -> None:
+    """Fail-closed in the direction that matters: nothing is invented from a title."""
+    routes = range_routes(
+        "chore: an unrelated change (#50)", RANGE_HEAD_MESSAGE, "dependabot/uv/setuptools-gte-1"
+    )
+
+    assert read_landing(reader_for(routes), REPO, "main", "e931db8d").update is None
+
+
+# ---------------------------------------------------------------------------------------------
 # The reader reads.
 # ---------------------------------------------------------------------------------------------
 
