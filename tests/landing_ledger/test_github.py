@@ -376,9 +376,7 @@ def test_a_check_is_still_never_counted_from_anything_but_a_pull_request_run() -
                     _run(31179220691, "q.yml", "push", "2026-08-07T12:41:49Z", "success"),
                     # A check workflow on the gate's own new trigger: still not a check, because
                     # `pull_request_target` is admitted for the GATE PATH only.
-                    _run(
-                        31179220777, "q.yml", "pull_request_target", "2026-08-07T12:41:50Z", "ok"
-                    ),
+                    _run(31179220777, "q.yml", "pull_request_target", "2026-08-07T12:41:50Z", "ok"),
                 ]
             },
             f"/repos/{REPO}/actions/runs/31179220777/jobs": {
