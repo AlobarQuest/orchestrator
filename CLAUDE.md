@@ -4031,3 +4031,56 @@ style of that module.
   `gh pr merge --auto`. Note the change moves each gate's blob sha, so `landing_ledger/rules.py` must
   be re-transcribed in the SAME operation or `bump_proposer` refuses every repository with
   `gate-not-transcribed` and the ledger loses the `auto_merge_rule` basis.
+
+- **FIXING A READER RE-DERIVES FACTS THAT ARE ALREADY FROZEN, so a reader fix has a second
+  consumer: the writer.** `landing_ledger` observations are content-addressed over `facts` at an
+  immutable `source_reference`, so improving what the reader *derives* changes the facts for rows
+  already stored. The write then hits the orchestrator's same-source/different-facts branch —
+  `observation_conflict` → `LedgerWriteError` → counted `skipped` → `incomplete` → **exit 3 every
+  night** for as long as those commits sit inside the pass's `--days` lookback.
+  Measured 2026-08-29: the trailer-fallback fix (`#204`) would have done exactly that to six stored
+  landings and kept `sds-landing-ledger` red rather than returning it to up — the opposite of the
+  change's own purpose. HQ's spec exempted the six in the AUDIT and missed the recorder entirely,
+  having written "observations are immutable and content-addressed" four times the same day.
+  **Before shipping a change to what a producer derives for a content-addressed, immutable record
+  type, enumerate every stored row whose derivation moves.** The reader fix and the old population's
+  handling are one change, not two.
+
+- **A CENSUS THAT FILTERS ON A VOCABULARY LITERAL MUST PRINT THAT FIELD'S OBSERVED DISTRIBUTION
+  BESIDE THE RESULT.** The landing ledger's rule basis is spelled `auto_merge_rule`, not `rule`. A
+  production census filtered on `basis == "rule"` reported **0 missing across all eight
+  repositories over 671 rows** — a confident, complete-looking all-clear that was pure artefact; the
+  correct literal returns exactly six. Caught only because a second script printed the `bases`
+  distribution and showed no `rule` at all. This is the estate's probe-must-discriminate rule
+  applied to a census, and the discriminator costs one line. A zero from a filter is never evidence
+  of absence.
+
+- **`pytest --collect-only -q` prints node ids and NO `rootdir:`; non-quiet prints `rootdir:` and NO
+  node ids — so the collected-count reconciliation needs BOTH runs, and getting it wrong reads as
+  success.** CLAUDE.md already records that `-q` suppresses the header. The other half is worse:
+  non-quiet `--collect-only` prints a `<Module>`/`<Function>` tree rather than node ids, so
+  `pytest --collect-only | grep '::' | sort` matches nothing and the `comm` against `main` reports
+  **0 added, 0 removed** — a reconciliation that reads as "the counts are explained" while having
+  diffed two empty files. Hit 2026-08-29 against a real +56 delta. **Assert the node-id file is
+  non-empty before trusting the diff:** zero added and zero removed beside a non-zero count delta is
+  a broken measurement, not a clean one.
+
+- **A REPORTED FINDING KIND THAT IS A SUPERSTRING OF ANOTHER BREAKS EVERY SUBSTRING READER,
+  including the estate's own discriminating tests.** `test_audit_pass.py` proves a suppression is
+  real with a pair of assertions over one `json.dumps` report — a kind ABSENT on one pass and
+  PRESENT on the next — and an operator greps the nightly report the same way. A kind containing
+  another satisfies the "present" half on its own name while breaking the "absent" half for an
+  unrelated reason. Found 2026-08-29 when a new kind was drafted as
+  `update_metadata_unreadable_at_recording`, which contains `update_metadata_unreadable` verbatim;
+  renamed to `..._absent_at_recording`. `test_no_reported_kind_is_a_substring_of_another` now guards
+  the whole vocabulary and found a **pre-existing** collision on its first run:
+  `rule_revision_unknown` ⊂ `current_rule_revision_unknown`, exempted as named debt.
+
+- **A Healthchecks check reading `status=new, n_pings=0` is NOT failing — it has never pinged, and
+  the two are visibly different.** To establish whether a scheduled lane has run since a change
+  landed, read `launchctl list` for its last exit status AND the mtime of its log in
+  `~/Library/Logs/`; the check's status alone cannot distinguish "failing" from "has not run since
+  the thing that would make it ping". Measured 2026-08-29: HQ told Devon two checks were "failed on
+  standing findings and will page tomorrow". They were `new` — four of seven were — because their
+  lanes last ran at 07:10 and 07:32 and the switch landed at 10:19. The underlying observation was
+  right (both lanes did last exit 2, their finding code) and the state description was wrong.
