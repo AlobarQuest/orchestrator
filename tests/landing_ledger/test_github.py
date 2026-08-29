@@ -399,21 +399,23 @@ def test_an_open_pull_request_touching_the_commit_does_not_make_it_a_landing() -
 # A requirement range keeps the metadata its OWN message states (2026-08-29).
 # ---------------------------------------------------------------------------------------------
 
-# Verbatim from `AlobarQuest/orchestrator` #174, landed 2026-08-28. The trailer states a
+# From `AlobarQuest/orchestrator` #174, landed 2026-08-28. The TRAILER is verbatim -- it is the
+# part that is read -- and one prose line of the body is abridged to fit. It states a
 # `dependency-name` and NO `update-type`, which is the ordinary shape of a requirement range.
-RANGE_LANDING_MESSAGE = """chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0 (#174)
-
-Updates the requirements on [setuptools](https://github.com/pypa/setuptools) to permit the latest version.
-
----
-updated-dependencies:
-- dependency-name: setuptools
-  dependency-version: 84.0.0
-  dependency-type: direct:development
-...
-
-Signed-off-by: dependabot[bot] <support@github.com>
-"""
+RANGE_LANDING_MESSAGE = (
+    "chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0 (#174)\n"
+    "\n"
+    "Updates the requirements on setuptools to permit the latest version.\n"
+    "\n"
+    "---\n"
+    "updated-dependencies:\n"
+    "- dependency-name: setuptools\n"
+    "  dependency-version: 84.0.0\n"
+    "  dependency-type: direct:development\n"
+    "...\n"
+    "\n"
+    "Signed-off-by: dependabot[bot] <support@github.com>\n"
+)
 
 # That pull request's own head, verbatim and entire: 60 bytes, no trailers of any kind. It is a
 # branch-update merge commit -- created by this estate's OWN freshness lane calling `update-branch`

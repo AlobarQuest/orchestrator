@@ -22,6 +22,7 @@ pre-set, which is the escape hatch the helper already offers, so the Keychain is
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -63,7 +64,9 @@ printf '{"value": "not-a-real-key"}'
 
 def launchers() -> list[Path]:
     """Every launcher that arms the switch, found by what it does rather than by a list here."""
-    return sorted(path for path in SCRIPTS.glob("run-*.sh") if "sds_deadman_arm" in path.read_text())
+    return sorted(
+        path for path in SCRIPTS.glob("run-*.sh") if "sds_deadman_arm" in path.read_text()
+    )
 
 
 def declared_codes() -> dict[str, tuple[Path, int]]:
@@ -101,9 +104,7 @@ def _run(
     """Source the real helper, arm it, exit with `exit_code`; return (rc, pings, stderr+stdout)."""
     ping_log = tmp_path / "pings.txt"
     ping_log.write_text("")
-    listing = (
-        '{"checks": [{"name": "%s", "ping_url": "%s"}]}' % (listing_name or check_name, PING_URL)
-    )
+    listing = json.dumps({"checks": [{"name": listing_name or check_name, "ping_url": PING_URL}]})
     declaration = "" if finding is None else f"--finding {finding} "
     driver = tmp_path / "driver.sh"
     driver.write_text(

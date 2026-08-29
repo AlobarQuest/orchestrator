@@ -336,9 +336,7 @@ def test_absent_update_metadata_FIRES_rather_than_being_read_as_ineligible() -> 
 # ---------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("repository", "commit"), sorted(KNOWN_DEFECTIVE_METADATA_LANDINGS)
-)
+@pytest.mark.parametrize(("repository", "commit"), sorted(KNOWN_DEFECTIVE_METADATA_LANDINGS))
 def test_a_known_defective_row_is_an_exception_rather_than_a_finding(
     repository: str, commit: str
 ) -> None:
@@ -380,17 +378,13 @@ def test_the_exemption_silences_one_row_and_not_the_finding_class() -> None:
 def test_an_exempt_row_is_still_audited_for_everything_else() -> None:
     """The exemption withholds ONE finding, not the audit. A landing whose gate run did not
     succeed, or whose checks did not pass, is still reported however it was recorded."""
-    exempt = dict(
-        repository="AlobarQuest/orchestrator",
-        commit="b0150834bd6d42950b4fe3ca65582e05af2aae3f",
-    )
-
     findings, _, exceptions = audit_landing(
         landing(
             metadata=False,
             outcome="failure",
             checks=[{"name": "Quality", "conclusion": "failure"}],
-            **exempt,
+            repository="AlobarQuest/orchestrator",
+            commit="b0150834bd6d42950b4fe3ca65582e05af2aae3f",
         )
     )
 
