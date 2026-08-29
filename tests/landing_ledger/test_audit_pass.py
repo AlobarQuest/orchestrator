@@ -17,6 +17,7 @@ from landing_ledger.audit import (
     STALL_ELIGIBLE_NOT_ARMED,
     STALL_METADATA_UNREADABLE,
 )
+from landing_ledger.audit import branch_status as branch_status
 from landing_ledger.cli import (
     EXIT_FINDINGS,
     EXIT_INCOMPLETE,
@@ -78,6 +79,7 @@ def _routes(
     tip_status: str = "completed",
     tip_conclusion: str | None = "success",
     tip: bool = True,
+    gate_at_tip: bool = False,
 ) -> dict[str, Any]:
     routes: dict[str, Any] = {
         f"/repos/{REPO}": {"default_branch": "main"},
@@ -156,6 +158,23 @@ def _routes(
             ]
         },
     }
+    if gate_at_tip:
+        # A GATE RUN THAT IS NOT A PULL-REQUEST RUN. The two exclusions in `workflow_runs_at`
+        # overlap on every run in the default fixture -- the gate's own run is a `pull_request`
+        # run there, so it is excluded twice over and removing the path exclusion changes
+        # nothing. Measured by mutation, which survived until this case existed. `failure` rather
+        # than `success` so the difference is loud: without the path exclusion the branch reads
+        # red on the strength of the very workflow under audit.
+        routes[f"/repos/{REPO}/actions/runs"]["workflow_runs"].append(
+            {
+                "id": 4,
+                "path": GATE_PATH,
+                "event": "push",
+                "status": "completed",
+                "conclusion": "failure",
+                "updated_at": "2026-08-02T00:00:00Z",
+            }
+        )
     if gate is not None:
         routes[f"/repos/{REPO}/contents/{GATE_PATH}"] = {"sha": gate}
     if tip:
@@ -591,6 +610,20 @@ def test_the_branch_read_skips_the_pull_request_runs_and_the_gates_own_run() -> 
     assert [(run.run, run.path, run.conclusion) for run in runs] == [
         (3, ".github/workflows/quality.yml", "success")
     ]
+
+
+def test_the_GATE_is_not_evidence_about_the_branch_even_when_it_ran_on_a_push() -> None:
+    """The path exclusion on its own, with the event exclusion unable to cover for it.
+
+    The gate's run says the gate EXECUTED and never that the change is sound, so counting it
+    would let a repository's health rest on the very workflow under audit -- and here it would
+    report the branch RED on that basis.
+    """
+    reader = reader_for(_routes(gate_at_tip=True))
+    runs = workflow_runs_at(reader, REPO, TIP)
+
+    assert [run.path for run in runs] == [".github/workflows/quality.yml"]
+    assert branch_status(TIP, runs).state == "passing"
 
 
 def test_the_branch_read_carries_an_UNFINISHED_run_rather_than_dropping_it() -> None:
