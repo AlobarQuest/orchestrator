@@ -13,6 +13,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
+import yaml
 
 from landing_ledger.rules import (
     GATE_PATH,
@@ -198,7 +199,8 @@ def test_a_major_outside_that_ecosystem_is_still_refused_by_the_cascade() -> Non
 # ADR-0034: the fourth shape, and the history it must not rewrite.
 # ---------------------------------------------------------------------------------------------
 
-OUTCOME = "3457db3cee85ffa054dee8b434ac25238a81f425"
+OUTCOME = "294e2c3d1d01548ec960196c8f68b564dd6b198a"
+PREVIOUS_OUTCOME = "3457db3cee85ffa054dee8b434ac25238a81f425"
 DOCKER_CASCADE = "72391c0f7343477193b5c896680a083500c45227"
 
 PATCH, MINOR, MAJOR = SEMVER_PATCH, SEMVER_MINOR, SEMVER_MAJOR
@@ -274,6 +276,18 @@ HISTORICAL_ANSWERS: dict[str, dict[str | None, list[str | None]]] = {
         None: [],
         UNKNOWN: [],
     },
+    # ADR-0034, the fourth shape: every update type outside the excluded ecosystem, and the
+    # absent `None` ecosystem refused fail-closed rather than faithfully. MEASURED 2026-08-29
+    # from the unmodified code, before ADR-0035's revision was added, for the same reason every
+    # row above is data rather than derivation: this revision decided six landings on 2026-08-28
+    # and its answers must not move because a successor was transcribed beside it.
+    "3457db3cee85ffa054dee8b434ac25238a81f425": {
+        PATCH: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions"],
+        MINOR: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions"],
+        MAJOR: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions"],
+        None: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions"],
+        UNKNOWN: ["uv", "pip", "npm_and_yarn", "github_actions", "github-actions"],
+    },
 }
 
 
@@ -297,10 +311,73 @@ def test_every_revision_is_either_pinned_as_history_or_is_the_current_one() -> N
     assert OUTCOME not in HISTORICAL_ANSWERS
 
 
+def test_the_current_revisions_bytes_arm_with_the_factorys_credential() -> None:
+    """What the entry above CLAIMS about its bytes, asked of the bytes.
+
+    The fixture is pinned to its own filename by its blob sha, so it cannot drift -- but nothing
+    says the revision that filename names is the one ADR-0035 describes. A successor transcribed
+    with the right reasoning and the wrong file would satisfy every other test here: the predicate
+    is identical to its predecessor's by design, so no answer-table check can tell them apart. The
+    trigger and the arming identity are the only things that distinguish them, and they live in
+    the bytes rather than in the `Rule`.
+    """
+    text = (FIXTURES / f"{OUTCOME}.yml").read_text(encoding="utf-8")
+    previous = (FIXTURES / f"{PREVIOUS_OUTCOME}.yml").read_text(encoding="utf-8")
+
+    assert "on: pull_request_target" in text
+    assert "GH_TOKEN: ${{ secrets.FACTORY_PR_TOKEN }}" in text
+    # The predecessor is the control: without it these two assertions could be satisfied by a
+    # file that never changed, if the strings had been there all along.
+    assert "on: pull_request\n" in previous
+    assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in previous
+    # Unchanged, and each is named in ADR-0035 as something the move must not take with it.
+    for unchanged in (
+        "if: github.event.pull_request.user.login == 'dependabot[bot]'",
+        "if: steps.meta.outputs.package-ecosystem != 'docker'",
+        "dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98",
+    ):
+        assert unchanged in text, unchanged
+        assert unchanged in previous, unchanged
+    # The restraint that makes `pull_request_target` defensible: nothing reads the branch.
+    # Asked of the PARSED steps, not of the text: the file's own header explains at length why
+    # a checkout must never be added, so a substring search matches the prohibition and reports
+    # the file as violating it. A first draft did exactly that.
+    steps = yaml.safe_load(text)["jobs"]["auto-merge"]["steps"]
+    assert [step["uses"] for step in steps if "uses" in step] == [
+        "dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98"
+    ]
+
+
+def test_adr0035_moved_the_arming_identity_and_not_the_predicate() -> None:
+    """The claim ADR-0035 makes about itself, checked rather than trusted.
+
+    Its revision changes the gate's TRIGGER and the identity its arm step holds, so a landing
+    fires the repository's own push gate instead of skipping it. It deliberately changes nothing
+    about WHICH updates are permitted -- so the two revisions must agree on every cell of the
+    grid. Divergence here means an arming change quietly widened or narrowed the lane, which is
+    exactly the shape nobody would notice: the audit would keep classifying, differently.
+
+    Asserted cell by cell rather than by comparing the two `Rule` objects, because equal fields
+    are the transcription agreeing with itself and prove nothing about `permits`.
+    """
+    current = rule_for(OUTCOME)
+    previous = rule_for(PREVIOUS_OUTCOME)
+    assert current is not None
+    assert previous is not None
+
+    for update_type in UPDATE_TYPES:
+        for ecosystem in ECOSYSTEMS:
+            assert current.permits(update_type, ecosystem) == previous.permits(
+                update_type, ecosystem
+            ), f"{OUTCOME[:12]} and {PREVIOUS_OUTCOME[:12]} differ at {update_type} / {ecosystem}"
+
+
 def test_the_outcome_rule_permits_every_update_type_outside_the_excluded_ecosystem() -> None:
     """ADR-0034: a pull request whose required checks pass is routine whatever it declares. The
     absent update type is the cell this revision exists for -- ten of the estate's thirteen open
-    updates on 2026-08-28 stated no delta, and no rule keyed on update types could reach one."""
+    updates on 2026-08-28 stated no delta, and no rule keyed on update types could reach one.
+
+    Still asked of the CURRENT revision, which ADR-0035 re-transcribed without touching this."""
     rule = rule_for(OUTCOME)
     assert rule is not None
 

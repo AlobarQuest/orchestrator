@@ -22,8 +22,11 @@ from landing_ledger.rules import REGISTRY
 ORCHESTRATOR_GATE = "72391c0f7343477193b5c896680a083500c45227"
 FIVE_REPO_GATE = "e849b3a8411fabeff1dedd138e6e3e3a2f535319"
 NEWER_METADATA_GATE = "a4a4b8da035292fe434badd007607d8a69bc54e2"
-# The one revision all six carry from 2026-08-28 (ADR-0034): it excludes `docker` and asks
-# nothing else, so what the checks concluded is the only thing left separating the two lanes.
+# The revision all six carried from 2026-08-28 to 2026-08-29 (ADR-0034): it excludes `docker` and
+# asks nothing else, so what the checks concluded is the only thing left separating the two lanes.
+# ADR-0035's successor has the same predicate and differs only in trigger and arming identity, so
+# the cases below hold for both; this one is named because it is the revision they were measured
+# against.
 OUTCOME_GATE = "3457db3cee85ffa054dee8b434ac25238a81f425"
 
 NOW = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)

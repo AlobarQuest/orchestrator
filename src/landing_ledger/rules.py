@@ -186,6 +186,22 @@ _OUTCOME_NOT_UPDATE_TYPE = Rule(
     excluded_ecosystems=frozenset({"docker"}),
 )
 
+# ADR-0035, and the first revision whose PREDICATE is unchanged from the one before it. What moved
+# is the trigger (`pull_request` -> `pull_request_target`) and the identity the arm step holds
+# (`secrets.GITHUB_TOKEN` -> `FACTORY_PR_TOKEN`), so that a landing this lane produces fires the
+# repository's own `on: push` gate instead of skipping it under GitHub's recursion guard.
+#
+# It is transcribed rather than aliased for the same reason 12880ce7 and 43e37ed9 both exist: the
+# ledger keys on BYTES, and a revision that answers identically is still a different revision. The
+# fields below are deliberately a copy of the entry above -- if a future change makes them diverge,
+# that is a change to what the gate PERMITS and belongs in an ADR of its own.
+_OUTCOME_ARMED_WITH_THE_FACTORYS_CREDENTIAL = Rule(
+    revision="294e2c3d1d01548ec960196c8f68b564dd6b198a",
+    update_types=frozenset(),
+    permits_any_update_type=True,
+    excluded_ecosystems=frozenset({"docker"}),
+)
+
 REGISTRY: dict[str, Rule] = {
     rule.revision: rule
     for rule in (
@@ -197,6 +213,7 @@ REGISTRY: dict[str, Rule] = {
         _CASCADE_NEWER_METADATA,
         _CASCADE_WITHOUT_DOCKER,
         _OUTCOME_NOT_UPDATE_TYPE,
+        _OUTCOME_ARMED_WITH_THE_FACTORYS_CREDENTIAL,
     )
 }
 
