@@ -1,4 +1,4 @@
-"""The two detectors that replace the human gate on a routine dependency update.
+"""The three detectors that replace the human gate on a routine dependency update.
 
 They REPORT. Neither of them changes anything, anywhere -- not a pull request, not a repository
 setting, not a work unit. That is this estate's established shape for anything that watches
@@ -55,9 +55,31 @@ reports a pass that could not read everything as a distinct, non-zero outcome. F
 would put "the producer under-reported" behind a detector whose input is what the producer
 produced -- which is the shape of a check that consumes the thing it is meant to detect.
 
+**Detector C -- is the default branch green NOW?** A and B both ask about ONE update at a time,
+and neither can see the failure ADR-0034 newly creates: several updates, each green on its own
+head, landing in one evening and breaking `main` in combination. Nothing verifies the combination.
+It is the hazard `strict: true` would prevent and which this estate deliberately declined, because
+making branches strict serialises every merge behind rebase cycles -- so the answer is to WATCH
+the combination rather than to forbid it.
+
+**C is not a second copy of `DRIFT_CHECK_NOT_GREEN`.** That one asks whether a landing went in
+with a failing check on its OWN head, which A already files daily across all eight repositories.
+C asks about the branch afterwards, where every landing's checks may have passed individually.
+
+**The whole of C is the three-state distinction, and collapsing it makes the control useless.**
+A run in flight, or a tip nothing has decided on yet, IS NOT A FINDING. Under the current arming
+identity a landing fires no `push` run at all -- a `GITHUB_TOKEN`-armed auto-merge triggers none
+-- so an unverified tip is the ordinary state for hours at a time, and reporting it would red the
+control permanently. This estate has now paid twice for collapsing check states: `mergeable_state:
+blocked` covers four different causes, and the landing lane held three clean bumps for four days
+on runs GitHub had cancelled when the Actions quota ran out. The quiet answers are still RECORDED,
+in the observation's own facts, because which quiet answer it is is worth reading -- they are just
+not assertions that anything is wrong.
+
 **What a rule arm cannot be evidence of.** A landing's own gate run says the gate EXECUTED; it
 never says the change is sound. So neither detector counts the gate's run as a check, and B's
-notion of green excludes it.
+notion of green excludes it. C excludes it too, and for C the omission is sharper: the gate runs
+only on pull requests, so a gate run at a branch tip would be a surprise rather than a signal.
 
 **THREE CATEGORIES, and only one of them drives the exit status.** A FINDING asserts that
 something is wrong and that a person can act on it. A CAVEAT qualifies the audit's own evidence.
@@ -76,7 +98,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
-from landing_ledger.model import PendingUpdate, is_work_unit_id
+from landing_ledger.model import (
+    BRANCH_FAILING,
+    BRANCH_IN_FLIGHT,
+    BRANCH_PASSING,
+    BRANCH_UNVERIFIED,
+    BranchStatus,
+    PendingUpdate,
+    WorkflowRun,
+    is_work_unit_id,
+)
 
 # What the orchestrator reads raise when they cannot answer. The name predates the read surface --
 # the client had only a write surface when it was written -- and is left alone rather than churned
@@ -142,6 +173,9 @@ FACTORY_HUMAN_ADJUDICATION = "factory_human_adjudication"
 FACTORY_LANDING_UNBOUND = "factory_landing_unbound"
 FACTORY_LANDING_UNCLAIMED = "factory_landing_not_claimed_by_the_orchestrator"
 FACTORY_FINGERPRINT_MISMATCH = "factory_fingerprint_mismatch"
+
+# Detector C.
+BRANCH_NOT_GREEN = "default_branch_not_green"
 
 # Detector B.
 STALL_ELIGIBLE_NOT_ARMED = "eligible_green_and_not_armed"
@@ -233,6 +267,9 @@ class RepoAudit:
     permitted_landings: int
     pending_audited: int
     factory_landings: int = 0
+    # Detector C's answer, or None when the branch could not be asked -- which is a measurement
+    # that did not happen and reaches `unavailable`, never a pass.
+    branch: BranchStatus | None = None
     findings: tuple[Finding, ...] = ()
     caveats: tuple[Finding, ...] = ()
     exceptions: tuple[Finding, ...] = ()
@@ -671,6 +708,88 @@ def audit_pending(
     ), ()
 
 
+def branch_status(commit: str, runs: tuple[WorkflowRun, ...]) -> BranchStatus:
+    """Reduce every workflow run at a commit to one of the four branch states.
+
+    PER WORKFLOW, THEN ACROSS WORKFLOWS, and that order is the substance. "The newest concluded
+    run at the tip" reads as one run, and one run is the wrong unit: a repository runs several
+    workflows over one commit, so a newer green run of workflow B would hide a red workflow A and
+    report a broken branch as healthy. Each workflow's own newest decided run is its current
+    answer, and the branch is failing if ANY of them decided against the commit.
+
+    THE SKIP IS THE MECHANISM, not the choice of set, and the two are easy to confuse. A
+    no-verdict conclusion is skipped BEFORE the newest-run comparison, so a cancelled re-run
+    cannot become a workflow's current answer and bury the verdict it superseded -- which is the
+    behaviour that held three clean bumps for four days when the Actions quota ran out. Delete
+    that skip and a cancelled run newer than a failure reports the branch as fine.
+
+    `REFUSING_CONCLUSIONS` rather than `FAILING_CONCLUSIONS` is then a NAMING choice with no
+    behavioural difference: the skip has already removed everything the two sets disagree about
+    (`REFUSING == FAILING - NO_VERDICT` by construction), so no test can tell them apart here.
+    It is named this way because it is the safer one to inherit -- if the skip is ever removed,
+    `REFUSING` still declines to call a cancelled run a failure and `FAILING` would not.
+
+    A run whose conclusion is unknown to BOTH vocabularies -- something the platform has not yet
+    invented -- lands in `passing` and accuses nobody. That is the fail-toward-quiet direction,
+    and it is the right one for a control whose findings a person acts on. Note this is the
+    OPPOSITE polarity from `NO_VERDICT_CONCLUSIONS`, deliberately: there an unknown word must
+    read as a verdict so a landing lane refuses; here an unknown word must not manufacture a
+    finding about somebody's branch.
+    """
+    newest: dict[str, WorkflowRun] = {}
+    in_flight: set[str] = set()
+    for run in runs:
+        if run.status != "completed":
+            in_flight.add(run.path)
+            continue
+        if run.conclusion is None or run.conclusion in NO_VERDICT_CONCLUSIONS:
+            continue
+        current = newest.get(run.path)
+        if current is None or run.updated_at > current.updated_at:
+            newest[run.path] = run
+    failing = tuple(
+        sorted(path for path, run in newest.items() if run.conclusion in REFUSING_CONCLUSIONS)
+    )
+    passing = tuple(
+        sorted(path for path, run in newest.items() if run.conclusion not in REFUSING_CONCLUSIONS)
+    )
+    if failing:
+        state = BRANCH_FAILING
+    elif passing:
+        state = BRANCH_PASSING
+    elif in_flight:
+        state = BRANCH_IN_FLIGHT
+    else:
+        state = BRANCH_UNVERIFIED
+    return BranchStatus(
+        commit=commit,
+        state=state,
+        failing=failing,
+        passing=passing,
+        in_flight=tuple(sorted(in_flight)),
+    )
+
+
+def audit_branch(repository: str, branch: BranchStatus) -> tuple[Finding, ...]:
+    """Detector C's verdict: one finding when the tip is failing, and nothing otherwise.
+
+    The quiet states produce no line here on purpose. They are carried on the observation instead
+    (`audit_observation`), where a reader can see WHICH quiet answer a repository gave without the
+    control having to exit non-zero about it every night for eight repositories.
+    """
+    if branch.state != BRANCH_FAILING:
+        return ()
+    return (
+        Finding(
+            BRANCH_NOT_GREEN,
+            f"{repository}@{branch.commit[:12]}",
+            "the default branch tip is red: "
+            + "; ".join(branch.failing[:MAX_LIST])
+            + " decided against it",
+        ),
+    )
+
+
 def audit_repository(
     *,
     repository: str,
@@ -679,20 +798,32 @@ def audit_repository(
     rule_revision: str | None,
     units: UnitRecordReader,
     now: datetime,
+    branch: BranchStatus | None,
     settle_seconds: int = SETTLE_SECONDS,
 ) -> RepoAudit:
-    """Both detectors over one repository. Never raises on a shape it did not expect.
+    """All three detectors over one repository. Never raises on a shape it did not expect.
 
     It DOES propagate an orchestrator that could not be read, which is not the same thing: the
     caller turns that into the incomplete exit code, where a swallowed one would report a
     repository as clean on the strength of a question nobody managed to ask.
+
+    `branch` HAS NO DEFAULT, deliberately, and it is the only parameter here without one. `None`
+    is a real answer -- the branch could not be asked -- and it is the answer that reaches
+    `unavailable`. A default would let a caller omit the read entirely and get the same value,
+    so the fail-closed case and the forgotten case would be spelled identically. Requiring it
+    makes every caller say which one it means.
     """
     findings: list[Finding] = []
     caveats: list[Finding] = []
     exceptions: list[Finding] = []
     permitted = 0
     factory = 0
-    unreadable = False
+    # A branch nobody could ask about is a missing answer, exactly as an unreadable orchestrator
+    # is. It reaches the incomplete exit code rather than a clean one, so a repository whose tip
+    # went unread is never reported as green.
+    unreadable = branch is None
+    if branch is not None:
+        findings.extend(audit_branch(repository, branch))
     for facts in landings:
         landing_findings, landing_caveats = audit_landing(facts)
         try:
@@ -752,6 +883,7 @@ def audit_repository(
         permitted_landings=permitted,
         factory_landings=factory,
         pending_audited=len(pending),
+        branch=branch,
         findings=tuple(findings),
         caveats=tuple(caveats),
         exceptions=tuple(exceptions),
@@ -762,13 +894,28 @@ def audit_repository(
 def _fit(facts: dict[str, Any]) -> dict[str, Any]:
     """Trim the three variable-length lists until the record fits the orchestrator's byte bound.
 
-    LEAST URGENT FIRST. An exception is a permanent property of a subject, so it says the same
-    thing tomorrow and is the cheapest thing to lose. A caveat qualifies evidence. A finding
-    asserts a violation, and the violation is the thing that must survive. All three keep their
-    true counts beside them, so a trim is visible rather than silent.
+    LEAST URGENT FIRST. The branch's workflow-path lists go before anything else: the `state`
+    beside them is the verdict and is a scalar that always survives, so the paths are detail in a
+    way an exception is not. Then an exception, a permanent property of a subject that says the
+    same thing tomorrow. Then a caveat, which qualifies evidence. A finding asserts a violation,
+    and the violation is the thing that must survive. All the entry lists keep their true counts
+    beside them, so a trim is visible rather than silent.
+
+    THE BRANCH LISTS ARE IN THE LOOP RATHER THAN OUTSIDE IT, and that is what keeps this
+    function's guarantee. A fixed block added to `facts` that this loop cannot reach would be
+    evicting findings on its behalf -- the exact inversion the paragraph above forbids -- and,
+    once the three entry lists emptied, would fall out of the `else` still over the bound.
     """
+    branch = facts.get("default_branch") or {}
     while len(json.dumps(facts, sort_keys=True, separators=(",", ":"))) > MAX_FACT_BYTES:
-        for entries in (facts["exceptions"], facts["caveats"], facts["findings"]):
+        for entries in (
+            branch.get("passing") or [],
+            branch.get("in_flight") or [],
+            branch.get("failing") or [],
+            facts["exceptions"],
+            facts["caveats"],
+            facts["findings"],
+        ):
             if entries:
                 entries.pop()
                 break
@@ -790,6 +937,23 @@ def audit_observation(audit: RepoAudit, pass_id: str, observed_at: datetime) -> 
             "repository": audit.repository,
             "rule_revision": audit.rule_revision,
             "unavailable": audit.unavailable,
+            # DETECTOR C'S ANSWER, RECORDED WHATEVER IT IS -- including the three answers that are
+            # not findings. That is the point of putting it here rather than in `caveats`: a
+            # caveat prints a line every night for every repository whose tip nothing has decided
+            # on yet, which under the current arming identity is the ordinary state, and a report
+            # known to be noise is one a real finding arrives inside. `null` means the branch
+            # could not be asked, which `unavailable` beside it already says is not a pass.
+            "default_branch": (
+                None
+                if audit.branch is None
+                else {
+                    "commit": audit.branch.commit,
+                    "state": audit.branch.state,
+                    "failing": list(audit.branch.failing[:MAX_LIST]),
+                    "passing": list(audit.branch.passing[:MAX_LIST]),
+                    "in_flight": list(audit.branch.in_flight[:MAX_LIST]),
+                }
+            ),
             "landings_audited": audit.landings_audited,
             "rule_permitted_landings": audit.permitted_landings,
             "factory_landings": audit.factory_landings,
@@ -828,6 +992,10 @@ def audit_observation(audit: RepoAudit, pass_id: str, observed_at: datetime) -> 
             f"{audit.permitted_landings} rule-permitted landing(s), "
             f"{audit.factory_landings} factory landing(s) and "
             f"{audit.pending_audited} open update(s)"
+            # The branch state belongs in the SUMMARY as well as the facts, because the summary is
+            # what a person reads in a listing. `unread` rather than an omission: a missing clause
+            # would read as a state nobody thought to print.
+            + f"; default branch {audit.branch.state if audit.branch else 'unread'}"
             + (" [UNAVAILABLE]" if audit.unavailable else "")
         )[:512],
         "facts": facts,

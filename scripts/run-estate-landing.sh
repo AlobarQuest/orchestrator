@@ -77,6 +77,16 @@ else
 fi
 activate_checkout "$REPO_ROOT" "$0" "$@"
 
+# THE DEAD-MAN SWITCH. `launchd` discards this script's exit code, so the codes documented above
+# reach nobody: a pass that stops running, or that fails every night, is silent. Armed AFTER
+# activation, because `activate_checkout` may `exec` and an `exec` does not fire an EXIT handler.
+# It reports and never gates -- every failure inside it logs a line and returns 0. Note this lane
+# runs FOUR times a night and the check is scheduled to expect all four: a single missed window is
+# a lane that half-stopped, which is the thing worth hearing about.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-deadman.sh"
+sds_deadman_arm sds-estate-landing "$@"
+
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,

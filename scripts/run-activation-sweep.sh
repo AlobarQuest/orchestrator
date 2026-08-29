@@ -138,6 +138,14 @@ else
   activate_checkout "$REPO_ROOT" "$0" "$@"
 fi
 
+# THE DEAD-MAN SWITCH. `launchd` discards this script's exit code, so the codes documented above
+# reach nobody: a pass that stops running, or that fails every morning, is silent. Armed AFTER
+# activation, because `activate_checkout` may `exec` and an `exec` does not fire an EXIT handler.
+# It reports and never gates -- every failure inside it logs a line and returns 0.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-deadman.sh"
+sds_deadman_arm sds-activation-sweep "$@"
+
 # Load BWS_ACCESS_TOKEN from the Keychain via the approved helper (never a plaintext file). ONE
 # identity: the three secrets this sweep's siblings juggle are not needed here, because it reads
 # only local git and speaks only to the orchestrator.
