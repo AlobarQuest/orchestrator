@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from landing_ledger import audit as audit_module
 from landing_ledger.audit import (
     BRANCH_NOT_GREEN,
     CAVEAT_NO_RULE_INSTALLED,
@@ -407,6 +408,45 @@ def test_the_exempt_population_is_exactly_six_named_landings() -> None:
             ("AlobarQuest/security-standards", "3a60adc6af3d42b0045bd6fb2b5222719bfb1f31"),
         }
     )
+
+
+def test_no_reported_kind_is_a_substring_of_another() -> None:
+    """THE REPORT IS READ BY SUBSTRING, so a kind that CONTAINS another is a broken discriminator.
+
+    `test_audit_pass.py` proves the sibling exception is not a suppression with a PAIR of
+    assertions over one `json.dumps` report -- the stall kind absent on one pass, present on the
+    next -- and an operator greps the nightly report the same way. A first draft spelled this
+    increment's exception `update_metadata_unreadable_at_recording`, which contains
+    `STALL_METADATA_UNREADABLE` verbatim: it would satisfy the second assertion on its own name and
+    break the first for a reason that has nothing to do with what it tests. Asserted over the whole
+    vocabulary rather than the one pair, because the next collision will be somewhere else.
+
+    ONE PAIR IS EXEMPT AND IT IS DEBT, NOT A JUSTIFICATION. `rule_revision_unknown` (detector A)
+    is contained in `current_rule_revision_unknown` (detector B), which predates this change and
+    was found BY this control on its first run. Renaming a reported kind changes what an operator
+    greps for, so it is outside this change's subject and is reported rather than done. The
+    exemption is a named pair: any OTHER collision, including a new one involving either of these
+    two, still reds.
+    """
+    known_debt = ("rule_revision_unknown", "current_rule_revision_unknown")
+    kinds_reported = sorted(
+        value
+        for name, value in vars(audit_module).items()
+        if isinstance(value, str)
+        and name.isupper()
+        and name.split("_")[0] in {"DRIFT", "STALL", "EXCEPTION", "CAVEAT", "FACTORY", "BRANCH"}
+        and not name.endswith(("_CONCLUSIONS", "_ROLE", "_STATUSES"))
+    )
+
+    assert len(kinds_reported) == len(set(kinds_reported))
+    collisions = sorted(
+        (kind, other)
+        for kind in kinds_reported
+        for other in kinds_reported
+        if kind != other and kind in other
+    )
+
+    assert collisions == [known_debt]
 
 
 def test_a_non_string_subject_matches_nothing_rather_than_raising() -> None:

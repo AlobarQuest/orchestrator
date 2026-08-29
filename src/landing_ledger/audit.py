@@ -207,7 +207,14 @@ EXCEPTION_UPDATE_TYPE_UNPARSEABLE = "update_type_unparseable"
 # the reader discarded a requirement range's own trailer: the row is immutable and content-
 # addressed, so the three update keys it lacks can never arrive and the finding it would otherwise
 # raise can never clear. A certainty about the subject, which is what separates it from a caveat.
-EXCEPTION_METADATA_UNREADABLE_AT_RECORDING = "update_metadata_unreadable_at_recording"
+#
+# ITS VALUE IS DELIBERATELY NOT A SUPERSTRING OF `STALL_METADATA_UNREADABLE`. A first draft spelled
+# it `update_metadata_unreadable_at_recording`, which CONTAINS the stall finding's own kind -- and
+# both are printed into one report that `test_audit_pass.py` asserts on by substring, and that an
+# operator greps by substring. The pair of assertions there (the stall kind ABSENT on one pass,
+# PRESENT on the next) is the discriminator proving the sibling exception is not a suppression, and
+# a superstring silently satisfies the second while breaking the first for an unrelated reason.
+EXCEPTION_METADATA_UNREADABLE_AT_RECORDING = "update_metadata_absent_at_recording"
 
 # A caveat qualifies the audit's own evidence; it is not an assertion that anything is wrong, and
 # it does not drive the exit status. It is still recorded, so it cannot be lost by being quiet.

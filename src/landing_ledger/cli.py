@@ -131,6 +131,17 @@ def record_landings(
         # exits 3 every night for as long as they sit inside the window. There is no route to
         # correcting the rows and none is wanted, so the honest act is not to attempt the write.
         # Skipped under `--dry-run` too: a dry run must describe what a real pass would do.
+        #
+        # THE PREMISE IS "ALREADY STORED", AND IT WAS MEASURED RATHER THAN ASSUMED. Skipping a row
+        # that is NOT stored would suppress a write that would have succeeded, so the premise is
+        # load-bearing: all six were read back from production on 2026-08-29 with their stored
+        # `permitted_by` contents, and an observation has no delete route, so nothing can unmake
+        # them. What could falsify it is a database restored from before 2026-08-28 -- and only
+        # while these commits remain inside the pass's `--days` lookback, which for landings of
+        # 2026-08-28 ends around 2026-09-27, after which `landing_shas` never yields them and this
+        # branch matches nothing ever again. In that world the ledger has lost its whole history
+        # and six rows are the least of what is missing, so the check is deliberately not built:
+        # it would make "audit this repository" assert a global property of the ledger.
         if is_known_defective_metadata_landing(repository, sha):
             summary["exempt"] += 1
             continue
