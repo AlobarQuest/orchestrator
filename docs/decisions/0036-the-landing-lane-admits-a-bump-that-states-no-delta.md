@@ -123,3 +123,67 @@ same exposure already accepted for patch and minor, at a larger blast radius.
 - **`brain`'s acceptance criteria are transcribed in two repositories** — change-manager's policy
   and the orchestrator's `deploy_watcher/workflows.py` — and compared literally. This change touches
   neither, and must not.
+
+## How it was built, and three things the spec had wrong
+
+Recorded by the build session, 2026-08-30. The decision above is unchanged; what follows is what
+implementing it established.
+
+### The orchestrator half needs a DEPLOY, and the brief said `git pull`
+
+`estate_lander` composes nothing — its own docstring says *"Every term lives inside the
+orchestrator"* — and `estate_lander/orchestrator_client.py` calls
+`https://sds.alobar.net/api/v1/estate-pr-merge-admission`. So the admission terms run in the
+**deployed image**, and `git pull` in the checkout activates only the relay, which this change does
+not touch. The failure shape of getting this wrong is quiet: an inert orchestrator leaves the five
+refused on `landing_update_type_unparseable`, which is in the lander's `_EXCEPTION` set, so the
+nightly control exits 0 and reports nothing. That is the 2026-08-16 episode, in this same lane.
+
+**Verify the deploy by asking production what it SERVES**, not by health or digest — neither can
+see a missing field.
+
+### The two repositories must ship in one ORDER, and it is not "close together"
+
+`change-manager` redeploys on merge, so merging it IS serving version 5. The order is: merge the
+orchestrator, build and deploy it, verify, and only then merge change-manager. The reverse leaves
+the previous image reading a shape it may not understand, and this version is built so that even
+that is survivable — see the floor below — but the ordering is what makes it a non-event rather
+than a bounded incident.
+
+### The grant is carried by ONE new served field, and the old one stays
+
+`LandingConditions` gains `excluded_ecosystems`, and its PRESENCE is the grant: a version that
+serves it decides on the outcome, one that does not decides by update type. That is why the
+orchestrator's two update-type refusals are not dead code — every retained policy version still
+declares that rule, and the reader is served those shapes whenever it runs ahead of the party
+holding the policy, and after any rollback of it.
+
+`update_types` is still served under version 5, as an **empty list**. Dropping it would make the
+previous build unable to parse the conditions at all (`_conditions` answers `None`, which becomes
+`landing_conditions_unreadable` and refuses every record in both repositories); keeping it
+well-typed and empty keeps the shape readable and permits nothing under it, which is the right
+answer for a reader that cannot see this version's rule. It is a floor for that reader, not a
+statement that version 5 permits no delta.
+
+### The exclusion is provable only synthetically, and that is a fact about the population
+
+Neither repository declares the `github_actions` ecosystem in `.github/dependabot.yml` — both
+configs say *"github-actions is intentionally omitted"* — nor `docker`. So no workflow-automation
+bump can arise in this lane today, and the refused direction is a unit-level proof rather than a
+live one. The ADR's first ground was measured on a live subject instead: `brain#53`'s CI run shows
+`test=success`, `build-and-push=skipped`, `deploy=skipped`, and `change-manager`'s rollout workflow
+produces no run on a pull request head at all.
+
+The exclusion is read from the second segment of the update bot's branch name, which is the same
+fact the estate's landing ledger reads. Spelled with an **underscore**: the ledger transcribes a
+gate revision that compared the hyphenated form and therefore permitted nothing, silently, and both
+repositories now pin the spelling with a test.
+
+### The queue drains over three nights, not two
+
+The pace term is one landing per repository per OCCURRENCE of the window, and the window is one
+occurrence per night. `brain` holds three of the five, so it needs three nights; `change-manager`
+needs two. Four of the five are also behind their base, and the branch-update pass clears that —
+which changes the nightly exit code before it empties the queue. Expect the control to report
+FINDINGS (exit 3) on the first night or two: a pull request refused on freshness alone, with no
+exception beside it, is a finding by design. That is the lane working, not breaking.

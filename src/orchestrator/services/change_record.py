@@ -319,9 +319,16 @@ def _conditions(row: dict[str, Any]) -> LandingConditions | None:
     pins = served.get("rollout_workflows")
     if not isinstance(pins, dict):
         return None
-    excluded = _excluded_ecosystems(served)
-    if excluded is _UNREADABLE:
-        return None
+    # ADR-0036. ABSENT and MALFORMED are different facts about this key and only one is
+    # survivable. Absent is a server that predates the outcome rule, read as the rule it does
+    # declare -- which is what makes the two repositories shippable in either order. Malformed is
+    # a shape nobody can act on, and refuses the whole conditions exactly as a malformed pin does.
+    excluded: frozenset[str] | None = None
+    if "excluded_ecosystems" in served:
+        names = served["excluded_ecosystems"]
+        if not isinstance(names, list) or not all(isinstance(n, str) and n for n in names):
+            return None
+        excluded = frozenset(names)
     parsed: dict[str, WorkflowPin] = {}
     for repository, pin in pins.items():
         if not isinstance(repository, str) or not isinstance(pin, dict):
@@ -335,30 +342,8 @@ def _conditions(row: dict[str, Any]) -> LandingConditions | None:
         update_types=frozenset(update_types),
         require_head_current_with_base=fresh,
         rollout_workflows=parsed,
-        excluded_ecosystems=excluded,  # type: ignore[arg-type]
+        excluded_ecosystems=excluded,
     )
-
-
-# A third answer, because ABSENT and MALFORMED are different facts about this key and only one of
-# them is survivable. Absent is a server that predates ADR-0036 and is read as the rule it does
-# declare; malformed is a shape nobody can act on, which refuses the whole record exactly as a
-# malformed pin does.
-_UNREADABLE: Final = object()
-
-
-def _excluded_ecosystems(served: dict[str, Any]) -> frozenset[str] | None | object:
-    """Which ecosystems the outcome rule excludes, `None` for a version that does not use it.
-
-    Tolerating the absent key is what makes the two repositories shippable in either order: this
-    reader meets a server serving the older shape whenever it is deployed first, and must answer
-    about that shape rather than refusing it.
-    """
-    if "excluded_ecosystems" not in served:
-        return None
-    value = served["excluded_ecosystems"]
-    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
-        return _UNREADABLE
-    return frozenset(value)
 
 
 def _qualifiers(
