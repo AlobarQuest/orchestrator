@@ -168,11 +168,44 @@ def gate_armed(landing: Landing) -> bool:
 
     A step conclusion of `success` and nothing else. `skipped` is the cascade DECLINING, which is
     the rule working correctly on an update it does not reach, and reading it as armed would make
-    the basis mean "a gate ran" rather than "a gate permitted this". None is the step not being
-    found at all, which is not an arming either -- but the two are kept apart in the record, and
-    `basis_of` treats an untranscribed revision separately from both.
+    the basis mean "a gate ran" rather than "a gate permitted this".
+
+    ASK `arm_question_answered` FIRST. This says what the arming step DID, and it is only
+    meaningful once something is known to have been observed; on its own it cannot tell a gate
+    that declined from a question nobody managed to ask.
     """
     return landing.rule is not None and landing.rule.arm_outcome == "success"
+
+
+def arm_question_answered(landing: Landing) -> bool:
+    """Whether this program actually learned what the gate's arming step did.
+
+    THREE THINGS ARRIVE AS `arm_outcome is None` AND NONE OF THEM IS "THE GATE DECLINED". The
+    revision is not transcribed, so there was no step name to look for; the gate run's jobs could
+    not be read; or a step of that name is not in the run at all. A decline is `skipped`, which is
+    a positive observation and is not this.
+
+    THE THIRD IS THE ONE THAT MAKES THIS NECESSARY RATHER THAN TIDY, and it is reachable today.
+    `_gate_revision` pins the gate as it stands AT THE LANDING COMMIT, which is not necessarily
+    the revision that RAN -- `audit.py` already carries `rule_self_modified` for that mismatch.
+    Across a revision that RENAMES the arming step, a pull request opened before the rename and
+    landed after it therefore carries a transcription describing a different revision's step, and
+    the run does not contain it. The name has changed twice in eight revisions, so this is a
+    boundary the estate has crossed and will cross again. Reading that as "not armed" would drop
+    a genuinely armed machine landing to `unattributed` -- which `audit_landing` returns early on,
+    so it would be wrong AND invisible, which is the worse half.
+
+    So an unanswered question keeps the answer the ledger gave before ADR-0037 rather than
+    inventing a colder one, and the landing stays where a detector can still look at it.
+
+    THE TRANSCRIPTION CLAUSE IS NOT REDUNDANT WITH THE OTHER TWO. `_arm_outcome` declines to ask
+    about an untranscribed revision, so in production the two coincide -- but what makes an arm
+    observation interpretable at all is that a human transcribed which step to read, and stating
+    that here keeps the rule where the judgment is rather than in the reader that happens to
+    implement it today.
+    """
+    rule = landing.rule
+    return rule is not None and rule.arm_outcome is not None and rule_for(rule.revision) is not None
 
 
 def basis_of(landing: Landing) -> str:
@@ -193,15 +226,17 @@ def basis_of(landing: Landing) -> str:
     and the named checks had already verified it, so the record loses nothing by saying so.
     `landed_by` is still recorded; it is no longer what the basis is gated on.
 
-    AN UNTRANSCRIBED REVISION FALLS BACK TO THE OLD CONJUNCT, AND THAT IS NOT TIMIDITY.
+    AN UNANSWERED ARM QUESTION FALLS BACK TO THE OLD CONJUNCT, AND THAT IS NOT TIMIDITY.
     `audit_landing` returns nothing at all for any basis but this one, so `DRIFT_RULE_UNKNOWN`
     -- the finding that says a rule nobody classified decided a landing -- is reachable ONLY
-    through `auto_merge_rule`. Without a registry entry there is no step name to look for, so
+    through `auto_merge_rule`. An untranscribed revision has no step name to look for, so
     `arm_outcome` is None for a landing that may well have been armed; letting that drop to
     `unattributed` would delete the finding rather than raise it, which is the fail-open this
-    change exists near. So where the arm question cannot be asked, the basis answers exactly what
-    it answered before, and the landing still reaches the detector that says the revision is
-    unknown. The new behaviour is therefore scoped precisely to revisions the registry knows.
+    change exists near. The same is true of the two other ways the question goes unanswered --
+    see `arm_question_answered`, where the reachable one is spelled out. So where nothing was
+    learned, the basis answers exactly what it answered before, and the landing still reaches the
+    detectors that read it. The new behaviour is scoped precisely to landings whose arming step
+    this program actually observed.
 
     THE `outcome == "success"` CONJUNCT IS KEPT AND IS NOT REDUNDANT. A run can conclude
     `cancelled` after its arming step has already succeeded, which is a landing whose gate did not
@@ -250,9 +285,7 @@ def basis_of(landing: Landing) -> str:
         landing.rule is not None
         and landing.rule.outcome == "success"
         and (
-            gate_armed(landing)
-            if rule_for(landing.rule.revision) is not None
-            else is_machine(landing.landed_by)
+            gate_armed(landing) if arm_question_answered(landing) else is_machine(landing.landed_by)
         )
     ):
         return BASIS_RULE

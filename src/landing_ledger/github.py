@@ -338,12 +338,22 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
     if gate is not None:
         revision = _gate_revision(reader, repository, landing_sha)
         if revision is not None:
+            outcome = gate.get("conclusion") or "unknown"
             rule = RuleApplication(
                 path=GATE_PATH,
                 revision=revision,
                 run=gate["id"],
-                outcome=gate.get("conclusion") or "unknown",
-                arm_outcome=_arm_outcome(reader, repository, gate["id"], revision),
+                outcome=outcome,
+                # ONLY WHEN THE RUN CONCLUDED CLEANLY, because nothing downstream can use the
+                # answer otherwise: the rule basis requires this same `success` first, so a
+                # request here would be spent on a landing already refused. It matters at this
+                # scale -- the gate workflow runs on EVERY pull request and its job is skipped
+                # for every author but the update bot, which is most landings in most passes.
+                arm_outcome=(
+                    _arm_outcome(reader, repository, gate["id"], revision)
+                    if outcome == "success"
+                    else None
+                ),
             )
     # A squash carries both sets of trailers through verbatim, so the landing commit almost always
     # has them. A true merge commit does not, and neither does a squash in a repository configured

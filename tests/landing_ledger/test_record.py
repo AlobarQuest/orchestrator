@@ -20,6 +20,7 @@ from landing_ledger.record import (
     BASIS_RULE,
     BASIS_UNATTRIBUTED,
     MAX_FACT_BYTES,
+    arm_question_answered,
     basis_of,
     gate_armed,
     landing_observation,
@@ -238,7 +239,6 @@ def test_the_rule_basis_needs_both_halves_and_is_never_rounded_down() -> None:
     """
     assert basis_of(gate_landing(rule=None)) == BASIS_UNATTRIBUTED
     assert basis_of(gate_landing(rule=_rule(arm_outcome="skipped"))) == BASIS_UNATTRIBUTED
-    assert basis_of(gate_landing(rule=_rule(arm_outcome=None))) == BASIS_UNATTRIBUTED
     # The run itself failed while the arming step had already succeeded. Reachable -- a run is
     # cancelled after its last step concludes -- and the conjunct that refuses it is separate.
     assert basis_of(gate_landing(rule=_rule(outcome="cancelled"))) == BASIS_UNATTRIBUTED
@@ -267,16 +267,49 @@ def test_an_armed_landing_merged_by_a_machine_is_unchanged() -> None:
     assert basis_of(gate_landing()) == BASIS_RULE
 
 
-def test_a_skipped_arming_step_is_the_cascade_DECLINING_and_is_not_an_absent_one() -> None:
-    """`skipped` is the gate's `if:` excluding this update -- the rule working, not failing. Both
-    it and an absent step refuse the basis, and a reader must still be able to tell them apart:
-    one is routine and the other means the registry named a step the run did not contain."""
-    declined = gate_landing(rule=_rule(arm_outcome="skipped"))
-    missing = gate_landing(rule=_rule(arm_outcome=None))
+def test_a_skipped_arming_step_is_the_cascade_DECLINING_and_an_absent_one_is_not_an_answer() -> (
+    None
+):
+    """The two must not be collapsed, and the basis is where the difference shows.
 
-    assert basis_of(declined) == basis_of(missing) == BASIS_UNATTRIBUTED
-    assert declined.rule is not None and missing.rule is not None
-    assert declined.rule.arm_outcome != missing.rule.arm_outcome
+    `skipped` is the gate's `if:` excluding this update -- a positive observation that the rule
+    declined, so the landing loses the rule basis. An ABSENT step is not an observation at all:
+    nobody learned what the gate did, so the basis keeps the answer it had before ADR-0037 rather
+    than inventing a colder one. Reading absent as "declined" would drop a genuinely armed machine
+    landing to `unattributed`, where `audit_landing` returns early and no detector looks again.
+    """
+    declined = gate_landing(rule=_rule(arm_outcome="skipped"))
+    unanswered = gate_landing(rule=_rule(arm_outcome=None))
+
+    assert basis_of(declined) == BASIS_UNATTRIBUTED
+    assert basis_of(unanswered) == BASIS_RULE
+    assert arm_question_answered(declined)
+    assert not arm_question_answered(unanswered)
+
+
+def test_an_unanswered_arm_question_keeps_a_HUMAN_merge_human() -> None:
+    """The fallback is today's answer, not a free pass. It restores the login conjunct, so an
+    unanswered question on a person's merge stays `human` exactly as it did before."""
+    assert basis_of(gate_landing(rule=_rule(arm_outcome=None), landed_by="AlobarQuest")) == (
+        BASIS_HUMAN
+    )
+
+
+def test_a_renamed_arming_step_does_not_quietly_unattribute_an_armed_landing() -> None:
+    """The reachable case behind the fallback, spelled as the sequence that produces it.
+
+    The ledger pins the gate AT THE LANDING COMMIT, which need not be the revision that RAN --
+    `audit.py` already carries `rule_self_modified` for that mismatch. A pull request opened
+    before a revision that RENAMES the arming step and landed after it therefore carries a
+    transcription describing a different revision's step, and the run does not contain it. That
+    is `arm_outcome is None` on a landing the gate really did arm, and reading it as a decline
+    would be wrong AND invisible.
+    """
+    renamed_away = gate_landing(rule=_rule(arm_outcome=None))
+
+    assert renamed_away.rule is not None
+    assert rule_for(renamed_away.rule.revision) is not None
+    assert basis_of(renamed_away) == BASIS_RULE
 
 
 def test_gate_armed_is_success_and_nothing_else() -> None:
@@ -298,8 +331,11 @@ def test_an_untranscribed_revision_keeps_todays_answer_so_the_audit_still_sees_i
     raise it. So an unknown revision answers exactly what it answered before ADR-0037, and the
     landing still reaches the detector that reports the revision is unknown.
     """
+    # Carries an arm outcome that WOULD refuse the basis, so this pins the transcription clause
+    # itself rather than coinciding with the absent-step one: what makes an arm observation
+    # interpretable is that a human said which step to read for these exact bytes.
     unknown = RuleApplication(
-        path=GATE, revision=UNTRANSCRIBED, run=31179223805, outcome="success", arm_outcome=None
+        path=GATE, revision=UNTRANSCRIBED, run=31179223805, outcome="success", arm_outcome="skipped"
     )
 
     assert rule_for(UNTRANSCRIBED) is None

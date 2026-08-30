@@ -450,6 +450,42 @@ def test_that_control_would_have_caught_a_fetch_that_did_go_out() -> None:
         read_landing(reader, REPO, "main", "e931db8d")
 
 
+def test_a_gate_run_that_did_not_conclude_cleanly_is_not_asked_about() -> None:
+    """The request is spent only where its answer can be used.
+
+    The rule basis requires the gate RUN to have concluded `success` before it looks at the step,
+    so a run that did not is refused whatever its steps report -- and the gate workflow runs on
+    every pull request while its job is skipped for every author but the update bot, which is most
+    landings in most passes. Discriminated the same way as the untranscribed case: the jobs route
+    answers 500, which the reader raises on, so a fetch that went out would surface.
+    """
+    gate_jobs = f"/repos/{REPO}/actions/runs/31179223805/jobs"
+    routes = gate_routes(
+        **{
+            f"/repos/{REPO}/actions/runs": {
+                "workflow_runs": [
+                    _run(31179223805, GATE, "pull_request", "2026-08-07T12:41:11Z", "skipped"),
+                    _run(31179223856, "q.yml", "pull_request", "2026-08-07T12:42:02Z", "success"),
+                ]
+            }
+        }
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == gate_jobs:
+            return httpx.Response(500, json=None)
+        if request.url.path not in routes:
+            return httpx.Response(404, json=None)
+        return httpx.Response(200, json=routes[request.url.path])
+
+    reader = GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
+    landing = read_landing(reader, REPO, "main", "e931db8d")
+
+    assert landing.rule is not None
+    assert landing.rule.outcome == "skipped"
+    assert landing.rule.arm_outcome is None
+
+
 def test_the_record_takes_the_full_sha_from_github_not_the_argument() -> None:
     """An abbreviated argument would otherwise become the landing's identity, and two spellings
     of one landing are two rows that never dedup."""
