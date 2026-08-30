@@ -652,8 +652,16 @@ def _pull_from_body(body: dict[str, Any], number: int) -> EstatePullRequest:
     base_ref = base.get("ref")
     default_branch = repo.get("default_branch")
     head_sha = head.get("sha")
+    # ADR-0036. The branch name, which is where the update bot states the ecosystem an exclusion is
+    # keyed on. REQUIRED like the others rather than defaulted: a body with no head ref is a body
+    # this reader does not recognise, and defaulting it to an empty string would hand the exclusion
+    # a name it can never read, which the caller then has to treat as a refusal anyway -- one
+    # refusal naming the wrong cause instead of the one that says the answer was unreadable.
+    head_ref = head.get("ref")
     title = body.get("title")
-    if not all(isinstance(v, str) and v for v in (base_ref, default_branch, head_sha, title)):
+    if not all(
+        isinstance(v, str) and v for v in (base_ref, default_branch, head_sha, head_ref, title)
+    ):
         raise EstateGatewayError("read_response_invalid")
     login = user.get("login")
     return EstatePullRequest(
@@ -661,6 +669,7 @@ def _pull_from_body(body: dict[str, Any], number: int) -> EstatePullRequest:
         title=str(title),
         head_sha=str(head_sha),
         base_ref=str(base_ref),
+        head_ref=str(head_ref),
         default_branch=str(default_branch),
         open=body.get("state") == "open",
         landed=bool(body.get("merged")),

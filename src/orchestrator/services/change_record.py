@@ -93,6 +93,17 @@ class LandingConditions:
     update_types: frozenset[str]
     require_head_current_with_base: bool
     rollout_workflows: Mapping[str, WorkflowPin]
+    # ADR-0036. WHICH RULE THIS VERSION DECIDES BY, carried as the presence of the field rather
+    # than as a second flag beside it. `None` means the version served no such key, which is every
+    # version before the fifth: those decide by `update_types`, and a reader that guessed otherwise
+    # would widen an approval nobody granted. A frozenset -- empty or not -- means the version
+    # decides on the OUTCOME, and names the ecosystems its required checks do not exercise.
+    #
+    # ABSENCE FALLS TOWARD THE STRICTER RULE, deliberately. The two sides of this contract ship
+    # separately, so a reader that has learned the outcome rule will meet a server that has not,
+    # and the only safe reading of "this version said nothing about it" is the rule that version
+    # actually declared.
+    excluded_ecosystems: frozenset[str] | None = None
 
     def pin_for(self, repository: str) -> WorkflowPin | None:
         """The pin for a repository, matched case-insensitively as its identity key is.
@@ -308,6 +319,9 @@ def _conditions(row: dict[str, Any]) -> LandingConditions | None:
     pins = served.get("rollout_workflows")
     if not isinstance(pins, dict):
         return None
+    excluded = _excluded_ecosystems(served)
+    if excluded is _UNREADABLE:
+        return None
     parsed: dict[str, WorkflowPin] = {}
     for repository, pin in pins.items():
         if not isinstance(repository, str) or not isinstance(pin, dict):
@@ -321,7 +335,30 @@ def _conditions(row: dict[str, Any]) -> LandingConditions | None:
         update_types=frozenset(update_types),
         require_head_current_with_base=fresh,
         rollout_workflows=parsed,
+        excluded_ecosystems=excluded,  # type: ignore[arg-type]
     )
+
+
+# A third answer, because ABSENT and MALFORMED are different facts about this key and only one of
+# them is survivable. Absent is a server that predates ADR-0036 and is read as the rule it does
+# declare; malformed is a shape nobody can act on, which refuses the whole record exactly as a
+# malformed pin does.
+_UNREADABLE: Final = object()
+
+
+def _excluded_ecosystems(served: dict[str, Any]) -> frozenset[str] | None | object:
+    """Which ecosystems the outcome rule excludes, `None` for a version that does not use it.
+
+    Tolerating the absent key is what makes the two repositories shippable in either order: this
+    reader meets a server serving the older shape whenever it is deployed first, and must answer
+    about that shape rather than refusing it.
+    """
+    if "excluded_ecosystems" not in served:
+        return None
+    value = served["excluded_ecosystems"]
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        return _UNREADABLE
+    return frozenset(value)
 
 
 def _qualifiers(

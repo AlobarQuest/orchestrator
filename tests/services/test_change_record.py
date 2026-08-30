@@ -408,6 +408,98 @@ def test_a_qualifier_of_the_wrong_type_is_no_answer_rather_than_an_absent_one(
     assert answer.reason == SOURCE_UNREADABLE
 
 
+# ADR-0036. The conditions deploy policy VERSION 5 serves, generated from change-manager's own
+# `landing_conditions_dict(V5)` on 2026-08-30 and pasted here rather than derived from anything in
+# this tree. That is the point of the fixture: a payload built FROM this repository's parser proves
+# the parser reads itself, and says nothing about whether the two sides agree.
+V5_CONDITIONS: dict = {
+    "excluded_ecosystems": ["github_actions"],
+    "rationale": "…",
+    "require_head_current_with_base": True,
+    "rollout_workflows": {
+        "alobarquest/brain": {
+            "blob_sha": "c5c088719cd340f0071b875c6a82439292ed8756",
+            "path": ".github/workflows/ci.yml",
+        },
+        "alobarquest/change-manager": {
+            "blob_sha": "a47d4b187c93971a5b5915ce87a963bd4ef35e30",
+            "path": ".github/workflows/deploy.yml",
+        },
+    },
+    "update_types": [],
+}
+
+
+def test_the_version_five_conditions_round_trip() -> None:
+    """The served shape parses, which is not a formality: `_conditions` answering None is a
+    SILENT full-lane refusal -- every record in both repositories, reported as unreadable
+    conditions rather than as anything about the change."""
+    conditions = _read(
+        [_served_row(landing_policy_version=5, landing_conditions=V5_CONDITIONS)]
+    ).record.conditions  # type: ignore[union-attr]
+
+    assert conditions is not None
+    assert conditions.version == 5
+    assert conditions.excluded_ecosystems == frozenset({"github_actions"})
+    assert conditions.update_types == frozenset()
+    assert conditions.require_head_current_with_base is True
+    pin = conditions.pin_for("AlobarQuest/brain")
+    assert pin is not None and pin.blob_sha == "c5c088719cd340f0071b875c6a82439292ed8756"
+
+
+def test_conditions_that_name_no_excluded_set_are_the_OLDER_RULE_and_not_a_refusal() -> None:
+    """The row every version before the fifth serves, and the reason this reader tolerates it.
+
+    The two sides of this contract ship separately, so this build runs against a server that
+    predates ADR-0036 whenever it is deployed first -- and after any rollback of that server.
+    `None` here selects the rule that version actually declared. Refusing instead would take the
+    whole lane down for having learned a newer rule than the party holding the policy.
+    """
+    conditions = _read([_served_row()]).record.conditions  # type: ignore[union-attr]
+
+    assert conditions is not None
+    assert conditions.excluded_ecosystems is None
+    assert conditions.update_types == frozenset({"semver-minor", "semver-patch"})
+
+
+@pytest.mark.parametrize(
+    "excluded",
+    ["github_actions", {"github_actions": True}, ["github_actions", 1], [""], [None], 5],
+    ids=["string", "dict", "mixed-list", "empty-member", "none-member", "int"],
+)
+def test_a_malformed_excluded_set_refuses_the_whole_conditions(excluded: object) -> None:
+    """ABSENT and MALFORMED are different facts and only one of them is survivable.
+
+    A shape nobody can act on must not degrade to the nearest recognisable one: reading a
+    malformed exclusion as "no exclusion" would silently restore the older rule, which is the
+    permissive direction for four of these six -- a landing party would then decide by update
+    type under a version that does not, and land a workflow-automation bump the exclusion names.
+    """
+    row = _served_row(
+        landing_policy_version=5,
+        landing_conditions={**V5_CONDITIONS, "excluded_ecosystems": excluded},
+    )
+
+    assert _read([row]).record.conditions is None  # type: ignore[union-attr]
+
+
+def test_an_EMPTY_excluded_set_is_the_outcome_rule_excluding_nothing() -> None:
+    """Empty is a real value and is not absence, which is the distinction the reader is built on.
+
+    No version serves it today. It is asserted because the two answers differ in what RULE
+    applies, not merely in how much they permit -- so a reader that folded empty into absent
+    would apply the update-type rule to a version that decides on the outcome.
+    """
+    row = _served_row(
+        landing_policy_version=5,
+        landing_conditions={**V5_CONDITIONS, "excluded_ecosystems": []},
+    )
+    conditions = _read([row]).record.conditions  # type: ignore[union-attr]
+
+    assert conditions is not None
+    assert conditions.excluded_ecosystems == frozenset()
+
+
 def test_the_landing_conditions_are_read_from_the_served_row() -> None:
     conditions = _read([_served_row()]).record.conditions  # type: ignore[union-attr]
 

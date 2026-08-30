@@ -232,8 +232,31 @@ LANDING_FRESHNESS_UNREADABLE: Final = "landing_freshness_unreadable"
 #
 # A requirement-RANGE bump carries no parseable delta and is refused for want of one. That is the
 # intended answer and not a parser defect.
+#
+# **RAISED ONLY UNDER A POLICY VERSION THAT DECIDES BY UPDATE TYPE**, which is every version before
+# the fifth (ADR-0036). They are not dead under the fifth: the two repositories in this contract
+# ship separately and the served conditions say which rule applies, so a version predating the
+# outcome rule is what this reader meets whenever it is deployed ahead of the server -- and after
+# any rollback of it.
 LANDING_UPDATE_TYPE_UNPARSEABLE: Final = "landing_update_type_unparseable"
 LANDING_UPDATE_TYPE_NOT_PERMITTED: Final = "landing_update_type_not_permitted"
+
+# ADR-0036, and raised only under a version that decides on the OUTCOME. The exclusion is not a
+# statement about how large a change is; it names the ecosystems whose changes the required checks
+# on a pull request do not exercise. On a repository where landing changes something already
+# serving, the rollout job is gated on a push to the default branch and runs on no pull request at
+# all, so a bump reaching it would be exercised for the first time by the very rollout it gates.
+#
+# UNREADABLE IS ITS OWN ANSWER AND REFUSES. The ecosystem is the second segment of the update
+# bot's branch name, which every pull request it opens carries -- so a name this cannot read is
+# never "the bot named no ecosystem". It is this program failing to read what the exclusion is
+# about, and permitting on that would land a change whose exclusion nobody can re-check. The
+# estate's landing ledger reaches the same conclusion about the same fact, for the same reason.
+LANDING_ECOSYSTEM_EXCLUDED: Final = "landing_ecosystem_excluded"
+LANDING_ECOSYSTEM_UNREADABLE: Final = "landing_ecosystem_unreadable"
+
+# The update bot's branch naming, from which the ecosystem is read: `dependabot/<ecosystem>/<rest>`.
+_BRANCH_PREFIX: Final = "dependabot/"
 
 # Whether the rollout this landing would cause is still the one the record's criteria describe.
 LANDING_ROLLOUT_UNPINNED: Final = "landing_rollout_unpinned"
@@ -292,6 +315,10 @@ class EstatePullRequest:
     title: str
     head_sha: str
     base_ref: str
+    # The branch this pull request would be squashed FROM, which is where the update bot states
+    # the ecosystem. Carried as the raw ref rather than as a parsed ecosystem so that the one
+    # place that reads it is the one place that decides what an unreadable name means.
+    head_ref: str
     default_branch: str
     open: bool
     landed: bool
@@ -787,7 +814,7 @@ def _remote_terms(
         return _RemoteTerms(_Term(False, tuple(refusals)), pull.head_sha, False)
 
     fresh = _freshness_term(repository, pull, conditions, gateway)
-    kind = _update_type_term(pull, conditions)
+    kind = _bump_term(pull, conditions)
     rollout = _rollout_term(repository, pull, conditions, gateway)
     refusals.extend(fresh.refusals)
     refusals.extend(kind.refusals)
@@ -899,8 +926,75 @@ def _freshness_term(
     return _Term(True, ())
 
 
+def ecosystem_of(head_ref: str) -> str | None:
+    """Which package ecosystem the update bot says this branch belongs to, or None.
+
+    The second segment of `dependabot/<ecosystem>/<rest>`, which is the same fact the estate's
+    landing ledger reads and the same one the update bot's own metadata action derives. Read from
+    the BRANCH rather than from the title, unlike the version delta above, and the two are not in
+    tension: the branch goes stale about the VERSION when the bot rewrites a pull request in place,
+    and it cannot go stale about the ecosystem, because an update never moves between them.
+
+    None for any name that is not that shape. What that means is the caller's to decide, and it
+    decides refuse.
+    """
+    if not head_ref.startswith(_BRANCH_PREFIX):
+        return None
+    rest = head_ref[len(_BRANCH_PREFIX) :]
+    ecosystem, separator, remainder = rest.partition("/")
+    if not separator or not ecosystem or not remainder:
+        return None
+    return ecosystem
+
+
+def _bump_term(pull: EstatePullRequest, conditions: LandingConditions) -> _Term:
+    """May this bump land unattended -- and by WHICH RULE is that asked?
+
+    **THE SERVED CONDITIONS SAY WHICH RULE APPLIES, and nothing here chooses.** A version that
+    names the excluded ecosystems decides on the OUTCOME (ADR-0036); one that names none decides
+    on the version delta, which is every version before the fifth. That is not a transitional
+    courtesy: the party holding the policy and the party evaluating it are different processes
+    shipped separately, so this reader meets both shapes in production and must answer about the
+    version actually in force rather than about the one it was written alongside.
+
+    ## Why the delta stopped deciding
+
+    It never said whether the bump WORKS. Both this lane and the cascade governing the inert half
+    of the estate already gate on the required checks passing; the update-type condition sat on top
+    of that gate and asked a question about the version NUMBER. A requirement range states no delta
+    at all, so no rule about deltas could ever reach one -- and five green pull requests sat
+    unlandable for that reason alone, while a `semver-patch` that broke at runtime would have
+    passed.
+
+    ## Why an exclusion survives, and what it is about
+
+    The outcome rule rests on the required checks having exercised what changed. Where they have
+    not, the outcome says nothing. On these repositories the rollout job is gated on a push to the
+    default branch and runs on no pull request -- visible on every subject as a skipped job beside
+    the passing ones -- so a change reaching it is first exercised by the rollout it is supposed to
+    gate. The excluded set names that, by ecosystem, exactly as the cascade's own exclusion does.
+
+    **It is not the whole of the protection and is not meant to be.** `_rollout_term` compares the
+    pinned workflow's bytes at the head, so a change to that file is refused whatever ecosystem it
+    came from and whoever wrote it. The exclusion reaches what the pin cannot: a workflow this
+    estate runs that no required check executes, whose bytes are not pinned by any record.
+    """
+    if conditions.excluded_ecosystems is None:
+        return _update_type_term(pull, conditions)
+    ecosystem = ecosystem_of(pull.head_ref)
+    if ecosystem is None:
+        return _Term(False, (LANDING_ECOSYSTEM_UNREADABLE,))
+    if ecosystem in conditions.excluded_ecosystems:
+        return _Term(False, (LANDING_ECOSYSTEM_EXCLUDED,))
+    return _Term(True, ())
+
+
 def _update_type_term(pull: EstatePullRequest, conditions: LandingConditions) -> _Term:
     """Is the version delta one the policy permits landing unattended?
+
+    The rule every policy version before the fifth declares, retained because those versions are
+    retained: a record approved under one is judged by what it actually said, and this reader is
+    served that shape whenever it runs ahead of the party holding the policy.
 
     Stricter than the rule governing the repositories where landing is inert, on that rule's own
     reasoning: its premise is that the check gating a bump IS the thing being bumped, so passing

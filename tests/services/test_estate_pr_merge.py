@@ -25,6 +25,7 @@ from orchestrator.services.estate_pr_merge import (
     POLICY_VERSION_TRAILER,
     EstateMergeCommand,
     MergeOutcome,
+    _pull_from_body,
     land_estate_pull_request,
 )
 from orchestrator.services.lifecycle import ActorContext
@@ -508,3 +509,55 @@ def test_a_failure_AFTER_the_send_is_still_recorded_when_it_cannot_be_ruled_out(
     assert _land(migrated_session, gateway).status == "refused"
     with Session(migrated_engine) as reader:
         assert reader.scalar(select(EstatePrMerge)) is not None
+
+
+# ---------------------------------------------------------------------------
+# What the remote's own body reads as. ADR-0036 added a field to this shape, and a field a
+# service composes and another parses is a boundary no service-level test crosses: every case in
+# this module injects an `EstatePullRequest` that was built by hand, so the one place the wire
+# shape is turned into that object is reached by nothing above.
+# ---------------------------------------------------------------------------
+
+
+def _wire_body(**overrides: object) -> dict:
+    """One pull request as GitHub serves it, projected to the fields this reader takes."""
+    body: dict = {
+        "number": 67,
+        "title": "build(deps): update uvicorn[standard] requirement from >=0.51.0 to >=0.52.4",
+        "state": "open",
+        "merged": False,
+        "mergeable_state": "clean",
+        "base": {"ref": "main", "repo": {"default_branch": "main"}},
+        "head": {"sha": HEAD, "ref": "dependabot/uv/uvicorn-standard--gte-0.52.4"},
+        "user": {"login": "dependabot[bot]", "type": "Bot"},
+    }
+    body.update(overrides)
+    return body
+
+
+def test_the_head_BRANCH_is_read_from_the_body() -> None:
+    """The field the ecosystem exclusion is keyed on, read at the one place it enters this
+    process. Without this the exclusion could be correct in every unit test and be handed an
+    empty string in production."""
+    pull = _pull_from_body(_wire_body(), 67)
+
+    assert pull.head_ref == "dependabot/uv/uvicorn-standard--gte-0.52.4"
+    assert pull.head_sha == HEAD
+
+
+@pytest.mark.parametrize(
+    "head",
+    [{"sha": HEAD}, {"sha": HEAD, "ref": ""}, {"sha": HEAD, "ref": 5}, {"ref": "x"}],
+    ids=["no-ref", "empty-ref", "ref-not-a-string", "no-sha"],
+)
+def test_a_body_that_does_not_name_the_head_is_UNREADABLE(head: dict) -> None:
+    """Required like the others rather than defaulted, and the difference matters downstream.
+
+    An empty string would reach the exclusion as a branch naming no ecosystem, which refuses --
+    so both paths refuse and it looks like a free choice. It is not: one refusal says the branch
+    named no ecosystem and the other says this reader could not read the remote's answer, and
+    only the second is true. A report that names the wrong cause sends whoever reads it to look
+    at the update bot instead of at the gateway.
+    """
+    with pytest.raises(EstateGatewayError):
+        _pull_from_body(_wire_body(head=head), 67)
