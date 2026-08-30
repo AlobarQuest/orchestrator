@@ -187,3 +187,58 @@ needs two. Four of the five are also behind their base, and the branch-update pa
 which changes the nightly exit code before it empties the queue. Expect the control to report
 FINDINGS (exit 3) on the first night or two: a pull request refused on freshness alone, with no
 exception beside it, is a finding by design. That is the lane working, not breaking.
+
+### The exclusion does NOT carry over unchanged, and the difference is a narrowing
+
+The decision above says the exclusion "carries over unchanged". Building it made the difference
+visible and it is worth recording, because it is the one place version 5 refuses something version 4
+permitted.
+
+Versions 1 to 4 excluded the workflow-automation ecosystem only in the sense of **withholding the
+cascade's major allowance**: patch and minor were permitted in every ecosystem, that one included.
+Version 5 excludes the ecosystem outright, at every delta. So `bump actions/checkout from 4.1.0 to
+4.1.1` was landable and now is not.
+
+That narrowing is the principle applied honestly rather than a side effect. What the exclusion is
+about is whether the required checks exercised the change, and a patch bump to an action the rollout
+uses is exercised by nothing on a pull request, exactly as a major is. The delta was never the
+thing that decided it.
+
+Its practical reach today is **empty**, and measured rather than assumed: neither repository
+declares the `github_actions` ecosystem in `.github/dependabot.yml` — both configs say
+*"github-actions is intentionally omitted"* — so no such pull request can arise. It is also
+narrower than it looks even if one did: since version 2 the rollout pin has refused any pull request
+whose head changes the pinned workflow's bytes, so a bump reaching the rollout was already refused
+at every delta. What version 5 newly refuses is a workflow-automation bump touching some OTHER
+workflow — which is right for one this estate never runs on a pull request, and conservative for the
+workflow that IS the required check.
+
+**Two refusal codes this adds are in neither of the lander's suppression sets.** So if that
+ecosystem is ever declared here, such a pull request reports as a nightly FINDING rather than
+sitting quietly as an exception. Under Devon's 2026-08-13 ruling it is arguably an exception — a
+record no current policy can land — and classifying it is left open rather than decided here,
+because it cannot occur until a dependabot config changes.
+
+### The population that is admitted is WIDER than the five, and three of the four were not measured
+
+`update_type_of` answers `None` for four distinct populations, not one, and the outcome rule admits
+all four. The decision's population section measured only the first:
+
+- **a requirement range** — the five subjects;
+- **a grouped bump**, which changes several packages in one pull request and whose title
+  (`"bump the minor-and-patch group across 1 directory with 5 updates"`) the delta pattern cannot
+  match at all;
+- **a downgrade**, or a title whose two versions are equal;
+- **a version string the parser cannot read** — more than three dotted components, a pre-release
+  suffix, a calendar version.
+
+Admitting them follows from the rule rather than escaping it: what decides is whether the required
+checks passed, and they exercised every package in a group exactly as they exercise one. But a
+grouped bump is a materially wider ACT than any subject the decision measured, and it now lands
+unattended into a repository where merging redeploys production. It belongs in the residual above
+alongside the `semver-major` case, and it is asserted rather than left to be discovered:
+`test_a_GROUPED_bump_is_admitted_under_the_outcome_rule`.
+
+The docstring on `update_type_of` said all four were *"correctly unlandable by this lane"*. That was
+true when written and is false now, and it is corrected in the same change rather than left as a
+comment that describes a rule the code no longer applies.

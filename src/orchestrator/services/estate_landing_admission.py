@@ -248,10 +248,15 @@ LANDING_UPDATE_TYPE_NOT_PERMITTED: Final = "landing_update_type_not_permitted"
 # all, so a bump reaching it would be exercised for the first time by the very rollout it gates.
 #
 # UNREADABLE IS ITS OWN ANSWER AND REFUSES. The ecosystem is the second segment of the update
-# bot's branch name, which every pull request it opens carries -- so a name this cannot read is
-# never "the bot named no ecosystem". It is this program failing to read what the exclusion is
-# about, and permitting on that would land a change whose exclusion nobody can re-check. The
-# estate's landing ledger reaches the same conclusion about the same fact, for the same reason.
+# bot's branch name, which every pull request it opens carries UNDER THE DEFAULT NAMING -- so a
+# name this cannot read is never "the bot named no ecosystem". It is this program failing to read
+# what the exclusion is about, and permitting on that would land a change whose exclusion nobody
+# can re-check. The estate's landing ledger reaches the same conclusion about the same fact.
+#
+# The dependency it rests on, named rather than assumed: a repository setting
+# `pull-request-branch-name.separator` changes that shape, and every pull request there would then
+# refuse here forever. Neither repository sets it and nothing pins that they do not, so the failure
+# would be a lane that goes quiet for a reason no refusal names.
 LANDING_ECOSYSTEM_EXCLUDED: Final = "landing_ecosystem_excluded"
 LANDING_ECOSYSTEM_UNREADABLE: Final = "landing_ecosystem_unreadable"
 
@@ -525,9 +530,11 @@ def update_type_of(title: str) -> str | None:
     The title is the only one of the three that tracked the change, so the two identifiers that
     look more structured are the two that were wrong.
 
-    None is a refusal, never a default. A requirement-range bump and a grouped bump both land
-    here, and both are correctly unlandable by this lane: neither states a single delta that any
-    rule about update types could be applied to.
+    None means this title states no single delta, and a requirement range, a GROUPED bump, a
+    downgrade and a version string this cannot parse all land here. It was a refusal until
+    ADR-0036; under the outcome rule it is no longer consulted for a version that decides on the
+    outcome, so all four are admitted when their required checks pass. `_bump_term` is where that
+    is decided, and none of the four is refused for its delta any more.
     """
     match = _BUMP.search(title.strip())
     if match is None:
@@ -972,7 +979,9 @@ def _bump_term(pull: EstatePullRequest, conditions: LandingConditions) -> _Term:
     not, the outcome says nothing. On these repositories the rollout job is gated on a push to the
     default branch and runs on no pull request -- visible on every subject as a skipped job beside
     the passing ones -- so a change reaching it is first exercised by the rollout it is supposed to
-    gate. The excluded set names that, by ecosystem, exactly as the cascade's own exclusion does.
+    gate. The excluded set names that, by ecosystem, on the same principle as the cascade's own
+    exclusion -- which is a citation of the reasoning and not of the implementation, since that
+    one is also the estate's exemplar of an exclusion whose literal matched nothing.
 
     **It is not the whole of the protection and is not meant to be.** `_rollout_term` compares the
     pinned workflow's bytes at the head, so a change to that file is refused whatever ecosystem it
@@ -984,7 +993,12 @@ def _bump_term(pull: EstatePullRequest, conditions: LandingConditions) -> _Term:
     ecosystem = ecosystem_of(pull.head_ref)
     if ecosystem is None:
         return _Term(False, (LANDING_ECOSYSTEM_UNREADABLE,))
-    if ecosystem in conditions.excluded_ecosystems:
+    # CASE-FOLDED ON BOTH SIDES, which is exactly what `pin_for` does with the other identity key
+    # crossing this boundary -- the parser folds what it stores AND the lookup folds what it asks.
+    # Folding only at the parser would leave this correct for a served document and wrong for any
+    # other constructor of these conditions, and the direction of that failure is PERMISSIVE: a
+    # member differing in case is not `in` the set, and not-in means admitted.
+    if ecosystem.lower() in {name.lower() for name in conditions.excluded_ecosystems}:
         return _Term(False, (LANDING_ECOSYSTEM_EXCLUDED,))
     return _Term(True, ())
 

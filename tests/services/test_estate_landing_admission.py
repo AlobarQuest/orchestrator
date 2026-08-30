@@ -902,6 +902,62 @@ def test_the_excluded_ecosystem_is_spelled_the_way_a_BRANCH_spells_it() -> None:
     assert ecosystem_of(ACTIONS_REF) == WORKFLOW_AUTOMATION
 
 
+@pytest.mark.parametrize(
+    ("served", "branch_segment"),
+    [
+        ("GitHub_Actions", "github_actions"),
+        ("github_actions", "GitHub_Actions"),
+        ("GITHUB_ACTIONS", "github_actions"),
+    ],
+    ids=["served-cased", "branch-cased", "served-upper"],
+)
+def test_the_exclusion_folds_case_on_BOTH_sides(
+    migrated_session: Session, served: str, branch_segment: str
+) -> None:
+    """Every other identity key crossing this boundary folds case, and this one must too.
+
+    The repository is folded on entry to the admission, and the rollout pin's key is folded when it
+    is parsed and again when it is looked up. This key was compared raw on both sides, and the
+    direction of that failure is PERMISSIVE: a member differing only in case is not `in` the set,
+    and not-in means admitted. It is the hyphen/underscore near-miss one character over, in the
+    lane where the ecosystem sits on the excluding side rather than the permitting one.
+    """
+    gateway = FakeEstateGateway(
+        pull=pull_request(
+            title=ACTIONS_TITLE, head_ref=f"dependabot/{branch_segment}/actions/checkout-5"
+        )
+    )
+    answer = _ask(
+        migrated_session,
+        record=_outcome_record(excluded=frozenset({served})),
+        gateway=gateway,
+    )
+
+    assert not answer.satisfied
+    assert LANDING_ECOSYSTEM_EXCLUDED in answer.refusals
+
+
+def test_a_GROUPED_bump_is_admitted_under_the_outcome_rule(migrated_session: Session) -> None:
+    """The widening beyond the population ADR-0036 measured, asserted so it is not a surprise.
+
+    `update_type_of` answers None for FOUR populations, not one: a requirement range, a grouped
+    bump, a downgrade, and a version string it cannot parse. The five subjects were requirement
+    ranges; a grouped bump changes several packages at once and is a materially wider act. It is
+    admitted on the same ground as the rest -- what decides is whether the required checks passed,
+    and they exercised every package in the group -- but it is stated here and in the decision
+    rather than arriving as a consequence nobody wrote down.
+    """
+    gateway = FakeEstateGateway(
+        pull=pull_request(
+            title="build(deps): bump the minor-and-patch group across 1 directory with 5 updates",
+            head_ref="dependabot/pip/minor-and-patch-a1b2c3d4e5",
+        )
+    )
+    answer = _ask(migrated_session, record=_outcome_record(), gateway=gateway)
+
+    assert answer.satisfied, answer.refusals
+
+
 def test_a_record_approved_under_the_previous_version_is_refused_until_re_approved(
     migrated_session: Session,
 ) -> None:

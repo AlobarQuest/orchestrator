@@ -328,7 +328,9 @@ def _conditions(row: dict[str, Any]) -> LandingConditions | None:
         names = served["excluded_ecosystems"]
         if not isinstance(names, list) or not all(isinstance(n, str) and n for n in names):
             return None
-        excluded = frozenset(names)
+        # Folded on arrival, as the pin keys below are, so the comparison has one normal form
+        # rather than two hopeful ones.
+        excluded = frozenset(name.lower() for name in names)
     parsed: dict[str, WorkflowPin] = {}
     for repository, pin in pins.items():
         if not isinstance(repository, str) or not isinstance(pin, dict):

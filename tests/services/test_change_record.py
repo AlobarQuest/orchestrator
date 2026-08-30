@@ -467,6 +467,23 @@ def test_conditions_that_name_no_excluded_set_are_the_OLDER_RULE_and_not_a_refus
     ["github_actions", {"github_actions": True}, ["github_actions", 1], [""], [None], 5],
     ids=["string", "dict", "mixed-list", "empty-member", "none-member", "int"],
 )
+def test_the_excluded_names_are_FOLDED_when_they_are_parsed() -> None:
+    """The same treatment the pin keys below get, and for the same reason.
+
+    Folding at the parser is not the whole of it -- the term folds its lookup too, as `pin_for`
+    does -- but it is the half that gives the stored value one normal form, so a reader comparing
+    raw is wrong only for conditions this parser did not build.
+    """
+    row = _served_row(
+        landing_policy_version=5,
+        landing_conditions={**V5_CONDITIONS, "excluded_ecosystems": ["GitHub_Actions"]},
+    )
+    conditions = _read([row]).record.conditions  # type: ignore[union-attr]
+
+    assert conditions is not None
+    assert conditions.excluded_ecosystems == frozenset({"github_actions"})
+
+
 def test_a_malformed_excluded_set_refuses_the_whole_conditions(excluded: object) -> None:
     """ABSENT and MALFORMED are different facts and only one of them is survivable.
 
