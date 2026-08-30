@@ -31,6 +31,16 @@ POLICY_VERSION = 2
 # A real title from the population this lane serves, measured 2026-08-12.
 MINOR_TITLE = "build(deps): bump alembic from 1.18.5 to 1.19.0"
 
+# A real branch from the same population, measured 2026-08-30 on change-manager #67. The ecosystem
+# is its second segment.
+HEAD_REF = "dependabot/uv/uvicorn-standard--gte-0.52.4"
+
+# The one ecosystem deploy policy version 5 excludes, spelled as the update bot spells it in a
+# branch name. WITH AN UNDERSCORE, which is not a detail: the estate's landing ledger records a
+# revision of the other lane's gate that compared the hyphenated form against this value and
+# therefore permitted nothing, silently, for weeks.
+WORKFLOW_AUTOMATION = "github_actions"
+
 
 def conditions(
     *,
@@ -38,7 +48,14 @@ def conditions(
     update_types: frozenset[str] = frozenset({"semver-patch", "semver-minor"}),
     require_fresh: bool = True,
     pins: dict[str, WorkflowPin] | None = None,
+    excluded_ecosystems: frozenset[str] | None = None,
 ) -> LandingConditions:
+    """The pre-ADR-0036 shape by default, because it is what most of this file's cases are about.
+
+    `excluded_ecosystems=None` is the version-4-and-earlier shape and selects the update-type
+    rule; passing a frozenset selects the outcome rule. The default is the older shape so that
+    every case written before ADR-0036 keeps asking the question it was written to ask.
+    """
     return LandingConditions(
         version=version,
         update_types=update_types,
@@ -48,6 +65,29 @@ def conditions(
             if pins is None
             else pins
         ),
+        excluded_ecosystems=excluded_ecosystems,
+    )
+
+
+def outcome_conditions(
+    *,
+    version: int = 5,
+    excluded_ecosystems: frozenset[str] = frozenset({WORKFLOW_AUTOMATION}),
+    require_fresh: bool = True,
+    pins: dict[str, WorkflowPin] | None = None,
+) -> LandingConditions:
+    """Deploy policy version 5, as change-manager serves it. ADR-0036.
+
+    `update_types` is EMPTY and that is the served value, not a convenience: version 5 does not
+    decide by update type, and a landing party that has not learned the outcome rule must permit
+    nothing under it rather than be handed a set it would act on.
+    """
+    return conditions(
+        version=version,
+        update_types=frozenset(),
+        require_fresh=require_fresh,
+        pins=pins,
+        excluded_ecosystems=excluded_ecosystems,
     )
 
 
@@ -92,6 +132,7 @@ def pull_request(
     title: str = MINOR_TITLE,
     head_sha: str = HEAD,
     base_ref: str = "main",
+    head_ref: str = HEAD_REF,
     default_branch: str = "main",
     is_open: bool = True,
     landed: bool = False,
@@ -104,6 +145,7 @@ def pull_request(
         title=title,
         head_sha=head_sha,
         base_ref=base_ref,
+        head_ref=head_ref,
         default_branch=default_branch,
         open=is_open,
         landed=landed,

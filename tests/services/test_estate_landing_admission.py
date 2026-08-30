@@ -30,6 +30,8 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_CHECKS_NOT_CLEAN,
     LANDING_CHECKS_VERDICT_UNREADABLE,
     LANDING_CONDITIONS_UNREADABLE,
+    LANDING_ECOSYSTEM_EXCLUDED,
+    LANDING_ECOSYSTEM_UNREADABLE,
     LANDING_ESTATE_SOURCE_UNCONFIGURED,
     LANDING_ESTATE_UNKNOWN,
     LANDING_FRESHNESS_UNREADABLE,
@@ -54,6 +56,7 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_UPDATE_TYPE_NOT_PERMITTED,
     LANDING_UPDATE_TYPE_UNPARSEABLE,
     EstateGatewayError,
+    ecosystem_of,
     estate_landing_admission,
     update_type_of,
 )
@@ -75,9 +78,11 @@ from tests.services.estate_landing_doubles import (
     REPOSITORY,
     ROLLOUT_BLOB,
     ROLLOUT_PATH,
+    WORKFLOW_AUTOMATION,
     FakeEstateGateway,
     approved,
     conditions,
+    outcome_conditions,
     pull_request,
     run,
 )
@@ -677,6 +682,315 @@ def test_an_update_type_the_policy_does_not_permit_refuses(migrated_session: Ses
     )
 
     assert LANDING_UPDATE_TYPE_NOT_PERMITTED in _ask(migrated_session, gateway=gateway).refusals
+
+
+# ---------------------------------------------------------------------------
+# ADR-0036: the version that decides on the OUTCOME.
+#
+# THE FIXTURE IS THE POPULATION. The five pull requests below are the ones this estate held
+# unlandable, read from the two repositories on 2026-08-30 -- title and branch as the update bot
+# wrote them. Every one refuses under the rule in force before this change and is admitted under
+# the one after it, and BOTH directions are asserted here: the refused direction is what makes the
+# admitted direction mean something, because a change that admitted everything would satisfy the
+# admitted direction alone.
+# ---------------------------------------------------------------------------
+
+# (title, branch), measured 2026-08-30 from AlobarQuest/change-manager and AlobarQuest/brain.
+STUCK = [
+    (
+        "build(deps): update uvicorn[standard] requirement from >=0.51.0 to >=0.52.4",
+        "dependabot/uv/uvicorn-standard--gte-0.52.4",
+    ),
+    (
+        "build(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0",
+        "dependabot/uv/setuptools-gte-84.0.0",
+    ),
+    (
+        "chore(deps): update pydantic-settings requirement from <3,>=2.14.2 to >=2.15.0,<3",
+        "dependabot/pip/pydantic-settings-gte-2.15.0-and-lt-3",
+    ),
+    (
+        "chore(deps-dev): update greenlet requirement from >=3.0 to >=3.5.5",
+        "dependabot/pip/greenlet-gte-3.5.5",
+    ),
+    (
+        "chore(deps): update fastmcp requirement from <4,>=3.4.2 to >=3.4.7,<4",
+        "dependabot/pip/fastmcp-gte-3.4.7-and-lt-4",
+    ),
+]
+STUCK_IDS = ["uvicorn", "setuptools", "pydantic-settings", "greenlet", "fastmcp"]
+
+# A branch the update bot opens for the one ecosystem version 5 excludes. Its title parses as a
+# major, so it is the case that separates "excluded because of what it touches" from "refused for
+# being too large a jump" -- under version 5 nothing is refused for the latter.
+ACTIONS_TITLE = "build(deps): bump actions/checkout from 4 to 5"
+ACTIONS_REF = "dependabot/github_actions/actions/checkout-5"
+
+
+def _outcome_record(*, policy_version: int | None = 5, excluded: frozenset[str] | None = None):
+    """A record approved under version 5, with version 5 in force."""
+    return approved(
+        policy_version=policy_version,
+        landing_conditions=(
+            outcome_conditions()
+            if excluded is None
+            else outcome_conditions(excluded_ecosystems=excluded)
+        ),
+    )
+
+
+@pytest.mark.parametrize(("title", "head_ref"), STUCK, ids=STUCK_IDS)
+def test_a_held_pull_request_is_REFUSED_under_the_update_type_rule(
+    migrated_session: Session, title: str, head_ref: str
+) -> None:
+    """The before-state, asserted rather than recalled. Each of the five states a requirement
+    RANGE, so no delta parses and the refusal is raised before any policy value is consulted --
+    which is why widening the permitted set could never have reached one of them."""
+    gateway = FakeEstateGateway(pull=pull_request(title=title, head_ref=head_ref))
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert not answer.satisfied
+    assert LANDING_UPDATE_TYPE_UNPARSEABLE in answer.refusals
+
+
+@pytest.mark.parametrize(("title", "head_ref"), STUCK, ids=STUCK_IDS)
+def test_a_held_pull_request_is_ADMITTED_under_the_outcome_rule(
+    migrated_session: Session, title: str, head_ref: str
+) -> None:
+    """The whole answer, not the term alone: `satisfied` with no refusals at all."""
+    gateway = FakeEstateGateway(pull=pull_request(title=title, head_ref=head_ref))
+    answer = _ask(migrated_session, record=_outcome_record(), gateway=gateway)
+
+    assert answer.satisfied, answer.refusals
+    assert answer.refusals == ()
+
+
+def test_a_major_package_bump_is_ADMITTED_under_the_outcome_rule(
+    migrated_session: Session,
+) -> None:
+    """The direction that distinguishes the outcome rule from a wider set of update types.
+
+    A first draft of ADR-0036 admitted a bump stating NO delta while still refusing one that
+    states the largest delta there is -- treating the less classifiable change more permissively
+    than the more classifiable one. This is that incoherence asserted away: what decides is the
+    checks, and a major whose checks pass is admitted like any other.
+    """
+    gateway = FakeEstateGateway(
+        pull=pull_request(
+            title="build(deps): bump httpx from 1.2.3 to 2.0.0",
+            head_ref="dependabot/uv/httpx-2.0.0",
+        )
+    )
+    answer = _ask(migrated_session, record=_outcome_record(), gateway=gateway)
+
+    assert answer.satisfied, answer.refusals
+
+
+def test_the_same_major_is_REFUSED_under_the_update_type_rule(migrated_session: Session) -> None:
+    """The control for the case above, on the same subject: one variable, the rule in force."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(
+            title="build(deps): bump httpx from 1.2.3 to 2.0.0",
+            head_ref="dependabot/uv/httpx-2.0.0",
+        )
+    )
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert not answer.satisfied
+    assert LANDING_UPDATE_TYPE_NOT_PERMITTED in answer.refusals
+
+
+def test_a_workflow_automation_bump_is_REFUSED_under_the_outcome_rule(
+    migrated_session: Session,
+) -> None:
+    """The exclusion, which is the reason the outcome rule is not "admit everything".
+
+    On these repositories the rollout job is gated on a push to the default branch, so it runs on
+    no pull request -- visible on each of them as a skipped job beside the passing ones. A change
+    reaching it would be exercised for the first time by the rollout it is supposed to gate, so
+    the outcome says nothing about it and the outcome rule declines to decide.
+    """
+    gateway = FakeEstateGateway(pull=pull_request(title=ACTIONS_TITLE, head_ref=ACTIONS_REF))
+    answer = _ask(migrated_session, record=_outcome_record(), gateway=gateway)
+
+    assert not answer.satisfied
+    assert LANDING_ECOSYSTEM_EXCLUDED in answer.refusals
+    # Not refused for its DELTA. The update-type codes belong to the other rule and must not
+    # appear here, or the two rules are running at once and the report names the wrong cause.
+    assert LANDING_UPDATE_TYPE_UNPARSEABLE not in answer.refusals
+    assert LANDING_UPDATE_TYPE_NOT_PERMITTED not in answer.refusals
+
+
+def test_an_ecosystem_the_version_does_not_exclude_is_admitted(migrated_session: Session) -> None:
+    """The exclusion refuses what it NAMES and nothing else -- otherwise the term is an
+    always-refuse wearing a set, and the five above would move for the wrong reason."""
+    gateway = FakeEstateGateway(pull=pull_request(title=ACTIONS_TITLE, head_ref=ACTIONS_REF))
+    answer = _ask(
+        migrated_session,
+        record=_outcome_record(excluded=frozenset({"docker"})),
+        gateway=gateway,
+    )
+
+    assert answer.satisfied, answer.refusals
+
+
+def test_the_outcome_rule_does_not_bypass_the_rollout_pin(migrated_session: Session) -> None:
+    """The second guard, and the one that is byte-precise rather than keyed on a name.
+
+    The exclusion reads the branch the update bot wrote; the pin reads the workflow's bytes at the
+    head. A pull request whose own diff edits the pinned workflow is refused by the pin whatever
+    ecosystem it claims and whoever authored it, and widening the delta rule must not reach it.
+    """
+    gateway = FakeEstateGateway(blob="0000000000000000000000000000000000000000")
+    answer = _ask(migrated_session, record=_outcome_record(), gateway=gateway)
+
+    assert not answer.satisfied
+    assert LANDING_ROLLOUT_MOVED in answer.refusals
+
+
+@pytest.mark.parametrize(
+    "head_ref",
+    ["main", "dependabot", "dependabot/", "dependabot/uv", "dependabot/uv/", "dependabot//x"],
+    ids=["plain", "prefix-only", "prefix-slash", "no-remainder", "empty-remainder", "empty-eco"],
+)
+def test_a_branch_that_names_no_ecosystem_REFUSES(migrated_session: Session, head_ref: str) -> None:
+    """Fail closed, and the reason is the ledger's own: the update bot always names an ecosystem,
+    so a name this cannot read never means "there was none". It means this program could not read
+    what the exclusion is about, and permitting on that lands a change whose exclusion nobody can
+    re-check."""
+    gateway = FakeEstateGateway(pull=pull_request(head_ref=head_ref))
+    answer = _ask(migrated_session, record=_outcome_record(), gateway=gateway)
+
+    assert not answer.satisfied
+    assert LANDING_ECOSYSTEM_UNREADABLE in answer.refusals
+
+
+@pytest.mark.parametrize(
+    ("head_ref", "expected"),
+    [
+        ("dependabot/uv/uvicorn-standard--gte-0.52.4", "uv"),
+        ("dependabot/pip/fastmcp-gte-3.4.7-and-lt-4", "pip"),
+        ("dependabot/github_actions/actions/checkout-5", "github_actions"),
+        ("dependabot/npm_and_yarn/zod-4.4.3", "npm_and_yarn"),
+        ("dependabot/docker/python-3.14-slim", "docker"),
+        ("main", None),
+        ("feature/dependabot/uv/x", None),
+        ("dependabot/uv", None),
+    ],
+)
+def test_the_ecosystem_is_read_from_the_branch(head_ref: str, expected: str | None) -> None:
+    """The second segment, which is the same fact the estate's landing ledger reads.
+
+    **From the BRANCH, where the version delta is read from the TITLE, and the two are not in
+    tension.** The bot rewrites a pull request in place when a newer version appears, which is
+    what makes the branch stale about the VERSION; it cannot go stale about the ecosystem, because
+    an update never moves between them. Every branch above except the last three is a real one.
+    """
+    assert ecosystem_of(head_ref) == expected
+
+
+def test_the_excluded_ecosystem_is_spelled_the_way_a_BRANCH_spells_it() -> None:
+    """An underscore, and this assertion is not pedantry.
+
+    The estate's other lane carries a gate revision that compared the HYPHENATED spelling against
+    this exact value, so it permitted nothing while reading as though it permitted more -- and the
+    registry transcribes that literal rather than correcting it, precisely so the defect stays
+    visible. A term keyed on the wrong spelling here would over-refuse rather than over-permit,
+    which is the safe direction and therefore the one nobody notices.
+    """
+    assert WORKFLOW_AUTOMATION == "github_actions"
+    assert ecosystem_of(ACTIONS_REF) == WORKFLOW_AUTOMATION
+
+
+@pytest.mark.parametrize(
+    ("served", "branch_segment"),
+    [
+        ("GitHub_Actions", "github_actions"),
+        ("github_actions", "GitHub_Actions"),
+        ("GITHUB_ACTIONS", "github_actions"),
+    ],
+    ids=["served-cased", "branch-cased", "served-upper"],
+)
+def test_the_exclusion_folds_case_on_BOTH_sides(
+    migrated_session: Session, served: str, branch_segment: str
+) -> None:
+    """Every other identity key crossing this boundary folds case, and this one must too.
+
+    The repository is folded on entry to the admission, and the rollout pin's key is folded when it
+    is parsed and again when it is looked up. This key was compared raw on both sides, and the
+    direction of that failure is PERMISSIVE: a member differing only in case is not `in` the set,
+    and not-in means admitted. It is the hyphen/underscore near-miss one character over, in the
+    lane where the ecosystem sits on the excluding side rather than the permitting one.
+    """
+    gateway = FakeEstateGateway(
+        pull=pull_request(
+            title=ACTIONS_TITLE, head_ref=f"dependabot/{branch_segment}/actions/checkout-5"
+        )
+    )
+    answer = _ask(
+        migrated_session,
+        record=_outcome_record(excluded=frozenset({served})),
+        gateway=gateway,
+    )
+
+    assert not answer.satisfied
+    assert LANDING_ECOSYSTEM_EXCLUDED in answer.refusals
+
+
+def test_a_GROUPED_bump_is_admitted_under_the_outcome_rule(migrated_session: Session) -> None:
+    """The widening beyond the population ADR-0036 measured, asserted so it is not a surprise.
+
+    `update_type_of` answers None for FOUR populations, not one: a requirement range, a grouped
+    bump, a downgrade, and a version string it cannot parse. The five subjects were requirement
+    ranges; a grouped bump changes several packages at once and is a materially wider act. It is
+    admitted on the same ground as the rest -- what decides is whether the required checks passed,
+    and they exercised every package in the group -- but it is stated here and in the decision
+    rather than arriving as a consequence nobody wrote down.
+    """
+    gateway = FakeEstateGateway(
+        pull=pull_request(
+            title="build(deps): bump the minor-and-patch group across 1 directory with 5 updates",
+            head_ref="dependabot/pip/minor-and-patch-a1b2c3d4e5",
+        )
+    )
+    answer = _ask(migrated_session, record=_outcome_record(), gateway=gateway)
+
+    assert answer.satisfied, answer.refusals
+
+
+def test_a_record_approved_under_the_previous_version_is_refused_until_re_approved(
+    migrated_session: Session,
+) -> None:
+    """Expected on any version bump, and asserted rather than discovered on the night.
+
+    The landing binds an approval to the version IN FORCE, which is the only mechanism by which
+    moving the policy binds an approval that already exists. For an open pull request the producer
+    re-approves a still-conforming record on its next pass, so the binding lifts without anyone
+    looking -- this is a widening, so every held record still conforms.
+    """
+    gateway = FakeEstateGateway(pull=pull_request(title=STUCK[0][0], head_ref=STUCK[0][1]))
+
+    stale = _ask(migrated_session, record=_outcome_record(policy_version=4), gateway=gateway)
+    assert not stale.satisfied
+    assert LANDING_POLICY_VERSION_SUPERSEDED in stale.refusals
+
+    fresh = _ask(migrated_session, record=_outcome_record(), gateway=gateway)
+    assert fresh.satisfied, fresh.refusals
+
+
+def test_the_outcome_rule_still_asks_every_other_condition(migrated_session: Session) -> None:
+    """A grant on one term is not a grant on the composition. Freshness and the checks are
+    unchanged by ADR-0036, and a version-5 record misses them exactly as a version-4 one does."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(title=STUCK[0][0], head_ref=STUCK[0][1], mergeable_state="blocked"),
+        behind=3,
+        runs=(run("completed", "failure"),),
+    )
+    answer = _ask(migrated_session, record=_outcome_record(), gateway=gateway)
+
+    assert not answer.satisfied
+    assert LANDING_HEAD_NOT_CURRENT_WITH_BASE in answer.refusals
+    assert LANDING_CHECKS_NOT_CLEAN in answer.refusals
 
 
 # ---------------------------------------------------------------------------

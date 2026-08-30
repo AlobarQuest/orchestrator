@@ -93,6 +93,17 @@ class LandingConditions:
     update_types: frozenset[str]
     require_head_current_with_base: bool
     rollout_workflows: Mapping[str, WorkflowPin]
+    # ADR-0036. WHICH RULE THIS VERSION DECIDES BY, carried as the presence of the field rather
+    # than as a second flag beside it. `None` means the version served no such key, which is every
+    # version before the fifth: those decide by `update_types`, and a reader that guessed otherwise
+    # would widen an approval nobody granted. A frozenset -- empty or not -- means the version
+    # decides on the OUTCOME, and names the ecosystems its required checks do not exercise.
+    #
+    # ABSENCE FALLS TOWARD THE STRICTER RULE, deliberately. The two sides of this contract ship
+    # separately, so a reader that has learned the outcome rule will meet a server that has not,
+    # and the only safe reading of "this version said nothing about it" is the rule that version
+    # actually declared.
+    excluded_ecosystems: frozenset[str] | None = None
 
     def pin_for(self, repository: str) -> WorkflowPin | None:
         """The pin for a repository, matched case-insensitively as its identity key is.
@@ -308,6 +319,18 @@ def _conditions(row: dict[str, Any]) -> LandingConditions | None:
     pins = served.get("rollout_workflows")
     if not isinstance(pins, dict):
         return None
+    # ADR-0036. ABSENT and MALFORMED are different facts about this key and only one is
+    # survivable. Absent is a server that predates the outcome rule, read as the rule it does
+    # declare -- which is what makes the two repositories shippable in either order. Malformed is
+    # a shape nobody can act on, and refuses the whole conditions exactly as a malformed pin does.
+    excluded: frozenset[str] | None = None
+    if "excluded_ecosystems" in served:
+        names = served["excluded_ecosystems"]
+        if not isinstance(names, list) or not all(isinstance(n, str) and n for n in names):
+            return None
+        # Folded on arrival, as the pin keys below are, so the comparison has one normal form
+        # rather than two hopeful ones.
+        excluded = frozenset(name.lower() for name in names)
     parsed: dict[str, WorkflowPin] = {}
     for repository, pin in pins.items():
         if not isinstance(repository, str) or not isinstance(pin, dict):
@@ -321,6 +344,7 @@ def _conditions(row: dict[str, Any]) -> LandingConditions | None:
         update_types=frozenset(update_types),
         require_head_current_with_base=fresh,
         rollout_workflows=parsed,
+        excluded_ecosystems=excluded,
     )
 
 
