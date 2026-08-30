@@ -1,14 +1,33 @@
 # ADR-0035 — The cascade arms with the factory's credential, not the CI token
 
-- **Status:** Accepted, **IMPLEMENTATION BLOCKED 2026-08-30 — DO NOT BUILD THIS AS WRITTEN.**
-  The decision's *problem* stands; its chosen *identity* is defective and the fork replacing it is
-  open. See "Blocked" immediately below before reading anything else here.
+- **Status:** **SUPERSEDED 2026-08-30, not taken.** Devon chose to stop arming the cascade
+  altogether and have the orchestrator merge its subjects, which removes the need for an arming
+  identity rather than choosing a better one. Its six pull requests are closed unmerged. **The
+  problem statement and every measurement below stand**; only the remedy is rejected.
 - **Date:** 2026-08-29
 - **Decided by:** Devon
 - **Relates to:** ADR-0016 (native auto-merge for routine updates), ADR-0018 (the gate is a
   cascade), ADR-0034 (the split is by outcome, not update type)
 - **Supersedes:** the 2026-08-25 ruling to leave the cascade on `secrets.GITHUB_TOKEN`, on the
   reopen trigger that ruling named for itself
+
+## Why it was not taken
+
+Devon, 2026-08-30, asking why the estate was creating identities to arm a gate at all: the Dispatch
+App is already installed account-wide with `contents: write` and **already merges pull requests** in
+`estate_pr_merge.py` and `pr_merge.py`. An arming identity is only needed while the cascade workflow
+is the thing that merges. Stopping the arming removes the question.
+
+That also collapses machinery this ADR would have added to: `rules.py`'s transcription registry —
+blob pinning, fixtures, eight hand-transcribed revisions, and ADR-0037's arm-step names — exists
+ONLY because the rule lives in six workflow files the orchestrator cannot read. Moving the rule into
+the orchestrator makes the bridge unnecessary rather than wider.
+
+The property deliberately given up: the cascade is GitHub-native today and lands even if the
+orchestrator is down. Routine dependency hygiene will now depend on `sds.alobar.net` being up.
+
+ADR-0037 lands first and is right under every option — it decouples what the ledger records from who
+pressed merge, which is what made this ADR's remedy dangerous in the first place.
 
 ## Blocked — the identity choice destroys the record this change exists beside
 
