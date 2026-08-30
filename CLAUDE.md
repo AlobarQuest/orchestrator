@@ -4112,3 +4112,33 @@ style of that module.
   in under 10 seconds. The second row is the positive control that makes the first mean something.
   So "an admin arms it, therefore admin bypass applies" is false — worth knowing before treating an
   arming-identity change as a safety question, which is the question ADR-0035 did not ask.
+
+- **A MUTATION RUN HAS THREE WAYS TO REPORT A PASS IT DID NOT EARN, and this estate hit all three
+  in two days. A harness must distinguish "the mutation was applied and killed" from "the mutation
+  never applied" and from "the suite was already broken."**
+  1. **The anchor no longer matches.** `ruff format` rewrites the exact whitespace a
+     text-substitution mutant anchors on, so a harness authored before the formatter runs reports
+     its most important mutants as untouched. Caught 2026-08-30 only because that harness reported
+     *"anchor matched 0 times"* separately from *"tests passed"* — one that silently skipped would
+     have reported **12/15 as 15/15**.
+  2. **The kill is a COLLECTION ERROR, not an assertion.** Found 2026-08-29 by reading the kill
+     rather than the count: a new test inserted immediately above a parametrized one had captured
+     its decorator, so that file collected nothing at all. Every mutant reported KILLED against a
+     control that was seeing nothing.
+  3. **The harness mutates the tree while you commit.** A background run swept two live mutations
+     into commits, one under a message claiming to fix the other. **A 0-byte redirect file is not
+     evidence a process is dead** — its output was OS-buffered. Restore from git, require the tree
+     COMMITTED first, and set `PYTHONDONTWRITEBYTECODE=1` so a same-length mutation is not masked
+     by a stale `.pyc`.
+  **Read the kills, never the count.** All three produce a green number, and the number is the only
+  thing anyone looks at.
+
+- **An unkillable clause is a defect of the tests, not free safety margin — and the fix is usually
+  to strengthen the TEST, not delete the clause.** 2026-08-30: a mutant reading *"trust an arm
+  outcome for an untranscribed revision"* could not be killed, because the untranscribed fixture
+  carried no arm outcome for the clause to act on. The right move was to give that fixture an arm
+  outcome that WOULD have flipped the basis, after which the clause states a real rule instead of
+  sitting redundant. Deleting it would have removed a guard; leaving it unkilled would have let the
+  mutation set claim coverage it did not have. Same family as the earlier ruling that a clause
+  nothing can falsify sits beside clauses that can, which is how a mutation set comes to report a
+  green it did not earn.
