@@ -67,8 +67,35 @@ blob, held to the bytes by a fixture, and fails closed on an unknown revision. A
 renames its arm step gets a new blob, hence a new entry, hence the new name — the coupling becomes
 self-maintaining rather than brittle. ADR-0034 has already renamed that step once.
 
-**The data is already fetched.** `_checks_and_gate` reads the gate run's jobs and keeps only
-`name` and `conclusion`, discarding `steps[]`. No new API call.
+**CORRECTED 2026-08-30 by the build session, before building — this ADR said "the data is already
+fetched" and that is false.** `_checks_and_gate` (`github.py:262-264`) does `gate = run; continue`,
+and the `continue` skips the jobs fetch that only non-gate runs reach. Nothing about the gate job is
+fetched at all, so `steps[]` is not being discarded — it was never requested. Extracting the arm
+step costs **one new request per gated landing**, roughly +90 a week against the launcher's ~12
+requests per landing over a 7-day window. Acceptable, but it is a new call and this ADR claimed
+otherwise.
+
+**Also corrected: there are EIGHT transcribed revisions, not "three plus the current one."** All
+eight need the new field, and they carry at least four distinct arm-step names — `72391c0f`,
+`e849b3a8` and `a4a4b8da` share one; `3457db3c` has ADR-0034's; `77ab867d` has its own; and
+`4d87d9b7`, `12880ce7` and `43e37ed9` share a fourth. Read each from the bytes it pins.
+
+## The fail-open this would have created, and the shape that avoids it
+
+Found by the build session before writing code, and it is the reason the change is scoped to
+transcribed revisions rather than applied unconditionally.
+
+`audit_landing` returns `(), (), ()` for any basis that is not `auto_merge_rule`. An **untranscribed**
+gate revision has no registry entry, so there is no arm-step name to look for — under a naive
+implementation it would lose the rule basis, `DRIFT_RULE_UNKNOWN` would become unreachable, and the
+finding that exists precisely to catch a rule nobody classified would vanish silently. The guard
+this ADR relies on would be disabled by the same change that depends on it.
+
+**So the conjunct is: armed WHEN the revision is transcribed, falling back to today's
+`is_machine(landed_by)` when it is not.** Untranscribed revisions stay byte-identical to current
+behaviour and keep reaching the audit; the new attribution applies exactly where the registry can
+support it. That is also the honest scope — the ledger can only claim the gate armed a landing for a
+revision whose arm step it knows.
 
 ## Consequences
 
@@ -81,6 +108,10 @@ self-maintaining rather than brittle. ADR-0034 has already renamed that step onc
 - **It unblocks ADR-0035 without endorsing it.** After this, the arming credential and the recorded
   basis are independent, so the arming identity becomes a free choice rather than one that silently
   destroys the record. Which identity to arm with is still ADR-0035's open question.
-- **`rules.py` gains a field, so every transcribed revision must declare it** — including the three
-  historical ones, whose arm-step names must be read from the bytes each pins rather than assumed
-  to match today's.
+- **`rules.py` gains a field, so all EIGHT transcribed revisions must declare it**, each read from
+  the bytes it pins rather than assumed to match today's.
+- **The record pass re-reads a rolling 7-day window every night**, so an ALREADY-STORED landing whose
+  basis flips under this change is an `observation_conflict` — skipped, incomplete, exit 3 nightly
+  until it leaves the window. This is the same trap ADR-0036 hit one field over. It must be measured
+  with a before/after `record --dry-run` at 7 and 30 days BEFORE merging, and any flip inside the
+  7-day window raised rather than shipped.
