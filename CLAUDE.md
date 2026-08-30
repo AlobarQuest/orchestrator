@@ -4084,3 +4084,31 @@ style of that module.
   standing findings and will page tomorrow". They were `new` — four of seven were — because their
   lanes last ran at 07:10 and 07:32 and the switch landed at 10:19. The underlying observation was
   right (both lanes did last exit 2, their finding code) and the state description was wrong.
+
+- **GITHUB ATTRIBUTES AN AUTO-MERGE TO THE ARMING IDENTITY, SO THE ARMING CREDENTIAL IS ALSO THE
+  LANDING LEDGER'S ATTRIBUTION — MOVING ONE SILENTLY MOVES THE OTHER.** `basis_of`
+  (`landing_ledger/record.py:207`) requires the gate to have succeeded **and**
+  `is_machine(landed_by)`, where `is_machine` is `login.endswith("[bot]")` (`:161`) fed from
+  `merged_by.login`. Measured 2026-08-30, same repository, one variable: `#174` armed with
+  `secrets.GITHUB_TOKEN` → `merged_by = github-actions[bot]` (Bot) → basis `auto_merge_rule`;
+  `#167` armed with a user PAT → `merged_by = AlobarQuest` (**User**) → **basis `human`**.
+  Consequence: re-arming the cascade with a non-bot identity makes every future cascade landing
+  record as landed by a person, after which `audit_landing` returns `(), (), ()` for any basis that
+  is not the rule (`audit.py:355`) and **Detector A stops auditing the native lane silently**, its
+  `permitted` denominator at zero. **And it cannot be corrected afterwards** — `permitted_by` lands
+  in an immutable observation with a non-content-addressed `source_reference` and no delete route,
+  so a fix is an `observation_conflict`.
+  **This was known three times over and specced into an ADR anyway** (ADR-0035, blocked before it
+  shipped): the `[bot]`-suffix hazard is a backlog item from 2026-08-10, `basis_of`'s own docstring
+  names it, and HQ quoted that backlog item to Devon the day before writing the ADR. **Before
+  changing any credential that performs an act this estate records, grep for what READS the identity
+  of that act** — the arming credential, the merging identity and the recorded basis are one thing
+  wearing three names.
+
+- **An auto-merge honours required status checks regardless of whether the arming identity could
+  bypass them.** Measured 2026-08-30 on a disposable public repository with `enforce_admins: false`:
+  a pull request armed by an admin with its required context at `failure` stayed OPEN and `BLOCKED`
+  for 90 seconds; the same pull request, same arming, with the context flipped to `success` merged
+  in under 10 seconds. The second row is the positive control that makes the first mean something.
+  So "an admin arms it, therefore admin bypass applies" is false — worth knowing before treating an
+  arming-identity change as a safety question, which is the question ADR-0035 did not ask.
