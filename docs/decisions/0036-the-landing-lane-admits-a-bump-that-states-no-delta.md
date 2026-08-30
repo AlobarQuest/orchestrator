@@ -242,3 +242,18 @@ alongside the `semver-major` case, and it is asserted rather than left to be dis
 The docstring on `update_type_of` said all four were *"correctly unlandable by this lane"*. That was
 true when written and is false now, and it is corrected in the same change rather than left as a
 comment that describes a rule the code no longer applies.
+
+**RULED 2026-08-30 by Devon: a grouped bump is fine, and this is not to be re-decided.** The reason
+is the one this section already gives — the checks exercised every package in the group exactly as
+they exercise one, so it is the rule's own logic rather than an exception to it, and a grouped bump
+is the most routine thing the update bot produces. Measured the same day: **neither repository
+configures grouping** — `change-manager` declares `uv` weekly and `brain` declares `pip` weekly,
+with no `groups:` block in either — so the reach of this ruling is empty today and becomes live the
+day someone adds one. It was put to Devon precisely because the approval that produced this ADR
+rested on five requirement ranges, and a grouped bump is a wider act than any of them.
+
+**The other two populations were NOT ruled on and are left latent, deliberately.** A downgrade and
+an unparseable version string are admitted by the same logic, neither occurs in these repositories
+today, and neither was measured. If one appears it is worth a look rather than a rule change — a
+downgrade in particular usually signals something unusual upstream, which is a reason to read it,
+not a reason for the lane to refuse it.
