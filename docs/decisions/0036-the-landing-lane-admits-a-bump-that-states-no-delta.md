@@ -1,6 +1,6 @@
 # ADR-0036 — The landing lane admits a bump that states no delta, when its checks pass
 
-- **Status:** Accepted, with one question open below that should be settled before it ships
+- **Status:** Accepted (widened 2026-08-30 — see "The question this ADR opened, and its answer")
 - **Date:** 2026-08-30
 - **Decided by:** Devon
 - **Relates to:** ADR-0019 (SDS-initiated deploys route through change-manager), ADR-0034 (the
@@ -8,15 +8,21 @@
 
 ## Decision
 
-**A Dependabot pull request whose title states no parseable version delta may be landed by the
-estate-landing lane when its required checks pass.** Deploy policy gains **version 5** expressing
-that grant, and the orchestrator's `_update_type_term` stops treating an unparseable delta as a
-refusal on its own.
+**A Dependabot pull request may be landed by the estate-landing lane when its required checks
+pass — whatever its version delta, or its absence of one.** Deploy policy gains **version 5**
+expressing that grant, and the orchestrator's `_update_type_term` stops refusing on the delta
+itself.
 
-**The rollout-workflow exclusion carries over unchanged**, and is the same principle ADR-0034 kept:
-exclude where the required checks do not exercise what changed. On a deploying repository the
-rollout job runs on a push to `main` and not on a pull request, so a bump to it would first be
-exercised during the very rollout it is meant to gate.
+This is ADR-0034's rule applied to the deploying half of the estate: the outcome decides, with one
+principled exclusion. Both mechanisms already gate on the required checks passing; the update-type
+condition sat on top of that gate and said nothing about whether the bump works.
+
+**The exclusion carries over unchanged, and is the same principle ADR-0034 kept: exclude where the
+required checks do not exercise what changed.** On a deploying repository the rollout job runs on a
+push to `main` and never on a pull request, so a bump reaching it would first be exercised during
+the very rollout it is meant to gate. Its current instantiation is the workflow-automation
+ecosystem, which is what V1 named and what the visibly-skipped `build-and-push` and `deploy` jobs
+demonstrate on every pull request.
 
 ## The population, measured 2026-08-30
 
@@ -64,17 +70,32 @@ The item is superseded by this ADR. `factory-runner#28` — armed 2026-08-07 by 
 and still armed 23 days later — is the live instance of the mechanic it describes, in the other
 lane, where arming-and-waiting is the design and there is no window to be outside of.
 
-## Open, and it should be settled before this ships
+## The question this ADR opened, and its answer
 
-**The resulting rule is incoherent in one direction.** After this change a bump stating *no* delta
-lands on green checks, while a `semver-major` stating one is still refused by `update_types` — so
-the less classifiable change is treated more permissively than the more classifiable one.
+A first draft admitted a bump stating *no* delta while still refusing a `semver-major` that states
+one — treating the less classifiable change more permissively than the more classifiable one. That
+incoherence was named rather than shipped, and Devon resolved it on 2026-08-30 by widening to the
+outcome rule. Four grounds, measured:
 
-ADR-0034 resolved exactly this for the cascade by making the outcome decide and keeping a single
-principled exclusion. The same resolution here would admit any bump whose checks pass, excluding
-those touching the rollout workflow. **That is deliberately not decided in this ADR**, because it
-is broader than what was approved; it is named so the incoherence is a choice rather than an
-oversight.
+- **The unexercised jobs are visible on the subject itself.** On `brain`, every pull request's own
+  check list shows `build-and-push=skipped` and `deploy=skipped` beside `test=success` and
+  `Lint, type-check, and test=success`. So "the required checks did not exercise this" is an
+  observation about each pull request, not an inference from an ecosystem name — a firmer footing
+  than ADR-0034's docker exclusion, which rests on knowing the image is built and never run.
+- **The tests genuinely run.** Two passing test jobs on every `brain` pull request, one on every
+  `change-manager` one. This also closes a 2026-08-07 backlog worry that `brain`'s pull requests
+  reporting SKIPPED beside SUCCESS meant its gate was attesting rather than executing; the skips are
+  the deploy jobs correctly not running on a pull request.
+- **There is a post-landing net here that the inert repositories lack.** This policy pins acceptance
+  criteria requiring production to report the merged commit, and a rollback plan; the deploy watcher
+  observes the rollout hourly. On an inert repository a bad landing sits until somebody looks.
+- **Two rules across two lanes is a second vocabulary that must agree with the first and is checked
+  by nothing** — the defect this estate repeats more than any other.
+
+**The residual, accepted knowingly:** a `semver-major` whose tests pass but which breaks at runtime
+in a way those tests do not cover would reach production. It is bounded by one landing per
+repository per occurrence of the window, a pinned rollback plan, and the watcher — and it is the
+same exposure already accepted for patch and minor, at a larger blast radius.
 
 ## Consequences
 
