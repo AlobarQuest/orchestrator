@@ -41,6 +41,10 @@ def gate_landing(**overrides: Any) -> Landing:
             revision="77ab867d1080d18baea3a2b230655c2729716970",
             run=31179223805,
             outcome="success",
+            # The gate armed this landing. Since ADR-0037 that, rather than the merging login,
+            # is what gives it the rule basis -- so a fixture without it records `unattributed`
+            # and this file's whole subject stops being an auto-merged landing.
+            arm_outcome="success",
         ),
         "update": UpdateMetadata(
             dependency="ruff", ecosystem="uv", update_type="version-update:semver-minor"

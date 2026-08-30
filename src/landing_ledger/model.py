@@ -48,12 +48,27 @@ class RuleApplication:
     `revision` is the file's git blob sha AT THE LANDING COMMIT, not at the branch tip. The rule
     changes -- intent-packages' gate was 1530 bytes on 2026-08-07 at 12:42 and 3202 bytes four
     hours later -- so a record that does not pin the version cannot say which rule it was.
+
+    `outcome` is the RUN's conclusion and `arm_outcome` is one STEP's, and the two answer different
+    questions. The run says the gate executed; the step says the gate ACTED. A gate that ran
+    perfectly and declined -- its `if:` excluding the ecosystem -- concludes `success` at the run
+    and `skipped` at the step, and until ADR-0037 nothing here could tell those apart.
+
+    THREE STATES, AND THE THIRD IS NOT A FOURTH SPELLING OF `skipped`. `arm_outcome` is whatever
+    GitHub called the step, verbatim; `"unknown"` where a step of that name exists but had not
+    concluded; and None where no step of that name was found in the gate's run AT ALL. That last
+    is the case a reader must be able to tell from `skipped`: `skipped` is the cascade declining,
+    which is the rule working, while None means this program looked for a step the registry named
+    and the run did not contain it -- either an untranscribed revision it could not even name, or
+    a transcription that has drifted from the bytes. One is routine and one is a defect, so they
+    do not share a value.
     """
 
     path: str
     revision: str
     run: int
     outcome: str
+    arm_outcome: str | None = None
 
 
 @dataclass(frozen=True)

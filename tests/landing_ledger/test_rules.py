@@ -68,6 +68,49 @@ def test_this_repositorys_own_gate_is_transcribed() -> None:
     )
 
 
+@pytest.mark.parametrize("revision", sorted(REGISTRY))
+def test_each_arm_step_name_is_transcribed_from_the_bytes_that_revision_pins(
+    revision: str,
+) -> None:
+    """The transcription held to the file, the same way the predicate is (ADR-0037).
+
+    The blob-sha pin above proves the FIXTURE is the revision it claims to be; it can say nothing
+    about whether a hand-typed step name matches what is inside it. Without this, an entry could
+    name a step no revision ever contained, and the only symptom would be a landing recorded as
+    unarmed -- silent, and in the direction that quietly withdraws the rule basis.
+
+    It also holds the per-revision discipline mechanically: ADR-0034 renamed this step, and the
+    three revisions before it renamed it once before that, so a single name copied across the
+    registry would be wrong for five of the eight entries. Matched as a `- name:` line rather than
+    as a substring, so a name that merely appears somewhere in the prose cannot satisfy it.
+    """
+    fixture = (FIXTURES / f"{revision}.yml").read_text()
+    step_names = [
+        line.split("- name:", 1)[1].strip()
+        for line in fixture.splitlines()
+        if line.strip().startswith("- name:")
+    ]
+
+    assert REGISTRY[revision].arm_step in step_names, (
+        f"rule {revision} names an arming step that revision does not declare; "
+        f"it declares {step_names}"
+    )
+
+
+def test_the_arming_step_is_the_one_that_hands_the_merge_to_github() -> None:
+    """The name is only a handle; what makes it the ARMING step is the command beneath it.
+
+    Read from the current revision alone, deliberately: this asserts that the registry's handle
+    still points at `gh pr merge --auto` in the gate this estate runs today, which is the thing a
+    future rename would break. A whole-registry version would be re-deriving the transcription.
+    """
+    current = "3457db3cee85ffa054dee8b434ac25238a81f425"
+    fixture = (FIXTURES / f"{current}.yml").read_text()
+    step = fixture.split(f"- name: {REGISTRY[current].arm_step}", 1)[1]
+
+    assert "gh pr merge --auto" in step.split("- name:", 1)[0]
+
+
 def test_an_unrecognised_revision_is_refused_rather_than_assumed_harmless() -> None:
     """The whole reason the ledger pins a revision instead of a filename."""
     assert rule_for("0" * 40) is None
@@ -126,7 +169,12 @@ def test_a_revision_that_differs_only_in_its_pinned_action_still_needs_its_own_e
 def test_a_rule_that_names_no_ecosystem_never_permits_on_an_absent_one() -> None:
     """`None in frozenset()` is False either way; this pins that an absent ecosystem cannot
     become a match by some future membership check being written the other way round."""
-    rule = Rule(revision="x", update_types=frozenset({SEMVER_PATCH}), ecosystems=frozenset({"uv"}))
+    rule = Rule(
+        revision="x",
+        update_types=frozenset({SEMVER_PATCH}),
+        arm_step="Arm it",
+        ecosystems=frozenset({"uv"}),
+    )
 
     assert not rule.permits(SEMVER_MAJOR, None)
     assert not rule.permits(None, None)

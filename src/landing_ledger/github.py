@@ -33,7 +33,7 @@ from landing_ledger.model import (
     UpdateMetadata,
     WorkflowRun,
 )
-from landing_ledger.rules import GATE_PATH
+from landing_ledger.rules import GATE_PATH, rule_for
 
 API = "https://api.github.com"
 
@@ -275,6 +275,35 @@ def _gate_revision(reader: GitHubReader, repository: str, sha: str) -> str | Non
     return blob.get("sha") if isinstance(blob, dict) else None
 
 
+def _arm_outcome(reader: GitHubReader, repository: str, run_id: int, revision: str) -> str | None:
+    """What the gate's arming step concluded on this run, or None if it could not be found.
+
+    THIS IS A SECOND REQUEST AND THERE IS NO WAY AROUND IT. `_checks_and_gate` deliberately does
+    not fetch the gate run's jobs -- it identifies the gate and moves on, because the gate is not
+    one of the checks that verified the change. Whether the gate ACTED lives one level below the
+    run's own conclusion, in a step, so it costs one call per landing that has a gate at all.
+    ADR-0037's own text says the data is already fetched; it is not, and the cost is stated here
+    rather than discovered against the hourly limit the recording pass already runs close to.
+
+    IT ASKS NOTHING WHEN THE REVISION IS NOT TRANSCRIBED. The step has no `id:`, so the only
+    handle on it is the name the registry holds for these exact bytes -- with no entry there is
+    no name to look for, and a request that could not recognise its answer is a request not worth
+    making. `basis_of` treats that case as "the question could not be asked" rather than as "the
+    gate did not arm", which is what keeps an untranscribed revision reaching the audit.
+    """
+    rule = rule_for(revision)
+    if rule is None:
+        return None
+    jobs = reader.get(f"/repos/{repository}/actions/runs/{run_id}/jobs", per_page=100)
+    for job in (jobs or {}).get("jobs", []):
+        for step in job.get("steps") or ():
+            if step.get("name") == rule.arm_step:
+                # `or "unknown"` mirrors the run's own conclusion above, and reserves None for
+                # the genuinely different answer: no step of this name ran here.
+                return step.get("conclusion") or "unknown"
+    return None
+
+
 def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str) -> Landing:
     """Assemble one landing. Every value comes from GitHub; nothing is reconstructed."""
     commit = reader.get(f"/repos/{repository}/commits/{sha}")
@@ -309,11 +338,22 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
     if gate is not None:
         revision = _gate_revision(reader, repository, landing_sha)
         if revision is not None:
+            outcome = gate.get("conclusion") or "unknown"
             rule = RuleApplication(
                 path=GATE_PATH,
                 revision=revision,
                 run=gate["id"],
-                outcome=gate.get("conclusion") or "unknown",
+                outcome=outcome,
+                # ONLY WHEN THE RUN CONCLUDED CLEANLY, because nothing downstream can use the
+                # answer otherwise: the rule basis requires this same `success` first, so a
+                # request here would be spent on a landing already refused. It matters at this
+                # scale -- the gate workflow runs on EVERY pull request and its job is skipped
+                # for every author but the update bot, which is most landings in most passes.
+                arm_outcome=(
+                    _arm_outcome(reader, repository, gate["id"], revision)
+                    if outcome == "success"
+                    else None
+                ),
             )
     # A squash carries both sets of trailers through verbatim, so the landing commit almost always
     # has them. A true merge commit does not, and neither does a squash in a repository configured
