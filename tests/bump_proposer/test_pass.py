@@ -146,7 +146,7 @@ def rig(checkout, monkeypatch):
     # the defining module alone leaves the caller holding the original.
     for module in (standing, cli):
         monkeypatch.setattr(module, "require_clean", lambda root: None)
-        monkeypatch.setattr(module, "require_published", lambda root: None)
+        monkeypatch.setattr(module, "require_publishable", lambda root: None)
         monkeypatch.setattr(module, "commit", lambda package, bump, root: "c" * 40)
     monkeypatch.setattr(
         cli,
@@ -437,7 +437,7 @@ def test_a_checkout_carrying_an_unpublished_commit_stops_the_pass(rig, monkeypat
         raise standing.StandingError("the packages checkout carries 1 commit(s) origin does not")
 
     for module in (standing, cli):
-        monkeypatch.setattr(module, "require_published", refuse)
+        monkeypatch.setattr(module, "require_publishable", refuse)
 
     assert run(["--submit"]) == EXIT_UNUSABLE
     assert calls == []
@@ -484,10 +484,46 @@ def test_a_dry_run_does_not_ask_whether_the_checkout_is_published(rig, monkeypat
         raise standing.StandingError("the packages checkout carries 1 commit(s) origin does not")
 
     for module in (standing, cli):
-        monkeypatch.setattr(module, "require_published", refuse)
+        monkeypatch.setattr(module, "require_publishable", refuse)
 
     assert run([]) == EXIT_OK
 
     assert "would-advance" in capsys.readouterr().out
     assert calls == []
     assert estate.proposals == []
+
+
+def test_a_refused_publish_stops_the_pass_minting_a_further_revision(
+    rig, monkeypatch, capsys
+) -> None:
+    """Kills: asking the publishable question only once, at the top of the pass.
+
+    A refused publish is caught PER PULL REQUEST and the pass goes on, so the residue it just
+    created is invisible to a guard consulted only in `_lane`. Every later unit would then run
+    the ladder again -- minting a revision number that cannot be unminted and committing another
+    local commit refused the same way.
+
+    The raiser answers the pass-level call and refuses the per-unit one, which is the only
+    arrangement that isolates the second call site: a guard that raised on both would fail at
+    `_lane` and never reach the acting path at all.
+    """
+    estate, calls = rig
+    seen = 0
+
+    def refuse_after_the_first_call(root):
+        nonlocal seen
+        seen += 1
+        if seen > 1:
+            raise standing.StandingError(
+                "the packages checkout carries 1 commit(s) origin does not"
+            )
+
+    for module in (standing, cli):
+        monkeypatch.setattr(module, "require_publishable", refuse_after_the_first_call)
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert seen == 2
+    assert calls == []
+    assert estate.proposals == []
+    assert "origin does not" in capsys.readouterr().out

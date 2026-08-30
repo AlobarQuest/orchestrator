@@ -60,7 +60,7 @@ from bump_proposer.standing import (
     commit,
     discover,
     require_clean,
-    require_published,
+    require_publishable,
     snapshot_hash,
 )
 from landing_ledger.audit import REFUSING_CONCLUSIONS, is_green
@@ -306,6 +306,12 @@ def _act(
 
     published: str | None = None
     if not (package.carries(bump) and package.approved):
+        # ASKED AGAIN, PER UNIT, and not only once at the top of the pass. A refused publish is
+        # caught per pull request and the pass goes on, so the residue this pass just created
+        # would otherwise be invisible to the guard that exists to stop a revision being stacked
+        # on it -- and every later unit would mint another revision number, which cannot be
+        # unminted, and commit another local commit refused the same way.
+        require_publishable(root)
         package = advance(package, bump, root)
         snapshot_hash(package, root)
         published = commit(package, bump, root)
@@ -411,7 +417,7 @@ def _lane(
             # else's work this pass would sweep up, and an unpublished commit is this program's
             # own work it failed to finish. Neither is a state a further revision may be built
             # on, and both need a person.
-            require_published(root)
+            require_publishable(root)
     except StandingError as error:
         print(str(error), file=sys.stderr)
         return None

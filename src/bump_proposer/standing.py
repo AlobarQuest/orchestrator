@@ -69,6 +69,12 @@ COMMAND_TIMEOUT_SECONDS: Final = 120.0
 # that runs are ONE value, so neither can outlive the other.
 PUBLISH_COMMAND: Final = "git push origin main"
 
+# The branch that command publishes, READ OUT OF IT rather than written again. The push names
+# the branch by name, so a checkout on any other branch is one this producer must refuse; a
+# second spelling of `main` here would be the one place that refusal could silently stop
+# describing the command it guards.
+_PUBLISHED_BRANCH: Final = PUBLISH_COMMAND.split()[-1]
+
 # The placeholder both version fields hold in a standing package nobody has filled in. It is
 # the SAME string in both on purpose: the approval policy refuses a revision whose two versions
 # are equal, so an unfilled shell cannot be approved into a revision describing no work.
@@ -227,10 +233,23 @@ def require_clean(root: Path) -> None:
         )
 
 
-def require_published(root: Path) -> None:
-    """Refuse to act on a checkout carrying a commit this program wrote and could not publish.
+def require_publishable(root: Path) -> None:
+    """Refuse a checkout `git push origin main` would not publish this pass's work from.
 
-    **THE SIBLING OF `require_clean`, AND IT EXISTS BECAUSE THE REPLAY PATH SKIPS THE PUSH.**
+    **IT REFUSES A CHECKOUT THAT IS NOT ON `main`, AND THAT IS THE HALF THAT FAILS SILENTLY.**
+    `git push origin main` pushes the local `main` REF, not `HEAD`. From any other branch --
+    or a detached head -- the commit this pass writes lands off `main`, the push reports
+    `Everything up-to-date` and **exits 0**, and the pass goes on to name a sha and propose a
+    record for a commit only this machine holds: precisely the state ADR-0033 exists to end,
+    wearing the shape of success. Measured, not reasoned: `push_exit=0` with `HEAD` one commit
+    ahead of `origin/main`. The spelling cannot be `HEAD:main` -- ADR-0033 requires the literal
+    the merge guard scans for -- so the branch is what gives way.
+
+    It is checked FIRST because the count below is only meaningful on `main`: `origin/main..HEAD`
+    read from a topic branch answers a question about that branch instead.
+
+    **THE UNPUBLISHED-COMMIT HALF IS THE SIBLING OF `require_clean`, AND IT EXISTS BECAUSE THE
+    REPLAY PATH SKIPS THE PUSH.**
     A pass whose publish is refused has already written and committed an approved revision --
     and a non-fast-forward refusal is the ORDINARY way that happens, since anything landing in
     the authoring repository leaves this checkout behind until somebody reconciles it. The next
@@ -247,14 +266,27 @@ def require_published(root: Path) -> None:
     question from what is already on disk. Going to the network would make this program's
     refusal depend on somebody else's landings rather than on its own unfinished act.
     """
+    # `--abbrev-ref HEAD` answers the branch name, or the literal `HEAD` when detached -- so
+    # the detached case fails closed through the same comparison, with no second command.
+    branch = _run(root, ["git", "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    if branch != _PUBLISHED_BRANCH:
+        raise StandingError(
+            f"the packages checkout at {root} is on {branch or 'no branch'} rather than "
+            f"{_PUBLISHED_BRANCH}; publishing pushes that branch by name, so a commit written "
+            "here would be reported as published and would not be"
+        )
     ahead = _run(root, ["git", "rev-list", "--count", "origin/main..HEAD"]).strip()
     if not ahead.isdigit():
         raise StandingError(f"the checkout at {root} would not say how far ahead of origin it is")
     if int(ahead) > 0:
+        # DELIBERATELY NOT NARROWED TO THIS PROGRAM'S OWN COMMITS, and the message says only
+        # what has been established. Publishing pushes the branch, so somebody else's unpushed
+        # commit would be published by this pass too -- a widening ADR-0033 did not grant. The
+        # refusal is right in both cases; asserting whose commit it is would not be.
         raise StandingError(
             f"the packages checkout at {root} carries {ahead} commit(s) origin does not; "
-            "this program publishes what it commits and will not write another revision on "
-            "top of one it could not publish"
+            "publishing pushes the branch, so this pass would publish them too — reconcile "
+            "the checkout first"
         )
 
 
@@ -341,7 +373,7 @@ def commit(package: StandingPackage, bump: Bump, root: Path) -> str:
     **A REFUSED PUBLISH NAMES THE COMMIT IT STRANDED.** It raises like every other refusal here,
     so the pass reports it as a finding -- but the commit exists by then, and the next pass
     replays past the step that made it, so the sha is the one thing a reader needs and the one
-    thing `git` will not say afterwards. `require_published` is what stops that finding going
+    thing `git` will not say afterwards. `require_publishable` is what stops that finding going
     quiet on the following pass.
     """
     paths = [

@@ -370,41 +370,94 @@ def test_a_refused_publish_names_the_commit_it_stranded(tmp_path, monkeypatch) -
         standing.commit(package, BUMP, tmp_path)
 
 
+def _fake_git(*, branch="main", ahead="0"):
+    """A checkout that answers the two questions `require_publishable` asks, and nothing else.
+
+    Dispatching on the SUBCOMMAND rather than returning one string for every call: a single
+    canned answer makes the branch read and the distance read indistinguishable, so a guard
+    that asked only one of them would pass every case.
+    """
+
+    def run(root, command):
+        if command[1] == "rev-parse":
+            return branch + "\n"
+        if command[1] == "rev-list":
+            return ahead + "\n"
+        raise AssertionError(f"require_publishable ran an unexpected command: {command}")
+
+    return run
+
+
+def test_a_checkout_on_another_branch_is_refused(tmp_path, monkeypatch) -> None:
+    """Kills: publishing from a checkout `git push origin main` does not publish from.
+
+    That command pushes the local `main` REF. From a topic branch the commit lands off `main`,
+    the push says `Everything up-to-date` and exits 0, and the pass names a sha for a commit
+    only this machine holds -- the very state ADR-0033 ends, wearing the shape of success.
+    """
+    monkeypatch.setattr(standing, "_run", _fake_git(branch="topic"))
+    with pytest.raises(StandingError, match="is on topic rather than main"):
+        standing.require_publishable(tmp_path)
+
+
+def test_a_detached_head_is_refused(tmp_path, monkeypatch) -> None:
+    """Fail-closed through the same comparison: `--abbrev-ref` answers the literal `HEAD`."""
+    monkeypatch.setattr(standing, "_run", _fake_git(branch="HEAD"))
+    with pytest.raises(StandingError, match="rather than main"):
+        standing.require_publishable(tmp_path)
+
+
+def test_the_branch_is_read_out_of_the_publish_command(tmp_path, monkeypatch) -> None:
+    """Kills: a second spelling of the branch name.
+
+    The refusal exists because the push names its branch, so the two must be one value -- a
+    guard naming a branch the command does not push is a guard about nothing.
+    """
+    assert standing.PUBLISH_COMMAND.endswith(" " + standing._PUBLISHED_BRANCH)
+    monkeypatch.setattr(standing, "_run", _fake_git(branch=standing._PUBLISHED_BRANCH))
+    standing.require_publishable(tmp_path)
+
+
 def test_a_checkout_carrying_an_unpublished_commit_is_refused(tmp_path, monkeypatch) -> None:
     """Kills: writing a further revision on top of one that could not be published."""
-    monkeypatch.setattr(standing, "_run", lambda root, command: "1\n")
+    monkeypatch.setattr(standing, "_run", _fake_git(ahead="1"))
     with pytest.raises(StandingError, match="carries 1 commit"):
-        standing.require_published(tmp_path)
+        standing.require_publishable(tmp_path)
 
 
-def test_a_checkout_level_with_origin_is_accepted(tmp_path, monkeypatch) -> None:
+def test_a_checkout_level_with_origin_on_main_is_accepted(tmp_path, monkeypatch) -> None:
     """The other direction: a guard that refused every checkout would stop the lane dead."""
-    monkeypatch.setattr(standing, "_run", lambda root, command: "0\n")
-    standing.require_published(tmp_path)
+    monkeypatch.setattr(standing, "_run", _fake_git())
+    standing.require_publishable(tmp_path)
 
 
 def test_an_unreadable_distance_from_origin_is_refused(tmp_path, monkeypatch) -> None:
     """Fail-closed. A count that cannot be read is not a count of zero, and reading it as one
     would wave through exactly the residue this refusal exists for."""
-    monkeypatch.setattr(standing, "_run", lambda root, command: "\n")
+    monkeypatch.setattr(standing, "_run", _fake_git(ahead=""))
     with pytest.raises(StandingError, match="how far ahead"):
-        standing.require_published(tmp_path)
+        standing.require_publishable(tmp_path)
 
 
-def test_the_distance_is_read_from_the_tracking_ref_without_a_fetch(tmp_path, monkeypatch) -> None:
-    """Kills: fetching first, or asking a different question.
+def test_the_checkout_is_read_without_a_fetch(tmp_path, monkeypatch) -> None:
+    """Kills: fetching first, asking a different question, or asking them out of order.
 
     A successful push advances `origin/main` and a refused one does not, so the answer is
     already on disk. Going to the network would make this program's refusal depend on somebody
-    else's landings rather than on its own unfinished act.
+    else's landings rather than on its own unfinished act. The branch comes FIRST because the
+    distance is only meaningful on `main`: read from a topic branch it answers about that.
     """
     seen: list[tuple[str, ...]] = []
+    inner = _fake_git()
 
     def fake_run(root, command):
         seen.append(tuple(command))
-        return "0\n"
+        return inner(root, command)
 
     monkeypatch.setattr(standing, "_run", fake_run)
-    standing.require_published(tmp_path)
+    standing.require_publishable(tmp_path)
 
-    assert seen == [("git", "rev-list", "--count", "origin/main..HEAD")]
+    assert seen == [
+        ("git", "rev-parse", "--abbrev-ref", "HEAD"),
+        ("git", "rev-list", "--count", "origin/main..HEAD"),
+    ]
