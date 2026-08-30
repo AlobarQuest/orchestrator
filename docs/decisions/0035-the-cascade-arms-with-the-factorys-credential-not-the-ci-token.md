@@ -1,12 +1,56 @@
 # ADR-0035 — The cascade arms with the factory's credential, not the CI token
 
-- **Status:** Accepted
+- **Status:** Accepted, **IMPLEMENTATION BLOCKED 2026-08-30 — DO NOT BUILD THIS AS WRITTEN.**
+  The decision's *problem* stands; its chosen *identity* is defective and the fork replacing it is
+  open. See "Blocked" immediately below before reading anything else here.
 - **Date:** 2026-08-29
 - **Decided by:** Devon
 - **Relates to:** ADR-0016 (native auto-merge for routine updates), ADR-0018 (the gate is a
   cascade), ADR-0034 (the split is by outcome, not update type)
 - **Supersedes:** the 2026-08-25 ruling to leave the cascade on `secrets.GITHUB_TOKEN`, on the
   reopen trigger that ruling named for itself
+
+## Blocked — the identity choice destroys the record this change exists beside
+
+**Found by the build session, confirmed by measurement, before anything landed.** ADR-0035 guards
+one leg of the landing record and breaks the other.
+
+`basis_of` (`landing_ledger/record.py:207`) requires the gate to have succeeded **and**
+`is_machine(landed_by)` — and `is_machine` is `login.endswith("[bot]")` (`:161`), fed from
+`merged_by.login`. **GitHub attributes an auto-merge to the ARMING identity**, so changing what arms
+the cascade changes what the ledger records about every landing:
+
+| armed by | `merged_by` | `is_machine` | basis |
+|---|---|---|---|
+| `secrets.GITHUB_TOKEN` — all six 2026-08-28 landings | `github-actions[bot]` / Bot | true | `auto_merge_rule` |
+| a user PAT — `orchestrator#167`, **the mechanism this ADR adopts** | `AlobarQuest` / **User** | **false** | **`human`** |
+
+So every future cascade landing records as landed by a person, and `audit_landing` then returns
+`(), (), ()` for any basis that is not the rule (`audit.py:355`) — **Detector A stops auditing the
+native lane, silently**, with its `permitted` denominator at zero. Nothing raises.
+
+**It is not correctable afterwards.** `permitted_by` goes into an immutable observation whose
+`source_reference` is not content-addressed and which has no delete route, so a later correction is
+an `observation_conflict` — the state the six known-defective rows already exit 3 on nightly.
+
+**The Consequences section below is wrong where it says attribution "is not a regression".** It is
+one, for the landing ledger, and this ADR's own coupling argument names losing the
+`auto_merge_rule` basis as the failure that coupling exists to prevent. The estate also knew:
+CLAUDE.md carries the `[bot]`-suffix bullet, `basis_of`'s own docstring names the residual, and a
+backlog item has said so since 2026-08-10 — which HQ read aloud to Devon the day before writing
+this ADR.
+
+**The open fork, for Devon.** (a) *Ledger-side* — discriminate on the gate run's ARM STEP conclusion
+at the landed head rather than on who pressed merge; changes what every landing asserts, so it needs
+its own ADR. (b) *App-side* — arm with `alobar-sds-dispatch[bot]`, which keeps `basis_of` working
+untouched because it is type Bot with the suffix; costs two secrets across six repositories plus a
+token-mint step, hence a new blob and a new transcription, and its arming behaviour is unmeasured
+(~15 minutes on a disposable repository).
+
+**What survives regardless:** the problem statement, the `pull_request_target` secret measurement,
+the six-repository coupling, and one defect already fixed in the held `#205` — `_checks_and_gate`
+filtered `event != "pull_request"`, so the gate's own run would have been invisible under the new
+trigger.
 
 ## Decision
 
