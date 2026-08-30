@@ -11,6 +11,13 @@ FAIL CLOSED ON AN UNKNOWN REVISION. A blob sha with no entry is not "probably fi
 nobody classified, deciding landings. `rule_for` returns None and every caller treats that as a
 finding. That is the whole reason the ledger pins a revision instead of a filename.
 
+IT HOLDS THE ARM STEP'S NAME TOO, AND FOR THE SAME REASON (ADR-0037). What the gate DID -- whether
+it armed this landing or declined -- is readable only by matching the name of the step that runs
+`gh pr merge --auto`, because that step carries no `id:` and GitHub's job-steps payload exposes
+nothing else to key on. A single constant would be a second copy that goes stale silently; keyed by
+blob it goes stale loudly, as an untranscribed revision. Three names appear across the eight
+revisions below.
+
 THE LITERAL IS TRANSCRIBED, NOT CORRECTED. Revision 4d87d9b7 compares against `github-actions`
 with a HYPHEN, while the value it is compared to -- `fetch-metadata`'s `package-ecosystem`, which
 is the second segment of the branch name -- spells it with an UNDERSCORE. That revision therefore
@@ -53,10 +60,29 @@ class Rule:
     'dependabot[bot]'`). The ledger does not record the pull request's author, so the honest
     proxy is the `updated-dependencies` trailer -- the same text the gate's own metadata step
     parses. A landing with no trailer cannot be shown to have satisfied this arm.
+
+    `arm_step` is the NAME of the step that runs `gh pr merge --auto`, and it is here because
+    there is nowhere honest to put it and nothing else to key it on (ADR-0037). The step carries
+    no `id:` -- only the metadata step does -- and GitHub's job-steps payload exposes `name`,
+    `status`, `conclusion` and `number` and nothing more. So whether the gate ARMED a landing can
+    only be read by matching workflow prose, which is the coupling this estate normally refuses.
+
+    IT IS SAFE HERE AND NOWHERE ELSE, for the reason the module docstring gives: an entry is
+    keyed by the gate's blob, held to the bytes by a fixture, and unknown revisions fail closed.
+    A revision that renames its step gets a new blob, hence a new entry, hence the new name --
+    ADR-0034 has already renamed it once, and the three revisions before it renamed it once
+    before that. A single constant in `record.py` or `github.py` would have been wrong for five
+    of the eight revisions below on the day it was written.
+
+    IT IS REQUIRED, DELIBERATELY. A default would let a new revision be transcribed without its
+    step name and read as never having armed anything, which is the quiet direction. Every
+    construction below is keyword-only, so a required field costs nothing and makes the
+    declaration mechanical rather than requested.
     """
 
     revision: str
     update_types: frozenset[str]
+    arm_step: str
     ecosystems: frozenset[str] = field(default_factory=frozenset)
     major_ecosystems: frozenset[str] = field(default_factory=frozenset)
     excluded_ecosystems: frozenset[str] = field(default_factory=frozenset)
@@ -107,6 +133,7 @@ class Rule:
 _PATCH_AND_MINOR = Rule(
     revision="77ab867d1080d18baea3a2b230655c2729716970",
     update_types=frozenset({SEMVER_PATCH, SEMVER_MINOR}),
+    arm_step="Enable auto-merge for patch and minor updates",
 )
 
 # The first attempt at widening to GitHub Actions majors. Its literal does not match the value it
@@ -114,6 +141,7 @@ _PATCH_AND_MINOR = Rule(
 _HYPHENATED_ACTIONS = Rule(
     revision="4d87d9b7465e3b59bd9bdee2086de18eb1cab1dd",
     update_types=frozenset({SEMVER_PATCH, SEMVER_MINOR}),
+    arm_step="Enable auto-merge for patch, minor, and GitHub Actions major updates",
     ecosystems=frozenset({"github-actions"}),
 )
 
@@ -121,6 +149,7 @@ _HYPHENATED_ACTIONS = Rule(
 _UNDERSCORED_ACTIONS = Rule(
     revision="12880ce77ab97c3f4d9281195041eed8c5d52609",
     update_types=frozenset({SEMVER_PATCH, SEMVER_MINOR}),
+    arm_step="Enable auto-merge for patch, minor, and GitHub Actions major updates",
     ecosystems=frozenset({"github_actions"}),
 )
 
@@ -130,6 +159,7 @@ _UNDERSCORED_ACTIONS = Rule(
 _UNDERSCORED_ACTIONS_NEWER_METADATA = Rule(
     revision="43e37ed97823aec25cc5bac63f636914637e219c",
     update_types=frozenset({SEMVER_PATCH, SEMVER_MINOR}),
+    arm_step="Enable auto-merge for patch, minor, and GitHub Actions major updates",
     ecosystems=frozenset({"github_actions"}),
 )
 
@@ -140,6 +170,7 @@ _UNDERSCORED_ACTIONS_NEWER_METADATA = Rule(
 _CASCADE = Rule(
     revision="e849b3a8411fabeff1dedd138e6e3e3a2f535319",
     update_types=frozenset({SEMVER_PATCH, SEMVER_MINOR}),
+    arm_step="Enable auto-merge when the intent suffices, or a major is exercised by the gate",
     major_ecosystems=frozenset({"github_actions"}),
 )
 
@@ -149,6 +180,7 @@ _CASCADE = Rule(
 _CASCADE_NEWER_METADATA = Rule(
     revision="a4a4b8da035292fe434badd007607d8a69bc54e2",
     update_types=frozenset({SEMVER_PATCH, SEMVER_MINOR}),
+    arm_step="Enable auto-merge when the intent suffices, or a major is exercised by the gate",
     major_ecosystems=frozenset({"github_actions"}),
 )
 
@@ -162,6 +194,7 @@ _CASCADE_NEWER_METADATA = Rule(
 _CASCADE_WITHOUT_DOCKER = Rule(
     revision="72391c0f7343477193b5c896680a083500c45227",
     update_types=frozenset({SEMVER_PATCH, SEMVER_MINOR}),
+    arm_step="Enable auto-merge when the intent suffices, or a major is exercised by the gate",
     major_ecosystems=frozenset({"github_actions"}),
     excluded_ecosystems=frozenset({"docker"}),
 )
@@ -182,6 +215,7 @@ _CASCADE_WITHOUT_DOCKER = Rule(
 _OUTCOME_NOT_UPDATE_TYPE = Rule(
     revision="3457db3cee85ffa054dee8b434ac25238a81f425",
     update_types=frozenset(),
+    arm_step="Arm auto-merge, unless the required checks do not exercise what changed",
     permits_any_update_type=True,
     excluded_ecosystems=frozenset({"docker"}),
 )

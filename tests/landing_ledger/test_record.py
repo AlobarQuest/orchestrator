@@ -21,16 +21,33 @@ from landing_ledger.record import (
     BASIS_UNATTRIBUTED,
     MAX_FACT_BYTES,
     basis_of,
+    gate_armed,
     landing_observation,
 )
+from landing_ledger.rules import rule_for
 
 LANDED = datetime(2026, 8, 7, 12, 42, 4, tzinfo=UTC)
 REPO = "AlobarQuest/intent-packages"
 GATE = ".github/workflows/dependabot-auto-merge.yml"
 
+# THE FULL BLOB SHA, AND SINCE ADR-0037 IT DECIDES WHICH BRANCH RUNS. `basis_of` asks the registry
+# whether the revision is transcribed: a transcribed one is judged on whether the gate ARMED the
+# landing, and an unknown one falls back to the login heuristic. This fixture used the abbreviated
+# `77ab867d`, which the registry does not hold -- so every case in this file would have exercised
+# the fallback and nothing would have tested the rule the change is about.
+REVISION = "77ab867d1080d18baea3a2b230655c2729716970"
+# A revision no fixture pins and the registry has never held.
+UNTRANSCRIBED = "0" * 40
 
-def _rule(outcome: str = "success") -> RuleApplication:
-    return RuleApplication(path=GATE, revision="77ab867d", run=31179223805, outcome=outcome)
+
+def _rule(outcome: str = "success", arm_outcome: str | None = "success") -> RuleApplication:
+    return RuleApplication(
+        path=GATE,
+        revision=REVISION,
+        run=31179223805,
+        outcome=outcome,
+        arm_outcome=arm_outcome,
+    )
 
 
 def gate_landing(**overrides: object) -> Landing:
@@ -157,7 +174,7 @@ def test_an_auto_merged_landing_records_the_rule_that_permitted_it() -> None:
 
     assert permitted["basis"] == BASIS_RULE
     assert permitted["rule_path"] == GATE
-    assert permitted["rule_revision"] == "77ab867d"
+    assert permitted["rule_revision"] == REVISION
     assert permitted["rule_run"] == 31179223805
     assert permitted["update_type"] == "version-update:semver-minor"
     assert permitted["ecosystem"] == "uv"
@@ -179,15 +196,20 @@ def test_a_human_merge_records_the_person_and_invents_no_rule() -> None:
     )
 
 
-def test_a_human_merge_of_a_pull_request_the_gate_RAN_on_still_invents_no_rule() -> None:
+def test_a_human_merge_of_a_pull_request_the_gate_DECLINED_still_invents_no_rule() -> None:
     """The case the previous test cannot reach, and the one that actually occurs.
 
-    The gate runs on EVERY Dependabot pull request, including the package majors it deliberately
-    leaves to a person. Such a landing has a successful gate run AND a human who merged it -- so a
-    record keyed on "is there a rule application?" rather than on the basis would stamp
-    `decision: ADR-0016` onto a landing the rule declined to permit.
+    The gate runs on EVERY Dependabot pull request, including the ones it deliberately leaves to a
+    person. Such a landing has a successful gate RUN and a human who merged it -- so a record keyed
+    on "is there a rule application?" rather than on the basis would stamp `decision: ADR-0016`
+    onto a landing the rule declined to permit.
+
+    ADR-0037 changed WHICH FACT says the rule declined. It used to be that a person merged it;
+    it is now that the arming step did not run, which is what the gate itself reports when its
+    `if:` excludes the update. The scenario is unchanged and the discriminator is the honest one.
     """
-    permitted = landing_observation(gate_landing(landed_by="AlobarQuest"))["facts"]["permitted_by"]
+    declined = gate_landing(landed_by="AlobarQuest", rule=_rule(arm_outcome="skipped"))
+    permitted = landing_observation(declined)["facts"]["permitted_by"]
 
     assert permitted["basis"] == BASIS_HUMAN
     assert not {"rule_path", "rule_revision", "rule_run", "rule_outcome", "decision"} & set(
@@ -210,13 +232,79 @@ def test_a_direct_push_records_that_nothing_permitted_it() -> None:
 def test_the_rule_basis_needs_both_halves_and_is_never_rounded_down() -> None:
     """Either half alone is satisfiable by something that is not the lane.
 
-    The gate runs on every Dependabot pull request, including the major bumps it deliberately
-    leaves to a person -- so a successful gate run does not by itself mean the gate merged it.
+    The gate runs on every Dependabot pull request, including the ones it deliberately leaves to a
+    person -- so a successful gate RUN does not by itself mean the gate armed the landing. And a
+    run that did not conclude cleanly is not a rule that ran, whatever its steps report.
     """
-    assert basis_of(gate_landing(landed_by="AlobarQuest")) == BASIS_HUMAN
     assert basis_of(gate_landing(rule=None)) == BASIS_UNATTRIBUTED
-    assert basis_of(gate_landing(rule=_rule(outcome="skipped"))) == BASIS_UNATTRIBUTED
-    assert basis_of(gate_landing(landed_by=None)) == BASIS_UNATTRIBUTED
+    assert basis_of(gate_landing(rule=_rule(arm_outcome="skipped"))) == BASIS_UNATTRIBUTED
+    assert basis_of(gate_landing(rule=_rule(arm_outcome=None))) == BASIS_UNATTRIBUTED
+    # The run itself failed while the arming step had already succeeded. Reachable -- a run is
+    # cancelled after its last step concludes -- and the conjunct that refuses it is separate.
+    assert basis_of(gate_landing(rule=_rule(outcome="cancelled"))) == BASIS_UNATTRIBUTED
+
+
+def test_a_person_merging_an_ARMED_pull_request_records_the_rule_that_armed_it() -> None:
+    """ADR-0037, and the consequence taken deliberately.
+
+    Under the old rule this recorded `human`, because `merged_by` did not end in `[bot]`. The gate
+    had already permitted it and the named checks had already verified it, so the login was never
+    the fact the basis was reaching for. It matters because the arming credential is a free choice
+    only once the recorded basis stops moving with it.
+    """
+    permitted = landing_observation(gate_landing(landed_by="AlobarQuest"))["facts"]["permitted_by"]
+
+    assert permitted["basis"] == BASIS_RULE
+    assert permitted["rule_revision"] == REVISION
+    assert permitted["decision"] == "ADR-0016"
+    # `landed_by` stops being gated on and keeps being recorded.
+    assert permitted["landed_by"] == "AlobarQuest"
+
+
+def test_an_armed_landing_merged_by_a_machine_is_unchanged() -> None:
+    """The regression guard rather than the new behaviour: every cascade landing recorded to date
+    is this shape, and the change must not move any of them."""
+    assert basis_of(gate_landing()) == BASIS_RULE
+
+
+def test_a_skipped_arming_step_is_the_cascade_DECLINING_and_is_not_an_absent_one() -> None:
+    """`skipped` is the gate's `if:` excluding this update -- the rule working, not failing. Both
+    it and an absent step refuse the basis, and a reader must still be able to tell them apart:
+    one is routine and the other means the registry named a step the run did not contain."""
+    declined = gate_landing(rule=_rule(arm_outcome="skipped"))
+    missing = gate_landing(rule=_rule(arm_outcome=None))
+
+    assert basis_of(declined) == basis_of(missing) == BASIS_UNATTRIBUTED
+    assert declined.rule is not None and missing.rule is not None
+    assert declined.rule.arm_outcome != missing.rule.arm_outcome
+
+
+def test_gate_armed_is_success_and_nothing_else() -> None:
+    """A conclusion other than `success` is not an arming, whatever it is. Spelled over the
+    vocabulary GitHub actually reports rather than over the two cases the cascade produces."""
+    assert gate_armed(gate_landing())
+    for conclusion in ("skipped", "failure", "cancelled", "neutral", "unknown", ""):
+        assert not gate_armed(gate_landing(rule=_rule(arm_outcome=conclusion))), conclusion
+    assert not gate_armed(gate_landing(rule=None))
+
+
+def test_an_untranscribed_revision_keeps_todays_answer_so_the_audit_still_sees_it() -> None:
+    """The fail-open this change would otherwise have opened, closed deliberately.
+
+    `audit_landing` returns nothing at all for any basis but the rule, so `DRIFT_RULE_UNKNOWN` --
+    the finding that says a rule nobody classified decided a landing -- is reachable ONLY through
+    `auto_merge_rule`. Without a registry entry there is no step name to look for, so the arm
+    question cannot be asked; letting that drop the basis would DELETE the finding rather than
+    raise it. So an unknown revision answers exactly what it answered before ADR-0037, and the
+    landing still reaches the detector that reports the revision is unknown.
+    """
+    unknown = RuleApplication(
+        path=GATE, revision=UNTRANSCRIBED, run=31179223805, outcome="success", arm_outcome=None
+    )
+
+    assert rule_for(UNTRANSCRIBED) is None
+    assert basis_of(gate_landing(rule=unknown)) == BASIS_RULE
+    assert basis_of(gate_landing(rule=unknown, landed_by="AlobarQuest")) == BASIS_HUMAN
 
 
 def test_an_unattributed_landing_says_so_rather_than_claiming_a_basis() -> None:

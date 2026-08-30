@@ -19,10 +19,16 @@ from landing_ledger.github import (
     read_landing,
     update_metadata,
 )
+from landing_ledger.rules import REGISTRY
 
 REPO = "AlobarQuest/intent-packages"
 GATE = ".github/workflows/dependabot-auto-merge.yml"
 MERGED_AT = "2026-08-07T12:42:04Z"
+# The gate revision this fixture pins, and the name that revision gives its arming step. Read
+# from the registry rather than restated, so a fixture cannot claim a step no revision declares
+# -- `test_rules.py` holds the registry's side of that to the bytes.
+REVISION = "77ab867d1080d18baea3a2b230655c2729716970"
+ARM_STEP = REGISTRY[REVISION].arm_step
 
 TRAILER = """chore(deps-dev): bump ruff from 0.15.22 to 0.16.1 (#50)
 
@@ -283,10 +289,26 @@ def gate_routes(**overrides: object) -> dict[str, object]:
         f"/repos/{REPO}/actions/runs/31179220691/jobs": {
             "jobs": [{"name": "Lint, type-check, and test", "conclusion": "success"}]
         },
+        # The gate's OWN run, which `_checks_and_gate` identifies and does not read jobs for --
+        # ADR-0037 reads them separately, to learn whether the gate armed this landing.
         f"/repos/{REPO}/actions/runs/31179223805/jobs": {
-            "jobs": [{"name": "Dependabot auto-merge", "conclusion": "success"}]
+            "jobs": [
+                {
+                    "name": "Dependabot auto-merge",
+                    "conclusion": "success",
+                    "steps": [
+                        {"name": "Set up job", "conclusion": "success", "number": 1},
+                        {"name": "Read the update's metadata", "conclusion": "success"},
+                        {"name": ARM_STEP, "conclusion": "success"},
+                        {"name": "Complete job", "conclusion": "success"},
+                    ],
+                }
+            ]
         },
-        f"/repos/{REPO}/contents/{GATE}": {"sha": "77ab867d"},
+        # The FULL blob sha. Abbreviating it makes the revision untranscribed, which sends every
+        # case here down the unknown-revision fallback rather than through the rule the registry
+        # holds -- so the fixture would be exercising the wrong branch of `basis_of`.
+        f"/repos/{REPO}/contents/{GATE}": {"sha": REVISION},
     }
     routes.update(overrides)
     return routes
@@ -301,7 +323,8 @@ def test_a_gate_landing_is_read_whole() -> None:
     assert landing.landed_at.isoformat() == "2026-08-07T12:42:04+00:00"
     assert landing.files == ("pyproject.toml", "uv.lock")
     assert landing.rule is not None
-    assert (landing.rule.run, landing.rule.revision) == (31179223805, "77ab867d")
+    assert (landing.rule.run, landing.rule.revision) == (31179223805, REVISION)
+    assert landing.rule.arm_outcome == "success"
     assert landing.update is not None
     assert landing.update.update_type == "version-update:semver-minor"
 
@@ -319,6 +342,112 @@ def test_only_pull_request_runs_that_concluded_before_the_landing_are_checks() -
     assert all(check.name != "Dependabot auto-merge" for check in landing.checks)
     # And the run that concluded after the landing is not there either.
     assert all(check.name != "late" for check in landing.checks)
+
+
+def _gate_job(steps: list[dict[str, object]]) -> dict[str, object]:
+    return {"jobs": [{"name": "Dependabot auto-merge", "conclusion": "success", "steps": steps}]}
+
+
+def test_a_gate_that_DECLINED_reports_a_skipped_arming_step_rather_than_none() -> None:
+    """The gate's `if:` excluding this update. Its run still concludes `success` -- the decline
+    lives one level down, in the step -- which is exactly why the run's own conclusion cannot
+    answer the question ADR-0037 asks."""
+    routes = gate_routes(
+        **{
+            f"/repos/{REPO}/actions/runs/31179223805/jobs": _gate_job(
+                [
+                    {"name": "Read the update's metadata", "conclusion": "success"},
+                    {"name": ARM_STEP, "conclusion": "skipped"},
+                ]
+            )
+        }
+    )
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.rule is not None
+    assert landing.rule.outcome == "success"
+    assert landing.rule.arm_outcome == "skipped"
+
+
+def test_a_run_with_no_step_of_that_name_answers_None_rather_than_a_conclusion() -> None:
+    """Absent is not `skipped`, and the difference is a transcription that has drifted from the
+    bytes versus a cascade declining. Both refuse the rule basis; only one is a defect."""
+    routes = gate_routes(
+        **{
+            f"/repos/{REPO}/actions/runs/31179223805/jobs": _gate_job(
+                [{"name": "Read the update's metadata", "conclusion": "success"}]
+            )
+        }
+    )
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.rule is not None
+    assert landing.rule.arm_outcome is None
+
+
+def test_a_step_that_never_concluded_is_unknown_rather_than_absent() -> None:
+    """`None` is reserved for "no step of this name ran here", so a step that IS there and has no
+    conclusion must not borrow it -- it mirrors the run's own `or "unknown"` instead."""
+    routes = gate_routes(
+        **{
+            f"/repos/{REPO}/actions/runs/31179223805/jobs": _gate_job(
+                [{"name": ARM_STEP, "conclusion": None}]
+            )
+        }
+    )
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.rule is not None
+    assert landing.rule.arm_outcome == "unknown"
+
+
+def test_an_untranscribed_revision_is_not_asked_about_at_all() -> None:
+    """With no registry entry there is no step name to look for, so the request is not made -- a
+    call that could not recognise its own answer.
+
+    THE CONTROL HAS TO MAKE THE FETCH FAIL, not merely be absent. An absent route answers 404,
+    which the reader turns into `None`, which yields no steps and therefore `arm_outcome is None`
+    -- the same answer as never asking, so the assertion would hold whether or not the request
+    went out. Answering 500 makes the two outcomes different: the reader raises on it.
+    """
+    gate_jobs = f"/repos/{REPO}/actions/runs/31179223805/jobs"
+    routes = gate_routes(**{f"/repos/{REPO}/contents/{GATE}": {"sha": "0" * 40}})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == gate_jobs:
+            return httpx.Response(500, json=None)
+        if request.url.path not in routes:
+            return httpx.Response(404, json=None)
+        return httpx.Response(200, json=routes[request.url.path])
+
+    reader = GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
+    landing = read_landing(reader, REPO, "main", "e931db8d")
+
+    assert landing.rule is not None
+    assert landing.rule.revision == "0" * 40
+    assert landing.rule.arm_outcome is None
+
+
+def test_that_control_would_have_caught_a_fetch_that_did_go_out() -> None:
+    """The positive half of the test above, which is otherwise an assertion nothing can falsify.
+
+    Same 500, a TRANSCRIBED revision, so the fetch does happen -- and the pass fails loudly rather
+    than recording a landing as unarmed on the strength of an unreadable answer.
+    """
+    gate_jobs = f"/repos/{REPO}/actions/runs/31179223805/jobs"
+    routes = gate_routes()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == gate_jobs:
+            return httpx.Response(500, json=None)
+        if request.url.path not in routes:
+            return httpx.Response(404, json=None)
+        return httpx.Response(200, json=routes[request.url.path])
+
+    reader = GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(LedgerError):
+        read_landing(reader, REPO, "main", "e931db8d")
 
 
 def test_the_record_takes_the_full_sha_from_github_not_the_argument() -> None:

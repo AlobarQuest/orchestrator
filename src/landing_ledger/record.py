@@ -26,6 +26,7 @@ from dataclasses import asdict
 from typing import Any
 
 from landing_ledger.model import Landing
+from landing_ledger.rules import rule_for
 
 SOURCE_SYSTEM = "github"
 TRUST_CLASSIFICATION = "delivery_system"
@@ -162,15 +163,49 @@ def is_machine(login: str | None) -> bool:
     return login is not None and login.endswith("[bot]")
 
 
+def gate_armed(landing: Landing) -> bool:
+    """Whether the gate ARMED this landing -- the fact the rule basis rests on (ADR-0037).
+
+    A step conclusion of `success` and nothing else. `skipped` is the cascade DECLINING, which is
+    the rule working correctly on an update it does not reach, and reading it as armed would make
+    the basis mean "a gate ran" rather than "a gate permitted this". None is the step not being
+    found at all, which is not an arming either -- but the two are kept apart in the record, and
+    `basis_of` treats an untranscribed revision separately from both.
+    """
+    return landing.rule is not None and landing.rule.arm_outcome == "success"
+
+
 def basis_of(landing: Landing) -> str:
     """Which permission basis this landing has -- fail-closed in every direction.
 
     The rule basis needs BOTH halves: the gate workflow ran and succeeded on the pull request,
-    AND a machine performed the landing. Either half alone is satisfiable by something else --
-    the gate runs on every Dependabot pull request including the major bumps it deliberately
-    leaves to a person, and a machine identity could land something by some route this adapter
-    cannot see. Anything that satisfies neither `human` nor `rule` is `unattributed`; it is never
-    rounded down to the nearest basis that fits.
+    AND the gate ARMED this landing. Either half alone is satisfiable by something else -- the
+    gate runs on every Dependabot pull request including the ones it deliberately declines to
+    arm, and a run can conclude for reasons that have nothing to do with the arming step.
+    Anything that satisfies neither `human` nor `rule` is `unattributed`; it is never rounded
+    down to the nearest basis that fits.
+
+    THE SECOND HALF USED TO BE `is_machine(landed_by)`, AND ADR-0037 REPLACED IT. That was a
+    login-suffix heuristic standing in for "was this attended?", and the fact it was reaching for
+    is whether the RULE permitted the landing -- which the arming step answers directly. The
+    consequence is deliberate and is the point: a person merging an ARMED pull request now
+    records `auto_merge_rule` where it used to record `human`. The rule had already permitted it
+    and the named checks had already verified it, so the record loses nothing by saying so.
+    `landed_by` is still recorded; it is no longer what the basis is gated on.
+
+    AN UNTRANSCRIBED REVISION FALLS BACK TO THE OLD CONJUNCT, AND THAT IS NOT TIMIDITY.
+    `audit_landing` returns nothing at all for any basis but this one, so `DRIFT_RULE_UNKNOWN`
+    -- the finding that says a rule nobody classified decided a landing -- is reachable ONLY
+    through `auto_merge_rule`. Without a registry entry there is no step name to look for, so
+    `arm_outcome` is None for a landing that may well have been armed; letting that drop to
+    `unattributed` would delete the finding rather than raise it, which is the fail-open this
+    change exists near. So where the arm question cannot be asked, the basis answers exactly what
+    it answered before, and the landing still reaches the detector that says the revision is
+    unknown. The new behaviour is therefore scoped precisely to revisions the registry knows.
+
+    THE `outcome == "success"` CONJUNCT IS KEPT AND IS NOT REDUNDANT. A run can conclude
+    `cancelled` after its arming step has already succeeded, which is a landing whose gate did not
+    finish; the record should not assert a rule ran cleanly when its own run says otherwise.
 
     THE FACTORY BRANCH MUST SIT AFTER `auto_merge_rule`, AND THAT ORDER IS THE ONLY ONE THAT IS
     LOAD-BEARING -- measured by mutation rather than asserted, because a first draft of this note
@@ -198,14 +233,27 @@ def basis_of(landing: Landing) -> str:
     it is read as a person and recorded `human`, which asserts something false and which no
     detector will ever look at. GitHub does answer this properly: `merged_by.type` is `Bot`, and
     this adapter reads only the login. Closing it means carrying that field through the record,
-    which is a change to what every landing asserts and belongs with a reason to make it.
+    which is a change to what every landing asserts and belongs with a reason to make it. ADR-0037
+    narrowed what rests on it -- the rule basis no longer does -- without removing it.
+
+    ONE SHAPE THIS OPENS, NAMED RATHER THAN GUARDED. A landing merged by a machine whose gate ran
+    and DECLINED to arm now falls through to `unattributed`, whose frozen reason string says "no
+    gate run observed" -- which would be false for it. It is unreached today: the machines that
+    land here are the auto-merge itself (which only lands what it armed) and the orchestrator
+    (caught by the factory and change-record branches above). The string is frozen into 657
+    recorded observations and cannot be reworded without re-encoding them, so this is written down
+    rather than fixed.
     """
     if landing.pull_request is None:
         return BASIS_NONE
     if (
         landing.rule is not None
         and landing.rule.outcome == "success"
-        and is_machine(landing.landed_by)
+        and (
+            gate_armed(landing)
+            if rule_for(landing.rule.revision) is not None
+            else is_machine(landing.landed_by)
+        )
     ):
         return BASIS_RULE
     if landing.landed_by is not None and not is_machine(landing.landed_by):
