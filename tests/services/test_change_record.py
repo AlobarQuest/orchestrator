@@ -467,6 +467,22 @@ def test_conditions_that_name_no_excluded_set_are_the_OLDER_RULE_and_not_a_refus
     ["github_actions", {"github_actions": True}, ["github_actions", 1], [""], [None], 5],
     ids=["string", "dict", "mixed-list", "empty-member", "none-member", "int"],
 )
+def test_a_malformed_excluded_set_refuses_the_whole_conditions(excluded: object) -> None:
+    """ABSENT and MALFORMED are different facts and only one of them is survivable.
+
+    A shape nobody can act on must not degrade to the nearest recognisable one: reading a
+    malformed exclusion as "no exclusion" would silently restore the older rule, which is the
+    permissive direction for four of these six -- a landing party would then decide by update
+    type under a version that does not, and land a workflow-automation bump the exclusion names.
+    """
+    row = _served_row(
+        landing_policy_version=5,
+        landing_conditions={**V5_CONDITIONS, "excluded_ecosystems": excluded},
+    )
+
+    assert _read([row]).record.conditions is None  # type: ignore[union-attr]
+
+
 def test_the_excluded_names_are_FOLDED_when_they_are_parsed() -> None:
     """The same treatment the pin keys below get, and for the same reason.
 
@@ -482,22 +498,6 @@ def test_the_excluded_names_are_FOLDED_when_they_are_parsed() -> None:
 
     assert conditions is not None
     assert conditions.excluded_ecosystems == frozenset({"github_actions"})
-
-
-def test_a_malformed_excluded_set_refuses_the_whole_conditions(excluded: object) -> None:
-    """ABSENT and MALFORMED are different facts and only one of them is survivable.
-
-    A shape nobody can act on must not degrade to the nearest recognisable one: reading a
-    malformed exclusion as "no exclusion" would silently restore the older rule, which is the
-    permissive direction for four of these six -- a landing party would then decide by update
-    type under a version that does not, and land a workflow-automation bump the exclusion names.
-    """
-    row = _served_row(
-        landing_policy_version=5,
-        landing_conditions={**V5_CONDITIONS, "excluded_ecosystems": excluded},
-    )
-
-    assert _read([row]).record.conditions is None  # type: ignore[union-attr]
 
 
 def test_an_EMPTY_excluded_set_is_the_outcome_rule_excluding_nothing() -> None:
