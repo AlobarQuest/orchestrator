@@ -60,7 +60,7 @@ activation-sweep = "activation_sweep.cli:app"
 dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.6",
-  "ruff==0.16.2",
+  "ruff==0.16.4",
   "pyright==1.1.411",
   "httpx2>=2.10.0",
 ]
