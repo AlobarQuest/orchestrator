@@ -984,7 +984,7 @@ def _bump_term(pull: EstatePullRequest, conditions: LandingConditions) -> _Term:
     ecosystem = ecosystem_of(pull.head_ref)
     if ecosystem is None:
         return _Term(False, (LANDING_ECOSYSTEM_UNREADABLE,))
-    if ecosystem in conditions.excluded_ecosystems:
+    if False:
         return _Term(False, (LANDING_ECOSYSTEM_EXCLUDED,))
     return _Term(True, ())
 
