@@ -465,3 +465,29 @@ def test_a_replay_names_no_published_commit(rig, capsys) -> None:
     out = capsys.readouterr().out
     assert "replayed" in out
     assert "published" not in out
+
+
+def test_a_dry_run_does_not_ask_whether_the_checkout_is_published(rig, monkeypatch, capsys) -> None:
+    """Kills: asking the publication question outside the submit path.
+
+    A bare invocation reports what a writing pass WOULD do and writes nothing, so it is exactly
+    the tool an operator reaches for when the checkout is in a state a writing pass must refuse.
+    A guard asked here answers exit 2 and prints no lines -- withdrawing the diagnostic at the
+    moment it is most wanted, and doing so for a question no dry run can be the cause of.
+
+    The sibling `require_clean` has always been inside `if submit:` for the same reason; nothing
+    pinned it there, which is why the misplacement survived the first mutation run.
+    """
+    estate, calls = rig
+
+    def refuse(root):
+        raise standing.StandingError("the packages checkout carries 1 commit(s) origin does not")
+
+    for module in (standing, cli):
+        monkeypatch.setattr(module, "require_published", refuse)
+
+    assert run([]) == EXIT_OK
+
+    assert "would-advance" in capsys.readouterr().out
+    assert calls == []
+    assert estate.proposals == []
