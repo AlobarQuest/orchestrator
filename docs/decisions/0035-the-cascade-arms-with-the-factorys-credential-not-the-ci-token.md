@@ -70,6 +70,11 @@ probe measured who TRIGGERED the event. Both must hold and neither implies the o
 
 ## Consequences
 
+- **It is SIX repositories, not seven.** A first draft of this ADR and its handoff both said seven,
+  double-counting `orchestrator` — which is itself one of the six cascade repositories as well as
+  the home of `rules.py`, so its pull request carries both halves of the change. The build session
+  produced six and was right to.
+
 - **The gate blobs move, so `landing_ledger/rules.py` must be re-transcribed in the SAME
   operation.** `rule_for` is keyed by blob sha and fails closed. Split them and `bump_proposer`
   refuses every repository with `gate-not-transcribed`, and the landing ledger loses the
