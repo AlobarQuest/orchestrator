@@ -12,11 +12,12 @@ nobody classified, deciding landings. `rule_for` returns None and every caller t
 finding. That is the whole reason the ledger pins a revision instead of a filename.
 
 IT HOLDS THE ARM STEP'S NAME TOO, AND FOR THE SAME REASON (ADR-0037). What the gate DID -- whether
-it armed this landing or declined -- is readable only by matching the name of the step that runs
-`gh pr merge --auto`, because that step carries no `id:` and GitHub's job-steps payload exposes
-nothing else to key on. A single constant would be a second copy that goes stale silently; keyed by
-blob it goes stale loudly, as an untranscribed revision. Three names appear across the eight
-revisions below.
+it armed this landing or declined -- is readable only by matching the NAME of the step that hands
+the landing to GitHub's own auto-merge, because that step carries no `id:` and GitHub's job-steps
+payload exposes nothing else to key on. A single constant would be a second copy that goes stale
+silently; keyed by blob it goes stale loudly, as an untranscribed revision. Three names appear
+across the eight revisions below, and `tests/landing_ledger/test_rules.py` holds each of them to
+the bytes of the revision it claims -- including that the step so named is the arming one.
 
 THE LITERAL IS TRANSCRIBED, NOT CORRECTED. Revision 4d87d9b7 compares against `github-actions`
 with a HYPHEN, while the value it is compared to -- `fetch-metadata`'s `package-ecosystem`, which
@@ -61,9 +62,9 @@ class Rule:
     proxy is the `updated-dependencies` trailer -- the same text the gate's own metadata step
     parses. A landing with no trailer cannot be shown to have satisfied this arm.
 
-    `arm_step` is the NAME of the step that runs `gh pr merge --auto`, and it is here because
-    there is nowhere honest to put it and nothing else to key it on (ADR-0037). The step carries
-    no `id:` -- only the metadata step does -- and GitHub's job-steps payload exposes `name`,
+    `arm_step` is the NAME of the step that arms GitHub's auto-merge, and it is here because there
+    is nowhere honest to put it and nothing else to key it on (ADR-0037). The step carries no
+    `id:` -- only the metadata step does -- and GitHub's job-steps payload exposes `name`,
     `status`, `conclusion` and `number` and nothing more. So whether the gate ARMED a landing can
     only be read by matching workflow prose, which is the coupling this estate normally refuses.
 
