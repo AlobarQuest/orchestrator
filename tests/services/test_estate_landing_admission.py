@@ -853,9 +853,7 @@ def test_the_outcome_rule_does_not_bypass_the_rollout_pin(migrated_session: Sess
     ["main", "dependabot", "dependabot/", "dependabot/uv", "dependabot/uv/", "dependabot//x"],
     ids=["plain", "prefix-only", "prefix-slash", "no-remainder", "empty-remainder", "empty-eco"],
 )
-def test_a_branch_that_names_no_ecosystem_REFUSES(
-    migrated_session: Session, head_ref: str
-) -> None:
+def test_a_branch_that_names_no_ecosystem_REFUSES(migrated_session: Session, head_ref: str) -> None:
     """Fail closed, and the reason is the ledger's own: the update bot always names an ecosystem,
     so a name this cannot read never means "there was none". It means this program could not read
     what the exclusion is about, and permitting on that lands a change whose exclusion nobody can
@@ -916,9 +914,7 @@ def test_a_record_approved_under_the_previous_version_is_refused_until_re_approv
     """
     gateway = FakeEstateGateway(pull=pull_request(title=STUCK[0][0], head_ref=STUCK[0][1]))
 
-    stale = _ask(
-        migrated_session, record=_outcome_record(policy_version=4), gateway=gateway
-    )
+    stale = _ask(migrated_session, record=_outcome_record(policy_version=4), gateway=gateway)
     assert not stale.satisfied
     assert LANDING_POLICY_VERSION_SUPERSEDED in stale.refusals
 
