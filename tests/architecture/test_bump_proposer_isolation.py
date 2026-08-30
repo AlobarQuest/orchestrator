@@ -27,6 +27,10 @@ ALLOWED_TOP_LEVEL = {
     "__future__",
     "argparse",
     "bump_proposer",
+    # ADR-0033. `_run` takes a `Sequence[str]` so it accepts the split of the publish command's
+    # literal spelling, which `list`'s invariance refuses. Standard library, and a typing
+    # protocol rather than a capability: it widens what the helper accepts and reaches nothing.
+    "collections",
     "dataclasses",
     # ADR-0034. The producer now needs a clock: it takes a bump only once the required checks
     # have settled against it, because "the cascade permits this" stopped meaning "the cascade

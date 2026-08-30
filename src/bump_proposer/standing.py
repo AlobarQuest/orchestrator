@@ -45,6 +45,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -185,7 +186,10 @@ def discover(root: Path | None = None) -> dict[tuple[str, str], StandingPackage]
     return found
 
 
-def _run(root: Path, command: list[str]) -> str:
+# `Sequence`, not `list`: `PUBLISH_COMMAND.split()` yields a `list[LiteralString]`, and
+# `list` is invariant so it refuses one. Widening the parameter to the covariant type is
+# pyright's own suggestion and accepts every existing caller unchanged.
+def _run(root: Path, command: Sequence[str]) -> str:
     try:
         completed = subprocess.run(
             command,
