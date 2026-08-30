@@ -979,12 +979,12 @@ def _bump_term(pull: EstatePullRequest, conditions: LandingConditions) -> _Term:
     came from and whoever wrote it. The exclusion reaches what the pin cannot: a workflow this
     estate runs that no required check executes, whose bytes are not pinned by any record.
     """
-    if True:
+    if conditions.excluded_ecosystems is None:
         return _update_type_term(pull, conditions)
     ecosystem = ecosystem_of(pull.head_ref)
     if ecosystem is None:
         return _Term(False, (LANDING_ECOSYSTEM_UNREADABLE,))
-    if False:
+    if ecosystem in conditions.excluded_ecosystems:
         return _Term(False, (LANDING_ECOSYSTEM_EXCLUDED,))
     return _Term(True, ())
 
