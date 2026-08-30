@@ -17,7 +17,7 @@ import httpx
 import pytest
 
 from bump_proposer import cli, standing
-from bump_proposer.cli import EXIT_FINDINGS, EXIT_OK, run
+from bump_proposer.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
 
 GATE = "a4a4b8da035292fe434badd007607d8a69bc54e2"  # the cascade as installed on that repository
 REPOSITORY = "AlobarQuest/infraops-mcp-server"
@@ -146,6 +146,7 @@ def rig(checkout, monkeypatch):
     # the defining module alone leaves the caller holding the original.
     for module in (standing, cli):
         monkeypatch.setattr(module, "require_clean", lambda root: None)
+        monkeypatch.setattr(module, "require_published", lambda root: None)
         monkeypatch.setattr(module, "commit", lambda package, bump, root: "c" * 40)
     monkeypatch.setattr(
         cli,
@@ -396,3 +397,71 @@ def test_submitting_without_the_change_manager_credential_is_unusable(
 ) -> None:
     monkeypatch.delenv("BUMP_PROPOSER_CHANGE_MANAGER_TOKEN")
     assert run(["--submit"]) == 2
+
+
+# --- publishing (ADR-0033) --------------------------------------------------------
+
+
+def test_a_refused_publish_is_a_finding_and_no_record_is_proposed(rig, monkeypatch, capsys) -> None:
+    """Kills: reporting a refused publish as a warning, and proposing the record anyway.
+
+    ADR-0033 says a failed publish is a finding rather than a warning, and the proposal is
+    withheld with it for a reason of its own: the intake this record eventually causes records
+    `source_commit` as that checkout's HEAD, so a record for a revision nobody else can fetch
+    sends the carry after a commit only one machine holds.
+    """
+    estate, _ = rig
+
+    def refuse(package, bump, root):
+        raise standing.StandingError("p rev 1 is committed as abcdef123456 and unpublished")
+
+    for module in (standing, cli):
+        monkeypatch.setattr(module, "commit", refuse)
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert estate.proposals == []
+    assert "unpublished" in capsys.readouterr().out
+
+
+def test_a_checkout_carrying_an_unpublished_commit_stops_the_pass(rig, monkeypatch) -> None:
+    """Kills: running on past the residue a refused publish leaves.
+
+    THE REPLAY PATH SKIPS THE PUBLISHING STEP. A pass allowed to continue here would find the
+    package already carrying the bump and approved, propose the record, and exit clean -- with
+    the previous pass's commit still unpublished and nothing left saying so. That is the
+    finding reported once and then gone quiet, which is not a finding.
+    """
+    estate, calls = rig
+
+    def refuse(root):
+        raise standing.StandingError("the packages checkout carries 1 commit(s) origin does not")
+
+    for module in (standing, cli):
+        monkeypatch.setattr(module, "require_published", refuse)
+
+    assert run(["--submit"]) == EXIT_UNUSABLE
+    assert calls == []
+    assert estate.proposals == []
+
+
+def test_the_published_commit_is_named_in_the_pass_output(rig, capsys) -> None:
+    """Kills: discarding what `commit` returns, which is what the pass did until ADR-0033.
+
+    It is the `source_commit` the intake this record causes will record, and the pass is the
+    only thing that ever knows it.
+    """
+    assert run(["--submit"]) == EXIT_OK
+    assert "published cccccccccccc" in capsys.readouterr().out
+
+
+def test_a_replay_names_no_published_commit(rig, capsys) -> None:
+    """Kills: naming a sha regardless. A replay publishes nothing, so a sha beside `replayed`
+    would be a claim about a commit this pass did not make."""
+    assert run(["--submit"]) == EXIT_OK
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "replayed" in out
+    assert "published" not in out

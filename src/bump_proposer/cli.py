@@ -8,7 +8,8 @@ producer:
 
     Dependabot opens a major bump
       -> the transcribed cascade refuses it
-      -> HERE: revise the standing package, approve the revision by policy, propose a record
+      -> HERE: revise the standing package, approve the revision by policy, publish the
+         commit that carries it (ADR-0033), propose a record
       -> a human approves the record in change-manager
       -> the carry registers an intake -> decomposition -> envelope -> dispatch
 
@@ -59,6 +60,7 @@ from bump_proposer.standing import (
     commit,
     discover,
     require_clean,
+    require_published,
     snapshot_hash,
 )
 from landing_ledger.audit import REFUSING_CONCLUSIONS, is_green
@@ -302,21 +304,26 @@ def _act(
             )
         ]
 
+    published: str | None = None
     if not (package.carries(bump) and package.approved):
         package = advance(package, bump, root)
         snapshot_hash(package, root)
-        commit(package, bump, root)
+        published = commit(package, bump, root)
 
     record, created = client.propose(_proposal(package, bump, pending))
-    outcomes = [
-        Outcome(
-            subject,
-            pending.number,
-            "proposed" if created else "replayed",
-            f"item {record.get('id')} {package.package_id} rev {package.revision} "
-            f"status={record.get('status')}",
-        )
-    ]
+    # THE SHA IS REPORTED BECAUSE THE PASS IS THE ONLY THING THAT KNOWS IT. `source_commit` on
+    # the intake this record eventually causes is that commit, and until ADR-0033 the pass
+    # discarded it -- so a reader wanting to know what had been written to the authoring
+    # repository had to go and look. Only on a pass that wrote one: a replay names no sha
+    # because it published nothing, and printing the checkout's HEAD would be a different
+    # claim wearing the same words.
+    detail = (
+        f"item {record.get('id')} {package.package_id} rev {package.revision} "
+        f"status={record.get('status')}"
+    )
+    if published is not None:
+        detail = f"{detail} published {published[:12]}"
+    outcomes = [Outcome(subject, pending.number, "proposed" if created else "replayed", detail)]
     outcomes.extend(_superseded(records, package))
     return outcomes
 
@@ -399,6 +406,12 @@ def _lane(
         packages = discover(root)
         if submit:
             require_clean(root)
+            # ADR-0033. Both refusals answer "is this checkout one this program may write to?",
+            # and they are asked together for that reason: an uncommitted change is somebody
+            # else's work this pass would sweep up, and an unpublished commit is this program's
+            # own work it failed to finish. Neither is a state a further revision may be built
+            # on, and both need a person.
+            require_published(root)
     except StandingError as error:
         print(str(error), file=sys.stderr)
         return None

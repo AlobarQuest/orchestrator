@@ -321,3 +321,90 @@ def test_a_standing_package_reports_what_it_carries() -> None:
     assert not package.carries(
         Bump(from_version="3.25.76", to_version="4.5.0", kind="semver-major")
     )
+
+
+# --- publishing (ADR-0033) --------------------------------------------------------
+
+
+def _package(tmp_path):
+    _write(tmp_path, "p")
+    return discover(tmp_path)[("alobarquest/infraops-mcp-server", "zod")]
+
+
+def test_the_revision_is_published_once_it_is_committed(tmp_path, monkeypatch) -> None:
+    """Kills: committing and stopping, which is what this did before ADR-0033.
+
+    ORDERED, not merely counted. Publishing before the commit would push the branch as it
+    already stood and leave the revision behind, while the pass reported a sha for it.
+    """
+    package = _package(tmp_path)
+    ran: list[tuple[str, ...]] = []
+
+    def fake_run(root, command):
+        ran.append(tuple(command))
+        return "d" * 40 + "\n" if command[1] == "rev-parse" else ""
+
+    monkeypatch.setattr(standing, "_run", fake_run)
+
+    assert standing.commit(package, BUMP, tmp_path) == "d" * 40
+    assert [call[1] for call in ran] == ["add", "commit", "rev-parse", "push"]
+    assert ran[-1] == ("git", "push", "origin", "main")
+
+
+def test_a_refused_publish_names_the_commit_it_stranded(tmp_path, monkeypatch) -> None:
+    """Kills: swallowing a refused publish, and reporting one without its sha.
+
+    The commit exists by the time the publish is refused, and the next pass replays past the
+    step that made it -- so this message is the only place that sha is ever said.
+    """
+    package = _package(tmp_path)
+
+    def fake_run(root, command):
+        if command[1] == "push":
+            raise StandingError("push origin main refused: non-fast-forward")
+        return "d" * 40 + "\n" if command[1] == "rev-parse" else ""
+
+    monkeypatch.setattr(standing, "_run", fake_run)
+
+    with pytest.raises(StandingError, match="dddddddddddd and unpublished"):
+        standing.commit(package, BUMP, tmp_path)
+
+
+def test_a_checkout_carrying_an_unpublished_commit_is_refused(tmp_path, monkeypatch) -> None:
+    """Kills: writing a further revision on top of one that could not be published."""
+    monkeypatch.setattr(standing, "_run", lambda root, command: "1\n")
+    with pytest.raises(StandingError, match="carries 1 commit"):
+        standing.require_published(tmp_path)
+
+
+def test_a_checkout_level_with_origin_is_accepted(tmp_path, monkeypatch) -> None:
+    """The other direction: a guard that refused every checkout would stop the lane dead."""
+    monkeypatch.setattr(standing, "_run", lambda root, command: "0\n")
+    standing.require_published(tmp_path)
+
+
+def test_an_unreadable_distance_from_origin_is_refused(tmp_path, monkeypatch) -> None:
+    """Fail-closed. A count that cannot be read is not a count of zero, and reading it as one
+    would wave through exactly the residue this refusal exists for."""
+    monkeypatch.setattr(standing, "_run", lambda root, command: "\n")
+    with pytest.raises(StandingError, match="how far ahead"):
+        standing.require_published(tmp_path)
+
+
+def test_the_distance_is_read_from_the_tracking_ref_without_a_fetch(tmp_path, monkeypatch) -> None:
+    """Kills: fetching first, or asking a different question.
+
+    A successful push advances `origin/main` and a refused one does not, so the answer is
+    already on disk. Going to the network would make this program's refusal depend on somebody
+    else's landings rather than on its own unfinished act.
+    """
+    seen: list[tuple[str, ...]] = []
+
+    def fake_run(root, command):
+        seen.append(tuple(command))
+        return "0\n"
+
+    monkeypatch.setattr(standing, "_run", fake_run)
+    standing.require_published(tmp_path)
+
+    assert seen == [("git", "rev-list", "--count", "origin/main..HEAD")]
