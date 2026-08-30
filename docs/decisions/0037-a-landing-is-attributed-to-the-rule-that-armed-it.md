@@ -97,6 +97,41 @@ behaviour and keep reaching the audit; the new attribution applies exactly where
 support it. That is also the honest scope — the ledger can only claim the gate armed a landing for a
 revision whose arm step it knows.
 
+## A documented doubt becomes a silent failure, and the fix is to key on answerability
+
+Two findings from adversarial review on the implementing diff. Both are about this change and both
+are real.
+
+**The revision the ledger pins is the gate at the LANDING COMMIT, not the gate that RAN.**
+`_gate_revision` reads `/contents/{GATE_PATH}?ref={landing_sha}`, while the arm step executed under
+whatever the pull request's head carried. That mismatch is PRE-EXISTING and is already named in
+`audit.py` as `CAVEAT_RULE_SELF_MODIFIED` — *"the pinned revision is this landing's OWN new rule …
+the rule that armed it was the previous revision."*
+
+**This ADR makes it worse in the silent direction.** If the two revisions name their arm step
+differently, the transcribed name is not found in the run, the outcome reads as absent, and a
+genuinely armed machine landing drops to `unattributed` — which `audit_landing` returns early on, so
+it is not merely wrong but invisible. It needs a blob move AND a name change AND a pull request
+spanning the boundary. The name has changed twice historically and a blob move is imminent under
+every open option for the arming identity, so this is live rather than theoretical.
+
+**The general shape is worth carrying: a caveat is where a doubt goes to be ignored — which is
+fine until something starts depending on the thing being doubted.** That sentence is `audit.py`'s
+own, written about this very caveat, and this change is the something.
+
+**The fix keys the fallback on whether the question was ANSWERABLE, not on registry membership
+alone.** An absent outcome conflates three different states — no such step, jobs unreadable (a 404
+answers `None`), and an untranscribed revision — and only the last was being caught. So: fall back
+to today's `is_machine` when the revision is transcribed **and** a step of that name was actually
+found; treat `skipped` as the positive observation it is, the gate declining, which continues to
+refuse the rule basis. That closes the landing-commit mismatch as a side effect, and it makes
+`skipped` and absent produce DIFFERENT bases — a stronger proof than the one this ADR asked for.
+
+**Measured, not assumed:** a non-Dependabot pull request's gate run concludes `skipped`
+(`orchestrator#208`), and `change-manager#72` has no gate run at all — so the existing
+`outcome == "success"` conjunct already refuses the job-skipped shape, and this fallback cannot be
+reached by a landing the gate never considered.
+
 ## Consequences
 
 - **Forward-only.** The 657 stored landing observations keep the basis they were recorded with;
