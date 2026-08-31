@@ -18,9 +18,20 @@ import pytest
 
 from bump_proposer import cli, standing
 from bump_proposer.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
+from bump_proposer.landing_policy import (
+    LandingPolicyError,
+    parse,
+    read_inert_landing,
+)
+from tests.bump_proposer.test_landing_policy import LIVE
 
-GATE = "a4a4b8da035292fe434badd007607d8a69bc54e2"  # the cascade as installed on that repository
 REPOSITORY = "AlobarQuest/infraops-mcp-server"
+
+# The zod pull request's checks CONCLUDED AGAINST IT, long enough ago to have settled. Since
+# ADR-0034 that is the only thing that keeps a bump in this lane -- the declared rule permits an
+# npm major on its type -- so a rig whose stub reported no concluded checks would exercise a pass
+# that classifies its one subject as the estate's business and does nothing at all.
+FAILED_LONG_AGO = "2026-01-01T00:00:00+00:00"
 
 SHELL = """\
 schema_version: 1
@@ -49,6 +60,7 @@ def checkout(tmp_path, monkeypatch):
     monkeypatch.setenv("BUMP_PROPOSER_PACKAGES_CHECKOUT", str(tmp_path))
     monkeypatch.setenv("BUMP_PROPOSER_GITHUB_TOKEN", "gh")
     monkeypatch.setenv("BUMP_PROPOSER_CHANGE_MANAGER_TOKEN", "cm")
+    monkeypatch.setenv("BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN", "cm-read")
     return tmp_path
 
 
@@ -67,8 +79,10 @@ def _github(
         path = request.url.path
         if path == f"/repos/{REPOSITORY}":
             return httpx.Response(200, json={"default_branch": "main"})
-        if path.endswith("/contents/.github/workflows/dependabot-auto-merge.yml"):
-            return httpx.Response(200, json={"sha": GATE})
+        # DELIBERATELY NOT SERVED. Until ADR-0038 this stub answered the gate workflow's blob
+        # sha, because the pass read it. It reads change-manager's declaration instead, so the
+        # path falls through to the 404 below -- which is the assertion: a pass that went back to
+        # asking GitHub for that file would fail here rather than quietly working.
         if path == f"/repos/{REPOSITORY}/pulls":
             return httpx.Response(200, json=[{"number": 71, "user": {"login": "dependabot[bot]"}}])
         if path == f"/repos/{REPOSITORY}/pulls/71":
@@ -85,7 +99,27 @@ def _github(
         if path == f"/repos/{REPOSITORY}/commits/{'b' * 40}":
             return httpx.Response(200, json={"commit": {"message": trailer}})
         if path == f"/repos/{REPOSITORY}/actions/runs":
-            return httpx.Response(200, json={"workflow_runs": []})
+            return httpx.Response(
+                200,
+                json={
+                    "workflow_runs": [
+                        {"id": 1, "event": "pull_request", "path": ".github/workflows/quality.yml"}
+                    ]
+                },
+            )
+        if path == f"/repos/{REPOSITORY}/actions/runs/1/jobs":
+            return httpx.Response(
+                200,
+                json={
+                    "jobs": [
+                        {
+                            "name": "Lint, type-check, and test",
+                            "conclusion": "failure",
+                            "completed_at": FAILED_LONG_AGO,
+                        }
+                    ]
+                },
+            )
         return httpx.Response(404, json={})
 
     return handler
@@ -155,6 +189,7 @@ def rig(checkout, monkeypatch):
             token="gh", transport=httpx.MockTransport(_github())
         ),
     )
+    monkeypatch.setattr(cli, "read_inert_landing", lambda token, base_url: parse(LIVE))
     monkeypatch.setattr(
         cli,
         "ChangeManagerClient",
@@ -271,12 +306,41 @@ def test_another_packages_record_is_not_reported_superseded(rig, capsys, monkeyp
     assert "infraops-mcp-server-npm-zod" in reported[0]
 
 
-def test_a_dry_run_writes_nothing_and_touches_no_credential(rig, capsys, monkeypatch) -> None:
+def test_a_dry_run_writes_nothing_and_touches_no_credential_that_could(
+    rig, capsys, monkeypatch
+) -> None:
+    """THE PROPERTY `run-bump-proposer.sh` STATES, and ADR-0038 changed its SHAPE, not its truth.
+
+    A dry run now MUST read change-manager -- the rule it reports against is declared there
+    rather than transcribed into this repository -- so "touches no credential" became false as
+    written. What is preserved, and what the launcher's header is actually about, is that it
+    touches no credential that could WRITE: the read is a second, READ-scoped bearer, measured
+    2026-08-31 as 403 on the proposal route where the propose one reaches request validation.
+    """
     estate, calls = rig
     monkeypatch.delenv("BUMP_PROPOSER_CHANGE_MANAGER_TOKEN")
+
     assert run([]) == EXIT_OK
+
     assert calls == [] and estate.proposals == []
     assert "would-advance" in capsys.readouterr().out
+
+
+def test_a_dry_run_without_the_read_credential_is_unusable_rather_than_a_clean_pass(
+    rig, monkeypatch
+) -> None:
+    """THE CONTROL for the test above. Without it, that one passes for a producer that never
+    reads the declaration at all -- and a pass reporting nothing found on a rule it never asked
+    for is the quiet failure this whole increment is built to avoid."""
+    estate, calls = rig
+    monkeypatch.delenv("BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN")
+    # The rig stubs the reader; this case needs the REAL one, which refuses an empty credential
+    # before it constructs a client -- so nothing leaves the process either.
+    monkeypatch.setattr(cli, "read_inert_landing", read_inert_landing)
+
+    assert run([]) == EXIT_UNUSABLE
+
+    assert calls == [] and estate.proposals == []
 
 
 def test_the_bump_moving_under_a_stable_pull_request_advances_and_reports_the_stranded_record(
@@ -339,51 +403,80 @@ def test_an_unclassifiable_bump_is_reported_by_name_and_is_not_a_finding(
     assert "unclassifiable" in capsys.readouterr().out
 
 
-def test_an_untranscribed_gate_refuses_the_whole_repository(rig, capsys, monkeypatch) -> None:
-    """Fail closed on a gate revision nobody classified: which bumps it refuses is unknown, so
-    every pull request on that repository is unclassifiable by this producer, not permitted."""
-    estate, calls = rig
-
-    def handler(request):
-        if request.url.path.endswith("/contents/.github/workflows/dependabot-auto-merge.yml"):
-            return httpx.Response(200, json={"sha": "0" * 40})
-        return _github()(request)
-
-    monkeypatch.setattr(
-        cli,
-        "GitHubReader",
-        lambda **kw: __import__("landing_ledger.github", fromlist=["GitHubReader"]).GitHubReader(
-            token="gh", transport=httpx.MockTransport(handler)
-        ),
-    )
-    assert run(["--submit"]) == EXIT_FINDINGS
-    assert calls == [] and estate.proposals == []
-    assert "gate-not-transcribed" in capsys.readouterr().out
-
-
-def test_a_repository_with_no_cascade_says_so_rather_than_untranscribed(
+def test_a_repository_the_declaration_does_not_name_refuses_the_whole_repository(
     rig, capsys, monkeypatch
 ) -> None:
-    """ "Not applicable" is a different answer from "not measured", and this producer can give
-    both. Two repositories in the estate deliberately carry no gate; reporting one of them as an
-    untranscribed gate accuses somebody of not having transcribed a file that is not there."""
+    """THE SUCCESSOR TO `no-cascade`, and it is the same fact asked of the holder.
+
+    A repository the landing policy does not declare inert is one where nobody has said that
+    landing on the default branch changes nothing already serving -- so what lands there
+    unattended has no answer, and this producer will not guess. It is a finding rather than a
+    quiet skip because a standing package targeting such a repository was authored for a
+    producer that does not exist.
+
+    The live case is not hypothetical: `change-manager` is in the SAME document's deploying
+    population, where landing redeploys production and a change record, a rollout pin and a
+    change window all apply -- none of which this producer knows anything about.
+    """
     estate, calls = rig
-
-    def handler(request):
-        if request.url.path.endswith("/contents/.github/workflows/dependabot-auto-merge.yml"):
-            return httpx.Response(404, json={})
-        return _github()(request)
-
-    monkeypatch.setattr(
-        cli,
-        "GitHubReader",
-        lambda **kw: __import__("landing_ledger.github", fromlist=["GitHubReader"]).GitHubReader(
-            token="gh", transport=httpx.MockTransport(handler)
-        ),
+    declared = parse(LIVE)
+    narrowed = type(declared)(
+        version=declared.version,
+        repositories=frozenset({"alobarquest/change-manager"}),
+        permitted_authors=declared.permitted_authors,
+        excluded_ecosystems=declared.excluded_ecosystems,
     )
+    monkeypatch.setattr(cli, "read_inert_landing", lambda token, base_url: narrowed)
+
     assert run(["--submit"]) == EXIT_FINDINGS
     out = capsys.readouterr().out
-    assert "no-cascade" in out and "gate-not-transcribed" not in out
+    assert "not-declared-inert" in out
+    assert calls == [] and estate.proposals == []
+
+
+def test_a_declaration_that_cannot_be_read_stops_the_pass_before_it_reads_github(
+    rig, capsys, monkeypatch
+) -> None:
+    """UNUSABLE INPUT, NOT A FINDING, and it stops everything rather than one repository.
+
+    One declaration covers every repository at once, so a rule this pass cannot read is not a
+    fact about any single one of them -- reporting it per repository would be N copies of one
+    thing. Nothing may be written on the strength of a rule nobody could read, which is why the
+    lifecycle commands and the proposals are asserted empty and not merely unchanged.
+    """
+    estate, calls = rig
+
+    def refuse(token, base_url):
+        raise LandingPolicyError("change-manager answered 503 for the landing policy")
+
+    monkeypatch.setattr(cli, "read_inert_landing", refuse)
+
+    assert run(["--submit"]) == EXIT_UNUSABLE
+    assert calls == [] and estate.proposals == []
+
+
+def test_a_declaration_that_stopped_permitting_the_update_bot_refuses_rather_than_flooding(
+    rig, capsys, monkeypatch
+) -> None:
+    """THE EXPENSIVE DIRECTION, and the reason the author is checked at all.
+
+    `read_pending_updates` returns pull requests by `dependabot[bot]` and no others. If the
+    declaration stopped permitting that author, every one of them would be a bump the lane
+    refuses -- so every open update in the estate would become this lane's subject at once, each
+    minting a package revision that cannot be unminted and spending a human approval. Refusing
+    costs a pass; the next one picks it up if a person meant something else.
+    """
+    estate, calls = rig
+    declared = parse(LIVE)
+    without = type(declared)(
+        version=declared.version,
+        repositories=declared.repositories,
+        permitted_authors=frozenset({"app/some-other-bot"}),
+        excluded_ecosystems=declared.excluded_ecosystems,
+    )
+    monkeypatch.setattr(cli, "read_inert_landing", lambda token, base_url: without)
+
+    assert run(["--submit"]) == EXIT_UNUSABLE
     assert calls == [] and estate.proposals == []
 
 

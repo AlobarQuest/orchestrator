@@ -261,6 +261,14 @@ OUTBOUND_ALLOWLIST = {
     # could move a record's status. That bound is what keeps the producer on the far side of
     # the human decision it exists to prompt.
     Path("src/bump_proposer/change_manager.py"),
+    # ADR-0038. The other half of the same program, and a SEPARATE file because it is a separate
+    # credential. It makes ONE request -- change-manager's landing policy, the declaration of
+    # which repositories land unattended and on what terms -- with a READ-scoped bearer, on every
+    # pass including a dry one. It takes no path argument at all, so unlike the module above it
+    # needs no allowlist to be confined to one route. The split is what preserves the launcher's
+    # own property: reading the rule a dry run reports against does not touch the credential that
+    # could write.
+    Path("src/bump_proposer/landing_policy.py"),
     # ADR-0027. The other half of the same program: the intake registration that completes the
     # carry. ONE write, `POST /api/v1/package-intakes`, enforced in code by `is_allowed_write`
     # and in tests by test_work_carrier_isolation.py. It composes no decision -- every rule about

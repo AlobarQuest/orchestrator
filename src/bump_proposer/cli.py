@@ -7,7 +7,7 @@ revised per bump. Nothing produced the record, so the lane held zero of them. Th
 producer:
 
     Dependabot opens a major bump
-      -> the transcribed cascade refuses it
+      -> the declared landing rule does not cover it
       -> HERE: revise the standing package, approve the revision by policy, publish the
          commit that carries it (ADR-0033), propose a record
       -> a human approves the record in change-manager
@@ -19,11 +19,15 @@ factory. There is no diagnosis step, which is exactly what ADR-0026 says no prod
 other kind has. Do not generalise this to signals that need interpreting; a producer that
 guessed would be a worse thing than no producer.
 
-**IT REPRODUCES THE CASCADE'S ANSWER RATHER THAN RE-DECIDING IT.** Whether the gate refuses a
-bump is read from `landing_ledger.rules`, the hand-transcribed registry keyed on the gate
-workflow's git blob sha -- the same registry the landing audit uses, and the same fail-closed
-property: a gate revision nobody has transcribed is a finding, not a guess. Re-implementing the
-gate's condition would be a second interpreter of a GitHub expression language nobody owns.
+**IT READS THE RULE RATHER THAN RE-DECIDING IT, AND SINCE ADR-0038 IT READS IT AT THE SOURCE.**
+Whether a bump lands unattended is declared by change-manager's landing policy -- the one holder
+of that rule, asked by all three of its readers rather than transcribed into any of them. It was
+read until now from `landing_ledger.rules`, a hand transcription of the GitHub Actions workflow
+that used to enforce it, keyed by that workflow's blob sha; the workflow is being removed and the
+orchestrator becomes the merger, which would have left this producer reading a registry with no
+subject. The fail-closed property is carried over rather than lost: a policy version that declares
+no inert population is a refusal, not a waiver, exactly as an untranscribed blob was a finding
+rather than a guess.
 
 **IT APPROVES A PACKAGE REVISION AND NOTHING ELSE.** It cannot approve the change record it
 writes: the record is created `pending` by construction, change-manager's `propose` scope
@@ -51,6 +55,11 @@ from bump_proposer.change_manager import (
     ChangeManagerError,
     ProposalRefused,
 )
+from bump_proposer.landing_policy import (
+    InertLanding,
+    LandingPolicyError,
+    read_inert_landing,
+)
 from bump_proposer.standing import (
     PACKAGES_REPOSITORY,
     StandingError,
@@ -65,14 +74,13 @@ from bump_proposer.standing import (
 )
 from landing_ledger.audit import REFUSING_CONCLUSIONS, is_green
 from landing_ledger.github import (
+    UPSTREAM_AUTHOR,
     GitHubReader,
     LedgerError,
-    current_rule_revision,
     default_branch,
     read_pending_updates,
 )
 from landing_ledger.model import PendingUpdate
-from landing_ledger.rules import Rule, rule_for
 from landing_ledger.titles import Bump, bump_of
 
 EXIT_OK: Final = 0
@@ -114,8 +122,15 @@ FINDING_STATUSES: Final = frozenset(
         "error",
         "unreadable",
         "ambiguous",
-        "no-cascade",
-        "gate-not-transcribed",
+        # ADR-0038, and the SUCCESSOR to `no-cascade` rather than a new kind of thing. It used to
+        # mean "this repository carries no auto-merge workflow, so which bumps it refuses is not a
+        # question with an answer"; it now means the landing policy does not declare the
+        # repository one where landing on the default branch is inert, which is the same fact
+        # asked of the holder instead of of a file. `gate-not-transcribed` retires with no
+        # successor: there is no longer a transcription to be missing an entry, and the shape it
+        # guarded -- a rule this program cannot read -- is now a whole-pass refusal rather than a
+        # per-repository one, because one declaration covers every repository at once.
+        "not-declared-inert",
         "superseded",
         "refused",
     }
@@ -165,7 +180,7 @@ def _refused_by_the_checks(pending: PendingUpdate, now: datetime) -> bool:
 
 def _consider(
     pending: PendingUpdate,
-    rule: Rule,
+    rule: InertLanding,
     packages: dict[tuple[str, str], StandingPackage],
     now: datetime,
 ) -> tuple[StandingPackage, Bump, str] | tuple[None, None, str]:
@@ -195,19 +210,22 @@ def _consider(
     assert pending.update is not None  # implied by declared_by_bot == declared_by_title != None
     ecosystem = pending.update.ecosystem
     # PERMITTED IS NOT THE SAME QUESTION AS LANDED, and it stopped being a usable proxy for it on
-    # 2026-08-28. While the gate's condition was a cascade over update types, "the cascade
-    # permits this" and "the cascade lands this" picked out the same set, because everything it
-    # refused it refused on the declaration alone. Revision 3457db3c permits anything it does not
-    # exclude and leaves the rest to the required checks (ADR-0034), so a bump whose checks FAIL
-    # is now permitted and unlandable at once -- and this lane's subject is the second half.
-    # Reading `permits` alone here would EMPTY the factory's queue rather than narrow it to the
-    # failures ADR-0034 assigns to it, which is the opposite of what that decision says.
-    if rule.permits(bump.declared, ecosystem) and not _refused_by_the_checks(pending, now):
+    # 2026-08-28. While the rule was a cascade over update types, "the estate permits this" and
+    # "the estate lands this" picked out the same set, because everything it refused it refused on
+    # the declaration alone. ADR-0034 moved the split onto the OUTCOME -- anything not excluded is
+    # permitted and the required checks decide the rest -- so a bump whose checks FAIL is now
+    # permitted and unlandable at once, and this lane's subject is the second half. Reading
+    # `permits` alone here would EMPTY the factory's queue rather than narrow it to the failures
+    # ADR-0034 assigns to it, which is the opposite of what that decision says. The declaration
+    # ADR-0038 moved to change-manager is that same rule, so this reading is unchanged by the
+    # move -- and `permits` no longer takes the update type, because the declaration states no
+    # condition on one and passing it an argument it ignores would describe a rule nobody holds.
+    if rule.permits(ecosystem) and not _refused_by_the_checks(pending, now):
         answer = "have passed" if is_green(pending) else "have not concluded against it"
         return (
             None,
             None,
-            f"the installed gate permits a {bump.kind} of a {ecosystem} dependency "
+            f"the landing policy permits a {bump.kind} of a {ecosystem} dependency "
             f"and its checks {answer}",
         )
 
@@ -337,46 +355,36 @@ def _act(
 def _repository_pass(
     reader: GitHubReader,
     repository: str,
+    rule: InertLanding,
     packages: dict[tuple[str, str], StandingPackage],
     client: ChangeManagerClient | None,
     records: list[dict[str, Any]],
     root: Path,
     now: datetime,
 ) -> list[Outcome]:
+    if not rule.declares(repository):
+        # THE SUCCESSOR TO `no-cascade`, and the same fact asked of the holder rather than of a
+        # file. A repository the landing policy does not declare inert is one where nobody has
+        # said that landing on the default branch changes nothing already serving -- so "what
+        # lands here unattended" has no answer, and every bump against it is outside a lane whose
+        # subject is defined by what that declaration declines. Still a finding, because a
+        # standing package targeting such a repository was authored for a producer that does not
+        # exist. The DEPLOYING population this same document governs is the live case: landing
+        # there redeploys production, and that lane has a change record, a rollout pin and a
+        # change window this producer knows nothing about.
+        return [
+            Outcome(
+                repository,
+                0,
+                "not-declared-inert",
+                f"landing policy version {rule.version} does not declare this repository one "
+                "where landing on the default branch is inert, so which bumps land there "
+                "unattended is not a question with an answer; a standing package targeting it "
+                "needs a different producer",
+            )
+        ]
     try:
         base = default_branch(reader, repository)
-        revision = current_rule_revision(reader, repository, base)
-    except LedgerError as error:
-        return [Outcome(repository, 0, "unreadable", str(error))]
-    if revision is None:
-        # NOT THE SAME ANSWER as an untranscribed gate, and conflating them would report a
-        # falsehood. Two repositories in this estate deliberately carry no cascade at all, and
-        # on one of those "the cascade refuses this bump" has no meaning -- every bump is
-        # outside a lane whose subject is defined by what the cascade declines. Still a
-        # finding, because a standing package targeting such a repository was authored for a
-        # producer that does not exist.
-        return [
-            Outcome(
-                repository,
-                0,
-                "no-cascade",
-                "this repository has no auto-merge cascade, so which bumps it refuses is not a "
-                "question with an answer; a standing package targeting it needs a different "
-                "producer",
-            )
-        ]
-    rule = rule_for(revision)
-    if rule is None:
-        return [
-            Outcome(
-                repository,
-                0,
-                "gate-not-transcribed",
-                f"the auto-merge gate at blob {revision[:12]} is not transcribed, so which "
-                "bumps it refuses is unknown; refusing to guess",
-            )
-        ]
-    try:
         pending_updates = read_pending_updates(reader, repository, base)
     except LedgerError as error:
         return [Outcome(repository, 0, "unreadable", str(error))]
@@ -436,6 +444,37 @@ def _lane(
     return packages, scope
 
 
+def _declared_rule(read_token: str, *, base_url: str) -> InertLanding | None:
+    """What change-manager declares lands unattended, or None -- which stops the pass.
+
+    ADR-0038. Every failure here is "this pass could not use its inputs" rather than "this pass
+    found something", and that is the same reading an untranscribed gate blob used to get,
+    arrived at from the other side: a rule this program cannot read is a rule it will not guess
+    at. It stops the whole pass rather than one repository because ONE declaration covers every
+    repository at once -- reporting it per repository would be N copies of one fact.
+    """
+    try:
+        rule = read_inert_landing(read_token, base_url=base_url)
+    except LandingPolicyError as error:
+        print(str(error), file=sys.stderr)
+        return None
+    if not rule.covers_author(UPSTREAM_AUTHOR):
+        # THE ONE THING THIS PASS CHECKS ABOUT THE DECLARATION ITSELF, and it fails closed in the
+        # expensive direction. `read_pending_updates` returns pull requests by `UPSTREAM_AUTHOR`
+        # and no others, so a declaration that stopped permitting that author would make every
+        # open update in the estate this lane's subject at once -- a flood of package revisions
+        # that cannot be unminted, on a decision nobody took. Refusing costs a pass. The opposite
+        # direction, a declaration naming an author this program's reader cannot see, needs no
+        # check here: the lane simply goes quiet, and writes nothing.
+        print(
+            f"landing policy version {rule.version} does not permit {UPSTREAM_AUTHOR} to land, "
+            "so every open update would be this lane's subject at once; refusing",
+            file=sys.stderr,
+        )
+        return None
+    return rule
+
+
 def run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -453,12 +492,22 @@ def run(argv: list[str] | None = None) -> int:
 
     github_token = os.environ.get("BUMP_PROPOSER_GITHUB_TOKEN", "")
     cm_token = os.environ.get("BUMP_PROPOSER_CHANGE_MANAGER_TOKEN", "")
+    # ADR-0038. TWO change-manager credentials, and which is fetched when is the property the
+    # launcher's header states. This one is READ-scoped and is needed on EVERY pass, because the
+    # rule a dry run reports against is now read rather than transcribed; the one above can
+    # WRITE and is still needed only for `--submit`. Sharing one would have surrendered the
+    # property that a dry run cannot touch the credential that could write.
+    read_token = os.environ.get("BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN", "")
     cm_url = os.environ.get("BUMP_PROPOSER_CHANGE_MANAGER_URL", "")
     if not github_token:
         print("BUMP_PROPOSER_GITHUB_TOKEN is unset", file=sys.stderr)
         return EXIT_UNUSABLE
     if args.submit and not cm_token:
         print("BUMP_PROPOSER_CHANGE_MANAGER_TOKEN is unset; --submit needs it", file=sys.stderr)
+        return EXIT_UNUSABLE
+
+    rule = _declared_rule(read_token, base_url=cm_url or DEFAULT_BASE_URL)
+    if rule is None:
         return EXIT_UNUSABLE
 
     root = checkout_root()
@@ -477,7 +526,7 @@ def run(argv: list[str] | None = None) -> int:
         with GitHubReader(token=github_token) as reader:
             for repository in scope:
                 outcomes.extend(
-                    _repository_pass(reader, repository, packages, client, records, root, now)
+                    _repository_pass(reader, repository, rule, packages, client, records, root, now)
                 )
     except ChangeManagerError as error:
         print(str(error), file=sys.stderr)
@@ -491,7 +540,10 @@ def run(argv: list[str] | None = None) -> int:
         print(f"{subject}  {outcome.status:<19} {outcome.detail}")
     findings = [o for o in outcomes if o.status in FINDING_STATUSES]
     proposed = [o for o in outcomes if o.status in {"proposed", "would-advance"}]
-    print(f"\n{len(outcomes)} considered, {len(proposed)} to propose, {len(findings)} findings")
+    print(
+        f"\n{len(outcomes)} considered, {len(proposed)} to propose, {len(findings)} findings "
+        f"(landing policy version {rule.version})"
+    )
     return EXIT_FINDINGS if findings else EXIT_OK
 
 
