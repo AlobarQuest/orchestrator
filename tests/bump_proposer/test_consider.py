@@ -1,9 +1,24 @@
 """Which open pull requests this lane's subject is -- measured against the real population.
 
-**THE CORPUS IS THE ESTATE, not an invention.** Every case below is an open Dependabot pull
-request that existed on 2026-08-19, paired with the rule actually installed on its repository.
-A classifier tested only on shapes somebody thought of passes while being wrong for every real
-repository, which this estate has already paid for once.
+**THE CORPUS IS THE ESTATE, not an invention.** Every case below is an open update-bot pull
+request that existed on 2026-08-31, with the check state it actually carried, classified against
+the rule change-manager actually declares. A classifier tested only on shapes somebody thought of
+passes while being wrong for every real repository, which this estate has already paid for once.
+
+**IT WAS RE-MEASURED FOR ADR-0038 RATHER THAN RE-EXPRESSED**, and the reason is that the corpus's
+COLUMNS moved. Until now each row carried the gate blob installed on its repository, because six
+repositories could be on six transcribed revisions; one declaration now covers all of them, so
+that column has no values left to vary. What varies instead is what the required checks concluded
+-- the axis ADR-0034 moved the split onto -- and those states were never recorded for the
+2026-08-19 population, most of which has since landed. A corpus of closed pull requests carrying
+invented check states, judged by a rule that did not exist when they were open, would be a
+fiction wearing the word "measured".
+
+**WHAT THE RE-MEASUREMENT COST, STATED PLAINLY:** the estate had no GREEN open update on
+2026-08-31 -- all four carry at least one concluded failure -- so the corpus contains no row
+exercising the permitted path. That path is guarded by the named counterfactual controls below,
+on a real subject, and this note exists so a later reader does not mistake its absence from the
+corpus for an untested branch.
 """
 
 from __future__ import annotations
@@ -14,23 +29,28 @@ from pathlib import Path
 import pytest
 
 from bump_proposer.cli import FAILURE_SETTLE_SECONDS, _consider
+from bump_proposer.landing_policy import parse
 from bump_proposer.standing import StandingPackage
 from landing_ledger.model import Check, PendingUpdate, UpdateMetadata
-from landing_ledger.rules import REGISTRY
+from tests.bump_proposer.test_landing_policy import LIVE
 
-# The gate blob each repository carried, measured 2026-08-19 by reading the contents API.
-ORCHESTRATOR_GATE = "72391c0f7343477193b5c896680a083500c45227"
-FIVE_REPO_GATE = "e849b3a8411fabeff1dedd138e6e3e3a2f535319"
-NEWER_METADATA_GATE = "a4a4b8da035292fe434badd007607d8a69bc54e2"
-# The one revision all six carry from 2026-08-28 (ADR-0034): it excludes `docker` and asks
-# nothing else, so what the checks concluded is the only thing left separating the two lanes.
-OUTCOME_GATE = "3457db3cee85ffa054dee8b434ac25238a81f425"
+# The declaration `GET /api/landing-policy` served on 2026-08-31, parsed. ONE rule for every
+# repository: `docker` excluded, nothing asked about the version delta, and the required checks
+# deciding the rest.
+RULE = parse(LIVE)
 
 NOW = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
 SETTLED = NOW - timedelta(seconds=FAILURE_SETTLE_SECONDS + 1)
 JUST_CONCLUDED = NOW - timedelta(seconds=FAILURE_SETTLE_SECONDS - 1)
 FAILED = (Check(name="Quality", conclusion="failure", run=1),)
 PASSED = (Check(name="Quality", conclusion="success", run=1),)
+# orchestrator#3's real state on 2026-08-31: one required check failed and one passed. A pull
+# request is refused by ONE failure, so a corpus row carrying only the failure would understate
+# what the classifier had to read.
+MIXED = (
+    Check(name="Quality", conclusion="failure", run=1),
+    Check(name="Runner consumer compatibility", conclusion="success", run=2),
+)
 
 MAJOR = "version-update:semver-major"
 MINOR = "version-update:semver-minor"
@@ -102,9 +122,15 @@ PACKAGES = {
 }
 
 
-# (label, repository, number, title, dependency, ecosystem, update_type, gate, expected)
-LIVE = [
-    # The lane's subject: three npm majors the cascade refuses, all with a standing package.
+# The open update-bot population on 2026-08-31, read through the ledger's own reader: four pull
+# requests across the six declared repositories, each with the checks it actually carried.
+#
+# (label, repository, number, title, dependency, ecosystem, update_type, checks, expected)
+LIVE_POPULATION = [
+    # THE LANE'S SUBJECT. Two required checks concluded failure on 2026-08-30, and ADR-0034
+    # assigns exactly that remainder to the factory: the declaration permits an npm bump, and
+    # this one will never land, because the MCP SDK's `server.tool()` signature shifts under
+    # zod 4 and the diff needs a code change before it is correct.
     (
         "zod",
         "AlobarQuest/infraops-mcp-server",
@@ -113,44 +139,22 @@ LIVE = [
         "zod",
         "npm_and_yarn",
         MAJOR,
-        NEWER_METADATA_GATE,
+        FAILED,
         "candidate",
     ),
+    # Refused by the checks and OUTSIDE the lane anyway: nobody has authored a standing package
+    # for either action. Not a finding -- scope is the authored set, and authoring one is the act
+    # that changes it.
     (
-        "typescript",
-        "AlobarQuest/infraops-mcp-server",
-        73,
-        "build(deps-dev): bump typescript from 5.9.3 to 7.0.2",
-        "typescript",
-        "npm_and_yarn",
-        MAJOR,
-        NEWER_METADATA_GATE,
-        "candidate",
-    ),
-    (
-        "eslint",
-        "AlobarQuest/infraops-mcp-server",
-        78,
-        "build(deps-dev): bump eslint from 9.39.4 to 10.8.1",
-        "eslint",
-        "npm_and_yarn",
-        MAJOR,
-        NEWER_METADATA_GATE,
-        "candidate",
-    ),
-    # Majors the cascade TAKES, because the required check that gates them is the thing being
-    # bumped. Proposing these would put the factory to work on something GitHub is about to
-    # merge.
-    (
-        "fetch-metadata",
-        "AlobarQuest/orchestrator",
-        173,
-        "chore(deps): bump dependabot/fetch-metadata from 2.5.0 to 3.1.0",
-        "dependabot/fetch-metadata",
+        "checkout",
+        "AlobarQuest/factory-runner",
+        28,
+        "chore(actions): bump actions/checkout from 4 to 7",
+        "actions/checkout",
         "github_actions",
         MAJOR,
-        ORCHESTRATOR_GATE,
-        "permitted",
+        FAILED,
+        "unlaned",
     ),
     (
         "setup-uv",
@@ -160,66 +164,13 @@ LIVE = [
         "astral-sh/setup-uv",
         "github_actions",
         MAJOR,
-        NEWER_METADATA_GATE,
-        "permitted",
+        FAILED,
+        "unlaned",
     ),
-    (
-        "checkout",
-        "AlobarQuest/factory-runner",
-        28,
-        "chore(actions): bump actions/checkout from 4 to 7",
-        "actions/checkout",
-        "github_actions",
-        MAJOR,
-        NEWER_METADATA_GATE,
-        "permitted",
-    ),
-    # Requirement ranges: no single delta, on four repositories.
-    (
-        "setuptools",
-        "AlobarQuest/orchestrator",
-        174,
-        "chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0",
-        "setuptools",
-        "uv",
-        None,
-        ORCHESTRATOR_GATE,
-        "unclassifiable",
-    ),
-    (
-        "uvicorn",
-        "AlobarQuest/orchestrator",
-        151,
-        "chore(deps): update uvicorn[standard] requirement from >=0.52.0 to >=0.52.1",
-        "uvicorn[standard]",
-        "uv",
-        None,
-        ORCHESTRATOR_GATE,
-        "unclassifiable",
-    ),
-    (
-        "pyjwt",
-        "AlobarQuest/orchestrator",
-        126,
-        "chore(deps): update pyjwt[crypto] requirement from >=2.8 to >=2.13.0",
-        "pyjwt[crypto]",
-        "uv",
-        None,
-        ORCHESTRATOR_GATE,
-        "unclassifiable",
-    ),
-    (
-        "setuptools-ip",
-        "AlobarQuest/intent-packages",
-        69,
-        "chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0",
-        "setuptools",
-        "uv",
-        None,
-        FIVE_REPO_GATE,
-        "unclassifiable",
-    ),
-    # A docker tag that does not parse as semver, so the bot declares no update type either.
+    # A docker tag that does not parse as semver, so the bot declares no update type and the
+    # title states no single delta. The declaration excludes `docker` outright, so this would be
+    # refused even green -- but it never reaches that question, because a revision of a standing
+    # package carries two versions and this states none.
     (
         "python",
         "AlobarQuest/orchestrator",
@@ -228,15 +179,15 @@ LIVE = [
         "python",
         "docker",
         None,
-        ORCHESTRATOR_GATE,
+        MIXED,
         "unclassifiable",
     ),
 ]
 
 
-@pytest.mark.parametrize("case", LIVE, ids=[c[0] for c in LIVE])
+@pytest.mark.parametrize("case", LIVE_POPULATION, ids=[c[0] for c in LIVE_POPULATION])
 def test_the_live_population_is_classified_as_measured(case) -> None:
-    label, repository, number, title, dependency, ecosystem, update_type, gate, expected = case
+    label, repository, number, title, dependency, ecosystem, update_type, checks, expected = case
     pending = _pending(
         repository,
         number,
@@ -244,18 +195,25 @@ def test_the_live_population_is_classified_as_measured(case) -> None:
         dependency=dependency,
         ecosystem=ecosystem,
         update_type=update_type,
+        checks=checks,
+        concluded_at=SETTLED,
     )
-    package, bump, detail = _consider(pending, REGISTRY[gate], PACKAGES, NOW)
+    package, bump, detail = _consider(pending, RULE, PACKAGES, NOW)
     if expected == "candidate":
         assert package is not None and bump is not None, detail
-    elif expected == "permitted":
-        assert package is None and "permits" in detail, detail
+    elif expected == "unlaned":
+        assert package is None and detail.startswith("unlaned"), detail
     else:
         assert package is None and detail.startswith("unclassifiable"), detail
 
 
 def test_a_bump_with_no_standing_package_is_unlaned() -> None:
-    """Not a finding. Scope is the authored set, and authoring one is what changes it."""
+    """Not a finding. Scope is the authored set, and authoring one is what changes it.
+
+    Its checks must have SETTLED AGAINST IT to get this far, which they did not need to before
+    ADR-0034 -- the declaration permits an npm major on its type, so nothing but the outcome
+    keeps a bump in this lane, and a green one is answered a step earlier by the lane itself.
+    """
     pending = _pending(
         "AlobarQuest/infraops-mcp-server",
         99,
@@ -263,8 +221,10 @@ def test_a_bump_with_no_standing_package_is_unlaned() -> None:
         dependency="left-pad",
         ecosystem="npm_and_yarn",
         update_type=MAJOR,
+        checks=FAILED,
+        concluded_at=SETTLED,
     )
-    package, bump, detail = _consider(pending, REGISTRY[NEWER_METADATA_GATE], PACKAGES, NOW)
+    package, bump, detail = _consider(pending, RULE, PACKAGES, NOW)
     assert package is None and detail.startswith("unlaned")
 
 
@@ -283,7 +243,7 @@ def test_a_title_and_a_trailer_that_disagree_are_ambiguous() -> None:
         ecosystem="npm_and_yarn",
         update_type=MINOR,
     )
-    package, bump, detail = _consider(pending, REGISTRY[NEWER_METADATA_GATE], PACKAGES, NOW)
+    package, bump, detail = _consider(pending, RULE, PACKAGES, NOW)
     assert package is None and detail.startswith("ambiguous"), detail
 
 
@@ -298,7 +258,7 @@ def test_a_classifiable_title_with_no_trailer_is_ambiguous() -> None:
         ecosystem=None,
         update_type=None,
     )
-    package, bump, detail = _consider(pending, REGISTRY[NEWER_METADATA_GATE], PACKAGES, NOW)
+    package, bump, detail = _consider(pending, RULE, PACKAGES, NOW)
     assert package is None and detail.startswith("ambiguous"), detail
 
 
@@ -337,7 +297,7 @@ def test_a_settled_failure_is_still_this_lanes_subject_under_the_outcome_rule() 
     """
     pending = _zod(checks=FAILED, concluded_at=SETTLED)
 
-    package, bump, detail = _consider(pending, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+    package, bump, detail = _consider(pending, RULE, PACKAGES, NOW)
 
     assert package is not None and bump is not None, detail
     assert bump.kind == "semver-major"
@@ -352,7 +312,7 @@ def test_the_same_bump_passing_its_checks_is_left_to_the_cascade() -> None:
     """
     pending = _zod(checks=PASSED, concluded_at=SETTLED)
 
-    package, _, detail = _consider(pending, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+    package, _, detail = _consider(pending, RULE, PACKAGES, NOW)
 
     assert package is None
     assert "permits" in detail and "have passed" in detail, detail
@@ -365,7 +325,7 @@ def test_a_failure_that_has_not_settled_belongs_to_neither_lane_yet() -> None:
     re-run that then goes green strands the record as superseded with a human approval spent."""
     pending = _zod(checks=FAILED, concluded_at=JUST_CONCLUDED)
 
-    package, _, detail = _consider(pending, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+    package, _, detail = _consider(pending, RULE, PACKAGES, NOW)
 
     assert package is None
     assert "have not concluded against it" in detail, detail
@@ -376,27 +336,73 @@ def test_a_pull_request_whose_checks_have_not_concluded_at_all_is_not_taken() ->
     means waiting: a pass that skips it costs a pass, and the next one picks it up."""
     pending = _zod()
 
-    package, _, detail = _consider(pending, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+    package, _, detail = _consider(pending, RULE, PACKAGES, NOW)
 
     assert package is None
     assert "have not concluded against it" in detail, detail
 
 
-def test_the_old_and_new_gates_take_zod_for_DIFFERENT_reasons() -> None:
-    """The differential that shows the change is real rather than coincidental.
+def test_an_excluded_ecosystem_is_this_lanes_subject_however_green_its_checks() -> None:
+    """THE ONE CELL WHERE THE DECLARATION AND "the checks decide" DISAGREE, and it has no open
+    subject today, which is why it is stated rather than measured.
 
-    Under the cascade the bump was this lane's subject because a package major was refused on
-    its DECLARATION, whatever CI said -- so a green zod was a candidate too. Under 3457db3c only
-    the failure keeps it here. Asserting the candidate case alone would pass under both and
-    prove nothing about which question is being asked.
+    `docker` is excluded because the required checks do not exercise what changed: a tag is not
+    semver, so the version number promises nothing, and nothing RUNS the built image -- a package
+    that installs cleanly and fails at import on a removed standard-library module passes every
+    check this estate has. So a green docker bump is still refused by the lane, and refused is
+    what puts it here. A predicate that asked only what CI concluded would hand it to nobody.
+
+    The estate's one open docker update (orchestrator#3) never reaches this question: its title
+    states no single delta, so it is unclassifiable one step earlier. A parseable docker tag is
+    an ordinary shape -- `postgres:16.2` to `postgres:17.0` -- and the day one is opened against
+    a repository with a standing package, this is the answer it must get.
     """
-    green = _zod(checks=PASSED, concluded_at=SETTLED)
+    pending = _pending(
+        "AlobarQuest/infraops-mcp-server",
+        90,
+        "chore(deps): bump postgres from 16.2 to 17.0",
+        dependency="postgres",
+        ecosystem="docker",
+        update_type=MAJOR,
+        checks=PASSED,
+        concluded_at=SETTLED,
+    )
+    packages = dict(PACKAGES)
+    packages[("alobarquest/infraops-mcp-server", "postgres")] = _package(
+        "postgres", from_version="16.2", to_version="17.0"
+    )
 
-    cascade_package, _, _ = _consider(green, REGISTRY[NEWER_METADATA_GATE], PACKAGES, NOW)
-    outcome_package, _, _ = _consider(green, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+    package, bump, detail = _consider(pending, RULE, packages, NOW)
 
-    assert cascade_package is not None
-    assert outcome_package is None
+    assert package is not None and bump is not None, detail
+
+
+def test_the_exclusion_is_what_decides_that_and_not_the_ecosystems_name() -> None:
+    """THE CONTROL for the case above, and it is the same bump one field apart.
+
+    Without it the assertion passes for any predicate that takes every docker bump, or every
+    major, or everything at all. Move the ecosystem to one the declaration does not exclude and
+    the identical green pull request is left to the lane.
+    """
+    pending = _pending(
+        "AlobarQuest/infraops-mcp-server",
+        90,
+        "chore(deps): bump postgres from 16.2 to 17.0",
+        dependency="postgres",
+        ecosystem="npm_and_yarn",
+        update_type=MAJOR,
+        checks=PASSED,
+        concluded_at=SETTLED,
+    )
+    packages = dict(PACKAGES)
+    packages[("alobarquest/infraops-mcp-server", "postgres")] = _package(
+        "postgres", from_version="16.2", to_version="17.0"
+    )
+
+    package, _, detail = _consider(pending, RULE, packages, NOW)
+
+    assert package is None
+    assert "permits" in detail and "have passed" in detail, detail
 
 
 def test_a_requirement_range_stays_unclassifiable_under_the_outcome_rule() -> None:
@@ -414,7 +420,7 @@ def test_a_requirement_range_stays_unclassifiable_under_the_outcome_rule() -> No
         concluded_at=SETTLED,
     )
 
-    package, _, detail = _consider(pending, REGISTRY[OUTCOME_GATE], PACKAGES, NOW)
+    package, _, detail = _consider(pending, RULE, PACKAGES, NOW)
 
     assert package is None and detail.startswith("unclassifiable"), detail
 
@@ -433,9 +439,7 @@ def test_a_conclusion_that_is_no_verdict_does_not_hand_the_bump_to_the_factory(c
     the cascade's answer mints a package revision that cannot be unminted, and the bump lands by
     itself the moment somebody re-runs the job green.
     """
-    package, _, detail = _consider(
-        _zod(checks=checks, concluded_at=SETTLED), REGISTRY[OUTCOME_GATE], PACKAGES, NOW
-    )
+    package, _, detail = _consider(_zod(checks=checks, concluded_at=SETTLED), RULE, PACKAGES, NOW)
 
     assert package is None
     assert "have not concluded against it" in detail, detail

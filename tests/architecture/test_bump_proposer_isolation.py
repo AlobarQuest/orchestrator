@@ -4,11 +4,12 @@ Same shape as the watcher's, the ledger's, the lander's and the carry's isolatio
 for the same reason: hosting an out-of-process program here is a packaging choice, and the
 moment it can import the orchestrator it stops being one.
 
-**IT MATTERS PARTICULARLY HERE, because this program's whole judgment is a REPRODUCTION.** It
-decides which bumps the auto-merge cascade refuses, and it does so from `landing_ledger.rules`
--- the hand-transcribed registry of what each revision of that gate actually said. A program
-that could import the orchestrator could reach the admission module that answers an adjacent
-question about the same pull requests, and the two answers would drift into each other.
+**IT MATTERS PARTICULARLY HERE, because this program's whole judgment is a READING.** It decides
+which bumps the estate will not land by itself, and since ADR-0038 it reads that rule from
+change-manager's landing policy -- the one holder, asked rather than transcribed. A program that
+could import the orchestrator could reach the admission module that answers an adjacent question
+about the same pull requests from that same declaration, and the two answers would drift into
+each other while both cited one document.
 """
 
 from __future__ import annotations
@@ -20,9 +21,12 @@ PROPOSER = Path("src/bump_proposer")
 ORCHESTRATOR = Path("src/orchestrator")
 
 # Everything the program may import at the top level. `httpx` and the standard library, plus
-# `landing_ledger` -- reused rather than re-implemented, because the transcribed gate registry
-# and the update-metadata reader are exactly what this producer needs and a second copy of
-# either would be a second answer to "what did the gate say".
+# `landing_ledger` -- reused rather than re-implemented, because its GitHub reader, its
+# update-metadata parse and its conclusion vocabulary are exactly what this producer needs, and a
+# second copy of any of them would be a second answer to "what is open and what did CI conclude".
+# ADR-0038 removed the one part it took for JUDGMENT -- the transcribed gate registry -- which now
+# comes from change-manager. The readers stayed, and `rules.py` stays too, for the landings
+# already attributed to a revision of it.
 ALLOWED_TOP_LEVEL = {
     "__future__",
     "argparse",
