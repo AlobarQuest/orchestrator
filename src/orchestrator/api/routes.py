@@ -57,6 +57,11 @@ from orchestrator.api.schemas import (
     FactoryPolicyResponse,
     FollowUpMintCommand,
     FollowUpMintResponse,
+    InertBranchUpdateCommandModel,
+    InertBranchUpdateResponse,
+    InertLandingAdmissionResponse,
+    InertPrMergeCommandModel,
+    InertPrMergeResponse,
     InFlightUnitsResponse,
     InfraLaneLinkCommandModel,
     InfraLaneLinkResponse,
@@ -196,6 +201,20 @@ from orchestrator.services.follow_ups import mint_due_follow_ups
 from orchestrator.services.github_app import github_app_credentials, token_provider_for
 from orchestrator.services.github_checks import CheckObserver, GitHubActionsCheckObserver
 from orchestrator.services.in_flight import in_flight_snapshot
+from orchestrator.services.inert_landing_admission import inert_landing_admission
+from orchestrator.services.inert_landing_policy import (
+    HttpInertLandingPolicySource,
+    InertLandingPolicySource,
+)
+from orchestrator.services.inert_pr_branch_update import (
+    InertBranchUpdateCommand,
+    update_inert_pull_request_branch,
+)
+from orchestrator.services.inert_pr_merge import (
+    GitHubInertPullRequests,
+    InertMergeCommand,
+    land_inert_pull_request,
+)
 from orchestrator.services.infra_links import (
     InfraLaneLinkCommand,
     list_infra_lane_links,
@@ -336,6 +355,34 @@ def get_change_record_source(settings: SettingsDep) -> ChangeRecordSource:
 
 
 ChangeRecordSourceDep = Annotated[ChangeRecordSource, Depends(get_change_record_source)]
+
+
+def get_inert_landing_policy_source(settings: SettingsDep) -> InertLandingPolicySource:
+    """Build the thing that reads which repositories a person declared landable unattended.
+
+    **The SAME base URL and the SAME credential as the change-record reader above**, because it is
+    the same service and the same bearer: every narrow scope change-manager grants is its read
+    routes plus whatever that scope may write, and this route is one of those read routes -- so a
+    credential that can read a change record can read this. Sharing them means activating the lane
+    costs one environment variable rather than a second secret whose absence would be
+    indistinguishable from the service being down.
+
+    A dependency for the reason its two siblings are: a test can substitute the service, and an
+    unset URL or credential arrives as the empty string the source itself refuses on, never as a
+    source that silently answers.
+    """
+    return HttpInertLandingPolicySource(
+        base_url=settings.change_record_url,
+        token=(
+            settings.change_record_token.get_secret_value() if settings.change_record_token else ""
+        ),
+        timeout_seconds=settings.change_record_timeout_seconds,
+    )
+
+
+InertLandingPolicySourceDep = Annotated[
+    InertLandingPolicySource, Depends(get_inert_landing_policy_source)
+]
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorResponse, "description": "Authentication required or rejected"},
@@ -817,6 +864,107 @@ def estate_pr_branch_update_route(
         landing_source,
         record_source,
         enabled=settings.estate_landing_enabled,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.get("/inert-pr-merge-admission", response_model=InertLandingAdmissionResponse)
+def inert_landing_admission_route(
+    repository: Annotated[str, Query(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)],
+    pr_number: Annotated[int, Query(gt=0)],
+    _actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+    policy_source: InertLandingPolicySourceDep,
+) -> object:
+    """ADR-0038 part 2: may this update-bot pull request be landed where landing changes nothing
+    already serving, and if not, why?
+
+    **Report-only.** It is what makes a pass that lands nothing legible: every held pull request
+    names the condition it misses, and a pass that reports several held for freshness is the
+    condition working rather than the lane failing.
+
+    The credentials are resolved once and fed to both this answer and the act, so the gate can
+    never attest to credentials the actor does not hold.
+    """
+    credentials = github_app_credentials(settings)
+    return inert_landing_admission(
+        session,
+        repository,
+        pr_number,
+        landing_source,
+        policy_source,
+        GitHubInertPullRequests(token_provider_for(credentials)),
+        enabled=settings.inert_landing_enabled,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.post("/inert-pr-merge", response_model=InertPrMergeResponse)
+def inert_pr_merge_route(
+    body: InertPrMergeCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+    policy_source: InertLandingPolicySourceDep,
+) -> object:
+    """ADR-0038 part 2: the orchestrator lands a pull request the update bot opened.
+
+    Its caller is a scheduled one, which is why this path has an off-switch. Unconfigured refuses,
+    and the switch is its own rather than the deploying lane's: the two were activated by different
+    decisions and neither implies the other.
+    """
+    credentials = github_app_credentials(settings)
+    gateway = GitHubInertPullRequests(token_provider_for(credentials))
+    return land_inert_pull_request(
+        session,
+        InertMergeCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_head_sha=body.expected_head_sha,
+        ),
+        gateway,
+        landing_source,
+        policy_source,
+        enabled=settings.inert_landing_enabled,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.post("/inert-pr-branch-update", response_model=InertBranchUpdateResponse)
+def inert_pr_branch_update_route(
+    body: InertBranchUpdateCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+    policy_source: InertLandingPolicySourceDep,
+) -> object:
+    """ADR-0038 part 2: the lane brings up to date a branch it has itself put behind.
+
+    The same off-switch and the same credentials as the landing, resolved the same way and read off
+    the same composed answer -- so a deployment that may not land may not touch a branch either, by
+    the term that already says so rather than by a second one.
+    """
+    credentials = github_app_credentials(settings)
+    gateway = GitHubInertPullRequests(token_provider_for(credentials))
+    return update_inert_pull_request_branch(
+        session,
+        InertBranchUpdateCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_head_sha=body.expected_head_sha,
+        ),
+        gateway,
+        landing_source,
+        policy_source,
+        enabled=settings.inert_landing_enabled,
         credentials_configured=credentials is not None,
     )
 

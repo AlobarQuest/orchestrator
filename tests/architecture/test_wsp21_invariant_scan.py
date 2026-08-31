@@ -114,6 +114,33 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # is what keeps this entry to the one act it names rather than to whatever else has
     # accumulated on that branch.
     Path("src/bump_proposer/standing.py"),
+    # ADR-0038 part 2, the FOURTH entry, and it is the second that lands a pull request into a
+    # repository where landing changes nothing already serving -- so the first entry's last clause
+    # is the only one of its three that carries over, and the second entry's justification does
+    # not carry over at all. There is no work unit here, so no criteria the orchestrator resolved
+    # from evidence and no envelope a human approved; and there is no change record either, and
+    # there cannot be one -- a record exists to carry acceptance criteria and a rollback plan for
+    # a rollout, and a repository where landing deploys nothing has no subject for any of the
+    # three. So the change window, the pace rule and every record term are absent by decision.
+    #
+    # What stands in their place is ADR-0038 part 2: a population a human pinned into a versioned
+    # policy document held by another service, CONFIRMED against the estate's own answer about
+    # what landing on that repository does, with a disagreement refusing in both directions; an
+    # author condition read from that same document rather than written here, which is the only
+    # thing bounding which pull requests this lane sees at all; a head current with its base; an
+    # ecosystem the required checks do exercise; every required check green, told apart from a
+    # check that reported nothing and from one still running; and an environment switch of its own
+    # that defaults to refusing. What it replaces is a GitHub Actions workflow that armed the
+    # platform's own automatic landing across the same six repositories with no freshness
+    # condition, no policy version, and no record of the permission in the artifact.
+    #
+    # **This entry is only real because the module NAMES ITS ACT `merge`.** The scans above find a
+    # landing by a REST path spelled in the file or by an attribute call named `merge`, and a
+    # landing performed through an injected gateway spells neither -- so a module in this shape
+    # could land pull requests and be invisible to the one control that lists every file that
+    # does. The gateway method is named for the spelling the guard reads, deliberately, so that
+    # the exemption is taken openly rather than avoided by a verb the scanner does not cover.
+    Path("src/orchestrator/services/inert_pr_merge.py"),
 }
 
 
@@ -249,6 +276,11 @@ OUTBOUND_ALLOWLIST = {
     # answer obtained outside the transaction that records the decision is an answer about a
     # moment that has passed.
     Path("src/orchestrator/services/estate_pr_merge.py"),
+    # ADR-0038 part 2. It reads the policy naming which repositories a person declared landable
+    # unattended -- ONE request, to the same service and with the same bearer as the change-record
+    # reader above, whose own entry states why an admission term's read belongs inside the
+    # transaction that records the decision. It writes nothing and reaches one route.
+    Path("src/orchestrator/services/inert_landing_policy.py"),
     # ADR-0026. `work_carrier` is a SEPARATE program (ADR-0002's shape), out of process and on a
     # schedule, so this is not the orchestrator speaking HTTP. It makes ONE request here -- a
     # listing of the work proposals a human approved in change-manager -- and holds no write

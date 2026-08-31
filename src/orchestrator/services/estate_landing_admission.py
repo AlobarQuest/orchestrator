@@ -98,7 +98,7 @@ MERGEABLE_CLEAN: Final = "clean"
 
 # The platform's word for "a required check has not passed" -- which covers a check that FAILED, a
 # check that was abandoned, a check still running, and a required context that never reported at
-# all. One word, four causes; see `_checks_term` for the second read that separates them.
+# all. One word, four causes; see `checks_term` for the second read that separates them.
 MERGEABLE_BLOCKED: Final = "blocked"
 
 # This deployment has not been told it may land anything. Default false, unconfigured refusing.
@@ -494,7 +494,7 @@ def qualifies_for_branch_update(
     **A failing check remains disqualifying, and that boundary is the whole value of the split.**
     Freshening cannot turn a red verdict green, so offering it one spends a build to re-learn the
     same answer -- and a build running is indistinguishable from progress to whoever reads the
-    report. `_checks_term` is where the two are told apart, and it does so by reading the runs
+    report. `checks_term` is where the two are told apart, and it does so by reading the runs
     rather than by trusting a word that covers both.
 
     ## The shape, because it will recur
@@ -515,7 +515,7 @@ def qualifies_for_branch_update(
 
 
 @dataclass(frozen=True)
-class _Term:
+class Term:
     met: bool
     refusals: tuple[str, ...]
 
@@ -638,7 +638,7 @@ def estate_landing_admission(
     )
 
 
-def _estate_term(repository: str, landing_source: EstateLandingSource) -> _Term:
+def _estate_term(repository: str, landing_source: EstateLandingSource) -> Term:
     """Does landing on this repository's default branch change something already serving?
 
     Only an explicit yes passes, and the direction is the opposite of the work-unit landing's.
@@ -648,21 +648,21 @@ def _estate_term(repository: str, landing_source: EstateLandingSource) -> _Term:
     """
     answer = landing_source.landing_for(repository)
     if answer.landing == LANDING_REDEPLOYS:
-        return _Term(True, ())
+        return Term(True, ())
     if answer.landing is not None:
         # `inert` and `unknown` are different facts with different next steps: one says this lane
         # is the wrong one, the other says the estate has not looked.
         if answer.landing == LANDING_INERT:
-            return _Term(False, (LANDING_TARGET_NOT_ROUTED,))
-        return _Term(False, (LANDING_ESTATE_UNKNOWN,))
+            return Term(False, (LANDING_TARGET_NOT_ROUTED,))
+        return Term(False, (LANDING_ESTATE_UNKNOWN,))
     if answer.reason == SOURCE_UNCONFIGURED:
-        return _Term(False, (LANDING_ESTATE_SOURCE_UNCONFIGURED,))
-    return _Term(False, (LANDING_ESTATE_SOURCE_UNREADABLE,))
+        return Term(False, (LANDING_ESTATE_SOURCE_UNCONFIGURED,))
+    return Term(False, (LANDING_ESTATE_SOURCE_UNREADABLE,))
 
 
 @dataclass(frozen=True)
 class _RecordTerms:
-    term: _Term
+    term: Term
     record_id: int | None
     policy_version: int | None
     conditions: LandingConditions | None
@@ -681,10 +681,10 @@ def _record_term(
     """
     answer = record_source.record_for(repository, pr_number)
     if not answer.answered:
-        return _RecordTerms(_Term(False, (_unread_reason(answer.reason),)), None, None, None)
+        return _RecordTerms(Term(False, (_unread_reason(answer.reason),)), None, None, None)
     record = answer.record
     if record is None:
-        return _RecordTerms(_Term(False, (LANDING_RECORD_ABSENT,)), None, None, None)
+        return _RecordTerms(Term(False, (LANDING_RECORD_ABSENT,)), None, None, None)
 
     # Each clause is a fact about the record and its own refusal, evaluated together so the answer
     # names every one that is unmet rather than the first. `met` is the conjunction of the same
@@ -707,7 +707,7 @@ def _record_term(
     )
     refusals = tuple(refusal for held, refusal in clauses if not held)
     return _RecordTerms(
-        _Term(all(held for held, _ in clauses), refusals),
+        Term(all(held for held, _ in clauses), refusals),
         record.record_id,
         record.policy_version,
         record.conditions,
@@ -727,7 +727,7 @@ def _unread_reason(reason: str | None) -> str:
     return LANDING_RECORD_SOURCE_UNREADABLE
 
 
-def _window_term(now) -> _Term:
+def _window_term(now) -> Term:
     """Is this an hour in which policy raises no objection to changing something already serving?
 
     The affirmative case is "a window is declared and now is inside it", never "nothing objected":
@@ -738,16 +738,16 @@ def _window_term(now) -> _Term:
         policy = load_factory_policy()
         row = policy.rows.get(LIVE_ESTATE)
         if row is None or row.change_window is None:
-            return _Term(False, (LANDING_CHANGE_WINDOW_NOT_DECLARED,))
+            return Term(False, (LANDING_CHANGE_WINDOW_NOT_DECLARED,))
         refusal = policy.window_refusal((LIVE_ESTATE,), now)
     except DomainError:
-        return _Term(False, (LANDING_POLICY_UNREADABLE,))
+        return Term(False, (LANDING_POLICY_UNREADABLE,))
     if refusal is not None:
-        return _Term(False, (LANDING_OUTSIDE_CHANGE_WINDOW,))
-    return _Term(True, ())
+        return Term(False, (LANDING_OUTSIDE_CHANGE_WINDOW,))
+    return Term(True, ())
 
 
-def _pace_term(session: Session, repository: str, now) -> _Term:
+def _pace_term(session: Session, repository: str, now) -> Term:
     """One landing per repository per occurrence of the window.
 
     A RULE rather than a side effect, and the difference matters. Freshness makes it very nearly
@@ -760,11 +760,11 @@ def _pace_term(session: Session, repository: str, now) -> _Term:
         policy = load_factory_policy()
         opened = policy.window_opened_at(LIVE_ESTATE, now)
     except DomainError:
-        return _Term(False, (LANDING_POLICY_UNREADABLE,))
+        return Term(False, (LANDING_POLICY_UNREADABLE,))
     if opened is None:
         # Outside the window, or no window declared. The window term reports both; a second name
         # for one fact is redundancy, so this one is simply unmet with nothing to say.
-        return _Term(False, ())
+        return Term(False, ())
     already = session.scalar(
         select(EstatePrMerge).where(
             EstatePrMerge.repository == repository.lower(),
@@ -772,13 +772,13 @@ def _pace_term(session: Session, repository: str, now) -> _Term:
         )
     )
     if already is not None:
-        return _Term(False, (LANDING_PACE_EXHAUSTED,))
-    return _Term(True, ())
+        return Term(False, (LANDING_PACE_EXHAUSTED,))
+    return Term(True, ())
 
 
 @dataclass(frozen=True)
 class _RemoteTerms:
-    term: _Term
+    term: Term
     head_sha: str | None
     # Carried up rather than recomputed: the blobs were read once, by the term that owns them.
     rollout_base_matches_pin: bool
@@ -799,7 +799,7 @@ def _remote_terms(
     try:
         pull = gateway.read_pull_request(repository=repository, number=pr_number)
     except EstateGatewayError:
-        return _RemoteTerms(_Term(False, (LANDING_PULL_REQUEST_UNREADABLE,)), None, False)
+        return _RemoteTerms(Term(False, (LANDING_PULL_REQUEST_UNREADABLE,)), None, False)
 
     refusals: list[str] = []
     if pull.landed or not pull.open:
@@ -810,17 +810,22 @@ def _remote_terms(
         refusals.append(LANDING_AUTHOR_NOT_THE_UPDATE_BOT)
     if pull.mergeable_state == MERGEABLE_UNKNOWN:
         refusals.append(LANDING_MERGEABILITY_UNKNOWN)
-        checks = _Term(False, ())
+        checks = Term(False, ())
     else:
-        checks = _checks_term(repository, pull, gateway)
+        checks = checks_term(repository, pull, gateway)
         refusals.extend(checks.refusals)
 
     if conditions is None:
         # Already reported by the record term. Everything below is a condition this process was
         # not told, so it cannot be met and there is nothing further to say about it.
-        return _RemoteTerms(_Term(False, tuple(refusals)), pull.head_sha, False)
+        return _RemoteTerms(Term(False, tuple(refusals)), pull.head_sha, False)
 
-    fresh = _freshness_term(repository, pull, conditions, gateway)
+    fresh = freshness_term(
+        repository,
+        pull,
+        gateway,
+        required=conditions.require_head_current_with_base,
+    )
     kind = _bump_term(pull, conditions)
     rollout = _rollout_term(repository, pull, conditions, gateway)
     refusals.extend(fresh.refusals)
@@ -839,14 +844,14 @@ def _remote_terms(
         and kind.met
         and rollout.term.met
     )
-    return _RemoteTerms(_Term(met, tuple(refusals)), pull.head_sha, rollout.base_matches_pin)
+    return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha, rollout.base_matches_pin)
 
 
-def _checks_term(
+def checks_term(
     repository: str,
     pull: EstatePullRequest,
     gateway: EstateReadGateway,
-) -> _Term:
+) -> Term:
     """Do the checks at this head say NO, say NOTHING YET, or say nothing AT ALL?
 
     Three answers where the platform's composite offers one word. `clean` is the only value that
@@ -883,31 +888,32 @@ def _checks_term(
     it is the same residual the composite's own note already carries.
     """
     if pull.mergeable_state == MERGEABLE_CLEAN:
-        return _Term(True, ())
+        return Term(True, ())
     if pull.mergeable_state != MERGEABLE_BLOCKED:
-        return _Term(False, (LANDING_CHECKS_NOT_CLEAN,))
+        return Term(False, (LANDING_CHECKS_NOT_CLEAN,))
     try:
         runs = gateway.head_check_runs(repository=repository, head_sha=pull.head_sha)
     except EstateGatewayError:
-        return _Term(False, (LANDING_CHECKS_VERDICT_UNREADABLE,))
+        return Term(False, (LANDING_CHECKS_VERDICT_UNREADABLE,))
     if any(
         run.status == RUN_COMPLETED
         and run.conclusion != RUN_SUCCEEDED
         and run.conclusion not in NO_VERDICT_CONCLUSIONS
         for run in runs
     ):
-        return _Term(False, (LANDING_CHECKS_NOT_CLEAN,))
+        return Term(False, (LANDING_CHECKS_NOT_CLEAN,))
     if any(run.status != RUN_COMPLETED for run in runs):
-        return _Term(False, (LANDING_CHECKS_IN_FLIGHT,))
-    return _Term(False, (LANDING_CHECKS_AWAITING_VERDICT,))
+        return Term(False, (LANDING_CHECKS_IN_FLIGHT,))
+    return Term(False, (LANDING_CHECKS_AWAITING_VERDICT,))
 
 
-def _freshness_term(
+def freshness_term(
     repository: str,
     pull: EstatePullRequest,
-    conditions: LandingConditions,
     gateway: EstateReadGateway,
-) -> _Term:
+    *,
+    required: bool,
+) -> Term:
     """Is the head current with the base it would be squashed onto?
 
     The condition exists because required checks are not required to be up to date on these
@@ -919,18 +925,26 @@ def _freshness_term(
     what a person lands too, applies estate-wide behaviour nobody versions, and blocks silently
     where
     this produces a named refusal.
+
+    **`required` ARRIVES AS A BOOLEAN rather than as the object that carries it**, because the two
+    lanes that ask this question are told by two different documents: the deploying lane reads the
+    conditions projected onto a change record, and the lane serving repositories where landing
+    changes nothing already serving reads a block of the same policy that has no record to be
+    projected onto. Passing the object would have made this function know about a shape only one
+    of its callers has, and the alternative -- a second copy -- is what this repository keeps
+    paying for.
     """
-    if not conditions.require_head_current_with_base:
-        return _Term(True, ())
+    if not required:
+        return Term(True, ())
     try:
         behind = gateway.commits_behind_base(
             repository=repository, base_ref=pull.base_ref, head_sha=pull.head_sha
         )
     except EstateGatewayError:
-        return _Term(False, (LANDING_FRESHNESS_UNREADABLE,))
+        return Term(False, (LANDING_FRESHNESS_UNREADABLE,))
     if behind > 0:
-        return _Term(False, (LANDING_HEAD_NOT_CURRENT_WITH_BASE,))
-    return _Term(True, ())
+        return Term(False, (LANDING_HEAD_NOT_CURRENT_WITH_BASE,))
+    return Term(True, ())
 
 
 def ecosystem_of(head_ref: str) -> str | None:
@@ -954,7 +968,7 @@ def ecosystem_of(head_ref: str) -> str | None:
     return ecosystem
 
 
-def _bump_term(pull: EstatePullRequest, conditions: LandingConditions) -> _Term:
+def _bump_term(pull: EstatePullRequest, conditions: LandingConditions) -> Term:
     """May this bump land unattended -- and by WHICH RULE is that asked?
 
     **THE SERVED CONDITIONS SAY WHICH RULE APPLIES, and nothing here chooses.** A version that
@@ -990,20 +1004,37 @@ def _bump_term(pull: EstatePullRequest, conditions: LandingConditions) -> _Term:
     """
     if conditions.excluded_ecosystems is None:
         return _update_type_term(pull, conditions)
+    return ecosystem_exclusion_term(pull, conditions.excluded_ecosystems)
+
+
+def ecosystem_exclusion_term(pull: EstatePullRequest, excluded: frozenset[str]) -> Term:
+    """Is this bump in an ecosystem the required checks do not exercise?
+
+    **ONE COPY, TWO LANES, AND THE EXCLUDED SETS ARE DIFFERENT ON PURPOSE.** Both halves of the
+    estate exclude on the same principle -- exclude where the required checks do not exercise what
+    changed -- and each names a different ecosystem, because what goes unexercised differs. So the
+    SET is per-lane and arrives as an argument, and the reading of it is shared: which segment of
+    the branch names the ecosystem, what an unreadable name means, and the case fold.
+
+    UNREADABLE IS ITS OWN ANSWER AND REFUSES, for the reason `LANDING_ECOSYSTEM_UNREADABLE`
+    records: a name this cannot read is never "the bot named no ecosystem", it is this program
+    failing to read what the exclusion is about.
+
+    CASE-FOLDED ON BOTH SIDES, which is exactly what `pin_for` does with the other identity key
+    crossing this boundary -- the parser folds what it stores AND the lookup folds what it asks.
+    Folding only at the parser would leave this correct for a served document and wrong for any
+    other constructor of these values, and the direction of that failure is PERMISSIVE: a member
+    differing in case is not `in` the set, and not-in means admitted.
+    """
     ecosystem = ecosystem_of(pull.head_ref)
     if ecosystem is None:
-        return _Term(False, (LANDING_ECOSYSTEM_UNREADABLE,))
-    # CASE-FOLDED ON BOTH SIDES, which is exactly what `pin_for` does with the other identity key
-    # crossing this boundary -- the parser folds what it stores AND the lookup folds what it asks.
-    # Folding only at the parser would leave this correct for a served document and wrong for any
-    # other constructor of these conditions, and the direction of that failure is PERMISSIVE: a
-    # member differing in case is not `in` the set, and not-in means admitted.
-    if ecosystem.lower() in {name.lower() for name in conditions.excluded_ecosystems}:
-        return _Term(False, (LANDING_ECOSYSTEM_EXCLUDED,))
-    return _Term(True, ())
+        return Term(False, (LANDING_ECOSYSTEM_UNREADABLE,))
+    if ecosystem.lower() in {name.lower() for name in excluded}:
+        return Term(False, (LANDING_ECOSYSTEM_EXCLUDED,))
+    return Term(True, ())
 
 
-def _update_type_term(pull: EstatePullRequest, conditions: LandingConditions) -> _Term:
+def _update_type_term(pull: EstatePullRequest, conditions: LandingConditions) -> Term:
     """Is the version delta one the policy permits landing unattended?
 
     The rule every policy version before the fifth declares, retained because those versions are
@@ -1018,15 +1049,15 @@ def _update_type_term(pull: EstatePullRequest, conditions: LandingConditions) ->
     """
     kind = update_type_of(pull.title)
     if kind is None:
-        return _Term(False, (LANDING_UPDATE_TYPE_UNPARSEABLE,))
+        return Term(False, (LANDING_UPDATE_TYPE_UNPARSEABLE,))
     if kind not in conditions.update_types:
-        return _Term(False, (LANDING_UPDATE_TYPE_NOT_PERMITTED,))
-    return _Term(True, ())
+        return Term(False, (LANDING_UPDATE_TYPE_NOT_PERMITTED,))
+    return Term(True, ())
 
 
 @dataclass(frozen=True)
 class _RolloutTerm:
-    term: _Term
+    term: Term
     # DID THE BASE CARRY THE PINNED BYTES? Reported beside the refusal because the refusal itself
     # cannot tell "this head is stale" from "this workflow moved", and only the comparison below
     # can. False wherever the question was not reached or not answered -- an unpinned repository
@@ -1089,18 +1120,18 @@ def _rollout_term(
     """
     pin = conditions.pin_for(repository)
     if pin is None:
-        return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_UNPINNED,)), False)
+        return _RolloutTerm(Term(False, (LANDING_ROLLOUT_UNPINNED,)), False)
     try:
         at_base = gateway.blob_sha(repository=repository, path=pin.path, ref=pull.base_ref)
         if not _blob_matches(at_base, pin.blob_sha):
-            return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_MOVED,)), False)
+            return _RolloutTerm(Term(False, (LANDING_ROLLOUT_MOVED,)), False)
         at_head = gateway.blob_sha(repository=repository, path=pin.path, ref=pull.head_sha)
     except EstateGatewayError:
         # False even when the BASE read succeeded and matched: a term that could not finish
         # answering has not established the pair the carve-out rests on. Unobservable today --
         # `landing_rollout_unreadable` disqualifies on its own -- so it is stated rather than
         # left to whichever value happened to be in hand.
-        return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_UNREADABLE,)), False)
+        return _RolloutTerm(Term(False, (LANDING_ROLLOUT_UNREADABLE,)), False)
     if not _blob_matches(at_head, pin.blob_sha):
-        return _RolloutTerm(_Term(False, (LANDING_ROLLOUT_MOVED,)), True)
-    return _RolloutTerm(_Term(True, ()), True)
+        return _RolloutTerm(Term(False, (LANDING_ROLLOUT_MOVED,)), True)
+    return _RolloutTerm(Term(True, ()), True)

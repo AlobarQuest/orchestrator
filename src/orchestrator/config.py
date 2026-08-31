@@ -54,6 +54,20 @@ class Settings(BaseSettings):
     # lands nothing until somebody writes an environment variable, so merging it changes the
     # estate's behaviour by exactly nothing.
     estate_landing_enabled: bool = False
+    # ADR-0038 part 2. Whether this deployment may land a pull request into a repository where
+    # landing on the default branch changes NOTHING already serving.
+    #
+    # ITS OWN SWITCH RATHER THAN THE ONE ABOVE, because the two lanes were activated by different
+    # decisions and neither implies the other: one lands into repositories where a landing IS a
+    # production change, the other into repositories where the commit sits until something
+    # separately acts on it. Sharing a switch would mean turning either on turns both on, which is
+    # a permission nobody granted.
+    #
+    # Default false, and false is a REFUSAL rather than an absence: the release carrying this code
+    # lands nothing until somebody writes an environment variable, so merging it changes the
+    # estate's behaviour by exactly nothing. It reads the policy and the credentials the estate
+    # landing already needs, so activation is this one variable.
+    inert_landing_enabled: bool = False
     dispatch_failure_signature_threshold: int = 3
     dispatch_orchestrator_url: str = "https://sds.alobar.net"
     # How long a human approval gate may go unanswered before the dead-letter view reports it as

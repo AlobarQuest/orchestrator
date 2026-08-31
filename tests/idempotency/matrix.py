@@ -174,6 +174,34 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_estate_pr_branch_update.py::test_a_repeat_replays_the_event_and_never_calls_the_remote_again",
     ),
     MatrixRow(
+        "inert pr merge",
+        "/api/v1/inert-pr-merge",
+        # THE SAME TABLE AND THE SAME LOCK KEY as the deploying lane's landing, deliberately: the
+        # two populations cannot overlap, because each lane requires the opposite answer from the
+        # estate about a repository and the estate gives one answer per repository. One table, one
+        # uniqueness rule, one lock discipline -- and the alternative, a second table, would let a
+        # pull request that somehow reached both lanes be landed twice.
+        "pg_advisory_xact_lock on the repository + unique EstatePrMerge per\n"
+        "(repository, pull request)",
+        "tests/services/test_inert_pr_merge.py::test_a_repeat_replays_the_record_and_never_calls_the_remote_again",
+    ),
+    MatrixRow(
+        "inert pr branch update",
+        "/api/v1/inert-pr-branch-update",
+        # NO ROW OF ITS OWN, for the reason its deploying sibling gives: the act is repeatable by
+        # design, so a row unique per pull request would bar the next legitimate update. The KEY is
+        # what is safe here, because it names the head and a successful update moves the head.
+        #
+        # The replay guard tests the ACTION as well as the subject, and that clause is load-bearing
+        # rather than defensive: the event key space is global and both lanes write into it, so
+        # without it a key spent by any other act would be answered here as though this pull
+        # request had been brought up to date.
+        "pg_advisory_xact_lock on the repository + unique Event per\n"
+        "idempotency_key, content-addressed over the head + expected_head_sha\n"
+        "checked against the head the answer named",
+        "tests/services/test_inert_pr_branch_update.py::test_a_repeat_replays_the_event_and_never_calls_the_remote_again",
+    ),
+    MatrixRow(
         "dispatch",
         "/api/v1/work-units/{unit_id}/dispatch",
         "unique DispatchRecord.idempotency_key + (unit, runner_attempt) guard",
