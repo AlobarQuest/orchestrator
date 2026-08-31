@@ -35,9 +35,17 @@ included.** Devon ruled it 2026-08-31, after the determination below recorded th
 The case against was ADR-0015's trust loop — the runner verifying changes to itself — and the reason
 it does not reach here is that **ADR-0015 excluded the factory DISPATCHING work into factory-runner,
 where a coding agent authors the change.** This lane lands a change Dependabot authored, whose diff
-is a version number, behind a required check that genuinely gates: factory-runner is the only
-repository in the estate carrying `enforce_admins: true`, chosen precisely because a bad merge there
-stops every dispatch. Different acts, different risks. The blast radius is real and is why this is
+is a version number, behind a required check that genuinely gates: **of the six repositories this
+block declares, `factory-runner` is the only one carrying `enforce_admins: true`**, chosen precisely
+because a bad merge there stops every dispatch.
+
+**CORRECTED 2026-08-31 by the Increment 1 build, before it could reach an immutable record.** This
+clause first read *"the only repository in the estate"*, which is false: measured against the
+protection API, `enforce_admins` is true of `factory-runner`, `change-manager` and `brain` and false
+of the other five — so the claim was false about the deploying half of the very population this ADR
+governs. CLAUDE.md already carried that correction verbatim and HQ wrote the superseded form anyway.
+The narrowed clause is true as measured and carries the same argument, which is why the admission
+stands. Different acts, different risks. The blast radius is real and is why this is
 written down rather than assumed: it is 8 of the 52 Dependabot landings measured across the six over
 the preceding 30 days, and the population is a declared list, so removing it later is a one-line
 version bump.
@@ -168,6 +176,30 @@ request per repository is landable per pass and the rest are freshened for the n
 rule would be a second mechanism producing an effect the first already produces.** Recorded because
 the deploying lane DOES carry one, and the difference is not an oversight: there, pace bounds how
 often something already serving may change, which is a fact about production and not about staleness.
+
+### Two properties the build established that the lane's readers depend on
+
+**The permitted author is a NAMED field, not prose.** `inert_landing.permitted_authors` is
+`["dependabot[bot]"]`. Without it a landing party has two readings and one is a live fail-open:
+**four of the six declared repositories carry `.github/workflows/factory-runner-pilot.yml`**, so a
+factory-opened pull request with green checks would be landable by a lane that never asks whether the
+unit completed, whether the verifier decided its criteria from observed evidence, or whether an
+authority approval is bound to the envelope. The deploying lane needs no such field because
+`change_proposer` refuses a non-bot pull request upstream; **this lane has no record and therefore no
+upstream filter**, which is the same gap version 4's rationale closed by putting the refusal on the
+party that reads GitHub, keyed on something the document names.
+
+The spelling is load-bearing and there are two of them for one identity. REST `pulls/{n}` answers
+`user.login = "dependabot[bot]"` with `type = "Bot"`; `gh pr view --json author` answers
+`app/dependabot` for the same pull request. The cascade workflow keys on the first
+(`github.event.pull_request.user.login == 'dependabot[bot]'`), so that is what is declared. It sits
+on the PERMITTING side, so a wrong value under-permits and the lane goes quiet — the direction nobody
+notices.
+
+**A landing is attributed to the DOCUMENT's version, not the block's.** One `version` covers both
+populations, so a version 7 that moves only a `brain` rollout pin re-stamps what an inert landing is
+attributed to. This follows from one holder and is not a defect; it is recorded because a ledger
+reader will otherwise assume the number tracks the rule it names. Increment 3 depends on knowing it.
 
 ## What is given up, and what is gained
 
