@@ -194,6 +194,16 @@ def read_inert_landing(
         # Construction raises for some malformed URLs and request time for others, exactly as
         # `change_manager.py` records: a control character is refused here by `urlparse`, while a
         # doubled dot or an over-long DNS label survives until IDNA encoding at `request`.
+        #
+        # THE `ValueError` ARM HERE IS UNREACHABLE, and it is kept knowingly rather than by
+        # copying. Measured 2026-08-31 against httpx: `InvalidURL` is NOT a `ValueError` subclass
+        # (its bases are `Exception`), and every malformed base URL that fails at CONSTRUCTION --
+        # a control character, a non-numeric port, a broken IPv6 literal, a Unicode full-stop --
+        # raises `InvalidURL`. So no input can kill this arm, and a mutation set will report it as
+        # a survivor. It stays for two reasons: `change_manager.py` one file over carries the
+        # identical tuple, and a divergence between two clients of one service is a worse artifact
+        # than one defensive arm. The REQUEST tuple below is a different matter -- `ValueError` is
+        # load-bearing there, because IDNA encoding raises `UnicodeError`, which is one.
         raise LandingPolicyError(
             f"the change-manager base URL is unusable: {type(error).__name__}"
         ) from None

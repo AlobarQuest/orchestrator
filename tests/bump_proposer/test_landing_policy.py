@@ -94,6 +94,22 @@ def test_the_declared_population_is_case_folded_against_the_way_github_spells_it
     assert rule.declares("alobarquest/infraops-mcp-server")
 
 
+def test_a_population_served_in_mixed_case_is_still_declared() -> None:
+    """Kills: dropping the case-fold in `parse`, which `declares` alone does not cover.
+
+    `declares` lowers its ARGUMENT, so a mutation that stored the served names verbatim survives
+    against today's document, which change-manager happens to serve lowercased. It would not
+    survive a document that did not. Nothing in change-manager lowercases the constant on the way
+    out -- `inert_landing_dict` sorts the declared set and serves it -- so the case of these names
+    is whatever a person typed into the policy, and one repository typed the way GitHub spells it
+    would silently drop out of the population.
+    """
+    rule = parse(_document(repositories=["AlobarQuest/Orchestrator"]))
+
+    assert rule.declares("AlobarQuest/orchestrator")
+    assert rule.declares("alobarquest/orchestrator")
+
+
 def test_a_repository_the_document_governs_on_the_OTHER_terms_is_not_declared_inert() -> None:
     """The live case, and the reason `declares` is not a formality: one document, two
     populations. `change-manager` is in `repositories` at the top level -- landing there
