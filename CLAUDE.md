@@ -4245,3 +4245,27 @@ style of that module.
   catches it only if the mutant for the OLD arm is still in the set — a mutation run scoped to "the
   code I changed" will not contain it. Keep the whole set, and treat a mutant that newly survives a
   change as a disarmed control until proven an equivalent mutant.
+
+- **A SURVIVOR HAS A FOURTH EXPLANATION: the mutant applied and states nothing.** The estate records
+  three ways a mutation run reports a pass it did not earn; this is the mirror — a **false
+  survivor**, which costs a hunt for a control that is not missing. Found 2026-08-31 (ADR-0038
+  Increment 3, mutant M6): the replacement appended a duplicate projection branch BELOW an early
+  return without removing the original, so the original still fired and the mutation changed
+  nothing. **Its anchor matched once, so a harness's own "anchor matched 0 times" check cannot see
+  it** — that guard catches a mutation that failed to apply, not one that applied and asserted
+  nothing. The only thing that catches this is reading what the replacement DOES.
+  **It interacts with the disjunction rule above and the interaction is the trap.** That rule says
+  treat a newly-surviving mutant as a disarmed control until proven equivalent — sound, and under it
+  a defective mutant reads as a disarmed control, which is a conclusion about the tests drawn from a
+  defect in the harness. So the order is: first establish the mutant expresses its claim, then ask
+  whether the tests fail to catch it. Rebuilt to actually MOVE the branch, M6 was killed.
+
+- **Concurrent build sessions dispatched from one HQ SHARE A SCRATCHPAD, so any fixed-name scratch
+  file collides.** In-process subagents inherit the parent session's scratchpad directory, so two
+  sessions working in different worktrees still write to one path. Observed 2026-08-31: Increment
+  2b's `mutate.py` overwrote Increment 3's at the same path while both were live. No harm that time
+  — Increment 3's run had already completed under its own harness and its tree was clean — but the
+  failure mode is the same class as two sessions sharing a test database, and worse in consequence:
+  **a harness silently swapped mid-run mutates one tree while reporting about another.** The
+  discipline is the same as for the database — namespace per session, or write scratch into your own
+  worktree — and it belongs in the dispatch brief, because a session cannot see that it has a peer.
