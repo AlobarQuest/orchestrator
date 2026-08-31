@@ -616,16 +616,24 @@ def test_a_pull_request_this_lane_has_already_acted_on_is_refused(
 # ---------------------------------------------------------------------------------------------
 
 
-def test_satisfied_is_a_positive_conjunction_and_not_an_empty_refusal_list(
+def test_a_term_that_is_unmet_refuses_even_when_the_remote_half_names_nothing(
     migrated_session: Session,
 ) -> None:
-    """**The property this asserts is the one an implementation loses silently.** Every term
-    computes its own affirmative answer and they are ANDed; a `satisfied` derived from "no refusal
-    was raised" would pass every case above and admit any future term that forgets to name itself.
+    """`satisfied` is the conjunction of every term's own affirmative answer, and the refusal list
+    is built alongside for the reader rather than being what decides.
 
-    Proven by a term that is unmet and, by construction, names nothing: a policy that could not be
-    read leaves the remote terms with no conditions to evaluate, so `_remote_terms` returns unmet
-    with a refusal list that is EMPTY of anything about the conditions.
+    **BE PRECISE ABOUT WHAT THIS DOES NOT PROVE, because the name it first carried claimed more.**
+    Mutation-tested: replacing the conjunction with `not refusals` leaves this suite entirely
+    green, because no reachable state today has an unmet term that names nothing -- every term
+    here either raises its own refusal or sits beside one that does. The two forms are therefore
+    equivalent for this lane as it stands, and the conjunction is kept because the NEXT term added
+    may not name itself, which is the case the deploying sibling already reaches through its pace
+    term (unmet, silent, deliberately). A test cannot discriminate a difference the code cannot
+    yet exhibit, and inventing a fixture that could would be testing a shape nothing produces.
+
+    What it does prove is the half that is reachable: a remote half returning unmet with an empty
+    refusal list of its own -- which is what a policy that could not be read produces -- still
+    refuses, and the answer names the cause rather than staying silent about it.
     """
     gateway = FakeEstateGateway(pull=pull_request(number=PR, head_ref=UV_BRANCH))
 

@@ -224,7 +224,14 @@ def test_the_request_names_the_route_and_carries_the_bearer() -> None:
 
 @pytest.mark.parametrize("status", [204, 301, 400, 401, 403, 404, 500, 502])
 def test_any_status_but_200_reads_as_unreadable(status: int) -> None:
-    answer = _source(lambda request: httpx.Response(status, json={})).inert_landing_rules()
+    """**The body is a VALID policy document, and that is what makes this control discriminate.**
+    An empty body is refused by the PARSE whether or not the status is checked at all, so the
+    obvious version of this test passes against a client that reads a 404 as a policy -- measured,
+    by a mutation that loosened the status check and killed nothing. Only a body the parser would
+    happily accept leaves the status as the sole thing that can refuse it."""
+    answer = _source(
+        lambda request: httpx.Response(status, json=served_body())
+    ).inert_landing_rules()
 
     assert answer.rules is None
     assert answer.reason == SOURCE_UNREADABLE

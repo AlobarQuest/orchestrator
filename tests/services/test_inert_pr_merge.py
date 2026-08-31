@@ -255,12 +255,21 @@ def test_a_credential_that_could_not_be_minted_records_nothing(
     gateway = ActingInertGateway(
         pull=pull_request(number=PR, head_ref=UV_BRANCH),
         merge_error=EstateGatewayError("app_token_mint:private_key_invalid"),
+        # **THE RECONCILING READ FAILS TOO, and without that this control does not
+        # discriminate.** A gateway whose re-read succeeds answers "it did not land", which is
+        # recorded as nothing either way -- so the obvious version of this test passes against a
+        # lane that has lost the never-sent branch entirely. Measured, by a mutation that deleted
+        # it and killed nothing. The failing re-read is also the honest fixture: the same outage
+        # that stops a token being minted stops the read that uses one, which is precisely why
+        # the branch exists rather than being left to the reconciliation below.
+        reconcile_error=EstateGatewayError("read_status", 500),
     )
 
     with pytest.raises(DomainError) as caught:
         _land(migrated_session, gateway=gateway)
 
     assert caught.value.code == INERT_MERGE_REFUSED_BY_REMOTE
+    assert "was not attempted" in caught.value.message
     assert _rows(migrated_engine) == []
 
 
