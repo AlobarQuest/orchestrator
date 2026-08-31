@@ -59,6 +59,13 @@ BASIS_FACTORY = "factory-approved-no-deploy"
 # policy version a human pinned. Named for what it rests on rather than for who performed it,
 # because the record and the version are the parts that can be looked up years later.
 BASIS_CHANGE_RECORD = "change-record-policy"
+# ADR-0038. A landing the orchestrator made into a repository where landing on the default branch
+# changes nothing already serving, permitted by a policy version a human pinned that declares
+# that population and the conditions on landing into it. Named for what it rests on, exactly as
+# the sibling above is -- there is no change record here, because the population is declared in
+# the policy document rather than per landing, so the version is the whole of what can be looked
+# up years later.
+BASIS_INERT_POLICY = "inert-landing-policy"
 # Merged by a machine with no gate run to account for it. Never fabricate a basis: say so.
 BASIS_UNATTRIBUTED = "unattributed"
 
@@ -82,6 +89,7 @@ BASES = (
     BASIS_HUMAN,
     BASIS_FACTORY,
     BASIS_CHANGE_RECORD,
+    BASIS_INERT_POLICY,
     BASIS_UNATTRIBUTED,
 )
 
@@ -103,6 +111,18 @@ CHANGE_RECORD_REASON = (
     "landed by the orchestrator against a change record the estate approved by conformance to a "
     "pinned policy version; the record and the version are named so the approval can be looked up "
     "in change-manager, and no detector re-evaluates it here"
+)
+# Says only what stays true, for the reason above it. In particular it does NOT say the landing
+# was into a repository where landing is inert: that is what the POLICY declared at the version
+# named, and a repository can stop being inert afterwards -- so the honest sentence names the
+# permission the landing rested on and where to look it up, never a property of the world today.
+# It also does not claim the conditions were re-checked here: this program holds no credential for
+# the policy document, so the excluded ecosystem and the permitted author are not re-readable and
+# saying otherwise would be the assertion this basis exists to avoid.
+INERT_POLICY_REASON = (
+    "landed by the orchestrator under a pinned policy version declaring a population where "
+    "landing on the default branch changes nothing already serving; the version is named so the "
+    "declaration can be looked up in change-manager, and this record re-reads only the checks"
 )
 
 
@@ -271,6 +291,23 @@ def basis_of(landing: Landing) -> str:
     which is a change to what every landing asserts and belongs with a reason to make it. ADR-0037
     narrowed what rests on it -- the rule basis no longer does -- without removing it.
 
+    THE INERT-POLICY BRANCH (ADR-0038) SITS LAST BEFORE `unattributed`, AND ONLY THAT POSITION IS
+    LOAD-BEARING. It is what stops the whole native-cascade population falling to `unattributed`
+    once the cascade is removed -- `audit_landing` returns nothing at all for that basis, so a
+    landing that reaches it is one no detector reads, which is the silence this branch exists to
+    prevent.
+
+    Its position relative to the RULE branch is UNREACHABLE rather than chosen, and saying so is
+    the honest form: the removal operation flips this lane's switch in the same act that deletes
+    the gate workflows, and the switch flips last, so no landing can carry both an armed gate and
+    this trailer. Reordering the two therefore changes nothing any fixture can produce, and a rule
+    invented for it would be a rule about a case that does not occur. Relative to `human` it is
+    likewise unreachable and for a second reason: the trailer is written into the squash body the
+    orchestrator composes, so a landing a person made cannot carry it. The `is_machine` conjunct
+    is kept anyway, because the case it CAN decide is a landing whose merger GitHub did not report
+    -- `landed_by is None` -- where naming a permission for an act nobody was observed to perform
+    is worse than saying nothing.
+
     ONE SHAPE THIS OPENS, NAMED RATHER THAN GUARDED. A landing merged by a machine whose gate ran
     and DECLINED to arm now falls through to `unattributed`, whose frozen reason string says "no
     gate run observed" -- which would be false for it. It is unreached today: the machines that
@@ -295,6 +332,8 @@ def basis_of(landing: Landing) -> str:
         return BASIS_FACTORY
     if landing.policy is not None and is_machine(landing.landed_by):
         return BASIS_CHANGE_RECORD
+    if landing.inert_policy is not None and is_machine(landing.landed_by):
+        return BASIS_INERT_POLICY
     return BASIS_UNATTRIBUTED
 
 
@@ -334,6 +373,19 @@ def permitted_by(landing: Landing) -> dict[str, Any]:
         record["reason"] = CHANGE_RECORD_REASON
         record["change_record"] = landing.policy.change_record
         record["policy_version"] = landing.policy.policy_version
+        return record
+    if basis == BASIS_INERT_POLICY:
+        # ADR-0038. The version and the checks, and deliberately NOT the update metadata the rule
+        # basis records below. The three update keys exist there because the RULE's own condition
+        # is written against them and the audit re-reads it; nothing re-reads them here, because
+        # the excluded ecosystem is declared in a policy document this program holds no credential
+        # for. Carrying them would be a second copy of a judgment with an owner, and every string
+        # a landing puts in `facts` is frozen at the first observation of it -- so a key added
+        # speculatively is a key that can never be corrected. The change-record basis one branch
+        # up accepted the identical asymmetry for the identical reason.
+        assert landing.inert_policy is not None
+        record["reason"] = INERT_POLICY_REASON
+        record["policy_version"] = landing.inert_policy.policy_version
         return record
     if basis == BASIS_HUMAN or landing.rule is None:
         return record

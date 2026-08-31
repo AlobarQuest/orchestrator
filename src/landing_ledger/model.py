@@ -1,9 +1,16 @@
 """What one landing is, as this adapter reads it from GitHub.
 
-A LANDING is a commit that reached a repository's default branch by any route. FOUR routes exist
+A LANDING is a commit that reached a repository's default branch by any route. SIX routes exist
 in this estate and their permission bases differ, which is the whole reason the ledger records a
 basis rather than a boolean. The fourth arrived on 2026-08-10, when the factory landed its own
-pull request for the first time (ADR-0020).
+pull request for the first time (ADR-0020); the fifth with ADR-0019 increment 5b, when the
+orchestrator began landing into repositories where landing changes something already serving; the
+sixth with ADR-0038, when it became the merger for the update-bot pull requests where landing
+changes nothing already serving.
+
+**This count said FOUR until 2026-08-31 and had been wrong since the fifth arrived.** A count in
+prose does not move when a branch is added, so read `record.BASES` for the vocabulary and
+`record.basis_of` for the cascade; this paragraph is orientation and the code is the record.
 """
 
 from __future__ import annotations
@@ -140,6 +147,37 @@ class PolicyPermission:
 
 
 @dataclass(frozen=True)
+class InertLandingPermission:
+    """What a landing SAYS the estate's inert-landing policy version was (ADR-0038 part 3).
+
+    Read from the `SDS-Inert-Landing-Policy:` trailer the orchestrator writes into the squash body
+    it composes for a repository where landing on the default branch changes nothing already
+    serving -- the same place, and for the same reason, as the two claims above: a commit message
+    cannot be edited afterwards, so an unchanged landing always encodes to the same facts.
+
+    ONE VALUE, WHERE THE SIBLING CARRIES TWO, AND THE ASYMMETRY IS THE POPULATION'S. A deploying
+    landing rests on a change record AND the policy version that approved it; here there is no
+    record, because the population is declared in the policy document itself. So the trailer names
+    the population in its KEY and the version in its value, and the two lanes stay tellable apart
+    without a second marker.
+
+    THE VERSION IS THE DOCUMENT'S, NOT THE BLOCK'S. One `version` covers both populations, so a
+    revision moving only the deploying half re-stamps what a landing here is attributed to. That
+    follows from there being one holder of the rule and is recorded in ADR-0038 as a consequence
+    rather than a defect -- a reader would otherwise assume the number tracks the rule it names.
+
+    A CLAIM, like both of the others, and it names no record to look up. What it buys is that the
+    landing is not recorded as having no accountable basis at all; what the audit can re-evaluate
+    from it is bounded by what this program can read, which is the stored facts and GitHub. It
+    holds no credential for the policy document, so the ecosystem exclusion and the permitted
+    author -- both declared there -- are named open work rather than done, exactly as the
+    change-record claim's re-evaluation is.
+    """
+
+    policy_version: int
+
+
+@dataclass(frozen=True)
 class PendingUpdate:
     """An OPEN pull request from the upstream update bot -- a landing that has not happened.
 
@@ -257,3 +295,4 @@ class Landing:
     update: UpdateMetadata | None = None
     claim: FactoryClaim | None = None
     policy: PolicyPermission | None = None
+    inert_policy: InertLandingPermission | None = None

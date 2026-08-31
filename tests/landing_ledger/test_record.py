@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from landing_ledger.model import (
     Check,
     FactoryClaim,
+    InertLandingPermission,
     Landing,
     PolicyPermission,
     RuleApplication,
@@ -16,6 +17,7 @@ from landing_ledger.record import (
     BASIS_CHANGE_RECORD,
     BASIS_FACTORY,
     BASIS_HUMAN,
+    BASIS_INERT_POLICY,
     BASIS_NONE,
     BASIS_RULE,
     BASIS_UNATTRIBUTED,
@@ -164,6 +166,8 @@ def test_every_basis_the_cascade_can_return_is_named() -> None:
         # landing here would be a name nothing can produce, which is the half of the property
         # that is easy to lose when a basis is added.
         basis_of(policy_landing()),
+        # ADR-0038, and the same obligation one basis later.
+        basis_of(inert_landing()),
     }
 
     assert reachable == set(BASES)
@@ -537,3 +541,80 @@ def test_a_landing_whose_trailer_could_not_be_read_records_none_of_the_three() -
     # Still a rule-basis landing: the gate ran and a machine landed it. What is absent is what
     # the update was, not what permitted it.
     assert permitted["basis"] == BASIS_RULE
+
+
+# ---------------------------------------------------------------------------
+# ADR-0038: a landing the orchestrator made into the inert population.
+# ---------------------------------------------------------------------------
+
+FACTORY_RUNNER = "AlobarQuest/factory-runner"
+
+
+def inert_landing(**overrides: object) -> Landing:
+    """The shape ADR-0038's lane produces.
+
+    An update-bot pull request landed by the estate's App into a repository where landing on the
+    default branch changes nothing already serving, carrying the ONE trailer that lane writes --
+    no change record, because the population is declared in the policy rather than per landing;
+    no factory claim, because there is no work unit; and NO GATE RUN, because the removal that
+    switched this lane on deleted the gate workflow in the same operation.
+    """
+    base: dict[str, object] = {
+        "repository": FACTORY_RUNNER,
+        "commit": "1" * 40,
+        "title": "build(deps): bump actions/checkout from 4 to 5 (#28)",
+        "pull_request": 28,
+        "landed_by": "alobar-sds-dispatch[bot]",
+        "rule": None,
+        "claim": None,
+        "policy": None,
+        "inert_policy": InertLandingPermission(policy_version=6),
+    }
+    return gate_landing(**{**base, **overrides})
+
+
+def test_a_landing_permitted_by_the_inert_policy_names_the_version_it_rests_on() -> None:
+    """Without this the whole native-cascade population lands as `unattributed` once the cascade
+    is removed -- a class `audit_landing` returns nothing at all for."""
+    permitted = landing_observation(inert_landing())["facts"]["permitted_by"]
+
+    assert permitted["basis"] == BASIS_INERT_POLICY
+    assert permitted["policy_version"] == 6
+    assert permitted["landed_by"] == "alobar-sds-dispatch[bot]"
+    # No change record, no rule keys, no unit, and no update metadata: none is true of this
+    # landing, and the update keys are deliberately absent because nothing re-reads them here.
+    assert not {"change_record", "rule_path", "rule_run", "decision", "work_unit"} & set(permitted)
+    assert not {"dependency", "ecosystem", "update_type"} & set(permitted)
+
+
+def test_the_inert_basis_needs_a_MACHINE_as_well_as_a_trailer() -> None:
+    """The `is_machine` conjunct, pinned by the ONLY case that can tell it apart.
+
+    A human merger falls to `human` one branch earlier, so asserting on one proves nothing about
+    this conjunct -- exactly as the change-record basis records one branch up. `landed_by: None`
+    reaches this branch: the trailer is there, and nothing observed who acted on it.
+    """
+    assert basis_of(inert_landing(landed_by=None)) == BASIS_UNATTRIBUTED
+
+
+def test_a_PERSON_merging_an_inert_pull_request_is_still_a_person() -> None:
+    """Unreachable in production and asserted anyway, for the same reason its sibling is: the
+    trailer lives in the squash body the orchestrator composes, so a landing a person made cannot
+    carry it. What this pins is that the ordering below `human` is not accidental."""
+    assert basis_of(inert_landing(landed_by="AlobarQuest")) == BASIS_HUMAN
+
+
+def test_a_machine_landing_with_no_inert_trailer_stays_unattributed() -> None:
+    """Never fabricate a basis. A machine merge alone is not a policy landing."""
+    assert basis_of(inert_landing(inert_policy=None)) == BASIS_UNATTRIBUTED
+
+
+def test_the_inert_reason_says_only_what_stays_true() -> None:
+    """Every string a landing puts in `facts` is frozen at the first observation of it. In
+    particular this one must not assert that the repository IS inert -- that is what the policy
+    declared at the version named, and a repository can stop being inert afterwards."""
+    reason = landing_observation(inert_landing())["facts"]["permitted_by"]["reason"]
+
+    assert "re-reads only the checks" in reason
+    for forbidden in ("2026", "today", "verified", "is inert", "was checked"):
+        assert forbidden not in reason

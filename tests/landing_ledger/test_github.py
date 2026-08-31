@@ -14,6 +14,7 @@ from landing_ledger.github import (
     LedgerError,
     factory_claim,
     first_parent_chain,
+    inert_landing_permission,
     landing_shas,
     policy_permission,
     read_landing,
@@ -776,3 +777,52 @@ def test_half_a_claim_is_no_claim() -> None:
 
 def test_a_non_numeric_trailer_is_no_claim() -> None:
     assert policy_permission("SDS-Change-Record: fifty-two\nSDS-Policy-Version: 2\n") is None
+
+
+# ---------------------------------------------------------------------------
+# ADR-0038: the inert-landing trailer.
+# ---------------------------------------------------------------------------
+
+
+def test_the_inert_landing_trailer_is_read_from_a_landing_commit() -> None:
+    permission = inert_landing_permission(
+        "build(deps): bump actions/checkout from 4 to 5 (#28)\n\nSDS-Inert-Landing-Policy: 6\n"
+    )
+
+    assert permission is not None
+    assert permission.policy_version == 6
+
+
+def test_the_inert_spelling_matches_the_only_writer_of_it() -> None:
+    """A LITERAL on each side, exactly as the change-record pair above.
+
+    The writer is `orchestrator/services/inert_pr_merge.py::INERT_LANDING_POLICY_TRAILER`, and
+    its own test asserts the same string. A rename on either side is a red test rather than a
+    landing silently recorded with no basis -- which no detector reads.
+    """
+    permission = inert_landing_permission("SDS-Inert-Landing-Policy: 6\n")
+
+    assert permission is not None and permission.policy_version == 6
+
+
+def test_a_non_numeric_inert_version_is_no_claim() -> None:
+    assert inert_landing_permission("SDS-Inert-Landing-Policy: six\n") is None
+    assert inert_landing_permission("nothing here\n") is None
+
+
+def test_the_two_policy_trailers_do_not_read_each_other() -> None:
+    """`SDS-Policy-Version` is the closest neighbour this key has, and the two lanes must stay
+    tellable apart: a landing read as the wrong one is attributed to a permission it never had.
+
+    Asserted in BOTH directions, because a pattern that is too loose in one is not necessarily
+    too loose in the other -- and the failure is silent either way.
+    """
+    assert inert_landing_permission("SDS-Policy-Version: 6\n") is None
+    assert policy_permission("SDS-Change-Record: 5\nSDS-Inert-Landing-Policy: 6\n") is None
+
+    both = "SDS-Change-Record: 53\nSDS-Policy-Version: 4\nSDS-Inert-Landing-Policy: 6\n"
+    inert = inert_landing_permission(both)
+    deploying = policy_permission(both)
+
+    assert inert is not None and inert.policy_version == 6
+    assert deploying is not None and (deploying.change_record, deploying.policy_version) == (53, 4)
