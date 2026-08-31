@@ -23,6 +23,16 @@ packages with moves with every revision, so a tree left dirty fails that reposit
 Refusing a dirty tree is what stops this program sweeping somebody else's work-in-progress into
 a commit it wrote the message for.
 
+**AND IT PUBLISHES WHAT IT COMMITS (ADR-0033).** Leaving the branch for a person to move was
+right while a person invoked this producer and could move it in the same breath; scheduling it
+severed the two, and nobody is told to push. The three costs of stopping half-way are each
+measured in that decision -- the revision gets no CI at all, the `source_commit` the intake
+records names a commit only one machine holds, and local `main` drifts from `origin` under
+every other lane that reads this checkout. Publishing surrenders no gate, because that
+repository's default branch takes a direct push and reports its required checks afterwards
+whoever performs it. The exemption this needs from the repository-wide merge guard is taken
+openly, in that guard's own register, and is named in ADR-0033 rather than implied here.
+
 **IT WRITES EXACTLY TWO LINES OF YAML**, by targeted line replacement rather than by re-dumping
 the document -- the technique `intent_packages.operations.set_revision_in_file` already uses,
 and for the same reason: everything else in a standing package is hand-authored prose, and a
@@ -35,6 +45,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -46,6 +57,23 @@ PACKAGES_REPOSITORY: Final = "AlobarQuest/intent-packages"
 PROFILE: Final = "dependency-update"
 HASH_FIXTURE: Final = Path("tests") / "fixtures" / "package_hashes.json"
 COMMAND_TIMEOUT_SECONDS: Final = 120.0
+
+# THE ACT, SPELLED THE WAY THE GUARD SCANS FOR IT, and a STRING rather than a list of four
+# words on purpose. `MERGE_EXEMPT_PATHS` in `tests/architecture/test_wsp21_invariant_scan.py`
+# names this file, and the rot check beside it removes an entry whose file no longer contains
+# one of `MERGE_ACTIONS`. That scan reads this file's TEXT, where a list literal matches
+# nothing -- so writing the command as `["git", "push", ...]` would pass the guard without an
+# exemption, and would then have the exemption withdrawn as unneeded, leaving the act in place
+# with nothing watching it. Not by rewording, which ADR-0033 forbids, but by tokenisation,
+# which amounts to the same evasion. Written this way the bytes the guard scans and the command
+# that runs are ONE value, so neither can outlive the other.
+PUBLISH_COMMAND: Final = "git push origin main"
+
+# The branch that command publishes, READ OUT OF IT rather than written again. The push names
+# the branch by name, so a checkout on any other branch is one this producer must refuse; a
+# second spelling of `main` here would be the one place that refusal could silently stop
+# describing the command it guards.
+_PUBLISHED_BRANCH: Final = PUBLISH_COMMAND.split()[-1]
 
 # The placeholder both version fields hold in a standing package nobody has filled in. It is
 # the SAME string in both on purpose: the approval policy refuses a revision whose two versions
@@ -164,7 +192,10 @@ def discover(root: Path | None = None) -> dict[tuple[str, str], StandingPackage]
     return found
 
 
-def _run(root: Path, command: list[str]) -> str:
+# `Sequence`, not `list`: `PUBLISH_COMMAND.split()` yields a `list[LiteralString]`, and
+# `list` is invariant so it refuses one. Widening the parameter to the covariant type is
+# pyright's own suggestion and accepts every existing caller unchanged.
+def _run(root: Path, command: Sequence[str]) -> str:
     try:
         completed = subprocess.run(
             command,
@@ -199,6 +230,63 @@ def require_clean(root: Path) -> None:
         raise StandingError(
             f"the packages checkout at {root} has uncommitted changes; "
             "this program commits what it writes and will not commit somebody else's"
+        )
+
+
+def require_publishable(root: Path) -> None:
+    """Refuse a checkout `git push origin main` would not publish this pass's work from.
+
+    **IT REFUSES A CHECKOUT THAT IS NOT ON `main`, AND THAT IS THE HALF THAT FAILS SILENTLY.**
+    `git push origin main` pushes the local `main` REF, not `HEAD`. From any other branch --
+    or a detached head -- the commit this pass writes lands off `main`, the push reports
+    `Everything up-to-date` and **exits 0**, and the pass goes on to name a sha and propose a
+    record for a commit only this machine holds: precisely the state ADR-0033 exists to end,
+    wearing the shape of success. Measured, not reasoned: `push_exit=0` with `HEAD` one commit
+    ahead of `origin/main`. The spelling cannot be `HEAD:main` -- ADR-0033 requires the literal
+    the merge guard scans for -- so the branch is what gives way.
+
+    It is checked FIRST because the count below is only meaningful on `main`: `origin/main..HEAD`
+    read from a topic branch answers a question about that branch instead.
+
+    **THE UNPUBLISHED-COMMIT HALF IS THE SIBLING OF `require_clean`, AND IT EXISTS BECAUSE THE
+    REPLAY PATH SKIPS THE PUSH.**
+    A pass whose publish is refused has already written and committed an approved revision --
+    and a non-fast-forward refusal is the ORDINARY way that happens, since anything landing in
+    the authoring repository leaves this checkout behind until somebody reconciles it. The next
+    pass then finds the package carrying the bump and approved, skips straight to proposing the
+    record, and never reaches the publishing step again: the commit would sit local forever
+    while the lane reported a clean run. ADR-0033 says a failed publish is a finding rather
+    than a warning, and a finding that is reported once and then goes quiet is neither.
+
+    So the residue is refused here instead, at the top of the pass, which also stops this
+    program stacking a second revision on top of one it could not publish.
+
+    **IT NEEDS NO FETCH, AND MUST NOT MAKE ONE.** `origin/main` is the remote-tracking ref: a
+    successful push advances it and a refused push does not, so it answers exactly this
+    question from what is already on disk. Going to the network would make this program's
+    refusal depend on somebody else's landings rather than on its own unfinished act.
+    """
+    # `--abbrev-ref HEAD` answers the branch name, or the literal `HEAD` when detached -- so
+    # the detached case fails closed through the same comparison, with no second command.
+    branch = _run(root, ["git", "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    if branch != _PUBLISHED_BRANCH:
+        raise StandingError(
+            f"the packages checkout at {root} is on {branch or 'no branch'} rather than "
+            f"{_PUBLISHED_BRANCH}; publishing pushes that branch by name, so a commit written "
+            "here would be reported as published and would not be"
+        )
+    ahead = _run(root, ["git", "rev-list", "--count", "origin/main..HEAD"]).strip()
+    if not ahead.isdigit():
+        raise StandingError(f"the checkout at {root} would not say how far ahead of origin it is")
+    if int(ahead) > 0:
+        # DELIBERATELY NOT NARROWED TO THIS PROGRAM'S OWN COMMITS, and the message says only
+        # what has been established. Publishing pushes the branch, so somebody else's unpushed
+        # commit would be published by this pass too -- a widening ADR-0033 did not grant. The
+        # refusal is right in both cases; asserting whose commit it is would not be.
+        raise StandingError(
+            f"the packages checkout at {root} carries {ahead} commit(s) origin does not; "
+            "publishing pushes the branch, so this pass would publish them too — reconcile "
+            "the checkout first"
         )
 
 
@@ -275,7 +363,19 @@ def snapshot_hash(package: StandingPackage, root: Path) -> None:
 
 
 def commit(package: StandingPackage, bump: Bump, root: Path) -> str:
-    """Commit the revision and the fixture. Never pushes; the branch is somebody else's to move."""
+    """Commit the revision and the fixture, and publish them to the default branch (ADR-0033).
+
+    **PUBLISHING IS THE SAME ACT FINISHED, NOT A NEW ONE.** The commit this writes was always
+    destined for that branch; the only question ADR-0033 settled is who performs the last step
+    and when, and the answer had been "nobody, for an unbounded time" since this producer was
+    scheduled. The module docstring carries the reasoning.
+
+    **A REFUSED PUBLISH NAMES THE COMMIT IT STRANDED.** It raises like every other refusal here,
+    so the pass reports it as a finding -- but the commit exists by then, and the next pass
+    replays past the step that made it, so the sha is the one thing a reader needs and the one
+    thing `git` will not say afterwards. `require_publishable` is what stops that finding going
+    quiet on the following pass.
+    """
     paths = [
         str((package.path / "package.yaml").relative_to(root)),
         str((package.path / "lineage.yaml").relative_to(root)),
@@ -293,4 +393,12 @@ def commit(package: StandingPackage, bump: Bump, root: Path) -> str:
         "that.\n"
     )
     _run(root, ["git", "commit", "-m", message])
-    return _run(root, ["git", "rev-parse", "HEAD"]).strip()
+    head = _run(root, ["git", "rev-parse", "HEAD"]).strip()
+    try:
+        _run(root, PUBLISH_COMMAND.split())
+    except StandingError as error:
+        raise StandingError(
+            f"{package.package_id} rev {package.revision} is committed as {head[:12]} "
+            f"and unpublished: {error}"
+        ) from None
+    return head

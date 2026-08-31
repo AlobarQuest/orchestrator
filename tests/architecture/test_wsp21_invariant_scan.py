@@ -93,6 +93,27 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # the bytes the record's criteria describe; one landing per repository per window; and an
     # environment switch that defaults to refusing.
     Path("src/orchestrator/services/estate_pr_merge.py"),
+    # ADR-0033, the THIRD entry and the first that is not about landing a pull request -- so
+    # neither justification above carries over, and the difference is larger than between the
+    # two of them. There is no work unit here, so no criteria the orchestrator resolved from
+    # evidence and no envelope a human approved; and there is no change record either, because
+    # this act happens on the FAR side of the one this producer writes. It publishes a commit
+    # directly to a default branch.
+    #
+    # What stands in their place is that the commit can only ever be one this program wrote:
+    # a revision of a package whose author declared `standing = true` -- a declaration only a
+    # human author can make -- targeting a repository named in the grant of the
+    # `approval-policy.toml` that approved the revision, whose shape that same policy checks
+    # exactly. The producer cannot approve the change record it writes (its change-manager
+    # bearer is propose-scoped by construction), cannot create work, and cannot dispatch. The
+    # estate reports that repository's default branch as `inert`, so nothing already serving
+    # changes; and its protection takes a direct push and reports the required checks
+    # afterwards whoever performs it, so publishing OBTAINS a verdict rather than skipping one.
+    #
+    # The producer refuses to begin on a checkout carrying a commit it could not publish, which
+    # is what keeps this entry to the one act it names rather than to whatever else has
+    # accumulated on that branch.
+    Path("src/bump_proposer/standing.py"),
 }
 
 

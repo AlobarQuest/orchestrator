@@ -3,9 +3,16 @@
 #
 # WHAT A WRITING PASS ACTUALLY DOES, because it is more than the siblings do. It edits two
 # lines of a standing package in the intent-packages checkout, takes the revision through
-# that repository's audited lifecycle, re-pins its hash fixture, COMMITS the three files, and
-# proposes a work record in change-manager. It does not push, and it does not approve the
-# record: a person does that, which is the decision ADR-0028 keeps.
+# that repository's audited lifecycle, re-pins its hash fixture, COMMITS the three files,
+# PUBLISHES that commit to the authoring repository's default branch (ADR-0033), and proposes
+# a work record in change-manager. It does not approve the record: a person does that, which
+# is the decision ADR-0028 keeps and the one this producer sits on the other side of.
+#
+# PUBLISHING IS THE COMMIT FINISHED, NOT A SECOND ACT. Until ADR-0033 the pass stopped at the
+# commit and nobody was told to move the branch, so the revision got no CI, the `source_commit`
+# the intake records named a commit only this machine held, and local `main` drifted from
+# origin under every other lane that reads this checkout. It surrenders no gate: that branch
+# takes a direct push and reports its required checks afterwards whoever performs it.
 #
 # IT REFUSES A DIRTY CHECKOUT. Committing is not tidiness -- the orchestrator's intake payload
 # records `source_commit` as that checkout's git HEAD, so a revision left uncommitted is
@@ -25,9 +32,13 @@
 #      exits 0, because `proposed` is this program's ordinary output rather than a
 #      finding. Read the lines to learn whether anything was written.
 #   1  the tool itself failed (a missing or unreadable credential).
-#   2  the tool ran but could not use its inputs (no standing packages, a dirty checkout).
+#   2  the tool ran but could not use its inputs (no standing packages, a dirty checkout, or
+#      a checkout carrying a commit a previous pass wrote and could not publish -- a state no
+#      further revision may be built on, and one only a person can resolve).
 #   3  something was found -- an untranscribed auto-merge gate, a pull request whose title and
-#      update trailer disagree, a record stranded by a bump that moved, or a refused proposal.
+#      update trailer disagree, a record stranded by a bump that moved, a refused proposal, or
+#      a revision that was committed and could not be published (ADR-0033: a failed publish is
+#      a finding, not a warning; the line names the sha it stranded).
 #
 # BARE INVOCATION IS A DRY RUN. `--submit` separates reporting from writing, and this wrapper
 # must not supply it: an operator reaching for "just look at what it would do" would otherwise
