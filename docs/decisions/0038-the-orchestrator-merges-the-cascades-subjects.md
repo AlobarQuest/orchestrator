@@ -112,8 +112,42 @@ auth.
   runs on the item-listing route for every record — so widening that set does not over-grant, it
   crashes the listing. Avoiding the crash means inventing acceptance criteria and a production
   rollback plan for repositories that have no rollout and nothing serving to roll back.
-- **A separate sibling document and route.** Cleanest naming, and it reintroduces the second holder
-  of one rule that the module's own docstring exists to prevent.
+- **A separate sibling DOCUMENT and route.** Cleanest naming, and it reintroduces the second holder
+  of one rule that the module's own docstring exists to prevent. **Note precisely what this rejects:
+  a second HOLDER. A second PROJECTION of one holder is not the same thing and is required — see
+  below.**
+
+### A second projection, ruled 2026-08-31 during the build
+
+**The orchestrator structurally cannot name `/api/deploy-policy`.** Measured with the ws32 guard's
+own tokenizer during Increment 1's pre-build: `"/api/deploy-policy"` tokenizes to
+`('api', 'deploy', 'policy')`, and `deploy` is a member of `FORBIDDEN_SEQUENCES`, scanned across
+every runtime string literal under `src/orchestrator` including docstrings. The repository's standing
+rule is to reword rather than to widen a guard, and **a URL owned by another service cannot be
+reworded from this side.**
+
+change-manager has already hit this once and recorded it. `app/api.py`, on why `landing_conditions`
+is projected onto the item listing rather than left on the policy route: *"the orchestrator's
+architecture guards forbid the bare token this service's policy route is spelled with, anywhere under
+its source tree, and its own rule is to reword rather than to widen a guard. It cannot name that
+path. It already reads this listing."* Confirmed: `services/change_record.py` reads `/api/items`.
+
+**That escape hatch does not reach this lane**, because `landing_conditions` arrives per ITEM and an
+inert repository has no change record by construction — which is the whole point of part 2.
+
+**So change-manager serves the same policy object at a second, nameable path.** One holder, one
+builder, two projections, pinned by a test asserting the two responses agree. `/api/deploy-policy` is
+untouched, which keeps this additive and forward-compatible with the rename Devon deferred: at that
+rename the second path becomes the primary and the first retires.
+
+The two alternatives were rejected on the same ground. Putting the literal in `config.py` — which
+both ws32 and ws34 allowlist — is a route path relocated to get past a word guard, which is the
+obfuscation the guard's own message forbids. A file-scoped allowlist entry spends the standing
+"reword, never allowlist" rule to buy one string.
+
+**Consequence for part 1: the new field's NAME must tokenize clean too**, against ws32, ws33 and
+ws34, because Increment 2 names it in source. Verify with each guard's own tokenizer rather than by
+eye.
 
 ## The lane, and the two design choices inside it that carry reasoning
 
