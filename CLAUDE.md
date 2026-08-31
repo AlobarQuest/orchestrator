@@ -4269,3 +4269,21 @@ style of that module.
   **a harness silently swapped mid-run mutates one tree while reporting about another.** The
   discipline is the same as for the database — namespace per session, or write scratch into your own
   worktree — and it belongs in the dispatch brief, because a session cannot see that it has a peer.
+
+- **"RE-READ `main` BEFORE YOU GATE" IS INERT WITHOUT `git fetch` FIRST — the check reads as done
+  either way.** A session's `origin/main` is whatever it last fetched, so `git log`, `git diff` and
+  `git merge-base` against it answer about a snapshot rather than about the remote, and the answer
+  is confidently wrong in exactly the situation the check exists for: somebody else merged. Measured
+  2026-08-31 on ADR-0038 Increment 2b, which did the check correctly and concluded from
+  `git diff --stat <a> <b>` that Increment 3 "had not merged, only its documentation half" — because
+  its range closed at 14:42 and that code merged at 18:18. Its supporting evidence was equally
+  self-consistent: byte-identical `--collect-only` node-id lists at 4639 on both sides, which is
+  what a range containing no executable file looks like. **Nothing in the output says the range is
+  stale.**
+  Two consequences worth stating separately, because the second is the expensive one. A **conflict**
+  is not the hazard — different files merge cleanly. The hazard is a **green gate over a tree that
+  is not the one being merged into**, plus a collected-count baseline taken from the wrong `main`,
+  both of which look exactly like success. So: `git fetch` immediately before the re-read, and take
+  the baseline from the fetched ref rather than from a number recorded earlier in the session. Same
+  family as the estate's other stale-input errors — the instruction was followed and the input was
+  old, which is why the discipline has to name the fetch and not just the read.
