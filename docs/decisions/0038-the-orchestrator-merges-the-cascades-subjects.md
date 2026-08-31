@@ -30,6 +30,18 @@ different numbered lists in the conversation that produced this: the inert block
 deploy policy under its current name and its current route, and the document is renamed later if the
 name starts misleading people.** The two alternatives are recorded under *Rejected* below.
 
+**1a. The declared population is all six repositories that carry the cascade, `factory-runner`
+included.** Devon ruled it 2026-08-31, after the determination below recorded that repository `inert`.
+The case against was ADR-0015's trust loop — the runner verifying changes to itself — and the reason
+it does not reach here is that **ADR-0015 excluded the factory DISPATCHING work into factory-runner,
+where a coding agent authors the change.** This lane lands a change Dependabot authored, whose diff
+is a version number, behind a required check that genuinely gates: factory-runner is the only
+repository in the estate carrying `enforce_admins: true`, chosen precisely because a bad merge there
+stops every dispatch. Different acts, different risks. The blast radius is real and is why this is
+written down rather than assumed: it is 8 of the 52 Dependabot landings measured across the six over
+the preceding 30 days, and the population is a declared list, so removing it later is a one-line
+version bump.
+
 **2. A distinct admission lane in the orchestrator for inert-repository update-bot pull requests.**
 No change record, no change window, no pace. It shares the record-independent terms with the
 existing lane and applies neither the record terms nor the rollout-pin terms.
