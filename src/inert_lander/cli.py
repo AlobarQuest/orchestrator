@@ -298,12 +298,21 @@ def _subjects(reader: PullRequestSource, rule: InertLanding) -> Selection:
         except ReadError as error:
             unreadable.append(Outcome(repository, 0, "unreadable", str(error)))
             continue
-        for pull in sorted(pulls, key=lambda item: item.get("number") or 0):
+        # NUMBERED FIRST, SORTED SECOND, and the order of those two is not cosmetic: sorting a
+        # list whose numbers have not been checked compares whatever the platform answered, and
+        # one string beside one integer raises a `TypeError` that no caller here catches -- a
+        # scheduled pass ending in a traceback instead of a report.
+        numbered: list[tuple[int, dict[str, Any]]] = []
+        for pull in pulls:
+            if not isinstance(pull, dict):
+                continue
             number = pull.get("number")
             # `bool` is an `int` and `True == 1`, so a boolean number would be asked about as pull
             # request one. Three other readers in this repository exclude it for this exact field.
             if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
                 continue
+            numbered.append((number, pull))
+        for number, pull in sorted(numbered, key=lambda item: item[0]):
             author = pull.get("author")
             if not isinstance(author, str) or not rule.covers_author(author):
                 deferred[_DEFERRAL_AUTHOR] = deferred.get(_DEFERRAL_AUTHOR, 0) + 1

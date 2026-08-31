@@ -69,7 +69,7 @@ class FakeGitHub:
 
     def __init__(
         self,
-        pulls: dict[str, list[dict[str, Any]]] | None = None,
+        pulls: dict[str, list[Any]] | None = None,
         *,
         errors: dict[str, Exception] | None = None,
     ) -> None:
@@ -258,6 +258,22 @@ def test_a_pull_request_number_that_is_not_a_POSITIVE_INT_is_never_asked_about(
     Three other readers in this repository exclude it for this exact field."""
     github = FakeGitHub({REPOSITORY: [{"number": number, "author": BOT}]})
     assert _subjects(github, _rule()).subjects == []
+
+
+def test_a_pull_request_whose_NUMBER_IS_NOT_A_NUMBER_beside_one_that_is_never_crashes() -> None:
+    """TWO pull requests, because one cannot discriminate. Sorting a list whose numbers have not
+    been checked compares whatever the platform answered, and one string beside one integer raises
+    a `TypeError` no caller here catches -- a scheduled pass ending in a traceback instead of a
+    report. With a single pull request the comparison never happens and the test passes either
+    way, which is the shape of a control that proves nothing."""
+    github = FakeGitHub({REPOSITORY: [{"number": "3", "author": BOT}, _pull(4)]})
+    assert _subjects(github, _rule()).subjects == [(REPOSITORY, 4)]
+
+
+def test_something_that_is_not_a_pull_request_at_all_is_skipped() -> None:
+    pulls: dict[str, list[Any]] = {REPOSITORY: ["not a pull request", _pull(4)]}
+    github = FakeGitHub(pulls)
+    assert _subjects(github, _rule()).subjects == [(REPOSITORY, 4)]
 
 
 # --------------------------------------------------------------------------------------------
