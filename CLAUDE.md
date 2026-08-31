@@ -4179,3 +4179,21 @@ style of that module.
   rather than admitting something it should not. Same family as the estate's other
   two-vocabularies-for-one-thing entries, and the same rule applies: grep both sides before keying
   anything on an identity string.
+
+- **`-q` IS CUMULATIVE, and a repo whose `addopts` already carries one turns the documented
+  collected-count recipe into per-file counts.** `pytest --collect-only -q` in a repository with
+  `addopts = "-q"` is `-qq`, which prints `path: N` lines instead of node ids — so
+  `grep '::' | sort` matches nothing and the `comm` against `main` reports **0 added, 0 removed**
+  against a real delta, which reads as "the counts are explained" while having diffed two empty
+  files. Measured 2026-08-31 with controls in both directions, both repos on pytest **9.1.1**:
+  `change-manager` (`addopts = "-q"` in `pyproject.toml`) prints per-file counts under an explicit
+  `-q` and **node ids when the explicit one is dropped** (412 of them); `orchestrator` (no
+  `addopts`) prints node ids under one `-q` and **nothing matching `::` under `-q -q`**.
+  **THE ATTRIBUTION IS THE PART TO CARRY.** This was first diagnosed as "pytest 9 broke the recipe
+  in both documented modes", which is false and would have retired a working technique estate-wide
+  — the recipe is fine anywhere `addopts` does not already quieten. **Read `[tool.pytest.ini_options]
+  addopts` before adding `-q`**, and keep the existing rule that a node-id file must be asserted
+  non-empty before its diff is believed: that assertion catches this without needing to know the
+  cause. Same family as the ruff 0.15→0.16 wording change — but note the difference, because it is
+  the useful half: there the tool's output genuinely moved, here it did not and a per-repo config
+  made it look as though it had. An observed behaviour is not yet a cause.
