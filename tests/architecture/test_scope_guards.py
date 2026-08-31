@@ -66,6 +66,13 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # it has itself moved. The lane's second act, and much the smaller: it writes to a topic
         # branch that nothing serves, and only where being behind is the sole remaining obstacle.
         "/api/v1/estate-pr-branch-update",
+        # ADR-0038 part 2: the orchestrator lands a pull request the update bot opened into a
+        # repository where landing changes NOTHING already serving -- the population the removed
+        # GitHub-native cascade used to land. No change record, no change window, no pace.
+        "/api/v1/inert-pr-merge",
+        # ADR-0038 part 2: the same lane's second act. It clears the staleness the lane's own
+        # landings create, which is what makes requiring freshness survivable at all.
+        "/api/v1/inert-pr-branch-update",
         "/api/v1/work-units/{unit_id}/verify",
         "/api/v1/work-units/{unit_id}/verifier-evidence/named-check",
         "/api/v1/work-units/{unit_id}/infra-lane-links",
@@ -181,6 +188,10 @@ def test_production_get_route_inventory_is_explicit() -> None:
         # ADR-0019 Increment 5b: report-only, and the surface that makes a night which
         # lands nothing legible -- every held pull request names the condition it misses.
         "/api/v1/estate-pr-merge-admission",
+        # ADR-0038 part 2: report-only, and the surface a caller enumerating the inert
+        # population reads before it asks for anything. It also carries the branch-update
+        # permission, which is what the freshening pass acts on.
+        "/api/v1/inert-pr-merge-admission",
         "/api/v1/work-units/{unit_id}/infra-lane-links",
         "/api/v1/work-units/{unit_id}/readiness",
         "/api/v1/work-units/{unit_id}/release-artifacts",

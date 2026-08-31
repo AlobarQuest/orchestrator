@@ -113,6 +113,23 @@ MERGE_NAMING_ROUTES = {
     # has none of, because that decision named a scheduled caller as the thing that would void it,
     # and this is that caller.
     ("POST", "/api/v1/estate-pr-merge"),
+    # ADR-0038 part 2. Report-only, over a pull request that has no work unit AND no change
+    # record: it answers whether an update-bot pull request may be landed into a repository a
+    # human pinned into a policy document as one where landing changes nothing already serving.
+    # Every term it evaluates is a read.
+    ("GET", "/api/v1/inert-pr-merge-admission"),
+    # ADR-0038 part 2: the act, and the LEAST consequential of the three this file excuses -- the
+    # landed commit sits on a default branch until something separately acts on it, which for the
+    # declared six is nothing. What it costs is that `main` is what every build session branches
+    # from and what default-branch CI now runs on. Named separately from its report for the reason
+    # both pairs above are: this set is keyed on the verb precisely so an acting endpoint cannot
+    # inherit a reporting one's excuse.
+    #
+    # It replaces a GitHub Actions workflow that armed the platform's own automatic landing across
+    # these same repositories, so the prohibition is not being lifted over new ground -- it is
+    # being moved to a party that can state its permission and be audited for it. Gated by an
+    # environment switch of its own that defaults to refusing.
+    ("POST", "/api/v1/inert-pr-merge"),
 }
 
 

@@ -705,6 +705,117 @@ class EstateBranchUpdateResponse(BaseModel):
     replayed: bool
 
 
+class InertPrMergeCommandModel(BaseModel):
+    """Ask the orchestrator to land a pull request into a repository where landing on the default
+    branch changes nothing already serving (ADR-0038 part 2).
+
+    Field for field the same shape as its sibling above, and for the same reasons: the subject is a
+    pull request in a foreign system with no version of ours, so `expected_head_sha` is what a
+    caller states before asking for an act; and the repository is bounded in SHAPE because it is
+    interpolated into GitHub API paths called with the App installation token.
+    """
+
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pr_number: int = Field(gt=0)
+    # A FULL object name, not a prefix: the service compares it for equality against the head the
+    # admission answer named, so a prefix could never match.
+    expected_head_sha: str = Field(min_length=40, max_length=40)
+
+
+class InertPrMergeResponse(BaseModel):
+    """The orchestrator's record of its own act, for a landing with no unit and no change record.
+
+    It reads the SAME table its sibling writes -- the two populations cannot overlap, because each
+    lane requires the opposite answer from the estate about a repository and the estate gives one
+    answer per repository. So `change_record_id` is declared and is always null here: withholding
+    the field would make one table answer two shapes, and a reader comparing rows would have to
+    know which route produced each.
+
+    `policy_version` is the whole of the permission, written down at the moment it was exercised.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    repository: str
+    pr_number: int
+    head_sha: str
+    status: str
+    reason_code: str | None
+    merge_commit_sha: str | None
+    github_status: int | None
+    change_record_id: int | None
+    policy_version: int | None
+    event_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class InertLandingAdmissionResponse(BaseModel):
+    """Whether this pull request may be landed into the declared inert population, and every term
+    that is unmet.
+
+    Every term is reported rather than the first that failed: the terms are fixed by different
+    people at different times, and an operator asking why nothing landed wants the list.
+
+    **`branch_update_qualifies` MUST BE DECLARED HERE OR IT DOES NOT EXIST ON THE WIRE.** A
+    response model drops every key the service returns and the model does not name, silently and
+    with no error -- so a field added to the service alone passes every service-level assertion and
+    reaches no caller. This estate has shipped that exact defect twice: once on the runner brief,
+    and once on this field's own sibling, where the enumerating agent read a key that was not there
+    and skipped every record for two days while reporting zero.
+
+    There is no `change_record_id` and no `rollout_base_matches_pin`: this lane has no record, and
+    it evaluates no rollout pin, so a field for either would be a column of nulls that a reader
+    would reasonably take to mean something.
+    """
+
+    repository: str
+    pr_number: int
+    satisfied: bool
+    refusals: list[str]
+    head_sha: str | None
+    policy_version: int | None
+    branch_update_qualifies: bool
+
+
+class InertBranchUpdateCommandModel(BaseModel):
+    """Ask the orchestrator to bring an inert-population pull request's head up to date with its
+    base (ADR-0038 part 2).
+
+    The idempotency key is load-bearing and not decoration, which is worth saying because a key on
+    an act that keeps no record of its own would be. It is content-addressed over the head by its
+    caller, and a successful update CHANGES the head -- so a key can only ever bar a repeat of this
+    same request against this same head, and never the next legitimate update after the base moves
+    again.
+    """
+
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pr_number: int = Field(gt=0)
+    expected_head_sha: str = Field(min_length=40, max_length=40)
+
+
+class InertBranchUpdateResponse(BaseModel):
+    """What was brought up to date, and the head it was brought up to date from.
+
+    There is no id, no status and no row, because the act is repeatable by design: what is kept is
+    an event. The head named here is the OLD one, since the platform performs the work after
+    answering and never names the resulting one.
+
+    `replayed` is the one field that is not decoration. Because the key is content-addressed over
+    the head and a success moves the head, a replay means the branch did NOT move -- so it is the
+    signal that the platform accepted the work and did not do it, which without this field would
+    print as a success on every pass forever.
+    """
+
+    repository: str
+    pr_number: int
+    head_sha: str
+    replayed: bool
+
+
 class InfraLaneLinkResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
