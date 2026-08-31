@@ -4225,3 +4225,23 @@ style of that module.
   correct-about-the-wrong-noun family again: the check named the parent and the hazard was the
   child. Kill the process GROUP, and verify by looking for `pytest` itself rather than for the
   thing that launched it.
+
+- **ADDING A TERM TO A DISJUNCTION SILENTLY DISARMS EVERY CONTROL THAT DISCRIMINATES ON IT, AND THE
+  CONTROL STAYS GREEN.** A control proves arm X is load-bearing by satisfying every OTHER arm, so
+  that deleting X changes the answer. Add an arm the control's fixture does not satisfy and the
+  disjunction is forced regardless: deleting X stops changing anything, the mutant survives, and the
+  test still passes — it has simply stopped asking its question. Found 2026-08-31 building ADR-0038
+  Increment 3, in `landing_ledger/github.py::read_landing`, whose head-fetch is
+  `if claim is None or policy is None or update is None`. Its control
+  `test_the_update_arm_reaches_for_the_head_even_when_the_other_two_are_answered` discriminates only
+  because the fixture answers the other two on the landing commit; a fourth arm left unanswered
+  disarms it. **The rule: when you add a term to a disjunction, extend the fixture of every control
+  that discriminates on that disjunction to satisfy the new term, and add the mirror control for the
+  new arm.** The same reasoning applies to a conjunction with the polarity flipped.
+  **This is the estate's "a control written before a fix can survive the fix and stop
+  discriminating" rule reached from the OTHER direction, and the difference is what makes it worth
+  its own entry:** there the fix outran a control that had already been written, so re-running the
+  set after the last behavioural change catches it. Here the fix DISARMS the control, so re-running
+  catches it only if the mutant for the OLD arm is still in the set — a mutation run scoped to "the
+  code I changed" will not contain it. Keep the whole set, and treat a mutant that newly survives a
+  change as a disarmed control until proven an equivalent mutant.
