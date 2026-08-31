@@ -115,13 +115,15 @@ from landing_ledger.model import (
 from landing_ledger.orchestrator_client import LedgerWriteError as LedgerReadError
 from landing_ledger.record import (
     BASIS_FACTORY,
+    BASIS_INERT_POLICY,
     BASIS_RULE,
     is_known_defective_metadata_landing,
 )
 from landing_ledger.rules import GATE_PATH, Rule, rule_for
 from landing_ledger.titles import bump_of
 
-# `BASIS_RULE` and `BASIS_FACTORY` are IMPORTED, not restated. Until WS-P3.7 Increment 5 this
+# `BASIS_RULE`, `BASIS_FACTORY` and `BASIS_INERT_POLICY` are IMPORTED, not restated. Until
+# WS-P3.7 Increment 5 this
 # module defined `BASIS_RULE = "auto_merge_rule"` independently of `record.py`, with nothing
 # coupling the two -- the recorder writes the value and the detector selects on it, so a rename on
 # one side would have made the detector silently select nothing, which reads as a clean estate.
@@ -167,6 +169,12 @@ DRIFT_METADATA_MISSING = "update_metadata_missing"
 DRIFT_NOT_SATISFIED = "rule_not_satisfied"
 DRIFT_RULE_DID_NOT_SUCCEED = "rule_run_did_not_succeed"
 DRIFT_CHECK_NOT_GREEN = "check_did_not_pass"
+
+# Detector A, inert-landing half (ADR-0038). Prefixed `DRIFT_` deliberately: the substring guard
+# below selects on the prefix, so a kind minted under a NEW prefix would be outside the one thing
+# checking that no reported kind contains another.
+DRIFT_INERT_VERSION_MISSING = "inert_landing_policy_version_missing"
+DRIFT_INERT_CHECK_FAILED = "inert_landing_check_failed"
 
 # Detector A, factory half (ADR-0020).
 FACTORY_CLAIM_UNREADABLE = "factory_claim_unreadable"
@@ -219,7 +227,9 @@ EXCEPTION_METADATA_UNREADABLE_AT_RECORDING = "update_metadata_absent_at_recordin
 # A caveat qualifies the audit's own evidence; it is not an assertion that anything is wrong, and
 # it does not drive the exit status. It is still recorded, so it cannot be lost by being quiet.
 CAVEAT_RULE_SELF_MODIFIED = "rule_pinned_after_this_landing_changed_it"
-CAVEAT_NO_RULE_INSTALLED = "no_rule_installed"
+# `CAVEAT_NO_RULE_INSTALLED = "no_rule_installed"` stood here until ADR-0038 and is gone rather
+# than deprecated. Its reasoning is at its former call site in `audit_repository`; the name is
+# removed so nothing can emit it and no reader can grep for a kind that no pass will produce.
 # A caveat qualifies the audit's own evidence; it is not an assertion that anything is wrong, and
 # it does not drive the exit status. NOTHING about a factory landing is reported this way, and that
 # is a decision: a caveat is where a doubt goes to be ignored, and every doubt about an irreversible
@@ -284,6 +294,14 @@ class RepoAudit:
     permitted_landings: int
     pending_audited: int
     factory_landings: int = 0
+    # ADR-0038. A third denominator rather than a share of `permitted_landings`, for the reason
+    # the second one exists: a count nobody can attribute is a number and not a denominator, and
+    # this population is re-read against a different and narrower set of questions.
+    inert_landings: int = 0
+    # How many of the open updates are green. Carried here rather than in a caveat, because it is
+    # a measurement and not a doubt -- see `audit_repository`, where the caveat that used to make
+    # a claim about it was retired.
+    pending_green: int = 0
     # Detector C's answer, or None when the branch could not be asked -- which is a measurement
     # that did not happen and reaches `unavailable`, never a pass.
     branch: BranchStatus | None = None
@@ -446,6 +464,62 @@ def audit_landing(
             Finding(DRIFT_CHECK_NOT_GREEN, subject, "; ".join(sorted(failing)[:MAX_LIST]))
         )
     return tuple(findings), tuple(caveats), tuple(exceptions)
+
+
+def audit_inert_landing(facts: Any) -> tuple[Finding, ...]:
+    """Re-evaluate one landing the orchestrator made into the inert population (ADR-0038 part 3).
+
+    **WHY THIS ARM EXISTS AT ALL, WHICH IS THE WHOLE OF ITS DESIGN.** `audit_landing` returns
+    nothing for any basis but the rule's, so removing the native cascade would have dropped every
+    landing it used to permit into a basis no detector reads -- Detector A auditing the lane with
+    its denominator at zero and nothing saying so. This arm is what keeps the population counted
+    and re-read; the `inert_landings` counter beside it is what makes "nothing found" arrive with
+    a denominator rather than as a number.
+
+    **WHAT IT CAN HONESTLY RE-EVALUATE IS BOUNDED BY WHAT THIS PROGRAM CAN READ, AND THAT BOUND IS
+    STATED RATHER THAN PAPERED OVER.** The lane's admission has terms this audit cannot reach: the
+    excluded ecosystem and the permitted author are declared in change-manager's policy document,
+    for which this program holds no credential, and the population and freshness terms are live
+    answers that legitimately drift. Re-asking the orchestrator's own admission route would answer
+    a different question -- would this land NOW -- which is exactly what ADR-0020's factory arm
+    declines to do, and for the same reason. So two things are checked, both from the stored row:
+    that the landing names the version it rests on, and that no check it recorded decided against
+    it. The rest is named open work.
+
+    Returns findings only. There is no caveat here and no exception: a caveat is where a doubt
+    goes to be ignored, and the bound above is a permanent property of the arrangement rather than
+    a doubt about one landing -- it belongs in this docstring, where it is read, rather than in a
+    line printed nightly about every landing in the population.
+    """
+    permitted = _permitted_by(facts)
+    if permitted is None or permitted.get("basis") != BASIS_INERT_POLICY:
+        return ()
+    changed = _what_changed(facts)
+    subject = f"{changed.get('repository')}@{str(changed.get('commit'))[:12]}"
+    findings: list[Finding] = []
+
+    # ISINSTANCE, NOT TRUTHINESS. This reads a stored row whose shape it cannot assume, and the
+    # audit's own convention is that an unexpected shape reaches a finding rather than raises.
+    # A `bool` is an `int` in Python, so it is excluded explicitly: `True` would otherwise read as
+    # a version, and a landing attributed to policy version "true" is worse than one reported as
+    # naming no version at all.
+    version = permitted.get("policy_version")
+    if not isinstance(version, int) or isinstance(version, bool):
+        findings.append(
+            Finding(
+                DRIFT_INERT_VERSION_MISSING,
+                subject,
+                "recorded as permitted by the inert-landing policy with no version pinned, so "
+                "the declaration it rested on cannot be looked up",
+            )
+        )
+
+    failing = _failing(permitted.get("checks"))
+    if failing:
+        findings.append(
+            Finding(DRIFT_INERT_CHECK_FAILED, subject, "; ".join(sorted(failing)[:MAX_LIST]))
+        )
+    return tuple(findings)
 
 
 class UnitRecordReader(Protocol):
@@ -860,6 +934,7 @@ def audit_repository(
     exceptions: list[Finding] = []
     permitted = 0
     factory = 0
+    inert = 0
     # A branch nobody could ask about is a missing answer, exactly as an unreadable orchestrator
     # is. It reaches the incomplete exit code rather than a clean one, so a repository whose tip
     # went unread is never reported as green.
@@ -884,40 +959,47 @@ def audit_repository(
         # denominator -- it is a number.
         permitted += basis == BASIS_RULE
         factory += basis == BASIS_FACTORY
-        findings.extend(landing_findings + factory_findings)
+        inert += basis == BASIS_INERT_POLICY
+        findings.extend(landing_findings + factory_findings + audit_inert_landing(facts))
         caveats.extend(landing_caveats + factory_caveats)
         exceptions.extend(landing_exceptions)
 
     rule = rule_for(rule_revision)
-    if rule_revision is None:
-        # A repository with no gate cannot fail to arm one. Its open updates are still counted and
-        # reported, because "nobody installed a rule here" is a fact worth reading -- but it is a
-        # scope decision somebody made, not drift, and reporting it as a violation would make the
-        # detector permanently red about something nobody intends to change.
-        caveats.append(
-            Finding(
-                CAVEAT_NO_RULE_INSTALLED,
-                repository,
-                f"no rule at {GATE_PATH}; {sum(1 for p in pending if is_green(p))} of "
-                f"{len(pending)} open updates are green and will not land unattended",
+    # A REPOSITORY WITH NO GATE SAYS NOTHING HERE, AND UNTIL ADR-0038 IT EMITTED A CAVEAT.
+    #
+    # `CAVEAT_NO_RULE_INSTALLED` was RETIRED rather than taught, and the reason is that its claim
+    # was ALREADY FALSE for its whole live population rather than about to become so. It reported
+    # that N of M open updates "will not land unattended"; measured 2026-08-31 against the eight
+    # repositories this ledger covers, the two with no gate were `change-manager` and `brain`, and
+    # both land unattended through the ADR-0019 lane. After the cascade's removal the other six
+    # join them under ADR-0038's, so the claim is false everywhere it can fire -- and a caveat
+    # that is unconditionally emitted for every repository is the nightly noise a real finding
+    # arrives inside.
+    #
+    # TEACHING IT WAS THE ALTERNATIVE AND IT IS THE WRONG SHAPE. What it would have to learn is
+    # the declared population, the permitted author and the excluded ecosystem -- all declared in
+    # change-manager's policy document, for which this program holds no credential. Acquiring one
+    # would put a second reader of that rule in a second program to restate a judgment whose owner
+    # is the lane's own caller, which reports what it considered, landed and held. The MEASUREMENT
+    # the caveat carried is kept as `pending_green` on the observation, where it is a number
+    # rather than a line.
+    if rule_revision is not None:
+        if rule is None:
+            findings.append(
+                Finding(
+                    STALL_RULE_UNKNOWN,
+                    repository,
+                    f"the installed rule {rule_revision[:12]} is not transcribed, so no open "
+                    "update here can be classified",
+                )
             )
-        )
-    elif rule is None:
-        findings.append(
-            Finding(
-                STALL_RULE_UNKNOWN,
-                repository,
-                f"the installed rule {rule_revision[:12]} is not transcribed, so no open update "
-                "here can be classified",
-            )
-        )
-    else:
-        for candidate in pending:
-            pending_findings, pending_exceptions = audit_pending(
-                candidate, rule, now, settle_seconds
-            )
-            findings.extend(pending_findings)
-            exceptions.extend(pending_exceptions)
+        else:
+            for candidate in pending:
+                pending_findings, pending_exceptions = audit_pending(
+                    candidate, rule, now, settle_seconds
+                )
+                findings.extend(pending_findings)
+                exceptions.extend(pending_exceptions)
 
     return RepoAudit(
         repository=repository,
@@ -925,7 +1007,9 @@ def audit_repository(
         landings_audited=len(landings),
         permitted_landings=permitted,
         factory_landings=factory,
+        inert_landings=inert,
         pending_audited=len(pending),
+        pending_green=sum(1 for candidate in pending if is_green(candidate)),
         branch=branch,
         findings=tuple(findings),
         caveats=tuple(caveats),
@@ -1000,7 +1084,13 @@ def audit_observation(audit: RepoAudit, pass_id: str, observed_at: datetime) -> 
             "landings_audited": audit.landings_audited,
             "rule_permitted_landings": audit.permitted_landings,
             "factory_landings": audit.factory_landings,
+            "inert_landings": audit.inert_landings,
             "pending_audited": audit.pending_audited,
+            # The number the retired `no_rule_installed` caveat carried, kept where a measurement
+            # belongs. Safe to add: this observation's reference is per pass, so a new key changes
+            # future rows and cannot conflict with a stored one -- unlike a landing's, which is
+            # frozen at the commit it names.
+            "pending_green": audit.pending_green,
             "findings_found": len(audit.findings),
             "caveats_found": len(audit.caveats),
             "exceptions_found": len(audit.exceptions),
@@ -1033,7 +1123,8 @@ def audit_observation(audit: RepoAudit, pass_id: str, observed_at: datetime) -> 
             f"{audit.repository}: {len(audit.findings)} finding(s) and "
             f"{len(audit.exceptions)} exception(s) over "
             f"{audit.permitted_landings} rule-permitted landing(s), "
-            f"{audit.factory_landings} factory landing(s) and "
+            f"{audit.factory_landings} factory landing(s), "
+            f"{audit.inert_landings} inert-policy landing(s) and "
             f"{audit.pending_audited} open update(s)"
             # The branch state belongs in the SUMMARY as well as the facts, because the summary is
             # what a person reads in a listing. `unread` rather than an omission: a missing clause

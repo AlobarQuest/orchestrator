@@ -26,6 +26,7 @@ from landing_ledger.model import (
     WORK_UNIT_ID,
     Check,
     FactoryClaim,
+    InertLandingPermission,
     Landing,
     PendingUpdate,
     PolicyPermission,
@@ -61,6 +62,15 @@ SDS_PACKAGE_REVISION = re.compile(r"^\s*SDS-Package-Rev:\s*(\d+)\s*$", re.MULTIL
 # rather than a landing silently recorded with no basis.
 SDS_CHANGE_RECORD = re.compile(r"^\s*SDS-Change-Record:\s*(\d+)\s*$", re.MULTILINE)
 SDS_POLICY_VERSION = re.compile(r"^\s*SDS-Policy-Version:\s*(\d+)\s*$", re.MULTILINE)
+
+# ADR-0038. The single trailer the orchestrator writes when it lands an update-bot pull request in
+# a repository where landing on the default branch changes nothing already serving. Spelled here
+# as a literal for the same reason as the two above, and pinned by a test on each side.
+#
+# THE NAME IS NOT A SUPERSTRING OR SUBSTRING OF ANY TRAILER ABOVE, and that was checked rather
+# than eyeballed: `SDS-Policy-Version` is the closest neighbour and neither pattern matches the
+# other's line, because every one of these is anchored on a whole line and on its full key.
+SDS_INERT_LANDING_POLICY = re.compile(r"^\s*SDS-Inert-Landing-Policy:\s*(\d+)\s*$", re.MULTILINE)
 
 
 class LedgerError(RuntimeError):
@@ -225,6 +235,25 @@ def policy_permission(message: str) -> PolicyPermission | None:
     )
 
 
+def inert_landing_permission(message: str) -> InertLandingPermission | None:
+    """The policy version a landing commit says permitted it into the inert population, or nothing.
+
+    Read from the landing commit, falling back to the pull request's head exactly as the two
+    claims above are, and for the same reason: the squash body is a REPOSITORY SETTING rather than
+    something the merge call decides, so a repository reconfigured to compose a different body
+    would silently drop the trailer, and a dropped trailer is a landing recorded with no basis at
+    all -- which no detector reads.
+
+    ONE TRAILER, SO NO HALF-READ CASE EXISTS. The sibling refuses a record without its version
+    because a record that cannot be re-evaluated wears the name of one that can; here the version
+    IS the whole claim, so absent means absent and there is nothing to be half of.
+    """
+    version = SDS_INERT_LANDING_POLICY.search(message)
+    if version is None:
+        return None
+    return InertLandingPermission(policy_version=int(version.group(1)))
+
+
 def _landed_pull(reader: GitHubReader, repository: str, sha: str) -> dict[str, Any] | None:
     associated = reader.get(f"/repos/{repository}/commits/{sha}/pulls") or []
     for pull in associated:
@@ -359,7 +388,7 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
     # has them. A true merge commit does not, and neither does a squash in a repository configured
     # to write a different body -- and the authority in both cases is the pull request's own head,
     # which is what `fetch-metadata` read and where the runner wrote its own. Fetched ONCE for all
-    # three, and only when something is actually missing.
+    # four, and only when something is actually missing.
     #
     # EACH ARM ASKS ITS OWN QUESTION, AND THE UPDATE ARM'S USED TO ASK A DIFFERENT ONE. It was
     # keyed on an absent `update-type`, which spells "no version delta stated" and was being read
@@ -380,12 +409,14 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
     head_ref = detail["head"].get("ref")
     claim = factory_claim(message)
     policy = policy_permission(message)
+    inert_policy = inert_landing_permission(message)
     update = update_metadata(message, head_ref)
-    if claim is None or policy is None or update is None:
+    if claim is None or policy is None or inert_policy is None or update is None:
         head = reader.get(f"/repos/{repository}/commits/{head_sha}")
         head_message = head["commit"]["message"] if head else ""
         claim = claim or factory_claim(head_message)
         policy = policy or policy_permission(head_message)
+        inert_policy = inert_policy or inert_landing_permission(head_message)
         if update is None:
             update = update_metadata(head_message, head_ref)
     return Landing(
@@ -406,6 +437,7 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
         update=update,
         claim=claim,
         policy=policy,
+        inert_policy=inert_policy,
     )
 
 

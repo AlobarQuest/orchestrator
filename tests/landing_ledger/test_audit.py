@@ -14,9 +14,10 @@ import pytest
 from landing_ledger import audit as audit_module
 from landing_ledger.audit import (
     BRANCH_NOT_GREEN,
-    CAVEAT_NO_RULE_INSTALLED,
     CAVEAT_RULE_SELF_MODIFIED,
     DRIFT_CHECK_NOT_GREEN,
+    DRIFT_INERT_CHECK_FAILED,
+    DRIFT_INERT_VERSION_MISSING,
     DRIFT_METADATA_MISSING,
     DRIFT_NOT_SATISFIED,
     DRIFT_RULE_DID_NOT_SUCCEED,
@@ -39,6 +40,7 @@ from landing_ledger.audit import (
     STALL_RULE_UNKNOWN,
     audit_branch,
     audit_factory_landing,
+    audit_inert_landing,
     audit_landing,
     audit_observation,
     audit_pending,
@@ -60,6 +62,7 @@ from landing_ledger.model import (
 from landing_ledger.orchestrator_client import LedgerWriteError
 from landing_ledger.record import (
     BASIS_FACTORY,
+    BASIS_INERT_POLICY,
     KNOWN_DEFECTIVE_METADATA_LANDINGS,
     is_known_defective_metadata_landing,
 )
@@ -919,11 +922,19 @@ def test_a_repository_with_an_untranscribed_installed_rule_FIRES_once_for_the_re
     assert kinds(audit.findings) == [STALL_RULE_UNKNOWN]
 
 
-def test_a_repository_with_no_rule_installed_is_a_caveat_with_its_numbers() -> None:
-    """Three repositories deliberately have no gate, and one of them CANNOT have one -- this
-    repository's own architecture guards forbid the command it would run. Reporting that as a
-    violation would make the detector permanently red about a scope decision somebody made. The
-    green-and-unlanded count is still carried, because it is the fact worth reading.
+def test_a_repository_with_no_rule_installed_says_nothing_and_counts_its_green_updates() -> None:
+    """ADR-0038 RETIRED the caveat that lived here, and this is the pin on that.
+
+    It reported that N of M open updates "will not land unattended" -- a claim that was ALREADY
+    false for its whole live population: measured 2026-08-31, the two of eight repositories with
+    no gate were `change-manager` and `brain`, both of which land unattended through the ADR-0019
+    lane, and the other six join them under ADR-0038's once the cascade is removed. A caveat
+    emitted unconditionally for every repository is the nightly noise a real finding arrives
+    inside.
+
+    THE MEASUREMENT IS KEPT AND THE CLAIM IS NOT. `pending_green` carries the number onto the
+    observation, where it is a fact a reader can look at rather than a line asserting something
+    about a lane this program cannot see.
     """
     audit = audit_repository(
         repository="AlobarQuest/orchestrator",
@@ -936,8 +947,10 @@ def test_a_repository_with_no_rule_installed_is_a_caveat_with_its_numbers() -> N
     )
 
     assert audit.findings == ()
-    assert kinds(audit.caveats) == [CAVEAT_NO_RULE_INSTALLED]
-    assert "1 of 2 open updates are green" in audit.caveats[0].detail
+    assert audit.caveats == ()
+    assert (audit.pending_audited, audit.pending_green) == (2, 1)
+    facts = audit_observation(audit, "20260831T120000Z", NOW)["facts"]
+    assert (facts["pending_audited"], facts["pending_green"]) == (2, 1)
 
 
 def test_the_denominators_are_carried_so_nothing_found_is_never_bare() -> None:
@@ -1541,3 +1554,93 @@ def test_an_unread_branch_records_null_rather_than_an_answer() -> None:
     assert facts["facts"]["default_branch"] is None
     assert "default branch unread" in facts["summary"]
     assert "[UNAVAILABLE]" in facts["summary"]
+
+
+# ---------------------------------------------------------------------------------------------
+# The inert-landing half of detector A (ADR-0038). Shaped like the row ADR-0038's lane produces:
+# an update-bot pull request the orchestrator landed into a repository where landing on the
+# default branch changes nothing already serving, with no gate run to account for it.
+# ---------------------------------------------------------------------------------------------
+
+
+def inert(
+    *,
+    policy_version: Any = 6,
+    checks: list[dict[str, Any]] | None = None,
+    drop_version: bool = False,
+) -> dict[str, Any]:
+    facts = landing(basis=BASIS_INERT_POLICY, checks=checks)
+    permitted = facts["permitted_by"]
+    permitted["landed_by"] = "alobar-sds-dispatch[bot]"
+    permitted["policy_version"] = policy_version
+    if drop_version:
+        del permitted["policy_version"]
+    return facts
+
+
+def test_an_inert_landing_that_names_its_version_and_stayed_green_is_no_finding() -> None:
+    """The healthy shape. Reported by nothing, and COUNTED -- which is the half that matters:
+    the whole point of this arm is that "nothing found" arrives with a denominator rather than
+    with a detector that has quietly stopped looking at the population."""
+    assert audit_inert_landing(inert()) == ()
+
+
+def test_an_inert_landing_naming_no_version_cannot_be_looked_up_and_is_a_finding() -> None:
+    """The version is the whole of what this basis rests on. Without it the record names a
+    permission nobody can find, which is a basis wearing the name of one that can be checked."""
+    assert kinds(audit_inert_landing(inert(drop_version=True))) == [DRIFT_INERT_VERSION_MISSING]
+
+
+@pytest.mark.parametrize("version", ["6", None, True, 6.0, {"version": 6}])
+def test_a_version_that_is_not_an_integer_is_not_a_version(version: Any) -> None:
+    """The audit reads a stored row whose shape it cannot assume, so the check is `isinstance`
+    rather than truthiness -- and `True` is excluded explicitly, because a `bool` IS an `int` in
+    Python and a landing attributed to policy version `true` is worse than one reported as naming
+    no version at all. An unhashable shape must reach a finding, never raise."""
+    assert kinds(audit_inert_landing(inert(policy_version=version))) == [
+        DRIFT_INERT_VERSION_MISSING
+    ]
+
+
+def test_an_inert_landing_whose_recorded_check_decided_against_it_is_a_finding() -> None:
+    """The lane refuses a pull request whose checks are not clean, so a landing carrying a failed
+    one is either a landing the lane should not have made or a record of something else."""
+    findings = audit_inert_landing(
+        inert(checks=[{"name": "Quality", "conclusion": "failure", "run": 1}])
+    )
+
+    assert kinds(findings) == [DRIFT_INERT_CHECK_FAILED]
+    assert "Quality=failure" in findings[0].detail
+
+
+def test_the_inert_arm_reads_only_its_own_basis() -> None:
+    """Each arm of detector A selects on the basis and yields nothing for the others, so a
+    landing is never audited twice under two sets of rules. The rule-basis fixture here carries a
+    failing check, so an arm that ignored the basis would report it."""
+    other = landing(checks=[{"name": "Quality", "conclusion": "failure", "run": 1}])
+
+    assert audit_inert_landing(other) == ()
+    assert audit_inert_landing({}) == ()
+    assert audit_inert_landing({"permitted_by": "not a mapping"}) == ()
+
+
+def test_an_inert_landing_is_counted_on_its_own_denominator_and_reported_through() -> None:
+    """The counter is separate from the rule's and the factory's, for the reason those two are
+    separate from each other: folding them would put a population behind a key whose name says
+    something else, and a count nobody can attribute is a number rather than a denominator.
+    """
+    audit = audit_repository(
+        repository=REPO,
+        landings=[landing(), inert(), inert(drop_version=True)],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        units=NO_UNITS,
+        now=NOW,
+        branch=GREEN,
+    )
+
+    assert (audit.permitted_landings, audit.factory_landings, audit.inert_landings) == (1, 0, 2)
+    assert kinds(audit.findings) == [DRIFT_INERT_VERSION_MISSING]
+    observation = audit_observation(audit, "20260831T120000Z", NOW)
+    assert observation["facts"]["inert_landings"] == 2
+    assert "2 inert-policy landing(s)" in observation["summary"]

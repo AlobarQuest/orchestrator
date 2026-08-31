@@ -14,6 +14,7 @@ from landing_ledger.github import (
     LedgerError,
     factory_claim,
     first_parent_chain,
+    inert_landing_permission,
     landing_shas,
     policy_permission,
     read_landing,
@@ -673,14 +674,25 @@ def test_a_landing_commit_with_no_trailer_at_all_still_falls_back_to_the_head() 
     assert landing.update.dependency == "setuptools"
 
 
-def test_the_update_arm_reaches_for_the_head_even_when_the_other_two_are_answered() -> None:
-    """Each of the three arms asks its OWN question, and this is the case that proves it.
+def test_the_update_arm_reaches_for_the_head_even_when_the_other_three_are_answered() -> None:
+    """Each of the four arms asks its OWN question, and this is the case that proves it.
 
     The condition guarding the fetch is a disjunction, so an arm dropped from it is invisible
     whenever some other arm happens to be unanswered -- which every other fixture here is, because
-    a Dependabot landing carries no SDS trailers. This one carries BOTH, which is the shape an
-    ADR-0025 factory-delivery landing has: a work unit landed under a change record. Only here does
-    dropping `update is None` from the disjunction change the answer.
+    a Dependabot landing carries no SDS trailers. This one carries all three, so only dropping
+    `update is None` from the disjunction changes the answer.
+
+    **THE FIXTURE ANSWERS EVERY OTHER ARM, AND THAT IS THE WHOLE OF WHAT MAKES THIS A CONTROL --
+    so it grew a trailer when ADR-0038 added a fourth arm.** Until then it carried two, which was
+    all there was to satisfy; a fourth arm its fixture left unanswered would force the fetch on
+    its own, and the mutant this test exists to kill would have stopped changing anything while
+    the test stayed green. The general rule, which cost nothing to state and would have cost a
+    control to discover: ADDING A TERM TO A DISJUNCTION DISARMS EVERY CONTROL THAT DISCRIMINATES
+    ON IT, unless that control's fixture is extended in the same change.
+
+    The shape is deliberately one no writer produces -- a work unit, a change record and an
+    inert-landing permission on one landing. What is pinned here is a property of the disjunction
+    rather than of any landing, and a realistic fixture cannot pin it.
     """
     landing_message = (
         "chore(deps-dev): update setuptools requirement (#50)\n\n"
@@ -688,6 +700,7 @@ def test_the_update_arm_reaches_for_the_head_even_when_the_other_two_are_answere
         "SDS-Package-Rev: 1\n"
         "SDS-Change-Record: 61\n"
         "SDS-Policy-Version: 3\n"
+        "SDS-Inert-Landing-Policy: 6\n"
     )
     routes = range_routes(
         landing_message, RANGE_LANDING_MESSAGE, "dependabot/uv/setuptools-gte-84.0.0"
@@ -697,8 +710,76 @@ def test_the_update_arm_reaches_for_the_head_even_when_the_other_two_are_answere
 
     assert landing.claim is not None
     assert landing.policy is not None
+    assert landing.inert_policy is not None
     assert landing.update is not None
     assert landing.update.dependency == "setuptools"
+
+
+def test_the_inert_arm_reaches_for_the_head_even_when_the_other_three_are_answered() -> None:
+    """The mirror of the test above, for the arm ADR-0038 added.
+
+    A landing commit answering claim, policy and update but NOT the inert trailer: only dropping
+    `inert_policy is None` from the disjunction leaves the head unfetched here, and the basis
+    silently absent.
+    """
+    landing_message = (
+        "chore(deps): bump sqlalchemy from 2.0.51 to 2.0.52 (#190)\n\n"
+        "SDS-Unit: 0c0002c6-9869-59bc-84c6-654e6fc57d9e\n"
+        "SDS-Package-Rev: 1\n"
+        "SDS-Change-Record: 61\n"
+        "SDS-Policy-Version: 3\n"
+        "---\n"
+        "updated-dependencies:\n"
+        "- dependency-name: sqlalchemy\n"
+        "  update-type: version-update:semver-patch\n"
+        "...\n"
+    )
+    routes = range_routes(
+        landing_message, "SDS-Inert-Landing-Policy: 6\n", "dependabot/uv/sqlalchemy-2.0.52"
+    )
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.claim is not None
+    assert landing.policy is not None
+    assert landing.update is not None
+    assert landing.inert_policy is not None
+    assert landing.inert_policy.policy_version == 6
+
+
+def test_the_inert_trailer_reaches_the_landing_the_reader_assembles() -> None:
+    """PROOF THROUGH `read_landing`, not through the parser alone.
+
+    A trailer this program parses and then does not carry onto the `Landing` is a landing recorded
+    as `unattributed` -- a class no detector reads -- and every parser test above would still
+    pass. So the assembly is asserted rather than assumed.
+    """
+    routes = range_routes(
+        "build(deps): bump actions/checkout from 4 to 5 (#28)\n\nSDS-Inert-Landing-Policy: 6\n",
+        RANGE_HEAD_MESSAGE,
+        "dependabot/github_actions/actions/checkout-5",
+    )
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.inert_policy is not None
+    assert landing.inert_policy.policy_version == 6
+
+
+def test_the_inert_trailer_is_taken_from_the_head_when_the_landing_commit_is_silent() -> None:
+    """The fall-back, which exists for the reason its two siblings' do: the squash body is a
+    REPOSITORY SETTING rather than something the merge call decides, so a repository reconfigured
+    to compose its own body drops the trailer -- and the failure is silent."""
+    routes = range_routes(
+        "chore(deps): a body this repository composed itself (#28)",
+        "build(deps): bump actions/checkout from 4 to 5\n\nSDS-Inert-Landing-Policy: 6\n",
+        "dependabot/github_actions/actions/checkout-5",
+    )
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.inert_policy is not None
+    assert landing.inert_policy.policy_version == 6
 
 
 def test_a_landing_neither_message_describes_records_no_metadata() -> None:
@@ -776,3 +857,52 @@ def test_half_a_claim_is_no_claim() -> None:
 
 def test_a_non_numeric_trailer_is_no_claim() -> None:
     assert policy_permission("SDS-Change-Record: fifty-two\nSDS-Policy-Version: 2\n") is None
+
+
+# ---------------------------------------------------------------------------
+# ADR-0038: the inert-landing trailer.
+# ---------------------------------------------------------------------------
+
+
+def test_the_inert_landing_trailer_is_read_from_a_landing_commit() -> None:
+    permission = inert_landing_permission(
+        "build(deps): bump actions/checkout from 4 to 5 (#28)\n\nSDS-Inert-Landing-Policy: 6\n"
+    )
+
+    assert permission is not None
+    assert permission.policy_version == 6
+
+
+def test_the_inert_spelling_matches_the_only_writer_of_it() -> None:
+    """A LITERAL on each side, exactly as the change-record pair above.
+
+    The writer is `orchestrator/services/inert_pr_merge.py::INERT_LANDING_POLICY_TRAILER`, and
+    its own test asserts the same string. A rename on either side is a red test rather than a
+    landing silently recorded with no basis -- which no detector reads.
+    """
+    permission = inert_landing_permission("SDS-Inert-Landing-Policy: 6\n")
+
+    assert permission is not None and permission.policy_version == 6
+
+
+def test_a_non_numeric_inert_version_is_no_claim() -> None:
+    assert inert_landing_permission("SDS-Inert-Landing-Policy: six\n") is None
+    assert inert_landing_permission("nothing here\n") is None
+
+
+def test_the_two_policy_trailers_do_not_read_each_other() -> None:
+    """`SDS-Policy-Version` is the closest neighbour this key has, and the two lanes must stay
+    tellable apart: a landing read as the wrong one is attributed to a permission it never had.
+
+    Asserted in BOTH directions, because a pattern that is too loose in one is not necessarily
+    too loose in the other -- and the failure is silent either way.
+    """
+    assert inert_landing_permission("SDS-Policy-Version: 6\n") is None
+    assert policy_permission("SDS-Change-Record: 5\nSDS-Inert-Landing-Policy: 6\n") is None
+
+    both = "SDS-Change-Record: 53\nSDS-Policy-Version: 4\nSDS-Inert-Landing-Policy: 6\n"
+    inert = inert_landing_permission(both)
+    deploying = policy_permission(both)
+
+    assert inert is not None and inert.policy_version == 6
+    assert deploying is not None and (deploying.change_record, deploying.policy_version) == (53, 4)
