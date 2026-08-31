@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One bump-proposer pass: a dependency bump the estate will not land by itself becomes proposed
-# work (ADR-0028). WHICH BUMPS THOSE ARE IS READ FROM change-manager'"'"'s LANDING POLICY (ADR-0038),
+# work (ADR-0028). WHICH BUMPS THOSE ARE IS READ FROM change-manager's LANDING POLICY (ADR-0038),
 # not from a transcription of the GitHub Actions workflow that used to enforce it -- that workflow
 # is being removed and the orchestrator becomes the merger, which would otherwise have left this
 # pass reading a registry with no subject.
