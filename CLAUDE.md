@@ -4142,3 +4142,27 @@ style of that module.
   mutation set claim coverage it did not have. Same family as the earlier ruling that a clause
   nothing can falsify sits beside clauses that can, which is how a mutation set comes to report a
   green it did not earn.
+
+- **`git push origin main` pushes the local `main` REF, not `HEAD` — so from any other branch it
+  exits 0 having published nothing, and the failure wears the shape of success.** Measured
+  2026-08-31 building ADR-0033: `push_exit=0` with `HEAD` one commit ahead of `origin/main` and
+  nothing published. A producer that commits and then pushes this way from a topic branch or a
+  detached head goes on to name a sha and propose a record for a commit only that machine holds —
+  precisely the state the push was added to end. **The spelling cannot give way**: the repo-wide
+  merge guard scans for the literal `git push origin main`, and reaching for `HEAD:main` takes the
+  act out of the one register that watches it, which is evasion by another route. So the BRANCH is
+  what must be checked. Three consequences, none of them obvious from the command:
+  **(1)** hold the command as a STRING and split it at call time. `MERGE_EXEMPT_PATHS`' rot check
+  removes an entry whose file no longer contains one of `MERGE_ACTIONS`, and that scan reads the
+  file's TEXT — so `["git", "push", ...]` matches nothing, passes the guard without an exemption,
+  and then has the exemption withdrawn as unneeded, leaving the act in place with nothing watching
+  it. Not evasion by rewording, which the guard's message forbids, but by tokenisation, which
+  amounts to the same thing. Written as one value the scanned bytes and the executed command
+  cannot outlive each other.
+  **(2)** derive the branch name out of that command rather than spelling `main` a second time; a
+  second spelling is the one place the refusal can silently stop describing the command it guards.
+  **(3)** a refused publish must be refused AGAIN at the start of the next pass. The replay path
+  skips the committing step, so the finding is reported once and then goes quiet forever while the
+  commit sits local and the lane reports clean runs — and `origin/main..HEAD` answers it from disk,
+  with no fetch, so the refusal depends on this program's own unfinished act rather than on
+  somebody else's landings.
