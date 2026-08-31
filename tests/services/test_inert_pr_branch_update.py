@@ -47,8 +47,11 @@ HUMAN = ActorContext("devon", ActorRole.HUMAN)
 PR = 3
 UV_BRANCH = "dependabot/uv/typer-0.21.0"
 # Content-addressed over the head, exactly as the caller composes it -- which is what makes a spent
-# key mean "this same request against this same head" and nothing wider.
-KEY = f"inert-branch-update:{INERT_REPOSITORY}:{PR}:{HEAD}"
+# key mean "this same request against this same head" and nothing wider. The head is TRUNCATED,
+# matching the sibling lane; `test_the_caller_composes_the_key_THIS_TEST_FILE_IS_WRITTEN_AGAINST`
+# below derives this from the caller rather than restating it, which it could not do until
+# ADR-0038 part 2a gave this lane a caller at all.
+KEY = f"inert-branch-update:{INERT_REPOSITORY}:{PR}:{HEAD[:12]}"
 
 
 def _command(*, key: str = KEY, head: str = HEAD, actor: ActorContext = SYSTEM):
@@ -318,3 +321,60 @@ def test_a_key_spent_by_a_different_ACT_is_refused_rather_than_replayed(
 
     assert caught.value.code == "idempotency_conflict"
     assert gateway.branch_updates == []
+
+
+# ------------------------------------------------------------------------------------------
+# The caller's vocabulary, pinned from OUTSIDE both sides. ADR-0038 part 2a.
+#
+# `inert_lander` may not import the orchestrator -- that isolation is what makes a scheduled
+# caller acceptable at all -- so the two sides carry the same strings and nothing in either
+# would notice a rename. These tests may import both, exactly as the estate lane's equivalents
+# do, because this estate's standing lesson is that wherever two vocabularies must agree they
+# do not, until something checks.
+# ------------------------------------------------------------------------------------------
+
+
+def test_the_callers_SELF_CLEARING_set_is_exactly_the_codes_this_act_raises_for_a_moved_answer():
+    """The caller reports these two as deliberate rather than as findings, because each says only
+    that the answer moved between the read and the request -- which the next pass re-decides.
+
+    EQUALITY, not containment. Containment would pass while the caller excused a code this act
+    never raises, and it would pass while the act grew a third that the caller reported forever.
+    """
+    from inert_lander.cli import _UPDATE_SELF_CLEARING
+
+    assert _UPDATE_SELF_CLEARING == {
+        INERT_BRANCH_UPDATE_HEAD_MOVED,
+        INERT_BRANCH_UPDATE_NOT_QUALIFIED,
+    }
+
+
+def test_the_remote_REFUSING_is_NOT_one_of_them() -> None:
+    """A stated control, because it is the near miss. A remote that declined to bring the branch
+    up to date is a condition somebody can act on, and folding it in with the two above would
+    make a lane that has stopped working read as a lane that is working."""
+    from inert_lander.cli import _UPDATE_SELF_CLEARING
+
+    assert INERT_BRANCH_UPDATE_REFUSED_BY_REMOTE not in _UPDATE_SELF_CLEARING
+
+
+def test_the_callers_SETTLED_set_is_exactly_the_refusals_that_mean_there_is_nothing_left_to_land():
+    """The two the caller reports as settled rather than as findings. Read from the admission
+    module that raises them, so a rename there reddens this rather than making one landing a
+    nightly page forever."""
+    from inert_lander.cli import _SETTLED
+    from orchestrator.services.estate_landing_admission import (
+        LANDING_ALREADY_RECORDED,
+        LANDING_PULL_REQUEST_NOT_OPEN,
+    )
+
+    assert _SETTLED == {LANDING_ALREADY_RECORDED, LANDING_PULL_REQUEST_NOT_OPEN}
+
+
+def test_the_caller_composes_the_key_THIS_TEST_FILE_IS_WRITTEN_AGAINST() -> None:
+    """`KEY` above claims to be the caller's own composition. Until ADR-0038 part 2a there was no
+    caller, so the claim could not be checked and was written from the sibling lane's shape with
+    the head at full length. This makes it true by derivation instead of by assertion."""
+    from inert_lander.cli import _update_key
+
+    assert _update_key(INERT_REPOSITORY, PR, HEAD) == KEY

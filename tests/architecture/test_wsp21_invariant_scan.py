@@ -326,6 +326,14 @@ OUTBOUND_ALLOWLIST = {
     # Its whole surface is two routes, enforced in code by `is_allowed_read`/`is_allowed_write`
     # and in tests by test_estate_lander_isolation.py.
     Path("src/estate_lander/orchestrator_client.py"),
+    # ADR-0038 part 2a. `inert_lander` is the SIBLING separate program, and its egress is not
+    # the orchestrator's either. It reads which repositories a person declared ones where landing
+    # on the default branch changes nothing already serving, asks the orchestrator whether each
+    # open update-bot pull request may be landed, and relays the answer -- composing nothing.
+    # Its whole surface is three routes, enforced in code by `is_allowed_read`/`is_allowed_write`
+    # and in tests by test_inert_lander_isolation.py, and it deliberately cannot reach the
+    # estate lane's, whose population lands into something already serving.
+    Path("src/inert_lander/orchestrator_client.py"),
     # The reconciliation runner is a SEPARATE program (ADR-0002). Polling GitHub is its entire
     # job, and it may only push what it finds back through two endpoints -- enforced in code by
     # ALLOWED_WRITE_ENDPOINTS and in tests by test_reconciliation_runner_isolation.py. It is not

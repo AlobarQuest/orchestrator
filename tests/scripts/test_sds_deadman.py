@@ -265,7 +265,10 @@ def test_a_check_that_does_not_resolve_never_gates_the_lane(
 
 
 def test_every_launcher_that_arms_the_switch_declares_a_finding_code() -> None:
-    assert len(declared_codes()) == len(launchers()) == 7
+    """EIGHT since ADR-0038 part 2a added the inert-population lander, and the number is asserted
+    rather than derived so a launcher that stopped arming the switch is a red build rather than a
+    smaller count nobody notices."""
+    assert len(declared_codes()) == len(launchers()) == 8
 
 
 @pytest.mark.parametrize("launcher", [path.name for path in launchers()])
@@ -273,7 +276,7 @@ def test_the_declared_code_is_the_one_the_launchers_own_header_calls_a_finding(
     launcher: str,
 ) -> None:
     """THE PIN. The declaration restates a vocabulary that already lives in seven headers, so
-    without this it is an eighth copy free to drift -- and a drifted copy inverts the signal
+    without this it is one more copy free to drift -- and a drifted copy inverts the signal
     silently rather than failing. Read from the header the launcher documents itself with, so
     editing one and not the other is a red build."""
     text = (SCRIPTS / launcher).read_text()
@@ -286,7 +289,8 @@ def test_the_declared_code_is_the_one_the_launchers_own_header_calls_a_finding(
 
 
 def test_the_two_schemes_are_both_present_so_neither_test_above_is_vacuous() -> None:
-    """A universal rule inverts three of seven, so a suite that happened to cover only one scheme
+    """A universal rule inverts three of the eight, so a suite that happened to cover only one
+    scheme
     would prove the half that already worked."""
     codes = {code for _, code in declared_codes().values()}
 
