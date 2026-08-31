@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the inert-landing LaunchAgent (ADR-0038 part 2a). Install with
+     scripts/install-inert-landing-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__
+     and writes ~/Library/LaunchAgents/com.devon.inert-landing.plist.
+
+     No secrets live here: the wrapper fetches the read-scoped change-manager bearer and the
+     orchestrator's system bearer from BWS at runtime, and the GitHub token from `gh auth token`.
+
+     HOURLY, AND NOT IN A CHANGE WINDOW. That is the setting worth arguing about, because the
+     sibling estate-landing agent runs four times a night inside one. Its pass ends in something
+     changing a running service; the defining property of THIS lane's population is that landing
+     there changes nothing already serving, so there is no window and no hour is better than
+     another. Hourly rather than less often because freshness is required: a landing puts every
+     sibling pull request behind its base, so at most one lands per repository per pass and the
+     pass rate is the drain rate. It is still strictly slower than the GitHub Actions cascade it
+     replaces, which merged the moment the required checks went green.
+
+     StartCalendarInterval with only a Minute fires every hour at :35 local. The minute is chosen
+     to sit away from the other lanes, whose fixed times cluster at :05, :15 and :50.
+
+     THE PASS IS BOUNDED BY THE ORCHESTRATOR, not by this schedule. Every term is composed there,
+     inside the transaction that acts, and the lane refuses everything until
+     ORCHESTRATOR_INERT_LANDING_ENABLED is true in production.
+
+     RunAtLoad is false. There is nothing to catch up on, and a pass at login would run at an
+     hour nobody chose.
+
+     The exit code is the report. launchd discards it, so the dead-man switch the wrapper arms is
+     what reaches anybody — and the log is what says which of the four codes it was. 0 clean,
+     1 the tool failed, 2 it could not use its inputs, 3 a pull request is held on a condition
+     somebody has to act on. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.inert-landing</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-inert-landing.sh</string>
+        <!-- The wrapper does NOT force this. A bare run reports and asks for nothing, so the one
+             invocation that can cause a landing is the scheduled one, and it says so here. -->
+        <string>--submit</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict><key>Minute</key><integer>35</integer></dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/inert-landing.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/inert-landing.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
