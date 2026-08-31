@@ -54,6 +54,23 @@ version bump.
 No change record, no change window, no pace. It shares the record-independent terms with the
 existing lane and applies neither the record terms nor the rollout-pin terms.
 
+**2a. The lane ships WITH ITS CALLER, and with the act that keeps freshness satisfiable.** Named
+because the first decomposition of this ADR omitted both, and an admission surface nothing invokes is
+the estate's own documented defect rather than a partial delivery. `estate_lander` enumerates its
+subjects from change records — its docstring says *"the record is the only place that set exists"* —
+so the inert population, which has no records, needs an enumerator that reads GitHub per repository.
+**The lander's stated objection to doing that is answered by part 1, not overridden:** it declines
+because enumerating from GitHub "would put this program in the business of deciding which of them
+belongs here", and `inert_landing.repositories` is now a human-pinned list, so the program reads a
+declaration rather than deciding. That is the same relationship it already has with the deploying
+population; only the carrier differs.
+
+**And requiring freshness obliges the lane to freshen.** Freshness serialises the lane only if
+something performs the branch update; without it, requiring freshness is a strict degradation on the
+cascade, which required none — and it reproduces the measured `brain#31`–`#35` stall in six
+repositories whose Dependabot cadence is weekly. The split follows the deploying lane's exactly:
+admission reports `branch_update_qualifies`, and the caller acts on it.
+
 **3. The landing ledger gains a fourth attribution basis, and Detector A an arm for it.** The lane
 stamps a trailer into the squash body naming the policy version that permitted the landing, exactly
 as `estate_pr_merge` already stamps `SDS-Change-Record` and `SDS-Policy-Version`; the ledger reads it
