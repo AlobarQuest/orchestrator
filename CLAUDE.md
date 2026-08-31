@@ -4197,3 +4197,31 @@ style of that module.
   cause. Same family as the ruff 0.15→0.16 wording change — but note the difference, because it is
   the useful half: there the tool's output genuinely moved, here it did not and a per-repo config
   made it look as though it had. An observed behaviour is not yet a cause.
+
+- **A CLEAN-TREE ASSERTION MUST USE `/usr/bin/git`. The command hook has twice been observed
+  disagreeing with it, and it does NOT reproduce on demand — so treat the divergence as real and
+  its cause as unestablished.** The two observations are independent: an earlier one recorded that
+  `diff` and working-tree `git status`/`git diff` can report falsely through the hook, and on
+  2026-08-31 the ADR-0038 Increment 2 session caught a stranded mutation on disk **only** after
+  switching to the absolute path, hooked `git status --porcelain` having reported the tree clean.
+  **Measured the same day, the divergence did not reproduce:** in a worktree, bare and
+  `/usr/bin/git` agreed exactly for an untracked file and for a modified tracked file, in both
+  `status --porcelain` and `diff --stat`. So *"the hook lies"* is the wrong lesson and would be the
+  same attribution error as blaming pytest 9 for a cumulative `-q`; what is established is that the
+  two CAN diverge, not that they always do.
+  **Key the rule on the direction of failure rather than on a mechanism nobody has pinned:** a
+  clean-tree claim is the one where a wrong answer is silent and success-shaped, so it is the one
+  that must not be taken from the hooked form. The same session also reported a hooked `make check`
+  running against a DIFFERENT worktree and reporting its `rootdir:` and file count — observed once,
+  with the numbers recorded, and not reproducible afterwards because that worktree had been removed.
+  Read `rootdir:` beside the collected count regardless, which catches it either way.
+
+- **`pkill -f <parent>` leaves the pytest CHILD running, and the orphan keeps `DROP SCHEMA`-ing the
+  test database.** Found 2026-08-31 by the Increment 2 session: its mutation harness was reaped,
+  its process check was keyed on the harness's own name, so it reported zero survivors while an
+  orphaned `pytest` went on recreating the schema underneath the next run — producing a 43-failed
+  result on a tree that passes 136/136 alone. That is the estate's standing "never run two pytest
+  suites against one test database" rule reached by a route nobody was watching, and it is the
+  correct-about-the-wrong-noun family again: the check named the parent and the hazard was the
+  child. Kill the process GROUP, and verify by looking for `pytest` itself rather than for the
+  thing that launched it.
