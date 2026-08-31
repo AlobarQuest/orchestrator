@@ -239,10 +239,19 @@ has run for a few weeks** — retiring them is a separate decision, not a conseq
   for any basis but `auto_merge_rule`, so **Detector A stops auditing the native lane with its
   `permitted` denominator at zero, and nothing says so.** That is the ADR-0035 hazard shape reached by
   a different route, and it is why the ordering below is not a preference.
-- **Detector B emits a caveat that becomes false.** `CAVEAT_NO_RULE_INSTALLED` reports how many open
-  updates "will not land unattended" for a repository with no installed rule — true today, false the
-  moment the lane exists. Teach it the policy rule or retire it explicitly. Leaving it is the quiet
-  twin of the Detector A gap.
+- **Detector B emits a caveat that becomes false. RETIRED, 2026-08-31, and the measured reason is
+  stronger than the one this ADR first gave.** `CAVEAT_NO_RULE_INSTALLED` reports how many open
+  updates "will not land unattended" for a repository with no installed rule. This ADR said the
+  claim becomes false *"the moment the lane exists"*. Measured during Increment 3, it is **already
+  false for its entire live population**: the only two of the eight ledger repositories with no gate
+  are `change-manager` and `brain`, and both land unattended through the ADR-0019 lane. So
+  retirement corrects a standing falsehood rather than pre-empting a future one. Its measurement —
+  green open updates — is kept as `pending_green` on the audit observation, where it is a number
+  rather than a nightly line for every repository forever. **Teaching it was rejected on a boundary
+  argument, not on effort:** what it would have to learn (population, permitted author, excluded
+  ecosystem) all lives in change-manager's policy, the ledger holds no credential for it, and
+  acquiring one would put a second reader of that rule in a second program in order to restate a
+  judgment whose owner is part 2a's caller.
 - **Leftover arms survive workflow removal, and two are live right now.** The arm lives on the pull
   request, not in the workflow file. Measured 2026-08-31: `factory-runner#28` and
   `infraops-mcp-server#71` each carry an auto-merge armed by `app/github-actions`, both `BLOCKED`;
