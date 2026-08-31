@@ -674,14 +674,25 @@ def test_a_landing_commit_with_no_trailer_at_all_still_falls_back_to_the_head() 
     assert landing.update.dependency == "setuptools"
 
 
-def test_the_update_arm_reaches_for_the_head_even_when_the_other_two_are_answered() -> None:
-    """Each of the three arms asks its OWN question, and this is the case that proves it.
+def test_the_update_arm_reaches_for_the_head_even_when_the_other_three_are_answered() -> None:
+    """Each of the four arms asks its OWN question, and this is the case that proves it.
 
     The condition guarding the fetch is a disjunction, so an arm dropped from it is invisible
     whenever some other arm happens to be unanswered -- which every other fixture here is, because
-    a Dependabot landing carries no SDS trailers. This one carries BOTH, which is the shape an
-    ADR-0025 factory-delivery landing has: a work unit landed under a change record. Only here does
-    dropping `update is None` from the disjunction change the answer.
+    a Dependabot landing carries no SDS trailers. This one carries all three, so only dropping
+    `update is None` from the disjunction changes the answer.
+
+    **THE FIXTURE ANSWERS EVERY OTHER ARM, AND THAT IS THE WHOLE OF WHAT MAKES THIS A CONTROL --
+    so it grew a trailer when ADR-0038 added a fourth arm.** Until then it carried two, which was
+    all there was to satisfy; a fourth arm its fixture left unanswered would force the fetch on
+    its own, and the mutant this test exists to kill would have stopped changing anything while
+    the test stayed green. The general rule, which cost nothing to state and would have cost a
+    control to discover: ADDING A TERM TO A DISJUNCTION DISARMS EVERY CONTROL THAT DISCRIMINATES
+    ON IT, unless that control's fixture is extended in the same change.
+
+    The shape is deliberately one no writer produces -- a work unit, a change record and an
+    inert-landing permission on one landing. What is pinned here is a property of the disjunction
+    rather than of any landing, and a realistic fixture cannot pin it.
     """
     landing_message = (
         "chore(deps-dev): update setuptools requirement (#50)\n\n"
@@ -689,6 +700,7 @@ def test_the_update_arm_reaches_for_the_head_even_when_the_other_two_are_answere
         "SDS-Package-Rev: 1\n"
         "SDS-Change-Record: 61\n"
         "SDS-Policy-Version: 3\n"
+        "SDS-Inert-Landing-Policy: 6\n"
     )
     routes = range_routes(
         landing_message, RANGE_LANDING_MESSAGE, "dependabot/uv/setuptools-gte-84.0.0"
@@ -698,8 +710,76 @@ def test_the_update_arm_reaches_for_the_head_even_when_the_other_two_are_answere
 
     assert landing.claim is not None
     assert landing.policy is not None
+    assert landing.inert_policy is not None
     assert landing.update is not None
     assert landing.update.dependency == "setuptools"
+
+
+def test_the_inert_arm_reaches_for_the_head_even_when_the_other_three_are_answered() -> None:
+    """The mirror of the test above, for the arm ADR-0038 added.
+
+    A landing commit answering claim, policy and update but NOT the inert trailer: only dropping
+    `inert_policy is None` from the disjunction leaves the head unfetched here, and the basis
+    silently absent.
+    """
+    landing_message = (
+        "chore(deps): bump sqlalchemy from 2.0.51 to 2.0.52 (#190)\n\n"
+        "SDS-Unit: 0c0002c6-9869-59bc-84c6-654e6fc57d9e\n"
+        "SDS-Package-Rev: 1\n"
+        "SDS-Change-Record: 61\n"
+        "SDS-Policy-Version: 3\n"
+        "---\n"
+        "updated-dependencies:\n"
+        "- dependency-name: sqlalchemy\n"
+        "  update-type: version-update:semver-patch\n"
+        "...\n"
+    )
+    routes = range_routes(
+        landing_message, "SDS-Inert-Landing-Policy: 6\n", "dependabot/uv/sqlalchemy-2.0.52"
+    )
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.claim is not None
+    assert landing.policy is not None
+    assert landing.update is not None
+    assert landing.inert_policy is not None
+    assert landing.inert_policy.policy_version == 6
+
+
+def test_the_inert_trailer_reaches_the_landing_the_reader_assembles() -> None:
+    """PROOF THROUGH `read_landing`, not through the parser alone.
+
+    A trailer this program parses and then does not carry onto the `Landing` is a landing recorded
+    as `unattributed` -- a class no detector reads -- and every parser test above would still
+    pass. So the assembly is asserted rather than assumed.
+    """
+    routes = range_routes(
+        "build(deps): bump actions/checkout from 4 to 5 (#28)\n\nSDS-Inert-Landing-Policy: 6\n",
+        RANGE_HEAD_MESSAGE,
+        "dependabot/github_actions/actions/checkout-5",
+    )
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.inert_policy is not None
+    assert landing.inert_policy.policy_version == 6
+
+
+def test_the_inert_trailer_is_taken_from_the_head_when_the_landing_commit_is_silent() -> None:
+    """The fall-back, which exists for the reason its two siblings' do: the squash body is a
+    REPOSITORY SETTING rather than something the merge call decides, so a repository reconfigured
+    to compose its own body drops the trailer -- and the failure is silent."""
+    routes = range_routes(
+        "chore(deps): a body this repository composed itself (#28)",
+        "build(deps): bump actions/checkout from 4 to 5\n\nSDS-Inert-Landing-Policy: 6\n",
+        "dependabot/github_actions/actions/checkout-5",
+    )
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.inert_policy is not None
+    assert landing.inert_policy.policy_version == 6
 
 
 def test_a_landing_neither_message_describes_records_no_metadata() -> None:
