@@ -4166,3 +4166,16 @@ style of that module.
   commit sits local and the lane reports clean runs — and `origin/main..HEAD` answers it from disk,
   with no fetch, so the refusal depends on this program's own unfinished act rather than on
   somebody else's landings.
+
+- **One identity, two spellings: the update bot is `dependabot[bot]` to the REST API and
+  `app/dependabot` to `gh pr view --json author`.** Measured 2026-08-31 on `orchestrator#3`:
+  `repos/{r}/pulls/{n}` answers `user.login = "dependabot[bot]"` with `user.type = "Bot"`, while
+  `gh pr view --json author` answers `author.login = "app/dependabot"` with `is_bot = true` — same
+  pull request, same instant. The cascade workflow keys on the first
+  (`github.event.pull_request.user.login == 'dependabot[bot]'`), so anything reproducing or
+  declaring that condition must use the REST spelling. **The direction of failure is the reason this
+  is worth knowing:** an author condition sits on the PERMITTING side, so a wrong spelling
+  under-permits — the lane refuses everything and goes quiet, which is the failure nobody notices,
+  rather than admitting something it should not. Same family as the estate's other
+  two-vocabularies-for-one-thing entries, and the same rule applies: grep both sides before keying
+  anything on an identity string.
