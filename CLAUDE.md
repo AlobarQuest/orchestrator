@@ -4318,3 +4318,29 @@ style of that module.
   it. And the CI-poll invariant that leans on the old container answering throughout does **not**
   hold here, so a liveness poll against `sds.alobar.net` during a swap can fail for a reason that is
   not a bad build.
+
+- **A REPOSITORY RULESET REFUSES A DIRECT PUSH AND IS INVISIBLE TO THE CLASSIC BRANCH-PROTECTION
+  API — so `enforce_admins: false` does NOT mean a direct push will land.** Measured 2026-09-01
+  removing the auto-merge cascade: `infraops-mcp-server` reports `enforce_admins: false` from
+  `branches/main/protection/enforce_admins`, and refused a direct push with
+  **`GH013: Repository rule violations found`** and *"Changes must be made through a pull request"* —
+  from an active ruleset named `Protect main` (`GET /repos/{r}/rulesets`), a mechanism the classic
+  protection endpoints do not report at all. The error code is the tell: **GH006 is classic branch
+  protection, GH013 is a ruleset.** Censused the same day: of the eight ledger repositories, that is
+  the ONLY active ruleset, and it makes that repository behave like the three carrying
+  `enforce_admins: true` despite reporting the opposite. **Any question of the form "can I push
+  directly to this repository's default branch" must read BOTH surfaces**, and this estate's recorded
+  protection tables were all built from the classic one.
+
+- **REMOVING THE AUTO-MERGE CASCADE IS A PAIRED OPERATION: five of the six repositories carry a
+  guard that asserts the workflow EXISTS, and its own message asks to be deleted in the same
+  change.** `tests/test_automerge_cannot_bypass_ci.py` (TypeScript in `infraops-mcp-server`) opens
+  with `test_the_auto_merge_workflow_exists`, whose docstring reads: *"If auto-merge is ever
+  withdrawn from this repository that is a decision worth making visibly — delete this assertion in
+  the same change, and say why."* Its purpose is that the module's remaining assertions become
+  vacuous passes once the file is gone. Measured 2026-09-01: deleting only the workflow turned three
+  default branches red within minutes, and the two protected repositories' removal pull requests
+  went `BLOCKED`. `orchestrator` is the one repository with no such guard. **The guard did exactly
+  its job** — it is the reason a half-removal was loud instead of silent — so the lesson is not
+  about the guard but about the operation: when a file's absence is asserted somewhere, deleting it
+  is one commit, not one push followed by a repair.
