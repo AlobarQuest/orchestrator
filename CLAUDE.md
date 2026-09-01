@@ -4287,3 +4287,16 @@ style of that module.
   the baseline from the fetched ref rather than from a number recorded earlier in the session. Same
   family as the estate's other stale-input errors — the instruction was followed and the input was
   old, which is why the discipline has to name the fetch and not just the read.
+
+- **A BEFORE/AFTER DIFFERENTIAL MUST BRACKET ONLY THE VARIABLE UNDER TEST — a baseline taken hours
+  earlier silently brackets the world as well.** Measured 2026-09-01 verifying the ADR-0038 deploy:
+  the pre-swap production probe was taken at 19:11 and the post-swap one at 07:26, so the interval
+  contained not just the image swap but an entire unattended landing window. Two of five subjects
+  changed, and the diff **cannot say** whether the deploy or the landings caused it. It was rescued
+  only by arithmetic after the fact — the three subjects whose world had not changed were
+  byte-identical (that part IS a controlled comparison), and the two that had changed carried
+  exactly the settled-state signature the OLD image already produced for two other landed subjects.
+  **Take the baseline immediately before the mutation**, and where a subject's own state may move
+  under you, prefer subjects that cannot. Same family as the estate's clean-clone rule — *control
+  for the environment before blaming the change* — on the TIME axis rather than the tree axis, which
+  is the one that is easy to miss because nothing about the output looks stale.
