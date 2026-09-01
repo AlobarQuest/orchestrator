@@ -72,6 +72,7 @@ from orchestrator.services.estate_landing_admission import (
     EstateReadGateway,
     HeadCheckRun,
     estate_landing_admission,
+    gateway_failure_detail,
 )
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import ActorContext
@@ -293,7 +294,7 @@ def _act(
             # finding. The error code already carried the distinction and nothing read it.
             raise DomainError(
                 ESTATE_MERGE_REFUSED_BY_REMOTE,
-                f"the landing was not attempted: {error.code}",
+                f"the landing was not attempted: {gateway_failure_detail(error)}",
                 "retry once the credential can be minted",
             ) from error
         landed = _landed_after_all(gateway, admission)
@@ -312,7 +313,7 @@ def _act(
             # that is red today can be green tomorrow. No record.
             raise DomainError(
                 ESTATE_MERGE_REFUSED_BY_REMOTE,
-                f"the remote refused to land the pull request: {error.code}",
+                f"the remote refused to land the pull request: {gateway_failure_detail(error)}",
                 "resolve what the remote objected to, then ask again",
             ) from error
         # The reconciling read ITSELF failed, so a landing cannot be ruled out. Terminal and

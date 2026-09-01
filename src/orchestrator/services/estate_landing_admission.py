@@ -341,6 +341,30 @@ class EstateGatewayError(Exception):
         self.status_code = status_code
 
 
+def gateway_failure_detail(error: EstateGatewayError) -> str:
+    """What the remote said, for a person reading a refusal -- the code AND the status.
+
+    THE STATUS WAS CAPTURED AND THEN DISCARDED, which is the defect this closes. Three raise
+    sites carry `response.status_code`, every one of them the case where the remote answered and
+    said no; and every message rendered from them named only the code, so an operator's whole
+    answer was `branch_update_status` -- a refusal that does not say what was refused. Found
+    2026-09-01 when the inert lane's branch update began failing: separating "the App may not
+    write this" from "the head moved under us" took six probes and a controlled differential, and
+    a three-digit number would have taken none.
+
+    A status of `None` renders as the bare code, deliberately. Most raise sites never reach the
+    remote at all -- a timeout, an unparseable body -- and inventing a number for them would say
+    the remote answered when it did not.
+
+    IDENTIFIERS ARE NOT MESSAGES, and this is for messages only. The two `reason_code` values
+    composed from the same errors are stored vocabulary that other readers key on; widening them
+    with a number that varies per occurrence would make one value into many.
+    """
+    if error.status_code is None:
+        return error.code
+    return f"{error.code} (HTTP {error.status_code})"
+
+
 class EstateReadGateway(Protocol):
     """The reads every term below needs. Injected, so the whole cascade runs with no network."""
 

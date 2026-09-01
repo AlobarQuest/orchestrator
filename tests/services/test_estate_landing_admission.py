@@ -58,6 +58,7 @@ from orchestrator.services.estate_landing_admission import (
     EstateGatewayError,
     ecosystem_of,
     estate_landing_admission,
+    gateway_failure_detail,
     update_type_of,
 )
 from tests.services.change_record_doubles import (
@@ -1199,3 +1200,18 @@ def test_the_repository_is_folded_so_the_report_and_the_act_ask_one_question(
     assert gateway.reads == [(REPOSITORY, PR)]
     assert answer.repository == REPOSITORY
     assert answer.satisfied, answer.refusals
+
+
+def test_a_gateway_failure_names_the_status_when_the_remote_answered() -> None:
+    """Both branches, because either alone passes under the defect the pair exists to catch.
+
+    Rendering the code alone was the defect: three raise sites carry a status and every message
+    dropped it. Rendering a status unconditionally would be the mirror defect -- most raisers
+    never reach the remote at all, and a number there would claim it answered when it did not.
+    """
+    assert gateway_failure_detail(EstateGatewayError("branch_update_status", 403)) == (
+        "branch_update_status (HTTP 403)"
+    )
+    assert gateway_failure_detail(EstateGatewayError("request_error:ConnectError")) == (
+        "request_error:ConnectError"
+    )
