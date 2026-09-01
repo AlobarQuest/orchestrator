@@ -4332,15 +4332,31 @@ style of that module.
   directly to this repository's default branch" must read BOTH surfaces**, and this estate's recorded
   protection tables were all built from the classic one.
 
-- **REMOVING THE AUTO-MERGE CASCADE IS A PAIRED OPERATION: five of the six repositories carry a
-  guard that asserts the workflow EXISTS, and its own message asks to be deleted in the same
-  change.** `tests/test_automerge_cannot_bypass_ci.py` (TypeScript in `infraops-mcp-server`) opens
-  with `test_the_auto_merge_workflow_exists`, whose docstring reads: *"If auto-merge is ever
-  withdrawn from this repository that is a decision worth making visibly — delete this assertion in
-  the same change, and say why."* Its purpose is that the module's remaining assertions become
-  vacuous passes once the file is gone. Measured 2026-09-01: deleting only the workflow turned three
-  default branches red within minutes, and the two protected repositories' removal pull requests
-  went `BLOCKED`. `orchestrator` is the one repository with no such guard. **The guard did exactly
-  its job** — it is the reason a half-removal was loud instead of silent — so the lesson is not
-  about the guard but about the operation: when a file's absence is asserted somewhere, deleting it
-  is one commit, not one push followed by a repair.
+- **REMOVING THE AUTO-MERGE CASCADE IS A PAIRED OPERATION: ALL SIX repositories carry a guard that
+  asserts the workflow EXISTS, and its own message asks to be deleted in the same change.**
+  `tests/test_automerge_cannot_bypass_ci.py` (TypeScript in `infraops-mcp-server`) opens with
+  `test_the_auto_merge_workflow_exists`, whose docstring reads: *"If auto-merge is ever withdrawn
+  from this repository that is a decision worth making visibly — delete this assertion in the same
+  change, and say why."* Its purpose is that the module's remaining assertions become vacuous passes
+  once the file is gone. Measured 2026-09-01: deleting only the workflow turned three default
+  branches red within minutes, and the two protected repositories' removal pull requests went
+  `BLOCKED`. **The guard did exactly its job** — it is the reason a half-removal was loud instead of
+  silent — so the lesson is not about the guard but about the operation: when a file's absence is
+  asserted somewhere, deleting it is one commit, not one push followed by a repair.
+  **CORRECTED HOURS LATER, and the correction is the more useful half: this bullet said
+  `orchestrator` was "the one repository with no such guard". It has THREE, and all three fired.**
+  `test_no_automatic_merge.py::test_the_native_auto_merge_exemption_is_load_bearing_and_scoped`,
+  `::test_the_exempted_command_only_ever_arms` and
+  `test_ws33_scope_guards.py::test_the_native_auto_merge_exemption_is_load_bearing_and_scoped` each
+  read `.github/workflows/dependabot-auto-merge.yml` and died `FileNotFoundError`, so `main` went
+  red on the removal commit at 11:33Z and stayed red — every subsequent commit failing identically,
+  and every pull request into the repository with it, because `Quality` is a required check.
+  **The reason the census was wrong is worth more than the number.** The other five assert the
+  workflow's PRESENCE, which greps for the filename and finds it. Orchestrator's assert an
+  EXEMPTION for it — the same dependency inverted — so a census looking for "a test that says the
+  workflow exists" does not match them, and this repository's own guard family is the one HQ
+  searched least carefully because it was the one being edited. **When you count which repositories
+  depend on a file, grep for the FILENAME, not for the shape of the assertion you expect.**
+  Fixed by deleting the exemption in both files rather than restoring the constant: the scans are
+  now unconditional, which is strictly tighter, and each file's comment says what restoring an
+  exemption would cost.
