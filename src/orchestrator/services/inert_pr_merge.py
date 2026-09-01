@@ -71,6 +71,7 @@ from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.estate_landing_admission import (
     EstateGatewayError,
     EstateReadGateway,
+    gateway_failure_detail,
 )
 from orchestrator.services.estate_pr_merge import (
     NEVER_SENT,
@@ -315,7 +316,7 @@ def _act(
             # finding.
             raise DomainError(
                 INERT_MERGE_REFUSED_BY_REMOTE,
-                f"the landing was not attempted: {error.code}",
+                f"the landing was not attempted: {gateway_failure_detail(error)}",
                 "retry once the credential can be minted",
             ) from error
         landed = _landed_after_all(gateway, admission)
@@ -334,7 +335,7 @@ def _act(
             # that is red today can be green tomorrow. No record.
             raise DomainError(
                 INERT_MERGE_REFUSED_BY_REMOTE,
-                f"the remote refused to land the pull request: {error.code}",
+                f"the remote refused to land the pull request: {gateway_failure_detail(error)}",
                 "resolve what the remote objected to, then ask again",
             ) from error
         # The reconciling read ITSELF failed, so a landing cannot be ruled out. Terminal and

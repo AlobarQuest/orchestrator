@@ -58,6 +58,7 @@ from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.estate_landing_admission import (
     EstateGatewayError,
     EstateReadGateway,
+    gateway_failure_detail,
 )
 from orchestrator.services.inert_landing_admission import inert_landing_admission
 from orchestrator.services.inert_landing_policy import InertLandingPolicySource
@@ -215,7 +216,7 @@ def _update(
     except EstateGatewayError as error:
         raise DomainError(
             INERT_BRANCH_UPDATE_REFUSED_BY_REMOTE,
-            f"the branch was not brought up to date: {error.code}",
+            f"the branch was not brought up to date: {gateway_failure_detail(error)}",
             "nothing was recorded; the next pass composes the answer again and may ask again",
         ) from error
     _record(session, command, admission.repository, admission.pr_number, head_sha)

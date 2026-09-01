@@ -241,6 +241,11 @@ def test_a_remote_refusal_records_nothing_and_bars_nothing(
         _update(migrated_session, gateway=gateway)
 
     assert caught.value.code == INERT_BRANCH_UPDATE_REFUSED_BY_REMOTE
+    # The STATUS, not only the code. It was captured at the raise site and dropped here, so an
+    # operator's whole answer was `branch_update_status` -- which does not say what was refused.
+    # Measured 2026-09-01: telling "the App may not write this" from "the head moved" took six
+    # probes without it.
+    assert "422" in caught.value.message
     with Session(migrated_engine) as reader:
         assert (
             reader.scalars(select(Event).where(Event.action == INERT_BRANCH_UPDATE_ACTION)).all()
