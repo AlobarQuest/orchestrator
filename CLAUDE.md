@@ -4360,3 +4360,35 @@ style of that module.
   Fixed by deleting the exemption in both files rather than restoring the constant: the scans are
   now unconditional, which is strictly tighter, and each file's comment says what restoring an
   exemption would cost.
+
+- **A LANE'S DECLARED FINDING CODE PINGS ITS DEAD-MAN CHECK **SUCCESS**, NOT `/fail` — so "a
+  standing finding drives a permanently-red control" is false of every lane in this estate.**
+  `sds_deadman_finish` (`scripts/sds-deadman.sh:141-153`) has three branches: `rc == 0` pings
+  success; `rc == SDS_DEADMAN_FINDING_CODE` logs *"exit N is this lane's finding code — the pass
+  ran and reported"* and pings **success**; everything else pings `/fail`. That is the whole point
+  of `--finding N`, and its own header says so — the check answers *is this lane alive*, never
+  *did it find something*. Measured 2026-09-01, not read: `sds-inert-landing` reads **up** after a
+  pass that exited 3 with four subjects held.
+  **Both the programme plan's §7 decision 10 and the 2026-09-01 HQ handoff asserted the opposite**,
+  costing a decision its actual cost. The real cost of a permanent resident is narrower and a
+  different kind of thing: the exit code is permanently the finding code, so nothing keyed on it
+  can distinguish a NEW finding from the standing one without reading the log. When weighing what
+  a standing finding costs, read the launcher's `--finding` declaration before assuming a page.
+
+- **`launchctl print`'s `runs` and `last exit code` are NOT evidence about whether a scheduled lane
+  has ever run.** Measured 2026-09-01: `landing-ledger`, `estate-landing`, `deploy-watcher` and
+  `bump-proposer` all report `runs = 0 / last exit code = (never exited)` while carrying logs of
+  63K–743K. The counter is per-load, and `launchctl list`'s status column reads `0` for a job that
+  has never fired, which is the same value as a clean exit. **The record is the log file, the
+  Healthchecks ping count, and the lane's own output.** A missing log IS honest evidence of no run
+  — pair it with the plist's mtime and the next scheduled minute before concluding anything.
+
+- **HQ KEEPING THE MAIN TREE IS RIGHT FOR READING AND WRONG FOR EDITING: a checked-out branch there
+  puts branch code under all eight schedulers.** The launchers resolve `REPO_ROOT` from
+  `BASH_SOURCE` and run the working copy, so a three-file fix made in the main tree is what every
+  lane executes until the tree goes back. Observed 2026-09-01 — the 12:35 inert-landing pass opened
+  `[activation] ~/Projects/orchestrator is on 'adr0038-remove-cascade-guards', not main — running
+  what is there`. The activation guard did its job and the exposure was minutes, but nothing warns
+  BEFORE a pass fires and a session cannot see which lane is next. **Use a worktree for any edit,
+  HQ included**; the existing rule already gives build sessions one for a different reason (the
+  Stop hook), and this is a second, independent reason that applies to the tree HQ keeps.
