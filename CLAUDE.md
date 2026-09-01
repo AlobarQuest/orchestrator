@@ -4300,3 +4300,21 @@ style of that module.
   under you, prefer subjects that cannot. Same family as the estate's clean-clone rule — *control
   for the environment before blaming the change* — on the TIME axis rather than the tree axis, which
   is the one that is easy to miss because nothing about the output looks stale.
+
+- **THE ORCHESTRATOR'S COOLIFY SWAP IS NOT ZERO-DOWNTIME, unlike `brain`'s — and the difference is
+  that its own Coolify health check is DISABLED.** Measured 2026-09-01 during the ADR-0038 deploy,
+  timestamps from one probe loop and `docker inspect`: `11:23:36Z` the old container answering
+  `/health/live` 200; `11:23:39Z` the new container started; `11:23:56Z` the proxy answering
+  **`no available server`**; `11:24:18Z` the new container serving. So the old container was gone
+  ~17 seconds after the new one started and ~22 seconds before it could serve. **This qualifies the
+  recorded rolling-update invariant** — *"Coolify serves the OLD container throughout the swap"* —
+  which was measured on `brain`, where `health_check_enabled` is TRUE and the log shape is
+  `New container started` → `Waiting for healthcheck` → `New container is healthy` → `Removing old
+  containers`. The orchestrator has `health_check_enabled: false` (deliberately, so `/health/ready`'s
+  `migration_drift` 503 cannot kill the container during a migrate-first window), so Coolify has **no
+  readiness signal to gate the removal on** and drops the old container on a timer instead. The
+  timing is measured; that mechanism is inferred from the configuration and is not proven.
+  Two consequences. A brief public outage is expected on every orchestrator deploy — do not diagnose
+  it. And the CI-poll invariant that leans on the old container answering throughout does **not**
+  hold here, so a liveness poll against `sds.alobar.net` during a swap can fail for a reason that is
+  not a bad build.
