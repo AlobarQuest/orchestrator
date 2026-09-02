@@ -4408,3 +4408,36 @@ style of that module.
   with no flag involved. **Always name `--python 3.12` when rebuilding the main tree's venv**, and
   read `.venv/bin/python --version` afterwards. (Production runs 3.14.7 in its image; the main
   tree's 3.12 is deliberate and is the floor CI pins.)
+
+- **THE DISPATCH APP'S REACH IS DELIBERATELY WIDER THAN ITS WORK, AND THAT IS A RULING, NOT AN
+  OVERSIGHT — the bound is the orchestrator's own allowlists, checked in code before every call.**
+  Measured 2026-09-02 from a mint response inside the running container (never `/app`, which reports
+  the App's *requested* permissions rather than the installation's granted ones). App `4259746`,
+  installation `145535298`: `actions:write, contents:write, metadata:read, pull_requests:write,
+  workflows:write`, `repository_selection: all` — **75 repositories, 18 archived, 57 writable**,
+  against **8** the code can address (the five in
+  `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` plus landing policy v6's two deploying and six
+  inert repositories; every App call site — `dispatch.py`, `pr_merge.py`, `estate_pr_merge.py`,
+  `github_checks.py` — is bounded by one of those sets). **20 of the 57 hold Actions secrets and 12
+  are outside the eight**, including `community-atlas`'s `VPS_SSH_KEY` and
+  `AdjustRight-Photo-Pro`'s `CF_API_TOKEN`. `workflows: write` (granted 2026-09-01 to unblock the
+  inert lane's branch update) made that exposure **unconditional**: the App can author an `on: push`
+  workflow that fires on its own push and names any secret, where `contents: write` alone only
+  reached secrets a repository's existing CI already exposed.
+  **RULED 2026-09-02 (Devon), with the full measurement in hand: leave it.** *"The SDS part of the
+  operations factory limits what it works on already."* Backlog `880ba73ecc24` is **answered, not
+  deferred** — it stays in `~/.portfolio/inbox.jsonl` only because that file is an append log with
+  no close or remove verb. **A future audit will re-derive these numbers and reach the same alarm;
+  that is a repeat, not a new fact, and is not a reason to re-raise it.**
+  **Two things WOULD re-open it.** (1) **An App call site not bounded by an allowlist** — the ruling
+  rests entirely on that property, so a new lane that mints the token and addresses a repository from
+  anything else removes the ground it stands on. (2) **ADR-0015's declaration mechanism arriving**
+  (programme plan §7 decision 9): the strongest argument against narrowing is that an installation
+  list would be a *fourth* hand-maintained answer to "which repositories are factory targets", and if
+  that answer ever becomes derivable the cost side of the trade collapses.
+  Two facts that make narrowing safe should it ever be chosen, measured the same day so nobody
+  re-establishes them: the out-of-process lanes read GitHub with Devon's PAT (`gh auth token`), not
+  this App, so the ledger and audit are unaffected; and `claude-octopus`'s `upstream-sync.yml`
+  authenticates as a **different** App — its pull requests are authored by `app/octo-upstream-sync`,
+  not `alobar-sds-dispatch`. Evidence:
+  `~/docs/software-delivery-system/2026-09-02-permission-and-interpreter-audit.md`.
