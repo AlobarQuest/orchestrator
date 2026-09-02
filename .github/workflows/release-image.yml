@@ -82,7 +82,7 @@ jobs:
       # legitimate thing to want -- a base-image CVE lands underneath an unchanged tree -- but it
       # produces DIFFERENT BYTES under the same name. That is measured rather than theoretical:
       # WS-P2.18 Inc 7 built one commit twice and got digests da035e69... and a0936e08..., because
-      # `org.opencontainers.image.created` moves and `python:3.12-slim` moves underneath it. The
+      # `org.opencontainers.image.created` moves and `python:3.14-slim` moves underneath it. The
       # runtime is pointed at a TAG, so a silent re-point can change what production serves with
       # nothing visible having happened. So an overwrite must be a decision somebody made, not a
       # side effect of re-running a workflow. This runs before the build: a refusal should cost
