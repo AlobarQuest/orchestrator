@@ -335,7 +335,9 @@ def test_SETTLED_is_read_with_INTERSECTION_and_ahead_of_every_other_classificati
         "landing_pace_exhausted",
         "landing_outside_change_window",
         # And this one its sibling calls an EXCEPTION -- current policy can never clear it. This
-        # lane never asks about an update type at all.
+        # lane never asks about an update type at all, so it is unexplained here. Note this lane
+        # DOES now have an exception of its own (`landing_ecosystem_excluded`); the point of this
+        # case is that the sibling's member is not silently inherited with it.
         "landing_update_type_unparseable",
         # A code nobody has classified, present or future.
         "landing_something_nobody_has_thought_of",
@@ -348,15 +350,81 @@ def test_a_refusal_THE_SIBLING_LANE_WOULD_EXCUSE_is_still_a_finding_here(refusal
     assert report(outcomes, {}, 6) == EXIT_FINDINGS
 
 
-def test_being_behind_its_base_is_a_FINDING_here_under_every_circumstance() -> None:
+def test_being_behind_its_base_is_a_FINDING_when_no_exception_sits_beside_it() -> None:
     """Transient, and the branch-update pass clears it on a later run -- but a condition all the
-    same, and this lane has no exception for it to sit beside."""
+    same.
+
+    RENAMED, from `..._under_every_circumstance`. That was true when this lane had no exception
+    and is false now: beside one, being behind is the lane's own permanent declining and carries
+    nothing a reader could act on. The pair that pins the difference is below."""
     client = FakeOrchestrator(
         {(REPOSITORY, 1): _held("landing_head_not_current_with_base", "landing_rollout_moved")}
     )
     outcomes = _pass([(REPOSITORY, 1)], client, True)
     assert [o.status for o in outcomes] == ["held"]
     assert report(outcomes, {}, 6) == EXIT_FINDINGS
+
+
+def test_a_refusal_CURRENT_POLICY_CAN_NEVER_CLEAR_is_an_exception_and_not_a_finding() -> None:
+    """Devon's 2026-08-13 ruling, applied to this lane's own member.
+
+    The deploy policy names the ecosystems whose changes a pull request's required checks do not
+    exercise. Such a pull request waits on a person forever and no pass of this program will ever
+    change that, so reporting it hourly makes the exit code stop discriminating -- which is the
+    whole cost the ruling exists to avoid.
+    """
+    client = FakeOrchestrator({(REPOSITORY, 1): _held("landing_ecosystem_excluded")})
+    outcomes = _pass([(REPOSITORY, 1)], client, True)
+    assert [o.status for o in outcomes] == ["exception"]
+    assert "landing_ecosystem_excluded" in outcomes[0].detail
+    assert client.landed == []
+    assert report(outcomes, {}, 6) == EXIT_OK
+
+
+def test_freshness_is_suppressed_WHEN_AND_ONLY_WHEN_an_exception_is_present() -> None:
+    """THREE ROWS, and the third was added because a mutation proved the first two insufficient.
+
+    The rule has two failure directions and needs a row for each, plus a row for it holding:
+
+    - **suppress nothing** -- row one reports `held`, so row one catches it.
+    - **suppress unconditionally** -- rows one and two BOTH give the same answer either way, a
+      branch beside an exception being quiet regardless and a failing check unexplained
+      regardless. **Only row three, freshness ALONE, changes**: unconditionally it reads
+      `exception`, which is a merely-stale branch gone quiet. Measured -- the first version of
+      this test carried rows one and two, asserted in its own docstring that they caught the
+      over-general fix, and the mutant SURVIVED. The existing behind-its-base test does not cover
+      it either: it pairs freshness with a second refusal, which stays unexplained under the
+      mutant.
+
+    Row two is `orchestrator#3` as it stands today: the exclusion AND a red build, and the red
+    build is a person's to act on.
+    """
+    beside_exception = FakeOrchestrator(
+        {(REPOSITORY, 1): _held("landing_ecosystem_excluded", "landing_head_not_current_with_base")}
+    )
+    beside_a_real_condition = FakeOrchestrator(
+        {
+            (REPOSITORY, 1): _held(
+                "landing_ecosystem_excluded",
+                "landing_head_not_current_with_base",
+                "landing_checks_not_clean",
+            )
+        }
+    )
+    alone = FakeOrchestrator({(REPOSITORY, 1): _held("landing_head_not_current_with_base")})
+
+    assert [o.status for o in _pass([(REPOSITORY, 1)], beside_exception, True)] == ["exception"]
+    assert [o.status for o in _pass([(REPOSITORY, 1)], beside_a_real_condition, True)] == ["held"]
+    assert [o.status for o in _pass([(REPOSITORY, 1)], alone, True)] == ["held"]
+
+
+def test_a_SETTLED_subject_outranks_an_exception() -> None:
+    """Ordering, asserted rather than left to the reading order. There is nothing left to land on
+    a settled subject, so its other refusals -- an exception included -- say nothing."""
+    client = FakeOrchestrator(
+        {(REPOSITORY, 1): _held("landing_already_recorded", "landing_ecosystem_excluded")}
+    )
+    assert [o.status for o in _pass([(REPOSITORY, 1)], client, True)] == ["settled"]
 
 
 def test_an_unsatisfied_answer_that_names_NO_refusal_is_a_finding() -> None:
