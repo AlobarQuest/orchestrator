@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 ARG SECURITY_STANDARDS_REVISION
 ARG REGISTRY_ARTIFACT_SHA256
@@ -19,7 +19,7 @@ RUN uv sync --frozen --no-dev \
       --artifact-sha256 ${REGISTRY_ARTIFACT_SHA256} \
       --output /app/registry-bundle.json
 
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \

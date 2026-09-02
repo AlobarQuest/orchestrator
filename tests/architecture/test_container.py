@@ -8,10 +8,22 @@ from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.main import load_auth_config
 
 
-def test_container_is_python_312_non_root_and_health_checked() -> None:
+def test_container_is_python_314_non_root_and_health_checked() -> None:
+    """The interpreter VERSION is asserted by value, and that is the point.
+
+    This literal is what an update bot's proposal collides with, so a language-version
+    replacement cannot reach production without a person editing it -- the same construct as
+    `factory-runner`'s action pins, doing the same job. Editing it is how the review is recorded.
+
+    Moved 3.12 -> 3.14 on 2026-09-02 after measuring: the whole locked dependency set installs on
+    3.14 on macOS/arm64 AND on linux/amd64 (the runtime platform), and the full suite returns
+    4752 passed / 2 skipped on 3.14 -- identical to 3.12. `requires-python` stays `>=3.12`, which
+    is the supported FLOOR rather than the version we run; pyright still checks against that
+    floor, so using a 3.13+ only feature is still an error here.
+    """
     dockerfile = Path("Dockerfile").read_text()
 
-    assert "python:3.12-slim" in dockerfile
+    assert "python:3.14-slim" in dockerfile
     assert "USER orchestrator" in dockerfile
     assert "EXPOSE 8000" in dockerfile
     assert "/health/live" in dockerfile
@@ -20,7 +32,7 @@ def test_container_is_python_312_non_root_and_health_checked() -> None:
 
 def test_runtime_image_copies_only_declared_application_artifacts() -> None:
     dockerfile = Path("Dockerfile").read_text()
-    runtime = dockerfile.split("FROM python:3.12-slim AS runtime", 1)[1]
+    runtime = dockerfile.split("FROM python:3.14-slim AS runtime", 1)[1]
 
     assert "COPY . ." not in runtime
     assert "/app/.venv" in runtime
@@ -31,7 +43,7 @@ def test_runtime_image_copies_only_declared_application_artifacts() -> None:
 
 def test_runtime_image_carries_pinned_factory_event_helpers() -> None:
     dockerfile = Path("Dockerfile").read_text()
-    runtime = dockerfile.split("FROM python:3.12-slim AS runtime", 1)[1]
+    runtime = dockerfile.split("FROM python:3.14-slim AS runtime", 1)[1]
 
     assert "SECURITY_STANDARDS_DIR=/app/security-standards" in runtime
     assert "/agents /app/security-standards/registry/agents" in runtime
