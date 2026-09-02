@@ -154,6 +154,45 @@ _UPDATE_SELF_CLEARING = frozenset(
     {"inert_branch_update_head_moved", "inert_branch_update_not_qualified"}
 )
 
+# Refusals that CURRENT POLICY can never clear. The deploy policy names the ecosystems whose
+# changes the required checks on a pull request do not exercise, and a pull request in one of them
+# waits on a person forever -- no pass of this program will ever change that. Devon's ruling,
+# 2026-08-13, made for the sibling lane: a record that cannot land under current policy is an
+# EXCEPTION, not a finding.
+#
+# THIS SET IS NOT `_DELIBERATE` UNDER ANOTHER NAME, and the module docstring's claim that this lane
+# has no deliberate refusal still stands. A deliberate refusal clears on a CLOCK and this lane has
+# no clock; an exception clears on nothing at all. Increment 2b surveyed the sibling's `_EXCEPTION`,
+# found it holding `landing_update_type_unparseable` -- which this lane never asks about -- and
+# concluded the construct was unreachable here. `landing_ecosystem_excluded` is a second member of
+# the same class and the census missed it, by searching for the shape of the answer rather than for
+# the class.
+#
+# WHAT AN EXCEPTION DOES NOT DO IS RETIRE THE QUESTION. `orchestrator#3`, the live specimen, is a
+# language-version replacement the estate has to decide about; the exclusion says the FACTORY must
+# not land it, never that nobody should. Suppressing the line without recording that decision
+# elsewhere converts a deferred decision into silence, which is the failure this category exists to
+# prevent wearing the category's own clothes.
+_EXCEPTION = frozenset({"landing_ecosystem_excluded"})
+
+# The refusal that says only THIS BRANCH IS BEHIND ITS BASE. It belongs to no set: alone it is a
+# FINDING -- transient, and a later branch-update pass clears it -- while beside an exception it is
+# not, because such a branch is behind precisely because this lane has decided, permanently, not to
+# touch it. Membership is a property of a code; this is a property of the company it keeps.
+#
+# KEYED ON THE EXCEPTION BEING PRESENT, NEVER ON THIS LANE HAVING DECLINED TO FRESHEN. Those read
+# as one rule and are two: the lane declines to freshen anything it cannot clear, INCLUDING a
+# failing check, so keying on the declining would silence a red build. The discriminator is
+# DURABILITY -- red checks can go green, an exception never clears. (Devon's third refusal ruling,
+# 2026-08-14, transcribed here rather than imported: the sibling's module cannot be imported by
+# this one, which is isolated from it on purpose.)
+#
+# NO ROLLOUT PIN ENTERS THIS. The sibling subtracts a criterion rather than a member because a
+# stale head can also produce a rollout-pin refusal; this lane does not evaluate a rollout pin at
+# all and the admission response deliberately does not carry its key, so being behind is the whole
+# of what a position can cause here. If that ever stops being true, this becomes a criterion.
+_FRESHNESS = "landing_head_not_current_with_base"
+
 # What a pull request outside the declared authors is called in the report. ONE bucket, not one
 # per author, because there is one fact and it is the same fact each time: this lane is for the
 # accounts the declaration names and every other pull request belongs to a person. Its sibling
@@ -168,7 +207,7 @@ _DEFERRAL_AUTHOR = "not-a-declared-author"
 # the system working. `would-update` likewise: it is what a dry run has to say in order to be
 # worth running.
 _NOT_A_FINDING = frozenset(
-    {"landed", "would-land", "settled", "deliberate", "updated", "would-update"}
+    {"landed", "would-land", "settled", "deliberate", "exception", "updated", "would-update"}
 )
 
 # Every status a pass can produce, in report order, so the summary's counts sum to what was
@@ -179,6 +218,7 @@ _REPORTED = (
     "would-land",
     "held",
     "deliberate",
+    "exception",
     "settled",
     "unreadable",
     "error",
@@ -321,13 +361,36 @@ def _subjects(reader: PullRequestSource, rule: InertLanding) -> Selection:
     return Selection(subjects=subjects, deferred=deferred, unreadable=unreadable)
 
 
+def _unsatisfied_status(refusals: list[str]) -> str:
+    """`held` or `exception`, for an answer that is unsatisfied and not settled.
+
+    NO REFUSALS AT ALL IS HELD, never a vacuous pass. An answer unsatisfied while naming nothing is
+    the orchestrator failing to say why, which is exactly the thing worth reporting -- and a bare
+    subset test would call it an exception.
+
+    A FRESHNESS REFUSAL IS SUPPRESSED WHEN, AND ONLY WHEN, AN EXCEPTION IS PRESENT. Conditional,
+    never unconditional: unconditionally, a branch that is merely behind would read as quiet, and
+    `{behind, checks_not_clean}` would go quiet with it. Both are the over-general version of this
+    rule, which is the shape every fix in this family has taken.
+
+    EVERY OTHER CODE STAYS A FINDING, including one this program does not enumerate, so a refusal
+    nobody has thought of fails toward being reported.
+    """
+    present = set(refusals)
+    unexplained = present - _EXCEPTION
+    if _EXCEPTION & present:
+        unexplained.discard(_FRESHNESS)
+    if unexplained or not refusals:
+        return "held"
+    return "exception"
+
+
 def _consider(client: LandingClient, repository: str, number: int, submit: bool) -> Outcome:
     """Ask about one pull request, and act when told the answer is yes.
 
-    EVERY UNSATISFIED ANSWER THAT IS NOT SETTLED IS HELD, with no suppression of any kind -- see
-    the module docstring for why this lane has no deliberate refusal to suppress. An answer that
-    is unsatisfied while naming nothing is held too: the orchestrator failing to say why is
-    exactly the thing worth reporting.
+    AN UNSATISFIED ANSWER THAT IS NOT SETTLED IS HELD OR AN EXCEPTION -- see `_unsatisfied_status`,
+    and `_EXCEPTION` for why this lane grew that one suppression while still having no deliberate
+    refusal to suppress.
     """
     try:
         answer = client.admission(repository, number)
@@ -338,7 +401,7 @@ def _consider(client: LandingClient, repository: str, number: int, submit: bool)
     if _SETTLED & set(refusals):
         return Outcome(repository, number, "settled", ", ".join(refusals))
     if not answer.get("satisfied"):
-        return Outcome(repository, number, "held", ", ".join(refusals))
+        return Outcome(repository, number, _unsatisfied_status(refusals), ", ".join(refusals))
 
     head = answer.get("head_sha")
     if not isinstance(head, str) or not head:
