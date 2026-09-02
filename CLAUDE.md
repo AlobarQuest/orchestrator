@@ -4392,3 +4392,19 @@ style of that module.
   BEFORE a pass fires and a session cannot see which lane is next. **Use a worktree for any edit,
   HQ included**; the existing rule already gives build sessions one for a different reason (the
   Stop hook), and this is a second, independent reason that applies to the tree HQ keeps.
+
+- **A BARE `uv venv --clear` IN THE MAIN TREE MOVES ALL EIGHT SCHEDULERS TO A NEW INTERPRETER, AND
+  `--clear` DOES NOT PRESERVE THE ONE THAT IS THERE.** The 2026-09-01 near-miss is recorded as
+  *"had the flag been `--python 3.14`, all eight lanes would have moved interpreter silently"* — the
+  trigger is the opposite: **omitting the flag**. Measured 2026-09-02 in a clean directory carrying
+  this repository's `pyproject.toml`: bare `uv venv` → **3.14.3**; `uv venv --python 3.12` →
+  3.12.13; **bare `uv venv --clear` over an existing 3.12 venv → 3.14.3**. Yesterday's invocation
+  was survived only because it happened to name 3.12. There is no `.python-version` file and no
+  `[tool.uv]` table, `requires-python` is `>=3.12`, and `uv python list` shows 3.14.3 installed —
+  so uv picks the newest satisfying the floor, exactly as the worktree bullet above predicts. What
+  that bullet does not say is that the same command in the **main tree** costs eight production
+  schedulers rather than one session's test run: they resolve `REPO_ROOT` from `BASH_SOURCE` and
+  run `$REPO_ROOT/.venv/bin/<name>`, so the interpreter moves under all of them at once, silently,
+  with no flag involved. **Always name `--python 3.12` when rebuilding the main tree's venv**, and
+  read `.venv/bin/python --version` afterwards. (Production runs 3.14.7 in its image; the main
+  tree's 3.12 is deliberate and is the floor CI pins.)
