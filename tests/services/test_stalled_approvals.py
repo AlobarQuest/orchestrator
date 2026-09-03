@@ -66,6 +66,7 @@ def test_an_unanswered_approval_gate_past_the_threshold_is_reported(
         migrated_session,
         failure_signature_threshold=THRESHOLD,
         stalled_approval_seconds=STALE_NOW,
+        stalled_verification_seconds=604_800,
     )
 
     stalled = [entry for entry in entries if entry.source == "stalled_approval"]
@@ -81,6 +82,7 @@ def test_a_gate_answered_within_the_threshold_is_not_reported(migrated_session: 
         migrated_session,
         failure_signature_threshold=THRESHOLD,
         stalled_approval_seconds=WEEK,
+        stalled_verification_seconds=604_800,
     )
 
     assert [entry for entry in entries if entry.source == "stalled_approval"] == []
@@ -94,6 +96,7 @@ def test_a_stalled_gate_is_not_requeue_eligible(migrated_session: Session) -> No
         migrated_session,
         failure_signature_threshold=THRESHOLD,
         stalled_approval_seconds=STALE_NOW,
+        stalled_verification_seconds=604_800,
     )
 
     stalled = [entry for entry in entries if entry.source == "stalled_approval"]
@@ -116,6 +119,7 @@ def test_reporting_a_stalled_gate_transitions_nothing(migrated_session: Session)
         migrated_session,
         failure_signature_threshold=THRESHOLD,
         stalled_approval_seconds=STALE_NOW,
+        stalled_verification_seconds=604_800,
     )
 
     migrated_session.expire_all()

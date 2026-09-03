@@ -87,6 +87,7 @@ def test_the_at_rest_breaker_is_the_prospective_one_minus_exactly_one_failure(
             migrated_session,
             failure_signature_threshold=THRESHOLD,
             stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+            stalled_verification_seconds=604_800,
         )
         if entry.source == "circuit_breaker"
     ]
@@ -101,6 +102,7 @@ def test_the_at_rest_breaker_is_the_prospective_one_minus_exactly_one_failure(
             migrated_session,
             failure_signature_threshold=THRESHOLD,
             stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+            stalled_verification_seconds=604_800,
         )
         if entry.source == "circuit_breaker"
     ]
@@ -124,6 +126,7 @@ def test_terminal_and_blocked_units_are_enumerated(migrated_session: Session) ->
         migrated_session,
         failure_signature_threshold=THRESHOLD,
         stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+        stalled_verification_seconds=604_800,
     )
 
     units = {entry.work_unit_id: entry for entry in entries if entry.source == "work_unit"}
@@ -146,6 +149,7 @@ def test_failed_and_blocked_dispatch_records_are_enumerated(migrated_session: Se
         migrated_session,
         failure_signature_threshold=THRESHOLD,
         stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+        stalled_verification_seconds=604_800,
     )
 
     dispatches = [entry for entry in entries if entry.source == "dispatch_record"]
@@ -170,6 +174,7 @@ def test_requeue_eligibility_reflects_the_attempt_budget(migrated_session: Sessi
             migrated_session,
             failure_signature_threshold=THRESHOLD,
             stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+            stalled_verification_seconds=604_800,
         )
         if entry.source == "work_unit"
     }
@@ -188,6 +193,7 @@ def test_the_view_is_read_only(migrated_session: Session) -> None:
         migrated_session,
         failure_signature_threshold=THRESHOLD,
         stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+        stalled_verification_seconds=604_800,
     )
 
     migrated_session.expire_all()
@@ -202,6 +208,7 @@ def test_a_clean_database_yields_an_empty_view(migrated_session: Session) -> Non
             migrated_session,
             failure_signature_threshold=THRESHOLD,
             stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+            stalled_verification_seconds=604_800,
         )
         == ()
     )

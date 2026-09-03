@@ -95,6 +95,7 @@ def test_requeue_refuses_an_exhausted_unit_and_it_stays_visible(
             migrated_session,
             failure_signature_threshold=3,
             stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+            stalled_verification_seconds=604_800,
         )
         if entry.source == "work_unit"
     }

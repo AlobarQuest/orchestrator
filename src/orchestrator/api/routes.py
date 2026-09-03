@@ -1629,6 +1629,7 @@ def dead_letter_route(
         session,
         failure_signature_threshold=settings.dispatch_failure_signature_threshold,
         stalled_approval_seconds=settings.dead_letter_stalled_approval_seconds,
+        stalled_verification_seconds=settings.dead_letter_stalled_verification_seconds,
     )
 
 

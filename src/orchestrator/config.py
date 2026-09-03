@@ -87,6 +87,18 @@ class Settings(BaseSettings):
     dead_letter_stalled_approval_seconds: int = Field(
         default=604_800, ge=0, le=2_592_000
     )  # 7 days; capped at 30
+    # How long a unit may sit awaiting a VERIFIER decision before the dead-letter view reports
+    # it. Its sibling above covers the states a HUMAN owes; this covers the states the verifier
+    # owes, and neither covered them before 2026-09-03, when a unit was found parked in
+    # `submitted` for fifteen days with nothing reporting it. Nothing runs the verifier on a
+    # schedule -- an operator drives it -- so time passing cannot resolve these states either.
+    # A day, because a submit is normally verified within minutes, so anything longer is already
+    # anomalous; capped at 30 days for the same reason as its sibling, since a large value
+    # silences a report as effectively as a `None` ever did. The floor is not the risk: 0 reports
+    # everything, which is maximally on and is what the tests use so they need no sleep.
+    dead_letter_stalled_verification_seconds: int = Field(
+        default=86_400, ge=0, le=2_592_000
+    )  # 1 day; capped at 30
     brain_proposal_target_urls: dict[str, str] = Field(default_factory=dict)
     brain_proposal_credentials: dict[str, str] = Field(default_factory=dict)
     brain_proposal_timeout_seconds: float = 10.0
