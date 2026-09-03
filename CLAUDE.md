@@ -4441,3 +4441,80 @@ style of that module.
   authenticates as a **different** App — its pull requests are authored by `app/octo-upstream-sync`,
   not `alobar-sds-dispatch`. Evidence:
   `~/docs/software-delivery-system/2026-09-02-permission-and-interpreter-audit.md`.
+
+- **AN ENVELOPE WHOSE VERIFIER DOES NOT EXERCISE THE CHANGE CANNOT REFUSE A BROKEN CHANGE — and
+  the runner will honestly report success while the target repository's own gate fails.** Measured
+  2026-09-03 from work unit `98d07af9`'s own `runner.pr.opened` evidence, which is where the
+  answer was and where nobody had looked for fifteen days. Its `allowed_commands` were
+  `npm install zod@4.4.3 --save-exact`, `npm ci`, and **`grep -q '"zod": "4.4.3"' package.json`** —
+  all three `passed`, exit 0. **The verifier was a grep for a version string in a manifest.** It
+  could not fail for any reason connected to whether the code compiles, so the coding agent's
+  refusal by the command hook (`npm run build` was not authorized) produced a two-file pin move
+  that the runner correctly certified and that the repository's `build` and
+  `Lint, type-check, and test` jobs both failed. This is NOT the same statement as the recorded
+  dry-run rule (*prove the mutator yields a diff, prove the verifier executes tools*): both of
+  those were satisfied here. The missing clause is that **the verifier must exercise the thing the
+  change could break.** `intent-packages` closed it for npm — `_npm_mutation` appends
+  `npm run build` when the checkout declares one and `commands_deferred_to_coding` defers it from
+  authoring's dry run — so read the generated command list, do not hand-author one.
+
+- **A UNIT PARKED IN `submitted` WAS REPORTED BY NOTHING, and the two surfaces that could have
+  each missed it for a DIFFERENT reason.** Found 2026-09-03 by asking production what was in
+  flight: `98d07af9` had been `submitted` since 2026-08-19 with a failing pull request the whole
+  time. `dead_letter._stalled_approvals` keys on `APPROVAL_STATES = ("awaiting_approval",
+  "awaiting_review")` — WS-P2.15 widened that view to the gates a HUMAN owes and a verifier-owed
+  state was never in scope. `reconciliation_detection._detect_stalled_verifications` DOES key on
+  `SUBMITTED` but joins `DeploymentObservation.post_deploy_work_unit_id`, so it sees only the
+  units a release mints and an ordinary implementation unit is excluded by the join. Neither was a
+  decision — no ADR covers it and the module docstring reasons explicitly about approval gates.
+  **CLOSED 2026-09-03 (PR #221):** `dead_letter` now also reports `stalled_verification` over
+  `VERIFICATION_STATES = ("submitted", "verifying")`, kept SEPARATE from `APPROVAL_STATES` because
+  the two differ in who owes the decision and therefore in the remedy — an approval gate needs a
+  human to decide, a stalled verification needs the verifier run, and telling an operator the
+  wrong one is worse than silence. `dead_letter_stalled_verification_seconds` is a required plain
+  int, default one day, capped at 30 days, following its sibling's no-off-switch discipline.
+  **`revision_required` remains a THIRD silent state, deliberately uncovered**: its only exit is
+  `SYSTEM → ready`, nothing drives that automatically, and it is SYSTEM-owed — a third owner with
+  a third remedy. Named here so its absence reads as a decision rather than an oversight.
+
+- **READING `.gitignore` TELLS YOU WHAT IS IGNORED, NEVER WHAT IS TRACKED — and `git ls-files` is
+  the one-command check that discriminates.** 2026-09-03, nearly shipped as a prerequisite: seeing
+  `outDir: "./dist"` in `infraops-mcp-server`'s `tsconfig.json` beside a `.gitignore` holding only
+  `node_modules/`, the conclusion drawn was that an emitting build in an envelope would leave
+  `dist/` untracked and finalize's `git add -A` would sweep it into the pull request. **`dist/` is
+  TRACKED there — 376 files** — because that repository commits its build output deliberately
+  (`start` is `node dist/index.js`). So `npm run build` is correct in that envelope, no
+  `.gitignore` change is wanted, and the only real consequence is a large diff that brushes the
+  package's own `stop_conditions` wording (*"a file outside the source tree, its manifest and its
+  lockfile"*).
+  **The general hazard behind the wrong conclusion is real and still open.** `finalize-run` runs
+  `git add -A`, so anything a command leaves in the checkout is committed; factory-runner handles
+  the class with `_AGENT_ARTIFACTS = ("output.txt", ".factory-runner/", ".sds-local-heavy/")`
+  written into `.git/info/exclude`, whose comment states the principle — *"the fix belongs HERE
+  and not in each target repository's .gitignore; that shape is a fix you have to remember N
+  times, and it had already been forgotten twice"* (it once committed a live `lease_token`).
+  **Build output is not in that list.** It does not bite where the output is tracked; it will bite
+  the first target whose build emits to an untracked path.
+
+- **`GET /work-units/{id}/evidence-pack` PROJECTS ITS `work_unit` DOWN TO FOUR FIELDS — `state`,
+  `version`, `attempt_count` and `pr_number` all read `null` there.** Measured 2026-09-03: the
+  pack's `work_unit` carries `id`, `title`, `state` and `authority_fingerprint` and nothing else,
+  so a census taken from it reports a unit with no version and no attempt history. The surface
+  that carries them is **`GET /api/v1/in-flight-units`** (`work_unit_id`, `unit_key`, `state`,
+  `version`, `attempt_count`, `work_package_revision_id`, `pr_number`, `head_sha`,
+  `verification_read_head_sha`) — and it excludes DRAFT and terminal units, so it answers only for
+  a unit that is live. The pack's `events` are likewise projected: `action`, `actor_id`,
+  `from_state`, `to_state`, `occurred_at`, and **no `payload`** — so a dispatch ordinal or a
+  `dispatch_record_id` must come from `GET /work-units/{id}/history`, which does carry payloads.
+  Same family as the `response_model`-drops-fields invariant: the surface you read is not
+  necessarily the surface that has the field.
+
+- **A MUTATION HARNESS'S ANCHOR CAN MATCH A SIBLING FUNCTION, and the honest harness reports that
+  rather than a pass.** 2026-09-03, adding a report beside an existing one in `dead_letter.py`:
+  two of eight mutants anchored on lines (`WorkUnit.updated_at <= cutoff`,
+  `requeue_eligible=_requeue_eligible(unit),`) that appear **identically** in the sibling report,
+  so the harness reported *"ANCHOR MATCHED 2 TIMES — mutation not applied"* and refused. Reported
+  6/8 until both were re-anchored on text unique to the new function, then 8/8. **A harness that
+  applied the first match would have reported 8/8 while mutating the wrong function** — and the
+  kill would have been real, just about something else. When adding code that mirrors existing
+  code, expect every generic anchor to be ambiguous, and keep the match-count assertion.
