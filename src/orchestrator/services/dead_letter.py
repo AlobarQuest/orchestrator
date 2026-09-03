@@ -46,6 +46,12 @@ DEAD_LETTER_DISPATCH_STATUSES = ("failed", "blocked")
 REQUEUE_STATES = ("failed", "blocked")
 # The gates a human must answer. Nothing here can be answered by time passing.
 APPROVAL_STATES = ("awaiting_approval", "awaiting_review")
+# The states a VERIFIER owes an answer on. Nothing here can be answered by time passing either:
+# no schedule runs the verifier, an operator drives it. Kept separate from APPROVAL_STATES rather
+# than folded into it because the two reports differ in WHO OWES THE DECISION and therefore in
+# the remedy -- an approval gate needs a human to decide, a stalled verification needs the
+# verifier run. Telling an operator the wrong one is worse than telling them nothing.
+VERIFICATION_STATES = ("submitted", "verifying")
 
 
 @dataclass(frozen=True)
@@ -67,6 +73,7 @@ def dead_letter(
     *,
     failure_signature_threshold: int,
     stalled_approval_seconds: int,
+    stalled_verification_seconds: int,
 ) -> tuple[DeadLetterEntry, ...]:
     """`stalled_approval_seconds` is a plain int on purpose. It has no "off" value.
 
@@ -79,6 +86,48 @@ def dead_letter(
         *_failed_dispatch_records(session),
         *_open_circuit_breakers(session, failure_signature_threshold),
         *_stalled_approvals(session, stalled_approval_seconds),
+        *_stalled_verifications(session, stalled_verification_seconds),
+    )
+
+
+def _stalled_verifications(
+    session: Session, stalled_verification_seconds: int
+) -> tuple[DeadLetterEntry, ...]:
+    """A unit that submitted and was never verified. Reported, never resolved.
+
+    Added 2026-09-03 after a unit was found parked in `submitted` for fifteen days with a pull
+    request whose checks had failed the whole time, reported by nothing. `_stalled_approvals`
+    above does not cover it -- WS-P2.15 widened this view to the gates a HUMAN owes, and a
+    verifier-owed state was never in that scope. Neither does the reconciliation detect-pass,
+    which keys on SUBMITTED but joins the observation's post-deploy unit, so it sees only the
+    units minted by a release and never an ordinary implementation unit.
+
+    A unit ALSO reported there is reported here too, deliberately: that surface records a
+    divergence for the machine, this one is the operator's single view of what needs attention,
+    and narrowing either to avoid the overlap is how a hole gets moved rather than closed.
+    """
+    cutoff = TransactionClock().now(session) - timedelta(seconds=stalled_verification_seconds)
+    units = session.scalars(
+        select(WorkUnit)
+        .where(WorkUnit.state.in_(VERIFICATION_STATES), WorkUnit.updated_at <= cutoff)
+        .order_by(WorkUnit.updated_at, WorkUnit.id)
+    ).all()
+    return tuple(
+        DeadLetterEntry(
+            source="stalled_verification",
+            work_unit_id=unit.id,
+            unit_key=unit.unit_key,
+            unit_state=unit.state,
+            reason_code="verification_undecided",
+            detail=f"awaiting a verifier decision since {unit.updated_at.isoformat()}",
+            attempt_count=unit.attempt_count,
+            max_attempts=unit.max_attempts,
+            # False, from the existing predicate: neither state is a REQUEUE_STATE. A stalled
+            # verification needs the verifier run, not another attempt.
+            requeue_eligible=_requeue_eligible(unit),
+            occurred_at=unit.updated_at,
+        )
+        for unit in units
     )
 
 
