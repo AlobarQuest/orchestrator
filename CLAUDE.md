@@ -1146,6 +1146,21 @@ style of that module.
   evidence pack can see it (WS-P2.31) — recording, never prevention: the orchestrator is push-only
   and cannot interrupt a running runner, and making the runner stop itself would be the runner
   attesting to its own compliance.
+  **AUTHORING RULE — CORRECTED 2026-09-04: it is `max_attempts × max_turns × calls-per-turn`,
+  and omitting the third factor killed a unit permanently.** The formula below reads as a call
+  budget and is a TURN budget: an LLM call is not a turn, and the ratio is above 1. Measured on
+  unit `b1e02957` (zod 3→4 into `infraops-mcp-server`), attempts of 40 turns recorded **66 and 65
+  llm_calls** — ~1.65 calls per turn. Its ceiling of 120, authored as `3 × 40` and read as three
+  attempts, was spent by **two**; `budget_exceeded` then refused the third, and that refusal is
+  curable by nothing. Round the factor to **2** and authorise `max_attempts × max_turns × 2`
+  (`dependency_update.py::BUDGETS` and `approval-policy.toml` are both at 240 for `3 × 40 × 2`;
+  both sites move together, and a test asserts the stamped envelope equals the grant).
+  **The old formula's own reasoning is what makes this dangerous**: it exists to guarantee the
+  RECOVERABLE gate binds first, and under-counting inverts exactly that — the unrecoverable gate
+  binds while the envelope still reads as having attempts left.
+  **`max_turns` is 60 as of factory-runner `abd72db`, measured rather than guessed** — the prior
+  40 was chosen before anyone had run the lane. Five attempts at 40 all ran out of turns.
+
   **AUTHORING RULE, and it is `max_attempts × max_turns` — NOT a multiple of an observed run.**
   `max_turns` (a literal in factory-runner's workflow — `"40"` at revision `0e047df`) is the only
   thing that actually caps one attempt, so `max_attempts × max_turns` is the structural worst case.
@@ -4518,3 +4533,59 @@ style of that module.
   applied the first match would have reported 8/8 while mutating the wrong function** — and the
   kill would have been real, just about something else. When adding code that mirrors existing
   code, expect every generic anchor to be ambiguous, and keep the match-count assertion.
+
+- **THE ENVELOPE'S VERIFIER MAY NAME THE TARGET REPOSITORY'S OWN GATE WHEN THAT GATE *IS* THE
+  ACCEPTANCE CRITERION — and until 2026-09-03 `intent-packages` forbade exactly that, so a unit
+  could not verify the thing it was being judged on.** `DENIED_VERIFIER_PATTERNS`
+  (`profiles/dependency_update.py`) rejected `make check`, `pytest`, `npm test` and friends on
+  runner-honesty grounds: a bare hosted runner may not be able to run a repository's suite, and an
+  envelope that names one it cannot run records evidence about nothing. Sound, and it collided with
+  AC-001, which for a dependency update **is** the named check. The first zod envelope's verifier
+  was therefore a `grep` for a version string in `package.json` — **a command that cannot fail for
+  any reason about the code**, only about the edit having been typed.
+  **Devon's ruling: the deny-list was right that a bare runner may not be able to run a
+  repository's gate, and the fix is to make the runner's environment MATCH rather than to forbid
+  the gate.** `npm test` / `npm run test` came off the list; `make check`, `pytest`, `tox`, `nox`
+  stay, because this repository's own suite genuinely needs Postgres and `SECURITY_STANDARDS_DIR`
+  and a bare runner genuinely cannot run it. The distinction is per-gate and measurable — *can this
+  command run on a hosted runner?* — never per-command-name.
+  Generalise: **when a guard and an acceptance criterion contradict each other, at least one of them
+  is describing the environment rather than the work.** Fix the environment.
+
+- **The reusable workflow pinned NO Node version until 2026-09-04, so `npm test` ran on whatever the
+  hosted image shipped — and a gate that passes in the target repository's own CI failed on the
+  runner.** Unit `a78881e2` finished its migration, passed the coding classifier, and died at
+  `finalize-run` with `SyntaxError: 'node:util' does not provide an export named 'styleText'` —
+  `styleText` landed in Node 22. Pinned to 22 in factory-runner `18f6355c`, measured: five of six
+  target repositories pin 22 in their own workflows, and `infraops-mcp-server` pins 22 for its
+  **named check** and 24 in a separate job. **Match the named check, because the named check is what
+  AC-001 is decided by** — that is the tie-break wherever a repository has two.
+  The general form, and it outlives Node: **the runner's toolchain is part of what an envelope
+  attests.** A verifier command is honest only if the runner can execute it the way the gate does,
+  and nothing about the envelope, the brief or the contract fixtures records a toolchain version —
+  so a mismatch is invisible until finalize, i.e. after the coding is done and the attempt is spent.
+
+- **TWO NAMED CAUSES OF TURN WASTE, both in the runner rather than in the model, measured across
+  five attempts of one unit and fixed 2026-09-03.** Worth knowing because the symptom is
+  indistinguishable from an under-specified `outcome`, which is where a reader will look first.
+  (1) **The command policy refused SILENTLY.** `allowed_commands` is exact-match — an added flag,
+  pipe, redirect or `&&` makes it a different command — and the hook said only that the command was
+  not authorized. Runs spent **~11 turns each** discovering the boundary by trial. The refusal now
+  states the matching rule and points at Read/Grep/Glob, which need no authorization; an existing
+  test bounds that stderr under 200 characters and forbids echoing the policy, so the message is
+  189 chars by construction. (2) **The prompt read as an instruction to prove idempotency.** The
+  agent knew `finalize-run` re-executes the whole list, so it re-ran the list by hand to check —
+  7 turns in one attempt, 10 in another. The prompt now says the runner does that re-execution, the
+  agent must not, and once each verifying command has passed ONCE it should stop and say what it
+  changed.
+  **Both were found by RUNNING the factory, not by reading it**, and neither is visible in any
+  test: the policy's tests assert what it authorizes, and nothing measures what a refusal costs.
+
+- **`npm install` and `npm ci` resolve differently, so verifying in the wrong ORDER locally
+  reproduces the exact failure the envelope's `npm ci` placement exists to prevent.** Hit by hand
+  on `infraops-mcp-server#93`: eslint, prettier and the tests were run BEFORE `npm ci`, and only
+  `tsc` and the tests re-run after — prettier then failed in CI having passed locally, minutes
+  earlier, in the same checkout. The estate already records that the two commands disagree; this is
+  the operator-side twin, and it is easier to walk into than the envelope one because nothing
+  refuses you. **Run `npm ci` first, then every check, in that order** — the same rule the ordered
+  `allowed_commands` list encodes, applied to a person.
