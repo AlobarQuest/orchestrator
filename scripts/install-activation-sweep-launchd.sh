@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Install (or reinstall) the daily machine-activation sweep LaunchAgent (ADR-0030).
 #
-# Deliberately a separate, operator-run step. Writing a LaunchAgent changes what Devon's machine
-# does when nobody is watching, which is not something a build session installs on its own.
+# Run by whoever is building the lane. This header used to say it was "not something a build
+# session installs on its own"; Devon corrected that on 2026-09-04 -- his role is the decision, and
+# installing what he has already decided on is mechanics. He does not install LaunchAgents.
+#
+# It still refuses to run from a linked worktree, which is the real hazard: REPO_ROOT is written
+# into the plist verbatim, so a plist installed from a torn-down worktree dies every morning with
+# nothing reporting it.
 #
 # Verify afterwards with:
 #   launchctl list | grep activation-sweep
