@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The daily pin-watcher pass: does every repository the factory can dispatch to run the
+     runner the estate chose?
+
+     A caller workflow's `uses:` SHA IS the runner revision a dispatch executes. On 2026-09-04
+     five of six callers were twenty-three commits behind the recommendation, carrying none of
+     that week's runner fixes, and nothing reported it -- `runner.caller` measures exactly this
+     and runs only when a person runs it.
+
+     StartCalendarInterval is 07:20 local: after the activation sweep's 07:10 and before the
+     landing ledger's 07:30, so a morning's reading of the log runs from the machine outwards.
+
+     The exit code is the report. launchd discards it, so read the log: 0 clean, 2 a caller is
+     not at the recommendation, 3 something could not be read or filed. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.pin-watcher</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-pin-watcher.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>20</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- `gh` and `bws` both live under `/opt/homebrew/bin`, and the launcher shells out to
+             each: `gh auth token` for the GitHub read, `bws secret get` for the OBSERVER bearer.
+             A tool installed by a user-level installer is not on a launchd job's default PATH,
+             and the failure is silent -- every pass reports unmeasurable while working perfectly
+             from an operator's shell. Prove a change here with `env -i PATH=... HOME=...`. -->
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/pin-watcher.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/pin-watcher.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

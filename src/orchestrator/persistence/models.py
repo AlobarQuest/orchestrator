@@ -84,6 +84,13 @@ OBSERVATION_SOURCE_SYSTEMS = (
     # the individual run's subject. None of the members above fits, and reusing a near-miss would
     # write false provenance into rows that have no supersession model and no delete route.
     "machine_activation",
+    # The pin watcher: does every repository the factory can dispatch to run the runner the
+    # estate chose? One member for the lane, following `drift_digest` and `recovery_floor`;
+    # `subject_reference` names the individual repository. `github` is the near miss and is
+    # wrong -- it names the SYSTEM a fact came from, where every member here names the PRODUCER,
+    # and a row saying GitHub observed its own callers would be false provenance in a table with
+    # no supersession model and no delete route.
+    "pin_watcher",
 )
 OBSERVATION_TRUST_CLASSIFICATIONS = ("orchestrator", "delivery_system", "monitor", "external")
 OBSERVATION_SUBJECT_TYPES = (
@@ -136,6 +143,11 @@ OBSERVATION_TYPES = (
     # `inventory`, which asserts nothing: this says a named checkout is at a named commit, and
     # whether that is what was merged.
     "activation",
+    # Where one repository's caller workflow is pinned, relative to the runner's recommendation.
+    # Deliberately not `inventory`, which asserts only that something was enumerated: this
+    # asserts something specific and falsifiable about which runner revision a dispatch into
+    # that repository would execute.
+    "caller_pin",
 )
 OBSERVATION_STATUSES = (
     "passed",
