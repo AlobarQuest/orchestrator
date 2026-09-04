@@ -393,6 +393,18 @@ OUTBOUND_ALLOWLIST = {
     # acquiring the other's reach. Two paths, one GET and one POST, enforced in code by
     # `is_allowed_read` / `is_allowed_write`. Its egress is not the orchestrator's.
     Path("src/activation_sweep/binding_client.py"),
+    # The pin watcher READS GitHub, and that is the point rather than an incidental dependency:
+    # a caller's pin is a fact about a remote repository's workflow file, so no local surface can
+    # answer it. Read-only by construction -- the client's single entry point refuses anything but
+    # GET -- and it addresses only factory-runner and repositories it found by asking GitHub which
+    # ones carry a caller. Its egress is not the orchestrator's.
+    Path("src/pin_watcher/github.py"),
+    # The pin watcher's write half, and the activation sweep's client deliberately copied rather
+    # than imported: lanes share DOMAIN knowledge, never plumbing, so a sibling's refactor cannot
+    # break this lane's schedule. One endpoint, the OBSERVER role's whole write surface, no read
+    # surface at all; enforced by `is_allowed_write` and pinned by test_pin_watcher_isolation.py.
+    # Its egress is not the orchestrator's.
+    Path("src/pin_watcher/orchestrator_client.py"),
 }
 
 

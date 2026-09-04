@@ -43,6 +43,9 @@ bump-proposer = "bump_proposer.cli:main"
 # ADR-0019 increment 5b. The caller that asks the orchestrator to land what the estate has
 # routed and approved. It composes nothing: every term lives inside the orchestrator.
 estate-landing = "estate_lander.cli:main"
+# The pin watcher. Five of six callers were twenty-three commits behind the recommendation on
+# 2026-09-04 and nothing said so; a caller's `uses:` SHA IS the runner revision a dispatch runs.
+pin-watcher = "pin_watcher.cli:app"
 # ADR-0026, completed by ADR-0027. The carry: an approved change-manager work proposal becomes
 # a registered orchestrator package intake. It writes nothing to change-manager, and registers
 # only after asking the orchestrator whether the record has already caused work.

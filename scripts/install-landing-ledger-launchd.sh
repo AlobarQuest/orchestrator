@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Install (or reinstall) the daily landing-ledger + audit LaunchAgent.
 #
-# Deliberately a separate, operator-run step. Writing a LaunchAgent changes what Devon's machine
-# does when nobody is watching, which is not something a build session installs on its own -- and
-# THE REPOSITORY HAS NO PRECEDENT TO COPY: the three launchers this one is modelled on
+# Run by whoever is building the lane. This header used to call it a step for Devon; he corrected
+# that on 2026-09-04 -- his role is the decision, installing what he has already decided on is
+# mechanics, and he does not install LaunchAgents. What IS worth the care is that it writes a
+# plist from REPO_ROOT verbatim, so it must never run from a linked worktree.
+#
+# WHEN THIS WAS WRITTEN THE REPOSITORY HAD NO PRECEDENT TO COPY: the three launchers this one is modelled on
 # (run-tracker-projection.sh, run-tracker-reconciliation.sh, run-follow-up-mint.sh) are described
 # throughout the repository as scheduled and are scheduled by nothing. There is no LaunchAgent and
 # no crontab entry for any of them; every pass any of them has ever made was typed by hand.
