@@ -94,6 +94,17 @@ class InertLandingRules:
     permitted_authors: frozenset[str]
     excluded_ecosystems: frozenset[str]
     require_head_current_with_base: bool
+    # ADR-0041. The permitted authors whose pull requests are NOT ecosystem-scoped -- an upstream
+    # sync is somebody else's release wholesale, not a bump, so "which package ecosystem" is the
+    # wrong question rather than one it failed to answer.
+    #
+    # **THE ONLY OPTIONAL FIELD IN THIS BLOCK, and the asymmetry is the argument.** Every other
+    # field BOUNDS what may land, so an absent one is a permission the document never granted and
+    # `_string_set` refuses it. This one EXEMPTS: absent means the empty set, means no author is
+    # exempt, means every subject must produce a readable ecosystem -- which is exactly the
+    # behaviour before this field existed. An absence here cannot open a hole, so refusing on it
+    # would strand the live document for no gain.
+    non_ecosystem_authors: frozenset[str] = frozenset()
 
     def declares(self, repository: str) -> bool:
         """Is this repository one a person pinned into the population?"""
@@ -110,6 +121,22 @@ class InertLandingRules:
         replaces keyed on and what this lane reads.
         """
         return login.lower() in {name.lower() for name in self.permitted_authors}
+
+    def ecosystem_scoped(self, login: str) -> bool:
+        """Does the ecosystem bound apply to this author's pull requests at all? ADR-0041.
+
+        **DECLARED, never inferred from the branch.** Reading it from a `dependabot/` prefix is one
+        line and needs no policy version, and it lets ANY branch name switch the bound off -- the
+        bound defeated by the thing it constrains naming itself differently, which is ADR-0009's
+        R8 and the fail-open shape this repository keeps finding.
+
+        Folded on both sides, like `permits_author`: folding at one end only is the mistake the
+        sibling's exclusion comment records.
+
+        The default direction is the safety. An author nobody declared is scoped, so a policy
+        version that forgets to name a new one gets today's refusal rather than a hole.
+        """
+        return login.lower() not in {name.lower() for name in self.non_ecosystem_authors}
 
 
 @dataclass(frozen=True)
@@ -214,11 +241,21 @@ def _rules_from_body(body: Any) -> InertLandingAnswer:
         return InertLandingAnswer(None, SOURCE_UNREADABLE)
     if not isinstance(fresh, bool):
         return InertLandingAnswer(None, SOURCE_UNREADABLE)
+    # ABSENT is the empty set and PRESENT-BUT-MALFORMED is unreadable. The two are told apart
+    # rather than collapsed: absent is a document written before ADR-0041 and is readable, while a
+    # field that is there and is not a list of strings is a document this build cannot read, which
+    # is what every other field here already says.
+    exempt: frozenset[str] | None = frozenset()
+    if "non_ecosystem_authors" in block:
+        exempt = _string_set(block.get("non_ecosystem_authors"))
+        if exempt is None:
+            return InertLandingAnswer(None, SOURCE_UNREADABLE)
     return InertLandingAnswer(
         InertLandingRules(
             version=version,
             repositories=frozenset(name.lower() for name in repositories),
             permitted_authors=frozenset(authors),
+            non_ecosystem_authors=exempt,
             excluded_ecosystems=frozenset(ecosystems),
             require_head_current_with_base=fresh,
         )

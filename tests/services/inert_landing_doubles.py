@@ -82,6 +82,7 @@ def rules(
     permitted_authors: frozenset[str] | None = None,
     excluded_ecosystems: frozenset[str] | None = None,
     require_fresh: bool = True,
+    non_ecosystem_authors: frozenset[str] = frozenset(),
 ) -> InertLandingRules:
     return InertLandingRules(
         version=version,
@@ -90,6 +91,7 @@ def rules(
             if repositories is None
             else repositories
         ),
+        non_ecosystem_authors=non_ecosystem_authors,
         permitted_authors=(
             frozenset({UPDATE_BOT}) if permitted_authors is None else permitted_authors
         ),

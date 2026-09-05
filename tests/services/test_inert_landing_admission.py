@@ -729,3 +729,146 @@ def test_the_admitted_author_is_the_rest_spelling_and_not_the_command_line_one(
         ).satisfied
         is True
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# ADR-0041 — a subject with no ecosystem is not an unreadable one.
+#
+# The upstream-sync lanes open pull requests from a branch called plainly `upstream-sync`, so
+# `ecosystem_of` returns None and this lane refused them `landing_ecosystem_unreadable`. That is
+# true of a Dependabot branch whose shape could not be parsed and FALSE of a subject that has no
+# ecosystem at all. Which subjects those are is DECLARED, never read off the branch name.
+# ---------------------------------------------------------------------------------------------
+
+SYNC_BOT = "octo-upstream-sync[bot]"
+SYNC_BRANCH = "upstream-sync"
+
+
+def test_a_declared_non_bump_author_is_not_asked_which_ecosystem_it_belongs_to(
+    migrated_session: Session,
+) -> None:
+    """THE case. An upstream sync is somebody else's release wholesale; "which package ecosystem"
+    is the wrong question rather than one the branch failed to answer."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+    )
+
+    answer = _answer(
+        migrated_session,
+        gateway=gateway,
+        policy_source=FakeInertPolicySource(
+            InertLandingAnswer(
+                rules(
+                    permitted_authors=frozenset({UPDATE_BOT, SYNC_BOT}),
+                    non_ecosystem_authors=frozenset({SYNC_BOT}),
+                )
+            )
+        ),
+    )
+
+    assert LANDING_ECOSYSTEM_UNREADABLE not in answer.refusals
+    assert answer.satisfied is True
+
+
+def test_AN_AUTHOR_NOBODY_DECLARED_IS_STILL_REFUSED_ON_AN_UNREADABLE_ECOSYSTEM(
+    migrated_session: Session,
+) -> None:
+    """THE DEFAULT-DIRECTION CONTROL, and the one the ADR requires by name.
+
+    Without it the change reads as correct while having switched the ecosystem bound off for
+    everyone: a term that returns not-applicable unconditionally passes the test above. The bound
+    exists to constrain what may land, and an author nobody exempted must still meet it.
+    """
+    gateway = FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+    )
+
+    answer = _answer(
+        migrated_session,
+        gateway=gateway,
+        policy_source=FakeInertPolicySource(
+            InertLandingAnswer(
+                rules(
+                    permitted_authors=frozenset({UPDATE_BOT, SYNC_BOT}),
+                    # declared nowhere -- the empty default, i.e. every author is scoped
+                )
+            )
+        ),
+    )
+
+    assert LANDING_ECOSYSTEM_UNREADABLE in answer.refusals
+    assert answer.satisfied is False
+
+
+def test_the_update_bot_keeps_its_ecosystem_bound_when_another_author_is_exempted(
+    migrated_session: Session,
+) -> None:
+    """Exempting one author must not exempt the population. This is the mutant "return
+    not-applicable whenever ANY author is exempted", which both tests above survive."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref="no-ecosystem-here", author_login=UPDATE_BOT)
+    )
+
+    answer = _answer(
+        migrated_session,
+        gateway=gateway,
+        policy_source=FakeInertPolicySource(
+            InertLandingAnswer(
+                rules(
+                    permitted_authors=frozenset({UPDATE_BOT, SYNC_BOT}),
+                    non_ecosystem_authors=frozenset({SYNC_BOT}),
+                )
+            )
+        ),
+    )
+
+    assert LANDING_ECOSYSTEM_UNREADABLE in answer.refusals
+
+
+def test_an_exempted_author_still_meets_every_other_term(migrated_session: Session) -> None:
+    """Not-applicable on ONE term is not a pass on the cascade. An exempted author whose
+    repository the policy never declared is still refused."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+    )
+
+    answer = _answer(
+        migrated_session,
+        gateway=gateway,
+        policy_source=FakeInertPolicySource(
+            InertLandingAnswer(
+                rules(
+                    repositories=frozenset({"alobarquest/somewhere-else"}),
+                    permitted_authors=frozenset({SYNC_BOT}),
+                    non_ecosystem_authors=frozenset({SYNC_BOT}),
+                )
+            )
+        ),
+    )
+
+    assert answer.satisfied is False
+    assert INERT_LANDING_REPOSITORY_NOT_DECLARED in answer.refusals
+
+
+def test_the_exemption_is_case_folded_on_both_sides(migrated_session: Session) -> None:
+    """Folding at one end only is the mistake the sibling's exclusion comment records, and it
+    fails PERMISSIVELY here: a member differing in case would not match, so the author would be
+    treated as scoped and refused -- quiet, and in the direction nobody notices."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT.upper())
+    )
+
+    answer = _answer(
+        migrated_session,
+        gateway=gateway,
+        policy_source=FakeInertPolicySource(
+            InertLandingAnswer(
+                rules(
+                    permitted_authors=frozenset({SYNC_BOT}),
+                    non_ecosystem_authors=frozenset({SYNC_BOT}),
+                )
+            )
+        ),
+    )
+
+    assert LANDING_ECOSYSTEM_UNREADABLE not in answer.refusals
