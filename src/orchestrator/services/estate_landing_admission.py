@@ -109,10 +109,10 @@ MERGEABLE_BLOCKED: Final = "blocked"
 MERGEABLE_UNSTABLE: Final = "unstable"
 
 # THE BRANCH CANNOT BE MERGED AT ALL -- git cannot compute the result. Nothing to do with checks,
-# which on a conflicted branch are commonly green: `alobarquest/factory-runner#71` carried two
-# `Quality` runs at `success` on 2026-09-05 while diverged two ahead and three behind, and this
-# lane reported `landing_checks_not_clean` about it. A reader following that goes and stares at CI
-# that is fine.
+# which on a conflicted branch are commonly green: one of this estate's own repositories carried
+# a pull request on 2026-09-05 with TWO `Quality` runs at `success`, diverged two ahead and three
+# behind its base, and this lane reported `landing_checks_not_clean` about it. A reader following
+# that report goes and stares at CI that is fine.
 #
 # Its own refusal because its remedy is its own, and is nobody's here: a conflict is answered by
 # rebasing the branch, which for a Dependabot pull request means Dependabot's own next cycle. It is
@@ -932,8 +932,8 @@ def checks_term(
 
     Everything else is a statement about the BRANCH rather than about a verdict, and none is made
     right by a fresher base. **Until 2026-09-05 they all raised the failing-check refusal**, so a
-    conflicted branch was reported as having unclean checks while its checks were green --
-    `alobarquest/factory-runner#71`, two `Quality` runs at `success`, diverged from its base. A
+    conflicted branch was reported as having unclean checks while its checks were green -- two
+    `Quality` runs at `success` on a head diverged from its base, measured in this estate. A
     conflict now says so, and a value this lane does not recognise says THAT rather than borrowing
     a cause from a check that may never have run. Both still refuse, and both still keep a
     conflicted branch away from an update that would fail at the remote anyway; only the name a
