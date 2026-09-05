@@ -4636,7 +4636,8 @@ style of that module.
   `bws --color no` GUARD, AND THE SECOND FACT EXPLAINS WHY THE FIRST WENT UNNOTICED.** Measured
   2026-09-05: of twelve `scripts/run-*.sh`, nine were guarded and scheduled and three —
   `run-tracker-projection.sh`, `run-tracker-reconciliation.sh`, `run-follow-up-mint.sh` — were
-  neither. This file has NAMED those three files as carrying the defect since 2026-08-02 and the
+  neither. **TWO OF THOSE THREE WERE DELETED HOURS LATER by ADR-0040**, so the guard survives only
+  on the follow-up minter; the finding is kept because it is about the correlation, not the files. This file has NAMED those three files as carrying the defect since 2026-08-02 and the
   one-flag fix was never applied to them, because nothing runs them and a lane nobody runs cannot
   report that it is broken.
   The differential, same secret and one flag apart: bare output began `1b 5b 33 38` (an ANSI
@@ -4653,3 +4654,21 @@ style of that module.
   elements**, so a portfolio-wide count taken that way over-reports. `scripts/exit_probe.py` was a
   false positive in exactly that way. Count shell and Python separately, or match on `--color`
   alone.
+
+- **A DELETION CAN BE BOUNDED BY AN ATTESTATION, AND THE BOUND IS NOT CAUTION — IT IS THE RECORD.**
+  Retiring the tracker lanes (ADR-0040) began as a 24-file deletion: the adapter, its tests, three
+  routes, two services. That is wrong, and what says so is `docs/operations/wave-exit-manifest.toml`.
+  **Wave 2's exit bar was MET, and its clause 3 attests exactly those artifacts** — a
+  `routes_served` check naming all three tracker routes, and a `command` check whose probe executes
+  `tests/tracker_projection_adapter` to prove the adapter imports nothing from the orchestrator.
+  `.github/workflows/attest-wave-exit.yml` re-measures it on demand and states the consequence in
+  its own header: *"a route a Wave-2 clause depends on going missing reds this job."*
+  So the deletable set is the LANES — the launchers — and not the code they invoke. Deleting the
+  code would either red that guard or force a met bar to be rewritten, and **rewriting a bar that
+  was met is the back-dating mistake ADR-0014 names**: a decision made once, on evidence true then,
+  does not become false because the estate later stopped using what it attested.
+  **Generalise: before deleting anything, grep the exit manifests and the evidence directory, not
+  just the source tree.** An artifact can have no operator and still be load-bearing, and the thing
+  bearing on it is a claim about the past that nothing in `src/` mentions.
+  The residual is named in ADR-0040 rather than implied: the adapter is now reachable only by its
+  own tests and by that probe. If Wave 2's manifest is ever retired, this becomes deletable with it.
