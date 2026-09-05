@@ -4589,3 +4589,45 @@ style of that module.
   the operator-side twin, and it is easier to walk into than the envelope one because nothing
   refuses you. **Run `npm ci` first, then every check, in that order** — the same rule the ordered
   `allowed_commands` list encodes, applied to a person.
+
+- **A NARROWING THAT SEPARATES ONE VALUE'S CAUSES LEAVES EVERY OTHER VALUE COLLAPSED, AND A TEST
+  CAN PIN THAT RESIDUAL AS THOUGH IT WERE THE DESIGN.** `checks_term`
+  (`services/estate_landing_admission.py`) took `mergeable_state: blocked` apart into a failing
+  check, an abandoned one and one still running — the module's own comment records that it "used to
+  be raised for every `mergeable_state` that was not `clean`, which collapsed 'a check said no' into
+  'a check said nothing yet'". **The fix stopped there**: every OTHER unpermitted value — `dirty`,
+  `draft`, `behind`, `has_hooks`, and anything GitHub invents — still fell through to the
+  failing-check refusal. Measured live 2026-09-05: `alobarquest/factory-runner#71` carried **two
+  `Quality` runs at `success`** while diverged two ahead and three behind, and the lane reported
+  `landing_checks_not_clean` about it. A reader following that report goes and stares at green CI.
+  **The residual was PINNED**: `test_only_a_blocked_pull_request_is_inquired_into` parametrized over
+  `["dirty", "draft", "unstable", "has_hooks", "behind"]` and asserted the failing-check refusal for
+  every one — so the wrong behaviour had a passing test and read as deliberate. That is why it
+  survived the narrowing that was written to remove exactly this shape.
+  Closed by naming the live cause (`landing_pull_request_conflicted`) AND the residual
+  (`landing_mergeability_unrecognised`) — the second is the general half, because the defect was
+  not that `dirty` lacked a name but that an unrecognised word was given somebody else's. `unstable`
+  now gets the SAME second read as `blocked` rather than a cruder answer of its own, since both mean
+  a run has not said yes and the runs are what tell the causes apart.
+  **Behaviour did not move and could not**: `qualifies_for_branch_update` subtracts a named few and
+  disqualifies everything else, so a renamed refusal cannot become permission — which is also why
+  this was safe to change without re-deciding anything.
+  **Generalise: when you narrow one branch of a fallback, ask what still reaches the fallback**, and
+  read the tests over it — a parametrized list of the states you did NOT handle is a pin on the
+  defect, not coverage of it.
+
+- **`brain`'s deploy verification fails on ONE OF FOUR APPS, a DIFFERENT one each time, and the
+  straggler does not report within the full 600-second deadline.** Measured 2026-09-05 across the
+  last eight push-triggered `ci.yml` runs: **two failed (25%)**, both at *"Verify every deployed
+  brain is serving the new revision"*. Run `33843605720` — `infra`, `open`, `code` reported inside
+  ~40 seconds and **`app` never did**; run `33871480326` — `open`, `infra`, `app` reported and
+  **`code` never did**. So it is not one slow application, and it is not the deadline being
+  marginally short: three swap in under a minute and the fourth is still absent ten minutes later.
+  It resolves afterwards — `deploy_watcher` independently records `production_reached=yes
+  attests=revision_confirmed` for both — so the change is fine and the workflow's verdict is not.
+  Two consequences worth knowing before touching it. The per-app check is CORRECT and must stay:
+  the four brains genuinely swap at different times, and a poll that checked one and generalised
+  would pass while three served the previous image. And the failing run leaves its change record at
+  `approved` rather than `resolved` (item 78 on 2026-09-04), so the records accumulate slowly.
+  **Raising the deadline would be a guess** — nothing here says the straggler is slow rather than
+  stuck, and that distinction is what a remedy would have to rest on.

@@ -39,8 +39,10 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_CHECKS_NOT_CLEAN,
     LANDING_CHECKS_VERDICT_UNREADABLE,
     LANDING_HEAD_NOT_CURRENT_WITH_BASE,
+    LANDING_MERGEABILITY_UNRECOGNISED,
     LANDING_OUTSIDE_CHANGE_WINDOW,
     LANDING_PACE_EXHAUSTED,
+    LANDING_PULL_REQUEST_CONFLICTED,
     LANDING_ROLLOUT_MOVED,
     LANDING_UPDATE_TYPE_UNPARSEABLE,
     EstateGatewayError,
@@ -167,7 +169,18 @@ def test_every_deliberate_refusal_together_with_freshness_still_qualifies() -> N
 
 @pytest.mark.parametrize(
     "real",
-    [LANDING_CHECKS_NOT_CLEAN, LANDING_UPDATE_TYPE_UNPARSEABLE, "landing_record_absent"],
+    [
+        LANDING_CHECKS_NOT_CLEAN,
+        LANDING_UPDATE_TYPE_UNPARSEABLE,
+        "landing_record_absent",
+        # A CONFLICT IS THE SHARPEST MEMBER, because for it the update does not merely buy nothing
+        # -- the call fails at the remote. It reached this list on 2026-09-05 when it stopped being
+        # reported as an unclean check, and it disqualified under both names: the subtraction below
+        # names a few and refuses everything else, so a renamed refusal cannot become permission.
+        LANDING_PULL_REQUEST_CONFLICTED,
+        # And the state nobody has named yet, which is the whole point of having a name for it.
+        LANDING_MERGEABILITY_UNRECOGNISED,
+    ],
 )
 def test_freshness_beside_a_real_condition_does_NOT_qualify(real: str) -> None:
     """THE MUTANT THIS KILLS is "any refusal set containing freshness qualifies". Each of these

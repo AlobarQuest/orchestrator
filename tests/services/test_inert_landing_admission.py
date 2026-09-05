@@ -39,7 +39,9 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_FRESHNESS_UNREADABLE,
     LANDING_HEAD_NOT_CURRENT_WITH_BASE,
     LANDING_MERGEABILITY_UNKNOWN,
+    LANDING_MERGEABILITY_UNRECOGNISED,
     LANDING_NOT_ENABLED,
+    LANDING_PULL_REQUEST_CONFLICTED,
     LANDING_PULL_REQUEST_NOT_OPEN,
     LANDING_PULL_REQUEST_UNREADABLE,
     EstateGatewayError,
@@ -354,7 +356,11 @@ def test_an_unreadable_pull_request_refuses_and_asks_nothing_further(
         ({"landed": True}, LANDING_PULL_REQUEST_NOT_OPEN),
         ({"base_ref": "release/2.0"}, LANDING_BASE_NOT_DEFAULT_BRANCH),
         ({"mergeable_state": "unknown"}, LANDING_MERGEABILITY_UNKNOWN),
-        ({"mergeable_state": "dirty"}, LANDING_CHECKS_NOT_CLEAN),
+        # THE SIBLING PIN OF THE SAME DEFECT, and this test's own name is the indictment: a
+        # conflicted branch was refusing by SOMEBODY ELSE'S name, in a parametrization asserting
+        # that each fact refuses by its own. Corrected 2026-09-05 with the lane it mirrors.
+        ({"mergeable_state": "dirty"}, LANDING_PULL_REQUEST_CONFLICTED),
+        ({"mergeable_state": "draft"}, LANDING_MERGEABILITY_UNRECOGNISED),
     ],
 )
 def test_the_remote_facts_each_refuse_by_their_own_name(
