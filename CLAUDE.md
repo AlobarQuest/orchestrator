@@ -4631,3 +4631,25 @@ style of that module.
   `approved` rather than `resolved` (item 78 on 2026-09-04), so the records accumulate slowly.
   **Raising the deadline would be a guess** — nothing here says the straggler is slow rather than
   stuck, and that distinction is what a remedy would have to rest on.
+
+- **THE THREE LAUNCHERS THAT NEVER GOT A DEAD-MAN SWITCH WERE EXACTLY THE THREE THAT NEVER GOT THE
+  `bws --color no` GUARD, AND THE SECOND FACT EXPLAINS WHY THE FIRST WENT UNNOTICED.** Measured
+  2026-09-05: of twelve `scripts/run-*.sh`, nine were guarded and scheduled and three —
+  `run-tracker-projection.sh`, `run-tracker-reconciliation.sh`, `run-follow-up-mint.sh` — were
+  neither. This file has NAMED those three files as carrying the defect since 2026-08-02 and the
+  one-flag fix was never applied to them, because nothing runs them and a lane nobody runs cannot
+  report that it is broken.
+  The differential, same secret and one flag apart: bare output began `1b 5b 33 38` (an ANSI
+  escape) and `json.load` died at byte 0; guarded output began `7b 0a`. Under the fix the projection
+  lane reaches a NAMED prerequisite instead — `set TODOIST_PROJECT_ID` — which is the honest state
+  and is still not a working lane. **The guard did not make it work; it made it say what it needs.**
+  **DO NOT read the trigger as having changed.** A first pass here saw the bare form emit escapes
+  with no forcing variable apparently set and nearly recorded that `bws` now colours pipes
+  unconditionally — which would have contradicted a measured invariant. `FORCE_COLOR=3` was set by
+  the agent session itself. The documented cause stands: the trigger is the environment, not the
+  version. It fires in every agent session on this machine, which is how it was found and why an
+  operator running these by hand may never have seen it.
+  **A `grep` for `color no` MISSES a Python call that passes `["--color", "no"]` as list
+  elements**, so a portfolio-wide count taken that way over-reports. `scripts/exit_probe.py` was a
+  false positive in exactly that way. Count shell and Python separately, or match on `--color`
+  alone.

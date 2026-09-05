@@ -26,8 +26,21 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 
 # `bws secret get <uuid>` returns JSON; extract only the "value" field, never echoing it.
+#
+# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
+# CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
+# which breaks the parse below. This launcher carried the bare form until 2026-09-05 and was the
+# last of twelve here to do so; the nine that had been given a dead-man switch had all been fixed
+# and these three had not. Measured the same day, same secret, one flag apart: bare output began
+# `1b 5b 33 38` (an ANSI escape) and `json.load` died at byte 0, while the guarded form began
+# `7b 0a` -- `{`. `--output json` is explicit for the same reason: it is not the default.
+#
+# The trigger is the environment rather than the bws version, so this fires wherever FORCE_COLOR
+# is set -- which is every agent session on this machine, and is how it was found. It costs
+# nothing where the behaviour never fires.
 _bws_value() {
-  bws secret get "$1" | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
+  env -u FORCE_COLOR -u CLICOLOR_FORCE bws secret get "$1" --output json --color no \
+    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
 }
 
 ORCHESTRATOR_API_TOKEN="$(_bws_value "$SYSTEM_BEARER_UUID")"
