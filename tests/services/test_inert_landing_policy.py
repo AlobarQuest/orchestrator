@@ -289,3 +289,66 @@ def test_a_malformed_base_url_reads_as_unreadable_rather_than_raising(base_url: 
 
     assert answer.rules is None
     assert answer.reason == SOURCE_UNREADABLE
+
+
+# ---------------------------------------------------------------------------------------------
+# ADR-0041 — `non_ecosystem_authors`, the block's ONE optional field.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_the_live_document_still_parses_without_the_adr0041_field() -> None:
+    """THE ORDERING CONTROL, and the reason this field is optional at all.
+
+    Every other field in this block BOUNDS what may land, so an absent one is refused. Requiring
+    this one too would have made the document change-manager serves TODAY unreadable the moment
+    this build shipped -- stopping the lane estate-wide until a policy version caught up. The
+    parse must therefore survive its absence, and the absence must mean the safe thing.
+    """
+    block = dict(served_body()["inert_landing"])
+    assert "non_ecosystem_authors" not in block, "the fixture must still be the pre-ADR shape"
+
+    answer = _rules_from_body(served_body(inert_landing=block))
+
+    assert answer.rules is not None
+    assert answer.rules.non_ecosystem_authors == frozenset()
+
+
+def test_an_absent_exemption_list_exempts_NOBODY() -> None:
+    """The polarity, asserted rather than implied. This field EXEMPTS where the others BOUND, so
+    absent means the empty set means every author is ecosystem-scoped -- exactly the behaviour
+    before the field existed. An absence here cannot open a hole, which is the whole argument for
+    it not refusing."""
+    block = dict(served_body()["inert_landing"])
+    block.pop("non_ecosystem_authors", None)
+
+    rules_read = _rules_from_body(served_body(inert_landing=block)).rules
+
+    assert rules_read is not None
+    assert rules_read.ecosystem_scoped(UPDATE_BOT) is True
+    assert rules_read.ecosystem_scoped("anyone-at-all[bot]") is True
+
+
+def test_a_declared_exemption_parses_and_is_case_folded() -> None:
+    block = dict(served_body()["inert_landing"])
+    block["non_ecosystem_authors"] = ["Octo-Upstream-Sync[bot]"]
+
+    rules_read = _rules_from_body(served_body(inert_landing=block)).rules
+
+    assert rules_read is not None
+    assert rules_read.ecosystem_scoped("octo-upstream-sync[bot]") is False
+    assert rules_read.ecosystem_scoped(UPDATE_BOT) is True
+
+
+@pytest.mark.parametrize("value", ["not-a-list", 7, [""], [None], {"a": 1}])
+def test_a_PRESENT_but_malformed_exemption_list_refuses(value: object) -> None:
+    """Absent and malformed are told apart rather than collapsed. Absent is a document written
+    before this field existed and is readable; a field that is THERE and is not a list of
+    non-empty strings is a document this build cannot read -- which is what every other field in
+    this block already says, and reading it as empty would be guessing at a shape nobody served."""
+    block = dict(served_body()["inert_landing"])
+    block["non_ecosystem_authors"] = value
+
+    answer = _rules_from_body(served_body(inert_landing=block))
+
+    assert answer.rules is None
+    assert answer.reason == SOURCE_UNREADABLE

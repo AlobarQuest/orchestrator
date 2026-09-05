@@ -341,7 +341,20 @@ def _remote_terms(
 
     author = _author_term(pull, rules)
     fresh = freshness_term(repository, pull, gateway, required=rules.require_head_current_with_base)
-    ecosystem = ecosystem_exclusion_term(pull, rules.excluded_ecosystems)
+    # ADR-0041. The ecosystem bound applies to a BUMP; an upstream sync is somebody else's release
+    # wholesale and has no ecosystem to read. Before this, such a subject was refused
+    # `landing_ecosystem_unreadable` -- which is true of a Dependabot branch whose shape could not
+    # be parsed and false of a subject that has no ecosystem at all. "Not applicable" is a distinct
+    # answer from "not met", and this repository has now met that distinction four times.
+    #
+    # The shared term is NOT changed: the deploying lane and every scoped author here keep the
+    # reading they had. What changes is whether this lane asks the question of a subject the
+    # question is not about, and WHICH subjects those are is declared in the policy rather than
+    # read off a branch name -- see `InertLandingRules.ecosystem_scoped`.
+    if rules.ecosystem_scoped(pull.author_login):
+        ecosystem = ecosystem_exclusion_term(pull, rules.excluded_ecosystems)
+    else:
+        ecosystem = Term(True, ())
     refusals.extend(author.refusals)
     refusals.extend(fresh.refusals)
     refusals.extend(ecosystem.refusals)
