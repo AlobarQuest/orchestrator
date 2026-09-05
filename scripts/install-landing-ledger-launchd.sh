@@ -6,10 +6,12 @@
 # mechanics, and he does not install LaunchAgents. What IS worth the care is that it writes a
 # plist from REPO_ROOT verbatim, so it must never run from a linked worktree.
 #
-# WHEN THIS WAS WRITTEN THE REPOSITORY HAD NO PRECEDENT TO COPY: the three launchers this one is modelled on
-# (run-tracker-projection.sh, run-tracker-reconciliation.sh, run-follow-up-mint.sh) are described
-# throughout the repository as scheduled and are scheduled by nothing. There is no LaunchAgent and
-# no crontab entry for any of them; every pass any of them has ever made was typed by hand.
+# WHEN THIS WAS WRITTEN THE REPOSITORY HAD NO PRECEDENT TO COPY: the three launchers this one was
+# modelled on were described throughout the repository as scheduled and were scheduled by nothing;
+# every pass any of them ever made was typed by hand. That is now resolved in both directions --
+# nine lanes have a LaunchAgent, and on 2026-09-05 ADR-0040 deleted two of those three rather than
+# scheduling them. The survivor is run-follow-up-mint.sh, still operator-invoked and still the open
+# question that ADR names.
 #
 # Verify afterwards with:
 #   launchctl list | grep landing-ledger

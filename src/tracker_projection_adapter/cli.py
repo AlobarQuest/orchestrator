@@ -34,9 +34,11 @@ def _cli() -> None:
 
     Defining a callback keeps the single ``project`` command named at the CLI — Typer
     otherwise collapses a lone command into the top level, which would make the
-    ``tracker-projection-adapter project ...`` invocation used by
-    ``scripts/run-tracker-projection.sh`` fail. It also mirrors the reconciliation-runner
-    convention and leaves room for a second command (inbound, Increment 2).
+    ``tracker-projection-adapter project ...`` invocation fail. That invocation had a launcher
+    until ADR-0040 deleted it, so this program now has no operator; the reasoning is kept because
+    it is why the exit-code shape is what it is, and because a wave-exit probe still executes this
+    package's tests. It also mirrors the reconciliation-runner convention and leaves room for a
+    second command (inbound, Increment 2).
     """
 
 

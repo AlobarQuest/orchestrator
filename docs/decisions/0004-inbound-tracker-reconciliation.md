@@ -11,6 +11,13 @@ program exit criterion #9 ("no tracker is treated as canonical")
 auto-transitions, never inside an ingest transaction)
 **Design:** `docs/superpowers/specs/2026-07-27-wsp27-inc2-inbound-reconciliation-design.md`
 
+
+> **OPERATION RETIRED 2026-09-05 by ADR-0040.** The lane this decided is no longer a program
+> anybody can run: its launcher is deleted. The reasoning below is unchanged and still explains why
+> the code is shaped as it is, and the code remains -- Wave 2's exit bar attests it. Read ADR-0040
+> for the measurement (one pass on 2026-07-28, then 39 idle days) and for what stopped a fuller
+> deletion.
+
 ## Context
 
 ADR-0003 shipped the outbound half: the orchestrator projects canonical work-unit state onto
