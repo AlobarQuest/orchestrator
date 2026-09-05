@@ -37,10 +37,12 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_FRESHNESS_UNREADABLE,
     LANDING_HEAD_NOT_CURRENT_WITH_BASE,
     LANDING_MERGEABILITY_UNKNOWN,
+    LANDING_MERGEABILITY_UNRECOGNISED,
     LANDING_NOT_ENABLED,
     LANDING_OUTSIDE_CHANGE_WINDOW,
     LANDING_PACE_EXHAUSTED,
     LANDING_POLICY_VERSION_SUPERSEDED,
+    LANDING_PULL_REQUEST_CONFLICTED,
     LANDING_PULL_REQUEST_NOT_OPEN,
     LANDING_PULL_REQUEST_UNREADABLE,
     LANDING_RECORD_ABSENT,
@@ -505,20 +507,79 @@ def test_a_clean_pull_request_is_never_asked_about_its_runs(migrated_session: Se
     assert gateway.run_reads == []
 
 
-@pytest.mark.parametrize("state", ["dirty", "draft", "unstable", "has_hooks", "behind"])
-def test_only_a_blocked_pull_request_is_inquired_into(
+def test_a_conflicted_branch_says_so_rather_than_blaming_a_check(
+    migrated_session: Session,
+) -> None:
+    """THE case this replaced, and it was live: `alobarquest/factory-runner#71` carried two
+    `Quality` runs at `success` on 2026-09-05 while diverged from its base, and the lane reported
+    that its checks were not clean. A reader following that report goes and stares at green CI.
+
+    The predecessor of this test asserted exactly that behaviour, so the defect was pinned rather
+    than merely present -- which is why it survived the narrowing that took `blocked` apart.
+    """
+    gateway = FakeEstateGateway(pull=pull_request(mergeable_state="dirty"))
+
+    refusals = _ask(migrated_session, gateway=gateway).refusals
+
+    assert LANDING_PULL_REQUEST_CONFLICTED in refusals
+    assert LANDING_CHECKS_NOT_CLEAN not in refusals
+    assert gateway.run_reads == [], "a conflict is a fact about the branch; the runs say nothing"
+
+
+@pytest.mark.parametrize("state", ["draft", "has_hooks", "behind", "a-word-github-invents-later"])
+def test_a_state_this_lane_cannot_name_says_that_rather_than_naming_a_check(
     migrated_session: Session, state: str
 ) -> None:
-    """Every other unpermitted value is a statement about the BRANCH rather than about a verdict,
-    and none is made right by a fresher base -- a conflicted branch least of all, where the update
-    would fail at the remote. Each keeps the original refusal, and none spends the extra read."""
+    """The general half of the fix. The defect was not that `dirty` lacked a name -- it was that an
+    unrecognised word was given somebody else's, so every future state inherited the same wrong
+    cause. The unnamed case is parametrized deliberately: it is the one that keeps this honest."""
     gateway = FakeEstateGateway(pull=pull_request(mergeable_state=state))
 
     refusals = _ask(migrated_session, gateway=gateway).refusals
 
-    assert LANDING_CHECKS_NOT_CLEAN in refusals
-    assert LANDING_CHECKS_AWAITING_VERDICT not in refusals
+    assert LANDING_MERGEABILITY_UNRECOGNISED in refusals
+    assert LANDING_CHECKS_NOT_CLEAN not in refusals
     assert gateway.run_reads == []
+
+
+def test_an_unrecognised_state_still_refuses(migrated_session: Session) -> None:
+    """The control that stops the rename becoming a permission: the NAME moved, the answer did
+    not. Without this, a state renamed out of the failing-check refusal could quietly land."""
+    gateway = FakeEstateGateway(pull=pull_request(mergeable_state="a-word-github-invents-later"))
+
+    assert not _ask(migrated_session, gateway=gateway).satisfied
+
+
+def test_a_conflicted_branch_still_refuses(migrated_session: Session) -> None:
+    """Same control, for the state that occurs. A conflict must never become landable by being
+    named more precisely."""
+    gateway = FakeEstateGateway(pull=pull_request(mergeable_state="dirty"))
+
+    assert not _ask(migrated_session, gateway=gateway).satisfied
+
+
+@pytest.mark.parametrize(
+    ("conclusion", "expected"),
+    [
+        ("failure", LANDING_CHECKS_NOT_CLEAN),
+        ("cancelled", LANDING_CHECKS_AWAITING_VERDICT),
+    ],
+)
+def test_a_non_required_check_gets_the_SAME_second_read_as_a_required_one(
+    migrated_session: Session, conclusion: str, expected: str
+) -> None:
+    """`unstable` means a non-required run has not said yes, which is the same question `blocked`
+    asks and wants the same answer. Giving it a cruder answer of its own would rebuild, one state
+    over, the collapse this module already paid to take apart -- so it is inquired into, and the
+    two causes separate exactly as they do for `blocked`."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(mergeable_state="unstable"), runs=(run(conclusion=conclusion),)
+    )
+
+    refusals = _ask(migrated_session, gateway=gateway).refusals
+
+    assert expected in refusals
+    assert gateway.run_reads != [], "the second read is what separates the causes"
 
 
 def test_a_mergeability_the_remote_has_not_computed_is_not_asked_about_its_runs(

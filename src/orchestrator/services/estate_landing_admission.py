@@ -101,6 +101,26 @@ MERGEABLE_CLEAN: Final = "clean"
 # all. One word, four causes; see `checks_term` for the second read that separates them.
 MERGEABLE_BLOCKED: Final = "blocked"
 
+# The platform's word for "a NON-required check is not passing". Same second read as `blocked`
+# below, deliberately: both mean some run at this head has not said yes, and which of the three
+# causes holds is a question about the RUNS rather than about which composite word arrived. Giving
+# it a cruder answer of its own would rebuild, one state over, the collapse this module already
+# paid to take apart.
+MERGEABLE_UNSTABLE: Final = "unstable"
+
+# THE BRANCH CANNOT BE MERGED AT ALL -- git cannot compute the result. Nothing to do with checks,
+# which on a conflicted branch are commonly green: `alobarquest/factory-runner#71` carried two
+# `Quality` runs at `success` on 2026-09-05 while diverged two ahead and three behind, and this
+# lane reported `landing_checks_not_clean` about it. A reader following that goes and stares at CI
+# that is fine.
+#
+# Its own refusal because its remedy is its own, and is nobody's here: a conflict is answered by
+# rebasing the branch, which for a Dependabot pull request means Dependabot's own next cycle. It is
+# emphatically NOT answered by bringing the head up to date -- that call fails at the remote -- and
+# `qualifies_for_branch_update` withholds the update by construction, since it subtracts a named
+# few and disqualifies everything else.
+MERGEABLE_DIRTY: Final = "dirty"
+
 # This deployment has not been told it may land anything. Default false, unconfigured refusing.
 LANDING_NOT_ENABLED: Final = "landing_not_enabled"
 
@@ -169,6 +189,20 @@ LANDING_PULL_REQUEST_UNREADABLE: Final = "landing_pull_request_unreadable"
 LANDING_PULL_REQUEST_NOT_OPEN: Final = "landing_pull_request_not_open"
 LANDING_BASE_NOT_DEFAULT_BRANCH: Final = "landing_base_not_default_branch"
 LANDING_AUTHOR_NOT_THE_UPDATE_BOT: Final = "landing_author_not_the_update_bot"
+# The head conflicts with its base. See `MERGEABLE_DIRTY` for why this is not a statement about
+# any check, and for the live case that showed it being reported as one.
+LANDING_PULL_REQUEST_CONFLICTED: Final = "landing_pull_request_conflicted"
+
+# THE PLATFORM SAID SOMETHING THIS LANE CANNOT NAME. `draft`, `behind`, `has_hooks`, and whatever
+# GitHub invents next all reach here. Refusing is right; asserting a CAUSE is not, and until
+# 2026-09-05 every one of them was reported as `landing_checks_not_clean` -- an assertion about a
+# check that may never have run.
+#
+# This is the general half of that fix rather than a second patch for one state: the defect was
+# not that `dirty` lacked a name, it was that an unrecognised word was given somebody else's. A
+# state named later gets a name; until then it gets an honest absence of one, and it refuses
+# either way.
+LANDING_MERGEABILITY_UNRECOGNISED: Final = "landing_mergeability_unrecognised"
 # A required check REPORTED SOMETHING THIS LANE MAY NOT LAND ON. Kept for exactly that, and
 # narrowed: it used to be raised for every `mergeable_state` that was not `clean`, which collapsed
 # "a check said no" into "a check said nothing yet" and named the first as the cause of the second.
@@ -891,12 +925,19 @@ def checks_term(
     every run at their head abandoned. No amount of care with the composite recovers the
     difference, so the runs at the head are read.
 
-    ## Only `blocked` is inquired into
+    ## `blocked` AND `unstable` are inquired into; the rest are named, not guessed at
 
-    Every other unpermitted value is a statement about the branch rather than about a verdict --
-    a conflict, a draft, a check that failed without being required -- and none is made right by
-    a fresher base. They keep the original refusal untouched, and a conflicted branch is thereby
-    never offered to an update that would fail at the remote anyway.
+    Both of those mean some run at this head has not said yes -- required or not -- so both get the
+    second read, and which of the three causes holds is a question about the RUNS either way.
+
+    Everything else is a statement about the BRANCH rather than about a verdict, and none is made
+    right by a fresher base. **Until 2026-09-05 they all raised the failing-check refusal**, so a
+    conflicted branch was reported as having unclean checks while its checks were green --
+    `alobarquest/factory-runner#71`, two `Quality` runs at `success`, diverged from its base. A
+    conflict now says so, and a value this lane does not recognise says THAT rather than borrowing
+    a cause from a check that may never have run. Both still refuse, and both still keep a
+    conflicted branch away from an update that would fail at the remote anyway; only the name a
+    reader is sent to investigate has changed.
 
     ## The order of the three questions is the safety
 
@@ -913,8 +954,10 @@ def checks_term(
     """
     if pull.mergeable_state == MERGEABLE_CLEAN:
         return Term(True, ())
-    if pull.mergeable_state != MERGEABLE_BLOCKED:
-        return Term(False, (LANDING_CHECKS_NOT_CLEAN,))
+    if pull.mergeable_state == MERGEABLE_DIRTY:
+        return Term(False, (LANDING_PULL_REQUEST_CONFLICTED,))
+    if pull.mergeable_state not in (MERGEABLE_BLOCKED, MERGEABLE_UNSTABLE):
+        return Term(False, (LANDING_MERGEABILITY_UNRECOGNISED,))
     try:
         runs = gateway.head_check_runs(repository=repository, head_sha=pull.head_sha)
     except EstateGatewayError:
