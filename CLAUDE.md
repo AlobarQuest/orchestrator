@@ -1153,7 +1153,11 @@ style of that module.
   llm_calls** — ~1.65 calls per turn. Its ceiling of 120, authored as `3 × 40` and read as three
   attempts, was spent by **two**; `budget_exceeded` then refused the third, and that refusal is
   curable by nothing. Round the factor to **2** and authorise `max_attempts × max_turns × 2`
-  (`dependency_update.py::BUDGETS` and `approval-policy.toml` are both at 240 for `3 × 40 × 2`;
+  (**CORRECTED 2026-09-06: both sites are at 360 for `3 × 60 × 2`, intent-packages `#87`.** They
+  read 240 for `3 × 40 × 2` from 2026-09-03 until then — and the contradiction was sitting in THIS
+  BULLET, four lines below, where it already said `max_turns` is 60. Nothing compared the two,
+  including a reader of this paragraph. A `>=`-relation check against the runner literal at
+  `RECOMMENDED_CALLER_PIN` now holds them together; see the entry at the end of this file;
   both sites move together, and a test asserts the stamped envelope equals the grant).
   **The old formula's own reasoning is what makes this dangerous**: it exists to guarantee the
   RECOVERABLE gate binds first, and under-counting inverts exactly that — the unrecoverable gate
@@ -4672,3 +4676,86 @@ style of that module.
   bearing on it is a claim about the past that nothing in `src/` mentions.
   The residual is named in ADR-0040 rather than implied: the adapter is now reachable only by its
   own tests and by that probe. If Wave 2's manifest is ever retired, this becomes deletable with it.
+
+- **A CONFLICTED PULL REQUEST RUNS NO `pull_request` WORKFLOW, so a required check on it can never
+  REPORT — the pull request is permanently pending, and the branch protection that was supposed to
+  make a landing safe is what makes it impossible.** Measured 2026-09-06 on `claude-octopus#8` with
+  a positive control, because a zero is not evidence of absence on its own. Subject: head reset at
+  10:05Z that morning (the sync branch is rebuilt daily), well after `ci.yml` landed on 2026-09-05,
+  and **zero** workflow runs at that head. Control: `#10`, non-conflicted, same repository, same
+  workflows — **three** `pull_request` runs on its head. And the branch's own history is the third
+  reading: `pull_request` runs on `upstream-sync` up to **2026-07-18** and none since, through
+  seven weeks of daily resets. Three independent `on: pull_request` workflows silent on a fresh
+  head is the event not firing, not one workflow misconfigured; GitHub has no merge ref to build.
+  **`ci.yml`'s own header warns about this blockage twice and names neither route to it.** It
+  rejects upstream's suite (a check that FAILS for reasons nobody here owns) and
+  `harden-selftest.yml` (PATH-FILTERED, so it never reports outside its paths) — then adopts a gate
+  that is `on: pull_request` and `push: [main]`, which never reports on a conflicted pull request
+  either. Same permanent pending, third route.
+  **The consequence for the upstream-sync lane: resolving the conflict is a strict prerequisite to
+  landing anything on that fork, and not for the reason it looks like.** The landing lane's
+  `landing_pull_request_conflicted` refusal is the visible one; underneath it, the gate that would
+  authorize the landing physically cannot run, so clearing the refusal and clearing the gate are
+  the same act. Generalise: **before requiring a status check, ask which events can produce it on
+  the pull requests it will govern** — a required context is only as available as its trigger.
+
+- **ASK THE TARGET REPOSITORY WHETHER THE WORK IS ALREADY DONE BEFORE RE-RUNNING A SUBJECT.**
+  2026-09-06: a session was one step from authoring revision 6 of `infraops-mcp-server-npm-zod`,
+  with a spec, a handoff and four retired attempts behind it — and the bump had landed. **An
+  interactive session, working under Devon's identity, did the migration by hand in `#93`
+  (`aaee61e`, 2026-09-04, +79/−95), the day after the fourth factory attempt failed**, and
+  Dependabot's own `#71` for the same bump is closed. Read the attribution carefully, because it
+  is the sharper half: this was not a human reclaiming a task from the machine — it was **an agent
+  bypassing the factory for the one subject the factory existed to prove it could do**. The
+  commit's own message is a session's (*"Verified: tsc clean, eslint clean, prettier clean, 524
+  tests in 59 files passing, and all four re-run after `npm ci`"*), and this file already records
+  `#93` as hit by hand. The package declares
+  `from_version: 3.25.76 → to_version: 4.4.3`; `main` is at **4.5.4**, so revision 6 would have
+  been a DOWNGRADE whose `from_version` matched nothing in the tree. One `git show
+  origin/main:package.json` settled it, and nothing in the spec, the handoff, the change records or
+  the carrier's own `[WAITING]` lines pointed at it. This is the estate's *ask production what it
+  is running* rule with the noun changed: for a landing question ask production, for a **subject**
+  question ask the target repository's `main`. A change record cannot know its work was done by
+  another route.
+  **The four records stay `[WAITING]` forever regardless** — retirement keys on unit COMPLETION,
+  every zod unit is terminal-not-completed, and a `work`-source record's status is human-only under
+  ADR-0028. So a subject satisfied elsewhere leaves permanent residue in the carrier's report with
+  no machine path to clear it.
+  **What the four attempts cost is worth keeping, because each found a real defect and every one
+  was fixed:** rev 2 died because its verifier was a `grep` for a version string (closed — the npm
+  profile now generates `npm ci` / `npm run build`); rev 3 of `budget_exceeded` at 120 (closed —
+  240, then 360); rev 4 because the verifier was forbidden `npm test` (closed — off the deny-list);
+  rev 5 at `finalize-run` on `styleText`, a Node-22 symbol (closed — factory-runner pinned Node 22
+  in `18f6355c`, the day after). **The lane was one fix from its first real migration when the
+  subject was taken off the table by hand.** Read that as unproven, not disproven: nothing here
+  shows the factory could not have done it, and nothing shows it could.
+
+- **A CONSTANT WHOSE COMMENT NAMES ANOTHER REPOSITORY'S LITERAL WILL DRIFT, AND THE COMMENT IS NOT
+  WHAT STOPS IT.** `intent-packages`' `max_llm_calls` is `max_attempts × max_turns × CALLS_PER_TURN`
+  and was 240 for `3 × 40 × 2`. factory-runner raised `max_turns` 40 → 60 in `abd72db` and `#73`
+  advanced `RECOMMENDED_CALLER_PIN` onto that revision, so **every caller ran a 60-turn cap against
+  a ceiling sized for 40 for three days**. The coupling was not implied — the runner's comment
+  beside its own new literal says *"RAISING THIS IS COUPLED TO budgets.max_llm_calls … At 60 that is
+  3 x 60 x 2 = 360, and intent-packages moves with it. Raising one alone reproduces the failure that
+  killed a unit permanently."* It said so at the moment of the change and nothing compared the two
+  values. Identical in shape to the 120-versus-4 divergence `approval-policy.toml`'s own block
+  already records: **a comment that names a coupling is not a check.**
+  **CLOSED 2026-09-06 (intent-packages `#87`).** Both sites moved to 360, and
+  `scripts/check_routing_policy_compatibility.py` now vets a **second surface of the file it was
+  already fetching** — `max_turns` sits on the same `claude-code-base-action` step as the `model`
+  literal, so the check cost one more extraction and no new job. Live differential at the real pin:
+  360 → rc=0 *"covers the floor of 360 (margin 0)"*, 240 → rc=1 naming the shortfall. Mutation 11/11.
+  Three things about it that generalise. **(1) The relation is `>=`, not equality, and the asymmetry
+  is the design** — this repo's standing rule that `<=` passes against the defect it exists to catch
+  is about a value that must MATCH; here the property is that the recoverable gate binds before the
+  unrecoverable one, over-provisioning costs nothing, and equality would red on a safe margin.
+  **(2) Both arms are evaluated and reported every run**: a model divergence must not hide a budget
+  shortfall, or the second defect is only discoverable after the first is fixed. **(3) Adding the arm
+  DISARMED both existing controls, silently** — their fixtures carried a `model:` and no
+  `max_turns:`, so once the second arm existed they returned 1 whatever the model said, and
+  `test_the_comparison_fires_on_a_divergence` went on passing while discriminating on nothing. That
+  is this file's own add-a-term-to-a-conjunction rule, met inside the change that triggered it.
+  **The job's name (`Routing policy compatibility`) is now narrower than what it checks, and is left
+  wrong deliberately** — it is a required status check, so renaming it must move the protected
+  context in the same operation or every pull request is blocked by a context nothing reports. Same
+  trade the orchestrator's `Runner consumer compatibility` job already carries.
