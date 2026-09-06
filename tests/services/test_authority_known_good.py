@@ -455,3 +455,22 @@ def test_the_pattern_refuses_an_envelope_declaring_more_than_the_profile_stamps(
     }
 
     assert refusals(envelope) == (AUTHORITY_ENVELOPE_NOVEL,)
+
+
+def test_uv_bump_carries_the_profile_budgets_and_not_the_specimen_s() -> None:
+    """The provenance claim in `uv_bump`'s docstring, pinned rather than asserted in prose.
+
+    FOUND BY MUTATION, 2026-09-06, and the reason it is a separate test is the interesting part.
+    Deleting `uv_bump`'s budget line SURVIVED the whole module: with the pattern now at the
+    profile's 360, the specimen's frozen 4 satisfies `4 <= 360` too, so the recognition test
+    passes either way. The fix stopped that test being FALSE and did not restore its power to
+    discriminate on where the budgets came from -- and that provenance is the entire reason the
+    original defect was invisible.
+
+    Assert the difference explicitly, so it cannot quietly return.
+    """
+    assert uv_bump()["budgets"] == PROFILE_BUDGETS
+    assert CONTRACT_ENVELOPE["budgets"] != PROFILE_BUDGETS, (
+        "the specimen and the profile agreeing would make this test vacuous -- if a future change "
+        "aligns them, this assertion is the thing to reconsider, not to delete"
+    )
