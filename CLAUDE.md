@@ -1153,7 +1153,9 @@ style of that module.
   llm_calls** — ~1.65 calls per turn. Its ceiling of 120, authored as `3 × 40` and read as three
   attempts, was spent by **two**; `budget_exceeded` then refused the third, and that refusal is
   curable by nothing. Round the factor to **2** and authorise `max_attempts × max_turns × 2`
-  (**CORRECTED 2026-09-06: both sites are at 360 for `3 × 60 × 2`, intent-packages `#87`.** They
+  (**CORRECTED 2026-09-06: both sites are at 360 for `3 × 60 × 2`, intent-packages `#87` — and
+  "both sites" is itself wrong, there are FIVE; see the five-copies entry at the end of this file.**
+  They
   read 240 for `3 × 40 × 2` from 2026-09-03 until then — and the contradiction was sitting in THIS
   BULLET, four lines below, where it already said `max_turns` is 60. Nothing compared the two,
   including a reader of this paragraph. A `>=`-relation check against the runner literal at
@@ -4759,3 +4761,84 @@ style of that module.
   wrong deliberately** — it is a required status check, so renaming it must move the protected
   context in the same operation or every pull request is blocked by a context nothing reports. Same
   trade the orchestrator's `Runner consumer compatibility` job already carries.
+
+- **THE DEPENDENCY-UPDATE BUDGET NUMBER HAS FIVE COPIES, AND THE ONE NOBODY WAS WATCHING HAS MADE
+  ADR-0011's KNOWN-GOOD MECHANISM INERT SINCE 2026-08-19.** Measured 2026-09-06, after a morning
+  spent closing what looked like the whole problem and was three fifths of it.
+
+  | # | site | value |
+  |---|---|---|
+  | 1 | `intent-packages` `profiles/dependency_update.py::BUDGETS` | 360 — what is STAMPED |
+  | 2 | `intent-packages` `approval-policy.toml` ceiling | 360 — what may be DECLARED |
+  | 3 | each `packages/*/package.yaml` `authority.budgets` | 240 on the zod package (legacy, ≤ ceiling, valid) |
+  | 4 | **`orchestrator` `factory-policy.toml` known-good pattern** | **4** — what may be RECOGNISED |
+  | 5 | `tests/fixtures/runner_authority_envelope.json` | 4 (cross-repo contract specimen) |
+
+  Sites 1 and 2 are held together by a test, and site 1 is now held to factory-runner's `max_turns`
+  by `check_routing_policy_compatibility.py`. **Nothing watches site 4.** `_within` is
+  `value <= ceiling` (`factory_policy.py:627`), so `360 <= 4` is False and **no dependency-update
+  envelope has been recognised as known-good since the profile budget left 4 on 2026-08-19.** It
+  fails CLOSED — every envelope draws `authority_envelope_novel` and the human gate fires — so
+  nothing unsafe happened; the mechanism simply has not existed.
+
+  **ITS CONTROL IS GREEN AND FALSE, and the way it is false is the transferable part.**
+  `test_the_shipped_pattern_recognises_the_envelope_the_profile_emits_today` says in its own
+  docstring that it takes `CAPABILITIES` and `BUDGETS` from the profile *"verbatim"*. It does not:
+  `uv_bump()` deep-copies the contract FIXTURE and overwrites only `constraints`, so the budgets it
+  tests are the fixture's `4` — which matches the pattern's `4` exactly. Measured both paths:
+  `within(4, 4)` True, `within(360, 4)` False. **A docstring asserting a provenance the code does
+  not have is worse than no docstring**, because it is what a reader checks instead of the code.
+
+  **FIXING SITE 4 IS A STANDING-AUTHORITY DECISION, NOT A DEFECT FIX — do not treat it as tidying.**
+  Raising that ceiling ACTIVATES a mechanism whose entire effect is to WITHHOLD
+  `authority_envelope_novel`, i.e. to suppress a human authority gate. This file already records the
+  known-good mechanism as *"inert and therefore safe"* precisely because it recognises nothing.
+  Fixing the test alone is honest and turns `main` red until the policy question is answered, which
+  is the same decision wearing different clothes. **Open as of 2026-09-06.**
+
+  Generalise past budgets: **when you find N copies of a value, the count is a lower bound until you
+  have grepped every repository that consumes it** — the estate already learned this for BWS UUIDs
+  and capability names, and learned it again here inside the change written to close it.
+
+- **A BLANKET "PRESERVE OUR OWN FILES" RULE FREEZES THE OTHER SIDE'S FILES TOO, and the freeze is
+  invisible until their tests start asserting things about them.** `claude-octopus`'
+  `upstream-sync.yml` did `git checkout origin/main -- .github/workflows/ .github/scripts/` to
+  protect the fork's own CI. It also froze three files the fork has **never edited** — `test.yml`,
+  `claude-octopus.yml`, `post_reddit_update.py` — at their June versions. Upstream then added a
+  `package-integrity:` job to its `test.yml` **and a test asserting that job exists**, so upstream's
+  NEW test ran against the fork's OLD workflow and failed on a tree where **each parent passes
+  alone**: fork main 5/5, pure upstream 9/9, the merge 1 failed.
+  **The fix is to DERIVE the rule, never to list it**: preserve a `.github/` file when upstream has
+  none at that path. Self-maintaining both ways — a new fork-owned file is protected without anyone
+  remembering, and a file upstream later adopts stops being frozen, which is the same answer the
+  fork's `flock` hardening got when upstream wrote `_publish_session_state`. Verified to select
+  exactly the six fork-owned files and track upstream for the other twenty.
+  Taking upstream's `test.yml` also switched on five jobs the fork had never run — Portability Lint,
+  Package Artifact, Classify Changes, Symlinked Path and a two-platform unit matrix. **A frozen CI
+  file is not a frozen CI: it is a CI missing everything added since.**
+
+- **"UPSTREAM SUPERSEDED IT" IS A PER-HUNK FINDING, NOT A PATTERN YOU MAY EXTEND TO THE SET.**
+  Four of `claude-octopus#8`'s five conflicts were upstream having adopted the fork's own concern —
+  three `flock` patches against upstream's `_publish_session_state` / `_update_session_state`
+  (`mktemp` + `mv`, an atomic rename, strictly stronger than `flock`), and one schema change. HQ
+  resolved all five that way and stated the generalisation as fact. **The fifth was fork-owned and
+  still needed**: `tests/unit/test-github-work-queue-hook.sh`'s `4ddcc276` builds a fixture repo
+  with an `nyldn` remote, because `github-work-queue-watch.sh:66` refuses to act unless the
+  checkout's remote is upstream's — so on a fork it bails and both assertions fail. That commit's
+  own message said so in June: *"a permanent red Unit Tests job in the fork."* Upstream's fix
+  (`cd "$PROJECT_ROOT"`) is correct FOR UPSTREAM and wrong for a fork — **upstream-shaped rather
+  than wrong**, which is the category that survives a supersession sweep.
+  **AND THE LOCAL RUN COULD NOT TELL THEM APART.** Upstream's version and the restored graft BOTH
+  pass 5/5 in a fork checkout on this machine. CI is the only environment that has ever shown the
+  failure, so CI was the control: red on that file, green after a push changing that file and
+  nothing else. **When you cannot reproduce locally, stop trying and say so** — a local green that
+  does not discriminate is not weak evidence, it is none.
+
+- **A FAILING JOB MAY SAY IN ITS OWN LOG THAT IT IS NOT A FAILURE — read it before treating a red
+  as a finding.** `claude-octopus`' `Integration Tests` is a GATE job, not a test run:
+  `Integration Tests did not run: blocked by Unit Tests (failure), not an integration failure.` The
+  whole chain came from one macOS shard hitting its 45-minute timeout → `cancelled` → the `Unit
+  Tests` matrix aggregate reporting `failure` → the gate exiting 1. **No assertion failed
+  anywhere**, and three reds on the checks list had exactly one cause. Same family as
+  `mergeable_state: blocked` covering four causes: a status is a summary, and a summary is not a
+  diagnosis.
