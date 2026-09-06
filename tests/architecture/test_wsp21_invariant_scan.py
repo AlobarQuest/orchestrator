@@ -405,6 +405,21 @@ OUTBOUND_ALLOWLIST = {
     # surface at all; enforced by `is_allowed_write` and pinned by test_pin_watcher_isolation.py.
     # Its egress is not the orchestrator's.
     Path("src/pin_watcher/orchestrator_client.py"),
+    # ADR-0042. The tool installer is a SEPARATE program (ADR-0002's shape), out of process and
+    # on a clock, and the only lane whose subject is a compiled binary on the operator machine
+    # rather than a repository or a record. THREE files, one route each, and every split is a
+    # credential boundary rather than a tidiness one. `github.py` READS the fork's revision with a
+    # credential that must never write, and refuses any method but GET. `policy_client.py` reads
+    # the DEPLOYED change window with the SYSTEM bearer -- forced by the endpoint, which answers
+    # 403 to the observer role and 200 to system, measured 2026-09-06 -- and may reach that one
+    # route and nothing else, which is what keeps the bearer that can drive a work unit's
+    # lifecycle inside the half that can only read a policy. `orchestrator_client.py` WRITES with
+    # the OBSERVER bearer to one endpoint, that role's whole write surface. All three are enforced
+    # in code by `is_allowed_read` / `is_allowed_write` / a GET-only entry point, and pinned by
+    # test_tool_installer_isolation.py. Its egress is not the orchestrator's.
+    Path("src/tool_installer/github.py"),
+    Path("src/tool_installer/policy_client.py"),
+    Path("src/tool_installer/orchestrator_client.py"),
 }
 
 

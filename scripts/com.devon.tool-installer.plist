@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The nightly tool-installer pass: is the tool this machine runs the one the fork's branch
+     holds?
+
+     `AlobarQuest/rtk`'s upstream sync runs end to end and stops one step short of the machine.
+     Landing does not install, so the binary that filters every command here is whatever was last
+     installed by hand. This pass closes that step, and files what it found either way.
+
+     StartCalendarInterval is 03:15 local, INSIDE the operator machine's 02:00-06:00 change
+     window. That placement is not decoration: the pass reads the window from the deployed policy
+     and refuses outside it, so a schedule outside those hours would produce a job that runs every
+     night and can never act. The machine is on America/New_York, which is the window's own zone
+     (measured 2026-09-06); launchd schedules in MACHINE-local time, so a machine moved to another
+     zone would drift out of the window, and the pass would then refuse, which is the right
+     direction to fail in.
+
+     The exit code is the report. launchd discards it, so read the log: 0 clean or nothing
+     permitted to act, 2 an input could not be read or a row could not be filed, 3 the install
+     failed or the artifact failed its probe and was rolled back. Note this lane matches the
+     ACTING group's vocabulary; 2 and 3 mean the opposite in the ledger's group. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.tool-installer</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-tool-installer.sh</string>
+        <string>--install</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- `gh`, `bws` and `rustup` all live under `/opt/homebrew/bin`, and the launcher shells
+             out to the first two while the pass resolves the third. A tool installed by a
+             user-level installer is not on a launchd job's default PATH, and the failure is
+             silent: every pass reports unmeasurable while working perfectly from an operator's
+             shell. The program does NOT depend on this: it looks rustup up by candidate path when
+             PATH does not answer, which was measured under `env -i PATH=/usr/bin:/bin` because
+             the entry below is a convenience and not a guarantee. Prove a change here the same
+             way. -->
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/tool-installer.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/tool-installer.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

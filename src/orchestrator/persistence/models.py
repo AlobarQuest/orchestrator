@@ -91,6 +91,15 @@ OBSERVATION_SOURCE_SYSTEMS = (
     # and a row saying GitHub observed its own callers would be false provenance in a table with
     # no supersession model and no delete route.
     "pin_watcher",
+    # The tool installer: which revision of a named tool the operator machine is running, and
+    # whether that is the revision the fork's branch holds. One member for the lane, following
+    # `drift_digest`, `recovery_floor` and `machine_activation`; `subject_reference` names the
+    # individual tool's repository. `machine_activation` is the near miss and is wrong -- it
+    # names the lane that asserts what a WORKING COPY will execute at its next start, where this
+    # asserts what a compiled BINARY on that machine IS. Two claims about two artifacts, and
+    # reusing one would be false provenance in a table with no supersession model and no delete
+    # route.
+    "tool_installer",
 )
 OBSERVATION_TRUST_CLASSIFICATIONS = ("orchestrator", "delivery_system", "monitor", "external")
 OBSERVATION_SUBJECT_TYPES = (
@@ -148,6 +157,12 @@ OBSERVATION_TYPES = (
     # asserts something specific and falsifiable about which runner revision a dispatch into
     # that repository would execute.
     "caller_pin",
+    # Which revision of a named tool is installed on the operator machine, and whether that is
+    # the revision its fork's branch holds. Deliberately neither `activation`, which is the
+    # working-copy sweep's and asserts what a checkout will run, nor `inventory`, which asserts
+    # only that something was enumerated: this asserts something specific and falsifiable about
+    # a binary that filters every command on that machine.
+    "tool_revision",
 )
 OBSERVATION_STATUSES = (
     "passed",
