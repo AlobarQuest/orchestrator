@@ -1153,7 +1153,11 @@ style of that module.
   llm_calls** — ~1.65 calls per turn. Its ceiling of 120, authored as `3 × 40` and read as three
   attempts, was spent by **two**; `budget_exceeded` then refused the third, and that refusal is
   curable by nothing. Round the factor to **2** and authorise `max_attempts × max_turns × 2`
-  (`dependency_update.py::BUDGETS` and `approval-policy.toml` are both at 240 for `3 × 40 × 2`;
+  (**CORRECTED 2026-09-06: both sites are at 360 for `3 × 60 × 2`, intent-packages `#87`.** They
+  read 240 for `3 × 40 × 2` from 2026-09-03 until then — and the contradiction was sitting in THIS
+  BULLET, four lines below, where it already said `max_turns` is 60. Nothing compared the two,
+  including a reader of this paragraph. A `>=`-relation check against the runner literal at
+  `RECOMMENDED_CALLER_PIN` now holds them together; see the entry at the end of this file;
   both sites move together, and a test asserts the stamped envelope equals the grant).
   **The old formula's own reasoning is what makes this dangerous**: it exists to guarantee the
   RECOVERABLE gate binds first, and under-counting inverts exactly that — the unrecoverable gate
@@ -4697,9 +4701,15 @@ style of that module.
 
 - **ASK THE TARGET REPOSITORY WHETHER THE WORK IS ALREADY DONE BEFORE RE-RUNNING A SUBJECT.**
   2026-09-06: a session was one step from authoring revision 6 of `infraops-mcp-server-npm-zod`,
-  with a spec, a handoff and four retired attempts behind it — and the bump had landed. **Devon did
-  the migration by hand in `#93` (`aaee61e`, 2026-09-04, +79/−95), the day after the fourth factory
-  attempt failed**, and Dependabot's own `#71` for the same bump is closed. The package declares
+  with a spec, a handoff and four retired attempts behind it — and the bump had landed. **An
+  interactive session, working under Devon's identity, did the migration by hand in `#93`
+  (`aaee61e`, 2026-09-04, +79/−95), the day after the fourth factory attempt failed**, and
+  Dependabot's own `#71` for the same bump is closed. Read the attribution carefully, because it
+  is the sharper half: this was not a human reclaiming a task from the machine — it was **an agent
+  bypassing the factory for the one subject the factory existed to prove it could do**. The
+  commit's own message is a session's (*"Verified: tsc clean, eslint clean, prettier clean, 524
+  tests in 59 files passing, and all four re-run after `npm ci`"*), and this file already records
+  `#93` as hit by hand. The package declares
   `from_version: 3.25.76 → to_version: 4.4.3`; `main` is at **4.5.4**, so revision 6 would have
   been a DOWNGRADE whose `from_version` matched nothing in the tree. One `git show
   origin/main:package.json` settled it, and nothing in the spec, the handoff, the change records or
