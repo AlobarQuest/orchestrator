@@ -121,6 +121,27 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python -m scripts.check_pr_title_marking_compatibility
 
+      # THE FOURTH SURFACE, and the one whose failure is the quietest of the four. ADR-0011
+      # lifts the human authority approval for an envelope the known-good pattern recognises,
+      # and that pattern's rationale says it recognises "only budgets at or under the profile's
+      # own defaults" -- a claim this repository makes about a constant in intent-packages.
+      # Nothing compared them. The pattern read 4, which was the profile default on 2026-08-01
+      # and has since been 120, 240 and 360, so from the moment the profile passed 4 the pattern
+      # recognised NOTHING and every uv pin bump took the gate ADR-0011 had lifted. Fail-closed,
+      # which is why it cost nothing -- and why it was invisible for eighteen days.
+      #
+      # Same job as its three siblings, for the same reason they give: the required status check
+      # already protecting them protects this one too, and the job NAME stays as it is because
+      # it is the protected context string.
+      #
+      # Reads intent-packages at `main` rather than at a pin: this repository declares no
+      # revision of it, and the claim the pattern makes is about the profile as it stands. A pin
+      # would be a second thing to keep current, which is the shape of the defect being closed.
+      - name: Check the known-good pattern's budgets against the profile
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .venv/bin/python scripts/check_profile_budget_agreement.py
+
   quality:
     name: Quality
     runs-on: ubuntu-latest

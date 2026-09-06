@@ -37,12 +37,28 @@ CONTRACT_ENVELOPE: dict[str, Any] = json.loads(
     Path("tests/fixtures/runner_authority_envelope.json").read_text(encoding="utf-8")
 )
 
+# WHAT `intent-packages`' dependency-update profile STAMPS TODAY, restated here because this
+# repository cannot import that one. `build_envelope` stamps `dict(BUDGETS)` verbatim, so this is
+# the budget every unit the lane emits actually carries.
+#
+# IT IS NOT THE CONTRACT ENVELOPE'S. That fixture is a byte-pinned cross-repo SPECIMEN frozen at
+# `max_llm_calls: 4` — the profile default of 2026-08-01 — and `uv_bump()` used to inherit it,
+# which is exactly why the recognition test below was green while production was refused. Held to
+# the profile by `scripts/check_profile_budget_agreement.py`; a one-sided edit reds that check.
+PROFILE_BUDGETS: dict[str, int] = {"max_attempts": 3, "max_llm_calls": 360}
+
 
 def uv_bump(unit_id: uuid.UUID = UNIT_ID, **constraints: Any) -> dict[str, Any]:
     """The envelope intent-packages emits for a uv pin bump TODAY.
 
     Provenance, field by field, from `intent_packages.profiles.dependency_update`: `CAPABILITIES`
-    and `BUDGETS` verbatim, `change_class = "dependency-update"`, and
+    and `BUDGETS` verbatim — `BUDGETS` via `PROFILE_BUDGETS`, and only since 2026-09-06. This
+    docstring made that claim from the start and the code did not honour it: the function
+    deep-copied the contract SPECIMEN and overwrote only `constraints`, so the budgets under test
+    were the specimen's frozen `4` rather than the profile's. That is what made the recognition
+    test below pass while every real envelope was refused, and it is why a docstring asserting a
+    provenance the code does not have is worse than no docstring: it is what a reader checks
+    instead of the code. `change_class = "dependency-update"`, and
     `constraints.allowed_commands = [*mutations, verifier]` where the uv mutator is `uv add` and
     the uv verifier is `uv lock --check`. The pin moved is the real one (`ruff` 0.15.20 to
     0.15.21, this repository, 2026-08-01).
@@ -53,6 +69,8 @@ def uv_bump(unit_id: uuid.UUID = UNIT_ID, **constraints: Any) -> dict[str, Any]:
     """
     mutation = "uv add --dev 'ruff>=0.15.21'"
     envelope = deepcopy(CONTRACT_ENVELOPE)
+    # The budgets the PROFILE stamps, never the specimen's. See PROFILE_BUDGETS.
+    envelope["budgets"] = dict(PROFILE_BUDGETS)
     envelope["constraints"] = {
         "allowed_commands": [mutation, "uv lock --check"],
         "mutation_commands": [mutation],
@@ -375,7 +393,14 @@ def test_the_report_serves_every_field_the_matcher_reads() -> None:
     assert pattern["command_prefixes"] == ["uv add", "uv lock"]
     assert pattern["target_repositories"] == [RECOGNISED_REPOSITORY]
     assert pattern["conformance_status"] == "green"
-    assert (pattern["max_attempts"], pattern["max_llm_calls"]) == (3, 4)
+    # Derived from PROFILE_BUDGETS rather than restated: the LITERAL lives in exactly one place
+    # (PROFILE_BUDGETS), pinned to intent-packages by check_profile_budget_agreement.py. A second
+    # literal here would be a second copy that goes stale quietly -- which is what `(3, 4)` was
+    # doing, agreeing with a pattern that had stopped recognising anything.
+    assert (pattern["max_attempts"], pattern["max_llm_calls"]) == (
+        PROFILE_BUDGETS["max_attempts"],
+        PROFILE_BUDGETS["max_llm_calls"],
+    )
 
 
 def test_no_pattern_rationale_has_a_second_copy_in_the_source_tree() -> None:
@@ -387,3 +412,46 @@ def test_no_pattern_rationale_has_a_second_copy_in_the_source_tree() -> None:
         for pattern in row.known_good:
             fingerprint = " ".join(pattern.rationale.split()[:8])
             assert [str(p) for p, text in sources.items() if fingerprint in text] == []
+
+
+def _the_uv_pattern():
+    """The one `source_repository` known-good row, located by name rather than by index."""
+    rows = load_factory_policy().rows["source_repository"].known_good
+    matches = [r for r in rows if r.name == "uv dependency pin bump into a named repository"]
+    assert len(matches) == 1, f"expected exactly one uv pattern, found {len(matches)}"
+    return matches[0]
+
+
+def test_the_pattern_budgets_equal_what_the_profile_stamps() -> None:
+    """The pattern's ceilings and the profile's defaults are ONE number, held equal here.
+
+    `_within` is `envelope <= ceiling`, so a ceiling below the profile's default recognises
+    nothing -- which is what happened between 2026-08-01 and 2026-09-06, when this pattern read 4
+    and the profile had moved to 120, then 240, then 360. ADR-0011 was accepted and its mechanism
+    was inert for eighteen days; it failed closed, so nothing unsafe happened and nothing said so.
+
+    EQUALITY RATHER THAN A CEILING-ABOVE-DEFAULT, and the direction is the opposite of the one
+    governing `max_llm_calls` in intent-packages. There the number is a FLOOR and
+    over-provisioning is free. Here it decides what a human still looks at, so a ceiling above the
+    profile's default would recognise an envelope no profile emits -- widening the recognised
+    shape, which the pattern's own rationale forbids without a deliberate edit.
+
+    This is the local half. `scripts/check_profile_budget_agreement.py` is the other one: this
+    test cannot see intent-packages, so it holds the pattern to PROFILE_BUDGETS, and that script
+    holds PROFILE_BUDGETS to the profile itself.
+    """
+    pattern = _the_uv_pattern()
+
+    assert pattern.max_attempts == PROFILE_BUDGETS["max_attempts"]
+    assert pattern.max_llm_calls == PROFILE_BUDGETS["max_llm_calls"]
+
+
+def test_the_pattern_refuses_an_envelope_declaring_more_than_the_profile_stamps() -> None:
+    """The ceiling still bites. Recognition is not "any budget"; it is the profile's own."""
+    envelope = uv_bump()
+    envelope["budgets"] = {
+        "max_attempts": PROFILE_BUDGETS["max_attempts"],
+        "max_llm_calls": PROFILE_BUDGETS["max_llm_calls"] + 1,
+    }
+
+    assert refusals(envelope) == (AUTHORITY_ENVELOPE_NOVEL,)

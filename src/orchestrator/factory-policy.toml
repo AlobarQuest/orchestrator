@@ -187,12 +187,29 @@ repository below, only a conformance claim that is green and waives nothing, and
 only budgets at or under the profile's own defaults. Widening any of those is an
 edit to this file, decided once, and never inferred from what was approved
 before.
+
+BUDGETS TRACK THE PROFILE'S DEFAULTS AND ARE HELD EQUAL TO THEM, which is what
+"at or under the profile's own defaults" above has always meant. `max_llm_calls`
+read 4 from 2026-08-01 until 2026-09-06 because that WAS the profile default
+when this pattern was written; it has since been 120, 240 and 360, and nothing
+compared the two. `_within` is `envelope <= ceiling`, so from the moment the
+profile passed 4 this pattern recognised nothing at all and every uv pin bump
+drew `authority_envelope_novel` — ADR-0011 accepted, its mechanism inert for
+eighteen days, failing closed so nothing unsafe happened and nothing said so.
+
+EQUALITY, not a floor, and the direction is the opposite of the one that governs
+`max_llm_calls` in intent-packages — deliberately. There, over-provisioning is
+free and the number is a floor under the recoverable/unrecoverable gate ordering.
+Here the number decides what a HUMAN still looks at, and a ceiling above the
+profile's default would recognise an envelope no profile emits — widening the
+recognised shape, which the paragraph above forbids without an edit. Held to
+intent-packages by `scripts/check_profile_budget_agreement.py`.
 """
 decided = "2026-08-01"
 change_class = "dependency-update"
 capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "orchestrator.claim" = "allowed", "orchestrator.evidence.write" = "allowed", "repo.edit" = "allowed", "repo.read" = "allowed" }
 max_attempts = 3
-max_llm_calls = 4
+max_llm_calls = 360
 conformance_status = "green"
 target_repositories = ["AlobarQuest/change-manager"]
 # `uv add` edits the manifest and `uv lock` resolves the tree; `uv lock --check`
