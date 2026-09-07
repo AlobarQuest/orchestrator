@@ -34,6 +34,14 @@
 # own: the operator machine's change window, read from the DEPLOYED policy, must be open too.
 # There is deliberately no override -- an out-of-hours install is a person running one command.
 #
+# THIS PASS CAN PUBLISH A COMMIT, and that is authority this lane did not used to have. The second
+# row is the `octo` Claude Code plugin, whose version is pinned in the marketplace manifest of
+# `AlobarQuest/devon-plugins` -- so an install that succeeds and proves itself ends by committing
+# that one line and pushing it. It happens ONLY with `--install`, ONLY inside the change window,
+# ONLY after the install has been verified, and any failure of the publish rolls the whole act
+# back locally. See `src/tool_installer/plugin.py` for the reasoning and the merge guard's own
+# register for the exemption it required.
+#
 # Usage:
 #   scripts/run-tool-installer.sh [--install] [--dry-run] [--install-root DIR]
 # Install as a scheduled job with:

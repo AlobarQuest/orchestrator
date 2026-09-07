@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 from tool_installer import cli as cli_module
 from tool_installer.cli import app
 from tool_installer.orchestrator_client import ObservationWriteError
+from tool_installer.plugin import Sites
 from tool_installer.toolchain import CRATES_JSON, CRATES_TOML, ToolchainError
 
 HEAD = "4be91ebe1fc4eaf73688e28cd62782eadb355379"
@@ -59,9 +60,39 @@ class _Recorder:
         return {"id": "recorded"}
 
 
+def _seed_plugin(plugins_root: Path, version: str, revision: str) -> None:
+    """Claude Code's own record, plus the cache directory it names."""
+    cache = plugins_root / "cache" / "devon-plugins" / "octo" / version
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "plugin.json").write_text("{}")
+    (plugins_root / "installed_plugins.json").write_text(
+        json.dumps(
+            {
+                "plugins": {
+                    "octo@devon-plugins": [
+                        {
+                            "scope": "user",
+                            "installPath": str(cache),
+                            "version": version,
+                            "gitCommitSha": revision,
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+
 @pytest.fixture
 def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
-    """A scratch install root holding an OLD rtk, and a cargo that must never be reached."""
+    """A scratch install root holding an OLD rtk, and a cargo that must never be reached.
+
+    THE PLUGIN ROW IS SEEDED CURRENT, so every assertion below stays about rtk. The alternative --
+    leaving the plugin sites at their real defaults -- would have each of these read the operator's
+    own `~/.claude/plugins`, which is both a test that depends on the machine it runs on and a
+    pass one `--install` away from acting on it. `resolve_claude` is a RAISING stub for the same
+    reason `resolve_cargo` is: reaching either is the failure.
+    """
     root = tmp_path / "cargo"
     (root / "bin").mkdir(parents=True)
     (root / "bin" / "rtk").write_text("#!/bin/sh\necho rtk 0.1.0\n")
@@ -69,6 +100,12 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
         f'[v1]\n"rtk 0.1.0 (git+https://github.com/AlobarQuest/rtk?branch=main#{OLD})" = ["rtk"]\n'
     )
     (root / CRATES_JSON).write_text(json.dumps({"installs": {}}))
+
+    plugins_root = tmp_path / "plugins"
+    plugins_root.mkdir()
+    _seed_plugin(plugins_root, "11.0.1", HEAD)
+    sites = Sites(hub_root=tmp_path / "hub", plugins_root=plugins_root)
+    monkeypatch.setattr(cli_module, "default_sites", lambda: sites)
 
     recorder = _Recorder()
     monkeypatch.setattr(cli_module, "open_policy_client", lambda **_: recorder)
@@ -81,7 +118,13 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     def _never(*_: object, **__: object) -> None:
         raise AssertionError("the pass reached the toolchain when it was not permitted to act")
 
+    def _never_claude(*_: object, **__: object) -> None:
+        # A DISTINGUISHABLE message, so a test that proves the plugin row reached the thing that
+        # would install it cannot be satisfied by the cargo row reaching its own stub first.
+        raise AssertionError("the pass reached CLAUDE when it was not permitted to act")
+
     monkeypatch.setattr(cli_module, "resolve_cargo", _never)
+    monkeypatch.setattr(cli_module, "resolve_claude", _never_claude)
 
     for name, value in (
         ("ORCHESTRATOR_API_URL", "https://sds.example.net"),
@@ -93,6 +136,7 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     ):
         monkeypatch.setenv(name, value)
     recorder.root = root  # type: ignore[attr-defined]
+    recorder.sites = sites  # type: ignore[attr-defined]
     return recorder
 
 
@@ -157,7 +201,15 @@ def test_a_pass_files_its_row_even_when_it_was_not_permitted_to_act(
     """The finding's durable home is the observation, not the exit code -- so a machine running an
     old tool is recorded whether or not anybody permitted an install."""
     _invoke(machine, monkeypatch, OUT_OF_WINDOW, "--install")
-    assert len(machine.filed) == 1
+    # TWO ROWS: the behind rtk and the current octo. The plugin row is asserted here rather than
+    # ignored, because "every tool is filed every pass" is the property that makes silence mean
+    # something -- a pass that filed only the interesting row would be indistinguishable from a
+    # pass that stopped measuring the other one.
+    assert len(machine.filed) == 2
+    assert [row["subject_reference"] for row in machine.filed] == [
+        "AlobarQuest/rtk",
+        "AlobarQuest/claude-octopus",
+    ]
     row = machine.filed[0]
     assert row["source_system"] == "tool_installer"
     assert row["status"] == "degraded"
@@ -288,6 +340,70 @@ def test_a_missing_toolchain_FILES_the_finding_it_already_made(
     monkeypatch.setattr(cli_module, "resolve_cargo", _raise_toolchain)
     result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
     assert result.exit_code == 2
-    assert len(machine.filed) == 1
+    assert len(machine.filed) == 2
     assert machine.filed[0]["status"] == "degraded"
     assert machine.filed[0]["facts"]["state"] == "behind"
+
+
+def _octo_behind(machine: _Recorder) -> None:
+    """Re-seed the plugin record at a revision the fork's head is not, leaving rtk untouched."""
+    _seed_plugin(machine.sites.plugins_root, "9.45.0", OLD)  # type: ignore[attr-defined]
+
+
+def _rtk_current(machine: _Recorder) -> None:
+    """Put rtk at the head, so the PLUGIN row is the only one a permitted pass would act on.
+
+    Without this the cargo row is reached first and raises its own stub, and a test meaning to say
+    something about the plugin row would be satisfied by rtk every time.
+    """
+    (machine.root / CRATES_TOML).write_text(  # type: ignore[attr-defined]
+        f'[v1]\n"rtk 0.48.0 (git+https://github.com/AlobarQuest/rtk?branch=main#{HEAD})" '
+        '= ["rtk"]\n'
+    )
+
+
+def test_the_octo_row_is_reported_current_when_it_is(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bare pass writes nothing and says so, and the row saying the machine is current is what
+    makes "this lane is watching that plugin" a fact rather than an inference from silence."""
+    result = _invoke(machine, monkeypatch, IN_WINDOW)
+    assert result.exit_code == 0
+    assert "octo 11.0.1 installed on the operator machine is" in result.stdout
+    assert "which is main's head" in result.stdout
+    assert machine.filed[1]["status"] == "passed"
+    assert machine.filed[1]["facts"]["action"] == "none"
+
+
+def test_the_window_refuses_the_OCTO_row_with_the_install_flag(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window's first half FOR THIS ROW: permitted to act, told not now.
+
+    `resolve_claude` is the raising stub, so "did not act" is proven by never reaching the thing
+    that would install rather than by a record that happens to be unchanged.
+    """
+    _octo_behind(machine)
+    _rtk_current(machine)
+    result = _invoke(machine, monkeypatch, OUT_OF_WINDOW, "--install")
+    assert result.exit_code == 0
+    assert "closed" in result.stdout
+    assert machine.filed[1]["facts"]["action"] == "not_permitted"
+    assert machine.filed[1]["facts"]["state"] == "behind"
+
+
+def test_the_window_ADMITS_the_OCTO_row_when_it_is_open(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE PAIR FOR THE TEST ABOVE, and the reason the pair exists.
+
+    Same flag, same machine, same seeded plugin -- only the clock differs. A window term that had
+    been dropped entirely, or one stuck on `closed`, would give both cases the same answer; here
+    the open clock reaches the raising `resolve_claude`, which is the proof that the ONLY thing
+    refusing in the case above is the window.
+    """
+    _octo_behind(machine)
+    _rtk_current(machine)
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    assert isinstance(result.exception, AssertionError)
+    assert "reached CLAUDE" in str(result.exception)

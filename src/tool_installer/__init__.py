@@ -21,6 +21,20 @@ proves the new binary before it walks away: `--version` reporting the expected v
 and `proxy` on a trivial command, because a build that succeeded and a binary that answers
 `--version` is a weak bar for a tool that intercepts every command.
 
+A SECOND ROW ARRIVED, AND IT IS A PLUGIN. `octo` (Claude Octopus) reaches this machine as a
+Claude Code plugin and nothing updated it -- it sat 72 days, 323 commits and two major versions
+behind the fork, because the routine that updates it fires only after a sync pull request merges
+and a person has to remember. `tools.py` kept its table and grew a per-row install/probe strategy;
+`plugin.py` is that strategy, and its docstring carries the two things a reader must have: Claude
+Code loads a SEPARATE versioned copy that a `git pull` does not touch, and what a plugin can be
+proven to be is much weaker than what a binary can.
+
+**THIS LANE NOW PUSHES A COMMIT, and it is named here rather than left to be discovered.** Moving
+`octo`'s version means moving the pin in `AlobarQuest/devon-plugins`, and leaving that edit
+uncommitted every night is the dirty-working-copy state another lane exists to report. So the pass
+commits the pin and publishes it -- one line of one file, after the install has been proven, with
+the exemption that requires taken openly in the repository-wide merge guard's own register.
+
 TWO TERMS MUST BOTH HOLD BEFORE ANYTHING IS WRITTEN. `--install` says the operator permits this
 pass to act; the window says not now. There is deliberately NO window override: an operator who
 wants an out-of-hours install runs `cargo install` by hand, which is one command and honest about

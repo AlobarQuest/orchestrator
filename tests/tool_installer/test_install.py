@@ -23,19 +23,19 @@ from tool_installer.install import (
     install_and_prove,
 )
 from tool_installer.toolchain import CRATES_JSON, CRATES_TOML, Cargo, read_installed
-from tool_installer.tools import Tool
+from tool_installer.tools import CargoInstall, Tool
 
 OLD_REVISION = "a" * 40
 NEW_REVISION = "b" * 40
 
 # A tool whose probes are cheap and real: the binary is asked to answer, and the version is checked
 # by VALUE against what cargo recorded.
+CRATE = "faketool"
 FAKE = Tool(
     name="faketool",
     repository="AlobarQuest/faketool",
     branch="main",
-    crate="faketool",
-    probe_commands=(("--version",), ("gain",)),
+    install=CargoInstall(crate=CRATE, probe_commands=(("--version",), ("gain",))),
 )
 
 
@@ -52,7 +52,7 @@ def _seed_installed(root: Path, version: str, revision: str) -> None:
         f'#!/bin/sh\nif [ "$1" = "gain" ]; then exit 0; fi\necho "{FAKE.name} {version}"\n',
     )
     (root / CRATES_TOML).write_text(
-        f'[v1]\n"{FAKE.crate} {version} '
+        f'[v1]\n"{CRATE} {version} '
         f'(git+https://github.com/{FAKE.repository}?branch=main#{revision})" = ["{FAKE.name}"]\n'
     )
     (root / CRATES_JSON).write_text(json.dumps({"installs": {}}))
@@ -80,7 +80,7 @@ printf '#!/bin/sh\\nif [ "$1" = "gain" ]; then exit 0; fi\\necho "{FAKE.name} {r
   > "$root/bin/{FAKE.name}"
 chmod +x "$root/bin/{FAKE.name}"
 source="git+https://github.com/{FAKE.repository}?branch=main#{revision}"
-record='[v1]\n"{FAKE.crate} {version} ('"$source"')" = ["{FAKE.name}"]\n'
+record='[v1]\n"{CRATE} {version} ('"$source"')" = ["{FAKE.name}"]\n'
 printf "%b" "$record" > "$root/{CRATES_TOML}"
 printf '{{"installs": {{}}}}' > "$root/{CRATES_JSON}"
 exit 0
@@ -106,7 +106,7 @@ def test_a_good_install_is_kept_and_probed_clean(tmp_path: Path) -> None:
     assert outcome.action == ACTION_INSTALLED
     assert outcome.succeeded
     assert all(result.passed for result in outcome.probes)
-    installed = read_installed(root, FAKE.crate)
+    installed = read_installed(root, CRATE)
     assert installed is not None
     assert (installed.revision, installed.version) == (NEW_REVISION, "0.2.0")
 
@@ -135,7 +135,7 @@ def test_a_probe_failure_restores_the_previous_binary_AND_cargos_record(tmp_path
     # The binary is the old one, and it still works.
     assert "0.1.0" in (root / "bin" / FAKE.name).read_text()
     # And cargo's record agrees with it, which is what lets the NEXT pass see work still pending.
-    restored = read_installed(root, FAKE.crate)
+    restored = read_installed(root, CRATE)
     assert restored is not None
     assert (restored.revision, restored.version) == (OLD_REVISION, "0.1.0")
     # The failing probe is named rather than merely counted.
@@ -154,7 +154,7 @@ def test_the_next_pass_after_a_rollback_still_sees_work_pending(tmp_path: Path) 
     cargo = _fake_cargo(tmp_path, version="0.2.0", revision=NEW_REVISION, reports="9.9.9")
     _run(tmp_path, cargo, root)
 
-    installed = read_installed(root, FAKE.crate)
+    installed = read_installed(root, CRATE)
     assert installed is not None
     assert installed.revision != NEW_REVISION
 
@@ -187,7 +187,7 @@ def test_a_first_install_that_fails_its_probe_leaves_the_root_AS_IT_WAS_FOUND(
     assert outcome.action == ACTION_ROLLED_BACK
     assert not (root / "bin" / FAKE.name).exists()
     assert not (root / CRATES_TOML).exists()
-    assert read_installed(root, FAKE.crate) is None
+    assert read_installed(root, CRATE) is None
 
 
 def test_a_probe_addresses_the_installed_PATH_and_never_the_name(tmp_path: Path) -> None:
@@ -242,7 +242,7 @@ exit 0
 
     assert outcome.action == ACTION_ROLLED_BACK
     assert "recorded nothing" in outcome.detail
-    restored = read_installed(root, FAKE.crate)
+    restored = read_installed(root, CRATE)
     assert restored is not None
     assert restored.revision == OLD_REVISION
 
@@ -305,7 +305,7 @@ mkdir -p "$root/bin"
 }} > "$root/bin/{FAKE.name}"
 chmod +x "$root/bin/{FAKE.name}"
 source="git+https://github.com/{FAKE.repository}?branch=main#{NEW_REVISION}"
-record='[v1]\n"{FAKE.crate} 0.2.0 ('"$source"')" = ["{FAKE.name}"]\n'
+record='[v1]\n"{CRATE} 0.2.0 ('"$source"')" = ["{FAKE.name}"]\n'
 printf "%b" "$record" > "$root/{CRATES_TOML}"
 printf '{{"installs": {{}}}}' > "$root/{CRATES_JSON}"
 """,
@@ -386,7 +386,7 @@ exit 124
     assert outcome.action == ACTION_INSTALL_FAILED
     # The half that discriminates: the swapped binary is gone and the outgoing one is back.
     assert "0.1.0" in (root / "bin" / FAKE.name).read_text()
-    restored = read_installed(root, FAKE.crate)
+    restored = read_installed(root, CRATE)
     assert restored is not None
     assert restored.revision == OLD_REVISION
 

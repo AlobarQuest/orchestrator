@@ -55,7 +55,7 @@ from tool_installer.install import (
     ACTION_ROLLED_BACK,
     ProbeResult,
 )
-from tool_installer.tools import Tool
+from tool_installer.tools import PluginInstall, Tool
 
 # ADR-0042's lane, named once for the whole lane rather than once per tool -- the precedent is
 # `drift_digest`, `recovery_floor`, `machine_activation` and `pin_watcher`: `source_system` names
@@ -175,12 +175,66 @@ def installation_facts(installation: Installation) -> dict[str, Any]:
     return facts
 
 
+def _plugin_summary(installation: Installation) -> str:
+    """The plugin row's sentences, which are a DIFFERENT set from the cargo row's.
+
+    Two reasons, and the second is the one that would be easy to skip. Cargo's wording asserts
+    things that are not true of a plugin -- a plugin is not "built", and no equivalent of "cargo
+    replaces a binary only on success" holds. And the RESTART GAP has to be said here or nowhere:
+    Claude Code loads plugins at session start, so after a successful pass the new plugin is
+    INSTALLED and the running session is on whatever it loaded. The summary says installed, and
+    says when it will load, because that is what the pass checked.
+
+    Note what the cargo branch below must NOT do: change. Its sentences are inside the record's
+    content-addressed digest, so a reworded clause would make the next unchanged rtk pass an
+    `idempotency_conflict` on a machine whose binary had not moved.
+    """
+    name = installation.tool.name
+    short = installation.available_revision[:7]
+    if installation.action == ACTION_INSTALLED:
+        return (
+            f"{name} {installation.installed_version} was installed at {short} on the operator "
+            f"machine; the install cache, the marketplace pin and the serving clone agree, and "
+            f"Claude Code loads it at its next start."
+        )
+    if installation.action == ACTION_ROLLED_BACK:
+        return (
+            f"{name} was updated to {short} but the update did not verify, so the previous "
+            f"plugin was restored; the operator machine has "
+            f"{installation.installed_revision or 'nothing'} installed."
+        )
+    if installation.action == ACTION_INSTALL_FAILED:
+        return (
+            f"{name} could not be updated to {short}; the previously installed plugin was left "
+            f"in place."
+        )
+    if installation.state == STATE_ABSENT:
+        return f"{name} is not installed on the operator machine; {short} is available."
+    installed = installation.installed_revision or ""
+    if installation.state == STATE_CURRENT:
+        return (
+            f"{name} {installation.installed_version} installed on the operator machine is "
+            f"{installed[:7]}, which is {installation.tool.branch}'s head."
+        )
+    permitted = (
+        "; this pass was not permitted to act"
+        if (installation.action == ACTION_NOT_PERMITTED)
+        else ""
+    )
+    return (
+        f"{name} installed on the operator machine is {installed[:7]}, which is not "
+        f"{installation.tool.branch}'s head {short}{permitted}."
+    )[:MAX_SUMMARY]
+
+
 def summary_of(installation: Installation) -> str:
     """One sentence, computed from the same state and action the facts carry.
 
     A tool is described as current only when its state IS current -- the guard is structural
     rather than a clause that remembers to check.
     """
+    if isinstance(installation.tool.install, PluginInstall):
+        return _plugin_summary(installation)
     name = installation.tool.name
     short = installation.available_revision[:7]
     if installation.action == ACTION_INSTALLED:
