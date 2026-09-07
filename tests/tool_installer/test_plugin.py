@@ -1014,6 +1014,10 @@ def test_a_hub_BEHIND_origin_is_refused_before_the_machine_is_touched(estate: Es
     origin = Path(_git(estate.hub, "remote", "get-url", "origin").strip())
     elsewhere = estate.hub.parent / "someone-else"
     subprocess.run(["git", "clone", str(origin), str(elsewhere)], check=True, capture_output=True)
+    # EVERY FIXTURE REPO NEEDS THIS. Locally git derives an identity from user+hostname and
+    # commits with a warning, so omitting it passes on this machine and fails on CI with exit
+    # 128 -- which is exactly what happened. A review flagged it as cosmetic; it was not.
+    _identify(elsewhere)
     (elsewhere / "FROM_ELSEWHERE.md").write_text("a commit this machine has never seen\n")
     _git(elsewhere, "add", "-A")
     _git(elsewhere, "commit", "-m", "landed from another machine")
