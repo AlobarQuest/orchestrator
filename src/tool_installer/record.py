@@ -202,10 +202,13 @@ def _plugin_summary(installation: Installation) -> str:
         # THE WORST STATE, AND THE ONE MOST WORTH A RECORD: the act failed and putting it back
         # failed too, so the machine may be between two versions. Said plainly rather than folded
         # into the rolled-back wording, which would assert a restore that did not happen.
+        # TRUNCATED like every other growable branch: the orchestrator refuses a summary over
+        # 512 bytes as `observation_invalid`, which would leave the WORST-state row unfiled --
+        # the exact outcome the per-row catch exists to prevent.
         return (
             f"{name} could not be updated to {short} AND the previous plugin could not be "
             f"restored; the operator machine may be between two versions. {installation.detail}"
-        )
+        )[:MAX_SUMMARY]
     if installation.action == ACTION_ROLLED_BACK:
         # KEYED ON WHAT THE PROBES SAID, not on the action alone, because this action has TWO
         # producers. A verification failure and a publish failure both roll back, and until
@@ -262,10 +265,31 @@ def summary_of(installation: Installation) -> str:
             f"{name} {installation.installed_version} was installed at {short} on the operator "
             f"machine and passed every probe."
         )
-    if installation.action == ACTION_ROLLED_BACK:
+    if installation.action == ACTION_ROLLBACK_FAILED:
+        # MADE REACHABLE HERE BY THE PER-ROW CATCH, and it had no case: the row fell through to
+        # the state check and filed `failed / critical` under the sentence "rtk ... is built from
+        # <head>, which is main's head" -- a durable observation asserting the machine is well, in
+        # the very row that says it may not be. That is the defect the plugin summary was fixed
+        # for, reproduced one function away by the fix that opened this branch.
         return (
-            f"{name} built at {short} but failed its probe, so the previous artifact was "
-            f"restored; the machine is running {installation.installed_revision or 'nothing'}."
+            f"{name} could not be updated to {short} AND the previous binary could not be "
+            f"restored; the operator machine may be between two versions. {installation.detail}"
+        )[:MAX_SUMMARY]
+    if installation.action == ACTION_ROLLED_BACK:
+        # "FAILED ITS PROBE" IS ONLY TRUE IF A PROBE RAN. `install_and_prove` also rolls back when
+        # cargo reports success and records nothing, with NO probes at all -- so this sentence
+        # asserted a probe result that did not exist. Same reasoning as the plugin branch: the
+        # probes are the evidence, so the summary reads them.
+        if installation.probes and not all(probe.passed for probe in installation.probes):
+            return (
+                f"{name} built at {short} but failed its probe, so the previous artifact was "
+                f"restored; the machine is running "
+                f"{(installation.installed_revision or 'nothing')[:7]}."
+            )
+        return (
+            f"{name} built at {short} but the result could not be confirmed, so the previous "
+            f"artifact was restored; the machine is running "
+            f"{(installation.installed_revision or 'nothing')[:7]}."
         )
     if installation.action == ACTION_INSTALL_FAILED:
         return (

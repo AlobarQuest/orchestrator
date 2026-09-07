@@ -385,7 +385,7 @@ def _require_usable_clone(sites: Sites, tool: Tool) -> str:
 def _require_publishable_hub(sites: Sites) -> str:
     """Refuse a hub this pass could not publish from, and answer its head.
 
-    THREE REFUSALS, AND EACH COVERS A DIFFERENT SILENT FAILURE. A hub on another branch would
+    FOUR REFUSALS, AND EACH COVERS A DIFFERENT SILENT FAILURE. A hub on another branch would
     have the publish push a branch this pass never wrote to, reporting `Everything up-to-date`
     and exiting 0 -- measured on the sibling producer, not reasoned. A dirty hub would have the
     commit sweep somebody else's work in, and the rollback destroy it. And a hub already carrying
@@ -393,10 +393,13 @@ def _require_publishable_hub(sites: Sites) -> str:
     unexamined it sits local forever while every later pass reports a clean run, so it is
     refused here, at the top, where a person is told about it every night until it is reconciled.
 
-    The unpublished check needs no fetch and must not make one: `origin/<branch>` is the
-    remote-tracking ref, which a successful push advances and a refused push does not, so it
-    answers this question from disk. Going to the network would make the refusal depend on
-    somebody else's landings rather than on this lane's own unfinished act.
+    THE AHEAD CHECK READS DISK; THE BEHIND CHECK FETCHES, and the split is deliberate.
+    `origin/<branch>` is a remote-tracking ref a successful push advances and a refused push does
+    not, so "have I got an unpublished commit" is answerable from disk -- that one genuinely is
+    about this lane's own unfinished act. "Would a push be refused" is not: it depends on origin
+    whether or not this function looks, so reading only disk did not remove the dependency, it
+    removed the ability to report it. This paragraph argued the opposite until 2026-09-07 and is
+    corrected in place rather than left to be inherited as a contract the code does not honour.
     """
     root = sites.hub_root
     if not (root / ".git").exists():
@@ -419,52 +422,61 @@ def _require_publishable_hub(sites: Sites) -> str:
             f"the marketplace hub at {root} has uncommitted changes to tracked files; this lane "
             "commits what it writes and will not commit somebody else's"
         )
-    # FETCH FIRST, AND BEHIND IS AS DISQUALIFYING AS AHEAD. An earlier version checked only
-    # `ahead` and deliberately never went to the network, reasoning that the refusal should turn
-    # on this lane's own unfinished act rather than on somebody else's landings. That is right
-    # about the COMMIT and backwards about the PUSH: the push depends on origin whether or not
-    # this function looks, and not looking does not remove the dependency -- it removes the
-    # ability to report it.
+    # AHEAD ONLY, AND FROM DISK. `origin/<branch>` is a remote-tracking ref a successful push
+    # advances and a refused push does not, so "have I got an unpublished commit" is genuinely
+    # about this lane's own unfinished act and needs no network.
     #
-    # What it cost, measured: a single commit landing on the hub from anywhere else made every
-    # subsequent pass pull, bump, commit, install, verify CLEAN, have the push rejected as a
-    # non-fast-forward, and then uninstall the new plugin and reinstall the old one -- nightly,
-    # filed `critical`, with no self-heal, because a rejected push does not advance `origin/main`
-    # so the next pass is identical. The hub tracks CLAUDE.md and docs/decisions/; a commit from
-    # elsewhere is an ordinary Tuesday.
-    #
-    # Refusing here makes that an INPUT problem, reported before anything moves, instead of an
-    # install failure discovered after the machine has been changed and changed back.
+    # BEHIND IS NOT CHECKED HERE, and the split is the 2026-09-07 correction. This gate runs
+    # before the clone is pulled, so it cannot know whether the pin will move -- and `_publish`
+    # returns immediately when it did not, so most passes never touch origin at all. Checking
+    # behind here refused the COMMON case for a push that would never be attempted. It moved to
+    # `_require_publishable_now`, which runs only when a commit is about to be made.
+    ahead = _git(
+        root, "rev-list", "--count", f"{_PUBLISHED_REMOTE}/{_PUBLISHED_BRANCH}..HEAD"
+    ).strip()
+    if not ahead.isdigit():
+        raise PluginError(f"the hub at {root} would not say how far ahead of origin it is")
+    if int(ahead) > 0:
+        raise PluginError(
+            f"the marketplace hub at {root} carries {ahead} commit(s) origin does not; "
+            "publishing pushes the branch, so this pass would publish them too - reconcile "
+            "the hub first"
+        )
+    return _git(root, "rev-parse", "HEAD").strip()
+
+
+def _require_publishable_now(root: Path) -> None:
+    """Refuse a hub that is BEHIND origin, checked where a push is actually about to happen.
+
+    CHECKED HERE RATHER THAN AT THE TOP, and the placement is the correction. The gate above runs
+    before the clone is pulled, so it cannot know whether the pin will move -- and `_publish`
+    returns immediately when it did not, meaning no commit, no push, no dependency on origin at
+    all. Refusing up front therefore blocked the COMMON case for a push that would never be
+    attempted: only 5 of the fork's last 30 commits touch `plugin.json`, so most head moves leave
+    the pin where it is, and every one of those would have been reported `critical` because
+    somebody committed to the hub from another machine.
+
+    It is still checked BEFORE the commit rather than after the push fails, which is the half the
+    reversal was for: a refusal here costs a filed `install_failed`, where discovering it at push
+    time costs installing the new plugin and uninstalling it again.
+    """
     fetched, _, why = _git_maybe(root, "fetch", "--quiet", _PUBLISHED_REMOTE, _PUBLISHED_BRANCH)
     if fetched != 0:
         raise PluginError(
             f"the marketplace hub at {root} could not be compared with {_PUBLISHED_REMOTE}: "
             f"{why.strip().splitlines()[-1] if why.strip() else 'the fetch failed'}"
         )
-    counts = _git(
-        root,
-        "rev-list",
-        "--left-right",
-        "--count",
-        f"{_PUBLISHED_REMOTE}/{_PUBLISHED_BRANCH}...HEAD",
-    ).split()
-    if len(counts) != 2 or not all(part.isdigit() for part in counts):
-        raise PluginError(f"the hub at {root} would not say how it differs from origin")
-    behind, ahead = int(counts[0]), int(counts[1])
-    if ahead > 0:
-        raise PluginError(
-            f"the marketplace hub at {root} carries {ahead} commit(s) origin does not; "
-            "publishing pushes the branch, so this pass would publish them too - reconcile "
-            "the hub first"
-        )
-    if behind > 0:
+    behind = _git(
+        root, "rev-list", "--count", f"HEAD..{_PUBLISHED_REMOTE}/{_PUBLISHED_BRANCH}"
+    ).strip()
+    if not behind.isdigit():
+        raise PluginError(f"the hub at {root} would not say how far behind origin it is")
+    if int(behind) > 0:
         raise PluginError(
             f"the marketplace hub at {root} is {behind} commit(s) behind "
             f"{_PUBLISHED_REMOTE}/{_PUBLISHED_BRANCH}; a push from here would be refused as a "
-            "non-fast-forward after the machine had already been changed, so this pass stops "
-            "before touching anything - reconcile the hub first"
+            "non-fast-forward, so this pass stops before committing - reconcile the hub first"
         )
-    return _git(root, "rev-parse", "HEAD").strip()
 
 
 def _refresh_install(claude: Path, marketplace: str, plugin: str) -> None:
@@ -749,6 +761,14 @@ def _advance(*, tool: Tool, claude: Path, sites: Sites, marketplace: str, act: _
         raise PluginError(f"the marketplace manifest could not be read: {error}") from error
     bumped = bump_marketplace_version(text, tool.name, act.version)
     if bumped != text:
+        # THE MOMENT A PUSH BECOMES CERTAIN IS THE MOMENT TO ASK WHETHER ONE CAN LAND. Checked
+        # here rather than at the top gate, which runs before the clone is pulled and so cannot
+        # know whether the pin will move -- refusing there blocked the COMMON case (only 5 of the
+        # fork's last 30 commits touch `plugin.json`) for a push that would never be attempted.
+        # And checked here rather than inside `_publish`, which runs AFTER the install: refusing
+        # there would install the plugin and then uninstall it again, which is most of the defect
+        # this check exists to prevent. Nothing has been written yet at this line.
+        _require_publishable_now(sites.hub_root)
         # WRITTEN WHOLE OR NOT AT ALL. `write_text` opens for truncation, so a failure PART WAY
         # THROUGH leaves the manifest short -- and a marketplace manifest Claude Code cannot
         # parse is worse than one that is merely stale, because the next pass then refuses on it
@@ -792,6 +812,15 @@ def _install_still_moved(sites: Sites, tool: Tool, marketplace: str, act: _Act) 
     """
     current = read_entry(sites, tool, marketplace)
     previous = act.previous
+    if current is None and previous is None:
+        # NOTHING WAS RECORDED BEFORE AND NOTHING IS RECORDED NOW, so there is nothing to put
+        # back and re-running the install would be re-running the command that just failed --
+        # the defect this function exists to close, reached through its own `None` case.
+        #
+        # `read_entry` returns `None` for a plugin whose record carries no `gitCommitSha`, which
+        # is a state Claude Code produces: `superpowers@claude-plugins-official` is installed on
+        # this machine right now with no such key. So this is not the first-install case alone.
+        return False
     if current is None or previous is None:
         return True
     return (current.version, current.revision) != (previous.version, previous.revision)

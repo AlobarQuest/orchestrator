@@ -18,6 +18,7 @@ from tool_installer.install import (
 )
 from tool_installer.record import (
     MAX_FACT_BYTES,
+    MAX_SUMMARY,
     OBSERVATION_TYPE,
     SOURCE_SYSTEM,
     STATE_ABSENT,
@@ -399,3 +400,56 @@ def test_a_failed_rollback_is_a_finding() -> None:
 
     assert row.is_finding
     assert status_of(row) == ("failed", "critical")
+
+
+# ---------------------------------------------------------------------------------------------
+# Second review round: the CARGO branch, which fix 4 made reachable and fix 7 did not reach.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_the_CARGO_row_says_a_failed_rollback_rather_than_that_the_machine_is_well() -> None:
+    """FIX 7'S DEFECT, REPRODUCED BY FIX 4, one function away from where fix 7 was applied.
+
+    Catching `RollbackFailed` per row catches the cargo row's too, so `rollback_failed` became
+    reachable here for the first time -- and with no case for it the row fell through to the
+    state check and filed `failed / critical` under "rtk ... is built from <head>, which is
+    main's head". A durable observation asserting the machine is well, in the row that says it
+    may not be.
+    """
+    row = installation(action=ACTION_ROLLBACK_FAILED, detail="cargo exited 101")
+
+    summary = summary_of(row)
+
+    assert "may be between two versions" in summary
+    assert "which is main's head" not in summary
+    assert "cargo exited 101" in summary
+
+
+def test_the_CARGO_rolled_back_summary_does_not_claim_a_probe_ran_when_none_did() -> None:
+    """`install_and_prove` also rolls back when cargo reports success and records nothing, with
+    NO probes -- so "failed its probe" asserted a result that did not exist."""
+    row = installation(action=ACTION_ROLLED_BACK, probes=())
+
+    summary = summary_of(row)
+
+    assert "could not be confirmed" in summary
+    assert "failed its probe" not in summary
+
+
+def test_the_CARGO_rolled_back_summary_still_says_probe_when_one_actually_failed() -> None:
+    """The control: the fix must not have replaced one wrong wording with another."""
+    row = installation(
+        action=ACTION_ROLLED_BACK,
+        probes=(ProbeResult(command=("gain",), passed=False, detail="boom"),),
+    )
+
+    assert "failed its probe" in summary_of(row)
+
+
+def test_a_failed_rollback_summary_is_bounded() -> None:
+    """The one growable branch with no truncation. The orchestrator refuses a summary over 512
+    bytes as `observation_invalid`, which would leave the WORST-state row unfiled -- the outcome
+    the per-row catch exists to prevent."""
+    row = plugin_installation(action=ACTION_ROLLBACK_FAILED, detail="x" * 4000)
+
+    assert len(summary_of(row)) <= MAX_SUMMARY

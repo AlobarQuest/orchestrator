@@ -34,6 +34,8 @@ from tool_installer.plugin import (
     PLUGIN_MANIFEST,
     PluginError,
     Sites,
+    _Act,
+    _install_still_moved,
     _version_key,
     bump_marketplace_version,
     default_sites,
@@ -1022,3 +1024,24 @@ def test_a_hub_BEHIND_origin_is_refused_before_the_machine_is_touched(estate: Es
     assert outcome.action == ACTION_INSTALL_FAILED
     assert "behind" in outcome.detail
     assert estate.commands() == [], "the machine was touched before the refusal"
+
+
+def test_a_rollback_with_nothing_recorded_either_side_does_not_re_run_the_install() -> None:
+    """FIX 3'S OWN `None` CASE, which bypassed fix 3 entirely.
+
+    `_install_still_moved` returned `True` whenever `previous` was `None`, so `_undo`'s guard was
+    satisfied unconditionally and `_refresh_install` re-ran -- the exact command whose failure
+    brought us there, which is the defect fix 3 claims to close, reached through its own hole.
+
+    THE TRIGGER IS ON THIS MACHINE TODAY. `read_entry` returns `None` for a plugin whose record
+    carries no `gitCommitSha`, and `superpowers@claude-plugins-official` is installed right now
+    with no such key. So this is not the first-install case alone.
+
+    Nothing recorded before and nothing recorded now means there is nothing to put back.
+    """
+    sites = Sites(hub_root=Path("/nowhere/hub"), plugins_root=Path("/nowhere/plugins"))
+    act = _Act(hub_head="a" * 40, clone_head="b" * 40, previous=None)
+
+    # `read_entry` on a plugins root that does not exist returns None, which is the state under
+    # test: unreadable/absent on both sides.
+    assert _install_still_moved(sites, OCTO, MARKETPLACE, act) is False
