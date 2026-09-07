@@ -50,7 +50,10 @@ from tool_installer.github import GitHubReader, GitHubReadError, commit
 from tool_installer.install import (
     ACTION_NONE,
     ACTION_NOT_PERMITTED,
+    ACTION_ROLLBACK_FAILED,
     ArtifactRecord,
+    InstallOutcome,
+    RollbackFailed,
     install_and_prove,
 )
 from tool_installer.install import ProbeResult as _ProbeResult
@@ -332,21 +335,36 @@ def main(  # noqa: PLR0911, PLR0912, C901
         # value that was resolved for this row IS the discriminator, and the two readings cannot
         # drift apart the way a repeated `isinstance` on the row could.
         outgoing = row.installed_version or "first"
-        outcome = (
-            install_and_prove(
-                tool=row.tool,
-                cargo=actor,
-                install_root=root,
-                backup_root=backups / f"{row.tool.name}-{outgoing}",
+        # A ROLLBACK THAT FAILED IS FILED, NEVER THROWN, and the reason is the whole point of the
+        # catch. It leaves the machine between two versions -- the single state an operator most
+        # needs told -- and an uncaught `RollbackFailed` reaches typer as a traceback: no summary,
+        # no observation, exit 1 reading as "the tool itself failed". It also took the OTHER row
+        # down with it, because `rows` is filed after this loop, so a defect in the plugin row
+        # cost the working cargo row its record. Caught per row so one tool's worst day cannot
+        # erase another tool's ordinary one.
+        try:
+            outcome = (
+                install_and_prove(
+                    tool=row.tool,
+                    cargo=actor,
+                    install_root=root,
+                    backup_root=backups / f"{row.tool.name}-{outgoing}",
+                )
+                if isinstance(actor, Cargo)
+                else install_and_prove_plugin(
+                    tool=row.tool,
+                    claude=actor,
+                    sites=sites,
+                    head_revision=row.available_revision,
+                )
             )
-            if isinstance(actor, Cargo)
-            else install_and_prove_plugin(
-                tool=row.tool,
-                claude=actor,
-                sites=sites,
-                head_revision=row.available_revision,
+        except RollbackFailed as error:
+            outcome = InstallOutcome(
+                action=ACTION_ROLLBACK_FAILED,
+                installed=None,
+                probes=[],
+                detail=str(error),
             )
-        )
         rows.append(_acted(row, outcome.action, tuple(outcome.probes), outcome.detail, root, sites))
 
     for row in rows:

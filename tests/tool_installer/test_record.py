@@ -12,6 +12,7 @@ from tool_installer.install import (
     ACTION_INSTALLED,
     ACTION_NONE,
     ACTION_NOT_PERMITTED,
+    ACTION_ROLLBACK_FAILED,
     ACTION_ROLLED_BACK,
     ProbeResult,
 )
@@ -348,3 +349,53 @@ def test_a_plugin_that_is_behind_reports_the_same_finding_shape_as_a_binary() ->
     assert record["status"] == "degraded"
     assert record["facts"]["state"] == "behind"
     assert "this pass was not permitted to act" in record["summary"]
+
+
+# ---------------------------------------------------------------------------------------------
+# 2026-09-07 review fixes: what the record SAYS about a rollback.
+# ---------------------------------------------------------------------------------------------
+
+_PASSED = (ProbeResult(command=("installed == pinned",), passed=True, detail=""),)
+_FAILED = (ProbeResult(command=("installed == pinned",), passed=False, detail="mismatch"),)
+
+
+def test_a_rolled_back_PUBLISH_does_not_claim_the_update_failed_to_verify() -> None:
+    """`ACTION_ROLLED_BACK` has TWO producers and the summary described only one.
+
+    A publish failure rolls back with every probe PASSING, and the sentence filed said "the
+    update did not verify" -- a durable observation contradicting its own evidence in the same
+    record, and the first thing a reader sees. Keyed on the probes now, which ARE the evidence.
+    """
+    row = plugin_installation(action=ACTION_ROLLED_BACK, probes=_PASSED)
+
+    summary = summary_of(row)
+
+    assert "could not be published" in summary
+    assert "did not verify" not in summary
+
+
+def test_a_rolled_back_VERIFICATION_still_says_the_update_did_not_verify() -> None:
+    """The control for the pair: with a FAILING probe the original sentence is the true one, so
+    the fix must not have replaced one wrong wording with another."""
+    row = plugin_installation(action=ACTION_ROLLED_BACK, probes=_FAILED)
+
+    assert "did not verify" in summary_of(row)
+
+
+def test_a_failed_rollback_says_the_machine_may_be_between_two_versions() -> None:
+    """The worst state this lane can reach needs a RECORD, not a traceback. Before 2026-09-07
+    `RollbackFailed` escaped the CLI uncaught, so the one pass most needing to say what happened
+    said nothing -- and took the other tool's row with it."""
+    row = plugin_installation(action=ACTION_ROLLBACK_FAILED, detail="claude exited 9")
+
+    summary = summary_of(row)
+
+    assert "may be between two versions" in summary
+    assert "claude exited 9" in summary
+
+
+def test_a_failed_rollback_is_a_finding() -> None:
+    row = plugin_installation(action=ACTION_ROLLBACK_FAILED)
+
+    assert row.is_finding
+    assert status_of(row) == ("failed", "critical")

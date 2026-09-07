@@ -59,6 +59,7 @@ success.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -315,7 +316,15 @@ def bump_marketplace_version(text: str, plugin: str, version: str) -> str:
     keeps its spacing; only the quoted value is rewritten, through `json.dumps` so a version
     needing an escape gets one.
     """
-    document = json.loads(text)
+    # WRAPPED, because a bare `json.loads` raises `ValueError` and the caller guards only
+    # `PluginError` -- so a hand-corrupted manifest escaped the rollback entirely, leaving the
+    # serving clone advanced with nothing put back and nothing recorded. Its two siblings
+    # (`_pinned_version`, `_clone_version`) already wrap the identical read; this one did not,
+    # which reads as an oversight rather than a decision.
+    try:
+        document = json.loads(text)
+    except ValueError as error:
+        raise PluginError(f"the marketplace manifest is not readable JSON: {error}") from error
     entries = _entries_named(document, plugin)
     if entries[0].get("version") == version:
         # Already there. Returning the text unchanged rather than rewriting it keeps a re-run
@@ -399,21 +408,61 @@ def _require_publishable_hub(sites: Sites) -> str:
             f"{_PUBLISHED_BRANCH}; publishing pushes that branch by name, so a commit written "
             "here would be reported as published and would not be"
         )
-    if _git(root, "status", "--porcelain").strip():
+    # `-uno`: TRACKED changes only, and the narrowing is what both stated reasons actually
+    # justify. `_publish` does `git add <manifest>` then `git commit`, which cannot sweep an
+    # untracked file, and the rollback's `reset --hard` does not delete one -- so an untracked
+    # file is neither publishable by accident nor destroyable by the undo. Without `-uno` a
+    # single stray scratch file in a repository Devon works in blocked every octo update,
+    # nightly, reported as a critical install failure.
+    if _git(root, "status", "--porcelain", "-uno").strip():
         raise PluginError(
-            f"the marketplace hub at {root} has uncommitted changes; this lane commits what it "
-            "writes and will not commit somebody else's"
+            f"the marketplace hub at {root} has uncommitted changes to tracked files; this lane "
+            "commits what it writes and will not commit somebody else's"
         )
-    ahead = _git(
-        root, "rev-list", "--count", f"{_PUBLISHED_REMOTE}/{_PUBLISHED_BRANCH}..HEAD"
-    ).strip()
-    if not ahead.isdigit():
-        raise PluginError(f"the hub at {root} would not say how far ahead of origin it is")
-    if int(ahead) > 0:
+    # FETCH FIRST, AND BEHIND IS AS DISQUALIFYING AS AHEAD. An earlier version checked only
+    # `ahead` and deliberately never went to the network, reasoning that the refusal should turn
+    # on this lane's own unfinished act rather than on somebody else's landings. That is right
+    # about the COMMIT and backwards about the PUSH: the push depends on origin whether or not
+    # this function looks, and not looking does not remove the dependency -- it removes the
+    # ability to report it.
+    #
+    # What it cost, measured: a single commit landing on the hub from anywhere else made every
+    # subsequent pass pull, bump, commit, install, verify CLEAN, have the push rejected as a
+    # non-fast-forward, and then uninstall the new plugin and reinstall the old one -- nightly,
+    # filed `critical`, with no self-heal, because a rejected push does not advance `origin/main`
+    # so the next pass is identical. The hub tracks CLAUDE.md and docs/decisions/; a commit from
+    # elsewhere is an ordinary Tuesday.
+    #
+    # Refusing here makes that an INPUT problem, reported before anything moves, instead of an
+    # install failure discovered after the machine has been changed and changed back.
+    fetched, _, why = _git_maybe(root, "fetch", "--quiet", _PUBLISHED_REMOTE, _PUBLISHED_BRANCH)
+    if fetched != 0:
+        raise PluginError(
+            f"the marketplace hub at {root} could not be compared with {_PUBLISHED_REMOTE}: "
+            f"{why.strip().splitlines()[-1] if why.strip() else 'the fetch failed'}"
+        )
+    counts = _git(
+        root,
+        "rev-list",
+        "--left-right",
+        "--count",
+        f"{_PUBLISHED_REMOTE}/{_PUBLISHED_BRANCH}...HEAD",
+    ).split()
+    if len(counts) != 2 or not all(part.isdigit() for part in counts):
+        raise PluginError(f"the hub at {root} would not say how it differs from origin")
+    behind, ahead = int(counts[0]), int(counts[1])
+    if ahead > 0:
         raise PluginError(
             f"the marketplace hub at {root} carries {ahead} commit(s) origin does not; "
             "publishing pushes the branch, so this pass would publish them too - reconcile "
             "the hub first"
+        )
+    if behind > 0:
+        raise PluginError(
+            f"the marketplace hub at {root} is {behind} commit(s) behind "
+            f"{_PUBLISHED_REMOTE}/{_PUBLISHED_BRANCH}; a push from here would be refused as a "
+            "non-fast-forward after the machine had already been changed, so this pass stops "
+            "before touching anything - reconcile the hub first"
         )
     return _git(root, "rev-parse", "HEAD").strip()
 
@@ -491,12 +540,33 @@ def verify(sites: Sites, tool: Tool, marketplace: str, head_revision: str) -> li
     ]
 
 
-def _version_key(name: str) -> tuple[object, ...]:
-    """A `sort -V`-shaped key, so `9.45.0` sorts below `11.0.1` where a string sort would not."""
-    return tuple(int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name) if part)
+def _version_key(name: str) -> tuple[tuple[int, int, str], ...]:
+    """A `sort -V`-shaped key, so `9.45.0` sorts below `11.0.1` where a string sort would not.
+
+    EVERY ELEMENT IS THE SAME SHAPE, which is the whole correction. The first version of this
+    returned `int` for a numeric run and `str` for the rest, so sorting a directory whose name did
+    not start with a digit raised `TypeError: '<' not supported between 'str' and 'int'` -- and
+    `prune` catches only `OSError`, so it escaped, killed the pass AFTER the commit had been
+    pushed, and cost the OTHER row its observation. In a function whose docstring says a failure
+    here is never fatal.
+
+    Not hypothetical about Claude Code's cache: this machine's
+    `plugins/cache/claude-plugins-official/playwright/` holds `008fef3972d6` beside
+    `ed404106fcd8`, and playwright's `version` field is `85cce0381e78`. Semver is what `octo`
+    happens to use, not what the directory name is required to be -- an interrupted update's
+    staging directory needs no permission to be there.
+
+    `(0, n, "")` for a numeric run and `(1, 0, s)` for the rest: numbers sort below text at the
+    same position, which is `sort -V`'s own convention, and no comparison ever crosses types.
+    """
+    return tuple(
+        (0, int(part), "") if part.isdigit() else (1, 0, part)
+        for part in re.split(r"(\d+)", name)
+        if part
+    )
 
 
-def prune(cache_root: Path, installed_version: str) -> list[str]:
+def prune(cache_root: Path, installed_version: str, *, plugins_root: Path) -> list[str]:
     """Keep exactly the installed version and the single newest other; report every outcome.
 
     THE NEWEST OTHER IS NOT SPARE CAPACITY. Claude Code loads plugins at session start, so a
@@ -509,9 +579,32 @@ def prune(cache_root: Path, installed_version: str) -> list[str]:
     roll back a good install. `permissions.deny` on this machine refuses `rm -rf` in an
     interactive shell, which is a fact about a shell rather than about this program -- but the
     reporting path is the one that has to work either way, so it is the one that is exercised.
+
+    CONTAINED, AND READING THE PATH FROM A RECORD IS NOT CONTAINMENT. `cache_root` comes from
+    Claude Code's own `installed_plugins.json`, which is the right SOURCE -- this module must not
+    compose a path out of names -- but a value read from a record still points wherever it points,
+    and nothing here wrote it. Pointed one level up, an earlier version of this function removed
+    every sibling PLUGIN in the marketplace, `octo` included. So the shape is asserted too: the
+    directory must be under `plugins_root` and must be named for the version whose record named
+    it. This machine already proves the record and the disk disagree -- `n8n-as-code`'s recorded
+    `installPath` does not exist -- so "it came from the tool" is not a guarantee about the tool.
+
+    EVERY FAILURE IS REPORTED, not just `OSError`. The first version caught `OSError` alone and a
+    `TypeError` out of the sort escaped to kill the pass; the promise above is only true if the
+    catch is as wide as the promise.
     """
     reported: list[str] = []
     try:
+        resolved = cache_root.resolve()
+        root = plugins_root.resolve()
+        if not resolved.is_relative_to(root):
+            return [f"the install cache {resolved} is not under {root}, so nothing was pruned"]
+        if resolved.name != installed_version:
+            return [
+                f"the install cache {resolved.name} is not named for the installed version "
+                f"{installed_version}, so nothing was pruned"
+            ]
+        cache_root = resolved.parent
         present = sorted(path.name for path in cache_root.iterdir() if path.is_dir())
     except OSError as error:
         return [f"the install cache could not be listed: {type(error).__name__}"]
@@ -625,7 +718,7 @@ def install_and_prove_plugin(
     # NOT reliably the same: this machine's `n8n-as-code` entry records an `installPath` that
     # does not exist, which is exactly the drift the cache check above exists to catch.
     pruned = (
-        prune(Path(entry.install_path).parent, entry.version)
+        prune(Path(entry.install_path), entry.version, plugins_root=sites.plugins_root)
         if entry and entry.install_path
         else ["the installed record names no path, so nothing was pruned"]
     )
@@ -656,7 +749,19 @@ def _advance(*, tool: Tool, claude: Path, sites: Sites, marketplace: str, act: _
         raise PluginError(f"the marketplace manifest could not be read: {error}") from error
     bumped = bump_marketplace_version(text, tool.name, act.version)
     if bumped != text:
-        manifest.write_text(bumped, encoding="utf-8")
+        # WRITTEN WHOLE OR NOT AT ALL. `write_text` opens for truncation, so a failure PART WAY
+        # THROUGH leaves the manifest short -- and a marketplace manifest Claude Code cannot
+        # parse is worse than one that is merely stale, because the next pass then refuses on it
+        # and the lane wedges. A temp file in the same directory plus `os.replace` makes the
+        # swap atomic on this filesystem; the `OSError` guard is here because the write was
+        # outside every `try` and an `OSError` bypassed the rollback entirely.
+        staging = manifest.with_name(f"{manifest.name}.tool-installer.tmp")
+        try:
+            staging.write_text(bumped, encoding="utf-8")
+            os.replace(staging, manifest)
+        except OSError as error:
+            staging.unlink(missing_ok=True)
+            raise PluginError(f"the marketplace manifest could not be written: {error}") from error
         act.bumped = True
     # RECORDED BEFORE THE CALL, NOT AFTER. A failure inside `_refresh_install` still leaves the
     # first of its two commands run, so the cache may have moved; the flag has to mean "an
@@ -675,6 +780,21 @@ def _publish(sites: Sites, tool: Tool, act: _Act) -> None:
     code, _, detail = _git_maybe(root, *PUBLISH_COMMAND.split()[1:])
     if code != 0:
         raise PluginError(f"the marketplace bump could not be published: {detail}")
+
+
+def _install_still_moved(sites: Sites, tool: Tool, marketplace: str, act: _Act) -> bool:
+    """Whether the installed record differs from what it named before the pass.
+
+    Read AFTER the pin has been put back, so it answers the only question the last rollback step
+    has: is there anything left to undo. A record that cannot be read at all is treated as moved,
+    because refusing to try is the worse failure of the two -- and the restore verification below
+    still has the last word on whether the attempt landed.
+    """
+    current = read_entry(sites, tool, marketplace)
+    previous = act.previous
+    if current is None or previous is None:
+        return True
+    return (current.version, current.revision) != (previous.version, previous.revision)
 
 
 def _undo(*, claude: Path, sites: Sites, tool: Tool, marketplace: str, act: _Act) -> None:
@@ -701,11 +821,26 @@ def _undo(*, claude: Path, sites: Sites, tool: Tool, marketplace: str, act: _Act
     error rather than escaping as a bare traceback, and so is a restore that ran and did not
     land -- the one state most needing a record is a machine left between two versions.
     """
+    # THE CLONE IS REWOUND ONLY IF THE INSTALL CAN BE PUT BACK WITH IT. Rewinding it
+    # unconditionally MANUFACTURED the disagreement this module exists to prevent: with the pin
+    # already correct (`bumped` False -- the 2026-06-17 shape), the undo rewound the clone and
+    # left the cache forward, so `installed` and `clone` named different versions and the NEXT
+    # pass reported that state `passed / info`, because the steady-state health check reads the
+    # revision alone. Leaving the clone forward keeps `installed == clone`, which is the weaker
+    # but honest state: ahead of where the pass started, consistent with itself, and corrected
+    # the moment the fork's head next moves.
     try:
         if act.bumped:
             _git(sites.hub_root, "reset", "--hard", act.hub_head)
-        _git(sites.clone_root(tool), "reset", "--hard", act.clone_head)
-        if act.bumped:
+            _git(sites.clone_root(tool), "reset", "--hard", act.clone_head)
+        # ASK THE DISK WHETHER THE INSTALL ACTUALLY MOVED, rather than re-running the command
+        # whose failure brought us here. The two git resets above have already put the pin and
+        # the clone back, so if the installed record still names what it named before the pass,
+        # there is nothing left to restore -- and re-running `claude plugin update` would be
+        # re-running the exact command that just failed. That turned a COMPLETE, SUCCESSFUL
+        # rollback into `RollbackFailed` on the single most likely way for this act to fail, and
+        # because that error escapes to a traceback it also cost the OTHER row its observation.
+        if act.bumped and _install_still_moved(sites, tool, marketplace, act):
             _refresh_install(claude, marketplace, tool.name)
     except (PluginError, OSError) as error:
         raise RollbackFailed(f"the previous plugin could not be restored: {error}") from error

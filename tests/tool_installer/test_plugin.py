@@ -34,6 +34,7 @@ from tool_installer.plugin import (
     PLUGIN_MANIFEST,
     PluginError,
     Sites,
+    _version_key,
     bump_marketplace_version,
     default_sites,
     install_and_prove_plugin,
@@ -426,13 +427,29 @@ def _break_claude_after_the_forward_pass(
     monkeypatch.setattr(subprocess, "run", wrapped)
 
 
+def _refuse_pushes(estate: Estate) -> None:
+    """Make the hub's origin FETCH cleanly and REFUSE the push.
+
+    An unreachable remote no longer reaches the publish -- since 2026-09-07 the pass fetches and
+    refuses up front, which is the whole point of that change. A `pre-receive` hook is both the
+    only way left to exercise the publish-failure path and the more realistic shape of it: the
+    remote is there, the comparison succeeds, and the server declines the write.
+    """
+    origin = Path(_git(estate.hub, "remote", "get-url", "origin").strip())
+    hooks = origin / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    hook = hooks / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'refused by the test' >&2\nexit 1\n")
+    hook.chmod(0o755)
+
+
 def test_a_restore_that_CANNOT_RUN_is_named_rather_than_a_bare_traceback(
     estate: Estate, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A rollback that cannot complete is the worst state this lane can produce, so it is raised as
     this module's own error rather than escaping as whatever the failing step happened to throw --
     a partially restored machine is the one state most needing a record."""
-    _git(estate.hub, "remote", "set-url", "origin", str(estate.hub.parent / "gone.git"))
+    _refuse_pushes(estate)
     _break_claude_after_the_forward_pass(estate, monkeypatch, "SDS_FAKE_CLAUDE_FAIL")
     try:
         with pytest.raises(RollbackFailed, match="could not be restored"):
@@ -453,7 +470,7 @@ def test_a_restore_that_RUNS_AND_DOES_NOT_LAND_is_still_a_rollback_failure(
     error wrapper: it makes the commands FAIL, so the raise comes from `_refresh_install` and the
     verification clause could be deleted with nothing noticing.
     """
-    _git(estate.hub, "remote", "set-url", "origin", str(estate.hub.parent / "gone.git"))
+    _refuse_pushes(estate)
     _break_claude_after_the_forward_pass(estate, monkeypatch, "SDS_FAKE_CLAUDE_STALE")
     try:
         with pytest.raises(RollbackFailed, match="between two versions"):
@@ -559,7 +576,7 @@ def test_a_publish_that_fails_rolls_the_whole_act_back(estate: Estate) -> None:
     a plugin whose pin no repository holds satisfies three quarters of it. The act is put back and
     the next pass tries again, rather than inventing an outcome for a state the invariant forbids.
     """
-    _git(estate.hub, "remote", "set-url", "origin", str(estate.hub.parent / "not-a-repo.git"))
+    _refuse_pushes(estate)
     hub_head = _git(estate.hub, "rev-parse", "HEAD").strip()
 
     outcome = _act(estate)
@@ -634,12 +651,41 @@ def test_a_serving_clone_on_another_branch_is_refused(estate: Estate) -> None:
     assert "rather than main" in outcome.detail
 
 
-def test_a_dirty_hub_is_refused(estate: Estate) -> None:
-    """This lane commits what it writes and will not commit somebody else's."""
-    (estate.hub / "NOTES.md").write_text("a person's note\n")
+def test_a_hub_with_a_modified_TRACKED_file_is_refused(estate: Estate) -> None:
+    """This lane commits what it writes and will not commit somebody else's.
+
+    A MODIFIED TRACKED file, because that is what the refusal's two stated reasons actually
+    reach: `git add <manifest>` then `git commit` could sweep a staged change, and the
+    rollback's `reset --hard` would destroy an uncommitted one. See the control below for the
+    case they do not reach.
+    """
+    tracked = estate.hub / "README.md"
+    tracked.write_text("edited by a person\n")
+    _git(estate.hub, "add", "-A")
+    _git(estate.hub, "commit", "-m", "seed a tracked file")
+    _git(estate.hub, "push", "origin", "main")
+    tracked.write_text("edited again, uncommitted\n")
+
     outcome = _act(estate)
+
     assert outcome.action == ACTION_INSTALL_FAILED
-    assert "uncommitted changes" in outcome.detail
+    assert "uncommitted changes to tracked files" in outcome.detail
+
+
+def test_a_hub_with_only_an_UNTRACKED_file_still_updates(estate: Estate) -> None:
+    """The control, and the reason the check narrowed to `-uno` on 2026-09-07.
+
+    Neither stated reason for the refusal reaches an untracked file: `git add <manifest>` names
+    one path and cannot sweep it, and `reset --hard` does not delete it. Without the narrowing, a
+    single stray scratch file in a repository Devon works in blocked every octo update, nightly,
+    reported as a critical install failure -- a refusal with no reason behind it.
+    """
+    (estate.hub / "NOTES.md").write_text("a person's scratch note\n")
+
+    outcome = _act(estate)
+
+    assert outcome.action == ACTION_INSTALLED
+    assert (estate.hub / "NOTES.md").exists(), "the pass must not have swept it away either"
 
 
 def test_a_hub_on_another_branch_is_refused(estate: Estate) -> None:
@@ -669,16 +715,30 @@ def test_a_hub_carrying_an_unpublished_commit_is_refused(estate: Estate) -> None
     assert estate.commands() == []
 
 
-def test_the_unpublished_check_reads_no_network(estate: Estate) -> None:
-    """The control for the refusal above: a hub whose origin is unreachable still passes it,
-    because `origin/main` is a ref on disk that a successful push advances and a refused push does
-    not. Going to the network would make this lane's refusal depend on somebody else's landings.
+def test_an_unreachable_origin_is_refused_BEFORE_the_machine_is_touched(estate: Estate) -> None:
+    """REVERSED 2026-09-07, deliberately, and the reversal is the point of this test.
+
+    It previously asserted the opposite -- that the check reads no network, reasoning that going
+    to it would make the refusal depend on somebody else's landings rather than on this lane's own
+    unfinished act. That is right about the COMMIT and backwards about the PUSH: the push depends
+    on origin whether or not this function looks, so not looking did not remove the dependency, it
+    removed the ability to report it.
+
+    Measured cost of the old behaviour: one commit landing on the hub from anywhere else made
+    every subsequent pass pull, bump, commit, install, verify CLEAN, have the push rejected as a
+    non-fast-forward, and then uninstall the new plugin and reinstall the old one -- nightly,
+    filed `critical`, with no self-heal, because a rejected push does not advance `origin/main` so
+    the next pass was identical.
+
+    Refusing at the top makes it an INPUT problem reported before anything moves, instead of an
+    install failure discovered after the machine was changed and changed back.
     """
     _git(estate.hub, "remote", "set-url", "origin", str(estate.hub.parent / "gone.git"))
     outcome = _act(estate)
-    # It gets all the way to the publish, which is the only step that needs the remote.
-    assert outcome.action == ACTION_ROLLED_BACK
-    assert "could not be published" in outcome.detail
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "could not be compared with origin" in outcome.detail
+    # The machine is untouched: no install command ran at all.
+    assert estate.commands() == []
 
 
 # ------------------------------------------------------------------------------------------------
@@ -743,12 +803,12 @@ def test_pruning_keeps_the_installed_version_and_the_single_newest_other(tmp_pat
     """The newest other is what a still-running session is loaded from AND the one-step rollback
     buffer, so it survives; everything below it goes. Version-ordered rather than string-ordered,
     because `9.45.0` is older than `11.0.1` and a string sort says the opposite."""
-    cache = tmp_path / "cache"
+    cache = tmp_path / "plugins" / "devon-plugins" / "octo"
     for version in ("9.45.0", "10.1.0", "11.0.1", "8.0.0"):
         (cache / version).mkdir(parents=True)
         (cache / version / "plugin.json").write_text("{}")
 
-    removed = prune(cache, "11.0.1")
+    removed = prune(cache / "11.0.1", "11.0.1", plugins_root=tmp_path / "plugins")
 
     assert sorted(path.name for path in cache.iterdir()) == ["10.1.0", "11.0.1"]
     assert sorted(removed) == ["removed stale cache 8.0.0", "removed stale cache 9.45.0"]
@@ -758,18 +818,20 @@ def test_pruning_two_directories_removes_nothing(tmp_path: Path) -> None:
     """The state the machine is actually in, and the control for the test above: with exactly the
     installed version and one other there is nothing stale, and a prune that removed anything here
     would be taking the rollback buffer."""
-    cache = tmp_path / "cache"
+    cache = tmp_path / "plugins" / "devon-plugins" / "octo"
     for version in ("9.45.0", "11.0.1"):
         (cache / version).mkdir(parents=True)
 
-    assert prune(cache, "11.0.1") == []
+    assert prune(cache / "11.0.1", "11.0.1", plugins_root=tmp_path / "plugins") == []
     assert sorted(path.name for path in cache.iterdir()) == ["11.0.1", "9.45.0"]
 
 
 def test_a_prune_that_cannot_read_the_cache_reports_rather_than_raises(tmp_path: Path) -> None:
     """A directory that could not be pruned is untidy, not broken -- and failing the pass over it
     would roll back an install that has already been verified."""
-    assert prune(tmp_path / "absent", "11.0.1") == [
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    assert prune(plugins / "octo" / "11.0.1", "11.0.1", plugins_root=plugins) == [
         "the install cache could not be listed: FileNotFoundError"
     ]
 
@@ -833,3 +895,102 @@ def test_a_record_that_cannot_say_what_it_installed_reads_as_absent(tmp_path: Pa
         json.dumps({"plugins": {"octo@devon-plugins": [{"version": "1.0.0"}]}})
     )
     assert read_entry(Sites(tmp_path, tmp_path), OCTO, MARKETPLACE) is None
+
+
+# ---------------------------------------------------------------------------------------------
+# 2026-09-07 review fixes. Each of these is a defect two independent adversarial reviews
+# demonstrated against the branch, so each test names the state it reproduces.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_the_version_key_orders_names_that_do_not_start_with_a_digit() -> None:
+    """The sort must be TOTAL. The first version returned `int` for a numeric run and `str` for
+    the rest, so one directory whose name did not start with a digit raised `TypeError` out of
+    `sorted` -- escaping `prune`, which catches only `OSError`, and killing the pass AFTER the
+    commit had been pushed. Claude Code demonstrably produces such names: this machine's
+    playwright cache holds `008fef3972d6` beside `ed404106fcd8`."""
+    names = ["11.0.1", "9.45.0", "latest", "ed404106fcd8", "008fef3972d6", "tmp-partial"]
+
+    ordered = sorted(names, key=_version_key)
+
+    assert ordered  # did not raise, which is the whole assertion
+    assert sorted(["8.0.0", "9.45.0", "10.1.0", "11.0.1"], key=_version_key) == [
+        "8.0.0",
+        "9.45.0",
+        "10.1.0",
+        "11.0.1",
+    ]
+
+
+def test_prune_refuses_a_cache_root_outside_the_plugins_root(tmp_path) -> None:
+    """Reading the path from a record is not containment. Pointed one level up, the first version
+    removed every sibling PLUGIN in the marketplace, `octo` included."""
+    plugins = tmp_path / "plugins"
+    elsewhere = tmp_path / "elsewhere" / "11.0.1"
+    elsewhere.mkdir(parents=True)
+    plugins.mkdir()
+
+    reported = prune(elsewhere, "11.0.1", plugins_root=plugins)
+
+    assert reported and "not under" in reported[0]
+    assert elsewhere.exists()
+
+
+def test_prune_refuses_a_cache_root_not_named_for_the_installed_version(tmp_path) -> None:
+    """The record and the disk already disagree on this machine -- `n8n-as-code`'s recorded
+    `installPath` does not exist -- so the record's word is a source, not a guarantee."""
+    plugins = tmp_path / "plugins"
+    cache = plugins / "devon-plugins" / "octo"
+    (cache / "11.0.1").mkdir(parents=True)
+    (cache / "9.45.0").mkdir()
+
+    reported = prune(cache, "11.0.1", plugins_root=plugins)
+
+    assert reported and "not named for the installed version" in reported[0]
+    assert (cache / "9.45.0").exists()
+
+
+def test_prune_removes_stale_versions_when_the_cache_root_is_the_installed_one(tmp_path) -> None:
+    """The positive control: with a well-formed root the prune still does its job."""
+    plugins = tmp_path / "plugins"
+    cache = plugins / "devon-plugins" / "octo"
+    for name in ("8.0.0", "9.45.0", "10.1.0", "11.0.1"):
+        (cache / name).mkdir(parents=True)
+
+    reported = prune(cache / "11.0.1", "11.0.1", plugins_root=plugins)
+
+    assert (cache / "11.0.1").exists() and (cache / "10.1.0").exists()
+    assert not (cache / "8.0.0").exists() and not (cache / "9.45.0").exists()
+    assert any("removed stale cache 8.0.0" in line for line in reported)
+
+
+def test_a_malformed_manifest_is_this_modules_error_and_not_a_bare_ValueError() -> None:
+    """A bare `json.loads` raises `ValueError`, which the caller does not catch -- so a corrupt
+    manifest escaped the rollback entirely, leaving the clone advanced with nothing put back."""
+    with pytest.raises(PluginError, match="not readable JSON"):
+        bump_marketplace_version("{not json", "octo", "2.0.0")
+
+
+def test_a_rollback_that_SUCCEEDS_is_not_reported_as_a_rollback_failure(
+    estate: Estate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE DEFECT TWO REVIEWS DEMONSTRATED, and the reason `_undo` asks the disk.
+
+    `_undo` used to re-run `_refresh_install` whenever the pin had moved -- re-running the exact
+    command whose failure brought it there. The two `git reset --hard`s above it had already put
+    everything back, so a COMPLETE, SUCCESSFUL rollback raised `RollbackFailed`, which nothing
+    caught: traceback, exit 1, no observation for this row AND none for the cargo row, because
+    the rows are filed after the loop.
+
+    Here the forward install fails outright, so the cache never moved and there is nothing to put
+    back. The pass must report `install_failed` and leave the machine exactly as it found it.
+    """
+    before = read_entry(estate.sites, OCTO, MARKETPLACE)
+    monkeypatch.setenv("SDS_FAKE_CLAUDE_FAIL", "1")
+
+    outcome = _act(estate)
+
+    assert outcome.action == ACTION_INSTALL_FAILED
+    after = read_entry(estate.sites, OCTO, MARKETPLACE)
+    assert before is not None and after is not None
+    assert (after.version, after.revision) == (before.version, before.revision)

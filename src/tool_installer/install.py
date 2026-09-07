@@ -51,6 +51,12 @@ ACTION_NONE = "none"
 ACTION_INSTALLED = "installed"
 ACTION_ROLLED_BACK = "rolled_back"
 ACTION_INSTALL_FAILED = "install_failed"
+# THE WORST STATE THIS LANE CAN REACH, and it needs a name because it needs a RECORD. A rollback
+# that itself failed leaves the machine between two versions, which is precisely the outcome an
+# operator must be told about -- and before this action existed `RollbackFailed` escaped the CLI
+# as a traceback, so the one pass that most needed to say what happened said nothing at all, and
+# took the other row's observation down with it.
+ACTION_ROLLBACK_FAILED = "rollback_failed"
 ACTION_NOT_PERMITTED = "not_permitted"
 
 # Long enough for a cold `cargo install` of a real crate on this machine, and bounded so a hung

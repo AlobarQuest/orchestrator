@@ -52,6 +52,7 @@ from tool_installer.install import (
     ACTION_INSTALL_FAILED,
     ACTION_INSTALLED,
     ACTION_NOT_PERMITTED,
+    ACTION_ROLLBACK_FAILED,
     ACTION_ROLLED_BACK,
     ProbeResult,
 )
@@ -103,7 +104,7 @@ MAX_FACT_BYTES = 4096
 # nothing was attempted. Spelled as a set of the FAILING actions rather than of the healthy ones so
 # that an action added later is a finding by default -- the other arrangement silently exempts it,
 # which is the direction that fails open.
-FAILING_ACTIONS = frozenset({ACTION_ROLLED_BACK, ACTION_INSTALL_FAILED})
+FAILING_ACTIONS = frozenset({ACTION_ROLLED_BACK, ACTION_INSTALL_FAILED, ACTION_ROLLBACK_FAILED})
 
 
 @dataclass(frozen=True)
@@ -197,7 +198,26 @@ def _plugin_summary(installation: Installation) -> str:
             f"machine; the install cache, the marketplace pin and the serving clone agree, and "
             f"Claude Code loads it at its next start."
         )
+    if installation.action == ACTION_ROLLBACK_FAILED:
+        # THE WORST STATE, AND THE ONE MOST WORTH A RECORD: the act failed and putting it back
+        # failed too, so the machine may be between two versions. Said plainly rather than folded
+        # into the rolled-back wording, which would assert a restore that did not happen.
+        return (
+            f"{name} could not be updated to {short} AND the previous plugin could not be "
+            f"restored; the operator machine may be between two versions. {installation.detail}"
+        )
     if installation.action == ACTION_ROLLED_BACK:
+        # KEYED ON WHAT THE PROBES SAID, not on the action alone, because this action has TWO
+        # producers. A verification failure and a publish failure both roll back, and until
+        # 2026-09-07 both filed the same sentence -- so a pass whose probes ALL PASSED filed a
+        # durable observation saying "the update did not verify", contradicting its own evidence
+        # in the same record. The probes are the evidence; the summary now reads them.
+        if installation.probes and all(probe.passed for probe in installation.probes):
+            return (
+                f"{name} was updated to {short} and verified, but the change could not be "
+                f"published, so the previous plugin was restored; the operator machine has "
+                f"{installation.installed_revision or 'nothing'} installed."
+            )
         return (
             f"{name} was updated to {short} but the update did not verify, so the previous "
             f"plugin was restored; the operator machine has "
