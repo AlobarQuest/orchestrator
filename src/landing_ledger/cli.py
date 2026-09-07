@@ -25,11 +25,13 @@ from typing import Annotated, Any, Protocol
 import typer
 
 from landing_ledger.audit import (
+    MAX_LIST,
     SETTLE_SECONDS,
     RepoAudit,
     audit_observation,
     audit_repository,
     branch_status,
+    describe_error,
 )
 from landing_ledger.github import (
     GitHubReader,
@@ -107,6 +109,15 @@ def record_landings(
         # pass deliberately did not attempt, for a reason that is permanent -- so it must not.
         "exempt": 0,
         "unavailable": False,
+        # WHY, beside the THAT, for both of the counters above that drive the incomplete exit
+        # code. A pass that exits 3 on a `skipped` or an `unavailable` and says nothing else
+        # leaves an operator with a red lane and one bit of information, which is the defect this
+        # whole pair of keys exists to end. Empty on a clean pass rather than absent, so a reader
+        # never has to tell a key nobody set from a reason nobody had.
+        "unavailable_reason": "",
+        # One entry per skipped landing, bounded -- `skipped` remains the count. A repository
+        # whose whole window fails the same way would otherwise print forty identical lines.
+        "skipped_reasons": [],
     }
     # A dry run's whole purpose is to show WHAT would be written -- the permission basis in
     # particular -- before anything permanent exists. Counts alone cannot serve that: they say
@@ -117,8 +128,9 @@ def record_landings(
     try:
         base_ref = default_branch(reader, repository)
         shas = landing_shas(reader, repository, base_ref, since, pages)
-    except RECOVERABLE:
+    except RECOVERABLE as error:
         summary["unavailable"] = True
+        summary["unavailable_reason"] = describe_error(error)
         return summary
     summary["landings"] = len(shas)
     for sha in shas:
@@ -151,8 +163,12 @@ def record_landings(
                 summary["records"].append(body)
             else:
                 writer.record_observation(body)
-        except RECOVERABLE:
+        except RECOVERABLE as error:
             summary["skipped"] += 1
+            if len(summary["skipped_reasons"]) < MAX_LIST:
+                summary["skipped_reasons"].append(
+                    {"commit": sha[:12], "reason": describe_error(error)}
+                )
             continue
         summary["recorded"] += 1
     return summary
@@ -215,13 +231,14 @@ def audit_pass(
         # could not ask about must reach `unavailable` -- never a pass -- but it must not discard
         # the landings and open updates the same pass already measured. `branch=None` carries the
         # first without costing the second; `audit_repository` turns it into `unavailable`.
+        branch_unread_reason = ""
         try:
             tip = branch_tip(reader, repository, base_ref)
             branch: BranchStatus | None = branch_status(
                 tip, workflow_runs_at(reader, repository, tip)
             )
-        except RECOVERABLE:
-            branch = None
+        except RECOVERABLE as error:
+            branch, branch_unread_reason = None, describe_error(error)
         audit = audit_repository(
             repository=repository,
             landings=[row.get("facts") for row in ledger.read_landings(repository)],
@@ -230,9 +247,15 @@ def audit_pass(
             units=ledger,
             now=now,
             branch=branch,
+            branch_unread_reason=branch_unread_reason,
             settle_seconds=settle_seconds,
         )
-    except RECOVERABLE:
+    except RECOVERABLE as error:
+        # NAME WHAT FAILED. This catch used to discard the exception, so a pass reported THAT a
+        # repository was unreadable and never WHY -- and `RECOVERABLE` spans `LedgerError`,
+        # `KeyError`, `TypeError` and `ValueError`, so a transient read and a code defect arrived
+        # as the same word. The type is carried as well as the message because the message alone
+        # does not distinguish "GitHub said no" from "this program has a bug".
         audit = RepoAudit(
             repository=repository,
             rule_revision=None,
@@ -241,6 +264,7 @@ def audit_pass(
             factory_landings=0,
             pending_audited=0,
             unavailable=True,
+            unavailable_reason=describe_error(error),
         )
     # The record's own clock is the PASS's, never the wall's. The orchestrator's replay check
     # compares the whole stored command, `observed_at` included, so a wall-clock timestamp would
@@ -250,10 +274,15 @@ def audit_pass(
     if not dry_run:
         try:
             writer.record_observation(body)
-        except RECOVERABLE:
+        except RECOVERABLE as error:
             # The heartbeat did not land, so this repository's answer is missing however good the
             # measurement was. Say so rather than reporting the verdict as filed.
-            audit = replace(audit, unavailable=True)
+            #
+            # THIS REASON REACHES THE PRINTED REPORT AND NOTHING ELSE, and that is the whole of
+            # what is available: the observation is what failed to be written, so the record that
+            # would have carried it does not exist. `body` was composed before the attempt and is
+            # returned unchanged, which is right -- it describes the measurement, not the filing.
+            audit = replace(audit, unavailable=True, unavailable_reason=describe_error(error))
     return audit, body
 
 

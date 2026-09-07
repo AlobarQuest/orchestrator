@@ -65,6 +65,10 @@ def test_a_pass_records_every_landing_it_can_read() -> None:
         "skipped": 0,
         "exempt": 0,
         "unavailable": False,
+        # Present and empty on a clean pass rather than absent, so a reader never has to tell a
+        # key nobody set from a reason nobody had.
+        "unavailable_reason": "",
+        "skipped_reasons": [],
     }
     assert len(recorder.bodies) == 1
 
