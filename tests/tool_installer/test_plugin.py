@@ -404,32 +404,62 @@ def test_a_failed_verification_restores_all_three_sites(
     assert (entry.version, entry.revision) == ("1.0.0", estate.old_head)  # type: ignore[attr-defined]
 
 
-def test_the_restore_is_VERIFIED_and_a_failed_one_is_named(
-    estate: Estate, monkeypatch: pytest.MonkeyPatch
+def _break_claude_after_the_forward_pass(
+    estate: Estate, monkeypatch: pytest.MonkeyPatch, variable: str
 ) -> None:
-    """A rollback that runs and does not land is the worst state this lane can produce, so it is
-    raised rather than reported as an ordinary restore. Here the stand-in refuses every command,
-    so the cache cannot be put back and the machine is left between two versions."""
-    monkeypatch.setenv("SDS_FAKE_CLAUDE_STALE", "1")
+    """Let the forward pass run normally and make only the ROLLBACK's `claude` calls misbehave.
 
+    The forward pass issues exactly two, so anything after the second belongs to `_undo`. Without
+    this split the install never happens either, and a test meaning to say something about the
+    restore would be satisfied by a pass that had nothing to restore.
+    """
     calls = {"n": 0}
     real = subprocess.run
 
-    def failing(argv, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def wrapped(argv, *args, **kwargs):  # type: ignore[no-untyped-def]
         if argv and str(argv[0]) == str(estate.claude):
             calls["n"] += 1
             if calls["n"] > 2:
-                # Only the ROLLBACK's invocations fail; the forward pass runs normally, so this
-                # exercises a restore that cannot complete rather than an install that never ran.
-                os.environ["SDS_FAKE_CLAUDE_FAIL"] = "1"
+                os.environ[variable] = "1"
         return real(argv, *args, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", failing)
+    monkeypatch.setattr(subprocess, "run", wrapped)
+
+
+def test_a_restore_that_CANNOT_RUN_is_named_rather_than_a_bare_traceback(
+    estate: Estate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rollback that cannot complete is the worst state this lane can produce, so it is raised as
+    this module's own error rather than escaping as whatever the failing step happened to throw --
+    a partially restored machine is the one state most needing a record."""
+    _git(estate.hub, "remote", "set-url", "origin", str(estate.hub.parent / "gone.git"))
+    _break_claude_after_the_forward_pass(estate, monkeypatch, "SDS_FAKE_CLAUDE_FAIL")
     try:
-        with pytest.raises(RollbackFailed):
+        with pytest.raises(RollbackFailed, match="could not be restored"):
             _act(estate)
     finally:
         os.environ.pop("SDS_FAKE_CLAUDE_FAIL", None)
+
+
+def test_a_restore_that_RUNS_AND_DOES_NOT_LAND_is_still_a_rollback_failure(
+    estate: Estate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE CASE A CHECK ON THE COMMANDS' EXIT STATUS CANNOT SEE, and the reason the restore is
+    verified rather than assumed.
+
+    Here every rollback command exits ZERO and the machine is still left on the version the pass
+    was putting back -- the same shape as the defect the forward verification exists to catch,
+    arriving on the way out instead. A mutation review found that the test above kills only the
+    error wrapper: it makes the commands FAIL, so the raise comes from `_refresh_install` and the
+    verification clause could be deleted with nothing noticing.
+    """
+    _git(estate.hub, "remote", "set-url", "origin", str(estate.hub.parent / "gone.git"))
+    _break_claude_after_the_forward_pass(estate, monkeypatch, "SDS_FAKE_CLAUDE_STALE")
+    try:
+        with pytest.raises(RollbackFailed, match="between two versions"):
+            _act(estate)
+    finally:
+        os.environ.pop("SDS_FAKE_CLAUDE_STALE", None)
 
 
 def test_a_publish_that_fails_rolls_the_whole_act_back(estate: Estate) -> None:
