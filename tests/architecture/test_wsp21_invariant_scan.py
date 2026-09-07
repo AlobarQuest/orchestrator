@@ -141,6 +141,26 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # does. The gateway method is named for the spelling the guard reads, deliberately, so that
     # the exemption is taken openly rather than avoided by a verb the scanner does not cover.
     Path("src/orchestrator/services/inert_pr_merge.py"),
+    # ADR-0042's plugin row, the FIFTH entry, and the second that publishes a commit to a default
+    # branch rather than landing a pull request -- so ADR-0033's entry above is the only one whose
+    # justification is even the same shape, and it does not carry over unexamined. There is no work
+    # unit here, no criteria the orchestrator resolved from evidence, no envelope a human approved,
+    # and no change record. The repository is not `intent-packages` and the commit is not a package
+    # revision, so every clause of that entry is about a different act.
+    #
+    # What stands in its place is that the commit can only ever be ONE line of ONE file: the
+    # `version` value of ONE named entry in the marketplace manifest, moved to the version the
+    # serving clone's own manifest declares after a fast-forward-only pull from the reviewed fork.
+    # The write is selected by REPARSING every candidate and keeping only the one whose document
+    # equals the original with nothing else changed, so an edit that touched a second plugin could
+    # not be produced. The producer refuses to begin on a hub carrying uncommitted changes, on a hub
+    # on any branch but the one the push names, or on a hub already holding a commit origin does not
+    # -- which is what keeps this entry to the one act it names rather than to whatever else has
+    # accumulated there. It publishes only after the install has been proven, and any failure of
+    # the publish rolls the whole act back locally, so nothing this lane cannot verify is ever
+    # pushed. The repository is a marketplace manifest for plugins on Devon's own machine; nothing
+    # already serving changes, and the change window governs when it may happen at all.
+    Path("src/tool_installer/plugin.py"),
 }
 
 

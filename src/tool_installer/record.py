@@ -52,10 +52,11 @@ from tool_installer.install import (
     ACTION_INSTALL_FAILED,
     ACTION_INSTALLED,
     ACTION_NOT_PERMITTED,
+    ACTION_ROLLBACK_FAILED,
     ACTION_ROLLED_BACK,
     ProbeResult,
 )
-from tool_installer.tools import Tool
+from tool_installer.tools import PluginInstall, Tool
 
 # ADR-0042's lane, named once for the whole lane rather than once per tool -- the precedent is
 # `drift_digest`, `recovery_floor`, `machine_activation` and `pin_watcher`: `source_system` names
@@ -103,7 +104,7 @@ MAX_FACT_BYTES = 4096
 # nothing was attempted. Spelled as a set of the FAILING actions rather than of the healthy ones so
 # that an action added later is a finding by default -- the other arrangement silently exempts it,
 # which is the direction that fails open.
-FAILING_ACTIONS = frozenset({ACTION_ROLLED_BACK, ACTION_INSTALL_FAILED})
+FAILING_ACTIONS = frozenset({ACTION_ROLLED_BACK, ACTION_INSTALL_FAILED, ACTION_ROLLBACK_FAILED})
 
 
 @dataclass(frozen=True)
@@ -175,12 +176,88 @@ def installation_facts(installation: Installation) -> dict[str, Any]:
     return facts
 
 
+def _plugin_summary(installation: Installation) -> str:
+    """The plugin row's sentences, which are a DIFFERENT set from the cargo row's.
+
+    Two reasons, and the second is the one that would be easy to skip. Cargo's wording asserts
+    things that are not true of a plugin -- a plugin is not "built", and no equivalent of "cargo
+    replaces a binary only on success" holds. And the RESTART GAP has to be said here or nowhere:
+    Claude Code loads plugins at session start, so after a successful pass the new plugin is
+    INSTALLED and the running session is on whatever it loaded. The summary says installed, and
+    says when it will load, because that is what the pass checked.
+
+    Note what the cargo branch below must NOT do: change. Its sentences are inside the record's
+    content-addressed digest, so a reworded clause would make the next unchanged rtk pass an
+    `idempotency_conflict` on a machine whose binary had not moved.
+    """
+    name = installation.tool.name
+    short = installation.available_revision[:7]
+    if installation.action == ACTION_INSTALLED:
+        return (
+            f"{name} {installation.installed_version} was installed at {short} on the operator "
+            f"machine; the install cache, the marketplace pin and the serving clone agree, and "
+            f"Claude Code loads it at its next start."
+        )
+    if installation.action == ACTION_ROLLBACK_FAILED:
+        # THE WORST STATE, AND THE ONE MOST WORTH A RECORD: the act failed and putting it back
+        # failed too, so the machine may be between two versions. Said plainly rather than folded
+        # into the rolled-back wording, which would assert a restore that did not happen.
+        # TRUNCATED like every other growable branch: the orchestrator refuses a summary over
+        # 512 bytes as `observation_invalid`, which would leave the WORST-state row unfiled --
+        # the exact outcome the per-row catch exists to prevent.
+        return (
+            f"{name} could not be updated to {short} AND the previous plugin could not be "
+            f"restored; the operator machine may be between two versions. {installation.detail}"
+        )[:MAX_SUMMARY]
+    if installation.action == ACTION_ROLLED_BACK:
+        # KEYED ON WHAT THE PROBES SAID, not on the action alone, because this action has TWO
+        # producers. A verification failure and a publish failure both roll back, and until
+        # 2026-09-07 both filed the same sentence -- so a pass whose probes ALL PASSED filed a
+        # durable observation saying "the update did not verify", contradicting its own evidence
+        # in the same record. The probes are the evidence; the summary now reads them.
+        if installation.probes and all(probe.passed for probe in installation.probes):
+            return (
+                f"{name} was updated to {short} and verified, but the change could not be "
+                f"published, so the previous plugin was restored; the operator machine has "
+                f"{installation.installed_revision or 'nothing'} installed."
+            )
+        return (
+            f"{name} was updated to {short} but the update did not verify, so the previous "
+            f"plugin was restored; the operator machine has "
+            f"{installation.installed_revision or 'nothing'} installed."
+        )
+    if installation.action == ACTION_INSTALL_FAILED:
+        return (
+            f"{name} could not be updated to {short}; the previously installed plugin was left "
+            f"in place."
+        )
+    if installation.state == STATE_ABSENT:
+        return f"{name} is not installed on the operator machine; {short} is available."
+    installed = installation.installed_revision or ""
+    if installation.state == STATE_CURRENT:
+        return (
+            f"{name} {installation.installed_version} installed on the operator machine is "
+            f"{installed[:7]}, which is {installation.tool.branch}'s head."
+        )
+    permitted = (
+        "; this pass was not permitted to act"
+        if (installation.action == ACTION_NOT_PERMITTED)
+        else ""
+    )
+    return (
+        f"{name} installed on the operator machine is {installed[:7]}, which is not "
+        f"{installation.tool.branch}'s head {short}{permitted}."
+    )[:MAX_SUMMARY]
+
+
 def summary_of(installation: Installation) -> str:
     """One sentence, computed from the same state and action the facts carry.
 
     A tool is described as current only when its state IS current -- the guard is structural
     rather than a clause that remembers to check.
     """
+    if isinstance(installation.tool.install, PluginInstall):
+        return _plugin_summary(installation)
     name = installation.tool.name
     short = installation.available_revision[:7]
     if installation.action == ACTION_INSTALLED:
@@ -188,10 +265,31 @@ def summary_of(installation: Installation) -> str:
             f"{name} {installation.installed_version} was installed at {short} on the operator "
             f"machine and passed every probe."
         )
-    if installation.action == ACTION_ROLLED_BACK:
+    if installation.action == ACTION_ROLLBACK_FAILED:
+        # MADE REACHABLE HERE BY THE PER-ROW CATCH, and it had no case: the row fell through to
+        # the state check and filed `failed / critical` under the sentence "rtk ... is built from
+        # <head>, which is main's head" -- a durable observation asserting the machine is well, in
+        # the very row that says it may not be. That is the defect the plugin summary was fixed
+        # for, reproduced one function away by the fix that opened this branch.
         return (
-            f"{name} built at {short} but failed its probe, so the previous artifact was "
-            f"restored; the machine is running {installation.installed_revision or 'nothing'}."
+            f"{name} could not be updated to {short} AND the previous binary could not be "
+            f"restored; the operator machine may be between two versions. {installation.detail}"
+        )[:MAX_SUMMARY]
+    if installation.action == ACTION_ROLLED_BACK:
+        # "FAILED ITS PROBE" IS ONLY TRUE IF A PROBE RAN. `install_and_prove` also rolls back when
+        # cargo reports success and records nothing, with NO probes at all -- so this sentence
+        # asserted a probe result that did not exist. Same reasoning as the plugin branch: the
+        # probes are the evidence, so the summary reads them.
+        if installation.probes and not all(probe.passed for probe in installation.probes):
+            return (
+                f"{name} built at {short} but failed its probe, so the previous artifact was "
+                f"restored; the machine is running "
+                f"{(installation.installed_revision or 'nothing')[:7]}."
+            )
+        return (
+            f"{name} built at {short} but the result could not be confirmed, so the previous "
+            f"artifact was restored; the machine is running "
+            f"{(installation.installed_revision or 'nothing')[:7]}."
         )
     if installation.action == ACTION_INSTALL_FAILED:
         return (

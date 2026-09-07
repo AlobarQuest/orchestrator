@@ -20,6 +20,11 @@ cargo writes its record on a successful BUILD, which is before this module has p
 restoring only the binary would leave the machine running the old tool while cargo's record
 claimed the new revision -- after which every later pass would compare that record to the head,
 find them equal, and never retry. The rollback is complete or it is worse than none.
+
+**THIS MODULE ALSO HOLDS THE VOCABULARY BOTH STRATEGIES WRITE IN** -- the action names, the probe
+row, the outcome shape and the rollback failure. `plugin.py` performs a different act on a
+different artifact and reports it in these same terms, because what a record says a pass DID must
+not depend on which strategy did it. Only `install_and_prove` below is cargo's.
 """
 
 from __future__ import annotations
@@ -27,17 +32,17 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
 from tool_installer.toolchain import (
     Cargo,
-    Installed,
     backup,
     install_artifacts,
     read_installed,
     remove_uncaptured,
     restore,
 )
-from tool_installer.tools import Tool
+from tool_installer.tools import CargoInstall, Tool
 
 # What a pass did to the artifact. A closed vocabulary because it is written into an observation,
 # and a value invented at a call site would be false provenance in a table with no supersession
@@ -46,6 +51,12 @@ ACTION_NONE = "none"
 ACTION_INSTALLED = "installed"
 ACTION_ROLLED_BACK = "rolled_back"
 ACTION_INSTALL_FAILED = "install_failed"
+# THE WORST STATE THIS LANE CAN REACH, and it needs a name because it needs a RECORD. A rollback
+# that itself failed leaves the machine between two versions, which is precisely the outcome an
+# operator must be told about -- and before this action existed `RollbackFailed` escaped the CLI
+# as a traceback, so the one pass that most needed to say what happened said nothing at all, and
+# took the other row's observation down with it.
+ACTION_ROLLBACK_FAILED = "rollback_failed"
 ACTION_NOT_PERMITTED = "not_permitted"
 
 # Long enough for a cold `cargo install` of a real crate on this machine, and bounded so a hung
@@ -54,8 +65,32 @@ INSTALL_TIMEOUT_SECONDS = 1800
 PROBE_TIMEOUT_SECONDS = 120
 
 
+class ArtifactRecord(Protocol):
+    """The two things every strategy's own record of an install can answer.
+
+    Structural rather than a base class, and READ-ONLY, so both a frozen `Installed` read out of
+    cargo's `.crates.toml` and a frozen `PluginEntry` read out of Claude Code's own record
+    satisfy it without either importing the other. What the observation needs from an install is
+    exactly these two values; anything else a strategy knows belongs to that strategy.
+    """
+
+    @property
+    def version(self) -> str: ...
+
+    @property
+    def revision(self) -> str: ...
+
+
 @dataclass(frozen=True)
 class ProbeResult:
+    """One assertion about the artifact a pass just wrote, and whether it held.
+
+    `command` is an argument vector for the cargo row, where a probe RUNS the binary. For a
+    plugin -- which is not executable -- it names the agreement being checked instead. Both are
+    written into the record the same way, because a reader wants to know which check failed
+    rather than what shape it took.
+    """
+
     command: tuple[str, ...]
     passed: bool
     detail: str
@@ -69,7 +104,7 @@ class InstallOutcome:
     """What the act did, in the vocabulary the record writes."""
 
     action: str
-    installed: Installed | None
+    installed: ArtifactRecord | None
     probes: list[ProbeResult] = field(default_factory=list)
     detail: str = ""
 
@@ -136,7 +171,7 @@ def _undo(artifacts: tuple[Path, ...], captured: dict[str, Path]) -> None:
         ) from error
 
 
-def probe(tool: Tool, binary: Path, expected_version: str) -> list[ProbeResult]:
+def probe(row: CargoInstall, binary: Path, expected_version: str) -> list[ProbeResult]:
     """Prove the installed binary. Every result is returned, including after the first failure.
 
     Every probe runs even once one has failed, deliberately: the record is more useful saying
@@ -144,7 +179,7 @@ def probe(tool: Tool, binary: Path, expected_version: str) -> list[ProbeResult]:
     so there is no reason to stop early.
     """
     results: list[ProbeResult] = []
-    for arguments in tool.probe_commands:
+    for arguments in row.probe_commands:
         code, _, detail = _run([str(binary), *arguments], env=None, timeout=PROBE_TIMEOUT_SECONDS)
         results.append(
             ProbeResult(command=arguments, passed=code == 0, detail=detail if code else "")
@@ -177,6 +212,9 @@ def install_and_prove(
     end to end against a scratch root -- proving it against the live `~/.cargo` would mean
     breaking the tool that filters every command in the session doing the proving.
     """
+    row = tool.install
+    if not isinstance(row, CargoInstall):
+        raise TypeError(f"{tool.name} is not a cargo row")
     artifacts = install_artifacts(install_root, tool.name)
     captured = backup(artifacts, backup_root)
 
@@ -191,7 +229,7 @@ def install_and_prove(
         "--force",
         "--root",
         str(install_root),
-        tool.crate,
+        row.crate,
     ]
     code, _, detail = _run(argv, env=cargo.environment(), timeout=INSTALL_TIMEOUT_SECONDS)
     if code != 0:
@@ -207,11 +245,11 @@ def install_and_prove(
         _undo(artifacts, captured)
         return InstallOutcome(
             action=ACTION_INSTALL_FAILED,
-            installed=read_installed(install_root, tool.crate),
+            installed=read_installed(install_root, row.crate),
             detail=f"cargo install exited {code}: {detail}",
         )
 
-    installed = read_installed(install_root, tool.crate)
+    installed = read_installed(install_root, row.crate)
     if installed is None:
         # cargo reported success and left no record, which is a state this program cannot
         # describe. Treated as a failed proof and rolled back, because the alternative is to
@@ -219,18 +257,18 @@ def install_and_prove(
         _undo(artifacts, captured)
         return InstallOutcome(
             action=ACTION_ROLLED_BACK,
-            installed=read_installed(install_root, tool.crate),
+            installed=read_installed(install_root, row.crate),
             detail="cargo install succeeded and recorded nothing",
         )
 
-    results = probe(tool, install_root / "bin" / tool.name, installed.version)
+    results = probe(row, install_root / "bin" / tool.name, installed.version)
     if all(result.passed for result in results):
         return InstallOutcome(action=ACTION_INSTALLED, installed=installed, probes=results)
 
     _undo(artifacts, captured)
     return InstallOutcome(
         action=ACTION_ROLLED_BACK,
-        installed=read_installed(install_root, tool.crate),
+        installed=read_installed(install_root, row.crate),
         probes=results,
         detail="the installed artifact failed its probe and the previous one was restored",
     )
