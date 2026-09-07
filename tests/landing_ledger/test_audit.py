@@ -1553,7 +1553,7 @@ def test_an_unread_branch_records_null_rather_than_an_answer() -> None:
 
     assert facts["facts"]["default_branch"] is None
     assert "default branch unread" in facts["summary"]
-    assert "[UNAVAILABLE]" in facts["summary"]
+    assert "[UNAVAILABLE: the default branch tip could not be read]" in facts["summary"]
 
 
 # ---------------------------------------------------------------------------------------------

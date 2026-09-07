@@ -266,6 +266,24 @@ LANDED_MERGE_STATUS = "merged"
 MAX_LIST = 20
 MAX_DETAIL = 240
 MAX_FACT_BYTES = 4096
+MAX_REASON = 200
+
+
+def describe_error(error: BaseException) -> str:
+    """The TYPE as well as the message, because the message alone does not say which kind it is.
+
+    `RECOVERABLE` spans `LedgerError` and `LedgerWriteError` -- reads that failed -- alongside
+    `KeyError`, `TypeError` and `ValueError`, which in this codebase mean a shape nobody expected,
+    i.e. a defect here. A reason reading `github rejected GET …: 502` and one reading
+    `KeyError: 'commit'` want opposite responses, and without the type the second can arrive
+    looking like the first.
+
+    Bounded because it reaches a durable observation. The producers compose their own messages from
+    a path and a status code and never from a response body, so there is nothing here to redact --
+    a producer that started embedding a body would have to be bounded at the source, not here.
+    """
+    return f"{type(error).__name__}: {error}"[:MAX_REASON]
+
 
 OBSERVATION_TYPE = "landing_audit"
 SOURCE_SYSTEM = "github"
@@ -309,6 +327,13 @@ class RepoAudit:
     caveats: tuple[Finding, ...] = ()
     exceptions: tuple[Finding, ...] = ()
     unavailable: bool = False
+    # WHY the answer is missing, when it is. An `unavailable` with no reason says THAT a
+    # repository could not be read and never WHY, so a transient network blip and a code defect
+    # look identical in the log -- and `RECOVERABLE` includes `KeyError`, `TypeError` and
+    # `ValueError`, so a genuine bug is swallowed into the same word. On 2026-09-07 one
+    # repository came back unavailable in a single pass out of 31 and establishing which read had
+    # failed meant reproducing all five by hand, because the pass had thrown the exception away.
+    unavailable_reason: str = ""
 
     @property
     def severity(self) -> str:
@@ -915,6 +940,7 @@ def audit_repository(
     units: UnitRecordReader,
     now: datetime,
     branch: BranchStatus | None,
+    branch_unread_reason: str = "",
     settle_seconds: int = SETTLE_SECONDS,
 ) -> RepoAudit:
     """All three detectors over one repository. Never raises on a shape it did not expect.
@@ -928,6 +954,11 @@ def audit_repository(
     `unavailable`. A default would let a caller omit the read entirely and get the same value,
     so the fail-closed case and the forgotten case would be spelled identically. Requiring it
     makes every caller say which one it means.
+
+    `branch_unread_reason` DOES take a default, and the asymmetry is not an oversight: it carries
+    only WHY a `None` branch is `None`, so it is meaningless unless `branch` is `None`, and the
+    parameter above already forces every caller to say which case it means. A caller that passes
+    `None` without a reason gets a stated fallback rather than silence.
     """
     findings: list[Finding] = []
     caveats: list[Finding] = []
@@ -939,19 +970,31 @@ def audit_repository(
     # is. It reaches the incomplete exit code rather than a clean one, so a repository whose tip
     # went unread is never reported as green.
     unreadable = branch is None
+    # WHY the answer is missing, composed rather than overwritten. Two causes can hold in one pass
+    # -- the branch unread AND the orchestrator unreadable -- and they have different remedies, so
+    # a first-wins field would report one of them and hide the other.
+    reasons: list[str] = []
+    if branch is None:
+        reasons.append(branch_unread_reason or "the default branch tip could not be read")
     if branch is not None:
         findings.extend(audit_branch(repository, branch))
     for facts in landings:
         landing_findings, landing_caveats, landing_exceptions = audit_landing(facts)
         try:
             factory_findings, factory_caveats = audit_factory_landing(facts, units)
-        except LedgerReadError:
+        except LedgerReadError as error:
             # The orchestrator could not be asked about THIS landing. Caught here rather than left
             # to the caller's blanket catch, which discards the rule and stall findings the same
             # pass already computed without asking anything -- and those are the ones that need no
             # orchestrator at all. The repository's answer is still missing, so `unavailable`
             # carries it to the incomplete exit code; what is not lost is everything else measured.
             unreadable, factory_findings, factory_caveats = True, (), ()
+            # Recorded ONCE however many landings fail the same way: a repository whose whole
+            # window cannot be asked about would otherwise repeat one message forty times and push
+            # every other cause out of a bounded field.
+            reason = describe_error(error)
+            if reason not in reasons:
+                reasons.append(reason)
         record = _permitted_by(facts)
         basis = record.get("basis") if record is not None else None
         # Two subjects, two denominators, kept apart. Folding them would put factory landings
@@ -1015,6 +1058,7 @@ def audit_repository(
         caveats=tuple(caveats),
         exceptions=tuple(exceptions),
         unavailable=unreadable,
+        unavailable_reason="; ".join(reasons)[:MAX_REASON],
     )
 
 
@@ -1064,6 +1108,12 @@ def audit_observation(audit: RepoAudit, pass_id: str, observed_at: datetime) -> 
             "repository": audit.repository,
             "rule_revision": audit.rule_revision,
             "unavailable": audit.unavailable,
+            # WHY, beside the THAT. Safe to add for the same reason `pending_green` was: this
+            # observation's reference is per pass, so a new key changes future rows and cannot
+            # conflict with a stored one -- unlike a landing's, which is frozen at the commit it
+            # names. Empty when the answer is not missing, so the key is present on every row and
+            # a consumer never has to tell an absent key from an unstated reason.
+            "unavailable_reason": audit.unavailable_reason,
             # DETECTOR C'S ANSWER, RECORDED WHATEVER IT IS -- including the three answers that are
             # not findings. That is the point of putting it here rather than in `caveats`: a
             # caveat prints a line every night for every repository whose tip nothing has decided
@@ -1130,7 +1180,13 @@ def audit_observation(audit: RepoAudit, pass_id: str, observed_at: datetime) -> 
             # what a person reads in a listing. `unread` rather than an omission: a missing clause
             # would read as a state nobody thought to print.
             + f"; default branch {audit.branch.state if audit.branch else 'unread'}"
-            + (" [UNAVAILABLE]" if audit.unavailable else "")
+            + (
+                f" [UNAVAILABLE: {audit.unavailable_reason}]"
+                if audit.unavailable and audit.unavailable_reason
+                else " [UNAVAILABLE]"
+                if audit.unavailable
+                else ""
+            )
         )[:512],
         "facts": facts,
         "payload_digest": None,

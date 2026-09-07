@@ -14,8 +14,12 @@ from typer.testing import CliRunner
 from landing_ledger.audit import (
     BRANCH_NOT_GREEN,
     EXCEPTION_UPDATE_TYPE_UNPARSEABLE,
+    MAX_LIST,
+    MAX_REASON,
     STALL_ELIGIBLE_NOT_ARMED,
     STALL_METADATA_UNREADABLE,
+    audit_repository,
+    describe_error,
 )
 from landing_ledger.audit import branch_status as branch_status
 from landing_ledger.cli import (
@@ -26,6 +30,7 @@ from landing_ledger.cli import (
     app,
     audit_pass,
     pass_moment,
+    record_landings,
 )
 from landing_ledger.github import (
     GitHubReader,
@@ -302,7 +307,7 @@ def test_an_orchestrator_that_cannot_answer_the_factory_check_makes_the_pass_INC
 
     assert audit.unavailable
     assert body["facts"]["unavailable"] is True
-    assert "[UNAVAILABLE]" in body["summary"]
+    assert "[UNAVAILABLE: " in body["summary"]
     # And everything the pass measured WITHOUT asking the orchestrator survives. Letting the
     # caller's blanket catch take the repository would discard the rule and stall findings too --
     # findings that need no orchestrator at all -- so one unreadable landing would blank three
@@ -675,3 +680,212 @@ def test_a_branch_that_could_not_be_read_is_INCOMPLETE_and_keeps_what_was_measur
     assert result.exit_code == EXIT_INCOMPLETE
     assert '"branch": null' in result.output
     assert STALL_ELIGIBLE_NOT_ARMED in result.output
+
+
+# ---------------------------------------------------------------------------------------------
+# WHY the answer is missing, not only that it is.
+#
+# On 2026-09-07 a pass exited 3 with one repository `unavailable` and every counter on it zero,
+# and the log said nothing else. Establishing which of five reads had failed meant reproducing
+# all five by hand, and by then the condition -- transient -- had cleared. `unavailable` has FOUR
+# routes in the audit lane and TWO in the recording lane, and a reason that covered some of them
+# would leave the next diagnosis exactly where this one started. Each has its own case below, so
+# losing one is a distinct failure rather than a shared assertion still passing on the others.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_the_reason_carries_the_TYPE_as_well_as_the_message() -> None:
+    """A read that failed and a defect here are both `RECOVERABLE`, and they want opposite
+    responses. `KeyError: 'commit'` says this program is wrong about a shape; the message alone
+    would arrive looking like a remote that said no."""
+    assert describe_error(KeyError("commit")) == "KeyError: 'commit'"
+    assert describe_error(LedgerWriteError("orchestrator rejected POST: 503")).startswith(
+        "LedgerWriteError: "
+    )
+
+
+def test_the_reason_is_bounded_because_it_reaches_a_durable_record() -> None:
+    assert len(describe_error(ValueError("x" * 500))) == MAX_REASON
+
+
+def test_github_being_unreadable_says_WHICH_read_failed() -> None:
+    """Route 1 of 4: the outer catch, which is the one that fired in production."""
+    recorder = _Recorder()
+    reader = GitHubReader(
+        token="fixture", transport=httpx.MockTransport(lambda request: httpx.Response(503))
+    )
+
+    audit, body = audit_pass(
+        reader,
+        _Ledger(),
+        recorder,
+        repository=REPO,
+        pass_id="20260808T120000Z",
+        now=NOW,
+        settle_seconds=3600,
+        dry_run=False,
+    )
+
+    assert audit.unavailable_reason.startswith("LedgerError: ")
+    assert "503" in audit.unavailable_reason
+    # Three surfaces, because three different readers use them: the durable facts a later query
+    # reads, the summary a person sees in a listing, and the report a launcher log carries.
+    assert body["facts"]["unavailable_reason"] == audit.unavailable_reason
+    assert f"[UNAVAILABLE: {audit.unavailable_reason}]" in body["summary"]
+
+
+def test_a_branch_that_could_not_be_read_says_so_rather_than_leaving_it_to_be_guessed() -> None:
+    """Route 2 of 4: the nested catch. `branch: null` beside a bare `unavailable: true` reads as
+    though the branch were the only possible cause, and it is one of four."""
+    recorder = _Recorder()
+
+    audit, body = _run(_routes(tip=False), _Ledger(), recorder)
+
+    assert audit.branch is None
+    assert "github has no branch" in audit.unavailable_reason
+    assert body["facts"]["unavailable_reason"] == audit.unavailable_reason
+
+
+def test_a_branch_read_that_fails_with_NO_reason_still_states_one() -> None:
+    """`audit_repository` is reachable without the caller's reason, and a `None` branch with an
+    empty reason would report the same silence this whole section removes."""
+    audit = audit_repository(
+        repository=REPO,
+        landings=[],
+        pending=(),
+        rule_revision=None,
+        units=_Ledger(),
+        now=NOW,
+        branch=None,
+    )
+
+    assert audit.unavailable is True
+    assert audit.unavailable_reason == "the default branch tip could not be read"
+
+
+def test_an_orchestrator_that_cannot_answer_names_the_orchestrator() -> None:
+    """Route 3 of 4: the per-landing `LedgerReadError`. The repository is still unavailable, and
+    the reason must say the orchestrator rather than GitHub -- they are different outages with
+    different remedies, and this is the one where everything GitHub said was read fine."""
+    recorder = _Recorder()
+    ledger = _UnreachableOrchestrator([{"facts": FACTORY_LANDING}])
+
+    audit, body = _run(_routes(), ledger, recorder)
+
+    assert "orchestrator is unreachable" in audit.unavailable_reason
+    assert body["facts"]["unavailable_reason"] == audit.unavailable_reason
+
+
+def test_one_unreadable_orchestrator_is_reported_ONCE_however_many_landings_hit_it() -> None:
+    """A repository whose whole window cannot be asked about would otherwise repeat one message
+    per landing and push every other cause out of a bounded field."""
+    recorder = _Recorder()
+    ledger = _UnreachableOrchestrator([{"facts": FACTORY_LANDING}] * 5)
+
+    audit, _ = _run(_routes(), ledger, recorder)
+
+    assert audit.unavailable_reason.count("orchestrator is unreachable") == 1
+
+
+def test_TWO_causes_in_one_pass_are_both_reported() -> None:
+    """The branch unread AND the orchestrator unreadable is a real pass, and the two have
+    different remedies. A first-wins field would report one and hide the other."""
+    audit = audit_repository(
+        repository=REPO,
+        landings=[FACTORY_LANDING],
+        pending=(),
+        rule_revision=None,
+        units=_UnreachableOrchestrator(),
+        now=NOW,
+        branch=None,
+        branch_unread_reason="LedgerError: github rejected GET /branches/main: 502",
+    )
+
+    assert "github rejected GET" in audit.unavailable_reason
+    assert "orchestrator is unreachable" in audit.unavailable_reason
+
+
+def test_a_pass_whose_own_row_cannot_be_filed_says_the_WRITE_is_what_failed() -> None:
+    """Route 4 of 4, and the one whose reason can reach no record: the observation is the thing
+    that failed to be written. The printed report is all there is, which is why the reason has to
+    be on the audit rather than only in the body."""
+
+    class _Refuses:
+        def record_observation(self, payload: dict[str, Any]) -> dict[str, Any]:
+            raise LedgerWriteError("orchestrator rejected POST /api/v1/observations: 503")
+
+    audit, body = _run(_routes(), _Ledger(), _Refuses())
+
+    assert "orchestrator rejected POST /api/v1/observations" in audit.unavailable_reason
+    # The body describes the MEASUREMENT, which succeeded, and is returned unchanged.
+    assert body["facts"]["unavailable"] is False
+
+
+def test_a_pass_that_measured_everything_carries_NO_reason() -> None:
+    """So the assertions above discriminate rather than reading a field that is always set."""
+    recorder = _Recorder()
+
+    audit, body = _run(_routes(), _Ledger(), recorder)
+
+    assert audit.unavailable is False
+    assert audit.unavailable_reason == ""
+    assert body["facts"]["unavailable_reason"] == ""
+    assert "UNAVAILABLE" not in body["summary"]
+
+
+def test_the_reason_reaches_the_report_a_launcher_log_carries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The surface the 2026-09-07 diagnosis actually had. A reason in the observation and not in
+    the printed report leaves the next reader exactly where that one started."""
+    result = _drive(monkeypatch, ["audit", "--repository", REPO], unreachable=True)
+
+    assert result.exit_code == EXIT_INCOMPLETE
+    assert '"unavailable_reason": "LedgerError: ' in result.output
+
+
+def test_a_recording_pass_that_read_NOTHING_says_why(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The recording lane has its own two silent counters, and both drive the same exit code."""
+    result = _drive(monkeypatch, ["record", "--repository", REPO], unreachable=True)
+
+    assert '"unavailable_reason": "LedgerError: ' in result.output
+    assert "503" in result.output
+
+
+def test_a_recording_pass_names_the_landings_it_SKIPPED(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A skip reaches the incomplete exit code exactly as an unavailable does, and said nothing.
+    The commit is carried with the reason: a skip that cannot be attributed to a landing cannot
+    be looked into."""
+    routes = dict(_routes())
+    routes[f"/repos/{REPO}/commits"] = [{"sha": TIP, "parents": []}]
+
+    result = _drive(monkeypatch, ["record", "--repository", REPO], routes=routes)
+
+    assert result.exit_code == EXIT_INCOMPLETE
+    assert '"skipped": 1' in result.output
+    assert f'"commit": "{TIP[:12]}"' in result.output
+    assert "github has no commit" in result.output
+
+
+def test_the_skipped_reasons_are_BOUNDED_and_the_count_is_not() -> None:
+    """A repository whose whole window fails the same way would otherwise print one entry per
+    landing into a report a person reads. `skipped` stays the measurement; the list is a sample."""
+    routes = dict(_routes())
+    shas = [f"{index:040x}" for index in range(MAX_LIST + 5)]
+    routes[f"/repos/{REPO}/branches/main"] = {"commit": {"sha": shas[0]}}
+    routes[f"/repos/{REPO}/commits"] = [
+        {"sha": sha, "parents": [{"sha": shas[index + 1]}] if index + 1 < len(shas) else []}
+        for index, sha in enumerate(shas)
+    ]
+
+    summary = record_landings(
+        reader_for(routes),
+        _Recorder(),
+        repository=REPO,
+        since="2026-08-01T00:00:00+00:00",
+        pages=1,
+        dry_run=False,
+    )
+
+    assert summary["skipped"] == len(shas)
+    assert len(summary["skipped_reasons"]) == MAX_LIST
