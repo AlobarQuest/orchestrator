@@ -46,9 +46,18 @@ class PluginInstall:
     """A Claude Code plugin served from a local directory-marketplace.
 
     The serving clone is `<hub>/<tool name>` and its manifest is `.claude-plugin/plugin.json` at
-    that clone's root. Both are read from the tool's name rather than declared, because both
-    plugins this hub serves are arranged that way and a field with one value is a second copy of
-    a fact rather than a decision.
+    that clone's root. Both are derived from the tool's name rather than declared.
+
+    THAT IS TRUE OF `octo` AND FALSE OF THE HUB'S OTHER PLUGIN, which this docstring claimed
+    until 2026-09-07. `n8n-as-code/.claude-plugin/` exists and holds a `marketplace.json`, not a
+    `plugin.json`; its real manifest is at `n8n-as-code/plugins/claude/n8n-as-code/.claude-plugin/`,
+    exactly as the hub's own `source` field says. So the derivation would read the wrong document
+    for that row rather than fail loudly, and the hub already DECLARES the answer the old
+    reasoning dismissed as "a second copy of a fact".
+
+    Left derived because `octo` is the only plugin row, and a field fitted to a second row before
+    that row exists is a guess. A THIRD ROW MUST ADD A DECLARED MANIFEST PATH -- read it from the
+    hub's `source`, do not extend the derivation.
     """
 
     marketplace: str

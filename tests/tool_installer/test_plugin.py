@@ -1049,3 +1049,62 @@ def test_a_rollback_with_nothing_recorded_either_side_does_not_re_run_the_instal
     # `read_entry` on a plugins root that does not exist returns None, which is the state under
     # test: unreadable/absent on both sides.
     assert _install_still_moved(sites, OCTO, MARKETPLACE, act) is False
+
+
+def test_read_entry_takes_the_USER_scope_row_not_whichever_is_first(tmp_path: Path) -> None:
+    """Claude Code records one row per scope, and this lane installs at user scope.
+
+    `n8n-as-code@n8nac-marketplace` already carries a `project`-scoped row on this machine, so
+    `rows[0]` is a coin toss the moment a plugin is installed twice -- and the wrong row's
+    revision would make the lane think the machine is behind, or current, when it is not.
+    """
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    (plugins / "installed_plugins.json").write_text(
+        json.dumps(
+            {
+                "plugins": {
+                    f"octo@{MARKETPLACE}": [
+                        {
+                            "scope": "project",
+                            "version": "0.0.1",
+                            "gitCommitSha": "p" * 40,
+                            "installPath": "/wrong",
+                        },
+                        {
+                            "scope": "user",
+                            "version": "11.0.1",
+                            "gitCommitSha": "u" * 40,
+                            "installPath": "/right/11.0.1",
+                        },
+                    ]
+                }
+            }
+        )
+    )
+    sites = Sites(hub_root=tmp_path / "hub", plugins_root=plugins)
+
+    entry = read_entry(sites, OCTO, MARKETPLACE)
+
+    assert entry is not None
+    assert (entry.version, entry.revision) == ("11.0.1", "u" * 40)
+
+
+def test_read_entry_is_None_when_no_row_is_user_scoped(tmp_path: Path) -> None:
+    """A record with rows but none this lane installed is not evidence of what it installed."""
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    (plugins / "installed_plugins.json").write_text(
+        json.dumps(
+            {
+                "plugins": {
+                    f"octo@{MARKETPLACE}": [
+                        {"scope": "project", "version": "0.0.1", "gitCommitSha": "p" * 40}
+                    ]
+                }
+            }
+        )
+    )
+    sites = Sites(hub_root=tmp_path / "hub", plugins_root=plugins)
+
+    assert read_entry(sites, OCTO, MARKETPLACE) is None

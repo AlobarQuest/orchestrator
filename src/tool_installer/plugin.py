@@ -178,6 +178,11 @@ def _run(argv: tuple[str, ...], *, cwd: Path | None, timeout: int) -> tuple[int,
     The diagnostic prefers stderr, which is right for a refused git command, and only its tail is
     kept: a failing pull's full output is large and is not this program's to relay.
     """
+    # NEVER PROMPT. Under launchd there is no terminal to answer, so a credential prompt blocks
+    # until the timeout -- 300 or 600 seconds spent waiting for a keystroke nobody can give,
+    # reported as a timeout rather than as the auth failure it is. Both variables are needed:
+    # git asks on its own and also delegates to an askpass helper.
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="", SSH_ASKPASS="")
     try:
         completed = subprocess.run(  # noqa: S603
             list(argv),
@@ -186,6 +191,7 @@ def _run(argv: tuple[str, ...], *, cwd: Path | None, timeout: int) -> tuple[int,
             text=True,
             timeout=timeout,
             check=False,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return 124, "", f"timed out after {timeout}s"
@@ -242,9 +248,19 @@ def read_entry(sites: Sites, tool: Tool, marketplace: str) -> PluginEntry | None
     if not isinstance(plugins, dict):
         return None
     rows = plugins.get(f"{tool.name}@{marketplace}")
-    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+    if not isinstance(rows, list) or not rows:
         return None
-    row: dict[str, Any] = rows[0]
+    # THE USER-SCOPE ROW, NAMED, not whichever happens to be first. Claude Code records one row
+    # per scope and this lane installs at user scope; `n8n-as-code@n8nac-marketplace` already
+    # carries a `project`-scoped row on this machine, so `rows[0]` is a coin toss the moment a
+    # plugin is installed twice. A record with rows but none at user scope is `None` -- the same
+    # answer as a record that cannot say what it installed.
+    candidates = [
+        entry for entry in rows if isinstance(entry, dict) and entry.get("scope", "user") == "user"
+    ]
+    if not candidates:
+        return None
+    row: dict[str, Any] = candidates[0]
     version = row.get("version")
     revision = row.get("gitCommitSha")
     install_path = row.get("installPath")
