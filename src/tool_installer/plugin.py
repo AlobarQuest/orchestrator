@@ -427,10 +427,13 @@ def _refresh_install(claude: Path, marketplace: str, plugin: str) -> None:
     the catalog current and the machine stale, which is the 2026-06-17 defect with an extra
     command in front of it.
 
-    `-y` IS REQUIRED AND THE ROUTINE A PERSON FOLLOWS DOES NOT CARRY IT. Measured 2026-09-07 on
-    Claude Code 2.1.263: `claude plugin update` accepts the marketplace-declared command without
-    a prompt only under `-y`, which its own help says is "required when stdin or stdout is not a
-    TTY" -- and a scheduled pass has neither.
+    `-y` IS PASSED AND THE ROUTINE A PERSON FOLLOWS DOES NOT CARRY IT. Be exact about what was
+    measured, because it is less than "required": on Claude Code 2.1.263 the flag's own help text
+    reads "required when stdin or stdout is not a TTY" of ACCEPTING A MARKETPLACE-DECLARED
+    COMMAND, and a scheduled pass has neither stream. Whether a `directory`-source marketplace
+    ever declares such a command -- so whether this one would prompt without the flag -- was NOT
+    measured and cannot be here without running the real update. The flag is passed because the
+    documented condition holds and because it is harmless where nothing needs accepting.
     """
     for argv in (
         (str(claude), "plugin", "marketplace", "update", marketplace),
@@ -529,9 +532,16 @@ class _Act:
     """What the pass has changed so far, so putting it back is driven by facts rather than memory.
 
     The two `head` values are the commits each repository was on BEFORE anything moved, captured
-    before the first mutation. `bumped` is what decides whether the cache has to be refreshed on
-    the way back: a pass that refused at the pull changed nothing at all, and running the install
-    commands to undo nothing could turn a clean refusal into a rollback failure.
+    before the first mutation.
+
+    `bumped` AND `refreshed` ARE DIFFERENT QUESTIONS AND THE UNDO KEYS ON BOTH, one each.
+    `bumped` says the marketplace pin moved, which is the only condition under which re-running
+    the install commands RESTORES anything -- they install whatever the manifest names, so with
+    the pin unmoved they would re-assert it rather than undo it. `refreshed` says an install
+    command RAN, which is the only condition under which the cache can have moved at all. The
+    two come apart when the pin already names the clone's version -- the 2026-06-17 shape -- and
+    there the pass can move the install and NOTHING THIS LANE CAN RUN puts it back; it can only
+    detect it, which is what the restore check keyed on `refreshed` does.
     """
 
     hub_head: str
@@ -539,7 +549,7 @@ class _Act:
     previous: PluginEntry | None
     version: str = ""
     bumped: bool = False
-    committed: bool = False
+    refreshed: bool = False
 
 
 def install_and_prove_plugin(
@@ -648,6 +658,10 @@ def _advance(*, tool: Tool, claude: Path, sites: Sites, marketplace: str, act: _
     if bumped != text:
         manifest.write_text(bumped, encoding="utf-8")
         act.bumped = True
+    # RECORDED BEFORE THE CALL, NOT AFTER. A failure inside `_refresh_install` still leaves the
+    # first of its two commands run, so the cache may have moved; the flag has to mean "an
+    # install command was attempted", which is what the undo's restore check is computed from.
+    act.refreshed = True
     _refresh_install(claude, marketplace, tool.name)
 
 
@@ -658,7 +672,6 @@ def _publish(sites: Sites, tool: Tool, act: _Act) -> None:
     root = sites.hub_root
     _git(root, "add", str(MARKETPLACE_MANIFEST))
     _git(root, "commit", "-m", f"chore: bump {tool.name} to {act.version}")
-    act.committed = True
     code, _, detail = _git_maybe(root, *PUBLISH_COMMAND.split()[1:])
     if code != 0:
         raise PluginError(f"the marketplace bump could not be published: {detail}")
@@ -672,26 +685,32 @@ def _undo(*, claude: Path, sites: Sites, tool: Tool, marketplace: str, act: _Act
     the machine running a version no repository claims -- the same class of half-rollback the
     cargo side documents as worse than none.
 
-    The cache is refreshed only when the pin actually moved. A pass that refused at the pull
-    changed nothing, and running the install commands to undo nothing could turn a clean refusal
-    into a rollback failure.
+    THE HUB GOES BACK WITH `reset --hard`, WHICH ALSO CLEARS THE INDEX. `git checkout -- <path>`
+    restores from the INDEX, so on the one path where `git add` succeeds and `git commit` does not
+    -- an identity or a hook -- it would reinstate the very bump it was undoing, after which the
+    refresh installs the NEW version and a recoverable failure reads as a rollback failure. The
+    hub was verified clean at capture, so resetting to the captured commit is exact and loses
+    nothing whether or not this pass committed.
+
+    The cache is refreshed only when the PIN moved, because the install commands install whatever
+    the manifest names: with the pin unmoved they re-assert it rather than undo it, turning a
+    clean refusal into a rollback failure. The restore is verified whenever an install command
+    RAN, which is the wider condition -- see `_Act`.
 
     THE RESTORE IS VERIFIED. An `OSError` or a refused git command is raised as this module's own
     error rather than escaping as a bare traceback, and so is a restore that ran and did not
     land -- the one state most needing a record is a machine left between two versions.
     """
     try:
-        if act.committed:
+        if act.bumped:
             _git(sites.hub_root, "reset", "--hard", act.hub_head)
         _git(sites.clone_root(tool), "reset", "--hard", act.clone_head)
         if act.bumped:
-            if not act.committed:
-                _git(sites.hub_root, "checkout", "--", str(MARKETPLACE_MANIFEST))
             _refresh_install(claude, marketplace, tool.name)
     except (PluginError, OSError) as error:
         raise RollbackFailed(f"the previous plugin could not be restored: {error}") from error
 
-    if not act.bumped:
+    if not act.refreshed:
         return
     restored = read_entry(sites, tool, marketplace)
     previous = act.previous

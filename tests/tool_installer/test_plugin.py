@@ -462,6 +462,98 @@ def test_a_restore_that_RUNS_AND_DOES_NOT_LAND_is_still_a_rollback_failure(
         os.environ.pop("SDS_FAKE_CLAUDE_STALE", None)
 
 
+def _pin_by_hand(estate: Estate, version: str) -> None:
+    """Move the marketplace pin the way a PERSON does, and publish it, so the pass finds a hub it
+    will admit and a pin it has no reason to touch.
+
+    This is the 2026-06-17 shape exactly: the pin already names what the clone will carry and the
+    INSTALL is the only thing behind. A pass over it bumps nothing -- and still runs the install
+    commands, which is the whole reason the undo cannot key on the pin having moved.
+    """
+    manifest = estate.hub / MARKETPLACE_MANIFEST
+    manifest.write_text(bump_marketplace_version(manifest.read_text(), "octo", version))
+    _git(estate.hub, "add", "-A")
+    _git(estate.hub, "commit", "-m", "pin by hand")
+    _git(estate.hub, "push", "origin", "main")
+
+
+def test_a_pass_over_a_HAND_MOVED_PIN_still_repairs_the_stale_install(estate: Estate) -> None:
+    """THE POSITIVE CONTROL for the pair below, and the 2026-06-17 repair working.
+
+    The pin is already right and the install is behind, so the pass bumps nothing, publishes
+    nothing, and is worth running anyway -- which is the entire claim of this module's opening
+    paragraph. Without this row the refusal below would be satisfied by a pass that never got
+    far enough to install anything.
+    """
+    _pin_by_hand(estate, "2.0.0")
+    hub_head = _git(estate.hub, "rev-parse", "HEAD").strip()
+
+    outcome = _act(estate)
+
+    assert outcome.action == ACTION_INSTALLED
+    assert all(result.passed for result in outcome.probes)
+    entry = estate.entry()
+    assert entry is not None
+    assert (entry.version, entry.revision) == ("2.0.0", estate.new_head)  # type: ignore[attr-defined]
+    # Nothing was committed: the pin did not move, so there was nothing to publish.
+    assert _git(estate.hub, "rev-parse", "HEAD").strip() == hub_head
+
+
+def test_a_pass_that_moved_the_install_with_the_pin_ALREADY_RIGHT_says_it_cannot_put_it_back(
+    estate: Estate,
+) -> None:
+    """THE STATE THE UNDO CANNOT REPAIR, AND MUST THEREFORE REPORT.
+
+    With the pin unmoved there is nothing for the rollback to reset the install to: the install
+    commands install whatever the manifest names, and the manifest names the NEW version, which
+    is what this pass just put on the machine. So the undo does not run them -- re-asserting the
+    pin is not a restore -- and the only honest thing left is to say the machine is not where it
+    was found.
+
+    Keyed on `refreshed` rather than on `bumped` for exactly this row: the pin never moved, so a
+    check gated on the pin says the previous plugin was left in place, about a cache it never
+    looked at. Here the previous plugin was NOT left in place.
+    """
+    _pin_by_hand(estate, "2.0.0")
+
+    with pytest.raises(RollbackFailed, match="between two versions"):
+        _act(estate, head=estate.old_head)
+
+    entry = estate.entry()
+    assert entry is not None
+    assert entry.version == "2.0.0"  # type: ignore[attr-defined]
+
+
+def test_a_commit_that_fails_AFTER_git_add_does_not_reinstate_the_bump_from_the_index(
+    estate: Estate,
+) -> None:
+    """`git checkout -- <path>` RESTORES FROM THE INDEX, which is why the hub goes back with
+    `reset --hard` instead.
+
+    `git add` succeeds and `git commit` does not -- an identity, a hook, a full disk. The bump is
+    then sitting in the index, and a checkout of the manifest would reinstate the very change the
+    rollback exists to undo; the refresh that follows would install the NEW version and a
+    recoverable failure would be reported as a rollback failure. The hub was verified clean before
+    anything moved, so resetting to the captured commit is exact and loses nothing.
+    """
+    hook = estate.hub / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    hub_head = _git(estate.hub, "rev-parse", "HEAD").strip()
+
+    outcome = _act(estate)
+
+    assert outcome.action == ACTION_ROLLED_BACK
+    assert estate.pinned("octo") == "1.0.0"
+    assert _git(estate.hub, "rev-parse", "HEAD").strip() == hub_head
+    # The INDEX is clean too, which `checkout --` would not have achieved.
+    assert _git(estate.hub, "status", "--porcelain").strip() == ""
+    assert _git(estate.hub, "diff", "--cached", "--name-only").strip() == ""
+    entry = estate.entry()
+    assert entry is not None
+    assert (entry.version, entry.revision) == ("1.0.0", estate.old_head)  # type: ignore[attr-defined]
+
+
 def test_a_publish_that_fails_rolls_the_whole_act_back(estate: Estate) -> None:
     """`installed == pinned == clone`, PUBLISHED, is the hub's own invariant, so a machine running
     a plugin whose pin no repository holds satisfies three quarters of it. The act is put back and
