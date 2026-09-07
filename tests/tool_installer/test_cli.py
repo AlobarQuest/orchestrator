@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 
 from tool_installer import cli as cli_module
 from tool_installer.cli import app
+from tool_installer.install import RollbackFailed
 from tool_installer.orchestrator_client import ObservationWriteError
 from tool_installer.plugin import Sites
 from tool_installer.toolchain import CRATES_JSON, CRATES_TOML, ToolchainError
@@ -407,3 +408,40 @@ def test_the_window_ADMITS_the_OCTO_row_when_it_is_open(
     result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
     assert isinstance(result.exception, AssertionError)
     assert "reached CLAUDE" in str(result.exception)
+
+
+def test_a_failed_rollback_is_FILED_and_does_not_cost_the_other_row_its_record(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE COMPOUNDING HALF OF THE WORST DEFECT, and the reason the catch is per row.
+
+    `RollbackFailed` was caught nowhere: it reached typer as a traceback, so the pass that most
+    needed to say what happened filed nothing. And because `rows` is filed AFTER the loop, a
+    defect in the NEW plugin row cost the pre-existing cargo row its observation too -- this PR
+    would have made a working lane's record conditional on an untested one not crashing.
+
+    Both halves are asserted: the octo row is filed as `rollback_failed`, and the rtk row is
+    filed at all.
+    """
+    _octo_behind(machine)
+    _rtk_current(machine)
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise RollbackFailed("the previous plugin could not be restored: claude exited 9")
+
+    # The fixture's `resolve_claude` raises to prove non-arrival elsewhere; here the pass MUST
+    # arrive, so it is let through and the failure is moved to the act itself.
+    monkeypatch.setattr(cli_module, "resolve_claude", lambda: Path("/usr/bin/true"))
+    monkeypatch.setattr(cli_module, "install_and_prove_plugin", explode)
+
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+
+    # Exit 3 is this lane's FINDING code -- the pass ran and reported. What must not happen is a
+    # traceback, which is what an uncaught `RollbackFailed` produced (exit 1, reading as "the tool
+    # itself failed", with nothing filed).
+    assert result.exit_code == 3, f"expected the finding code, got {result.exit_code}"
+    assert not isinstance(result.exception, RollbackFailed), "it threw instead of filing"
+    filed = {row["subject_reference"]: row for row in machine.filed}
+    assert "AlobarQuest/claude-octopus" in filed
+    assert filed["AlobarQuest/claude-octopus"]["facts"]["action"] == "rollback_failed"
+    assert "AlobarQuest/rtk" in filed, "the working row lost its record to the other row's crash"

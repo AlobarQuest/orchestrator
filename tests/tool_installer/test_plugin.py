@@ -994,3 +994,31 @@ def test_a_rollback_that_SUCCEEDS_is_not_reported_as_a_rollback_failure(
     after = read_entry(estate.sites, OCTO, MARKETPLACE)
     assert before is not None and after is not None
     assert (after.version, after.revision) == (before.version, before.revision)
+
+
+def test_a_hub_BEHIND_origin_is_refused_before_the_machine_is_touched(estate: Estate) -> None:
+    """THE STATE THAT MADE EVERY NIGHT A FALSE CRITICAL, and it is not the ahead case.
+
+    Reproduced: a commit lands on the hub's origin from anywhere else. The old check asked only
+    whether the hub was AHEAD, so it passed; the pass then pulled, bumped, committed, installed,
+    verified CLEAN, had the push rejected as a non-fast-forward, and uninstalled the new plugin to
+    reinstall the old one. Filed `critical`, nightly, with no self-heal -- a rejected push does not
+    advance `origin/main`, so the next pass was identical.
+
+    Behind is now as disqualifying as ahead, and it is refused BEFORE anything moves: an input
+    problem reported up front rather than an install failure found after the machine was changed
+    and changed back. `estate.commands()` empty is the half that says "nothing moved".
+    """
+    origin = Path(_git(estate.hub, "remote", "get-url", "origin").strip())
+    elsewhere = estate.hub.parent / "someone-else"
+    subprocess.run(["git", "clone", str(origin), str(elsewhere)], check=True, capture_output=True)
+    (elsewhere / "FROM_ELSEWHERE.md").write_text("a commit this machine has never seen\n")
+    _git(elsewhere, "add", "-A")
+    _git(elsewhere, "commit", "-m", "landed from another machine")
+    _git(elsewhere, "push", "origin", "main")
+
+    outcome = _act(estate)
+
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "behind" in outcome.detail
+    assert estate.commands() == [], "the machine was touched before the refusal"
