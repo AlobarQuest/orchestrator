@@ -60,6 +60,11 @@ SUBJECTS: tuple[Subject, ...] = (
     Subject("open-brain", "https://open-brain.devonwatkins.com/api/health", "AlobarQuest/brain"),
     Subject("app-brain", "https://app-brain.devonwatkins.com/api/health", "AlobarQuest/brain"),
     Subject("code-brain", "https://code-brain.devonwatkins.com/api/health", "AlobarQuest/brain"),
+    Subject(
+        "change-manager",
+        "https://change-mgr.alobar.net/api/health",
+        "AlobarQuest/change-manager",
+    ),
     # Its health path is NOT /api/health -- the platform's own check is disabled for this
     # application so that a migration-drift 503 on /health/ready cannot kill the container during
     # a migrate-first window, and the recorded path is a default that answers 404.

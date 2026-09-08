@@ -91,6 +91,14 @@ OBSERVATION_SOURCE_SYSTEMS = (
     # and a row saying GitHub observed its own callers would be false provenance in a table with
     # no supersession model and no delete route.
     "pin_watcher",
+    # The revision watcher: is a deployed application serving the commit its branch names? One
+    # member for the lane, following its siblings; `subject_reference` names the application.
+    # `deployment_observation` is the near miss and is wrong -- that names rows describing a
+    # deployment EVENT, recorded once by whoever performed it, where this lane asserts a standing
+    # CONDITION it re-measures hourly and that no deployment need have caused. `github` is wrong
+    # for the reason the pin watcher already records: it names the system a fact came from, and
+    # every member here names the PRODUCER.
+    "revision_watcher",
     # The tool installer: which revision of a named tool the operator machine is running, and
     # whether that is the revision the fork's branch holds. One member for the lane, following
     # `drift_digest`, `recovery_floor` and `machine_activation`; `subject_reference` names the
@@ -157,6 +165,11 @@ OBSERVATION_TYPES = (
     # asserts something specific and falsifiable about which runner revision a dispatch into
     # that repository would execute.
     "caller_pin",
+    # What a deployed application is SERVING, against what its branch names. `deployment` asserts
+    # that a deployment happened; this asserts nothing about how the state was arrived at, which is
+    # the cause-independence that makes the lane worth having. `tool_revision` is the same shape one
+    # artifact over -- a binary on the operator machine rather than an application in production.
+    "production_revision",
     # Which revision of a named tool is installed on the operator machine, and whether that is
     # the revision its fork's branch holds. Deliberately neither `activation`, which is the
     # working-copy sweep's and asserts what a checkout will run, nor `inventory`, which asserts
