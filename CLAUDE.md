@@ -4622,7 +4622,9 @@ style of that module.
   read the tests over it — a parametrized list of the states you did NOT handle is a pin on the
   defect, not coverage of it.
 
-- **`brain`'s deploy verification fails on ONE OF FOUR APPS, a DIFFERENT one each time, and the
+- **[CORRECTED 2026-09-07 — the straggler is neither slow nor stuck: COOLIFY'S DEPLOYMENT
+  FAILED. Read the correction at the end of this bullet before acting on any of it.]
+  `brain`'s deploy verification fails on ONE OF FOUR APPS, a DIFFERENT one each time, and the
   straggler does not report within the full 600-second deadline.** Measured 2026-09-05 across the
   last eight push-triggered `ci.yml` runs: **two failed (25%)**, both at *"Verify every deployed
   brain is serving the new revision"*. Run `33843605720` — `infra`, `open`, `code` reported inside
@@ -4637,6 +4639,42 @@ style of that module.
   `approved` rather than `resolved` (item 78 on 2026-09-04), so the records accumulate slowly.
   **Raising the deadline would be a guess** — nothing here says the straggler is slow rather than
   stuck, and that distinction is what a remedy would have to rest on.
+  **CORRECTED 2026-09-07 BY ASKING COOLIFY, WHICH IS THE ONE PARTY NOBODY HAD ASKED. It is a
+  third thing: the deployment FAILED and was rolled back, about two seconds in.** Coolify's helper
+  container exits between the `docker run` that starts it and the `docker exec` that follows, the
+  rolling update aborts on `No such container`, Coolify removes the new version, and the previous
+  container keeps serving — which is byte-for-byte what a deployment still in flight looks like
+  from the outside. The workflow's verdict was HONEST; what it could not do was name the cause,
+  because it only ever asked production what it was SERVING.
+  **Census over 154 deployments of the four brains: 5 failed, all in `brain-app` (3) and
+  `brain-code` (2), none in `brain-infra` or `brain-open`.** Every failure carries a doubled
+  `Preparing container with helper image` line and every success carries one — a clean
+  discriminator, and the cheapest way to classify a new one. The Docker daemon log puts the
+  helper's `task-delete` 1.7 s after its network join, with **no OOM kill** (the host has 3.8 GB
+  and 2.8 GB of swap in use, so it is under pressure, but nothing killed it).
+  **The obvious hypothesis is FALSIFIED, and the falsification is the reusable part.** `brain-app`
+  and `brain-code` are triggered third and fourth against `concurrent_builds: 2`, so queueing
+  looks like the answer. Measured, the wait before a deployment's first log line is 25.7–30.9 s
+  for the five failures and **min 0.8 / median 24.6 / max 62.0 s for the 149 successes** — the
+  failed range sits inside the successful distribution. Position separates the two PAIRS; queue
+  wait separates nothing. **Why the helper exits is not established**, and a remedy resting on
+  queueing would have been resting on nothing.
+  **`It resolves afterwards` IS FALSE, and that is the half that cost real time.** It resolved for
+  the 2026-09-04 pair because a later push redeployed them. Nothing corrected 2026-09-06:
+  **`app-brain` served `4b80fac8` while `main` was `de1bb53b` for a day and a half**, under a red
+  run on `main` whose message sent a reader looking at three things that were all wrong. A failed
+  Coolify deployment is not self-healing — it waits for the next deploy of that app, or for a hand.
+  **CLOSED for the REPORTING half by `brain#62`.** The trigger step keeps the deployment id Coolify
+  names (it was printed and discarded, which is why nothing downstream could ask about it), and the
+  verify step reads that deployment's status before each revision poll, failing fast with Coolify's
+  own error line. Only an explicit `failed` decides — an unreadable status is not a verdict, so an
+  unreachable Coolify costs a slower failure and never a wrong one — and the revision poll stays
+  the authority on success, because `finished` and *serving the revision* are different facts and
+  the four brains swap at measurably different times off one image. **The deployment still fails;
+  it now says so in about forty seconds instead of ten minutes, and production still needs a
+  redeploy.** Whether to retry automatically, serialize the four triggers, or raise
+  `concurrent_builds` is open, and the last of those touches every app on that host rather than
+  these four.
 
 - **THE THREE LAUNCHERS THAT NEVER GOT A DEAD-MAN SWITCH WERE EXACTLY THE THREE THAT NEVER GOT THE
   `bws --color no` GUARD, AND THE SECOND FACT EXPLAINS WHY THE FIRST WENT UNNOTICED.** Measured
