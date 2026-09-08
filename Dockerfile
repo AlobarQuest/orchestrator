@@ -21,7 +21,14 @@ RUN uv sync --frozen --no-dev \
 
 FROM python:3.14-slim AS runtime
 
-ENV PATH=/app/.venv/bin:$PATH \
+# The commit this image was built from, served on /health/live so the estate can ask from outside.
+# Declared in the RUNTIME stage: an ARG is scoped to the stage that declares it, so one on the
+# builder would leave this empty and the endpoint would report `null` for every image ever built.
+# Unset is a valid state -- a local `docker build` has no revision to state and must not invent one.
+ARG ORCHESTRATOR_REVISION=""
+
+ENV ORCHESTRATOR_REVISION=${ORCHESTRATOR_REVISION} \
+    PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     ORCHESTRATOR_REGISTRY_BUNDLE=/app/registry-bundle.json \
     SECURITY_STANDARDS_DIR=/app/security-standards

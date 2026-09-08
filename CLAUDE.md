@@ -858,10 +858,18 @@ style of that module.
   produces a single amd64 v2 manifest; verify the running container's RepoDigest == the pushed
   digest after Coolify swaps (via `.Image`, per the correction above).
   **A hand-run build must also pass the three `--label` flags the workflow passes**
-  (`org.opencontainers.image.revision` with the FULL sha, `.source`, `.created`) and the second
-  `-t sha-<full-sha>`, or the fallback silently produces a less-identifiable artifact than the
-  paved road — precisely the state Inc 7 closed. The workflow refuses such an image; a hand build
-  has nothing to refuse it.
+  (`org.opencontainers.image.revision` with the FULL sha, `.source`, `.created`), the second
+  `-t sha-<full-sha>`, **and `--build-arg ORCHESTRATOR_REVISION=<the same full sha>`** — or the
+  fallback silently produces a less-identifiable artifact than the paved road, precisely the state
+  Inc 7 closed. The workflow refuses such an image; a hand build has nothing to refuse it.
+  **The build arg is what `/health/live` serves, and omitting it is SILENT rather than loud**: the
+  image runs, the endpoint answers 200, and `revision` reads `null` — which the currency census
+  reports as a subject that cannot state what it is rather than as one that is stale, so a hand
+  build with the labels and without the arg is invisible until somebody asks why one row of the
+  census never resolves. `ARG ORCHESTRATOR_REVISION` is declared in the **runtime** stage, and that
+  is load-bearing: measured 2026-09-08 against a throwaway image, the identical `--build-arg`
+  against an `ARG` on the builder stage lands EMPTY in the runtime environment, so a well-formed
+  build command produces an unstamped image.
   **The FULL 40-character SHA goes in the workflow's `ref` INPUT, not in `gh workflow run --ref`.**
   These are two different things and this bullet used to conflate them, which cost WS-P2.18 Inc 4 a
   422. `--ref` selects the git ref the workflow FILE is read from and expects a branch or tag;

@@ -124,6 +124,7 @@ jobs:
             --build-context registry="$RUNNER_TEMP/registry" \
             --build-arg SECURITY_STANDARDS_REVISION="${{ steps.pin.outputs.revision }}" \
             --build-arg REGISTRY_ARTIFACT_SHA256="${{ steps.pin.outputs.digest }}" \
+            --build-arg ORCHESTRATOR_REVISION="${{ steps.tag.outputs.revision }}" \
             --label org.opencontainers.image.revision="${{ steps.tag.outputs.revision }}" \
             --label org.opencontainers.image.source="${{ steps.tag.outputs.source }}" \
             --label org.opencontainers.image.created="${{ steps.tag.outputs.created }}" \
