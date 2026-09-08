@@ -45,7 +45,7 @@ TRUST_CLASSIFICATION = "delivery_system"
 # `app`, because the subject is one deployed application rather than a repository -- four of the
 # six subjects share one repository and would collide under a `repo` reference. Uniqueness is on
 # `(source_system, source_reference)`, so this cannot collide with a sibling lane's rows either.
-SUBJECT_TYPE = "app"
+SUBJECT_TYPE = "service"
 
 # A current application PASSED. Behind or diverged is DEGRADED rather than FAILED: production
 # serving an older build is an ordinary, recoverable state that wants a person's attention, and

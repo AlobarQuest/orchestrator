@@ -115,3 +115,49 @@ def test_the_summary_names_both_commits_because_a_reader_needs_the_difference() 
 
     assert OLD[:12] in line
     assert TIP[:12] in line
+
+
+# ---------------------------------------------------------------------------------------------
+# THE VOCABULARY THIS PAYLOAD MUST SATISFY LIVES IN ANOTHER PROGRAM, and until 2026-09-08 nothing
+# checked it. The lane shipped, measured six applications correctly, and filed NOTHING: every
+# field below is a closed vocabulary backed by a CHECK constraint, `source_system` and
+# `observation_type` had no member for this producer, and the server refused each row with
+# `observation_invalid: source_system is unsupported`.
+#
+# It survived a 5197-test gate because every test that composes this payload also mocks the client
+# that would have refused it -- the estate's documented cross-program boundary, where the request
+# model is a second rule set on top of the service's and no unit test sees it.
+#
+# The orchestrator's tuples are IMPORTABLE here, so this needs no HTTP client and cannot drift.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_every_vocabulary_field_this_payload_sets_is_one_the_orchestrator_accepts() -> None:
+    from orchestrator.persistence.models import (
+        OBSERVATION_SEVERITIES,
+        OBSERVATION_SOURCE_SYSTEMS,
+        OBSERVATION_STATUSES,
+        OBSERVATION_SUBJECT_TYPES,
+        OBSERVATION_TRUST_CLASSIFICATIONS,
+        OBSERVATION_TYPES,
+    )
+
+    for state in (CURRENT, BEHIND, DIVERGED, UNSTAMPED):
+        row = revision_observation(
+            _reading(state=state, served=None if state == UNSTAMPED else TIP)
+        )
+        assert row["source_system"] in OBSERVATION_SOURCE_SYSTEMS
+        assert row["observation_type"] in OBSERVATION_TYPES
+        assert row["subject_type"] in OBSERVATION_SUBJECT_TYPES
+        assert row["trust_classification"] in OBSERVATION_TRUST_CLASSIFICATIONS
+        assert row["status"] in OBSERVATION_STATUSES
+        assert row["severity"] in OBSERVATION_SEVERITIES
+
+
+def test_the_payload_satisfies_the_ROUTES_OWN_REQUEST_MODEL() -> None:
+    """The second rule set. FastAPI answers before any service code runs, so a field the request
+    model rejects is an HTTP 422 that no named error and no service test can reach -- the shape
+    that refused twelve candidate rows in the binding lane before this one."""
+    from orchestrator.api.schemas import ObservationCommandModel
+
+    ObservationCommandModel.model_validate(revision_observation(_reading()))
