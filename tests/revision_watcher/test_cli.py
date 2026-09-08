@@ -44,19 +44,14 @@ class _Recorder:
 
 
 def _drive(monkeypatch, result: Pass, recorder: Any = None, argv: list[str] | None = None):
+    """Patched at `_measure`, which is the seam that owns opening every reader.
+
+    Patching `sweep` instead leaves `_measure` running, and it is `_measure` that decides an
+    unconfigured platform means coverage went unmeasured -- so every case below would exit 3 for a
+    reason the case was not about. Found when that refactor landed and five tests reddened at once.
+    """
     recorder = _Recorder() if recorder is None else recorder
-
-    class _Null:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return None
-
-    monkeypatch.setattr(cli, "GitHubReader", lambda **_: _Null())
-    monkeypatch.setattr(cli, "ApplicationReader", lambda **_: _Null())
-    monkeypatch.setattr(cli, "PlatformReader", lambda **_: _Null())
-    monkeypatch.setattr(cli, "sweep", lambda **_: result)
+    monkeypatch.setattr(cli, "_measure", lambda **_: result)
     monkeypatch.setattr(cli, "open_client", lambda **_: recorder)
     return CliRunner(env=ENV).invoke(cli.app, argv or []), recorder
 
@@ -161,16 +156,7 @@ def test_a_missing_credential_is_the_TOOL_failing_rather_than_a_finding(
     """A broken tool sharing a code with an honest finding is a collision this estate has already
     paid for."""
 
-    class _Null:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return None
-
-    monkeypatch.setattr(cli, "GitHubReader", lambda **_: _Null())
-    monkeypatch.setattr(cli, "ApplicationReader", lambda **_: _Null())
-    monkeypatch.setattr(cli, "sweep", lambda **_: Pass(readings=[_reading(CURRENT)]))
+    monkeypatch.setattr(cli, "_measure", lambda **_: Pass(readings=[_reading(CURRENT)]))
     monkeypatch.setattr(cli, "open_client", lambda **_: _Recorder())
 
     result = CliRunner(env={**ENV, missing: ""}).invoke(cli.app, [])

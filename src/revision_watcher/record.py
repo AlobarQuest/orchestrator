@@ -36,7 +36,14 @@ import hashlib
 import json
 from typing import Any
 
-from revision_watcher.census import BEHIND, CURRENT, DIVERGED, UNSTAMPED, Reading
+from revision_watcher.census import (
+    AWAITING_DEPLOY,
+    BEHIND,
+    CURRENT,
+    DIVERGED,
+    UNSTAMPED,
+    Reading,
+)
 
 SOURCE_SYSTEM = "revision_watcher"
 OBSERVATION_TYPE = "production_revision"
@@ -52,8 +59,22 @@ SUBJECT_TYPE = "service"
 # nothing here has established that anything FAILED -- which is the cause-independence the module
 # docstring keeps. `unstamped` is INFO: an application that never claimed to be askable has not
 # failed a check, it has declined to take one.
-_STATUS = {CURRENT: "passed", BEHIND: "degraded", DIVERGED: "degraded", UNSTAMPED: "passed"}
-_SEVERITY = {CURRENT: "info", BEHIND: "warning", DIVERGED: "warning", UNSTAMPED: "info"}
+_STATUS = {
+    CURRENT: "passed",
+    BEHIND: "degraded",
+    DIVERGED: "degraded",
+    UNSTAMPED: "passed",
+    # A separate-track application waiting for a deliberate deploy has not degraded: the estate's
+    # own record says merging does not deploy it, so the gap is the queue working as designed.
+    AWAITING_DEPLOY: "passed",
+}
+_SEVERITY = {
+    CURRENT: "info",
+    BEHIND: "warning",
+    DIVERGED: "warning",
+    UNSTAMPED: "info",
+    AWAITING_DEPLOY: "info",
+}
 
 MAX_SUMMARY = 512
 
@@ -70,6 +91,11 @@ def summary_of(reading: Reading) -> str:
         )
     elif reading.state == BEHIND:
         body = f"is serving {served}, behind {reading.subject.branch} at {expected}"
+    elif reading.state == AWAITING_DEPLOY:
+        body = (
+            f"is serving {served} and {reading.subject.branch} is at {expected}; landing on this "
+            f"repository does not deploy it, so it is waiting for one"
+        )
     else:
         body = f"is serving {served}, which is not on {reading.subject.branch} at {expected}"
     return f"{reading.subject.name} {body}"[:MAX_SUMMARY]
@@ -81,6 +107,14 @@ def revision_facts(reading: Reading) -> dict[str, Any]:
         "repository": reading.subject.repository,
         "branch": reading.subject.branch,
         "state": reading.state,
+        # What being behind MEANS here, per the estate's own record. In the facts because it is
+        # what makes the state readable a month later: `awaiting_deploy` is only a sane answer for
+        # a repository where merging does not deploy, and a reader must not have to go and ask.
+        #
+        # NOTHING TIME-DEPENDENT GOES IN HERE. The age of a gap changes every pass, so a fact
+        # carrying it would content-address to a new row hourly and never replay -- the frozen-fact
+        # discipline this record's docstring already turns on.
+        "landing": reading.landing,
         # Present and null rather than absent when an application names no commit. A consumer must
         # tell "this application does not say" from "this application is current", and an absent
         # key says the first to a reader who is looking and the second to one calling `.get()`.
