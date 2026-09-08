@@ -295,3 +295,163 @@ def test_the_two_schemes_are_both_present_so_neither_test_above_is_vacuous() -> 
     codes = {code for _, code in declared_codes().values()}
 
     assert codes == {2, 3}
+
+
+# ---------------------------------------------------------------------------------------------
+# A CONDITION IS A DIFFERENT QUESTION, AND IT GETS A DIFFERENT CHECK.
+#
+# The switch above answers "is this lane alive" and says SUCCESS on a declared finding, which is
+# why it cannot also answer "is the estate healthy". `sds_condition_report` answers only the
+# second, on its own check. Three verdicts, and `unknown` pinging NOTHING is the load-bearing one:
+# a pass that could not tell has established neither that the condition holds nor that it does not,
+# and reporting either would be an assertion nobody measured.
+# ---------------------------------------------------------------------------------------------
+
+CONDITION_URL = "https://hc.example/ping/condition"
+
+
+def _run_condition(
+    tmp_path: Path,
+    stubs: Path,
+    *,
+    verdict: str,
+    listing_name: str = "sds-a-condition",
+    also_arm: bool = False,
+) -> tuple[int, list[str], str]:
+    """Source the real helper and report a verdict; return (rc, pings, output)."""
+    ping_log = tmp_path / "pings.txt"
+    ping_log.write_text("")
+    listing = json.dumps(
+        {
+            "checks": [
+                {"name": "sds-the-lane", "ping_url": PING_URL},
+                {"name": listing_name, "ping_url": CONDITION_URL},
+            ]
+        }
+    )
+    arm = "sds_deadman_arm sds-the-lane --finding 2\n" if also_arm else ""
+    driver = tmp_path / "driver.sh"
+    driver.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -uo pipefail\n"
+        f"source {HELPER.resolve()}\n"
+        f"{arm}"
+        f"sds_condition_report sds-a-condition {verdict}\n"
+        "exit 0\n"
+    )
+    driver.chmod(0o755)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{stubs}{os.pathsep}{environment['PATH']}"
+    environment["BWS_ACCESS_TOKEN_BROAD"] = "not-a-real-identity"
+    environment["LISTING"] = listing
+    environment["PING_LOG"] = str(ping_log)
+    completed = subprocess.run(
+        [shutil.which("bash") or "/bin/bash", str(driver)],
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    pings = [line for line in ping_log.read_text().splitlines() if line]
+    return completed.returncode, pings, completed.stdout + completed.stderr
+
+
+def test_a_healthy_condition_pings_success(tmp_path: Path, bin_stubs: Path) -> None:
+    _, pings, _ = _run_condition(tmp_path, bin_stubs, verdict="ok")
+
+    assert pings == [CONDITION_URL]
+
+
+def test_an_unhealthy_condition_pings_fail(tmp_path: Path, bin_stubs: Path) -> None:
+    """Red until a later pass says otherwise. The condition persists, so the signal must persist
+    with it rather than scrolling past, which is the whole reason this check exists."""
+    _, pings, _ = _run_condition(tmp_path, bin_stubs, verdict="not-ok")
+
+    assert pings == [f"{CONDITION_URL}/fail"]
+
+
+def test_a_condition_the_pass_COULD_NOT_TELL_pings_NOTHING(tmp_path: Path, bin_stubs: Path) -> None:
+    """The load-bearing case. A missing credential or an unreachable subject has established
+    neither that the condition holds nor that it does not; `/fail` would be crying wolf and a
+    success would be a claim nobody measured. The check's own period speaks instead."""
+    _, pings, output = _run_condition(tmp_path, bin_stubs, verdict="unknown")
+
+    assert pings == []
+    assert "could not tell" in output
+
+
+def test_reporting_a_condition_does_not_STEAL_the_liveness_switchs_url(
+    tmp_path: Path, bin_stubs: Path
+) -> None:
+    """THE HAZARD THIS FUNCTION IS SHAPED AROUND. `sds_deadman_resolve` writes the module globals
+    and the EXIT handler reads them, so a resolve for the condition's check would leave the switch
+    pinging the CONDITION's url on the way out -- reporting the wrong lane alive, silently. The
+    driver arms the switch, reports a condition, then exits 0, so both pings are observable and
+    must name different checks."""
+    _, pings, _ = _run_condition(tmp_path, bin_stubs, verdict="ok", also_arm=True)
+
+    assert f"{CONDITION_URL}" in pings
+    # `/start` and the clean-exit ping both belong to the LANE's check, not the condition's.
+    assert [ping for ping in pings if ping.startswith(PING_URL)] == [
+        f"{PING_URL}/start",
+        PING_URL,
+    ]
+
+
+def test_a_condition_check_that_does_not_resolve_never_gates_the_lane(
+    tmp_path: Path, bin_stubs: Path
+) -> None:
+    """Same rule the switch already follows: a lane must not die because its reporting could not
+    report."""
+    rc, pings, output = _run_condition(
+        tmp_path, bin_stubs, verdict="ok", listing_name="a-different-name"
+    )
+
+    assert rc == 0
+    assert pings == []
+    assert "not reported" in output
+
+
+def test_an_unrecognised_verdict_reports_NOTHING_rather_than_guessing(
+    tmp_path: Path, bin_stubs: Path
+) -> None:
+    rc, pings, output = _run_condition(tmp_path, bin_stubs, verdict="probably-fine")
+
+    assert rc == 0
+    assert pings == []
+    assert "is not a verdict" in output
+
+
+def test_the_revision_watcher_is_the_only_launcher_reporting_a_condition_so_far() -> None:
+    """Asserted by value so a second lane adopting this cannot arrive without a person editing the
+    literal -- the same construct as the finding-code inventory above, for the same reason."""
+    reporting = sorted(
+        path.name for path in SCRIPTS.glob("run-*.sh") if "sds_condition_report" in path.read_text()
+    )
+
+    assert reporting == ["run-revision-watcher.sh"]
+
+
+def test_a_condition_reporting_launcher_suppresses_it_under_dry_run() -> None:
+    """An operator inspecting a lane by hand must not move the estate's own signal -- the same
+    reason the switch is not armed under `--dry-run`.
+
+    CALL LINES, NOT MENTIONS. A first draft indexed the raw text and matched the function's name in
+    the COMMENT that explains it, which sits ABOVE the guard -- so the assertion compared two
+    offsets in prose and failed on correct code. A second draft looked for lines STARTING with the
+    call and matched nothing, because every call site is a `case` arm. Both are the
+    non-discriminating check this file exists to catch, written twice into this file.
+    """
+    for path in SCRIPTS.glob("run-*.sh"):
+        lines = path.read_text().splitlines()
+        calls = [
+            i
+            for i, line in enumerate(lines)
+            if "sds_condition_report " in line and not line.strip().startswith("#")
+        ]
+        if not calls:
+            continue
+        guards = [i for i, line in enumerate(lines) if "sds_deadman_is_dry_run" in line]
+        assert guards, f"{path.name} reports a condition without consulting --dry-run"
+        assert min(guards) < min(calls), (
+            f"{path.name} reports a condition before checking --dry-run"
+        )

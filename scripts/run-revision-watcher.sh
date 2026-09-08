@@ -132,6 +132,27 @@ fi
 "$REPO_ROOT/.venv/bin/revision-watcher" "$@"
 rc=$?
 
+# THE CONDITION, ON ITS OWN CHECK. `sds-revision-watcher` above answers whether this LANE is alive
+# and says success on a finding, which is right and is exactly why it cannot also answer whether
+# the ESTATE is healthy. `sds-production-current` answers only the second question, so red there
+# means an application is not serving what its branch names — the standing condition that, on
+# 2026-09-06, three correct reports of a failed rollout could not keep in front of anybody.
+#
+# 1 and 3 report `unknown` rather than `not-ok`: a missing credential or an application that could
+# not be reached has established nothing about whether production is current, and calling that
+# staleness is how a control starts crying wolf. The check's own period is what speaks for an
+# inability to measure that persists — see `sds_condition_report` for the whole rule.
+#
+# A dry run reports nothing at all, for the reason the switch is not armed under one: an operator
+# inspecting the lane by hand must not move the estate's own signal.
+if ! sds_deadman_is_dry_run "$@"; then
+  case "$rc" in
+    0) sds_condition_report sds-production-current ok ;;
+    2) sds_condition_report sds-production-current not-ok ;;
+    *) sds_condition_report sds-production-current unknown ;;
+  esac
+fi
+
 # A code outside {0,1,2,3} is the program dying in a way it does not describe -- a missing binary
 # is 127. Reported as 1 (the tool failed) rather than folded to 0, which is what several sibling
 # launchers used to do.
