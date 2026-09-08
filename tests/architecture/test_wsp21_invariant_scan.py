@@ -437,6 +437,16 @@ OUTBOUND_ALLOWLIST = {
     # the OBSERVER bearer to one endpoint, that role's whole write surface. All three are enforced
     # in code by `is_allowed_read` / `is_allowed_write` / a GET-only entry point, and pinned by
     # test_tool_installer_isolation.py. Its egress is not the orchestrator's.
+    # The revision watcher. Three readers and one writer, all out of process (ADR-0002's shape),
+    # because the question is about applications this repository does not run and the answer is
+    # filed rather than acted on. `estate.py` performs one GET per declared application against
+    # the health URL that application declares, plus one listing GET against the hosting platform
+    # used ONLY to police the declared table; `github.py` asks what a branch names, when a commit
+    # was made and how two commits relate; the client below writes the one observation endpoint
+    # the OBSERVER role can reach and no other.
+    Path("src/revision_watcher/estate.py"),
+    Path("src/revision_watcher/github.py"),
+    Path("src/revision_watcher/orchestrator_client.py"),
     Path("src/tool_installer/github.py"),
     Path("src/tool_installer/policy_client.py"),
     Path("src/tool_installer/orchestrator_client.py"),

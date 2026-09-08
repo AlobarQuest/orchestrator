@@ -60,6 +60,12 @@ work-watcher = "work_watcher.cli:main"
 # orchestrator. A SEPARATE program from `estate-landing` because four of that lane's five
 # classifications cannot fire on an answer from this one.
 inert-landing = "inert_lander.cli:main"
+# Is every deployed application serving the commit its branch names? Three surfaces report a
+# rollout that went WRONG and every one reports a moment; on 2026-09-06 all three fired and
+# app-brain served a build behind main for a day and a half anyway. This one reports the
+# CONDITION, and is cause-independent: a failed deploy, an image that never built, a rotated
+# secret and a manual swap nobody performed all end in the same measurable state.
+revision-watcher = "revision_watcher.cli:app"
 # ADR-0030. The machine-activation sweep: what each enrolled working copy on the operator
 # machine will execute at its next start, and whether that is what was merged. It is also
 # the only control over ADR-0031, whose activation helper returns 0 whatever it finds.
