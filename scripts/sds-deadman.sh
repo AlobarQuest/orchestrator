@@ -214,3 +214,71 @@ sds_deadman_arm() {
     sds_deadman_ping "/start"
     return 0
 }
+
+# ---------------------------------------------------------------------------------------------
+# A CONDITION IS A DIFFERENT QUESTION FROM LIVENESS, AND IT GETS A DIFFERENT CHECK.
+#
+# Everything above answers "is this lane alive". That is why a declared finding code pings SUCCESS:
+# a lane that ran and reported is alive, whatever it found. The rule is right and is not changing.
+#
+# It leaves a gap this estate has already paid for. On 2026-09-06 three surfaces reported that a
+# rollout had failed, every one correctly, and `app-brain` served a build behind `main` for a day
+# and a half because each of them reports a MOMENT and nothing carried the CONDITION forward. A
+# lane whose subject is a standing condition can answer a second question -- is the condition
+# healthy right now -- and that answer belongs on its own check, where red means the estate needs
+# looking at rather than the lane does.
+#
+# THREE VERDICTS, and the third is the one worth reading twice.
+#
+#   ok       the pass established that the condition holds. Pings success.
+#   not-ok   the pass established that it does not. Pings `/fail`, and the check stays red until a
+#            later pass says `ok` -- which is the whole point: the condition persists, so the
+#            signal must persist with it rather than scrolling past.
+#   unknown  the pass could not tell. Pings NOTHING, deliberately.
+#
+# `unknown` is not `not-ok`. A GitHub blip or one unreachable application has not established that
+# anything is stale, and reporting it as staleness is how a control comes to cry wolf and then gets
+# ignored. It is not `ok` either. So it pings nothing and lets the check's own PERIOD speak: a
+# transient failure is absorbed by the next conclusive pass, and an inability to measure that
+# persists past the period turns the check red on a timeout, which says exactly what is true --
+# nothing has confirmed this condition recently.
+#
+# NEVER FAILS THE CALLER, exactly as the switch never does. A lane must not die because its
+# reporting could not report.
+sds_condition_report() {
+    local name="$1" verdict="$2" url reason
+    # SAVED AND RESTORED AROUND THE RESOLVE. `sds_deadman_resolve` writes the module globals, and
+    # the EXIT handler reads them -- so leaving them pointing at this check would make the liveness
+    # switch ping the CONDITION's url on the way out and report the wrong lane alive. Found by
+    # reading the resolver rather than by shipping it.
+    local saved_url="$SDS_DEADMAN_PING_URL" saved_reason="$SDS_DEADMAN_REASON"
+    SDS_DEADMAN_PING_URL=""
+    SDS_DEADMAN_REASON=""
+    sds_deadman_resolve "$name"
+    url="$SDS_DEADMAN_PING_URL"
+    reason="$SDS_DEADMAN_REASON"
+    SDS_DEADMAN_PING_URL="$saved_url"
+    SDS_DEADMAN_REASON="$saved_reason"
+
+    case "$verdict" in
+        ok|not-ok|unknown) ;;
+        *)
+            sds_deadman_log "condition '$name': '$verdict' is not a verdict — nothing reported"
+            return 0
+            ;;
+    esac
+    if [ "$verdict" = "unknown" ]; then
+        sds_deadman_log "condition '$name' left as it was: this pass could not tell"
+        return 0
+    fi
+    if [ -z "$url" ]; then
+        sds_deadman_log "condition '$name' not reported: ${reason:-no ping url}"
+        return 0
+    fi
+    local suffix=""
+    [ "$verdict" = "not-ok" ] && suffix="/fail"
+    curl -fsS --max-time 10 "${url}${suffix}" >/dev/null 2>&1 \
+        || sds_deadman_log "condition '$name' ping '${suffix:-/}' failed (non-fatal)"
+    sds_deadman_log "condition '$name' reported $verdict"
+    return 0
+}
