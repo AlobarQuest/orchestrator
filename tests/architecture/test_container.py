@@ -30,6 +30,26 @@ def test_container_is_python_314_non_root_and_health_checked() -> None:
     assert "alembic upgrade" not in dockerfile
 
 
+def test_the_revision_arg_is_declared_in_the_RUNTIME_stage() -> None:
+    """An ARG is scoped to the stage that declares it. Declared on the builder instead, the
+    runtime ENV would expand to empty and every image ever built would report `null` while the
+    build command looked entirely correct -- a wrong answer that costs a release to notice."""
+    dockerfile = Path("Dockerfile").read_text()
+    runtime = dockerfile.split("FROM python:3.14-slim AS runtime", 1)[1]
+
+    assert "ARG ORCHESTRATOR_REVISION" in runtime
+    assert "ENV ORCHESTRATOR_REVISION=${ORCHESTRATOR_REVISION}" in runtime
+
+
+def test_the_release_workflow_passes_the_revision_it_labels_the_image_with() -> None:
+    """The workflow already stamps this commit as an OCI label. Serving a DIFFERENT value than
+    the label would be worse than serving none, so both read the one output."""
+    workflow = Path(".github/workflows/release-image.yml").read_text()
+
+    assert '--build-arg ORCHESTRATOR_REVISION="${{ steps.tag.outputs.revision }}"' in workflow
+    assert 'org.opencontainers.image.revision="${{ steps.tag.outputs.revision }}"' in workflow
+
+
 def test_runtime_image_copies_only_declared_application_artifacts() -> None:
     dockerfile = Path("Dockerfile").read_text()
     runtime = dockerfile.split("FROM python:3.14-slim AS runtime", 1)[1]
