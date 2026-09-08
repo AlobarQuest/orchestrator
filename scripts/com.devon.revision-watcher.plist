@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the revision-watcher LaunchAgent. Install with
+     scripts/install-revision-watcher-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
+     writes ~/Library/LaunchAgents/com.devon.revision-watcher.plist.
+
+     No secrets live here: the wrapper fetches the observer bearer and the platform token from BWS
+     at runtime, under two DIFFERENT machine identities, and takes the GitHub credential from the
+     environment or from `gh`.
+
+     EVERY HOUR, and the reasoning differs from the rollout watcher's even though the interval
+     matches. This lane's subject is a CONDITION rather than an event: production being behind
+     stays true until somebody or something corrects it, so no pass can miss it the way a poll can
+     miss a run. What hourly buys is latency — an application that goes stale inside the
+     02:00–06:00 landing window is known by 07:00 rather than at the next morning's reading. It is
+     cheap: one pass is about eight seconds, six health calls, a handful of GitHub objects and one
+     platform listing, and re-observing an unchanged application replays rather than appending.
+
+     RunAtLoad is false. A pass at login adds nothing the hourly schedule does not cover, and the
+     machine being closed overnight costs nothing: the condition is still true when it wakes,
+     which is the whole property that makes this lane different from the three that report moments.
+
+     The exit code is the report. launchd discards it, so read the log — 0 every application
+     serves what its branch names, 1 the tool failed, 2 an application is behind or diverged or
+     undeclared, 3 something could not be measured. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.revision-watcher</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-revision-watcher.sh</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/revision-watcher.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/revision-watcher.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
