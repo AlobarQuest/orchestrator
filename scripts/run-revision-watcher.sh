@@ -32,6 +32,7 @@ set -uo pipefail
 # BWS UUIDs (values fetched at runtime; never stored in this repo). See .bws-secrets.toml.
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER bearer
 PLATFORM_TOKEN_UUID="bbd71f41-b7df-4ae9-8fdb-b41501447308"    # read-only hosting-platform API token
+ESTATE_READ_KEY_UUID="726a18ba-7a38-4ecc-aa03-b49a015fd302"   # App Brain READ-ONLY key
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -102,6 +103,15 @@ REVISION_WATCHER_PLATFORM_URL="${REVISION_WATCHER_PLATFORM_URL:-http://coolify-1
 REVISION_WATCHER_PLATFORM_TOKEN="$(_bws_value "$PLATFORM_TOKEN_UUID" "$BROAD_IDENTITY")"
 export REVISION_WATCHER_PLATFORM_URL REVISION_WATCHER_PLATFORM_TOKEN
 
+# WHAT BEING BEHIND MEANS, which is a different question from whether an application IS behind.
+# The estate's own record says whether landing on a repository's default branch redeploys it; for
+# one where it does, a gap means something went wrong, and for one where merge and deploy are
+# separate tracks a gap is the queue. Same broad identity as the platform token — measured
+# 2026-09-08, the narrow `sds-operator` account cannot read this project either.
+REVISION_WATCHER_ESTATE_URL="${REVISION_WATCHER_ESTATE_URL:-https://app-brain.devonwatkins.com}"
+REVISION_WATCHER_ESTATE_KEY="$(_bws_value "$ESTATE_READ_KEY_UUID" "$BROAD_IDENTITY")"
+export REVISION_WATCHER_ESTATE_URL REVISION_WATCHER_ESTATE_KEY
+
 # `set -e` is deliberately not used, so a failed fetch would otherwise leave these EMPTY and fall
 # through -- the observer bearer into an exit 1 that says the credential is unconfigured, which is
 # right, and the platform token into an exit 3 that says coverage went unmeasured, which is also
@@ -113,6 +123,10 @@ if [ -z "$ORCHESTRATOR_API_TOKEN" ]; then
 fi
 if [ -z "$REVISION_WATCHER_PLATFORM_TOKEN" ]; then
   echo "FATAL: could not read the platform token from BWS (broad identity)" >&2
+  exit 1
+fi
+if [ -z "$REVISION_WATCHER_ESTATE_KEY" ]; then
+  echo "FATAL: could not read the App Brain read key from BWS (broad identity)" >&2
   exit 1
 fi
 

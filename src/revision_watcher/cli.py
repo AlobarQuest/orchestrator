@@ -23,12 +23,13 @@ person by some other route is an open decision, deliberately not taken inside th
 from __future__ import annotations
 
 import os
+from contextlib import ExitStack
 from typing import Annotated
 
 import typer
 
 from revision_watcher.census import Pass, as_lines, sweep
-from revision_watcher.estate import ApplicationReader, PlatformReader
+from revision_watcher.estate import ApplicationReader, LandingReader, PlatformReader
 from revision_watcher.github import GitHubReader
 from revision_watcher.orchestrator_client import (
     OrchestratorClient,
@@ -61,6 +62,42 @@ def _file_rows(result: Pass, client: OrchestratorClient) -> list[str]:
     return unfiled
 
 
+def _measure(
+    *,
+    token: str,
+    platform_url: str,
+    platform_token: str,
+    estate_url: str,
+    estate_key: str,
+) -> Pass:
+    """One pass, with whatever optional sources are configured.
+
+    Both optional sources fail towards REPORTING rather than towards quiet. Without the platform
+    the declared table goes unpoliced and the pass says so; without the estate source every
+    subject is classified `unknown` and judged strictly, so a separate-track application's ordinary
+    queue is reported as a finding -- loud and wrong rather than quiet and wrong.
+    """
+    with (
+        GitHubReader(token=token) as reader,
+        ApplicationReader() as applications,
+        ExitStack() as stack,
+    ):
+        platform = None
+        if platform_url and platform_token:
+            platform = stack.enter_context(
+                PlatformReader(base_url=platform_url, token=platform_token)
+            )
+        landings = None
+        if estate_url and estate_key:
+            landings = stack.enter_context(LandingReader(base_url=estate_url, key=estate_key))
+        result = sweep(
+            applications=applications, reader=reader, platform=platform, landings=landings
+        )
+    if platform is None:
+        result.coverage_unmeasured = "no platform credential was configured"
+    return result
+
+
 @app.command()
 def main(
     dry_run: Annotated[
@@ -74,18 +111,16 @@ def main(
 
     platform_url = os.environ.get("REVISION_WATCHER_PLATFORM_URL", "").strip()
     platform_token = os.environ.get("REVISION_WATCHER_PLATFORM_TOKEN", "").strip()
+    estate_url = os.environ.get("REVISION_WATCHER_ESTATE_URL", "").strip()
+    estate_key = os.environ.get("REVISION_WATCHER_ESTATE_KEY", "").strip()
 
-    with (
-        GitHubReader(token=token) as reader,
-        ApplicationReader() as applications,
-    ):
-        if platform_url and platform_token:
-            with PlatformReader(base_url=platform_url, token=platform_token) as platform:
-                result = sweep(applications=applications, reader=reader, platform=platform)
-        else:
-            # Deliberately not silent. The coverage sweep is what stops the declared table rotting,
-            # so a pass that could not run it has not answered the whole question and says so.
-            result = sweep(applications=applications, reader=reader, platform=None)
+    result = _measure(
+        token=token,
+        platform_url=platform_url,
+        platform_token=platform_token,
+        estate_url=estate_url,
+        estate_key=estate_key,
+    )
 
     for line in as_lines(result):
         typer.echo(line)
@@ -114,8 +149,9 @@ def main(
 
     typer.echo(
         f"{len(result.readings)} applications, {len(result.findings)} behind or diverged, "
-        f"{len(result.unstamped)} unstamped, {len(result.unreadable)} unreadable, "
-        f"{len(result.undeclared)} undeclared, {len(unfiled)} unfiled"
+        f"{len(result.awaiting)} awaiting a deploy, {len(result.unstamped)} unstamped, "
+        f"{len(result.unreadable)} unreadable, {len(result.undeclared)} undeclared, "
+        f"{len(unfiled)} unfiled"
     )
     if result.unreadable or unfiled or result.coverage_unmeasured:
         raise typer.Exit(EXIT_INCOMPLETE)

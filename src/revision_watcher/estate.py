@@ -17,6 +17,18 @@ from typing import Any
 import httpx
 
 COOLIFY_APPLICATIONS = "/api/v1/applications"
+LANDING_ROUTE = "/api/apps/default-branch-landing"
+
+# App Brain's answer vocabulary, mirrored. The source of truth is `LANDING_*` in
+# AlobarQuest/brain `src/brains/app/models.py`; the orchestrator mirrors it too, in
+# `services/estate_landing.py`. This is a THIRD copy and it is pinned rather than trusted --
+# `tests/revision_watcher/test_landing_vocabulary.py` holds it to the orchestrator's, which is
+# importable from a test even though this package may not import it. Nothing is invented here: a
+# fourth value on this side would be a second copy of a vocabulary that already lives somewhere,
+# which this repository has paid for three times.
+LANDING_REDEPLOYS = "redeploys"
+LANDING_INERT = "inert"
+LANDING_UNKNOWN = "unknown"
 
 
 class UnreadableSubject(Exception):
@@ -25,6 +37,76 @@ class UnreadableSubject(Exception):
 
 class UnreadablePlatform(Exception):
     """The platform could not be listed, so the coverage question has no answer this pass."""
+
+
+class LandingReader:
+    """How landing on a repository's default branch behaves, per the estate's own record.
+
+    THIS DOES NOT DECIDE WHETHER AN APPLICATION IS BEHIND. It decides what BEING behind MEANS,
+    which is a different question and the reason this reader exists at all:
+
+      `redeploys`  merging IS deploying, so a gap means something went wrong -- the rollout
+                   failed, the webhook did not fire, the image never built.
+      `inert`      merge and deploy are separate tracks, so a gap is the QUEUE rather than a
+                   defect. Every merge creates one by design.
+
+    A repository whose answer cannot be obtained is treated as `redeploys` by the caller, which is
+    the strict reading: reporting a gap that turns out to be an expected queue costs a look, and
+    staying quiet about one that is a failed rollout costs what 2026-09-06 cost.
+
+    The credential is App Brain's READ-ONLY key, which authenticates GET on this route and answers
+    401 everywhere else -- measured 2026-09-08 against `/api/apps`, `/api/apps/{slug}` and
+    `/api/repositories`.
+
+    SELF-REFERENCE, NAMED: App Brain is itself one of this lane's subjects. It is asked about
+    every repository including its own, and a deploy of it makes this reader unavailable for one
+    pass -- which reaches the strict reading above rather than a wrong answer.
+    """
+
+    def __init__(
+        self, *, base_url: str, key: str, transport: httpx.BaseTransport | None = None
+    ) -> None:
+        self._client = httpx.Client(
+            base_url=base_url.rstrip("/"),
+            headers={"x-brain-key": key, "User-Agent": _agent()},
+            timeout=15.0,
+            transport=transport,
+        )
+        self._answers: dict[str, str] = {}
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> LandingReader:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def landing(self, repository: str) -> str:
+        """`redeploys`, `inert`, or `unknown` -- never a raised exception.
+
+        Cached per repository: four of the six subjects share one, so an uncached read would ask
+        the same question four times a pass for an answer that cannot differ within it.
+
+        An unreadable App Brain answers `unknown` rather than raising, because this lane can still
+        measure whether an application is behind without knowing what that means -- losing the
+        interpretation must not lose the measurement.
+        """
+        if repository not in self._answers:
+            answer = LANDING_UNKNOWN
+            try:
+                response = self._client.get(LANDING_ROUTE, params={"github_repo": repository})
+                response.raise_for_status()
+                body = response.json()
+            except (httpx.HTTPError, httpx.InvalidURL, ValueError):
+                body = None
+            if isinstance(body, dict):
+                value = body.get("landing")
+                if value in (LANDING_REDEPLOYS, LANDING_INERT, LANDING_UNKNOWN):
+                    answer = value
+            self._answers[repository] = answer
+        return self._answers[repository]
 
 
 def _agent() -> str:
