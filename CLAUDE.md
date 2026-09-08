@@ -4840,7 +4840,20 @@ style of that module.
   `authority_envelope_novel`, i.e. to suppress a human authority gate. This file already records the
   known-good mechanism as *"inert and therefore safe"* precisely because it recognises nothing.
   Fixing the test alone is honest and turns `main` red until the policy question is answered, which
-  is the same decision wearing different clothes. **Open as of 2026-09-06.**
+  is the same decision wearing different clothes.
+  **CLOSED 2026-09-06 (`#237`) and RECORDED 2026-09-08 as ADR-0043. The ceiling is 360, the test
+  takes its budgets from `PROFILE_BUDGETS` rather than from the frozen contract specimen, and
+  `scripts/check_profile_budget_agreement.py` holds the pattern, that constant and
+  intent-packages' `BUDGETS` at `main` to one value — measured PASS at
+  `{'max_attempts': 3, 'max_llm_calls': 360}`.**
+  **THIS BULLET SAYING "Open" TWO DAYS AFTER IT CLOSED IS THE HAZARD THE FILE WARNS ABOUT, AND IT
+  COST A WRONG REPORT.** On 2026-09-08 HQ was asked what was next, read this line, and named the
+  ceiling as an outstanding decision for Devon — the fix having landed in the same session, hours
+  earlier. The estate already records that a speculation hardens into an inherited fact; a CLOSED
+  item still labelled open is the same failure with the polarity reversed, and it is likelier,
+  because closing something and updating the note about it are two acts and only the first has a
+  test. **Read the artifact before reporting a bullet's status: one `grep` of
+  `factory-policy.toml` would have settled it.**
 
   Generalise past budgets: **when you find N copies of a value, the count is a lower bound until you
   have grepped every repository that consumes it** — the estate already learned this for BWS UUIDs
