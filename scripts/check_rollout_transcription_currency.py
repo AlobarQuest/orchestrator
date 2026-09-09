@@ -41,6 +41,12 @@ path, the branch the rollout fires on and the revision now there, but it cannot 
 this repository last knew for you". Giving `Attestation` a repository would fix that; it is a
 change to the transcription artifact and is deliberately not made here.
 
+IT LEADS ONE CONSUMER AND ONLY PROSPECTIVELY THE OTHER. `change_proposer` reads the blob at the
+workflow's `trigger_branch`, which is exactly what this asks for, so a refusal there is fully
+anticipated here. `deploy_watcher` reads the blob at each landing's own merge commit -- any
+historical revision -- so a rollout observed against bytes that were current months ago is beyond
+what any question about `main` today can see.
+
 Usage:
     python3 scripts/check_rollout_transcription_currency.py
 
@@ -50,10 +56,12 @@ at least one could not be read.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Container, Mapping
 from dataclasses import dataclass
@@ -74,7 +82,8 @@ def read_blob_sha(repository: str, path: str, ref: str) -> str:
     that leaves this file alone must not read as a moved transcription.
     """
     request = urllib.request.Request(
-        f"https://api.github.com/repos/{repository}/contents/{path}?ref={ref}",
+        f"https://api.github.com/repos/{repository}/contents/{urllib.parse.quote(path)}"
+        f"?ref={urllib.parse.quote(ref, safe='')}",
         headers={
             "Accept": "application/vnd.github+json",
             "User-Agent": "orchestrator-rollout-transcription-currency/1",
@@ -90,12 +99,21 @@ def read_blob_sha(repository: str, path: str, ref: str) -> str:
     except urllib.error.HTTPError as error:
         raise Unresolvable(
             f"HTTP {error.code} reading {path} at {repository}@{ref}. The repository must stay "
-            "readable and the branch must name a reachable revision."
+            "readable, the branch must name a reachable revision, and the file must not have "
+            "been moved or renamed -- which the contents API also answers 404 for."
         ) from error
+    # `URLError` FIRST: it is an `OSError` subclass, so a broad clause above it would swallow the
+    # one that carries a `reason`. The two broad clauses below cover what urllib does NOT wrap --
+    # a failure part-way through `response.read()`, which arrives as a bare `TimeoutError` (an
+    # OSError) or as `http.client.IncompleteRead` (which is NOT one). Both were escaping.
     except urllib.error.URLError as error:
         raise Unresolvable(f"cannot reach GitHub to read {path}: {error.reason}") from error
     except (ValueError, UnicodeDecodeError) as error:
         raise Unresolvable(f"GitHub's answer for {path} is not readable JSON: {error}") from error
+    except (OSError, http.client.HTTPException) as error:
+        raise Unresolvable(
+            f"the connection reading {path} at {repository}@{ref} failed: {error!r}"
+        ) from error
 
     return blob_sha_of(document, repository, path, ref)
 
@@ -104,10 +122,17 @@ def blob_sha_of(document: object, repository: str, path: str, ref: str) -> str:
     """The `sha` of a contents-API answer, or a refusal naming what was asked for.
 
     Separate from the fetch so the shapes that are NOT a file can be exercised: a DIRECTORY answers
-    with a JSON list, on which `.get` would raise `AttributeError` rather than refuse, and a
-    submodule answers a dict whose `sha` is the commit of another repository. Both mean the path
-    has moved, which is the same thing this check exists to report and must not be a crash.
+    with a JSON list, on which `.get` would raise `AttributeError` rather than refuse. `type` is
+    what discriminates the rest, and reading it is not fussiness -- a SUBMODULE answers a dict
+    whose `sha` is a commit in another repository entirely, and a SYMLINK a blob holding the link
+    target. Both carry a well-formed sha that the registry will never hold, so without this gate
+    the run is still red and the reason printed is a lie about what was read.
     """
+    if isinstance(document, dict) and document.get("type") not in (None, "file"):
+        raise Unresolvable(
+            f"{path} at {repository}@{ref} is a {document.get('type')!r}, not a file; its sha is "
+            "not the bytes of a workflow, so the path has moved."
+        )
     sha = document.get("sha") if isinstance(document, dict) else None
     if not isinstance(sha, str) or not sha:
         raise Unresolvable(
@@ -138,13 +163,19 @@ def audit(
     Pure apart from `read`, which is the only thing that touches the network. Every failure is a
     row rather than a raise: the point of reporting all of them is defeated by an early exit, and
     an early exit is what a raise here would be.
+
+    `Exception`, not `Unresolvable`, and that width is the point rather than laziness. The census
+    guarantee is a property of THIS loop; making it depend on the reader raising the right type
+    means every future reader silently owns it too, and the first one to leak a `TimeoutError` out
+    of `response.read()` takes the guarantee away with nothing saying so. Nothing is swallowed:
+    the row carries the exception's repr and the run still exits 1.
     """
     rows: list[Row] = []
     for repository in sorted(workflows):
         workflow = workflows[repository]
         try:
             revision = read(repository, workflow.path, workflow.trigger_branch)
-        except Unresolvable as error:
+        except Exception as error:
             unreadable = f"unreadable: {error}"
             branch = workflow.trigger_branch
             rows.append(Row(repository, workflow.path, branch, None, unreadable))
@@ -162,6 +193,14 @@ def main() -> int:
         verdict = row.problem or "transcribed"
         print(f"{row.repository} {row.path}@{row.ref} -> {seen} :: {verdict}")
     print(f"registry: {REGISTRY_SOURCE} transcribes {len(REGISTRY)} revisions")
+
+    if not rows:
+        print(
+            f"\nFAIL: {REGISTRY_SOURCE} declares no rollout workflows, so this check compared "
+            "nothing. A pass here would assert agreement about an empty set.",
+            file=sys.stderr,
+        )
+        return 1
 
     bad = [row for row in rows if row.problem is not None]
     if not bad:

@@ -18,6 +18,8 @@ is a membership test:
 
 from __future__ import annotations
 
+import http.client
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -31,9 +33,14 @@ UNKNOWN = "9999999999999999999999999999999999999999"
 
 REGISTRY = {TRANSCRIBED: object(), ALSO_TRANSCRIBED: object()}
 
+# INSERTION ORDER IS DELIBERATELY THE REVERSE OF SORTED ORDER. With the two agreeing, deleting
+# `sorted(...)` from the audit is invisible to both tests below whose stated subject is order --
+# and the real `ROLLOUT_WORKFLOWS` is `[change-manager, brain]`, which is not sorted either, so the
+# sort does real work in production. A fixture that cannot tell the difference is a control that
+# has stopped asking its question.
 WORKFLOWS = {
-    "alobarquest/first": RolloutWorkflow(".github/workflows/one.yml", 1),
     "alobarquest/second": RolloutWorkflow(".github/workflows/two.yml", 2, trigger_branch="live"),
+    "alobarquest/first": RolloutWorkflow(".github/workflows/one.yml", 1),
 }
 
 
@@ -157,19 +164,128 @@ def test_the_audit_asks_each_workflow_for_its_own_trigger_branch(monkeypatch) ->
     assert [row.problem for row in rows] == [None, None]
 
 
+def test_a_reader_error_that_is_not_unresolvable_still_leaves_every_row_reported() -> None:
+    """The census is a property of THIS loop, not of the reader raising the right type.
+
+    `response.read()` can fail part-way with a bare `TimeoutError` or an `http.client`
+    `IncompleteRead`, neither of which urllib wraps. Caught narrowly, the first repository's flaky
+    read would abort the pass and the second -- genuinely stale -- would never be read at all.
+    """
+    answers: dict[str, str | Exception] = {
+        "alobarquest/first": TimeoutError("the read timed out"),
+        "alobarquest/second": UNKNOWN,
+    }
+    rows = check.audit(WORKFLOWS, REGISTRY, _reader(answers))
+
+    assert [row.repository for row in rows] == ["alobarquest/first", "alobarquest/second"]
+    assert rows[0].problem is not None and "timed out" in rows[0].problem
+    assert rows[1].problem == "not transcribed"
+
+
+def test_an_empty_subject_set_is_not_a_pass(monkeypatch, capsys) -> None:
+    """`ROLLOUT_WORKFLOWS` is owned elsewhere; agreeing about nothing is not agreement."""
+    monkeypatch.setattr(check, "ROLLOUT_WORKFLOWS", {})
+    monkeypatch.setattr(check, "REGISTRY", REGISTRY)
+    monkeypatch.setattr(check, "read_blob_sha", _reader({}))
+
+    assert check.main() == 1
+    assert "compared nothing" in capsys.readouterr().err
+
+
 def test_a_blob_sha_is_read_from_a_file_answer() -> None:
+    assert check.blob_sha_of({"sha": TRANSCRIBED, "type": "file"}, "r", "p", "main") == TRANSCRIBED
+
+
+def test_a_file_answer_without_a_type_is_still_read() -> None:
+    """The gate refuses a NAMED non-file, never an absent field: an answer that says nothing about
+    its type is the shape every other assertion here is written against."""
     assert check.blob_sha_of({"sha": TRANSCRIBED}, "r", "p", "main") == TRANSCRIBED
 
 
 @pytest.mark.parametrize(
     "document",
-    [[{"sha": TRANSCRIBED}], {}, {"sha": ""}, {"sha": None}, {"sha": 7}, "not json at all"],
-    ids=["directory-listing", "no-sha", "empty-sha", "null-sha", "non-string-sha", "not-an-object"],
+    [
+        [{"sha": TRANSCRIBED}],
+        {},
+        {"sha": ""},
+        {"sha": None},
+        {"sha": 7},
+        "not json at all",
+        {"sha": TRANSCRIBED, "type": "submodule"},
+        {"sha": TRANSCRIBED, "type": "symlink"},
+        {"sha": TRANSCRIBED, "type": "dir"},
+    ],
+    ids=[
+        "directory-listing",
+        "no-sha",
+        "empty-sha",
+        "null-sha",
+        "non-string-sha",
+        "not-an-object",
+        "submodule",
+        "symlink",
+        "dir",
+    ],
 )
 def test_an_answer_that_is_not_a_file_is_unresolvable_rather_than_a_crash(document: object) -> None:
-    """A directory answers a LIST, on which `.get` would raise rather than refuse."""
+    """A directory answers a LIST, on which `.get` would raise rather than refuse.
+
+    The last three are the ones a shape check alone misses: a submodule and a symlink each answer a
+    well-formed sha the registry will never hold, so the run is red either way -- but the reason
+    printed would name bytes nobody read.
+    """
     with pytest.raises(check.Unresolvable):
         check.blob_sha_of(document, "alobarquest/first", ".github/workflows/one.yml", "main")
+
+
+class _Response:
+    """A context manager whose `read` fails part-way, which is what urllib does NOT wrap."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def __enter__(self) -> _Response:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        raise self._error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [http.client.IncompleteRead(b"half"), TimeoutError("the read timed out")],
+    ids=["incomplete-read", "read-timeout"],
+)
+def test_a_failure_during_the_body_read_is_unresolvable(error: Exception, monkeypatch) -> None:
+    """Neither shape is wrapped by urllib, and `IncompleteRead` is not even an `OSError` -- so a
+    clause naming only `HTTPError`/`URLError` lets both escape as a bare traceback."""
+    monkeypatch.setattr(check.urllib.request, "urlopen", lambda *a, **k: _Response(error))
+
+    with pytest.raises(check.Unresolvable):
+        check.read_blob_sha("alobarquest/first", ".github/workflows/one.yml", "main")
+
+
+def test_the_ref_and_path_are_percent_encoded(monkeypatch) -> None:
+    """`#` is legal in a branch name and truncates a query string, so an unquoted ref would compare
+    a DIFFERENT branch's bytes and pass having answered the wrong question."""
+    seen: list[str] = []
+
+    def capture(request: urllib.request.Request, timeout: int) -> _Response:
+        seen.append(request.full_url)
+        return _Response(TimeoutError("stop here; the URL is what is under test"))
+
+    monkeypatch.setattr(check.urllib.request, "urlopen", capture)
+
+    with pytest.raises(check.Unresolvable):
+        check.read_blob_sha("alobarquest/first", ".github/workflows/one.yml", "hotfix#2")
+
+    assert seen == [
+        "https://api.github.com/repos/alobarquest/first/contents/"
+        ".github/workflows/one.yml?ref=hotfix%232"
+    ]
 
 
 def test_the_gate_runs_the_script_this_module_tests() -> None:
