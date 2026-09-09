@@ -2478,9 +2478,19 @@ style of that module.
 - **A build-session worktree gets a DIFFERENT Python than CI unless you pin it, and the digest in
   a handoff is stale the moment anything merges.** Two release-time traps, both hit on 2026-08-07.
   (1) `uv sync` in a fresh worktree picks the newest interpreter satisfying `requires-python =
-  ">=3.12"` — it chose **3.14.3** while `quality.yml` pins **3.12**, so the session's green
-  `make check` was measured on an interpreter CI never uses. Add `uv venv --clear --python 3.12`
-  to the worktree recipe. Also note this repo is on **psycopg 3**: `TEST_DATABASE_URL` must be
+  ">=3.12"` — it chose **3.14.3** while `quality.yml` pinned **3.12**, so the session's green
+  `make check` was measured on an interpreter CI never uses.
+  **THE NUMBER IS NOW 3.14, AND FOR A WEEK THIS BULLET PRESCRIBED THE DEFECT IT WAS WRITTEN TO
+  PREVENT.** `quality.yml` moved to 3.14 on **2026-09-02** (`6fe1f95`, "Run on Python 3.14"), and
+  measured 2026-09-09 it pins `python-version: "3.14"` at **three** sites in that file — the third
+  arrived with `#248`, so the count moves with the job list and is not itself worth memorising —
+  plus `attest-wave-exit.yml` and `attest-exit-criteria.yml`, five in the repository and every one
+  3.14. So `--python 3.12` produced exactly the state described above with the versions swapped: a
+  local gate that cannot predict CI. **Use `uv venv --clear --python 3.14`** in a build worktree.
+  The PRINCIPLE is what to carry, not the digit: **name the interpreter CI names, and re-read
+  `quality.yml` rather than this line** — a number in prose ages, and this one aged in seven days.
+  Note the main tree is deliberately NOT 3.14; see the main-tree bullet below, which now differs
+  from CI on purpose. Also note this repo is on **psycopg 3**: `TEST_DATABASE_URL` must be
   `postgresql+psycopg://`, not `+psycopg2://`, which fails with a bare `ModuleNotFoundError` that
   reads like a broken environment.
   (2) **`artifact_sha256` cannot be computed before the merge SHA and cannot be carried across a
@@ -2908,6 +2918,18 @@ style of that module.
   **The shell figure was measured 2026-08-24: the merge-method scan is Python-only, so a script
   draws two cases rather than three.** That day 5 Python files plus 2 shell scripts added exactly
   19. Use the multiplier only as a cross-check — the node-id diff remains the answer.
+  **A `scripts/*.py` ALSO draws TWO, and it is a DIFFERENT two — reading "a script draws two" as
+  one rule for both kinds of script is the mistake.** Measured 2026-09-09 (`#248`, one new
+  `scripts/*.py`, exactly two added cases). The three parametrizations key on different lists:
+  `test_no_tracked_source_carries_a_secret` is `PYTHON_SOURCES` (`src/**.py`) + `SHELL_SOURCES`,
+  `test_nothing_in_the_repo_calls_a_merge_method` is `MERGE_SCAN_SOURCES` (`src/**.py` +
+  `scripts/*.py`), and `test_nothing_in_the_repo_merges_a_pull_request` is `MERGE_SCAN_SOURCES` +
+  `SHELL_SOURCES`. So a `scripts/*.py` draws the two MERGE scans and misses the SECRET scan, which
+  is `src`-only by design; a `scripts/*.sh` draws the secret scan and one merge scan and misses the
+  merge-METHOD scan, which is Python-only. Both are two, sharing exactly one member. The module's
+  own header says why `scripts/*.py` is a separate list: widening `PYTHON_SOURCES` to reach it
+  would red the egress scan and force four new `OUTBOUND_ALLOWLIST` entries, weakening a
+  structural chokepoint to strengthen the merge guard.
 
 - **`scripts/sds-token.sh` RESPECTS an already-set `BWS_ACCESS_TOKEN`, so a launcher that needs TWO
   BWS identities must not source it alongside a `${BWS_ACCESS_TOKEN:-…}` default.** One ambient
@@ -4435,8 +4457,17 @@ style of that module.
   schedulers rather than one session's test run: they resolve `REPO_ROOT` from `BASH_SOURCE` and
   run `$REPO_ROOT/.venv/bin/<name>`, so the interpreter moves under all of them at once, silently,
   with no flag involved. **Always name `--python 3.12` when rebuilding the main tree's venv**, and
-  read `.venv/bin/python --version` afterwards. (Production runs 3.14.7 in its image; the main
-  tree's 3.12 is deliberate and is the floor CI pins.)
+  read `.venv/bin/python --version` afterwards.
+  **THE TRAILING CLAUSE USED TO READ "the main tree's 3.12 is deliberate and is the floor CI pins",
+  AND THE SECOND HALF IS NO LONGER TRUE.** CI moved to 3.14 on 2026-09-02 (`6fe1f95`); measured
+  2026-09-09, `quality.yml` names 3.14 at every site. The main tree stays at **3.12** — Devon's
+  standing decision, reaffirmed 2026-09-09 — on the ground it still has: it is the declared
+  `requires-python` floor, and the eight scheduled lanes are what run there, so the lanes are
+  exercised against the oldest interpreter the project claims to support. **The two now differ
+  deliberately: CI 3.14, main tree 3.12, production 3.14.7 in its image.** The consequence to carry
+  is that a change touching the scheduled lanes is exercised by CI on one interpreter and by the
+  lanes on another, so it deserves a look at both rather than a green gate alone — and a build
+  worktree pins CI's, not this one (see the worktree bullet above).
 
 - **THE DISPATCH APP'S REACH IS DELIBERATELY WIDER THAN ITS WORK, AND THAT IS A RULING, NOT AN
   OVERSIGHT — the bound is the orchestrator's own allowlists, checked in code before every call.**
