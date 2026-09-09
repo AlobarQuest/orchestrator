@@ -6,24 +6,39 @@ import yaml
 
 from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.main import load_auth_config
+from tests.architecture.test_interpreter_agreement import pinned_version
+
+RUNTIME_STAGE = f"FROM python:{pinned_version()}-slim AS runtime"
 
 
-def test_container_is_python_314_non_root_and_health_checked() -> None:
-    """The interpreter VERSION is asserted by value, and that is the point.
+def test_container_is_non_root_and_health_checked() -> None:
+    """The interpreter version is DERIVED from `.python-version` rather than repeated here.
 
-    This literal is what an update bot's proposal collides with, so a language-version
-    replacement cannot reach production without a person editing it -- the same construct as
-    `factory-runner`'s action pins, doing the same job. Editing it is how the review is recorded.
+    It used to be a literal, and the reasoning for that is worth keeping: the literal is what an
+    update bot's proposal collides with, so a language-version replacement cannot reach
+    production without a person editing it -- the same construct as `factory-runner`'s action
+    pins, doing the same job. Editing it is how the review is recorded. That property is
+    unchanged; the literal it collides with now lives in `.python-version`, one file that
+    everything reads, and `test_interpreter_agreement.py` is what reds when the two part company.
 
     Moved 3.12 -> 3.14 on 2026-09-02 after measuring: the whole locked dependency set installs on
     3.14 on macOS/arm64 AND on linux/amd64 (the runtime platform), and the full suite returns
-    4752 passed / 2 skipped on 3.14 -- identical to 3.12. `requires-python` stays `>=3.12`, which
-    is the supported FLOOR rather than the version we run; pyright still checks against that
-    floor, so using a 3.13+ only feature is still an error here.
+    4752 passed / 2 skipped on 3.14 -- identical to 3.12.
+
+    THIS DOCSTRING USED TO CARRY A GUARD THAT IS NOW GONE, AND SAYING SO IS THE POINT.
+    It read: "`requires-python` stays `>=3.12` ... pyright still checks against that floor, so
+    using a 3.13+ only feature is still an error here." On 2026-09-09 pyright was moved off the
+    floor and onto `.python-version`, because checking a version nothing executes is the wrong
+    grounds to accept or reject code on. The floor stayed `>=3.12` -- deliberately, see
+    `test_interpreter_agreement.py::test_the_requires_python_floor_admits_the_pinned_version` --
+    so NOTHING now checks the declared floor: pyright targets the pin, and ruff derives its
+    target from the floor, so the two tools deliberately target different versions. That is a
+    real hole and it is one more reason to raise the floor, which is backlogged with its cost.
+    Do not close it by putting pyright back: the pinned interpreter is what runs.
     """
     dockerfile = Path("Dockerfile").read_text()
 
-    assert "python:3.14-slim" in dockerfile
+    assert RUNTIME_STAGE in dockerfile
     assert "USER orchestrator" in dockerfile
     assert "EXPOSE 8000" in dockerfile
     assert "/health/live" in dockerfile
@@ -35,7 +50,7 @@ def test_the_revision_arg_is_declared_in_the_RUNTIME_stage() -> None:
     runtime ENV would expand to empty and every image ever built would report `null` while the
     build command looked entirely correct -- a wrong answer that costs a release to notice."""
     dockerfile = Path("Dockerfile").read_text()
-    runtime = dockerfile.split("FROM python:3.14-slim AS runtime", 1)[1]
+    runtime = dockerfile.split(RUNTIME_STAGE, 1)[1]
 
     assert "ARG ORCHESTRATOR_REVISION" in runtime
     assert "ENV ORCHESTRATOR_REVISION=${ORCHESTRATOR_REVISION}" in runtime
@@ -52,7 +67,7 @@ def test_the_release_workflow_passes_the_revision_it_labels_the_image_with() -> 
 
 def test_runtime_image_copies_only_declared_application_artifacts() -> None:
     dockerfile = Path("Dockerfile").read_text()
-    runtime = dockerfile.split("FROM python:3.14-slim AS runtime", 1)[1]
+    runtime = dockerfile.split(RUNTIME_STAGE, 1)[1]
 
     assert "COPY . ." not in runtime
     assert "/app/.venv" in runtime
@@ -63,7 +78,7 @@ def test_runtime_image_copies_only_declared_application_artifacts() -> None:
 
 def test_runtime_image_carries_pinned_factory_event_helpers() -> None:
     dockerfile = Path("Dockerfile").read_text()
-    runtime = dockerfile.split("FROM python:3.14-slim AS runtime", 1)[1]
+    runtime = dockerfile.split(RUNTIME_STAGE, 1)[1]
 
     assert "SECURITY_STANDARDS_DIR=/app/security-standards" in runtime
     assert "/agents /app/security-standards/registry/agents" in runtime
