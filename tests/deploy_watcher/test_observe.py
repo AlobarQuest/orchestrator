@@ -26,9 +26,15 @@ from deploy_watcher.observe import (
     Outcome,
     Unmeasurable,
     observe,
+    superseded_by,
     superseded_exception,
 )
-from deploy_watcher.workflows import ATTESTS_REVISION, ATTESTS_UNKNOWN, ATTESTS_UNVERIFIED
+from deploy_watcher.workflows import (
+    ATTESTS_REVISION,
+    ATTESTS_UNKNOWN,
+    ATTESTS_UNVERIFIED,
+    RolloutWorkflow,
+)
 
 REPO = "AlobarQuest/change-manager"
 MERGE = "06f9268b5160d3d064f1f2e63d7f36faa2cb06df"
@@ -751,6 +757,65 @@ class TestSupersession:
 
         assert [f.kind for f in outcome.findings] == [ROLLOUT_JOB_NOT_FOUND]
         assert [f.kind for f in outcome.exceptions] == [SUPERSEDED_ROLLOUT]
+
+    def test_a_run_the_listing_calls_successful_but_has_NOT_FINISHED_supersedes_nothing(self):
+        """Written because a mutation dropping `r.concluded` from the reader SURVIVED.
+
+        GitHub's `status=success` filter ought to imply the run finished, and the reader
+        deliberately does not take its word for it -- so that clause needs a case that can falsify
+        it or it is decoration sitting beside real conditions. Every other clause here is
+        satisfied: the head is ahead, at a revision-confirming workflow, and the runs AT that head
+        are a clean success. Only the listing's own row is unfinished.
+        """
+        outcome = observe(
+            reader_for(
+                failed_rollout(
+                    **supersession(
+                        newest=[
+                            run(
+                                run_id=LATER_RUN,
+                                head=LATER_HEAD,
+                                status="in_progress",
+                                conclusion=None,
+                                started="2026-09-08T10:40:55Z",
+                            )
+                        ]
+                    )
+                )
+            ),
+            REPO,
+            46,
+            now=NOW,
+        )
+
+        assert outcome.exceptions == ()
+        assert [f.kind for f in outcome.findings] == [ROLLOUT_NOT_SUCCESS]
+
+    def test_the_supersession_asks_about_the_WORKFLOWS_OWN_trigger_branch(self):
+        """Written because a mutation replacing `workflow.trigger_branch` with `"main"` SURVIVED.
+
+        It survived for a reason that is a fact about the registry rather than about the code:
+        both declared rollouts fire on `main`, so no fixture built from `ROLLOUT_WORKFLOWS` can
+        tell the two apart. The sibling `concurrent_rollout_run` hardcodes `main` and this
+        function must not -- so the control drives `superseded_by` directly with a workflow that
+        fires somewhere else, which is the only place the difference is observable.
+
+        Asserted by the fixture: the routes answer for `branch=release` and NOT for `branch=main`,
+        so a hardcoded branch 404s into a `ReadError`, is caught, and excuses nothing.
+        """
+        workflow = RolloutWorkflow(WORKFLOW, WORKFLOW_ID, trigger_branch="release")
+        released = {
+            key.replace("branch=main", "branch=release"): value
+            for key, value in supersession().items()
+        }
+
+        assert superseded_by(reader_for(released), REPO, workflow, MERGE) is not None, (
+            "the fixture answers for the workflow's own branch"
+        )
+        assert (
+            superseded_by(reader_for(released), REPO, RolloutWorkflow(WORKFLOW, WORKFLOW_ID), MERGE)
+            is None
+        ), "and answers for no other, so a hardcoded branch cannot pass"
 
     def test_a_successful_rollout_never_asks_the_supersession_question(self):
         """There is no finding to excuse, so the four reads are not made at all.

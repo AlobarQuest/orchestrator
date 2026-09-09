@@ -152,8 +152,14 @@ def superseded_by(
         newest = reader.newest_successful_push_run(
             repository, workflow.path, workflow.trigger_branch
         )
-        if newest is None or newest.head_sha is None:
+        if newest is None:
             return None
+        # A TYPE NARROW, NOT A CLAUSE, and separated from the one above deliberately.
+        # `newest_successful_push_run` drops any run with no head, so this cannot be None -- and a
+        # condition nothing can falsify sitting beside conditions that can is how a mutation set
+        # comes to report a green it did not earn. It is an assert for the same reason `revision`
+        # below is.
+        assert newest.head_sha is not None
         head = newest.head_sha
         if reader.compare_status(repository, merge_commit_sha, head) != "ahead":
             return None
