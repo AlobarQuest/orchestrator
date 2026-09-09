@@ -127,7 +127,10 @@ in `watch`.
 Both were found by adversarial review of this branch, both are Low, and both are named here rather
 than built so that neither reads as an oversight — the same treatment `ROLLOUT_ABSENT` gets above.
 
-**Clause 1 orders by `run_started_at`, which resets on a RE-RUN.** So re-running a long-superseded
+**Clause 1 orders by `run_started_at`, which resets on a RE-RUN — measured, not inferred.**
+`brain`'s own `ci.yml` history carries run `32131769609` at attempt 2 with
+`created_at: 2026-08-18T11:26:54Z` and `run_started_at: 2026-08-18T13:32:37Z`, two hours apart. So
+re-running a long-superseded
 success moves it to the front of the ordering; its head is `behind` this merge, clause 2 refuses,
 and a genuinely superseding run further along is never consulted. The direction is conservative —
 an excuse is withheld, never wrongly granted — but the exception flaps back to a finding until a
@@ -136,6 +139,13 @@ which answers the "A failed, B succeeded, C failed" case identically and survive
 `ahead` already means "descended from this merge", so it is not a wider door. It is not built here
 because it multiplies the per-failure read cost by the page, and because "newest" is the wording the
 ruling used. Changing it is a design fork, not a defect fix.
+
+A cheaper candidate that stays inside the "newest" design: order by `created_at`, which the
+measurement above shows does NOT move on a re-run. `_run` currently prefers `run_started_at` and
+falls back to `created_at`, and that preference is right for the OTHER reader — `concurrent_rollout_run`
+asks whether a run started inside another's window, which is an attempt-scoped question. So the two
+readers want different fields from one model, and that is the shape of the fix rather than a
+one-line swap.
 
 **Clause 4 accepts a run-level `success` where `_settled` reads the rollout STEP.** This repository
 records at length that a run conclusion cannot distinguish *nothing was deployed* from *production
