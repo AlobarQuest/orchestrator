@@ -17,6 +17,7 @@ been shown to fire, and this guard replaces a rule that was prose from WS-P2.12 
 
 from __future__ import annotations
 
+import http.client
 from pathlib import Path
 
 import pytest
@@ -131,3 +132,62 @@ def test_the_gate_runs_the_script_this_module_tests() -> None:
     ]
 
     assert [path.name for path in invocations] == ["quality.yml"]
+
+
+class _Response:
+    """A stand-in response: `read` either fails part-way or returns bytes for `.decode()`.
+
+    The second mode is load-bearing. Production raises `UnicodeDecodeError` from `.decode()`, not
+    from `read()`, so a case that injects it at `read()` stays green if `.decode()` is ever hoisted
+    out of the `try` -- a plausible readability refactor that reopens the escape. Returning real
+    non-UTF-8 bytes makes the control fail when it should.
+    """
+
+    def __init__(self, error: Exception | bytes) -> None:
+        self._error = error
+
+    def __enter__(self) -> _Response:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        if isinstance(self._error, bytes):
+            return self._error
+        raise self._error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        http.client.IncompleteRead(b"half"),
+        TimeoutError("the read timed out"),
+        b"\xff\xfe not utf-8",
+    ],
+    ids=["incomplete-read", "read-timeout", "not-utf-8"],
+)
+def test_a_failure_during_the_body_read_is_unresolvable(
+    error: Exception | bytes, monkeypatch
+) -> None:
+    """None of these is wrapped by urllib, and `IncompleteRead` is not even an `OSError` -- so a
+    clause naming only `HTTPError`/`URLError` let all three escape as a bare traceback, out of a
+    step that is a REQUIRED status check and whose two siblings import this very fetcher.
+
+    Verified to reproduce against the pre-fix code: with the third `except` removed, every case
+    here raises the injected error rather than `Unresolvable`.
+    """
+    monkeypatch.setattr(check.urllib.request, "urlopen", lambda *a, **k: _Response(error))
+
+    with pytest.raises(check.Unresolvable):
+        check.fetch("alobarquest/factory-runner", check.CONSUMER_MODEL_PATH, "0" * 40)
+
+
+def test_the_ref_this_check_sends_cannot_carry_a_query_separator() -> None:
+    """Named rather than fixed. An unquoted ref CAN truncate a query string -- `#` and `&` are both
+    legal in a branch name -- but `pinned_consumer` refuses anything that is not a full 40-character
+    hex commit before a ref ever reaches the URL, so the input this would guard cannot occur.
+    """
+    assert check.FULL_SHA.pattern == r"^[0-9a-f]{40}$"
+    for hostile in ("hotfix#2", "a&b=c", "main"):
+        assert not check.FULL_SHA.match(hostile)

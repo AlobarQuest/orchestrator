@@ -41,6 +41,7 @@ could not be resolved.
 from __future__ import annotations
 
 import ast
+import http.client
 import os
 import sys
 import tomllib
@@ -87,8 +88,17 @@ def fetch(repo: str, path: str, ref: str) -> str:
             f"cannot read {path} at {repo}@{ref}: HTTP {error.code}. The repository must stay "
             "readable and the ref must name a reachable revision."
         ) from error
+    # `URLError` FIRST: it is an `OSError` subclass, so a broad clause above it would swallow the
+    # one that carries a `reason`. The two clauses below cover what urllib does NOT wrap -- a
+    # failure part-way through `response.read()`, which arrives as a bare `TimeoutError` (an
+    # OSError) or as `http.client.IncompleteRead` (which is not one), and a body that is not UTF-8,
+    # which `.decode()` raises `UnicodeDecodeError` for. All three escaped as a bare traceback.
     except urllib.error.URLError as error:
         raise Unresolvable(f"cannot reach GitHub to read {path}: {error.reason}") from error
+    except (OSError, http.client.HTTPException, UnicodeDecodeError) as error:
+        raise Unresolvable(
+            f"the connection reading {path} at {repo}@{ref} failed: {error!r}"
+        ) from error
 
 
 def _budgets_from_assignment(source: str, name: str, where: str) -> dict[str, int]:
