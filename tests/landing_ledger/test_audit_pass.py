@@ -482,7 +482,7 @@ class _FakeClient:
         self.rows = rows or []
         self.bodies: list[dict[str, Any]] = []
 
-    def __enter__(self) -> "_FakeClient":
+    def __enter__(self) -> _FakeClient:
         return self
 
     def __exit__(self, *_: object) -> None:

@@ -2247,7 +2247,7 @@ _ANCHOR_BUILDERS = {
 def _parse_uuid(value: str, field: str) -> uuid.UUID:
     try:
         return uuid.UUID(value)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         raise DomainError(f"invalid_{field}", f"{field} must be a UUID", None) from None
 
 

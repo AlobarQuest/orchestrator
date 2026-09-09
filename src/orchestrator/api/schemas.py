@@ -384,7 +384,7 @@ class RunnerBriefResponse(BaseModel):
     work_unit: RunnerBriefWorkUnitResponse
     package: RunnerBriefPackageResponse
     authority: RunnerBriefAuthorityResponse
-    acceptance_criteria: list["PackageAcceptanceCriterionResponse"]
+    acceptance_criteria: list[PackageAcceptanceCriterionResponse]
     readiness: RunnerBriefReadinessResponse
     target: RunnerBriefTargetResponse
     standing_context: dict[str, Any]
@@ -1488,7 +1488,7 @@ class CostActualsCommand(CommandBase):
     cost_usd: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
-    def _numerics_match_cost_known(self) -> "CostActualsCommand":
+    def _numerics_match_cost_known(self) -> CostActualsCommand:
         numerics = (
             self.llm_calls,
             self.num_turns,

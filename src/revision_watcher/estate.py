@@ -99,7 +99,7 @@ class LandingReader:
                 response = self._client.get(LANDING_ROUTE, params={"github_repo": repository})
                 response.raise_for_status()
                 body = response.json()
-            except (httpx.HTTPError, httpx.InvalidURL, ValueError):
+            except httpx.HTTPError, httpx.InvalidURL, ValueError:
                 body = None
             if isinstance(body, dict):
                 value = body.get("landing")

@@ -68,7 +68,7 @@ class DetectionCounters:
     skipped_correlations: int = 0
     suppressed_duplicates: int = 0
 
-    def __add__(self, other: "DetectionCounters") -> "DetectionCounters":
+    def __add__(self, other: DetectionCounters) -> DetectionCounters:
         return DetectionCounters(
             self.conditions_recorded + other.conditions_recorded,
             self.skipped_correlations + other.skipped_correlations,

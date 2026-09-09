@@ -167,7 +167,7 @@ def superseded_by(
         if level_of(revision) != ATTESTS_REVISION:
             return None
         later = _unanimous(reader.runs_at_head(repository, workflow.path, head))
-    except (ReadError, NotSettled, Unmeasurable):
+    except ReadError, NotSettled, Unmeasurable:
         # Not "we could not tell". The finding was measured and stands; only the EXCUSE is
         # missing, and an absent excuse is exactly a finding that is not excused.
         return None

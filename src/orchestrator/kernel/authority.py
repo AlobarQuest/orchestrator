@@ -217,6 +217,6 @@ def _is_canonicalizable(value: Mapping[str, Any]) -> bool:
     """
     try:
         json.dumps(value, sort_keys=True)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
     return True

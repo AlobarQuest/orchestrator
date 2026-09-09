@@ -104,7 +104,7 @@ class FakeProjectorCM:
         self._completed = completed
         self.calls: list[tuple] = []
 
-    def __enter__(self) -> "FakeProjectorCM":
+    def __enter__(self) -> FakeProjectorCM:
         return self
 
     def __exit__(self, *exc: object) -> None:

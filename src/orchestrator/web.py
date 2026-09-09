@@ -165,7 +165,7 @@ def _require_form(
         encoded, signature = csrf_token.rsplit(".", 1)
         expected = hmac.new(_csrf_secret(request), encoded.encode(), hashlib.sha256).hexdigest()
         payload = json.loads(base64.urlsafe_b64decode(encoded).decode())
-    except (ValueError, TypeError, json.JSONDecodeError, binascii.Error):
+    except ValueError, TypeError, json.JSONDecodeError, binascii.Error:
         payload, expected, signature = {}, "", ""
     valid = (
         hmac.compare_digest(expected, signature)

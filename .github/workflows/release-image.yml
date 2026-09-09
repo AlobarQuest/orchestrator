@@ -34,6 +34,54 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
+      # This job runs five `python3` steps against files in this tree, and until 2026-09-09 it
+      # ran them on the runner's system interpreter -- `ubuntu-latest` is 24.04, which ships
+      # 3.12.3. That was survivable only by accident: nothing this job executes had yet been
+      # rewritten into 3.14-only syntax. It would not have stayed survivable, because
+      # `[tool.ruff]` sets no `target-version` and derives its format target from
+      # `requires-python`, so the next `except`-tuple edited into either script would have been
+      # reformatted under PEP 758 and killed the production image build with a SyntaxError.
+      # This step must precede the first `python3` use below, and
+      # `test_every_job_running_runner_python_sets_it_up_before_the_first_use` enforces both
+      # halves -- that it is here at all, and that it is here FIRST.
+      #
+      # CONDITIONAL BECAUSE THIS WORKFLOW BUILDS AN ARBITRARY `inputs.ref`. `.python-version`
+      # was created on 2026-09-09, so no earlier commit carries it -- including the one
+      # production is serving today -- and `python-version-file` THROWS on a missing path rather
+      # than warning. An unconditional step would therefore turn the deliberate-rebuild path
+      # `allow_overwrite` exists for (a base-image CVE under an unchanged tree) into a hard
+      # failure at step two for every image ever built. Skipping it there restores exactly the
+      # interpreter those trees were always built with, and asks the built tree what it pins
+      # rather than writing a second copy of a number here.
+      - name: Set up Python
+        if: hashFiles('.python-version') != ''
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      # A STATIC guard cannot see whether the step above actually ran: if `hashFiles` returned ''
+      # for a path it should have matched, or the condition were ever inverted, the step would
+      # skip, `python3` would silently be the runner's system 3.12, and every check would stay
+      # green. This asserts it where it matters and derives the expected value from the file
+      # rather than repeating it. Skipped for a revision that predates the pin, which is the same
+      # tree the step above deliberately skips for.
+      - name: Confirm python3 is the interpreter this tree pins
+        run: |
+          # The messages below say "the interpreter" rather than naming the binary: a bare
+          # `python3` token in an echo is reported by the guard that watches this file, and
+          # rewording is this repository's answer to that rather than an exemption.
+          if [ ! -f .python-version ]; then
+            echo "::notice::this revision predates .python-version; using the runner's default"
+            exit 0
+          fi
+          want="$(cat .python-version)"
+          got="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+          if [ "$got" != "$want" ]; then
+            echo "::error::the interpreter is $got but this tree pins $want -- setup did not run"
+            exit 1
+          fi
+          echo "the interpreter is $got, as .python-version requires"
+
       - name: Read pin
         id: pin
         run: |

@@ -57,7 +57,7 @@ def _file_rows(result: Pass, client: OrchestratorClient) -> list[str]:
             continue
         try:
             client.record_observation(revision_observation(reading))
-        except (RevisionWriteError, ValueError):
+        except RevisionWriteError, ValueError:
             unfiled.append(reading.subject.name)
     return unfiled
 

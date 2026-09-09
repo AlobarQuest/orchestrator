@@ -117,7 +117,7 @@ class HttpEstateLandingSource:
         # of the other two, so a doubled dot or an over-long DNS label escaped this module and
         # surfaced as a bare 500 from the admission path -- the one outcome its own docstring
         # promises cannot happen.
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError):
+        except httpx.HTTPError, httpx.InvalidURL, ValueError:
             return EstateAnswer(None, SOURCE_UNREADABLE)
         if response.status_code != 200:
             return EstateAnswer(None, SOURCE_UNREADABLE)

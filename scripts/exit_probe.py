@@ -505,7 +505,7 @@ def _estate_divergence_reading(release_units: set[str]) -> dict:
             unit_id = str(row["unit_id"])
             chains = _chains(f"/api/v1/traceability?work_unit_id={unit_id}")
             carries = any(_hops(chain)["conditions"] for chain in chains)
-        except (Unavailable, KeyError, TypeError):
+        except Unavailable, KeyError, TypeError:
             reading["unread"] += 1
             continue
         if not carries:
@@ -910,7 +910,7 @@ def _portfolio_command() -> list[str]:
             probe = subprocess.run(  # noqa: S603
                 [*candidate, "--help"], capture_output=True, text=True, timeout=60
             )
-        except (OSError, subprocess.SubprocessError):
+        except OSError, subprocess.SubprocessError:
             continue
         if probe.returncode == 0:
             return candidate

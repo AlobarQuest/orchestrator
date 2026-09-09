@@ -25,16 +25,17 @@ def test_container_is_non_root_and_health_checked() -> None:
     3.14 on macOS/arm64 AND on linux/amd64 (the runtime platform), and the full suite returns
     4752 passed / 2 skipped on 3.14 -- identical to 3.12.
 
-    THIS DOCSTRING USED TO CARRY A GUARD THAT IS NOW GONE, AND SAYING SO IS THE POINT.
-    It read: "`requires-python` stays `>=3.12` ... pyright still checks against that floor, so
-    using a 3.13+ only feature is still an error here." On 2026-09-09 pyright was moved off the
-    floor and onto `.python-version`, because checking a version nothing executes is the wrong
-    grounds to accept or reject code on. The floor stayed `>=3.12` -- deliberately, see
-    `test_interpreter_agreement.py::test_the_requires_python_floor_admits_the_pinned_version` --
-    so NOTHING now checks the declared floor: pyright targets the pin, and ruff derives its
-    target from the floor, so the two tools deliberately target different versions. That is a
-    real hole and it is one more reason to raise the floor, which is backlogged with its cost.
-    Do not close it by putting pyright back: the pinned interpreter is what runs.
+    THIS DOCSTRING USED TO CARRY A GUARD THAT WENT MISSING FOR A DAY, AND THE SHAPE OF THAT GAP
+    IS WORTH KEEPING. It read: "`requires-python` stays `>=3.12` ... pyright still checks against
+    that floor, so using a 3.13+ only feature is still an error here." On 2026-09-09 pyright was
+    moved off the floor and onto `.python-version`, because checking a version nothing executes is
+    the wrong grounds to accept or reject code on -- and the floor stayed `>=3.12` for the rest of
+    that day, so for those hours pyright targeted the pin, ruff derived its target from the floor,
+    and NOTHING checked the floor at all. That hole is closed: the floor is now the pin, held to
+    equality by `test_interpreter_agreement.py`'s
+    `test_the_requires_python_floor_is_the_pinned_version`, and both tools target one number.
+    Do not reopen it by putting pyright back on the floor -- the
+    pinned interpreter is what runs, and the floor is now checked on its own terms.
     """
     dockerfile = Path("Dockerfile").read_text()
 

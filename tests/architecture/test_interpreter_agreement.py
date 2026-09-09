@@ -8,11 +8,13 @@ from one file rather than agreeing by hand.
 Three sites cannot read it and are held here by a CHECK instead of a shared variable.
 The Dockerfile's base tag would need an ARG declared before `FROM`, coupling the tag to
 the release workflow's argument list; `requires-python` and pyright's `pythonVersion` are
-static metadata a build backend and a type checker read without running anything. A check
-is this repository's paved answer to that shape -- see `check_profile_budget_agreement.py`
-and `check_rollout_transcription_currency.py`. The Dockerfile and pyright are held to
-EQUALITY; `requires-python` is held only to not excluding the pin, for a reason its own
-test records.
+static metadata a build backend, a type checker and -- see below -- a formatter read
+without running anything. A check is this repository's paved answer to that shape -- see
+`check_profile_budget_agreement.py` and `check_rollout_transcription_currency.py`. All
+three sites are held to EQUALITY. `requires-python` was held only to not EXCLUDING the pin
+until 2026-09-09, while the floor and the pin deliberately differed; they no longer do,
+and the weaker form admitted a floor like `>=3.13` -- a claim about an interpreter nothing
+here has ever run, passing a check written to refuse exactly that.
 
 WHY PYRIGHT KEEPS A LITERAL AT ALL. Omitting `pythonVersion` is derivation only in
 appearance. Measured 2026-09-09 against pyright 1.1.411: with the key absent it reports
@@ -73,32 +75,41 @@ def test_both_dockerfile_base_tags_name_the_pinned_version() -> None:
     )
 
 
-def test_the_requires_python_floor_admits_the_pinned_version() -> None:
-    """The floor may sit BELOW the pin; it may never sit above it.
+def test_the_requires_python_floor_is_the_pinned_version() -> None:
+    """The floor IS the pin. Above it is a contradiction; below it is a false claim.
 
-    Above it, the interpreter every environment actually runs would not satisfy the project's
-    own declared floor -- a contradiction no amount of `.python-version` can fix. At or below
-    it, the floor is a claim about older interpreters that nothing here executes.
+    Above the pin, the interpreter every environment actually runs would not satisfy the
+    project's own declared floor -- a contradiction no amount of `.python-version` can fix.
+    Below it, the floor asserts that some older interpreter can run this tree, and since
+    2026-09-09 that assertion is not merely unexercised but WRONG: the source now carries PEP
+    758 `except A, B:`, which is a hard SyntaxError before 3.14. A resolver that honours a
+    lagging floor would install this package onto an interpreter that cannot import it, so the
+    floor is load-bearing for refusal rather than documentation, and equality is what makes the
+    refusal honest.
 
-    THAT WEAKER CLAIM IS A DEFERRAL, NOT AN OVERSIGHT, AND THE COST OF CLOSING IT WAS MEASURED
-    ON 2026-09-09 RATHER THAN ESTIMATED. Raising the floor to the pin is the obviously right
-    end state and it is not a one-line change, because `[tool.ruff]` sets no `target-version`
-    and ruff derives BOTH its lint and its format target from `requires-python`. Raising it to
-    `>=3.14` produced, by clean differential (`>=3.12` gives `563 files already formatted` and
-    zero lint findings):
+    EQUALITY IS AFFORDABLE HERE BECAUSE THIS IS AN APPLICATION. `.python-version` holds exactly
+    one number and every environment derives from it; there is no supported range and no
+    downstream installer to keep on an older interpreter. Note equality constrains where the
+    FLOOR sits, not what the specifier admits -- `>=3.14` still admits 3.15 -- so the only thing
+    forbidden is a floor below the one number, which is the defect and not a use case.
+
+    WHY MOVING `.python-version` IS A PAIRED OPERATION WITH REAL CONSEQUENCES, MEASURED ON
+    2026-09-09 RATHER THAN ESTIMATED. `[tool.ruff]` sets no `target-version`, so ruff derives
+    BOTH its lint and its format target from this floor. Raising it from `>=3.12` to `>=3.14`
+    rewrote 26 sites across 23 files, by clean differential (`>=3.12` gave `563 files already
+    formatted` and zero lint findings):
 
       * 11 x UP037 -- quotes stripped from forward-reference annotations in five
-        `src/orchestrator/` modules and two tests. Those become `NameError` on 3.12; reverting
-        the floor afterwards reports all 11 as F821.
-      * 15 files reformatted under PEP 758 -- `except (A, B):` becomes `except A, B:`, which is
-        a hard SyntaxError on 3.12, not a style difference. Three of the affected modules
+        `src/orchestrator/` modules and two tests. Those are `NameError` on 3.12; reverting the
+        floor afterwards reports all 11 as F821.
+      * 15 files reformatted under PEP 758 -- `except (A, B):` becomes `except A, B:`, a hard
+        SyntaxError on 3.12 rather than a style difference. Three of the affected modules
         (`deploy_watcher`, `revision_watcher`, `tool_installer`) back scheduled lanes that run
         from the main tree's working copy.
 
-    So the floor is a lever on the source tree, and pulling it while any environment is still
-    on an older interpreter breaks that environment. Both cascades are free once nothing is on
-    3.12 -- which is why this was sequenced after the main tree's venv moves rather than
-    dropped. Backlogged; do not close it by editing this test alone.
+    So the floor is a lever on the source tree. Moving `.python-version` moves it, which rewrites
+    the tree into syntax the previous interpreter cannot parse -- do that only when nothing is
+    left on the old one, and expect a large mechanical diff in the same commit.
     """
     floor = tomllib.loads(PYPROJECT.read_text())["project"]["requires-python"]
 
@@ -114,9 +125,12 @@ def test_the_requires_python_floor_admits_the_pinned_version() -> None:
     pinned = tuple(int(part) for part in pinned_version().split("."))
     declared = tuple(int(part) for part in floor.removeprefix(">=").split("."))
 
-    assert declared <= pinned, (
-        f"requires-python is {floor!r}, which excludes the pinned interpreter "
-        f"{pinned_version()} that every environment here runs"
+    assert declared == pinned, (
+        f"requires-python is {floor!r}; expected '>={pinned_version()}'. Above the pin the "
+        f"floor excludes the interpreter every environment here runs; below it, the floor "
+        f"claims an older interpreter can run a tree that carries 3.14-only syntax. If this "
+        f"is a deliberate interpreter move, edit .python-version and let ruff rewrite the "
+        f"source in the same commit; see this test's docstring for what that costs."
     )
 
 
@@ -146,14 +160,19 @@ def _step_documents() -> list[Path]:
     return sorted(documents)
 
 
+def _step_containers(document: dict) -> list[dict]:
+    """Everything in one document that carries a `steps:` list."""
+    containers = list(document.get("jobs", {}).values())
+    if "runs" in document:  # a composite action puts its steps under `runs:`
+        containers.append(document["runs"])
+    return containers
+
+
 def _setup_python_steps() -> list[tuple[Path, dict]]:
     steps = []
     for path in _step_documents():
         document = yaml.safe_load(path.read_text()) or {}
-        containers = list(document.get("jobs", {}).values())
-        if "runs" in document:  # a composite action puts its steps under `runs:`
-            containers.append(document["runs"])
-        for container in containers:
+        for container in _step_containers(document):
             for step in container.get("steps", []) or []:
                 if str(step.get("uses", "")).startswith("actions/setup-python"):
                     steps.append((path, step))
@@ -180,3 +199,164 @@ def test_every_setup_python_step_reads_the_version_file() -> None:
         assert not re.search(r"\d", str(step.get("name", ""))), (
             f"{where} carries a version in its label, which nothing executes and nobody updates"
         )
+
+
+# A `run:` block executes on the RUNNER, so `python`/`python3` there is the machine's system
+# interpreter -- on `ubuntu-latest` that is Ubuntu 24.04's Python 3.12.3, whatever this repository
+# pins. An absolute path does NOT make it something else: `/usr/bin/python3` is that same
+# interpreter, so only `.venv/bin/` is exempted by path, not "has a path".
+RUNNER_PYTHON = re.compile(r"(?<![\w.-])python(?:3(?:\.\d+)?)?(?![\w:.-])")
+
+# `uv run`, `uvx` and the project venv resolve through `.python-version` themselves, so they are
+# deliberately not required to carry a setup step; `docker` names another machine's interpreter.
+DERIVES_ITS_OWN_INTERPRETER = re.compile(r"(?<![\w-])(uvx?|docker)(?![\w-])|\.venv/bin/$")
+
+# A marker governs only the command it introduces, so the line is cut into commands first. Both
+# halves of that are load-bearing and each has its own case below: `uv sync && python3 x.py` runs
+# a BARE python3 despite the `uv` earlier on the line, and the release workflow builds an image
+# and then reads its digest with a runner `python3` in the SAME `run:` block, so a step-level or
+# line-level docker exemption would wave that invocation through.
+COMMAND_SEPARATOR = re.compile(r"&&|\|\||[;|]")
+
+# THE ONLY CONDITION A SETUP STEP MAY CARRY, held by EQUALITY rather than by mentioning the
+# filename. A substring test looks equivalent and is not: `hashFiles('.python-version') == ''`
+# names the file and INVERTS it, running setup only when the pin is ABSENT -- so the release
+# workflow would fall back to the runner's system interpreter on every ordinary build with this
+# guard vouching for it. That direction is unreachable by mutating the condition away, which is
+# how it survived a set of four; it took a reviewer probing the clause with the file named.
+# The release workflow builds an arbitrary `inputs.ref`, including revisions predating
+# `.python-version`, where `setup-python` throws on the missing path -- so it asks the built tree
+# what it pins rather than carrying a second copy of a number.
+PIN_PRESENT_CONDITION = "hashFiles('.python-version') != ''"
+
+
+def _normalized(condition: object) -> str:
+    """Whitespace-normalised, so re-indenting the workflow is not a behavioural change."""
+    return " ".join(str(condition).split())
+
+
+def runner_python_lines(script: str) -> list[tuple[int, str]]:
+    """The lines of a `run:` block that invoke the runner's own interpreter.
+
+    Split out from the test so every clause above can be exercised directly. That is not tidiness:
+    once every workflow carries its setup step the scan below short-circuits on the first one and
+    stops reaching this function at all, so the real-file scan cannot kill a mutation of these
+    patterns. Measured -- four mutations survived the file scan and die here.
+    """
+    found = []
+    for number, line in enumerate(script.splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        for command in COMMAND_SEPARATOR.split(line):
+            match = RUNNER_PYTHON.search(command)
+            if match is None:
+                continue
+            if DERIVES_ITS_OWN_INTERPRETER.search(command[: match.start()]):
+                continue
+            found.append((number, line.strip()))
+            break
+    return found
+
+
+def test_every_job_running_runner_python_sets_it_up_before_the_first_use() -> None:
+    """The sibling guard above is keyed on PRESENCE: it asks whether every `setup-python` step
+    reads the file. A workflow with NO such step is not in its population, so it passed for months
+    while `release-image.yml` -- the production image build -- ran five `python3` steps against
+    files in this tree on the runner's system interpreter. That is this repository's recurring
+    shape: a filter reporting clean because the broken thing never entered it.
+
+    This is the inverse, and ORDERING is half of it -- a setup step after the first `python3` line
+    is decoration. Both halves were proven against the real file rather than a fixture: at
+    `ada8d20` this fires on all five of that workflow's steps, and it goes green on the four-line
+    step that fixes it; with that step moved below `Read pin` it fires on `Read pin` alone.
+    """
+    offenders = []
+    scanned = 0
+    for path in _step_documents():
+        document = yaml.safe_load(path.read_text()) or {}
+        for container in _step_containers(document):
+            prepared = False
+            for step in container.get("steps", []) or []:
+                if str(step.get("uses", "")).startswith("actions/setup-python"):
+                    # Read with a sentinel rather than `or ""`: YAML parses `if: false` as the
+                    # BOOLEAN False, which `or ""` turns into "no condition" -- so the tidier
+                    # spelling accepts the one mutant this clause exists to refuse. Found by
+                    # mutating it, not by reading it.
+                    condition = step.get("if")
+                    if condition is not None and _normalized(condition) != PIN_PRESENT_CONDITION:
+                        continue
+                    prepared = True
+                    continue
+                run = str(step.get("run", "") or "")
+                if not run:
+                    continue
+                # Counted BEFORE the short-circuit below, deliberately. Counting after it makes
+                # `scanned` zero exactly when every job is prepared -- that is, whenever the
+                # repository is healthy -- so the vacuity assertion would fire on the correct
+                # tree and never on a broken one. Measured: it did.
+                scanned += 1
+                if prepared:
+                    continue
+                where = step.get("name", step.get("uses", "?"))
+                for number, line in runner_python_lines(run):
+                    offenders.append(f"{path.name}: {where!r} line {number}: {line}")
+
+    # Without this the empty `offenders` has two indistinguishable causes -- every job prepared,
+    # or the scan reached no `run:` block at all. The sibling guard's `assert steps` does not
+    # cover it: that proves a setup step exists somewhere, not that anything here was read.
+    assert scanned, "no `run:` steps were scanned; this guard would pass vacuously"
+
+    assert not offenders, (
+        "these `run:` steps invoke the runner's own interpreter with no `actions/setup-python` "
+        "before them in the same job, so they execute on whatever the runner image ships rather "
+        "than on .python-version:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_the_line_classifier_reports_a_bare_invocation_and_exempts_the_rest() -> None:
+    """Each case here kills a specific mutation of the two patterns above; see
+    `runner_python_lines` for why the file scan cannot."""
+    for line in (
+        "python3 scripts/shape_registry_context.py --source x",
+        'DIGEST=$(python3 -c "import json,sys; print(1)")',
+        "python -m scripts.check_something",
+        "python3 - <<'PY' >> \"$GITHUB_OUTPUT\"",
+        'python3.14 -c "import sys"',
+        # An absolute path is not an exemption -- this IS the runner's system interpreter.
+        "/usr/bin/python3 scripts/foo.py",
+        # A marker governs the command it introduces, not the whole line.
+        "uv sync --frozen && python3 scripts/foo.py",
+        "docker load < image.tar; python3 scripts/foo.py",
+        # NAMING the venv path is not INVOKING it -- an env prefix leaves `python3` the system
+        # one. Without this case the venv exemption's `$` anchor is unkillable, and unanchored it
+        # would exempt any command that merely mentions the directory.
+        'VENV=.venv/bin/ python3 -c "import sys"',
+    ):
+        assert runner_python_lines(line), f"a bare runner invocation went unreported: {line}"
+
+    for line in (
+        ".venv/bin/python scripts/check_profile_budget_agreement.py",
+        'uv run python -c "import sys"',
+        "uv run alembic upgrade head",
+        "uvx ruff@0.16.2 format --check .",
+        'docker run --rm python:3.14-slim python -c "import sys"',
+        "docker buildx build --build-arg BASE=python:3.14-slim --push .",
+        "IMAGE=python:3.14-slim",
+        "  # python3 used to run here before the step was added",
+        # `--python 3.14` is a flag, not an invocation.
+        "uv venv --clear --python 3.14",
+        "PATH=$PWD/.venv/bin:$PATH .venv/bin/python -m pytest",
+        # A hyphen before the token means it is part of another word. Without this case the
+        # lookbehind's `-` is unkillable, because every OTHER `--python` line here also carries
+        # a `uv` that exempts it first.
+        'echo "this job uses actions/setup-python"',
+    ):
+        assert not runner_python_lines(line), (
+            f"reported something that is not runner python: {line}"
+        )
+
+    # Per LINE, not per step: the release workflow does exactly this shape.
+    after_a_docker_line = (
+        'docker buildx build -t ghcr.io/a/b:sha --push .\nDIGEST=$(python3 -c "1")\n'
+    )
+    assert [number for number, _ in runner_python_lines(after_a_docker_line)] == [2]
