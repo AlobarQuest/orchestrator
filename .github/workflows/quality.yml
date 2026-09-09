@@ -142,6 +142,56 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python scripts/check_profile_budget_agreement.py
 
+  # A FIFTH SURFACE, AND THE FIRST THAT IS DELIBERATELY ITS OWN JOB RATHER THAN A STEP ABOVE.
+  #
+  # This repository transcribes, per blob revision, what a green rollout run of `brain` and
+  # `change-manager` attests. When those bytes move, the transcription goes stale and two
+  # consumers break: acceptance criteria can no longer be derived for that repository's next
+  # update-bot record, and rollout observations record an unknown attestation level. It has
+  # happened twice -- 2026-08-14, found after a day of refused passes, and 2026-09-08, found the
+  # next day by accident because no new pull request had arrived to be refused.
+  #
+  # WHY NOT A STEP IN THE JOB ABOVE. Every step there is covered by a required status check, and
+  # that is exactly what this one must NOT have. The bytes that move here belong to ANOTHER
+  # repository, so this job goes red for something no orchestrator pull request did and would
+  # block every one of them until a person transcribed the change. Whether that is the right
+  # trade is Devon's call, not this increment's -- and making it required is a paired operation
+  # (the protected context has to move in the same act, or every pull request is blocked by a
+  # context nothing reports). So: its own job, advisory, red where a reader will see it.
+  #
+  # THE DAILY SCHEDULED RUN OF THIS WORKFLOW IS THE POINT. A pull-request-only check would have
+  # been just as silent in September as everything else was, because the staleness arrives with
+  # somebody else's merge and not with ours. On a clock, the window is at most a day.
+  transcription-currency:
+    name: Rollout transcription currency
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.5.31"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      # Read-only: one GET per transcribed repository. An unreadable answer fails the job with
+      # the repository named -- never a quiet pass, which would be the worse half of the defect.
+      - name: Check each rollout workflow's current bytes against the transcription
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .venv/bin/python scripts/check_rollout_transcription_currency.py
+
   quality:
     name: Quality
     runs-on: ubuntu-latest
