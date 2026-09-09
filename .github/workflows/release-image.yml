@@ -44,7 +44,17 @@ jobs:
       # This step must precede the first `python3` use below, and
       # `test_every_job_running_runner_python_sets_it_up_before_the_first_use` enforces both
       # halves -- that it is here at all, and that it is here FIRST.
+      #
+      # CONDITIONAL BECAUSE THIS WORKFLOW BUILDS AN ARBITRARY `inputs.ref`. `.python-version`
+      # was created on 2026-09-09, so no earlier commit carries it -- including the one
+      # production is serving today -- and `python-version-file` THROWS on a missing path rather
+      # than warning. An unconditional step would therefore turn the deliberate-rebuild path
+      # `allow_overwrite` exists for (a base-image CVE under an unchanged tree) into a hard
+      # failure at step two for every image ever built. Skipping it there restores exactly the
+      # interpreter those trees were always built with, and asks the built tree what it pins
+      # rather than writing a second copy of a number here.
       - name: Set up Python
+        if: hashFiles('.python-version') != ''
         uses: actions/setup-python@v7
         with:
           python-version-file: .python-version

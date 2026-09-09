@@ -201,15 +201,22 @@ def test_every_setup_python_step_reads_the_version_file() -> None:
         )
 
 
-# A `run:` block executes on the RUNNER, so a bare `python`/`python3` there is the machine's
-# system interpreter -- on `ubuntu-latest` that is Ubuntu 24.04's Python 3.12.3, whatever this
-# repository pins. `uv run`, `uvx` and `.venv/bin/python` all resolve through `.python-version`
-# themselves and are deliberately NOT required to carry a setup step; `docker` names another
-# machine's interpreter entirely. Both patterns are matched per LINE, never per step: the release
-# workflow builds an image and then reads its digest with a runner `python3` in the SAME `run:`
-# block, so a step-level docker exemption would wave that invocation through.
-RUNNER_PYTHON = re.compile(r"(?<![\w./-])python(?:3(?:\.\d+)?)?(?![\w:.-])")
-DERIVES_ITS_OWN_INTERPRETER = re.compile(r"(?<![\w-])(uvx?|docker)(?![\w-])")
+# A `run:` block executes on the RUNNER, so `python`/`python3` there is the machine's system
+# interpreter -- on `ubuntu-latest` that is Ubuntu 24.04's Python 3.12.3, whatever this repository
+# pins. An absolute path does NOT make it something else: `/usr/bin/python3` is that same
+# interpreter, so only `.venv/bin/` is exempted by path, not "has a path".
+RUNNER_PYTHON = re.compile(r"(?<![\w.-])python(?:3(?:\.\d+)?)?(?![\w:.-])")
+
+# `uv run`, `uvx` and the project venv resolve through `.python-version` themselves, so they are
+# deliberately not required to carry a setup step; `docker` names another machine's interpreter.
+DERIVES_ITS_OWN_INTERPRETER = re.compile(r"(?<![\w-])(uvx?|docker)(?![\w-])|\.venv/bin/$")
+
+# A marker governs only the command it introduces, so the line is cut into commands first. Both
+# halves of that are load-bearing and each has its own case below: `uv sync && python3 x.py` runs
+# a BARE python3 despite the `uv` earlier on the line, and the release workflow builds an image
+# and then reads its digest with a runner `python3` in the SAME `run:` block, so a step-level or
+# line-level docker exemption would wave that invocation through.
+COMMAND_SEPARATOR = re.compile(r"&&|\|\||[;|]")
 
 
 def runner_python_lines(script: str) -> list[tuple[int, str]]:
@@ -224,12 +231,14 @@ def runner_python_lines(script: str) -> list[tuple[int, str]]:
     for number, line in enumerate(script.splitlines(), 1):
         if line.lstrip().startswith("#"):
             continue
-        match = RUNNER_PYTHON.search(line)
-        if match is None:
-            continue
-        if DERIVES_ITS_OWN_INTERPRETER.search(line[: match.start()]):
-            continue
-        found.append((number, line.strip()))
+        for command in COMMAND_SEPARATOR.split(line):
+            match = RUNNER_PYTHON.search(command)
+            if match is None:
+                continue
+            if DERIVES_ITS_OWN_INTERPRETER.search(command[: match.start()]):
+                continue
+            found.append((number, line.strip()))
+            break
     return found
 
 
@@ -252,6 +261,21 @@ def test_every_job_running_runner_python_sets_it_up_before_the_first_use() -> No
             prepared = False
             for step in container.get("steps", []) or []:
                 if str(step.get("uses", "")).startswith("actions/setup-python"):
+                    # A CONDITIONAL setup step prepares the job only when its condition names
+                    # `.python-version`. The release workflow builds an arbitrary `inputs.ref`,
+                    # including revisions older than that file, where `setup-python` throws on the
+                    # missing path -- so it runs the step only when the built tree carries a pin,
+                    # which is the tree's own answer rather than a second copy of a number. Any
+                    # OTHER condition is refused here rather than ignored: silently accepting one
+                    # would let `if: false` satisfy this guard, which is the same
+                    # never-entered-the-filter defect the guard exists to close.
+                    # Read with a sentinel rather than `or ""`: YAML parses `if: false` as the
+                    # BOOLEAN False, which `or ""` turns into "no condition" -- so the tidier
+                    # spelling accepts the one mutant this clause exists to refuse. Found by
+                    # mutating it, not by reading it.
+                    condition = step.get("if")
+                    if condition is not None and ".python-version" not in str(condition):
+                        continue
                     prepared = True
                     continue
                 if prepared:
@@ -276,6 +300,11 @@ def test_the_line_classifier_reports_a_bare_invocation_and_exempts_the_rest() ->
         "python -m scripts.check_something",
         "python3 - <<'PY' >> \"$GITHUB_OUTPUT\"",
         'python3.14 -c "import sys"',
+        # An absolute path is not an exemption -- this IS the runner's system interpreter.
+        "/usr/bin/python3 scripts/foo.py",
+        # A marker governs the command it introduces, not the whole line.
+        "uv sync --frozen && python3 scripts/foo.py",
+        "docker load < image.tar; python3 scripts/foo.py",
     ):
         assert runner_python_lines(line), f"a bare runner invocation went unreported: {line}"
 
@@ -288,6 +317,9 @@ def test_the_line_classifier_reports_a_bare_invocation_and_exempts_the_rest() ->
         "docker buildx build --build-arg BASE=python:3.14-slim --push .",
         "IMAGE=python:3.14-slim",
         "  # python3 used to run here before the step was added",
+        # `--python 3.14` is a flag, not an invocation.
+        "uv venv --clear --python 3.14",
+        "PATH=$PWD/.venv/bin:$PATH .venv/bin/python -m pytest",
     ):
         assert not runner_python_lines(line), (
             f"reported something that is not runner python: {line}"
