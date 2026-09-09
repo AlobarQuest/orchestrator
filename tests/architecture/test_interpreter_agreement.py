@@ -305,6 +305,10 @@ def test_the_line_classifier_reports_a_bare_invocation_and_exempts_the_rest() ->
         # A marker governs the command it introduces, not the whole line.
         "uv sync --frozen && python3 scripts/foo.py",
         "docker load < image.tar; python3 scripts/foo.py",
+        # NAMING the venv path is not INVOKING it -- an env prefix leaves `python3` the system
+        # one. Without this case the venv exemption's `$` anchor is unkillable, and unanchored it
+        # would exempt any command that merely mentions the directory.
+        'VENV=.venv/bin/ python3 -c "import sys"',
     ):
         assert runner_python_lines(line), f"a bare runner invocation went unreported: {line}"
 
@@ -320,6 +324,10 @@ def test_the_line_classifier_reports_a_bare_invocation_and_exempts_the_rest() ->
         # `--python 3.14` is a flag, not an invocation.
         "uv venv --clear --python 3.14",
         "PATH=$PWD/.venv/bin:$PATH .venv/bin/python -m pytest",
+        # A hyphen before the token means it is part of another word. Without this case the
+        # lookbehind's `-` is unkillable, because every OTHER `--python` line here also carries
+        # a `uv` that exempts it first.
+        'echo "this job uses actions/setup-python"',
     ):
         assert not runner_python_lines(line), (
             f"reported something that is not runner python: {line}"
