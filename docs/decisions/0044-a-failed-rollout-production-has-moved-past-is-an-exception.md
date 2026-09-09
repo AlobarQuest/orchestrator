@@ -122,6 +122,30 @@ population most likely to have been superseded. It prints `[exception]` lines an
 `exceptions` list in the `--json` summary. An exception drives exit 2 there no more than it does
 in `watch`.
 
+## Known residuals
+
+Both were found by adversarial review of this branch, both are Low, and both are named here rather
+than built so that neither reads as an oversight — the same treatment `ROLLOUT_ABSENT` gets above.
+
+**Clause 1 orders by `run_started_at`, which resets on a RE-RUN.** So re-running a long-superseded
+success moves it to the front of the ordering; its head is `behind` this merge, clause 2 refuses,
+and a genuinely superseding run further along is never consulted. The direction is conservative —
+an excuse is withheld, never wrongly granted — but the exception flaps back to a finding until a
+newer push-run success lands. The alternative predicate is *any* success whose head is `ahead`,
+which answers the "A failed, B succeeded, C failed" case identically and survives the re-run;
+`ahead` already means "descended from this merge", so it is not a wider door. It is not built here
+because it multiplies the per-failure read cost by the page, and because "newest" is the wording the
+ruling used. Changing it is a design fork, not a defect fix.
+
+**Clause 4 accepts a run-level `success` where `_settled` reads the rollout STEP.** This repository
+records at length that a run conclusion cannot distinguish *nothing was deployed* from *production
+was deployed and is broken*, and `_settled` reads jobs and steps for exactly that reason; the
+supersession predicate does not. So a future workflow revision whose rollout job carries an `if:`
+that can be false on a push to `main` would produce a green run that never touched production.
+**Clause 3 is what makes this latent rather than live:** such a revision would be untranscribed and
+so `ATTESTS_UNKNOWN`, and the registry is transcribed-not-corrected, so a human classifying it would
+be recording what it actually attests. Closing it costs a fifth GitHub read per failed rollout.
+
 ## Consequences
 
 - The deploy watcher's nightly pass returns to exit 0 on today's population.

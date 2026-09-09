@@ -380,7 +380,19 @@ class GitHubReader:
 
         ADR-0044's first clause. NEWEST rather than any: a failed rollout is superseded only by a
         success that came AFTER it, and "A failed, B succeeded, C failed" means A is superseded
-        and C is not. Keying on the newest is both cheaper and more correct than scanning.
+        and C is not.
+
+        **Keying on the newest is CHEAPER, not more correct** -- an earlier draft of this
+        docstring claimed both and the second half is false. Scanning every success for one whose
+        head is `ahead` answers that example identically (B is behind C, so C stays unexcused) and
+        additionally survives a RE-RUN: `run_started_at` is the start of the latest ATTEMPT, so
+        re-running a two-week-old success moves it to the front of this ordering, its head is
+        `behind` the merge, clause 2 refuses, and a genuine superseding run further along is never
+        consulted. That withholds an excuse rather than granting a wrong one -- the conservative
+        direction -- but it makes the exception flap back to a finding, which is the shape this
+        ADR exists to remove. Named in ADR-0044's residuals rather than built: widening clause 1
+        to a scan multiplies the per-failure read cost by the page, and "newest" is the wording
+        the ruling used.
 
         `branch` is the workflow's transcribed `trigger_branch`, not `main` -- the sibling
         `concurrent_rollout_run` hardcodes `main` and predates that field.
