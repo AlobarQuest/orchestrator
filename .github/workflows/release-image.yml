@@ -41,7 +41,9 @@ jobs:
       # `[tool.ruff]` sets no `target-version` and derives its format target from
       # `requires-python`, so the next `except`-tuple edited into either script would have been
       # reformatted under PEP 758 and killed the production image build with a SyntaxError.
-      # This step must precede the first `python3` use below.
+      # This step must precede the first `python3` use below, and
+      # `test_every_job_running_runner_python_sets_it_up_before_the_first_use` enforces both
+      # halves -- that it is here at all, and that it is here FIRST.
       - name: Set up Python
         uses: actions/setup-python@v7
         with:

@@ -2514,11 +2514,25 @@ style of that module.
   assumed). It survived the floor raise only by accident — none of those files was in either
   cascade — and would not have stayed survivable, because the next `except`-tuple edited into
   either script gets reformatted into 3.14-only syntax automatically. Fixed in the same commit by
-  the four-line step every other workflow already carries, which also brings it under the guard.
-  **The generalisable half: a workflow that runs `python3 <file-from-this-tree>` is an executor of
-  this repository, and a census built by recalling which workflows "are the CI ones" will not
-  contain it.** Derive the list — `grep -rn 'python3\|\.venv/bin' .github/workflows/` — and for
-  every hit ask whether a `setup-python` step precedes it in the same job.
+  the four-line step every other workflow already carries.
+  **THE GENERAL DEFECT WAS THAT #251's GUARD IS KEYED ON PRESENCE, and that shape recurs here.**
+  `test_every_setup_python_step_reads_the_version_file` asks whether every `setup-python` step
+  reads the file — so a workflow with NO such step was never in its population, and the guard
+  reported clean for months while the production image build ran on 3.12. Same shape as a landing
+  census keyed on `basis == "rule"` reporting 0 across 671 rows: **a filter reports clean because
+  the broken thing never entered the filter.** The inverse now ships beside it —
+  `test_every_job_running_runner_python_sets_it_up_before_the_first_use` — asserting that a `run:`
+  block invoking the runner's own interpreter has a setup step **earlier in the same job**, since a
+  setup step below the first `python3` line is decoration. Three properties of it are worth knowing
+  before editing: `uv run`/`uvx`/`.venv/bin/python` are exempt because they resolve through
+  `.python-version` themselves (measured, with a control: the same `uv run` gives 3.14.3 and
+  3.12.13 as the file changes, `requires-python` held constant); `docker` is exempt as another
+  machine's interpreter; and **both are matched per LINE, never per step** — `release-image.yml`
+  builds an image and then reads its digest with a runner `python3` in the SAME `run:` block, so a
+  step-level docker exemption waves that invocation through. Its red control is the real file at
+  `ada8d20`, not a fixture. **And the file scan cannot kill a mutation of those patterns** — once
+  every workflow carries its step the scan short-circuits and never reaches the classifier, which
+  is why `runner_python_lines` is tested directly; four mutations survived the scan and die there.
   Also note this repo is on **psycopg 3**: `TEST_DATABASE_URL` must be
   `postgresql+psycopg://`, not `+psycopg2://`, which fails with a bare `ModuleNotFoundError` that
   reads like a broken environment.

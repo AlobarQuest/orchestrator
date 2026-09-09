@@ -160,14 +160,19 @@ def _step_documents() -> list[Path]:
     return sorted(documents)
 
 
+def _step_containers(document: dict) -> list[dict]:
+    """Everything in one document that carries a `steps:` list."""
+    containers = list(document.get("jobs", {}).values())
+    if "runs" in document:  # a composite action puts its steps under `runs:`
+        containers.append(document["runs"])
+    return containers
+
+
 def _setup_python_steps() -> list[tuple[Path, dict]]:
     steps = []
     for path in _step_documents():
         document = yaml.safe_load(path.read_text()) or {}
-        containers = list(document.get("jobs", {}).values())
-        if "runs" in document:  # a composite action puts its steps under `runs:`
-            containers.append(document["runs"])
-        for container in containers:
+        for container in _step_containers(document):
             for step in container.get("steps", []) or []:
                 if str(step.get("uses", "")).startswith("actions/setup-python"):
                     steps.append((path, step))
@@ -194,3 +199,102 @@ def test_every_setup_python_step_reads_the_version_file() -> None:
         assert not re.search(r"\d", str(step.get("name", ""))), (
             f"{where} carries a version in its label, which nothing executes and nobody updates"
         )
+
+
+# A `run:` block executes on the RUNNER, so a bare `python`/`python3` there is the machine's
+# system interpreter -- on `ubuntu-latest` that is Ubuntu 24.04's Python 3.12.3, whatever this
+# repository pins. `uv run`, `uvx` and `.venv/bin/python` all resolve through `.python-version`
+# themselves and are deliberately NOT required to carry a setup step; `docker` names another
+# machine's interpreter entirely. Both patterns are matched per LINE, never per step: the release
+# workflow builds an image and then reads its digest with a runner `python3` in the SAME `run:`
+# block, so a step-level docker exemption would wave that invocation through.
+RUNNER_PYTHON = re.compile(r"(?<![\w./-])python(?:3(?:\.\d+)?)?(?![\w:.-])")
+DERIVES_ITS_OWN_INTERPRETER = re.compile(r"(?<![\w-])(uvx?|docker)(?![\w-])")
+
+
+def runner_python_lines(script: str) -> list[tuple[int, str]]:
+    """The lines of a `run:` block that invoke the runner's own interpreter.
+
+    Split out from the test so every clause above can be exercised directly. That is not tidiness:
+    once every workflow carries its setup step the scan below short-circuits on the first one and
+    stops reaching this function at all, so the real-file scan cannot kill a mutation of these
+    patterns. Measured -- four mutations survived the file scan and die here.
+    """
+    found = []
+    for number, line in enumerate(script.splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        match = RUNNER_PYTHON.search(line)
+        if match is None:
+            continue
+        if DERIVES_ITS_OWN_INTERPRETER.search(line[: match.start()]):
+            continue
+        found.append((number, line.strip()))
+    return found
+
+
+def test_every_job_running_runner_python_sets_it_up_before_the_first_use() -> None:
+    """The sibling guard above is keyed on PRESENCE: it asks whether every `setup-python` step
+    reads the file. A workflow with NO such step is not in its population, so it passed for months
+    while `release-image.yml` -- the production image build -- ran five `python3` steps against
+    files in this tree on the runner's system interpreter. That is this repository's recurring
+    shape: a filter reporting clean because the broken thing never entered it.
+
+    This is the inverse, and ORDERING is half of it -- a setup step after the first `python3` line
+    is decoration. Both halves were proven against the real file rather than a fixture: at
+    `ada8d20` this fires on all five of that workflow's steps, and it goes green on the four-line
+    step that fixes it; with that step moved below `Read pin` it fires on `Read pin` alone.
+    """
+    offenders = []
+    for path in _step_documents():
+        document = yaml.safe_load(path.read_text()) or {}
+        for container in _step_containers(document):
+            prepared = False
+            for step in container.get("steps", []) or []:
+                if str(step.get("uses", "")).startswith("actions/setup-python"):
+                    prepared = True
+                    continue
+                if prepared:
+                    continue
+                where = step.get("name", step.get("uses", "?"))
+                for number, line in runner_python_lines(str(step.get("run", "") or "")):
+                    offenders.append(f"{path.name}: {where!r} line {number}: {line}")
+
+    assert not offenders, (
+        "these `run:` steps invoke the runner's own interpreter with no `actions/setup-python` "
+        "before them in the same job, so they execute on whatever the runner image ships rather "
+        "than on .python-version:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_the_line_classifier_reports_a_bare_invocation_and_exempts_the_rest() -> None:
+    """Each case here kills a specific mutation of the two patterns above; see
+    `runner_python_lines` for why the file scan cannot."""
+    for line in (
+        "python3 scripts/shape_registry_context.py --source x",
+        'DIGEST=$(python3 -c "import json,sys; print(1)")',
+        "python -m scripts.check_something",
+        "python3 - <<'PY' >> \"$GITHUB_OUTPUT\"",
+        'python3.14 -c "import sys"',
+    ):
+        assert runner_python_lines(line), f"a bare runner invocation went unreported: {line}"
+
+    for line in (
+        ".venv/bin/python scripts/check_profile_budget_agreement.py",
+        'uv run python -c "import sys"',
+        "uv run alembic upgrade head",
+        "uvx ruff@0.16.2 format --check .",
+        'docker run --rm python:3.14-slim python -c "import sys"',
+        "docker buildx build --build-arg BASE=python:3.14-slim --push .",
+        "IMAGE=python:3.14-slim",
+        "  # python3 used to run here before the step was added",
+    ):
+        assert not runner_python_lines(line), (
+            f"reported something that is not runner python: {line}"
+        )
+
+    # Per LINE, not per step: the release workflow does exactly this shape.
+    after_a_docker_line = (
+        'docker buildx build -t ghcr.io/a/b:sha --push .\nDIGEST=$(python3 -c "1")\n'
+    )
+    assert [number for number, _ in runner_python_lines(after_a_docker_line)] == [2]
