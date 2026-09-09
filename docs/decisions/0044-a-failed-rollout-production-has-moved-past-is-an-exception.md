@@ -162,8 +162,11 @@ deliberately**: `--dry-run` returns before `_ledger_finding` is ever reached, an
 with a failed rollout exists today — records 78 and 79 are `approved`. The condition goes live the
 moment a person resolves one, which is precisely when a permanently-red finding would appear.
 
-Mutation pass over the predicate: **18/18 killed, zero survivors**, every anchor matched exactly
-once. Three survivors in the first run were each acted on rather than explained away — two were
-real gaps (an unfinished run in the success listing, and the trigger branch being indistinguishable
-from a hardcoded `main` given today's registry) and the third was a dead clause, split into a
-behavioural guard and a type-narrowing assert.
+Mutation pass over the predicate, re-run after the LAST behavioural change: **19/19 killed, zero
+survivors**, every anchor matched exactly once and every kill attributed to a named test. Three
+survivors in the first run were each acted on rather than explained away — two were real gaps (an
+unfinished run in the success listing, and the trigger branch being indistinguishable from a
+hardcoded `main` given today's registry) and the third was a dead clause, split into a behavioural
+guard and a type-narrowing assert. The nineteenth mutant is the unstarted-run clause the `datetime`
+fix above added; it is killed by that fix's own control, and the two `github.py` anchors it moved
+were re-pointed rather than left to match nothing.
