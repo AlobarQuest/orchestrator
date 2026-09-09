@@ -2480,17 +2480,21 @@ style of that module.
   (1) `uv sync` in a fresh worktree picks the newest interpreter satisfying `requires-python =
   ">=3.12"` — it chose **3.14.3** while `quality.yml` pinned **3.12**, so the session's green
   `make check` was measured on an interpreter CI never uses.
-  **THE NUMBER IS NOW 3.14, AND FOR A WEEK THIS BULLET PRESCRIBED THE DEFECT IT WAS WRITTEN TO
-  PREVENT.** `quality.yml` moved to 3.14 on **2026-09-02** (`6fe1f95`, "Run on Python 3.14"), and
-  measured 2026-09-09 it pins `python-version: "3.14"` at **three** sites in that file — the third
-  arrived with `#248`, so the count moves with the job list and is not itself worth memorising —
-  plus `attest-wave-exit.yml` and `attest-exit-criteria.yml`, five in the repository and every one
-  3.14. So `--python 3.12` produced exactly the state described above with the versions swapped: a
-  local gate that cannot predict CI. **Use `uv venv --clear --python 3.14`** in a build worktree.
-  The PRINCIPLE is what to carry, not the digit: **name the interpreter CI names, and re-read
-  `quality.yml` rather than this line** — a number in prose ages, and this one aged in seven days.
-  Note the main tree is deliberately NOT 3.14; see the main-tree bullet below, which now differs
-  from CI on purpose. Also note this repo is on **psycopg 3**: `TEST_DATABASE_URL` must be
+  **THIS BULLET TWICE PRESCRIBED THE DEFECT IT WAS WRITTEN TO PREVENT, AND THAT IS WHY THE DIGIT
+  IS GONE.** It said `--python 3.12` for a week after `quality.yml` moved to 3.14 on **2026-09-02**
+  (`6fe1f95`), producing exactly the state described above with the versions swapped: a local gate
+  that cannot predict CI. It was then corrected to `--python 3.14` on 2026-09-09, which is the same
+  construction one number later. **Use `uv venv --clear` with NO flag.** Since 2026-09-09 the
+  repository root holds **`.python-version`**, `uv venv` and `uv sync` honour it natively, and
+  `actions/setup-python` reads it through `python-version-file:` — so the interpreter is written
+  once and everything else derives. Measured in a build worktree that day: bare `uv venv --clear`
+  over an EXISTING 3.14 venv re-resolved 3.14.3 from the file alone, with no flag given.
+  The PRINCIPLE is what to carry, not the digit: **name nothing, read `.python-version`** — a
+  number in prose ages, and this one aged in seven days.
+  `tests/architecture/test_interpreter_agreement.py` holds the sites that cannot read the file to
+  it — both Dockerfile base tags and pyright's `pythonVersion` to EQUALITY, and `requires-python`
+  only to not EXCLUDING it, for a reason that test records — and was proven to red on each.
+  Also note this repo is on **psycopg 3**: `TEST_DATABASE_URL` must be
   `postgresql+psycopg://`, not `+psycopg2://`, which fails with a bare `ModuleNotFoundError` that
   reads like a broken environment.
   (2) **`artifact_sha256` cannot be computed before the merge SHA and cannot be carried across a
@@ -2969,6 +2973,15 @@ style of that module.
   files were added. The blast radius is now smaller than it was: the launchers' exit-code fold
   surfaces a missing binary as 127 instead of folding it to 0, and the installer refuses at install
   time — but only for lanes that have an installer.
+  **AND THE HELPER'S SYNC RELOCATES THE INTERPRETER, WHICH ITS OWN COMMENT DOES NOT SAY.**
+  `~/.claude/bin/activate-checkout.sh::_activate_sync_dependencies` runs `uv sync --frozen` when a
+  pulled range touches `pyproject.toml` or `uv.lock`, and explains itself entirely in terms of a
+  MISSING BINARY — the case it was built for. Since `.python-version` exists that same sync also
+  REBUILDS THE VENV ON THE PINNED INTERPRETER whenever the two disagree, unattended, on whichever
+  scheduled lane fires first, printing `dependencies synced` as though nothing larger had
+  happened. Benign while the tree runs on either interpreter; not benign the moment a change is
+  version-specific. Read it as: a pull that moves a manifest can move the interpreter under all
+  eleven lanes, and the trigger is a cron rather than a person.
   **SHARPENED 2026-08-21: in a FRESH WORKTREE, `uv sync --frozen` is necessary and NOT SUFFICIENT.**
   Measured building item 150's fix: `work-carrier` and `work-watcher` were declared in
   `pyproject.toml` and absent from the new worktree's `.venv/bin` after a clean `uv sync --frozen`;
@@ -4458,25 +4471,38 @@ style of that module.
   trigger is the opposite: **omitting the flag**. Measured 2026-09-02 in a clean directory carrying
   this repository's `pyproject.toml`: bare `uv venv` → **3.14.3**; `uv venv --python 3.12` →
   3.12.13; **bare `uv venv --clear` over an existing 3.12 venv → 3.14.3**. Yesterday's invocation
-  was survived only because it happened to name 3.12. There is no `.python-version` file and no
-  `[tool.uv]` table, `requires-python` is `>=3.12`, and `uv python list` shows 3.14.3 installed —
-  so uv picks the newest satisfying the floor, exactly as the worktree bullet above predicts. What
-  that bullet does not say is that the same command in the **main tree** costs eight production
-  schedulers rather than one session's test run: they resolve `REPO_ROOT` from `BASH_SOURCE` and
-  run `$REPO_ROOT/.venv/bin/<name>`, so the interpreter moves under all of them at once, silently,
-  with no flag involved. **Always name `--python 3.12` when rebuilding the main tree's venv**, and
-  read `.venv/bin/python --version` afterwards.
-  **THE TRAILING CLAUSE USED TO READ "the main tree's 3.12 is deliberate and is the floor CI pins",
-  AND THE SECOND HALF IS NO LONGER TRUE.** CI moved to 3.14 on 2026-09-02 (`6fe1f95`); measured
-  2026-09-09, `quality.yml` names 3.14 at every site. The main tree stays at **3.12**, reaffirmed
-  in the 2026-09-09 handoff that prompted this correction (recorded there, not witnessed here — do
-  not read it as a Devon ruling this file observed), on the ground it still has: it is the declared
-  `requires-python` floor, and **the scheduled lanes** are what run there, so they are exercised
-  against the oldest interpreter the project claims to support. **The two now differ
-  deliberately: CI 3.14, main tree 3.12, production 3.14.7 in its image.** The consequence to carry
-  is that a change touching the scheduled lanes is exercised by CI on one interpreter and by the
-  lanes on another, so it deserves a look at both rather than a green gate alone — and a build
-  worktree pins CI's, not this one (see the worktree bullet above).
+  was survived only because it happened to name 3.12. At the time there was no `.python-version`
+  file and no `[tool.uv]` table, `requires-python` was `>=3.12`, and `uv python list` showed 3.14.3
+  installed — so uv picked the newest satisfying the floor, exactly as the worktree bullet above
+  predicts. What that bullet does not say is that the same command in the **main tree** costs
+  production schedulers rather than one session's test run: they resolve `REPO_ROOT` from
+  `BASH_SOURCE` and run `$REPO_ROOT/.venv/bin/<name>`, so the interpreter moves under all of them
+  at once, silently, with no flag involved.
+  **THE FLAG IS NO LONGER THE ANSWER, AND THE HAZARD IS NOW WIDER THAN THE COMMAND THIS BULLET IS
+  NAMED AFTER.** Since 2026-09-09 the root holds `.python-version`, so **`uv venv --clear` with no
+  flag rebuilds the main tree on the pinned interpreter** — read `.venv/bin/python --version`
+  afterwards, which is the half that never stops being worth doing. But `.python-version` is a
+  request to uv, not a note: measured 2026-09-09, **`uv sync --frozen` over a venv that disagrees
+  with it prints `Removed virtual environment at: .venv` and recreates it**, and either
+  `.python-version` OR a raised `requires-python` is sufficient on its own (both were probed
+  separately). So the trigger has moved from *omitting a flag on one command* to *any `uv sync`* —
+  and this file's own rule prescribes exactly that `uv sync` whenever a `[project.scripts]` entry
+  is added. There is no flag that avoids it and no way to opt a working copy out. **The rule that
+  survives is the one that was always the real one: do not run uv against the main tree while a
+  scheduled pass may fire, and check `.venv/bin/python --version` after anything that could have
+  moved it.** The launchers themselves never go through uv — they invoke `.venv/bin/<name>` by
+  absolute path — so nothing moves them except a rebuild of that venv.
+  **THE TRAILING CLAUSE USED TO READ "the main tree's 3.12 is deliberate and is the floor CI
+  pins", AND THE SECOND HALF IS GONE.** CI moved to 3.14 on 2026-09-02 (`6fe1f95`), and since
+  2026-09-09 `.python-version` is what CI, a build worktree and this tree are all meant to
+  resolve — one number, not a deliberate split. `requires-python` is still `>=3.12` and is
+  deliberately BEHIND it: raising the floor is the obviously right end state and was measured to
+  be a 26-file change rather than a line, because ruff derives both its lint and its format
+  target from `requires-python` and 3.14 turns on PEP 758 (`except A, B:`, a hard SyntaxError on
+  3.12) plus 11 forward-reference unquotings. Three of the files that reformats back scheduled
+  lanes. So the floor moves in its own increment AFTER this tree's venv does, at which point both
+  cascades are free; `tests/architecture/test_interpreter_agreement.py` holds it to not
+  EXCLUDING the pin in the meantime and records the whole measurement.
   **COUNT THE LANES, DO NOT RECALL THEM.** This bullet's headline says EIGHT and there are
   **eleven** (`ls scripts/com.devon.*.plist`, all loaded — measured 2026-09-09: activation-sweep,
   bump-proposer, change-proposer, deploy-watcher, estate-landing, inert-landing, landing-ledger,
