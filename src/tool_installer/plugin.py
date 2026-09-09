@@ -240,7 +240,7 @@ def read_entry(sites: Sites, tool: Tool, marketplace: str) -> PluginEntry | None
     """
     try:
         document = json.loads(sites.installed_record_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     if not isinstance(document, dict):
         return None

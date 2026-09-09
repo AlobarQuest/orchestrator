@@ -235,7 +235,7 @@ class HttpChangeRecordSource:
         # by probing rather than by reading -- the control written for this class used a trailing
         # newline, which `InvalidURL` already covered, so the mutation guarding it was killed by a
         # test that shared the same incomplete model of what httpx raises.
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError):
+        except httpx.HTTPError, httpx.InvalidURL, ValueError:
             return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
         if response.status_code != 200:
             return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)

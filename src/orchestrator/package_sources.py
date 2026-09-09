@@ -247,7 +247,7 @@ def _verify_factory_chain() -> bool:
             timeout=_CHAIN_VERIFY_TIMEOUT_SECONDS,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError, subprocess.TimeoutExpired:
         return False
     return result.returncode == 0
 

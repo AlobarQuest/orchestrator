@@ -29,7 +29,7 @@ class RegistryAdapter:
         self.source_revision, self._actors = _validate_bundle(bundle)
 
     @classmethod
-    def from_path(cls, path: Path) -> "RegistryAdapter":
+    def from_path(cls, path: Path) -> RegistryAdapter:
         try:
             value = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError) as error:

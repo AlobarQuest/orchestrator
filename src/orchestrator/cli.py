@@ -40,7 +40,7 @@ class CliSettings:
     credential_key_id: str | None
 
     @classmethod
-    def from_environment(cls) -> "CliSettings":
+    def from_environment(cls) -> CliSettings:
         return cls(
             api_url=os.getenv("ORCHESTRATOR_API_URL", "http://127.0.0.1:8000"),
             api_token=os.getenv("ORCHESTRATOR_API_TOKEN", ""),
@@ -54,7 +54,7 @@ class CliError(Exception):
         super().__init__(str(detail.get("message", detail.get("code", "API request failed"))))
 
     @classmethod
-    def from_response(cls, response: httpx.Response) -> "CliError":
+    def from_response(cls, response: httpx.Response) -> CliError:
         try:
             body = response.json()
         except ValueError:

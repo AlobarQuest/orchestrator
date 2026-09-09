@@ -8,11 +8,13 @@ from one file rather than agreeing by hand.
 Three sites cannot read it and are held here by a CHECK instead of a shared variable.
 The Dockerfile's base tag would need an ARG declared before `FROM`, coupling the tag to
 the release workflow's argument list; `requires-python` and pyright's `pythonVersion` are
-static metadata a build backend and a type checker read without running anything. A check
-is this repository's paved answer to that shape -- see `check_profile_budget_agreement.py`
-and `check_rollout_transcription_currency.py`. The Dockerfile and pyright are held to
-EQUALITY; `requires-python` is held only to not excluding the pin, for a reason its own
-test records.
+static metadata a build backend, a type checker and -- see below -- a formatter read
+without running anything. A check is this repository's paved answer to that shape -- see
+`check_profile_budget_agreement.py` and `check_rollout_transcription_currency.py`. All
+three sites are held to EQUALITY. `requires-python` was held only to not EXCLUDING the pin
+until 2026-09-09, while the floor and the pin deliberately differed; they no longer do,
+and the weaker form admitted a floor like `>=3.13` -- a claim about an interpreter nothing
+here has ever run, passing a check written to refuse exactly that.
 
 WHY PYRIGHT KEEPS A LITERAL AT ALL. Omitting `pythonVersion` is derivation only in
 appearance. Measured 2026-09-09 against pyright 1.1.411: with the key absent it reports
@@ -73,32 +75,41 @@ def test_both_dockerfile_base_tags_name_the_pinned_version() -> None:
     )
 
 
-def test_the_requires_python_floor_admits_the_pinned_version() -> None:
-    """The floor may sit BELOW the pin; it may never sit above it.
+def test_the_requires_python_floor_is_the_pinned_version() -> None:
+    """The floor IS the pin. Above it is a contradiction; below it is a false claim.
 
-    Above it, the interpreter every environment actually runs would not satisfy the project's
-    own declared floor -- a contradiction no amount of `.python-version` can fix. At or below
-    it, the floor is a claim about older interpreters that nothing here executes.
+    Above the pin, the interpreter every environment actually runs would not satisfy the
+    project's own declared floor -- a contradiction no amount of `.python-version` can fix.
+    Below it, the floor asserts that some older interpreter can run this tree, and since
+    2026-09-09 that assertion is not merely unexercised but WRONG: the source now carries PEP
+    758 `except A, B:`, which is a hard SyntaxError before 3.14. A resolver that honours a
+    lagging floor would install this package onto an interpreter that cannot import it, so the
+    floor is load-bearing for refusal rather than documentation, and equality is what makes the
+    refusal honest.
 
-    THAT WEAKER CLAIM IS A DEFERRAL, NOT AN OVERSIGHT, AND THE COST OF CLOSING IT WAS MEASURED
-    ON 2026-09-09 RATHER THAN ESTIMATED. Raising the floor to the pin is the obviously right
-    end state and it is not a one-line change, because `[tool.ruff]` sets no `target-version`
-    and ruff derives BOTH its lint and its format target from `requires-python`. Raising it to
-    `>=3.14` produced, by clean differential (`>=3.12` gives `563 files already formatted` and
-    zero lint findings):
+    EQUALITY IS AFFORDABLE HERE BECAUSE THIS IS AN APPLICATION. `.python-version` holds exactly
+    one number and every environment derives from it; there is no supported range and no
+    downstream installer to keep on an older interpreter. Note equality constrains where the
+    FLOOR sits, not what the specifier admits -- `>=3.14` still admits 3.15 -- so the only thing
+    forbidden is a floor below the one number, which is the defect and not a use case.
+
+    WHY MOVING `.python-version` IS A PAIRED OPERATION WITH REAL CONSEQUENCES, MEASURED ON
+    2026-09-09 RATHER THAN ESTIMATED. `[tool.ruff]` sets no `target-version`, so ruff derives
+    BOTH its lint and its format target from this floor. Raising it from `>=3.12` to `>=3.14`
+    rewrote 26 sites across 23 files, by clean differential (`>=3.12` gave `563 files already
+    formatted` and zero lint findings):
 
       * 11 x UP037 -- quotes stripped from forward-reference annotations in five
-        `src/orchestrator/` modules and two tests. Those become `NameError` on 3.12; reverting
-        the floor afterwards reports all 11 as F821.
-      * 15 files reformatted under PEP 758 -- `except (A, B):` becomes `except A, B:`, which is
-        a hard SyntaxError on 3.12, not a style difference. Three of the affected modules
+        `src/orchestrator/` modules and two tests. Those are `NameError` on 3.12; reverting the
+        floor afterwards reports all 11 as F821.
+      * 15 files reformatted under PEP 758 -- `except (A, B):` becomes `except A, B:`, a hard
+        SyntaxError on 3.12 rather than a style difference. Three of the affected modules
         (`deploy_watcher`, `revision_watcher`, `tool_installer`) back scheduled lanes that run
         from the main tree's working copy.
 
-    So the floor is a lever on the source tree, and pulling it while any environment is still
-    on an older interpreter breaks that environment. Both cascades are free once nothing is on
-    3.12 -- which is why this was sequenced after the main tree's venv moves rather than
-    dropped. Backlogged; do not close it by editing this test alone.
+    So the floor is a lever on the source tree. Moving `.python-version` moves it, which rewrites
+    the tree into syntax the previous interpreter cannot parse -- do that only when nothing is
+    left on the old one, and expect a large mechanical diff in the same commit.
     """
     floor = tomllib.loads(PYPROJECT.read_text())["project"]["requires-python"]
 
@@ -114,9 +125,12 @@ def test_the_requires_python_floor_admits_the_pinned_version() -> None:
     pinned = tuple(int(part) for part in pinned_version().split("."))
     declared = tuple(int(part) for part in floor.removeprefix(">=").split("."))
 
-    assert declared <= pinned, (
-        f"requires-python is {floor!r}, which excludes the pinned interpreter "
-        f"{pinned_version()} that every environment here runs"
+    assert declared == pinned, (
+        f"requires-python is {floor!r}; expected '>={pinned_version()}'. Above the pin the "
+        f"floor excludes the interpreter every environment here runs; below it, the floor "
+        f"claims an older interpreter can run a tree that carries 3.14-only syntax. If this "
+        f"is a deliberate interpreter move, edit .python-version and let ruff rewrite the "
+        f"source in the same commit; see this test's docstring for what that costs."
     )
 
 

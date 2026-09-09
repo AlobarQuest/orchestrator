@@ -2492,8 +2492,33 @@ style of that module.
   The PRINCIPLE is what to carry, not the digit: **name nothing, read `.python-version`** — a
   number in prose ages, and this one aged in seven days.
   `tests/architecture/test_interpreter_agreement.py` holds the sites that cannot read the file to
-  it — both Dockerfile base tags and pyright's `pythonVersion` to EQUALITY, and `requires-python`
-  only to not EXCLUDING it, for a reason that test records — and was proven to red on each.
+  it — both Dockerfile base tags, pyright's `pythonVersion` and, since 2026-09-09,
+  `requires-python`, **all three to EQUALITY** — and was proven to red on each. The floor was held
+  only to not EXCLUDING the pin while the two deliberately differed; they no longer do.
+  **AND THE FLOOR IS A LEVER ON THE SOURCE TREE, WHICH IS THE PART NOBODY EXPECTS.** `[tool.ruff]`
+  sets no `target-version`, so ruff derives BOTH its lint and its format target from
+  `requires-python`. Raising it `>=3.12` → `>=3.14` rewrote **26 sites across 23 files** in one
+  commit: 11 × UP037 (quotes stripped from forward-reference annotations — `NameError` on 3.12)
+  and 15 files reformatted under **PEP 758**, where `except (A, B):` becomes `except A, B:` — a
+  hard **SyntaxError** before 3.14, not a style difference. So moving `.python-version` rewrites
+  the tree into syntax the previous interpreter cannot parse; do it only when nothing is left on
+  the old one, and expect the mechanical diff in the same commit. Read `except A, B:` carefully:
+  in Python 2 that spelling meant *catch A, bind it to B*, so it is the one construct in this tree
+  a long-time reader can silently misread as the opposite of what it says.
+  **AND THE INTERPRETER CENSUS MISSED THE MOST CONSEQUENTIAL LANE TWICE — `release-image.yml`,
+  the production image build.** Neither #251's census nor the follow-up brief listed it. It runs
+  **five** `python3` steps against files in this tree — `scripts/shape_registry_context.py`,
+  `scripts/compute_image_tags.py` and three inline snippets — and it carried **no
+  `actions/setup-python` at all**, so they ran on the runner's system interpreter: `ubuntu-latest`
+  is `ubuntu-24.04`, which ships **Python 3.12.3** (measured from `actions/runner-images`, not
+  assumed). It survived the floor raise only by accident — none of those files was in either
+  cascade — and would not have stayed survivable, because the next `except`-tuple edited into
+  either script gets reformatted into 3.14-only syntax automatically. Fixed in the same commit by
+  the four-line step every other workflow already carries, which also brings it under the guard.
+  **The generalisable half: a workflow that runs `python3 <file-from-this-tree>` is an executor of
+  this repository, and a census built by recalling which workflows "are the CI ones" will not
+  contain it.** Derive the list — `grep -rn 'python3\|\.venv/bin' .github/workflows/` — and for
+  every hit ask whether a `setup-python` step precedes it in the same job.
   Also note this repo is on **psycopg 3**: `TEST_DATABASE_URL` must be
   `postgresql+psycopg://`, not `+psycopg2://`, which fails with a bare `ModuleNotFoundError` that
   reads like a broken environment.

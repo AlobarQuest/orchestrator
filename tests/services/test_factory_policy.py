@@ -239,7 +239,7 @@ def test_composition_over_a_reach_set_can_only_narrow() -> None:
 def _return_annotation(value: object) -> str:
     try:
         return str(inspect.signature(value).return_annotation)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return ""
 
 

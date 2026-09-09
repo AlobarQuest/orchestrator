@@ -54,11 +54,11 @@ class DependencySpec:
     external_ref: str | None = None
 
     @classmethod
-    def work_unit(cls, unit_id: uuid.UUID, required_state: str) -> "DependencySpec":
+    def work_unit(cls, unit_id: uuid.UUID, required_state: str) -> DependencySpec:
         return cls("work_unit", required_state, depends_on_work_unit_id=unit_id)
 
     @classmethod
-    def external(cls, reference: str, condition: str) -> "DependencySpec":
+    def external(cls, reference: str, condition: str) -> DependencySpec:
         return cls("external_system", condition, external_ref=reference)
 
 

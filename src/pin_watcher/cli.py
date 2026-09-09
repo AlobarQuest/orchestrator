@@ -61,7 +61,7 @@ def _file_rows(result: Pass, client: OrchestratorClient) -> list[str]:
             client.record_observation(
                 pin_observation(caller, result.recommended, result.recommended_at)
             )
-        except (PinWriteError, ValueError):
+        except PinWriteError, ValueError:
             unfiled.append(caller.repository)
     return unfiled
 

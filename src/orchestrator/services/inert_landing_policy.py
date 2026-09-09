@@ -204,7 +204,7 @@ class HttpInertLandingPolicySource:
         # over-long DNS label escapes a tuple that names only `HTTPError`. Every one of those is
         # an ordinary way for an environment variable to be malformed, and every one of them
         # would surface as a bare 500 from the admission path.
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError):
+        except httpx.HTTPError, httpx.InvalidURL, ValueError:
             return InertLandingAnswer(None, SOURCE_UNREADABLE)
         if response.status_code != 200:
             return InertLandingAnswer(None, SOURCE_UNREADABLE)

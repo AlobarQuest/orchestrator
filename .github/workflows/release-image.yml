@@ -34,6 +34,19 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
+      # This job runs five `python3` steps against files in this tree, and until 2026-09-09 it
+      # ran them on the runner's system interpreter -- `ubuntu-latest` is 24.04, which ships
+      # 3.12.3. That was survivable only by accident: nothing this job executes had yet been
+      # rewritten into 3.14-only syntax. It would not have stayed survivable, because
+      # `[tool.ruff]` sets no `target-version` and derives its format target from
+      # `requires-python`, so the next `except`-tuple edited into either script would have been
+      # reformatted under PEP 758 and killed the production image build with a SyntaxError.
+      # This step must precede the first `python3` use below.
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
       - name: Read pin
         id: pin
         run: |

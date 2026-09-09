@@ -273,7 +273,7 @@ def _idempotent_result(event: Event, command: TransitionCommand) -> TransitionRe
         raise _idempotency_conflict()
     try:
         source = WorkUnitState(event.from_state)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         raise _idempotency_conflict() from None
     expected = event.subject_id == command.unit_id and event.payload.get(
         "command"
