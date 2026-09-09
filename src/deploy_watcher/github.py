@@ -373,6 +373,72 @@ class GitHubReader:
             )
         return [_run(item) for item in items if isinstance(item, dict)]
 
+    def newest_successful_push_run(
+        self, repository: str, workflow_path: str, branch: str
+    ) -> Run | None:
+        """The most recent successful push-triggered run of one workflow on one branch.
+
+        ADR-0044's first clause. NEWEST rather than any: a failed rollout is superseded only by a
+        success that came AFTER it, and "A failed, B succeeded, C failed" means A is superseded
+        and C is not. Keying on the newest is both cheaper and more correct than scanning.
+
+        `branch` is the workflow's transcribed `trigger_branch`, not `main` -- the sibling
+        `concurrent_rollout_run` hardcodes `main` and predates that field.
+
+        **THE ORDER GITHUB SERVES IS NOT TRUSTED, and that is measured rather than defensive.**
+        On 2026-09-09 this exact query answered `total_count: 45` with a run from six days
+        earlier first, while the same query at three other page sizes minutes later answered
+        `total_count: 50` with the true newest first -- a stale cached page. So the newest is
+        chosen HERE, by start time with the run id as a tiebreak, over whatever came back.
+
+        A truncated page can only ever hide a success, which leaves the finding standing, so it
+        is not refused: under-reporting supersession is the conservative direction and refusing
+        would discard an answer that is already correct in every case where the newest is
+        present.
+        """
+        encoded = workflow_path.replace("/", "%2F")
+        body = self._get(
+            f"/repos/{repository}/actions/workflows/{encoded}/runs",
+            branch=branch,
+            event="push",
+            status="success",
+            per_page=PAGE_SIZE,
+        )
+        if body is None:
+            raise ReadError(f"{repository} has no workflow {workflow_path}")
+        if not isinstance(body, dict) or not isinstance(body.get("workflow_runs"), list):
+            raise ReadError(f"{repository} answered the successful-run query unreadably")
+        runs = [_run(item) for item in body["workflow_runs"] if isinstance(item, dict)]
+        # A run with no head is one this comparison cannot be made against, and a run GitHub
+        # says is not finished is not a success whatever the filter claimed.
+        usable = [r for r in runs if r.head_sha is not None and r.concluded]
+        if not usable:
+            return None
+        return max(usable, key=lambda r: (r.started_at or datetime.min, r.run_id))
+
+    def compare_status(self, repository: str, base_sha: str, head_sha: str) -> str:
+        """How `head_sha` stands relative to `base_sha`: `ahead`, `behind`, `identical`, `diverged`.
+
+        ADR-0044's second clause, and the reason it is asked of GitHub rather than derived: the
+        watcher has no checkout, and "is this commit an ancestor of that one" is exactly the
+        question a squash-merging estate gets wrong from every local heuristic.
+
+        A 404 RAISES rather than answering. Both commits were named by GitHub itself one hop
+        earlier -- one is a merge commit it reported, the other the head of a run it served -- so
+        an absent comparison is a question that could not be answered, never a fact about the
+        subjects. Collapsing it into "not ahead" would silently keep a finding that has in fact
+        been superseded, which is the milder direction but is still an answer nobody measured.
+        """
+        body = self._get(f"/repos/{repository}/compare/{base_sha}...{head_sha}")
+        if body is None:
+            raise ReadError(f"github cannot compare {base_sha[:8]}...{head_sha[:8]}")
+        if not isinstance(body, dict):
+            raise ReadError(f"the comparison {base_sha[:8]}...{head_sha[:8]} is not an object")
+        status = body.get("status")
+        if not isinstance(status, str) or not status:
+            raise ReadError(f"the comparison {base_sha[:8]}...{head_sha[:8]} names no status")
+        return status
+
     def merged_pull_numbers(self, repository: str, *, pages: int) -> list[int]:
         """Closed pull requests against the repository, newest first. Backfill's subject list."""
         numbers: list[int] = []
@@ -408,4 +474,5 @@ def _run(item: dict[str, Any]) -> Run:
         conclusion=str(conclusion) if conclusion else None,
         started_at=_parse_time(item.get("run_started_at") or item.get("created_at")),
         concluded_at=_parse_time(item.get("updated_at")),
+        head_sha=str(item["head_sha"]) if is_sha(item.get("head_sha")) else None,
     )

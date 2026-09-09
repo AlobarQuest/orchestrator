@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from deploy_watcher.github import ForbiddenMethodError, GitHubReader, ReadError
+from deploy_watcher.model import Finding
 from deploy_watcher.observe import (
     MERGE_TARGETED_ANOTHER_BRANCH,
     PULL_REQUEST_MISSING,
@@ -21,8 +22,11 @@ from deploy_watcher.observe import (
     ROLLOUT_JOB_NOT_FOUND,
     ROLLOUT_NOT_SUCCESS,
     ROLLOUT_STUCK,
+    SUPERSEDED_ROLLOUT,
+    Outcome,
     Unmeasurable,
     observe,
+    superseded_exception,
 )
 from deploy_watcher.workflows import ATTESTS_REVISION, ATTESTS_UNKNOWN, ATTESTS_UNVERIFIED
 
@@ -53,6 +57,8 @@ def run(
     status: str = "completed",
     attempt: int = 1,
     run_id: int = 31426195637,
+    head: str = MERGE,
+    started: str = "2026-08-10T19:51:56Z",
 ) -> dict:
     return {
         "id": run_id,
@@ -60,7 +66,8 @@ def run(
         "html_url": f"https://github.com/{REPO}/actions/runs/{run_id}",
         "status": status,
         "conclusion": conclusion,
-        "run_started_at": "2026-08-10T19:51:56Z",
+        "head_sha": head,
+        "run_started_at": started,
         "updated_at": "2026-08-10T19:55:00Z",
     }
 
@@ -96,9 +103,17 @@ def reader_for(routes: dict[str, object], *, status: int = 200) -> GitHubReader:
     def handler(request: httpx.Request) -> httpx.Response:
         key = request.url.path
         params = dict(request.url.params)
-        for name in ("ref", "head_sha"):
-            if name in params:
-                key = f"{key}?{name}={params[name]}"
+        # ADR-0044 added `status` (and with it `branch`/`event`) to this list. Without it the
+        # supersession query -- newest successful push run on the trigger branch -- and
+        # `concurrent_rollout_run` are the SAME path with no head_sha, so one fixture would answer
+        # both and neither read could be tested for what it actually asks.
+        keyed = [
+            f"{name}={params[name]}"
+            for name in ("branch", "event", "head_sha", "ref", "status")
+            if name in params
+        ]
+        if keyed:
+            key = f"{key}?{'&'.join(keyed)}"
         if key not in routes:
             return httpx.Response(404, json=None)
         return httpx.Response(status, json=routes[key])
@@ -115,8 +130,8 @@ def routes(**overrides) -> dict[str, object]:
             "total_count": 1,
             "workflow_runs": [run()],
         },
-        # `concurrent_rollout_run` asks the same path with no head_sha.
-        f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs": {
+        # `concurrent_rollout_run` asks the same path with no head_sha, scoped to branch+event.
+        f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?branch=main&event=push": {
             "total_count": 1,
             "workflow_runs": [run()],
         },
@@ -465,3 +480,302 @@ class TestTheQueryParametersAreLoadBEARING:
         reader = GitHubReader(token="f", transport=httpx.MockTransport(handler))
         reader.runs_at_head(REPO, WORKFLOW, MERGE)
         assert len(seen) == 1 and f"head_sha={MERGE}" in seen[0]
+
+
+# ---------------------------------------------------------------------------------------------
+# ADR-0044: a failed rollout production has moved past is an EXCEPTION, not a finding.
+# ---------------------------------------------------------------------------------------------
+
+# A later commit on the trigger branch, and the successful rollout run that sits at it.
+LATER_HEAD = "34ce166e499dd6c2154b05fd70e9cef19fed7e47"
+OTHER_HEAD = "9f1c2e7a4b8d6053e21f7c9a4b3d8e6f05127a3b"
+LATER_RUN = 34216728359
+OLDER_RUN = 33598034936
+
+_SUCCESS_QUERY = (
+    f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?branch=main&event=push&status=success"
+)
+
+
+def failed_rollout(**overrides) -> dict[str, object]:
+    """The subject of every control below: a merge whose rollout run concluded `failure`."""
+    base = routes(
+        **{
+            f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={MERGE}": {
+                "total_count": 1,
+                "workflow_runs": [run(conclusion="failure")],
+            },
+            f"/repos/{REPO}/actions/runs/31426195637/attempts/1/jobs": jobs(
+                job_conclusion="failure", step_conclusion="failure"
+            ),
+        }
+    )
+    base.update(overrides)
+    return base
+
+
+def supersession(
+    *,
+    compare: str = "ahead",
+    revision: str = REVISION,
+    head: str = LATER_HEAD,
+    runs_at_head: list[dict] | None = None,
+    newest: list[dict] | None = None,
+) -> dict[str, object]:
+    """Every route the four-clause predicate reads, all four clauses satisfied by default.
+
+    EACH NEGATIVE CONTROL BREAKS EXACTLY ONE ARGUMENT HERE and leaves the rest satisfied. That is
+    not tidiness: a conjunction refuses as soon as any term does, so a fixture that fails two
+    clauses cannot show which one is load-bearing, and deleting the clause under test would leave
+    the mutant alive because a sibling clause refused anyway.
+    """
+    return {
+        _SUCCESS_QUERY: {
+            "total_count": 1,
+            "workflow_runs": newest
+            if newest is not None
+            else [run(run_id=LATER_RUN, head=head, started="2026-09-08T10:40:55Z")],
+        },
+        f"/repos/{REPO}/compare/{MERGE}...{head}": {"status": compare},
+        f"/repos/{REPO}/contents/{WORKFLOW}?ref={head}": {"sha": revision},
+        f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={head}": {
+            "total_count": 1,
+            "workflow_runs": runs_at_head
+            if runs_at_head is not None
+            else [run(run_id=LATER_RUN, head=head)],
+        },
+    }
+
+
+class TestSupersession:
+    """The four clauses, one control per clause, each derived from the same passing fixture."""
+
+    def test_a_failed_rollout_production_has_moved_past_is_an_exception(self):
+        """The positive case, and the reference every negative below is derived from."""
+        outcome = observe(reader_for(failed_rollout(**supersession())), REPO, 46, now=NOW)
+
+        assert outcome.findings == ()
+        assert len(outcome.exceptions) == 1
+        excused = outcome.exceptions[0]
+        assert excused.kind == SUPERSEDED_ROLLOUT
+        # The reader must be able to dispute it, so the run, its head and its revision are named.
+        assert str(LATER_RUN) in excused.detail
+        assert LATER_HEAD[:8] in excused.detail
+        assert REVISION[:8] in excused.detail
+        # And the underlying fact is still stated -- the exception is the same fact with a reason.
+        assert "concluded failure" in excused.detail
+
+    def test_the_observation_is_unchanged_by_the_excuse(self):
+        """`_body` is untouched, so the record goes on saying the rollout failed.
+
+        The whole point of an exception rather than a suppression: nothing is un-asserted. If this
+        ever fails, the change has started editing history rather than annotating it.
+        """
+        excused = observe(reader_for(failed_rollout(**supersession())), REPO, 46, now=NOW)
+        plain = observe(reader_for(failed_rollout()), REPO, 46, now=NOW)
+
+        assert excused.rollout == plain.rollout
+        assert excused.rollout is not None
+        assert excused.rollout.run is not None
+        assert excused.rollout.run.conclusion == "failure"
+
+    def test_with_no_successful_run_on_the_branch_the_finding_stands(self):
+        """Clause 1, absent. A branch whose rollout has never succeeded excuses nothing."""
+        outcome = observe(
+            reader_for(failed_rollout(**{_SUCCESS_QUERY: {"total_count": 0, "workflow_runs": []}})),
+            REPO,
+            46,
+            now=NOW,
+        )
+
+        assert outcome.exceptions == ()
+        assert [f.kind for f in outcome.findings] == [ROLLOUT_NOT_SUCCESS]
+
+    def test_the_NEWEST_successful_run_decides_even_when_an_older_one_is_ahead(self):
+        """Clause 1, and the reason it says NEWEST rather than any.
+
+        "A failed, B succeeded, C failed" must supersede A and must not supersede C. Here the
+        newest success sits at a head that is `identical` to this merge, while an OLDER success
+        sits at a head that is genuinely ahead. A predicate that scanned for any qualifying run
+        would find the older one and excuse a rollout nothing has moved past.
+        """
+        outcome = observe(
+            reader_for(
+                failed_rollout(
+                    **supersession(
+                        newest=[
+                            run(run_id=OLDER_RUN, head=LATER_HEAD, started="2026-09-02T06:15:12Z"),
+                            run(run_id=LATER_RUN, head=OTHER_HEAD, started="2026-09-08T10:40:55Z"),
+                        ]
+                    ),
+                    **{f"/repos/{REPO}/compare/{MERGE}...{OTHER_HEAD}": {"status": "identical"}},
+                )
+            ),
+            REPO,
+            46,
+            now=NOW,
+        )
+
+        assert outcome.exceptions == ()
+        assert [f.kind for f in outcome.findings] == [ROLLOUT_NOT_SUCCESS]
+
+    @pytest.mark.parametrize("status", ["identical", "diverged", "behind"])
+    def test_only_a_strictly_AHEAD_head_supersedes(self, status: str):
+        """Clause 2.
+
+        `identical` is this merge's own commit, so a green run there is a disagreement for
+        `_unanimous` to refuse rather than proof anything moved; `diverged` is a different line of
+        history and says nothing about this build; `behind` is earlier.
+        """
+        outcome = observe(
+            reader_for(failed_rollout(**supersession(compare=status))), REPO, 46, now=NOW
+        )
+
+        assert outcome.exceptions == ()
+        assert [f.kind for f in outcome.findings] == [ROLLOUT_NOT_SUCCESS]
+
+    @pytest.mark.parametrize("revision", [OLD_REVISION, "f" * 40])
+    def test_a_weaker_attestation_at_the_superseding_head_excuses_nothing(self, revision: str):
+        """Clause 3, and the clause most easily left out.
+
+        `OLD_REVISION` is transcribed and `rollout_unverified`; the second is transcribed by
+        nobody and reads `unknown`. Under either, a green run establishes that a webhook answered
+        and NOT that production is serving the merged build -- so excusing a real failure with it
+        would be excusing it with nothing. The excuse must be at least as strong as what would
+        settle a record.
+        """
+        outcome = observe(
+            reader_for(failed_rollout(**supersession(revision=revision))), REPO, 46, now=NOW
+        )
+
+        assert outcome.exceptions == ()
+        assert [f.kind for f in outcome.findings] == [ROLLOUT_NOT_SUCCESS]
+
+    def test_an_ambiguous_superseding_head_excuses_nothing(self):
+        """Clause 4. A head carrying both a failed and a passed run does not establish a success."""
+        outcome = observe(
+            reader_for(
+                failed_rollout(
+                    **supersession(
+                        runs_at_head=[
+                            run(run_id=LATER_RUN, head=LATER_HEAD),
+                            run(run_id=LATER_RUN + 1, head=LATER_HEAD, conclusion="failure"),
+                        ]
+                    )
+                )
+            ),
+            REPO,
+            46,
+            now=NOW,
+        )
+
+        assert outcome.exceptions == ()
+        assert [f.kind for f in outcome.findings] == [ROLLOUT_NOT_SUCCESS]
+
+    def test_a_superseding_head_whose_own_run_failed_excuses_nothing(self):
+        """Clause 4, the other half: the listing said `success` and the head's own run did not.
+
+        Not redundant with the clause-1 filter. The two reads are of different things -- one asks
+        GitHub for runs it labels successful, the other asks what is at that head -- so a
+        disagreement between them is exactly the case where trusting the first alone is wrong.
+        """
+        outcome = observe(
+            reader_for(
+                failed_rollout(
+                    **supersession(
+                        runs_at_head=[run(run_id=LATER_RUN, head=LATER_HEAD, conclusion="failure")]
+                    )
+                )
+            ),
+            REPO,
+            46,
+            now=NOW,
+        )
+
+        assert outcome.exceptions == ()
+        assert [f.kind for f in outcome.findings] == [ROLLOUT_NOT_SUCCESS]
+
+    def test_an_unreadable_supersession_leaves_the_FINDING_and_is_never_incomplete(self):
+        """THE FAIL DIRECTION, and the reason the predicate catches rather than propagates.
+
+        The finding is already established when the excuse is looked for. If a `ReadError` escaped
+        to `_watch_one`'s `except (Unmeasurable, ReadError)`, a GitHub hiccup would convert a
+        measured failure into `incomplete` and exit 3 -- replacing an answer a reader can act on
+        with one they cannot. `observe` must RETURN here, never raise.
+        """
+        outcome = observe(
+            reader_for(failed_rollout(**{**supersession(), _SUCCESS_QUERY: ["not", "a", "dict"]})),
+            REPO,
+            46,
+            now=NOW,
+        )
+
+        assert outcome.exceptions == ()
+        assert [f.kind for f in outcome.findings] == [ROLLOUT_NOT_SUCCESS]
+
+    def test_a_missing_supersession_route_is_also_a_finding_rather_than_a_raise(self):
+        """The 404 twin of the control above, kept separate because it takes a different branch.
+
+        An absent route means `_get` answers None and the reader raises about a workflow it cannot
+        address -- a different line from the unreadable-body branch, and the one a real outage
+        looks like.
+        """
+        outcome = observe(reader_for(failed_rollout()), REPO, 46, now=NOW)
+
+        assert outcome.exceptions == ()
+        assert [f.kind for f in outcome.findings] == [ROLLOUT_NOT_SUCCESS]
+
+    def test_registry_drift_stays_a_FINDING_even_when_the_rollout_is_excused(self):
+        """Only the rollout finding is excusable. A transcription that has drifted is live.
+
+        The supersession says something about PRODUCTION; it says nothing about whether this
+        repository's registry entry still describes its workflow, which is wrong today and wrong
+        tomorrow whatever production is serving.
+        """
+        outcome = observe(
+            reader_for(
+                failed_rollout(
+                    **supersession(),
+                    **{
+                        f"/repos/{REPO}/actions/runs/31426195637/attempts/1/jobs": {
+                            "total_count": 1,
+                            "jobs": [{"name": "some-other-job", "conclusion": "failure"}],
+                        }
+                    },
+                )
+            ),
+            REPO,
+            46,
+            now=NOW,
+        )
+
+        assert [f.kind for f in outcome.findings] == [ROLLOUT_JOB_NOT_FOUND]
+        assert [f.kind for f in outcome.exceptions] == [SUPERSEDED_ROLLOUT]
+
+    def test_a_successful_rollout_never_asks_the_supersession_question(self):
+        """There is no finding to excuse, so the four reads are not made at all.
+
+        Asserted by the fixture rather than by a spy: the base `routes()` carries none of the
+        supersession routes, so any read of them would 404 into a `ReadError` this path does not
+        catch, and the test would fail loudly instead of silently costing four API calls per
+        healthy rollout.
+        """
+        outcome = observe(reader_for(routes()), REPO, 46, now=NOW)
+
+        assert outcome.findings == ()
+        assert outcome.exceptions == ()
+
+
+class TestTheSupersededExceptionAccessor:
+    def test_it_finds_the_excuse_by_KIND_rather_than_by_position_or_emptiness(self):
+        """The one place keying on `SUPERSEDED_ROLLOUT`, so its consumers need not.
+
+        A second exception kind arriving must not change what this returns -- which is exactly
+        what `outcome.exceptions[0]` and `bool(outcome.exceptions)` would both do.
+        """
+        excuse = Finding(SUPERSEDED_ROLLOUT, "s", "production moved on")
+        other = Finding("some_other_exception_kind", "s", "unrelated")
+
+        assert superseded_exception(Outcome("s", exceptions=(other, excuse))) is excuse
+        assert superseded_exception(Outcome("s", exceptions=(other,))) is None
+        assert superseded_exception(Outcome("s")) is None

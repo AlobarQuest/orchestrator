@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from deploy_watcher.github import GitHubReader, ReadError
 from deploy_watcher.model import Finding, Merge, Rollout, Run
 from deploy_watcher.workflows import (
+    ATTESTS_REVISION,
     ATTESTS_UNKNOWN,
     RolloutWorkflow,
     attestation_for,
@@ -38,6 +39,12 @@ MERGE_TARGETED_ANOTHER_BRANCH = "merge_did_not_target_the_rollout_branch"
 MERGE_DIVERGENCE = "observed_at_more_than_one_merge_commit"
 RECHECK_DIVERGENCE = "recorded_facts_no_longer_match_github"
 
+# ADR-0044. Reported as an EXCEPTION rather than a finding: the rollout did fail, and a later
+# rollout that production is serving has moved past it, so there is nothing left for a reader to
+# do. Deliberately NOT spelled `rollout_did_not_succeed_but_...`: a kind that CONTAINS another
+# breaks every substring reader, including this estate's own discriminating tests.
+SUPERSEDED_ROLLOUT = "production_has_moved_past_this_failed_rollout"
+
 
 class NotSettled(Exception):
     """Not an answer yet, and not a failure to measure. Reported as `pending`, exit 0.
@@ -59,12 +66,20 @@ class Unmeasurable(Exception):
 
 @dataclass(frozen=True)
 class Outcome:
-    """What one pass learned about one change. Exactly one of these is populated."""
+    """What one pass learned about one change.
+
+    `rollout`, `pending` and `findings` were once mutually exclusive and are not: a settled
+    rollout carries both an observation and whatever it found. `exceptions` is ADR-0044's, and it
+    holds findings that were MEASURED and then EXCUSED -- same `Finding` type, deliberately,
+    because an exception is not a lesser fact. It is the same fact with a reason a reader can
+    dispute.
+    """
 
     subject: str
     rollout: Rollout | None = None
     pending: str | None = None
     findings: tuple[Finding, ...] = ()
+    exceptions: tuple[Finding, ...] = ()
 
 
 def _unanimous(runs: list[Run]) -> Run:
@@ -90,6 +105,73 @@ def _unanimous(runs: list[Run]) -> Run:
             f"{', '.join(sorted(str(c) for c in conclusions))}"
         )
     return max(runs, key=lambda run: (run.run_id, run.run_attempt))
+
+
+def superseded_by(
+    reader: GitHubReader,
+    repository: str,
+    workflow: RolloutWorkflow,
+    merge_commit_sha: str,
+) -> str | None:
+    """Why production has moved past this failed rollout, or None if it has not.
+
+    ADR-0044. Devon ruled on 2026-09-09 that a rollout which failed, and which production has
+    since moved past, is an EXCEPTION rather than a finding -- the same ruling the landing lane
+    got on 2026-08-13. A finding a reader can do nothing about is one that trains its reader to
+    ignore the report.
+
+    FOUR CLAUSES, AND ALL FOUR MUST HOLD. Each excludes a way of being confidently wrong:
+
+    1. There is a NEWEST successful push run on the rollout branch. Newest, not any: "A failed,
+       B succeeded, C failed" supersedes A and must not supersede C.
+    2. Its head is strictly `ahead` of this merge commit. `identical` is the failed rollout's own
+       commit -- a green sibling run at the same head is a disagreement for `_unanimous` to
+       refuse, not proof that anything moved -- and `diverged` means the two are on different
+       lines of history, so the success says nothing about this merge's build.
+    3. The superseding run's OWN workflow revision is ATTESTS_REVISION. This is the clause that
+       is easy to leave out and it is the one that makes the excuse worth anything: a green run
+       of a workflow that only pokes a webhook does not establish that production is serving
+       anything, so excusing a real failure with it would be excusing it with nothing. The excuse
+       must be at least as strong as what would SETTLE a record under change-manager's own rule.
+    4. The runs at that head reduce to one, and it concluded success. A head carrying both a
+       failed and a passed run is ambiguous, and `_unanimous` is the existing rule for that --
+       reused rather than re-decided, because a second copy of a reduction rule is drift.
+
+    **THE FAIL DIRECTION IS THE WHOLE DESIGN OF THIS FUNCTION.** The finding is ALREADY
+    ESTABLISHED by the time anyone asks for an excuse, so every way of failing to find one means
+    "not superseded" and the finding stands. `ReadError`, `NotSettled` and `Unmeasurable` are
+    therefore caught HERE and never propagate: letting them reach `_watch_one`'s
+    `except (Unmeasurable, ReadError)` would turn a measured failure into `incomplete` and exit 3
+    on a GitHub hiccup, which is a strictly worse answer than the finding it replaced. A reader
+    told "this rollout failed" can act; a reader told "something could not be read" cannot.
+
+    Returns the reason as prose, so the caller can put the superseding run, its head and its
+    workflow revision in front of a reader who wants to dispute the excuse.
+    """
+    try:
+        newest = reader.newest_successful_push_run(
+            repository, workflow.path, workflow.trigger_branch
+        )
+        if newest is None or newest.head_sha is None:
+            return None
+        head = newest.head_sha
+        if reader.compare_status(repository, merge_commit_sha, head) != "ahead":
+            return None
+        revision = reader.blob_revision(repository, workflow.path, head)
+        if level_of(revision) != ATTESTS_REVISION:
+            return None
+        later = _unanimous(reader.runs_at_head(repository, workflow.path, head))
+    except (ReadError, NotSettled, Unmeasurable):
+        # Not "we could not tell". The finding was measured and stands; only the EXCUSE is
+        # missing, and an absent excuse is exactly a finding that is not excused.
+        return None
+    if not later.concluded or later.conclusion != "success":
+        return None
+    assert revision is not None  # level_of only returns ATTESTS_REVISION for a transcribed sha
+    return (
+        f"run {later.run_id} of {workflow.path} succeeded at {head[:8]}, which is ahead of this "
+        f"merge, at workflow revision {revision[:8]} — production has moved past this rollout"
+    )
 
 
 def _nothing_ran(
@@ -213,7 +295,7 @@ def observe(
             subject, f"run {run.run_id} is still {run.status}", early=now < settled_by
         )
 
-    return _settled(reader, subject, merge, workflow.path, revision, attestation, run)
+    return _settled(reader, subject, merge, workflow, revision, attestation, run)
 
 
 def _not_settled_yet(subject: str, why: str, *, early: bool) -> Outcome:
@@ -227,7 +309,7 @@ def _settled(
     reader: GitHubReader,
     subject: str,
     merge: Merge,
-    workflow_path: str,
+    workflow: RolloutWorkflow,
     revision: str,
     attestation: str,
     run: Run,
@@ -261,11 +343,11 @@ def _settled(
         else:
             job_name = transcribed.rollout_job
             job_conclusion, step_conclusion = seen
-    concurrent = reader.concurrent_rollout_run(repository, workflow_path, run)
+    concurrent = reader.concurrent_rollout_run(repository, workflow.path, run)
 
     observed = Rollout(
         merge=merge,
-        workflow_path=workflow_path,
+        workflow_path=workflow.path,
         workflow_revision=revision,
         attestation=attestation,
         run=run,
@@ -278,21 +360,45 @@ def _settled(
     )
 
     findings: tuple[Finding, ...] = drifted
+    exceptions: tuple[Finding, ...] = ()
     if run.conclusion != "success":
-        findings += (
-            Finding(
-                ROLLOUT_NOT_SUCCESS,
-                subject,
-                f"run {run.run_id} attempt {run.run_attempt} concluded {run.conclusion}"
-                + (f"; another rollout run ({concurrent}) overlapped it" if concurrent else "")
-                + (
-                    f"; a green run at {revision[:8]} attests only: {transcribed.attests}"
-                    if transcribed and attestation != "revision_confirmed"
-                    else ""
-                ),
+        failed = Finding(
+            ROLLOUT_NOT_SUCCESS,
+            subject,
+            f"run {run.run_id} attempt {run.run_attempt} concluded {run.conclusion}"
+            + (f"; another rollout run ({concurrent}) overlapped it" if concurrent else "")
+            + (
+                f"; a green run at {revision[:8]} attests only: {transcribed.attests}"
+                if transcribed and attestation != "revision_confirmed"
+                else ""
             ),
         )
-    return Outcome(subject, rollout=observed, findings=findings)
+        assert merge.merge_commit_sha is not None  # `_settled` is only reached for a landing
+        moved_on = superseded_by(reader, repository, workflow, merge.merge_commit_sha)
+        if moved_on is None:
+            findings += (failed,)
+        else:
+            # ADR-0044. The SAME fact, carried under a kind that says a reader has nothing to do
+            # about it, with the excuse spelled out so it can be disputed. Only THIS finding
+            # moves: `drifted` is a live transcription defect whatever production is serving.
+            exceptions += (Finding(SUPERSEDED_ROLLOUT, subject, f"{failed.detail}; {moved_on}"),)
+    return Outcome(subject, rollout=observed, findings=findings, exceptions=exceptions)
+
+
+def superseded_exception(outcome: Outcome) -> Finding | None:
+    """The excuse this pass found for a failed rollout, if it found one.
+
+    THE ONE PLACE THAT KEYS ON `SUPERSEDED_ROLLOUT`, and that is the whole reason it exists. The
+    supersession is decided once, in `_settled`; a second consumer needs the answer, and the two
+    ways of getting it without asking again are both traps. Reading `outcome.exceptions[0]` keys on
+    POSITION, and testing `bool(outcome.exceptions)` keys on this being the only exception kind
+    there will ever be -- each correct today and each silently wrong the day a second kind joins.
+    Filtering by the kind is correct under both futures, and confining that filter here means the
+    kind is named in one module rather than in every consumer.
+    """
+    return next(
+        (finding for finding in outcome.exceptions if finding.kind == SUPERSEDED_ROLLOUT), None
+    )
 
 
 def unclassified(rollout: Rollout) -> bool:
@@ -310,10 +416,13 @@ __all__ = [
     "ROLLOUT_JOB_NOT_FOUND",
     "ROLLOUT_STUCK",
     "SETTLE_SECONDS",
+    "SUPERSEDED_ROLLOUT",
     "NotSettled",
     "Outcome",
     "ReadError",
     "Unmeasurable",
     "observe",
+    "superseded_by",
+    "superseded_exception",
     "unclassified",
 ]
