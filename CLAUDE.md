@@ -2924,9 +2924,17 @@ style of that module.
   `test_no_tracked_source_carries_a_secret` is `PYTHON_SOURCES` (`src/**.py`) + `SHELL_SOURCES`,
   `test_nothing_in_the_repo_calls_a_merge_method` is `MERGE_SCAN_SOURCES` (`src/**.py` +
   `scripts/*.py`), and `test_nothing_in_the_repo_merges_a_pull_request` is `MERGE_SCAN_SOURCES` +
-  `SHELL_SOURCES`. So a `scripts/*.py` draws the two MERGE scans and misses the SECRET scan, which
-  is `src`-only by design; a `scripts/*.sh` draws the secret scan and one merge scan and misses the
-  merge-METHOD scan, which is Python-only. Both are two, sharing exactly one member. The module's
+  `SHELL_SOURCES`. So a `scripts/*.py` draws the two MERGE scans and misses the SECRET scan; a
+  `scripts/*.sh` draws the secret scan and one merge scan and misses the merge-METHOD scan, which
+  is Python-only. Both are two, sharing exactly one member.
+  **The secret scan is NOT `src`-only and its gap is NOT a decision** — a first draft of this
+  bullet said both and was wrong twice in one clause. It is `PYTHON_SOURCES + SHELL_SOURCES`, so it
+  covers `src/**.py` **and `scripts/*.sh`**, which the very next clause here already implies; and
+  the module's own comment calls the remaining hole *"the secret scan's identical blind spot is
+  left alone here; it is not this change's subject"* — an acknowledged gap, not a design. The
+  difference is load-bearing, because "by design" is what would stop the next reader closing it,
+  and the uncovered set is exactly the `scripts/*.py` that read `GITHUB_TOKEN` from the
+  environment. The module's
   own header says why `scripts/*.py` is a separate list: widening `PYTHON_SOURCES` to reach it
   would red the egress scan and force four new `OUTBOUND_ALLOWLIST` entries, weakening a
   structural chokepoint to strengthen the merge guard.
@@ -4460,14 +4468,24 @@ style of that module.
   read `.venv/bin/python --version` afterwards.
   **THE TRAILING CLAUSE USED TO READ "the main tree's 3.12 is deliberate and is the floor CI pins",
   AND THE SECOND HALF IS NO LONGER TRUE.** CI moved to 3.14 on 2026-09-02 (`6fe1f95`); measured
-  2026-09-09, `quality.yml` names 3.14 at every site. The main tree stays at **3.12** — Devon's
-  standing decision, reaffirmed 2026-09-09 — on the ground it still has: it is the declared
-  `requires-python` floor, and the eight scheduled lanes are what run there, so the lanes are
-  exercised against the oldest interpreter the project claims to support. **The two now differ
+  2026-09-09, `quality.yml` names 3.14 at every site. The main tree stays at **3.12**, reaffirmed
+  in the 2026-09-09 handoff that prompted this correction (recorded there, not witnessed here — do
+  not read it as a Devon ruling this file observed), on the ground it still has: it is the declared
+  `requires-python` floor, and **the scheduled lanes** are what run there, so they are exercised
+  against the oldest interpreter the project claims to support. **The two now differ
   deliberately: CI 3.14, main tree 3.12, production 3.14.7 in its image.** The consequence to carry
   is that a change touching the scheduled lanes is exercised by CI on one interpreter and by the
   lanes on another, so it deserves a look at both rather than a green gate alone — and a build
   worktree pins CI's, not this one (see the worktree bullet above).
+  **COUNT THE LANES, DO NOT RECALL THEM.** This bullet's headline says EIGHT and there are
+  **eleven** (`ls scripts/com.devon.*.plist`, all loaded — measured 2026-09-09: activation-sweep,
+  bump-proposer, change-proposer, deploy-watcher, estate-landing, inert-landing, landing-ledger,
+  pin-watcher, revision-watcher, tool-installer, work-carrier). Eight was last true on 2026-09-03;
+  `pin-watcher`, `tool-installer` and `revision-watcher` arrived over the following five days. The
+  headline is left as written because it is the record of what was measured then — and because the
+  way it went stale is the more useful half: **the 2026-09-09 correction rewrote the sentence
+  below it and copied the digit forward without re-measuring**, two thousand lines from its own new
+  line saying a number in prose ages. A count in a heading is a number in prose.
 
 - **THE DISPATCH APP'S REACH IS DELIBERATELY WIDER THAN ITS WORK, AND THAT IS A RULING, NOT AN
   OVERSIGHT — the bound is the orchestrator's own allowlists, checked in code before every call.**

@@ -147,9 +147,15 @@ def test_the_gate_runs_the_script_this_module_tests() -> None:
 
 
 class _Response:
-    """A context manager whose `read` fails part-way, which is what urllib does NOT wrap."""
+    """A stand-in response: `read` either fails part-way or returns bytes for `.decode()`.
 
-    def __init__(self, error: Exception) -> None:
+    The second mode is load-bearing. Production raises `UnicodeDecodeError` from `.decode()`, not
+    from `read()`, so a case that injects it at `read()` stays green if `.decode()` is ever hoisted
+    out of the `try` -- a plausible readability refactor that reopens the escape. Returning real
+    non-UTF-8 bytes makes the control fail when it should.
+    """
+
+    def __init__(self, error: Exception | bytes) -> None:
         self._error = error
 
     def __enter__(self) -> _Response:
@@ -159,6 +165,8 @@ class _Response:
         return None
 
     def read(self) -> bytes:
+        if isinstance(self._error, bytes):
+            return self._error
         raise self._error
 
 
@@ -167,11 +175,13 @@ class _Response:
     [
         http.client.IncompleteRead(b"half"),
         TimeoutError("the read timed out"),
-        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+        b"\xff\xfe not utf-8",
     ],
     ids=["incomplete-read", "read-timeout", "not-utf-8"],
 )
-def test_a_failure_during_the_body_read_is_unresolvable(error: Exception, monkeypatch) -> None:
+def test_a_failure_during_the_body_read_is_unresolvable(
+    error: Exception | bytes, monkeypatch
+) -> None:
     """None of these is wrapped by urllib, and `IncompleteRead` is not even an `OSError` -- so a
     clause naming only `HTTPError`/`URLError` let all three escape as a bare traceback.
 
