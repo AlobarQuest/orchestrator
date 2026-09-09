@@ -222,6 +222,48 @@ _BRAIN_VERIFIES_REVISION = Attestation(
     trigger_step="Deploy brain apps",
 )
 
+# `brain#62`, 2026-09-08 -- the rollout keeps the deployment id Coolify names, and the verify step
+# asks Coolify about THAT deployment before each revision poll. Purely additive to `c5c088719`:
+# the diff touches the two steps below and nothing else, and the revision poll it already had is
+# unchanged, so the LEVEL does not move.
+#
+# TWO FACTS `c5c088719` DID NOT HAVE, and they are transcribed because they change what a green
+# run means rather than merely how fast a red one arrives.
+#
+# The first is a hole the earlier bytes had. `c5c088719`'s trigger step ran `curl -f` and moved on,
+# so a 2xx that queued nothing was indistinguishable from a successful trigger everywhere
+# downstream -- a green trigger step did not establish that anything had been asked to deploy.
+# These bytes read `deployments[0].deployment_uuid` out of the response and FAIL the step when it
+# is absent, so the step's success now carries "Coolify named a deployment for every application
+# this run triggered".
+#
+# The second is narrower than it looks, and the workflow's own comment is careful about it: only
+# an EXPLICIT `failed` from Coolify decides anything, the revision poll remains the authority on
+# success, and a Coolify that cannot be read costs a slower failure rather than a wrong one. So a
+# green run attests no more than it did before -- what changed is that one way of failing is now
+# reported in about forty seconds instead of waiting out the 600-second deadline and reporting an
+# ambiguity. Transcribed because a reader comparing this entry with `c5c088719` would otherwise
+# have to diff the bytes to learn that the two attest the same thing.
+#
+# TRANSCRIBED, NOT CORRECTED, as everywhere in this file: the skip-if-the-secret-is-empty guard
+# survives in both loops, so "every application it triggered, and never none" remains the honest
+# reading rather than "all four".
+_BRAIN_DEPLOYMENT_ID_CHECKED = Attestation(
+    revision="7cf6ca2d2a508b1643cdb5ac0d5390357f397d54",
+    level=ATTESTS_REVISION,
+    attests=(
+        "every brain application this rollout triggered answered /api/health reporting the "
+        "merged commit as its revision and a status of ok, within 600 seconds, and Coolify "
+        "named a deployment for each one it was asked to deploy; a trigger whose 2xx response "
+        "names no deployment fails the rollout rather than counting as queued, and a deployment "
+        "Coolify itself reports as failed fails the run at once rather than at the deadline; an "
+        "application whose Coolify UUID secret is unset is neither triggered nor checked, and a "
+        "rollout that triggered none fails rather than passing empty"
+    ),
+    rollout_job="deploy",
+    trigger_step="Deploy brain apps",
+)
+
 REGISTRY: dict[str, Attestation] = {
     attestation.revision: attestation
     for attestation in (
@@ -232,6 +274,7 @@ REGISTRY: dict[str, Attestation] = {
         _BRAIN_THREE_NO_COMPOSE,
         _BRAIN_FOUR,
         _BRAIN_VERIFIES_REVISION,
+        _BRAIN_DEPLOYMENT_ID_CHECKED,
     )
 }
 
