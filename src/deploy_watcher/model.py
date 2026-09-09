@@ -59,6 +59,12 @@ class Run:
     conclusion: str | None
     started_at: datetime | None
     concluded_at: datetime | None
+    # The commit the run was ON. Every other reader here already knows it -- `runs_at_head` asked
+    # GitHub for a head and got runs back -- so it is carried for the one reader that does not:
+    # ADR-0044 asks "what is the newest successful rollout" and the answer's head is the whole
+    # subject of the question, since that is what a merge commit is compared AGAINST. Defaulted
+    # so nothing that constructs a `Run` by keyword has to care.
+    head_sha: str | None = None
 
     @property
     def concluded(self) -> bool:

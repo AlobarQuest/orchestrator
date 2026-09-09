@@ -13,18 +13,34 @@ the one that writes.
 
 from __future__ import annotations
 
+import ast
 import inspect
+import json
+import pathlib
 
 import httpx
 import pytest
 from typer.testing import CliRunner
 
 from deploy_watcher import cli as watcher_cli
+from deploy_watcher import observe as observe_module
+from deploy_watcher import units as units_module
 from deploy_watcher.change_manager import ChangeManagerClient
-from deploy_watcher.model import ChangeRecord
+from deploy_watcher.model import ChangeRecord, Finding
 from deploy_watcher.orchestrator import OrchestratorClient
 from deploy_watcher.units import UNIT_CLAIM_UNBOUND, UNIT_CLAIM_UNKNOWN
-from tests.deploy_watcher.test_observe import MERGE, NOW, REPO, reader_for, routes
+from tests.deploy_watcher.test_observe import (
+    _SUCCESS_QUERY,
+    LATER_HEAD,
+    LATER_RUN,
+    MERGE,
+    NOW,
+    REPO,
+    failed_rollout,
+    reader_for,
+    routes,
+    supersession,
+)
 
 UNIT = "1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f"
 RECORD = ChangeRecord(
@@ -48,10 +64,15 @@ _COMMIT = f"/repos/{REPO}/commits/{MERGE}"
 NO_TRAILER = "bump alembic from 1.18.5 to 1.19.1 (#46)\n"
 
 
-def _github(message: str | None):
-    """The observe harness, plus the one read ADR-0022 added. `None` = GitHub has no such commit."""
+def _github(message: str | None, github_routes: dict[str, object] | None = None):
+    """The observe harness, plus the one read ADR-0022 added. `None` = GitHub has no such commit.
+
+    `github_routes` replaces the whole route table, so an ADR-0044 case can present a rollout that
+    FAILED -- which the default table cannot, being a healthy landing.
+    """
     extra = {} if message is None else {_COMMIT: {"commit": {"message": message}}}
-    return reader_for(routes(**extra))
+    base = routes(**extra) if github_routes is None else {**github_routes, **extra}
+    return reader_for(base)
 
 
 def _orchestrator(history: object, posted: list[bytes], *, history_status: int = 200):
@@ -99,10 +120,11 @@ def _watch(
     history_status: int = 200,
     page: dict | None = None,
     recorded: dict | None = None,
+    github_routes: dict[str, object] | None = None,
 ) -> tuple[tuple[bool, bool], list[bytes]]:
     posted: list[bytes] = []
     with (
-        _github(message) as reader,
+        _github(message, github_routes) as reader,
         _changes(page or _page(), recorded or RECORDED) as changes,
         _orchestrator(
             _bound_history() if history is None else history,
@@ -395,3 +417,235 @@ def test_a_stored_fact_that_no_longer_matches_github_is_reported(
 ) -> None:
     assert _recheck(_stored(**{field: value}))[0] == (True, False)
     assert watcher_cli.RECHECK_DIVERGENCE in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# ADR-0044: the closed-record contradiction has an EXCEPTION twin
+# ---------------------------------------------------------------------------
+
+
+def _superseded_routes() -> dict[str, object]:
+    """A failed rollout that a later, revision-confirming run has moved production past."""
+    return failed_rollout(**supersession())
+
+
+def test_a_closed_record_whose_failed_rollout_was_SUPERSEDED_is_an_exception(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The whole point of ADR-0044 at this surface.
+
+    `SETTLED_ROLLOUT_NOT_SUCCESS` is LATENT on today's population -- records 78 and 79 are
+    `approved`, so it has never fired -- and becomes live the moment a person resolves one. Without
+    this branch that natural act converts a rollout nobody can act on into a permanently-red
+    finding, which is the shape the estate has now ruled against three times.
+    """
+    answer, _ = _watch(
+        github_routes=_superseded_routes(),
+        page=_page(verdict="failed"),
+        recorded={**RECORDED, "item_status": "resolved"},
+    )
+    out = capsys.readouterr().out
+
+    assert answer == (False, False)  # NOT found: an exception must not drive exit 2
+    assert watcher_cli.SETTLED_SUPERSEDED_ROLLOUT in out
+    assert watcher_cli.SETTLED_ROLLOUT_NOT_SUCCESS not in out
+    assert "[exception]" in out
+
+
+def test_the_SAME_closed_record_is_a_FINDING_when_nothing_superseded_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The discriminating half of the pair above: one fixture, one variable.
+
+    Identical in every respect except that the branch's newest successful run is absent, so the
+    excuse cannot be found. If this stopped reporting, the exception would have become a blanket
+    suppression of the contradiction rather than a reason for one instance of it.
+    """
+    answer, _ = _watch(
+        github_routes=failed_rollout(**{_SUCCESS_QUERY: {"total_count": 0, "workflow_runs": []}}),
+        page=_page(verdict="failed"),
+        recorded={**RECORDED, "item_status": "resolved"},
+    )
+    out = capsys.readouterr().out
+
+    assert answer == (True, False)
+    assert watcher_cli.SETTLED_ROLLOUT_NOT_SUCCESS in out
+    assert watcher_cli.SETTLED_SUPERSEDED_ROLLOUT not in out
+
+
+def test_the_settled_exception_cites_the_SAME_superseding_run_as_the_rollout_one(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The excuse is PASSED from `observe`, never recomputed here.
+
+    A second copy of the four-clause predicate is drift this estate has paid for repeatedly, and
+    the observable consequence of one copy is that both reports name the same run -- so a reader
+    disputing one disputes both.
+    """
+    _watch(
+        github_routes=_superseded_routes(),
+        page=_page(verdict="failed"),
+        recorded={**RECORDED, "item_status": "resolved"},
+    )
+    lines = [line for line in capsys.readouterr().out.splitlines() if "[exception]" in line]
+
+    assert len(lines) == 2
+    assert all(str(LATER_RUN) in line and LATER_HEAD[:8] in line for line in lines)
+
+
+def test_an_exception_alone_never_drives_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
+    """An OPEN record whose failed rollout was superseded: one exception, no finding, exit 0.
+
+    The rollout exception fires and the ledger one does not (the record is not closed), so this is
+    the narrowest case in which the category has to hold on its own.
+    """
+    answer, _ = _watch(
+        github_routes=_superseded_routes(),
+        page=_page(verdict="failed"),
+        recorded={**RECORDED, "item_status": "pending"},
+    )
+    out = capsys.readouterr().out
+
+    assert answer == (False, False)
+    assert watcher_cli._exit_code(findings=False, incomplete=False) == watcher_cli.EXIT_OK
+    assert out.count("[exception]") == 1
+    assert "[found]" not in out
+
+
+def test_the_exception_marker_is_distinct_from_the_finding_marker() -> None:
+    """A reader scanning for `[found]` must not see an exception, and an auditor must find them.
+
+    A quieter `[found]` would make the two indistinguishable to every grep an operator writes.
+    """
+    excused = Finding("some_kind", "subject", "detail")
+    assert "[found]" not in f"  [exception] {excused.kind}: {excused.subject} — {excused.detail}"
+
+
+def _reported_kinds() -> dict[str, str]:
+    """Every kind this program can put in a report, collected from the REPORTING call itself.
+
+    AST-scanned for `Finding(<kind>, ...)` and for the `[found]`/`[exception]` format strings
+    rather than filtered out of module constants by name, because the two predicates differ in the
+    case that actually occurred: `change_manager_refused_the_observation` was an INLINE LITERAL in
+    `_watch_one` until this change, so a scan of upper-case constants could not see it, and a guard
+    that cannot see a member is not a guard. This resolves a constant to its value and takes a
+    literal verbatim, so both shapes are collected.
+    """
+    found: dict[str, str] = {}
+    for module in (observe_module, watcher_cli, units_module):
+        source = ast.parse(pathlib.Path(inspect.getfile(module)).read_text())
+
+        def resolve(node: ast.expr, module: object = module) -> str | None:
+            """A constant's VALUE, resolved through the module's own namespace.
+
+            `getattr` rather than a scan of local assignments, because `UNIT_CLAIM_UNKNOWN` is
+            defined in `units` and REPORTED from `cli` -- so a collector that read only local
+            assignments would miss every kind one module imports from another, which is two of
+            them here.
+            """
+            if isinstance(node, ast.Name):
+                value = getattr(module, node.id, None)
+                return value if isinstance(value, str) else None
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return node.value
+            return None
+
+        for node in ast.walk(source):
+            kind: str | None = None
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "Finding"
+                and node.args
+            ):
+                kind = resolve(node.args[0])
+            elif isinstance(node, ast.JoinedStr) and "[found]" in ast.unparse(node):
+                # The one reported kind that reaches the log without a `Finding`: `_watch_one`
+                # prints change-manager's refusal directly.
+                for part in node.values:
+                    if isinstance(part, ast.FormattedValue):
+                        kind = resolve(part.value) or kind
+            if kind:
+                found[kind] = getattr(module, "__name__", "?")
+    return found
+
+
+def test_the_kind_collector_sees_the_kinds_this_change_added() -> None:
+    """Pins the scanner to reality, so the substring guard below cannot pass by seeing nothing.
+
+    A collector that silently matched zero call sites would make its sibling vacuously green --
+    which is how a mutation set comes to report a pass it did not earn.
+    """
+    kinds = _reported_kinds()
+
+    assert observe_module.SUPERSEDED_ROLLOUT in kinds
+    assert watcher_cli.SETTLED_SUPERSEDED_ROLLOUT in kinds
+    assert watcher_cli.SETTLED_ROLLOUT_NOT_SUCCESS in kinds
+    assert watcher_cli.CHANGE_MANAGER_REFUSED in kinds, "the inline literal must be collected"
+    assert units_module.UNIT_CLAIM_UNKNOWN in kinds
+    assert len(kinds) >= 12
+
+
+def test_no_reported_kind_is_a_substring_of_another() -> None:
+    """THE REPORT IS READ BY SUBSTRING, so a kind that CONTAINS another is a broken discriminator.
+
+    The tests above prove the exception is not a suppression with a PAIR of assertions over one
+    captured report -- one kind ABSENT on the first pass, PRESENT on the second -- and an operator
+    greps the log the same way. A kind containing another satisfies the "present" half on its own
+    name and breaks the "absent" half for a reason that has nothing to do with what it tests. This
+    is why ADR-0044's kinds are NOT spelled `rollout_did_not_succeed_but_superseded`.
+
+    ONE PAIR IS EXEMPT AND IT IS PRE-EXISTING DEBT, NOT A JUSTIFICATION.
+    `rollout_did_not_succeed` (`observe`) is contained in
+    `a_closed_record_whose_latest_rollout_did_not_succeed` (`cli`) -- found BY this control on its
+    first run, and older than this change. Renaming a reported kind changes what an operator greps
+    for, so it is outside this change's subject and is reported rather than done. Any OTHER
+    collision, including a new one involving either of these two, still reds.
+    """
+    known_debt = (
+        observe_module.ROLLOUT_NOT_SUCCESS,
+        watcher_cli.SETTLED_ROLLOUT_NOT_SUCCESS,
+    )
+    kinds = sorted(_reported_kinds())
+    collisions = sorted(
+        (kind, other) for kind in kinds for other in kinds if kind != other and kind in other
+    )
+
+    assert collisions == [known_debt]
+
+
+# ---------------------------------------------------------------------------
+# ADR-0044: `backfill` reports the exceptions it excused.
+# ---------------------------------------------------------------------------
+
+
+def test_backfill_reports_a_superseded_rollout_rather_than_dropping_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`backfill`'s whole product is the DISTRIBUTION, and ADR-0044 moves a superseded rollout out
+    of `findings`. Reporting only findings would shrink that distribution with nothing saying
+    where the difference went -- and historical merges, which is all this command reads, are the
+    population most likely to have been superseded.
+
+    Note the exit code: an exception does not drive exit 2, here as in `watch`.
+    """
+    routes_ = failed_rollout(
+        **{
+            **supersession(),
+            f"/repos/{REPO}/pulls": [{"number": 46, "merged_at": "2026-09-01T00:00:00Z"}],
+        }
+    )
+    monkeypatch.setenv(watcher_cli.GITHUB_TOKEN_VAR, "t")
+    monkeypatch.setattr(watcher_cli, "GitHubReader", lambda _token: reader_for(routes_))
+
+    result = CliRunner().invoke(watcher_cli.app, ["backfill", REPO, "--pages", "1", "--json"])
+
+    assert result.exit_code == 0, result.output
+    summary = json.loads(result.output)
+    assert summary["exceptions"] == [observe_module.SUPERSEDED_ROLLOUT]
+    assert summary["findings"] == []
+
+    # The human form is a separate function and would otherwise be exercised by nothing.
+    human = CliRunner().invoke(watcher_cli.app, ["backfill", REPO, "--pages", "1"])
+    assert human.exit_code == 0, human.output
+    assert f"[exception] {observe_module.SUPERSEDED_ROLLOUT}" in human.output

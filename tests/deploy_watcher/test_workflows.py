@@ -60,21 +60,28 @@ def test_every_level_is_one_of_the_three() -> None:
     assert {a.level for a in REGISTRY.values()} <= ATTESTATION_LEVELS
 
 
-def test_exactly_two_revisions_confirm_the_deployed_build() -> None:
+def test_exactly_three_revisions_confirm_the_deployed_build() -> None:
     """A literal assertion, not a derived one.
 
-    Of both repositories' entire history, two workflow revisions make a green run mean that the
-    merged build is the one production is serving: `change-manager`'s `191ec5a` (2026-08-07) and
-    `brain`'s `1d9e7d3` (2026-08-14), which is the same improvement made a week later. Deriving
-    this from the registry would let the registry change it silently — and a REVISION level is
-    the difference between a record that can be landed unattended and one that cannot.
+    Of both repositories' entire history, three workflow revisions make a green run mean that the
+    merged build is the one production is serving: `change-manager`'s `191ec5a` (2026-08-07),
+    `brain`'s `1d9e7d3` (2026-08-14), which is the same improvement made a week later, and
+    `brain#62` (2026-09-08), which keeps that poll and adds two refusals around it. Deriving this
+    from the registry would let the registry change it silently — and a REVISION level is the
+    difference between a record that can be landed unattended and one that cannot.
+
+    ADR-0044 gives this list a second consumer and a sharper edge. The supersession clause admits
+    a failed rollout as an EXCEPTION only when the run that moved production past it ran at a
+    revision on THIS list, so a member added here without re-reading the bytes would let a green
+    run of a weaker workflow excuse a real failure.
     """
     confirming = sorted(r for r, a in REGISTRY.items() if a.level == ATTESTS_REVISION)
     assert confirming == [
+        "7cf6ca2d2a508b1643cdb5ac0d5390357f397d54",
         "a47d4b187c93971a5b5915ce87a963bd4ef35e30",
         "c5c088719cd340f0071b875c6a82439292ed8756",
     ]
-    assert len(REGISTRY) == 7
+    assert len(REGISTRY) == 8
 
 
 def test_an_unclassified_revision_is_unknown_and_never_upgraded() -> None:
@@ -108,7 +115,7 @@ def test_every_brain_revision_before_the_revision_poll_is_unverified() -> None:
     those bytes still means what they said.
     """
     brain = [a for a in REGISTRY.values() if a.rollout_job == "deploy"]
-    assert len(brain) == 4
+    assert len(brain) == 5
     unverified = sorted(a.revision for a in brain if a.level == ATTESTS_UNVERIFIED)
     assert unverified == [
         "6cad4cf9f03d816ce8bf8fb87fa67d8634486ef1",
@@ -129,6 +136,43 @@ def test_brains_revision_poll_transcribes_what_the_bytes_permit_not_the_configur
     attestation = attestation_for("c5c088719cd340f0071b875c6a82439292ed8756")
     assert attestation is not None
     assert attestation.level == ATTESTS_REVISION
+    assert "every brain application this rollout triggered" in attestation.attests
+    assert "unset is neither triggered nor checked" in attestation.attests
+    assert "triggered none fails rather than passing empty" in attestation.attests
+    assert "all four" not in attestation.attests
+
+
+def test_brains_newest_revision_transcribes_the_two_facts_its_predecessor_lacked() -> None:
+    """`7cf6ca2d` is `c5c088719` plus two refusals, and the transcription has to say both.
+
+    They are here rather than left to a reader diffing the bytes because they change what a green
+    run MEANS, which is the only thing this registry records. The trigger step now fails when a
+    2xx response names no Coolify deployment -- so its success carries "something was actually
+    queued", which `c5c088719`'s did not -- and the verify step fails on Coolify's own explicit
+    `failed` for that deployment instead of waiting out the deadline and reporting an ambiguity.
+
+    THE LEVEL DOES NOT MOVE, and that is the half worth pinning. The second fact is about how
+    fast a red run arrives, not about what a green one proves: only an explicit `failed` decides
+    anything, the revision poll is still the authority on success, and a Coolify that cannot be
+    read still costs a slower failure rather than a wrong one. Both revisions attest the same
+    thing, so both are ATTESTS_REVISION.
+
+    The skip-if-the-secret-is-empty guard survives in both loops, so the honest reading is still
+    "every application it triggered" -- transcribed, never corrected.
+    """
+    attestation = attestation_for("7cf6ca2d2a508b1643cdb5ac0d5390357f397d54")
+    assert attestation is not None
+    assert attestation.level == ATTESTS_REVISION
+    assert attestation.rollout_job == "deploy"
+    assert attestation.trigger_step == "Deploy brain apps"
+    assert "names no deployment fails the rollout rather than counting as queued" in (
+        attestation.attests
+    )
+    assert "reports as failed fails the run at once rather than at the deadline" in (
+        attestation.attests
+    )
+    # Inherited from `c5c088719` and deliberately unchanged: the bytes still skip an application
+    # with no UUID secret, and still refuse the empty case.
     assert "every brain application this rollout triggered" in attestation.attests
     assert "unset is neither triggered nor checked" in attestation.attests
     assert "triggered none fails rather than passing empty" in attestation.attests

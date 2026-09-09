@@ -37,8 +37,10 @@ from deploy_watcher.observe import (
     MERGE_DIVERGENCE,
     RECHECK_DIVERGENCE,
     SETTLE_SECONDS,
+    Outcome,
     Unmeasurable,
     observe,
+    superseded_exception,
 )
 from deploy_watcher.orchestrator import (
     DEFAULT_BASE_URL as ORCHESTRATOR_URL,
@@ -79,6 +81,18 @@ DEFAULT_ACTOR = "deploy-watcher"
 # settlement, and when a human closed a record whose rollout then went wrong.
 SETTLED_ROLLOUT_NOT_SUCCESS = "a_closed_record_whose_latest_rollout_did_not_succeed"
 
+# ADR-0044's half of the above. Same condition, plus a later rollout that production is serving
+# and that is ahead of this merge -- so the contradiction the finding reports has already been
+# resolved by the estate and there is nothing for a reader to do. The supersession is decided
+# ONCE, in `observe`, and PASSED here: a second copy of that rule is drift this estate has paid
+# for repeatedly.
+SETTLED_SUPERSEDED_ROLLOUT = "closed_record_production_has_moved_past"
+
+# Promoted from an inline literal in `_watch_one` so the kind vocabulary is enumerable. It was
+# the one kind this module reports that no constant named, which made it invisible to the
+# substring guard over that vocabulary -- a guard that cannot see a member is not a guard.
+CHANGE_MANAGER_REFUSED = "change_manager_refused_the_observation"
+
 # The statuses that mean the record is closed. Mirrored from `app/deploy_settlement._TERMINAL` in
 # change-manager, which is the party that owns them.
 TERMINAL_STATUSES = frozenset({"resolved", "wontfix"})
@@ -117,6 +131,17 @@ def _say(line: str) -> None:
 
 def _report(finding: Finding) -> None:
     _say(f"  [found]  {finding.kind}: {finding.subject} — {finding.detail}")
+
+
+def _report_exception(finding: Finding) -> None:
+    """A fact that was measured and then excused. ADR-0044.
+
+    A DISTINCT MARKER, not a quieter `[found]`. An exception is not a smaller finding: it is the
+    same fact with a reason attached, and a reader scanning for `[found]` must not see it while a
+    reader auditing the excuses can. It deliberately does not set `found`, so it cannot drive
+    exit 2 -- which is the entire point of the category.
+    """
+    _say(f"  [exception] {finding.kind}: {finding.subject} — {finding.detail}")
 
 
 def _body(record: ChangeRecord, rollout: Rollout, *, now: datetime, actor: str) -> dict[str, Any]:
@@ -225,9 +250,7 @@ def _watch_one(
         _say(f"[incomplete] {where}: {error}")
         return False, True
 
-    found = bool(outcome.findings)
-    for finding in outcome.findings:
-        _report(finding)
+    found = _report_outcome(outcome)
     if outcome.pending is not None:
         _say(f"  [pending] {where}: {outcome.pending}")
         return found, False
@@ -244,7 +267,7 @@ def _watch_one(
     except RefusedError as error:
         # change-manager refusing is a fact about the estate, not a broken tool: the observation
         # named a change it does not belong to, or one that has no merge to observe.
-        _say(f"  [found]  change_manager_refused_the_observation: {where} — {error}")
+        _say(f"  [found]  {CHANGE_MANAGER_REFUSED}: {where} — {error}")
         return True, False
     except ChangeManagerError as error:
         _say(f"[incomplete] {where}: {error}")
@@ -265,15 +288,44 @@ def _watch_one(
     except ChangeManagerError as error:
         _say(f"[incomplete] {where}: {error}")
         return found, True
-    finding = _ledger_finding(where, item_status, page)
+    finding, excused = _ledger_finding(
+        where, item_status, page, superseded=superseded_exception(outcome)
+    )
+    if excused is not None:
+        _report_exception(excused)
     if finding is not None:
         _report(finding)
         return True, incomplete
     return found, incomplete
 
 
-def _ledger_finding(where: str, item_status: str, page: dict[str, Any]) -> Finding | None:
+def _report_outcome(outcome: Outcome) -> bool:
+    """Print everything one observation learned, and say whether any of it drives exit 2.
+
+    ADR-0044. The return value reads ONLY `findings`: an exception is printed and deliberately does
+    not set `found`, which is the entire point of the category. Extracted from `_watch_one` because
+    it is the honest unit -- and because the two loops pushed that function past the complexity
+    ceiling, which is the linter noticing the same thing.
+    """
+    for finding in outcome.findings:
+        _report(finding)
+    for excused in outcome.exceptions:
+        _report_exception(excused)
+    return bool(outcome.findings)
+
+
+def _ledger_finding(
+    where: str,
+    item_status: str,
+    page: dict[str, Any],
+    *,
+    superseded: Finding | None,
+) -> tuple[Finding | None, Finding | None]:
     """What the change's observation history says that only a reader can act on.
+
+    Returns `(finding, exception)`, at most one of which is populated -- the same shape `Outcome`
+    already uses, and chosen over a `(finding, is_exception)` pair because that one has a state
+    (`None, True`) that means nothing.
 
     Two of them, and the second is ADR-0022's. The FIRST: the server records a second merge commit
     rather than refusing it, deliberately -- refusing would freeze whichever arrived first and make
@@ -286,13 +338,27 @@ def _ledger_finding(where: str, item_status: str, page: dict[str, Any]) -> Findi
     whose rollout then went wrong, has to reach a person some other way. Keyed on the server's own
     reduction rather than on re-deriving what a settlement would have decided: a second copy of
     that rule is drift this estate has paid for.
+
+    ADR-0044 gives the second one an EXCEPTION twin, and `superseded` is PASSED rather than
+    recomputed for exactly the reason the paragraph above gives about the settlement rule: this
+    function would otherwise hold a second copy of the four-clause supersession predicate, and two
+    copies of a rule is how they come to disagree. It is the excuse `observe` already found for
+    this pass's rollout -- so the report cites the same superseding run in both places, and a
+    reader who disputes one disputes both.
+
+    The condition is LATENT on today's population: records 78 and 79 are `approved`, so neither is
+    terminal. It becomes live the moment a person does the natural thing and resolves one, which is
+    precisely when a permanently-red finding about a rollout nobody can act on would appear.
     """
     commits = page.get("merge_commits_observed") or []
     if len(commits) > 1:
-        return Finding(
-            MERGE_DIVERGENCE,
-            where,
-            f"observations exist at {len(commits)} merge commits: {', '.join(commits)}",
+        return (
+            Finding(
+                MERGE_DIVERGENCE,
+                where,
+                f"observations exist at {len(commits)} merge commits: {', '.join(commits)}",
+            ),
+            None,
         )
     current = page.get("current")
     if (
@@ -300,14 +366,17 @@ def _ledger_finding(where: str, item_status: str, page: dict[str, Any]) -> Findi
         and isinstance(current, dict)
         and current.get("verdict") != "success"
     ):
-        return Finding(
-            SETTLED_ROLLOUT_NOT_SUCCESS,
-            where,
+        detail = (
             f"the record is {item_status} and its latest observed rollout "
             f"(run {current.get('run_id')} attempt {current.get('run_attempt')}) concluded "
-            f"{current.get('verdict')}",
+            f"{current.get('verdict')}"
         )
-    return None
+        if superseded is not None:
+            return None, Finding(
+                SETTLED_SUPERSEDED_ROLLOUT, where, f"{detail}; {superseded.detail}"
+            )
+        return Finding(SETTLED_ROLLOUT_NOT_SUCCESS, where, detail), None
+    return None, None
 
 
 def _observe_unit(
@@ -405,6 +474,7 @@ def backfill(
     attestations: dict[str, int] = {}
     reached: dict[str, int] = {}
     findings: list[Finding] = []
+    exceptions: list[Finding] = []
     unmeasured: list[str] = []
 
     with GitHubReader(github_token) as reader:
@@ -423,6 +493,11 @@ def backfill(
                 unmeasured.append(f"#{number}: {error}")
                 continue
             findings.extend(outcome.findings)
+            # ADR-0044 moves a superseded rollout out of `findings`, and this command's whole
+            # product is the distribution -- so reporting only findings would shrink the count
+            # with nothing saying where the difference went. Historical merges are exactly the
+            # population most likely to be superseded.
+            exceptions.extend(outcome.exceptions)
             if outcome.rollout is None:
                 conclusions["<not merged>"] = conclusions.get("<not merged>", 0) + 1
                 continue
@@ -444,24 +519,38 @@ def backfill(
         "attestations": attestations,
         "trigger_step_conclusions": reached,
         "findings": [f.kind for f in findings],
+        "exceptions": [f.kind for f in exceptions],
         "unmeasured": unmeasured,
     }
     if as_json:
         _say(json.dumps(summary, indent=2, sort_keys=True))
     else:
-        _say(f"=== {repository}")
-        for label, table in (
-            ("run conclusions", conclusions),
-            ("what a green run attested", attestations),
-            ("trigger step conclusions", reached),
-        ):
-            _say(f"  {label}: {dict(sorted(table.items()))}")
-        for finding in findings:
-            _report(finding)
-        for line in unmeasured:
-            _say(f"  [incomplete] {line}")
+        _print_backfill(summary, findings=findings, exceptions=exceptions)
 
     raise typer.Exit(code=_exit_code(findings=bool(findings), incomplete=bool(unmeasured)))
+
+
+def _print_backfill(
+    summary: dict[str, Any], *, findings: list[Finding], exceptions: list[Finding]
+) -> None:
+    """The same summary the `--json` form serves, for a person.
+
+    Extracted only because `backfill` reached ruff's complexity ceiling when ADR-0044 gave it a
+    second list to print -- the same reason `_report_outcome` exists beside `_watch_one`.
+    """
+    _say(f"=== {summary['repository']}")
+    for label, key in (
+        ("run conclusions", "conclusions"),
+        ("what a green run attested", "attestations"),
+        ("trigger step conclusions", "trigger_step_conclusions"),
+    ):
+        _say(f"  {label}: {dict(sorted(summary[key].items()))}")
+    for finding in findings:
+        _report(finding)
+    for excused in exceptions:
+        _report_exception(excused)
+    for line in summary["unmeasured"]:
+        _say(f"  [incomplete] {line}")
 
 
 @app.command()
