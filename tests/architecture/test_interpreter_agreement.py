@@ -218,6 +218,22 @@ DERIVES_ITS_OWN_INTERPRETER = re.compile(r"(?<![\w-])(uvx?|docker)(?![\w-])|\.ve
 # line-level docker exemption would wave that invocation through.
 COMMAND_SEPARATOR = re.compile(r"&&|\|\||[;|]")
 
+# THE ONLY CONDITION A SETUP STEP MAY CARRY, held by EQUALITY rather than by mentioning the
+# filename. A substring test looks equivalent and is not: `hashFiles('.python-version') == ''`
+# names the file and INVERTS it, running setup only when the pin is ABSENT -- so the release
+# workflow would fall back to the runner's system interpreter on every ordinary build with this
+# guard vouching for it. That direction is unreachable by mutating the condition away, which is
+# how it survived a set of four; it took a reviewer probing the clause with the file named.
+# The release workflow builds an arbitrary `inputs.ref`, including revisions predating
+# `.python-version`, where `setup-python` throws on the missing path -- so it asks the built tree
+# what it pins rather than carrying a second copy of a number.
+PIN_PRESENT_CONDITION = "hashFiles('.python-version') != ''"
+
+
+def _normalized(condition: object) -> str:
+    """Whitespace-normalised, so re-indenting the workflow is not a behavioural change."""
+    return " ".join(str(condition).split())
+
 
 def runner_python_lines(script: str) -> list[tuple[int, str]]:
     """The lines of a `run:` block that invoke the runner's own interpreter.
@@ -255,34 +271,40 @@ def test_every_job_running_runner_python_sets_it_up_before_the_first_use() -> No
     step that fixes it; with that step moved below `Read pin` it fires on `Read pin` alone.
     """
     offenders = []
+    scanned = 0
     for path in _step_documents():
         document = yaml.safe_load(path.read_text()) or {}
         for container in _step_containers(document):
             prepared = False
             for step in container.get("steps", []) or []:
                 if str(step.get("uses", "")).startswith("actions/setup-python"):
-                    # A CONDITIONAL setup step prepares the job only when its condition names
-                    # `.python-version`. The release workflow builds an arbitrary `inputs.ref`,
-                    # including revisions older than that file, where `setup-python` throws on the
-                    # missing path -- so it runs the step only when the built tree carries a pin,
-                    # which is the tree's own answer rather than a second copy of a number. Any
-                    # OTHER condition is refused here rather than ignored: silently accepting one
-                    # would let `if: false` satisfy this guard, which is the same
-                    # never-entered-the-filter defect the guard exists to close.
                     # Read with a sentinel rather than `or ""`: YAML parses `if: false` as the
                     # BOOLEAN False, which `or ""` turns into "no condition" -- so the tidier
                     # spelling accepts the one mutant this clause exists to refuse. Found by
                     # mutating it, not by reading it.
                     condition = step.get("if")
-                    if condition is not None and ".python-version" not in str(condition):
+                    if condition is not None and _normalized(condition) != PIN_PRESENT_CONDITION:
                         continue
                     prepared = True
                     continue
+                run = str(step.get("run", "") or "")
+                if not run:
+                    continue
+                # Counted BEFORE the short-circuit below, deliberately. Counting after it makes
+                # `scanned` zero exactly when every job is prepared -- that is, whenever the
+                # repository is healthy -- so the vacuity assertion would fire on the correct
+                # tree and never on a broken one. Measured: it did.
+                scanned += 1
                 if prepared:
                     continue
                 where = step.get("name", step.get("uses", "?"))
-                for number, line in runner_python_lines(str(step.get("run", "") or "")):
+                for number, line in runner_python_lines(run):
                     offenders.append(f"{path.name}: {where!r} line {number}: {line}")
+
+    # Without this the empty `offenders` has two indistinguishable causes -- every job prepared,
+    # or the scan reached no `run:` block at all. The sibling guard's `assert steps` does not
+    # cover it: that proves a setup step exists somewhere, not that anything here was read.
+    assert scanned, "no `run:` steps were scanned; this guard would pass vacuously"
 
     assert not offenders, (
         "these `run:` steps invoke the runner's own interpreter with no `actions/setup-python` "

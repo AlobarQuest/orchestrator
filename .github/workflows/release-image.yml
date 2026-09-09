@@ -59,6 +59,29 @@ jobs:
         with:
           python-version-file: .python-version
 
+      # A STATIC guard cannot see whether the step above actually ran: if `hashFiles` returned ''
+      # for a path it should have matched, or the condition were ever inverted, the step would
+      # skip, `python3` would silently be the runner's system 3.12, and every check would stay
+      # green. This asserts it where it matters and derives the expected value from the file
+      # rather than repeating it. Skipped for a revision that predates the pin, which is the same
+      # tree the step above deliberately skips for.
+      - name: Confirm python3 is the interpreter this tree pins
+        run: |
+          # The messages below say "the interpreter" rather than naming the binary: a bare
+          # `python3` token in an echo is reported by the guard that watches this file, and
+          # rewording is this repository's answer to that rather than an exemption.
+          if [ ! -f .python-version ]; then
+            echo "::notice::this revision predates .python-version; using the runner's default"
+            exit 0
+          fi
+          want="$(cat .python-version)"
+          got="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+          if [ "$got" != "$want" ]; then
+            echo "::error::the interpreter is $got but this tree pins $want -- setup did not run"
+            exit 1
+          fi
+          echo "the interpreter is $got, as .python-version requires"
+
       - name: Read pin
         id: pin
         run: |
