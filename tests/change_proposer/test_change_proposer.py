@@ -1077,7 +1077,7 @@ def test_a_lost_repository_does_not_stop_the_other_ones_records_being_proposed(
     ids=["the-read-raised", "github-answers-no-file"],
 )
 def test_a_rollout_workflow_that_cannot_be_read_is_unusable_rather_than_silence(
-    answer: object, monkeypatch, capsys
+    answer: str | Exception | None, monkeypatch, capsys
 ) -> None:
     """NEVER SILENCE, and both shapes reach it.
 
