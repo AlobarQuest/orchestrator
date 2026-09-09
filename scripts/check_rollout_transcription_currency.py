@@ -26,6 +26,15 @@ The rule itself was already written down: grep every repository for a pinned val
 something that moves it. It was written by the person who then broke it. A comment naming a
 coupling is not a check; this is the check.
 
+THE PREDICATE IS SHARED, AND THIS SCRIPT IS ONE OF ITS TWO CALLERS.
+`deploy_watcher.transcription_currency.audit` holds the comparison and the census guarantee it
+rests on; `change_proposer`'s hourly scope sweep asks the same question, of the same population,
+at a different clock. It lives there rather than here because two copies of a membership test
+would drift into two different answers about the same bytes with nothing comparing them -- and
+because a `scripts/` module is not importable from `src/`, so this file could never have been the
+home. What stays here is the READING: one `urllib` GET, and the shapes a contents API answers that
+are not a file.
+
 FAIL DIRECTION. Exit 1 for a revision the registry does not hold, AND exit 1 for a repository
 whose workflow could not be read -- named, on the same line, with the HTTP status or the network
 error. An unreadable GitHub is never silence and never a pass: a check that goes quiet when it
@@ -63,10 +72,9 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Container, Mapping
-from dataclasses import dataclass
 
-from deploy_watcher.workflows import REGISTRY, ROLLOUT_WORKFLOWS, RolloutWorkflow
+from deploy_watcher.transcription_currency import audit
+from deploy_watcher.workflows import REGISTRY, ROLLOUT_WORKFLOWS
 
 REGISTRY_SOURCE = "src/deploy_watcher/workflows.py"
 
@@ -140,49 +148,6 @@ def blob_sha_of(document: object, repository: str, path: str, ref: str) -> str:
             "or a submodule answers this shape, so the path may have moved."
         )
     return sha
-
-
-@dataclass(frozen=True)
-class Row:
-    """One repository's verdict. `problem` is None exactly when its rollout is transcribed."""
-
-    repository: str
-    path: str
-    ref: str
-    revision: str | None
-    problem: str | None
-
-
-def audit(
-    workflows: Mapping[str, RolloutWorkflow],
-    registry: Container[str],
-    read: Callable[[str, str, str], str],
-) -> list[Row]:
-    """One row per repository, in a stable order, whatever goes wrong on the way.
-
-    Pure apart from `read`, which is the only thing that touches the network. Every failure is a
-    row rather than a raise: the point of reporting all of them is defeated by an early exit, and
-    an early exit is what a raise here would be.
-
-    `Exception`, not `Unresolvable`, and that width is the point rather than laziness. The census
-    guarantee is a property of THIS loop; making it depend on the reader raising the right type
-    means every future reader silently owns it too, and the first one to leak a `TimeoutError` out
-    of `response.read()` takes the guarantee away with nothing saying so. Nothing is swallowed:
-    the row carries the exception's repr and the run still exits 1.
-    """
-    rows: list[Row] = []
-    for repository in sorted(workflows):
-        workflow = workflows[repository]
-        try:
-            revision = read(repository, workflow.path, workflow.trigger_branch)
-        except Exception as error:
-            unreadable = f"unreadable: {error}"
-            branch = workflow.trigger_branch
-            rows.append(Row(repository, workflow.path, branch, None, unreadable))
-            continue
-        problem = None if revision in registry else "not transcribed"
-        rows.append(Row(repository, workflow.path, workflow.trigger_branch, revision, problem))
-    return rows
 
 
 def main() -> int:

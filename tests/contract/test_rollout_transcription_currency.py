@@ -18,6 +18,7 @@ is a membership test:
 
 from __future__ import annotations
 
+import ast
 import http.client
 import urllib.request
 from pathlib import Path
@@ -297,3 +298,30 @@ def test_the_gate_runs_the_script_this_module_tests() -> None:
     ]
 
     assert [path.name for path in workflows] == ["quality.yml"]
+
+
+def test_one_predicate_with_two_callers_and_neither_carries_a_copy() -> None:
+    """The property the seam exists for, asserted two ways because either alone is weak.
+
+    IDENTITY, so a caller cannot quietly bind a different function of the same name. And an AST
+    scan for a SECOND DEFINITION, because identity says nothing about a caller that keeps its
+    import and grows its own comparison beside it -- which is exactly how this estate's repeated
+    lesson goes wrong: N copies of a value is a lower bound on the copies you will find.
+
+    The two ask at different clocks (this script at pull-request time here, the proposer hourly),
+    and that is the reason there are two callers at all. It is not a reason for two answers.
+    """
+    from change_proposer import cli as proposer
+    from deploy_watcher import transcription_currency
+
+    assert check.audit is transcription_currency.audit
+    assert proposer.audit is transcription_currency.audit
+
+    home = Path("src/deploy_watcher/transcription_currency.py")
+    for source in (Path(check.__file__), Path(proposer.__file__)):
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        defined = {
+            node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.ClassDef)
+        }
+        assert "audit" not in defined, f"{source} defines its own audit; {home} is the one"
+        assert "Row" not in defined, f"{source} defines its own Row; {home} is the one"
