@@ -48,6 +48,11 @@ PROPOSER = Path("src/change_proposer")
 ORCHESTRATOR = Path("src/orchestrator")
 
 CM = "alobarquest/change-manager"
+BRAIN = "alobarquest/brain"
+# A well-formed blob sha `REGISTRY` does not hold. Forty characters because the reader's own
+# `is_sha` gate would reject anything shorter, so a fixture that skipped it would be exercising a
+# shape production can never produce.
+UNTRANSCRIBED = "x" * 40
 
 
 def _attestation(level: str = ATTESTS_REVISION) -> Attestation:
@@ -584,8 +589,18 @@ def test_a_malformed_base_url_is_an_answer_rather_than_a_raise(base_url: str) ->
 class _Pulls:
     """A reader with both halves, so `_pass` and `run` can be driven without GitHub."""
 
-    def __init__(self, pulls: dict[str, list[dict]], revision: str | None) -> None:
+    def __init__(
+        self,
+        pulls: dict[str, list[dict]],
+        revision: str | None,
+        per_repository: dict[str, str | None | Exception] | None = None,
+    ) -> None:
         self._pulls, self._revision = pulls, revision
+        # PER REPOSITORY, because the scope sweep and `_consider` read the same file and the
+        # interesting states are the ones where the two repositories disagree: one transcribed
+        # and one not is what "the lane has silently narrowed" looks like, and a fake that can
+        # only answer one thing for both cannot express it.
+        self._per_repository = per_repository or {}
 
     def open_pull_requests(self, repository: str) -> list[dict]:
         if repository not in self._pulls:
@@ -593,7 +608,10 @@ class _Pulls:
         return self._pulls[repository]
 
     def blob_revision(self, repository: str, path: str, ref: str) -> str | None:
-        return self._revision
+        answer = self._per_repository.get(repository, self._revision)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
 
 def _statuses(outcomes) -> list[str]:
@@ -669,11 +687,19 @@ def test_a_conflict_carries_change_managers_own_explanation() -> None:
 
 def test_an_unreadable_repository_is_a_finding_and_changes_the_exit_code(monkeypatch) -> None:
     """`unreadable` must stay in the findings set and the exit code must reflect it — two separate
-    mutations survived here, and either one silently turns a broken pass into a clean one."""
+    mutations survived here, and either one silently turns a broken pass into a clean one.
+
+    THE FIXTURE'S REVISION IS A TRANSCRIBED ONE, and that is load-bearing since the scope sweep
+    arrived: with untranscribed bytes this pass would ALSO have lost both repositories from its
+    scope, which outranks a finding, and the 3 asserted here would have become a 2 for a reason
+    that has nothing to do with the subject of this test.
+    """
     from change_proposer import cli as cli_module
 
     monkeypatch.setenv("CHANGE_PROPOSER_GITHUB_TOKEN", "gh")
-    monkeypatch.setattr(cli_module, "GitHubReader", lambda token: _Ctx(_Pulls({}, "x" * 40)))
+    monkeypatch.setattr(
+        cli_module, "GitHubReader", lambda token: _Ctx(_Pulls({}, _any_transcribed_revision()))
+    )
     assert cli_module.run([]) == 3
 
 
@@ -707,21 +733,22 @@ def test_without_submit_no_writing_client_is_ever_built(monkeypatch) -> None:
     monkeypatch.setenv("CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN", "cm")
     monkeypatch.setattr(cli_module, "ChangeManagerClient", _sentinel)
     monkeypatch.setattr(
-        cli_module, "GitHubReader", lambda token: _Ctx(_Pulls({CM: [_pull()]}, "x" * 40))
+        cli_module,
+        "GitHubReader",
+        lambda token: _Ctx(_Pulls({CM: [_pull()]}, _any_transcribed_revision())),
     )
     # Scoped to one repository so the other's absence from the fake reader is not a finding.
     #
-    # EXIT 3, not 0, and the change is the point rather than an inconvenience: this fixture's
-    # blob revision is untranscribed, so nothing can say what a green rollout there would
-    # prove. That used to be reported as an ordinary `skipped` — the same status a draft gets
-    # — and skips are not findings, so the pass exited 0 in silence. It is now `underivable`
-    # and a finding. The property this test exists for is the sentinel below.
-    assert cli_module.run(["--repository", CM]) == cli_module.EXIT_FINDINGS
+    # EXIT 0, and the fixture's transcribed revision is why: the pull request is eligible, so
+    # this drives `run()` all the way to the point where a submitting pass would build a client
+    # and write — which is the only place the sentinel below can fire. It asserted EXIT_FINDINGS
+    # against an untranscribed revision until the scope sweep arrived, and that same fixture now
+    # means the lane cannot establish its own scope, which outranks a finding and exits 2.
+    assert cli_module.run(["--repository", CM]) == cli_module.EXIT_OK
     assert built == [], "a dry run built a change-manager client"
-    assert built == []
 
 
-def test_an_untranscribed_rollout_workflow_is_a_finding_not_a_skip(monkeypatch) -> None:
+def test_an_untranscribed_rollout_workflow_is_a_finding_not_a_skip() -> None:
     """The silent case, and the one adversarial review of increment 5 named.
 
     When nobody has transcribed the rollout workflow's current bytes, `_consider` refuses to
@@ -733,14 +760,20 @@ def test_an_untranscribed_rollout_workflow_is_a_finding_not_a_skip(monkeypatch) 
 
     A skip means "this pull request is not our business". A refusal means "it is, and nobody
     can say what its deploy would attest". They must not share an exit code.
-    """
-    from change_proposer import cli as cli_module
 
-    monkeypatch.setenv("CHANGE_PROPOSER_GITHUB_TOKEN", "gh")
-    monkeypatch.setattr(
-        cli_module, "GitHubReader", lambda token: _Ctx(_Pulls({CM: [_pull()]}, "x" * 40))
-    )
-    assert cli_module.run(["--repository", CM]) == cli_module.EXIT_FINDINGS
+    ASSERTED ON THE STATUS RATHER THAN ON `run()`'s EXIT CODE, and the reason is worth stating
+    because it looks like a weakening. The scope sweep reads the SAME blob, at the same path and
+    the same ref, that `_consider` reads — so bytes nobody transcribed produce BOTH an
+    `underivable` pull request and a lost repository, on every real pass, and the lost repository
+    outranks the finding. There is no state of the world in which this fixture exits 3, so an
+    assertion that it does would be an assertion about nothing. What must not change is that the
+    refusal is a FINDING and not a skip, and that is a property of the status.
+    """
+    outcomes = _pass(_Pulls({CM: [_pull()]}, "x" * 40), [CM], None)
+
+    assert _statuses(outcomes) == ["underivable"]
+    assert "underivable" in FINDING_STATUSES
+    assert "skipped" not in FINDING_STATUSES
 
 
 def test_a_pull_request_that_is_not_our_business_is_still_only_a_skip(monkeypatch) -> None:
@@ -753,7 +786,7 @@ def test_a_pull_request_that_is_not_our_business_is_still_only_a_skip(monkeypatc
     monkeypatch.setattr(
         cli_module,
         "GitHubReader",
-        lambda token: _Ctx(_Pulls({CM: [_pull(draft=True)]}, "x" * 40)),
+        lambda token: _Ctx(_Pulls({CM: [_pull(draft=True)]}, _any_transcribed_revision())),
     )
     assert cli_module.run(["--repository", CM]) == cli_module.EXIT_OK
 
@@ -948,3 +981,155 @@ def test_the_sweep_names_the_pipeline_on_every_listing_it_asks_for() -> None:
     client.records()
 
     assert seen and seen[0].params.get("source") == "deploy"
+
+
+# ---------------------------------------------------------------------------
+# The scope sweep: has this lane silently stopped covering a repository?
+# ---------------------------------------------------------------------------
+
+
+def _sweep_run(monkeypatch, reader, argv: list[str] | None = None) -> int:
+    from change_proposer import cli as cli_module
+
+    monkeypatch.setenv("CHANGE_PROPOSER_GITHUB_TOKEN", "gh")
+    monkeypatch.setattr(cli_module, "GitHubReader", lambda token: _Ctx(reader))
+    return cli_module.run(argv or [])
+
+
+def test_a_transcribed_lane_contributes_nothing_and_a_finding_still_exits_3(
+    monkeypatch, capsys
+) -> None:
+    """THE PAIR, and neither half means anything alone.
+
+    The first asserts that a lane whose transcriptions are all current is a clean pass — without
+    it, a sweep that reported every repository as lost would pass every other control here. The
+    second asserts that a finding still reaches 3 with the sweep clean, which is what says the
+    sweep did not simply take the exit code over.
+    """
+    both_current = _any_transcribed_revision()
+
+    clean = _sweep_run(monkeypatch, _Pulls({CM: [_pull(draft=True)], BRAIN: []}, both_current))
+    assert clean == 0
+    assert "not transcribed" not in capsys.readouterr().out
+
+    # A finding that has nothing to do with scope: the pull request listing cannot be read.
+    finding = _sweep_run(monkeypatch, _Pulls({CM: [_pull(draft=True)]}, both_current))
+    assert finding == 3
+    assert "unreadable" in capsys.readouterr().out
+
+
+def test_a_rollout_workflow_that_has_left_the_transcription_is_unusable_and_is_named(
+    monkeypatch, capsys
+) -> None:
+    """`brain#62`'s shape, at the clock the failure actually arrives on.
+
+    No pull request is involved anywhere in this fixture — both listings are empty — which is the
+    whole point: the per-pull-request refusal cannot fire, and for 27 hours on 2026-09-08 it did
+    not, while every pass reported `0 findings` truthfully.
+    """
+    code = _sweep_run(
+        monkeypatch,
+        _Pulls({CM: [], BRAIN: []}, _any_transcribed_revision(), {BRAIN: UNTRANSCRIBED}),
+    )
+    out = capsys.readouterr().out
+
+    assert code == 2
+    assert f"{BRAIN} .github/workflows/ci.yml@main -> {UNTRANSCRIBED} :: not transcribed" in out
+    assert f"{CM} .github/workflows/deploy.yml@main" in out
+    assert "1 of 2 rollout transcriptions unusable" in out
+
+
+def test_a_lost_repository_outranks_a_finding(monkeypatch, capsys) -> None:
+    """THE PRECEDENCE PIN, with both conditions live in one pass.
+
+    `EXIT_UNUSABLE` used to be reachable only from an early return, so it never competed with a
+    finding and no order had to be chosen. It competes now. A pass that could not use some of its
+    inputs cannot claim it found everything there was to find — so 2, and the assertions below
+    prove the finding was really there rather than having been swallowed on the way.
+    """
+    code = _sweep_run(monkeypatch, _Pulls({}, _any_transcribed_revision(), {BRAIN: UNTRANSCRIBED}))
+    out = capsys.readouterr().out
+
+    assert code == 2
+    assert "unreadable" in out and "not transcribed" in out
+    assert "2 findings" in out and "1 of 2 rollout transcriptions unusable" in out
+
+
+def test_a_lost_repository_does_not_stop_the_other_ones_records_being_proposed(
+    monkeypatch, capsys
+) -> None:
+    """NO SHORT-CIRCUIT. One repository's stale transcription is not a reason to stop working on
+    the other, and a sweep that returned early would be exactly that."""
+    code = _sweep_run(
+        monkeypatch,
+        _Pulls({CM: [_pull()], BRAIN: []}, _any_transcribed_revision(), {BRAIN: UNTRANSCRIBED}),
+    )
+    out = capsys.readouterr().out
+
+    assert code == 2
+    assert "would-propose" in out
+    assert "1 to propose" in out
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [ReadError("github rejected GET: 502"), None],
+    ids=["the-read-raised", "github-answers-no-file"],
+)
+def test_a_rollout_workflow_that_cannot_be_read_is_unusable_rather_than_silence(
+    answer: object, monkeypatch, capsys
+) -> None:
+    """NEVER SILENCE, and both shapes reach it.
+
+    A raise is the obvious one. `None` is the one that needs the adapter: `blob_revision` answers
+    it for a 404, a directory and a sha that is not one, and `None` is not in the registry either
+    — so without the adapter all three would be reported as bytes that MOVED, which is a different
+    sentence about a repository nobody could read at all.
+    """
+    code = _sweep_run(
+        monkeypatch, _Pulls({CM: [], BRAIN: []}, _any_transcribed_revision(), {BRAIN: answer})
+    )
+    out = capsys.readouterr().out
+
+    assert code == 2
+    assert "unreadable" in out and BRAIN in out
+    assert "not transcribed" not in out
+
+
+def test_the_sweep_covers_the_lane_and_not_the_invocation(monkeypatch, capsys) -> None:
+    """`--repository` narrows which subjects are considered; it must not narrow this.
+
+    The question is what the LANE covers. A targeted run that reported only about the repository
+    it was asked for would report a coverage the lane does not have — and it is the same population
+    `scripts/check_rollout_transcription_currency.py` asks about, which is the point of the two
+    sharing one predicate.
+    """
+    code = _sweep_run(
+        monkeypatch,
+        _Pulls({CM: [], BRAIN: []}, _any_transcribed_revision(), {BRAIN: UNTRANSCRIBED}),
+        ["--repository", CM],
+    )
+
+    assert code == 2
+    assert BRAIN in capsys.readouterr().out
+
+
+def test_the_sweep_asks_github_for_each_workflow_at_its_own_trigger_branch(monkeypatch) -> None:
+    """The read is the one `_consider` makes, so a sweep asking a different ref would answer a
+    question about bytes no record is ever derived from."""
+    from change_proposer import cli as cli_module
+
+    asked: list[tuple[str, str, str]] = []
+
+    class _Recording:
+        def blob_revision(self, repository: str, path: str, ref: str) -> str:
+            asked.append((repository, path, ref))
+            return _any_transcribed_revision()
+
+    rows = cli_module._scope_sweep(_Recording())
+
+    assert asked == [
+        (BRAIN, ".github/workflows/ci.yml", "main"),
+        (CM, ".github/workflows/deploy.yml", "main"),
+    ]
+    assert [row.problem for row in rows] == [None, None]

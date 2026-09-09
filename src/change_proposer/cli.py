@@ -39,6 +39,16 @@ there -- but a transcription is a stronger, human-made statement than a classifi
 App Brain here would put a third credential in this program to re-derive a fact the transcription
 already implies. If the two ever disagree, the admission term is the one that gates.
 
+**AND IT IS A SET THAT CAN SHRINK WITHOUT ANYONE SAYING SO**, which is why every pass now begins
+by asking whether it still holds. The transcription keys on the BYTES of another repository's
+rollout workflow, so a merge over there expires it and this program cannot see that merge happen.
+`_scope_sweep` reports any rollout workflow whose current revision is no longer transcribed, or
+that could not be read at all, and either answer is an INPUT failure rather than a finding: a pass
+that has lost a repository from its own scope reports `0 findings` truthfully while covering less
+than it claims to. The refusal in `_consider` is the same fact seen per pull request, and it fires
+only when there is a pull request to refuse -- which is the wrong clock for a failure caused by
+somebody else's merge.
+
 **PROPOSING IS IDEMPOTENT SERVER-SIDE.** change-manager answers 201 for a new record and 200 for an
 identical proposal that already exists, and 409 for a different one. So a re-run is a replay, which
 is what makes this safe to schedule -- and a 409 is a real finding, because it means somebody
@@ -50,6 +60,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -62,7 +73,8 @@ from change_proposer.change_manager import (
 from change_proposer.criteria import CriteriaUnavailable, acceptance_criteria, rollback_for
 from change_proposer.factory_marking import FACTORY_TITLE_PREFIX, factory_unit_id
 from deploy_watcher.github import GitHubReader, ReadError
-from deploy_watcher.workflows import ROLLOUT_WORKFLOWS, attestation_for
+from deploy_watcher.transcription_currency import Row, audit
+from deploy_watcher.workflows import REGISTRY, ROLLOUT_WORKFLOWS, attestation_for
 
 
 class BlobSource(Protocol):
@@ -186,6 +198,52 @@ def _in_scope() -> list[str]:
             continue
         scope.append(repository)
     return scope
+
+
+def _blob_read(reader: BlobSource) -> Callable[[str, str, str], str]:
+    """`blob_revision` as the sweep's reader needs it: a revision, or a raise.
+
+    `GitHubReader.blob_revision` answers `None` for a 404, for a directory and for anything whose
+    `sha` is not one -- three ways of saying "there is no file there". Handed to the audit
+    unchanged, `None` is not in the registry either, so all three would be reported as a rollout
+    workflow whose bytes MOVED, when what happened is that nobody could find the file. The exit
+    code would be the same and the sentence would be wrong, and the sentence is the whole value of
+    a report nobody reads until it is red.
+    """
+
+    def read(repository: str, path: str, ref: str) -> str:
+        revision = reader.blob_revision(repository, path, ref)
+        if revision is None:
+            raise ReadError(f"github answers no file at {path} for {repository}@{ref}")
+        return revision
+
+    return read
+
+
+def _scope_sweep(reader: BlobSource) -> list[Row]:
+    """Ask, up front, whether this lane still covers what it says it covers.
+
+    SCOPE IS THE TRANSCRIBED SET -- the module docstring says so, and that makes the set a thing
+    that can quietly shrink. `REGISTRY` is keyed by the BYTES of another repository's rollout
+    workflow, so a merge over there expires the transcription, and nothing here can see that merge
+    happen. The refusal in `_consider` catches it per PULL REQUEST, which means it fires only when
+    something arrives to be refused: `brain#62` moved the bytes on 2026-09-08, no new brain pull
+    request arrived for 27 hours, and every hourly pass reported `0 findings` truthfully while
+    covering one fewer repository than it claimed to. A rule that fires only when a third party
+    happens to open a pull request is not a check.
+
+    THE POPULATION IS EVERY TRANSCRIBED ROLLOUT, NOT THE INVOCATION'S `--repository`. The question
+    is what the LANE covers, not which subjects this run was asked about, and narrowing it would
+    let a targeted run report a coverage the lane does not have. It also keeps this caller's
+    population identical to `scripts/check_rollout_transcription_currency.py`'s, which is the
+    point of the two of them sharing one predicate rather than one each.
+
+    NO NEW CREDENTIAL. This is the GitHub token the program already holds for the pass below, and
+    two more GETs an hour -- the same file, at the same ref, that `_consider` reads for a pull
+    request. Reading it twice is not duplication: one read answers a question about a subject, and
+    this one answers whether there are subjects to ask about at all.
+    """
+    return audit(ROLLOUT_WORKFLOWS, REGISTRY, _blob_read(reader))
 
 
 def _reasoning(repository: str, work_unit_id: str | None) -> str:
@@ -485,6 +543,12 @@ def run(argv: list[str] | None = None) -> int:
         if args.submit:
             client = ChangeManagerClient(cm_token, base_url=cm_url or DEFAULT_BASE_URL)
         with GitHubReader(github_token) as reader:
+            # Kept OUT of `outcomes`, deliberately. Those rows are subjects this pass considered
+            # and these are repositories it may no longer be able to consider anything in, so
+            # folding them together would put a statement about the lane into a count of pull
+            # requests -- and, since the two carry different exit codes, would need pulling apart
+            # again immediately.
+            scope_rows = _scope_sweep(reader)
             outcomes = _pass(reader, scope, client)
             outcomes.extend(_retire_pass(reader, scope, client))
     except ChangeManagerError as error:
@@ -494,16 +558,47 @@ def run(argv: list[str] | None = None) -> int:
         if client is not None:
             client.close()
 
+    for row in scope_rows:
+        seen = row.revision or "unread"
+        print(
+            f"scope  {row.repository} {row.path}@{row.ref} -> {seen} :: "
+            f"{row.problem or 'transcribed'}"
+        )
     for outcome in outcomes:
         subject = f"{outcome.repository}#{outcome.number or '-'}"
         print(f"{subject}  {outcome.status:<13} {outcome.detail}")
     findings = [o for o in outcomes if o.status in FINDING_STATUSES]
     proposed = [o for o in outcomes if o.status in {"proposed", "would-propose"}]
     retired = [o for o in outcomes if o.status == "retired"]
+    lost = [row for row in scope_rows if row.problem is not None]
     print(
         f"\n{len(outcomes)} considered, {len(proposed)} to propose, "
-        f"{len(retired)} retired, {len(findings)} findings"
+        f"{len(retired)} retired, {len(findings)} findings, "
+        f"{len(lost)} of {len(scope_rows)} rollout transcriptions unusable"
     )
+    if lost:
+        # 2 OUTRANKS 3, and the sibling lane states the same rule in the opposite direction: a
+        # pass that could not use some of its inputs cannot claim it found everything there was
+        # to find. `EXIT_UNUSABLE` used to be reachable only from an early return, so it never
+        # competed with a finding; the sweep can hold both at once, so the order is written down
+        # here rather than left to whichever branch a later refactor happens to put first.
+        #
+        # WHY 2 AND NOT 3, since something WAS found. Scope is the transcribed set, so a
+        # repository falling out of it is this program losing an input rather than observing a
+        # fact about a subject -- true whether or not the pass found anything, and true when
+        # there is not a single pull request anywhere to find anything about. The launcher's
+        # `--finding 3` follows from that reading rather than justifying it: exit 3 tells the
+        # dead-man switch the lane ran and reported, which is the right answer for a finding and
+        # the wrong one for a lane that no longer knows what it covers.
+        #
+        # AN UNREADABLE READ IS HERE TOO, and it differs from `_pass`'s `unreadable`, which is a
+        # finding at 3. That one is a subject this pass could not consider; this one is the lane
+        # unable to say what its subjects are. `check_rollout_transcription_currency.py` makes the
+        # same call for the same reason -- nothing that was not compared may be reported as
+        # agreeing. The cost is named rather than hidden: a transient GitHub failure will ping
+        # `/fail` where it used to be silent, and a lane that goes quiet exactly when it cannot
+        # tell what it covers is the failure this sweep exists to end.
+        return EXIT_UNUSABLE
     return EXIT_FINDINGS if findings else EXIT_OK
 
 

@@ -24,9 +24,17 @@
 # EXIT CODES, the whole interface a scheduled run has:
 #   0  everything was measured and nothing was found.
 #   1  the tool itself failed (a missing or unreadable credential, an unhandled error).
-#   2  the tool ran but could not use its inputs (no scope resolved, a refused client).
+#   2  the tool ran but could not use its inputs: no scope resolved, a refused client, or a
+#      rollout workflow whose current bytes nobody has transcribed — the lane's own scope,
+#      which it could not establish. An unreadable read is here too: nothing was compared for
+#      that repository, which is never the same as agreeing.
 #   3  something was found — including a pull request whose rollout workflow nobody has
 #      transcribed, which is the case that used to exit 0 in silence.
+# 2 OUTRANKS 3, the same rule the rollout watcher states in the opposite direction: a pass that
+# could not use some of its inputs cannot claim it found everything there was to find. Note what
+# that costs, because it is deliberate: 3 is this lane's `--finding` code and pings the dead-man
+# check ALIVE, where 2 pings /fail. A repository that has silently left the lane's scope is not a
+# finding about a subject; it is the lane no longer covering what it says it covers.
 #
 # NOTHING HERE APPROVES. The credential is propose-scoped: change-manager refuses it every
 # route that could move a record's status, and since increment 5a it refuses APPROVAL to

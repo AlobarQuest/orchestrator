@@ -47,6 +47,9 @@ ORCHESTRATOR = Path("src/orchestrator")
 # plain token rather than as the App: the App's JWT assertion needs `pyjwt`, which is not here.
 ALLOWED_TOP_LEVEL = {
     "__future__",
+    # `collections.abc`, for the injected-reader signature in `transcription_currency`. Stdlib,
+    # and `typing.Callable` is not the alternative: ruff's UP rules forbid it.
+    "collections",
     "dataclasses",
     "datetime",
     "deploy_watcher",
