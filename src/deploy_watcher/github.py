@@ -409,12 +409,22 @@ class GitHubReader:
         if not isinstance(body, dict) or not isinstance(body.get("workflow_runs"), list):
             raise ReadError(f"{repository} answered the successful-run query unreadably")
         runs = [_run(item) for item in body["workflow_runs"] if isinstance(item, dict)]
-        # A run with no head is one this comparison cannot be made against, and a run GitHub
-        # says is not finished is not a success whatever the filter claimed.
-        usable = [r for r in runs if r.head_sha is not None and r.concluded]
+        # A run with no head is one this comparison cannot be made against; a run GitHub says is
+        # not finished is not a success whatever the filter claimed; and a run with no start time
+        # cannot be the NEWEST of anything, which is the only question asked here.
+        #
+        # That third clause is a CRASH the substituted default would have hidden: `started_at`
+        # is aware (`_parse_time` reads GitHub's `Z`), so a naive `datetime.min` fallback beside
+        # one real time raises `TypeError` -- caught by nothing in `superseded_by`'s tuple and by
+        # nothing in `_watch_one`, so the lane would exit 1 saying the tool broke rather than
+        # leaving a finding it had already measured. Dropping the run instead can only
+        # under-report supersession, which leaves the finding standing.
+        usable = [
+            r for r in runs if r.head_sha is not None and r.concluded and r.started_at is not None
+        ]
         if not usable:
             return None
-        return max(usable, key=lambda r: (r.started_at or datetime.min, r.run_id))
+        return max(usable, key=lambda r: (r.started_at, r.run_id))
 
     def compare_status(self, repository: str, base_sha: str, head_sha: str) -> str:
         """How `head_sha` stands relative to `base_sha`: `ahead`, `behind`, `identical`, `diverged`.

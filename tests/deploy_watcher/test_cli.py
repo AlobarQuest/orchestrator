@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 import pathlib
 
 import httpx
@@ -611,3 +612,40 @@ def test_no_reported_kind_is_a_substring_of_another() -> None:
     )
 
     assert collisions == [known_debt]
+
+
+# ---------------------------------------------------------------------------
+# ADR-0044: `backfill` reports the exceptions it excused.
+# ---------------------------------------------------------------------------
+
+
+def test_backfill_reports_a_superseded_rollout_rather_than_dropping_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`backfill`'s whole product is the DISTRIBUTION, and ADR-0044 moves a superseded rollout out
+    of `findings`. Reporting only findings would shrink that distribution with nothing saying
+    where the difference went -- and historical merges, which is all this command reads, are the
+    population most likely to have been superseded.
+
+    Note the exit code: an exception does not drive exit 2, here as in `watch`.
+    """
+    routes_ = failed_rollout(
+        **{
+            **supersession(),
+            f"/repos/{REPO}/pulls": [{"number": 46, "merged_at": "2026-09-01T00:00:00Z"}],
+        }
+    )
+    monkeypatch.setenv(watcher_cli.GITHUB_TOKEN_VAR, "t")
+    monkeypatch.setattr(watcher_cli, "GitHubReader", lambda _token: reader_for(routes_))
+
+    result = CliRunner().invoke(watcher_cli.app, ["backfill", REPO, "--pages", "1", "--json"])
+
+    assert result.exit_code == 0, result.output
+    summary = json.loads(result.output)
+    assert summary["exceptions"] == [observe_module.SUPERSEDED_ROLLOUT]
+    assert summary["findings"] == []
+
+    # The human form is a separate function and would otherwise be exercised by nothing.
+    human = CliRunner().invoke(watcher_cli.app, ["backfill", REPO, "--pages", "1"])
+    assert human.exit_code == 0, human.output
+    assert f"[exception] {observe_module.SUPERSEDED_ROLLOUT}" in human.output

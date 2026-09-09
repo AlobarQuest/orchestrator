@@ -55,3 +55,51 @@ def test_an_unrecognised_state_is_refused_rather_than_read_as_closed() -> None:
         _dispositions({"number": 42, "merged": False, "state": "?"}).pull_request_disposition(
             "owner/repo", 42
         )
+
+
+# ---------------------------------------------------------------------------
+# ADR-0044: choosing the newest successful push run.
+# ---------------------------------------------------------------------------
+
+_HEAD_A = "a" * 40
+_HEAD_B = "b" * 40
+
+
+def _runs(*items: dict) -> GitHubReader:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"workflow_runs": list(items)})
+
+    return GitHubReader("t", transport=httpx.MockTransport(handler))
+
+
+def _row(run_id: int, head: str, started: str | None) -> dict:
+    return {
+        "id": run_id,
+        "head_sha": head,
+        "status": "completed",
+        "conclusion": "success",
+        "run_started_at": started,
+        "created_at": started,
+        "updated_at": started,
+    }
+
+
+def test_a_run_with_no_start_time_beside_one_with_a_start_time_does_not_CRASH_the_lane() -> None:
+    """GitHub's times are AWARE, so ordering an unstarted run against a started one by
+    substituting a naive default raises `TypeError` -- which `superseded_by` does not catch and
+    which would turn a measured finding into exit 1. The unstarted run is dropped instead: it
+    cannot be the newest of anything, and losing it can only leave the finding standing."""
+    reader = _runs(_row(1, _HEAD_A, None), _row(2, _HEAD_B, "2026-09-08T00:00:00Z"))
+    newest = reader.newest_successful_push_run("owner/repo", ".github/workflows/ci.yml", "main")
+    assert newest is not None
+    assert newest.run_id == 2
+
+
+def test_the_newest_is_chosen_by_START_TIME_and_not_by_the_order_github_served() -> None:
+    """The stale-page measurement: GitHub served a six-day-old run first for this exact query."""
+    reader = _runs(
+        _row(1, _HEAD_A, "2026-09-08T00:00:00Z"), _row(2, _HEAD_B, "2026-09-02T00:00:00Z")
+    )
+    newest = reader.newest_successful_push_run("owner/repo", ".github/workflows/ci.yml", "main")
+    assert newest is not None
+    assert newest.run_id == 1

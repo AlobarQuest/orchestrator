@@ -474,6 +474,7 @@ def backfill(
     attestations: dict[str, int] = {}
     reached: dict[str, int] = {}
     findings: list[Finding] = []
+    exceptions: list[Finding] = []
     unmeasured: list[str] = []
 
     with GitHubReader(github_token) as reader:
@@ -492,6 +493,11 @@ def backfill(
                 unmeasured.append(f"#{number}: {error}")
                 continue
             findings.extend(outcome.findings)
+            # ADR-0044 moves a superseded rollout out of `findings`, and this command's whole
+            # product is the distribution -- so reporting only findings would shrink the count
+            # with nothing saying where the difference went. Historical merges are exactly the
+            # population most likely to be superseded.
+            exceptions.extend(outcome.exceptions)
             if outcome.rollout is None:
                 conclusions["<not merged>"] = conclusions.get("<not merged>", 0) + 1
                 continue
@@ -513,24 +519,38 @@ def backfill(
         "attestations": attestations,
         "trigger_step_conclusions": reached,
         "findings": [f.kind for f in findings],
+        "exceptions": [f.kind for f in exceptions],
         "unmeasured": unmeasured,
     }
     if as_json:
         _say(json.dumps(summary, indent=2, sort_keys=True))
     else:
-        _say(f"=== {repository}")
-        for label, table in (
-            ("run conclusions", conclusions),
-            ("what a green run attested", attestations),
-            ("trigger step conclusions", reached),
-        ):
-            _say(f"  {label}: {dict(sorted(table.items()))}")
-        for finding in findings:
-            _report(finding)
-        for line in unmeasured:
-            _say(f"  [incomplete] {line}")
+        _print_backfill(summary, findings=findings, exceptions=exceptions)
 
     raise typer.Exit(code=_exit_code(findings=bool(findings), incomplete=bool(unmeasured)))
+
+
+def _print_backfill(
+    summary: dict[str, Any], *, findings: list[Finding], exceptions: list[Finding]
+) -> None:
+    """The same summary the `--json` form serves, for a person.
+
+    Extracted only because `backfill` reached ruff's complexity ceiling when ADR-0044 gave it a
+    second list to print -- the same reason `_report_outcome` exists beside `_watch_one`.
+    """
+    _say(f"=== {summary['repository']}")
+    for label, key in (
+        ("run conclusions", "conclusions"),
+        ("what a green run attested", "attestations"),
+        ("trigger step conclusions", "trigger_step_conclusions"),
+    ):
+        _say(f"  {label}: {dict(sorted(summary[key].items()))}")
+    for finding in findings:
+        _report(finding)
+    for excused in exceptions:
+        _report_exception(excused)
+    for line in summary["unmeasured"]:
+        _say(f"  [incomplete] {line}")
 
 
 @app.command()
