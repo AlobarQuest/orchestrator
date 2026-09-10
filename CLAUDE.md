@@ -3469,7 +3469,9 @@ style of that module.
   byte-identical live differential for the bot population — not yet by a live factory pull request.
 
 - **"Is this a factory target?" had THREE answers that disagreed pairwise, and ADR-0015 already
-  ruled which one is authoritative — the ruling was simply never implemented.** Measured 2026-08-17:
+  ruled which one is authoritative — the ruling went unimplemented for thirteen days and then
+  shipped the same evening this was written. TWO CLAIMS BELOW ARE CORRECTED; read to the end
+  before citing this.** Measured 2026-08-17:
   `delivery_profile` in `PROJECT.md` says orchestrator/intent-packages/security-standards/
   infraops-mcp-server/change-manager/brain; the orchestrator's
   `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` said intent-packages/security-standards/
@@ -3477,18 +3479,32 @@ style of that module.
   `.github/workflows/factory-runner-pilot.yml` said a third thing. `factory-runner` is the only
   repository all three agreed on. `orchestrator` declares itself a target and cannot be dispatched
   to; `project-standards` was **deliberately excluded by ADR-0015 on 2026-08-04** and was allowlisted
-  and given a caller on **2026-08-07** — by HQ, in commit `6aeff6f`, three days later, in a sweep
-  that never consulted the decision sitting in the repository it was working in. The episode was then
-  written into this file as a lesson about fine-grained PAT scopes, with the contradiction unnoticed.
-  **ADR-0015 names the single source of truth and the reason: the declaration belongs in `PROJECT.md`
-  frontmatter, "repo-local and self-describing, rather than a list inside the kit that the affected
-  repository cannot see."** That mechanism has never been built, which is exactly why the
-  contradiction survived — an env var cannot refuse an onboarding sweep, and a repository declaring
-  `factory_target: false` can. Reversed 2026-08-17 (Devon reaffirmed ADR-0015): caller removed
-  (`project-standards#23`), allowlist cut to five, verified from inside the container.
-  **The unbuilt half now has two independent reasons to exist**, and a design question ADR-0015 did
-  not face: the orchestrator has no checkout, so a repo-local declaration has to reach admission
-  somehow — a build-time bundle like the actor registry, App Brain, or a sync job.
+  and given a caller on **2026-08-07** — by HQ, in commit `6aeff6f`, three days later.
+  **CORRECTED 2026-09-10 ON TWO POINTS, both of which this bullet got wrong in the direction that
+  makes the estate look worse than it is.** (1) This said the caller was added *"in a sweep that
+  never consulted the decision sitting in the repository it was working in."* `6aeff6f`'s own
+  message names ADR-0015, distinguishes its two exclusions, reverses one and explicitly leaves the
+  other, and cites Devon deciding; the amendment eight minutes later quotes his reasoning. The
+  decision was read and the reversal was ratified. What actually happened is **momentum**:
+  `8de11eb` records that Devon added five repositories to the allowlist that day and
+  *"four needed only the allowlist entry; project-standards needed a caller workflow too."* The
+  repository was carried in on a batch. That is still an argument for the declaration — nothing
+  in the mechanism required the consultation that happened to occur — but it is not an unread
+  checklist, and the wrong version has now been inherited into a task brief.
+  (2) *"That mechanism has never been built"* was false four seconds after the reversal.
+  **ADR-0015's implementation note shipped 2026-08-17 in `project-standards#24` (`6980d97`)**:
+  `factory_target: <bool>` in `PROJECT.md` frontmatter, read by `runner.caller`, which reports
+  `not-applicable` with the declared reason — and stays a `violation` for a declared non-target
+  that still hosts a caller, which is the inverse the ADR never named. Both `project-standards`
+  and `factory-runner` declare it today. `not-applicable` satisfies admission
+  (`ADMISSION_SATISFYING`), so admission-clean and factory-reachable are now different questions.
+  **The half that is genuinely unbuilt is a DIFFERENT consumer than the ADR's note:** the
+  orchestrator has no checkout, so a repo-local declaration cannot reach *dispatch admission*,
+  which still consults the hand-maintained `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`
+  — a build-time bundle like the actor registry, App Brain, or a sync job would be needed.
+  The reversal itself stands as recorded: 2026-08-17, Devon reaffirmed ADR-0015, caller removed
+  (`project-standards#23`), allowlist cut to five, verified from inside the container — and
+  re-verified 2026-09-10, still five.
 
 - **THE SEVEN FACTORY REPOSITORIES ARE PUBLIC as of 2026-08-17, and the trigger was Actions minutes,
   not a change of posture.** GitHub bills Actions only on private repositories. The estate ran out
