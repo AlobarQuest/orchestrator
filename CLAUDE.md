@@ -3470,8 +3470,11 @@ style of that module.
 
 - **"Is this a factory target?" had THREE answers that disagreed pairwise, and ADR-0015 already
   ruled which one is authoritative — the ruling went unimplemented for thirteen days and then
-  shipped the same evening this was written. TWO CLAIMS BELOW ARE CORRECTED; read to the end
-  before citing this.** Measured 2026-08-17:
+  shipped the same evening this was written, adding a FOURTH surface. TWO CLAIMS BELOW ARE
+  CORRECTED; read to the end before citing this, and note that `src/pin_watcher/github.py` and
+  `src/revision_watcher/subjects.py` both cite this bullet for "four disagreeing answers" — the
+  fourth is the `factory_target:` frontmatter, which did not exist when the three below were
+  counted.** Measured 2026-08-17:
   `delivery_profile` in `PROJECT.md` says orchestrator/intent-packages/security-standards/
   infraops-mcp-server/change-manager/brain; the orchestrator's
   `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` said intent-packages/security-standards/
@@ -3999,10 +4002,17 @@ style of that module.
   made:
   - **ADR-0015** (2026-08-04) decided that a repository self-declares factory membership in
     `PROJECT.md` frontmatter, *"repo-local and self-describing, rather than a list inside the kit
-    that the affected repository cannot see."* Never built. The consequence in August was that
-    `project-standards` was deliberately excluded and then re-onboarded three days later by a sweep
-    that never consulted the decision; the consequence on 2026-08-24 was six exchanges
-    reconstructing "which repos are in SDS scope" by hand, from four surfaces that disagree.
+    that the affected repository cannot see."* Unbuilt for thirteen days; `project-standards` was
+    deliberately excluded and then re-onboarded three days into that window. **CORRECTED
+    2026-09-10 on both details, and the correction makes it a SHARPER example rather than a
+    retired one.** The KIT half shipped 2026-08-17 (`project-standards#24`), so "never built" is
+    false — and the 2026-08-24 consequence, six exchanges reconstructing "which repos are in SDS
+    scope" by hand, happened a week AFTER it shipped, because the half that answers a scope
+    question is the one with no checkout: dispatch admission still reads a hand-maintained
+    `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`. **An ADR half-built is this bullet's own
+    thesis at its worst**, because the shipped half makes the unshipped one look done. The
+    re-onboarding was also not "a sweep that never consulted the decision" — `6aeff6f` names the
+    ADR and cites Devon deciding; it was momentum, see the corrected bullet above.
   - **ADR-0025** (2026-08-17) decided that a `factory-delivery` change record is approved **by
     policy, not by a click** — *"There is no per-record human approval."* Never built:
     `change-manager`'s `deploy_policy.py` reached version 3 with all three versions pinning
@@ -4593,7 +4603,10 @@ style of that module.
   anything else removes the ground it stands on. (2) **ADR-0015's declaration mechanism arriving**
   (programme plan §7 decision 9): the strongest argument against narrowing is that an installation
   list would be a *fourth* hand-maintained answer to "which repositories are factory targets", and if
-  that answer ever becomes derivable the cost side of the trade collapses.
+  that answer ever becomes derivable the cost side of the trade collapses. **The consumer that
+  matters here is DISPATCH ADMISSION, and it is still unbuilt** — the kit-side half of ADR-0015
+  shipped 2026-08-17, and it does not make the answer derivable for anything without a checkout.
+  This trigger has therefore NOT fired; do not re-open the ruling on the strength of the kit half.
   Two facts that make narrowing safe should it ever be chosen, measured the same day so nobody
   re-establishes them: the out-of-process lanes read GitHub with Devon's PAT (`gh auth token`), not
   this App, so the ledger and audit are unaffected; and `claude-octopus`'s `upstream-sync.yml`

@@ -148,8 +148,10 @@ PAT; no API extends it. See the corresponding invariant in `CLAUDE.md`.
 
 ## Amendment, 2026-08-17 — reinstated in full, and decision 2 stopped being a plan
 
-**Amendment 1 is itself reversed. `project-standards` is not a factory target** (Devon,
-2026-08-17, reaffirming the original decision). Decision 1 stands as first written, for both
+**Amendment 1's reversal of decision 1 is itself reversed. `project-standards` is not a factory
+target** (Devon, 2026-08-17, reaffirming the original decision). Only that; amendment 1's other
+content — the `FACTORY_PR_TOKEN` fine-grained-access prerequisite, "onboarding has FOUR parts, not
+three" — is live estate knowledge and is not touched by this. Decision 1 stands as first written, for both
 repositories. Decision 2 is needed for two repositories again rather than one — and on the same
 afternoon it was built.
 
@@ -157,15 +159,20 @@ afternoon it was built.
 2026-08-07, and per ADR-0014 a decision does not become wrong because a later one replaced it.
 What follows records what changed, not what should have been thought.
 
-**What was executed — all of it inside twenty seconds on 2026-08-17.**
+**What was executed on 2026-08-17.** The three merges span twenty seconds; the fourth item is a
+Coolify environment write and carries no timestamp of its own.
 
 - **`project-standards#23`** (merged 20:35:52Z, `b9634564`) removed the caller workflow; that
-  file was the entire diff. Its body: *"Devon reaffirmed ADR-0015 on 2026-08-17:
+  file was the entire diff. Its **pull-request body** — the squash message on `main` words the
+  same events differently, which is worth knowing before comparing them — reads: *"Devon
+  reaffirmed ADR-0015 on 2026-08-17:
   project-standards is a prerequisite for the SDS and is maintained through a different
   mechanism, not by the orchestrator."* That is the original's own reasoning, restated.
 - **`project-standards#24`** (20:35:56Z, `6980d97`) shipped **decision 2 and the implementation
-  note above, as specified**: `factory_target: <bool>` in `PROJECT.md` frontmatter, read by
-  `runner.caller`, which reports `not-applicable` with the declared reason.
+  note above, with one deliberate refinement**: `factory_target: <bool>` in `PROJECT.md`
+  frontmatter, read by `runner.caller`, which reports `not-applicable` with the declared reason.
+  The refinement is that decision 2 says such a repository must read `not-applicable` and
+  "never `violation`", and the shipped check keeps `violation` for one case — below.
 - **`factory-runner#56`** (20:36:12Z, `b299183e`) declared its own `factory_target: false`,
   citing this ADR.
 - The repository was removed from `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`.
@@ -185,20 +192,32 @@ from inside the running orchestrator container is exactly five entries — `inte
 - `_declared_non_target` also closed the inverse this ADR never named: **a repository that
   declares itself a non-target while still hosting a caller stays a `violation`**, because it is
   dispatchable against its own declaration. A declaration may turn a violation into
-  `not-applicable`; it may never turn a failure into a pass. `project-standards` sat in exactly
-  that contradiction for the ten days between the two amendments.
+  `not-applicable`; it may never turn a failure into a pass. **This is where decision 2's
+  "never `violation`" is narrower than it reads**, and the refinement is right: a declaration is
+  not a way to opt out of being dispatchable, only a way to say that not being dispatchable is
+  intended. Note it describes a state no repository has yet occupied — `factory_target:` did not
+  exist before 2026-08-17, and for the ten days between the amendments `project-standards` hosting
+  a caller was the *correct* state under amendment 1. The contradiction it guards is available only
+  in retrospect.
 - **Criterion #2's arithmetic changed shape, not just value, and this amendment deliberately
   supplies no new count.** `not-applicable` satisfies admission
   (`ADMISSION_SATISFYING = (pass, not-applicable)`), so a declared non-target is admission-clean
   *and* out of the factory's reach. "6 of 8" and "7 of 8" were both proxies for how many
   repositories the factory could reach; that is now a separate question with a separate answer,
-  and the answer to it is **five**, measured above. "8 of 8 is not a goal" was always about
-  reach, and it stands. No sweep was re-run for this amendment.
+  and the answer to it is **five of the eight candidates**, measured above. Do not read that as
+  6 → 7 → 5: the earlier figures counted admission-clean repositories, and the eight include
+  `orchestrator`, which is admission-clean and structurally undispatchable. Reach was never 6 or 7.
+  "8 of 8 is not a goal" was always about reach, and it stands. No sweep was re-run for this
+  amendment.
 - The implementation note is closed **for the kit**. What remains open is a different consumer
   the note did not contemplate: the orchestrator has no checkout, so a repo-local declaration
   cannot reach *dispatch admission*, which still consults a hand-maintained environment variable.
-  That is the third of the three disagreeing answers, and it is tracked as a programme decision
-  rather than here.
+  That is the third of the disagreeing answers, and it is tracked as a programme decision rather
+  than here. **One open question rests on the superseded reading and should be re-read before it is
+  ruled on:** ADR-0030 §2's unratified enrolment rule weighs "ADR-0015's mechanism has never been
+  built, so this sweep would have had to invent it." It had shipped three days before that was
+  written. The counterweight survives in a narrower form — what is unbuilt is the consumer with no
+  checkout — but it is not the one recorded there.
 
 **On the prediction, because the record disagrees with itself.**
 
