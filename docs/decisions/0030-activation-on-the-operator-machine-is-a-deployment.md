@@ -142,7 +142,17 @@ kit's admission checks. That reasoning transfers to this sweep — `FacelessTT` 
 being swept — and it was bypassed rather than rejected, because nobody asked. Two things weigh the
 other way and belong in the decision: ADR-0015's mechanism has **never been built**, so this sweep
 would have had to invent it; and this sweep is **read-only**, granting no authority over the
-repositories it observes, where factory membership grants write. Self-identification matters most
+repositories it observes, where factory membership grants write.
+**CORRECTED 2026-09-10, and the first counterweight is weaker than recorded: the mechanism HAD
+shipped, three days before this section was written.** `project-standards#24` (2026-08-17,
+`6980d97`) put `factory_target:` in `PROJECT.md` frontmatter and taught `runner.caller` to read it;
+both `project-standards` and `factory-runner` declare it. What is unbuilt is a *different consumer*
+— the orchestrator has no checkout, so a repo-local declaration cannot reach dispatch admission —
+and the same is true of this sweep, which reads working copies and could in fact read frontmatter.
+So "would have had to invent it" is no longer the objection; "would have had to decide whether an
+unenrolled repository's silence means no" still is. The second counterweight is untouched.
+Devon's ruling is still owed, on this reading rather than the one above. See ADR-0015's 2026-08-17
+amendment. Self-identification matters most
 when the answer confers power. Devon to rule.
 
 ### 3. Reuse `ReleaseArtifactBinding` with an explicit kind discriminator

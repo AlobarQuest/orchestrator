@@ -1,6 +1,7 @@
 # ADR-0015 — A factory target is declared, not assumed; and the runner may not maintain itself
 
-- **Status:** Accepted; **partially reversed 2026-08-07 — see the amendment at the end.**
+- **Status:** Accepted; **partially reversed 2026-08-07 and reinstated in full 2026-08-17 —
+  see the two amendments at the end.** Decision 2 shipped 2026-08-17; nothing here is outstanding.
 - **Date:** 2026-08-04
 - **Workstream:** Wave-3 closeout (follows WS-P2.37)
 - **Supersedes:** nothing. **Relates to:** the conformance kit's `runner.caller` check
@@ -142,3 +143,106 @@ factory target must also appear in `FACTORY_PR_TOKEN`'s fine-grained repository 
 three documented steps were complete and the probe run still died in 35 seconds at
 `actions/checkout` with a 403. That list is a settings-page property of the account holding the
 PAT; no API extends it. See the corresponding invariant in `CLAUDE.md`.
+
+---
+
+## Amendment, 2026-08-17 — reinstated in full, and decision 2 stopped being a plan
+
+**Amendment 1's reversal of decision 1 is itself reversed. `project-standards` is not a factory
+target** (Devon, 2026-08-17, reaffirming the original decision). Only that; amendment 1's other
+content — the `FACTORY_PR_TOKEN` fine-grained-access prerequisite, "onboarding has FOUR parts, not
+three" — is live estate knowledge and is not touched by this. Decision 1 stands as first written, for both
+repositories. Decision 2 is needed for two repositories again rather than one — and on the same
+afternoon it was built.
+
+**Amendment 1 is left exactly as it was written.** It is a correct record of what was decided on
+2026-08-07, and per ADR-0014 a decision does not become wrong because a later one replaced it.
+What follows records what changed, not what should have been thought.
+
+**What was executed on 2026-08-17.** The three merges span twenty seconds; the fourth item is a
+Coolify environment write and carries no timestamp of its own.
+
+- **`project-standards#23`** (merged 20:35:52Z, `b9634564`) removed the caller workflow; that
+  file was the entire diff. Its **pull-request body** — the squash message on `main` words the
+  same events differently, which is worth knowing before comparing them — reads: *"Devon
+  reaffirmed ADR-0015 on 2026-08-17:
+  project-standards is a prerequisite for the SDS and is maintained through a different
+  mechanism, not by the orchestrator."* That is the original's own reasoning, restated.
+- **`project-standards#24`** (20:35:56Z, `6980d97`) shipped **decision 2 and the implementation
+  note above, with one deliberate refinement**: `factory_target: <bool>` in `PROJECT.md`
+  frontmatter, read by `runner.caller`, which reports `not-applicable` with the declared reason.
+  The refinement is that decision 2 says such a repository must read `not-applicable` and
+  "never `violation`", and the shipped check keeps `violation` for one case — below.
+- **`factory-runner#56`** (20:36:12Z, `b299183e`) declared its own `factory_target: false`,
+  citing this ADR.
+- The repository was removed from `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`.
+
+**Verified 2026-09-10**, because an amendment asserting a reversal should be measured rather than
+recalled. `project-standards`' default branch hosts one workflow (`quality.yml`) and no caller;
+`factory-runner`'s hosts `factory-runner.yml` and `quality.yml` and no caller; both declare
+`factory_target: false` in `PROJECT.md` with a reason naming this ADR; and the allowlist read
+from inside the running orchestrator container is exactly five entries — `intent-packages`,
+`security-standards`, `change-manager`, `brain`, `infraops-mcp-server` — with
+`project-standards` absent.
+
+**Consequences.**
+
+- **The "until that ships" consequence, in both the original and amendment 1, is discharged.**
+  No sweep reports a `runner.caller` violation that is a decision rather than a defect.
+- `_declared_non_target` also closed the inverse this ADR never named: **a repository that
+  declares itself a non-target while still hosting a caller stays a `violation`**, because it is
+  dispatchable against its own declaration. A declaration may turn a violation into
+  `not-applicable`; it may never turn a failure into a pass. **This is where decision 2's
+  "never `violation`" is narrower than it reads**, and the refinement is right: a declaration is
+  not a way to opt out of being dispatchable, only a way to say that not being dispatchable is
+  intended. Note it describes a state no repository has yet occupied — `factory_target:` did not
+  exist before 2026-08-17, and for the ten days between the amendments `project-standards` hosting
+  a caller was the *correct* state under amendment 1. The contradiction it guards is available only
+  in retrospect.
+- **Criterion #2's arithmetic changed shape, not just value, and this amendment deliberately
+  supplies no new count.** `not-applicable` satisfies admission
+  (`ADMISSION_SATISFYING = (pass, not-applicable)`), so a declared non-target is admission-clean
+  *and* out of the factory's reach. "6 of 8" and "7 of 8" were both proxies for how many
+  repositories the factory could reach; that is now a separate question with a separate answer,
+  and the answer to it is **five of the eight candidates**, measured above. Do not read that as
+  6 → 7 → 5: the earlier figures counted admission-clean repositories, and the eight include
+  `orchestrator`, which is admission-clean and structurally undispatchable. Reach was never 6 or 7.
+  "8 of 8 is not a goal" was always about reach, and it stands. No sweep was re-run for this
+  amendment.
+- The implementation note is closed **for the kit**. What remains open is a different consumer
+  the note did not contemplate: the orchestrator has no checkout, so a repo-local declaration
+  cannot reach *dispatch admission*, which still consults a hand-maintained environment variable.
+  That is the third of the disagreeing answers, and it is tracked as a programme decision rather
+  than here. **One open question rests on the superseded reading and should be re-read before it is
+  ruled on:** ADR-0030 §2's unratified enrolment rule weighs "ADR-0015's mechanism has never been
+  built, so this sweep would have had to invent it." It had shipped three days before that was
+  written. The counterweight survives in a narrower form — what is unbuilt is the consumer with no
+  checkout — but it is not the one recorded there.
+
+**On the prediction, because the record disagrees with itself.**
+
+The original says a standing violation *"invites some future session to helpfully resolve it by
+adding a caller, which decides the scope question by satisfying a checklist."* Something close to
+that happened on 2026-08-07, and the estate's two accounts of it do not agree. Both are recorded
+here so the next reader does not have to re-derive them.
+
+- **The later account** — `project-standards#23`'s body, since repeated in the orchestrator's
+  `CLAUDE.md` — is that the caller *"was added on 2026-08-07 (`6aeff6f`) by an onboarding sweep
+  that did not check the decision."*
+- **The artifacts do not support "did not check".** `6aeff6f`'s own message (11:51:34-04:00)
+  names this ADR, distinguishes its two exclusions, reverses one and explicitly leaves the other,
+  and says *"Devon made the scope choice differently on 2026-08-07, which is what the ADR
+  anticipated."* Amendment 1 was committed eight minutes later and quotes his reasoning. The
+  decision was read, and the reversal was ratified.
+- **What the artifacts do support is the pressure this ADR named.** `8de11eb`'s message records
+  the occasion: Devon added five repositories to
+  `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` that day, and *"four needed only the
+  allowlist entry; project-standards needed a caller workflow too."* The repository was carried
+  in on a batch, and the caller followed from the batch rather than from a fresh scope decision.
+
+So the mechanism was momentum rather than an unread checklist — a weaker claim than the later
+account and a stronger one than nothing. **Read it as an argument for decision 2, not against
+it.** For those ten days every readiness document anyone consulted showed a defect where a
+decision had been made, and the cheapest way to clear a defect is to satisfy it. That this
+particular reversal was consulted and ratified is what kept it honest; nothing in the mechanism
+required that, which is the whole reason the declaration had to be built.
