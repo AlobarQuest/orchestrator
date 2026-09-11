@@ -5036,6 +5036,43 @@ style of that module.
   nothing else. **When you cannot reproduce locally, stop trying and say so** — a local green that
   does not discriminate is not weak evidence, it is none.
 
+- **A TOOL POLICY THAT GATES WRITES AND NOT READS IS NOT A CONFINEMENT — and the push credential
+  was sitting in the tree the coding agent was pointed at.** Found 2026-09-10, fixed the same day,
+  closed 2026-09-11.
+  `factory-runner.yml` set **`persist-credentials: true` explicitly** — a choice, not a default —
+  passing `secrets.FACTORY_PR_TOKEN` as `actions/checkout`'s `token`. At the pinned action revision
+  that writes the credential to `$RUNNER_TEMP/git-credentials-<uuid>.config`, included from the
+  checkout's `.git/config`: same uid as the agent, present for the whole coding phase. The token is
+  a fine-grained PAT with write access to eight repositories.
+  **The policy could not stop it, and had already half-recognised why.** `command_policy.py`
+  registers hooks for **`Bash` and `Edit` only**, and its own refusal text points the agent at the
+  ungated `Read`/`Grep`/`Glob`. The Edit gate refuses paths inside `.git/` — *"Edit path is inside
+  checkout git metadata"* — so `.git/` was identified as sensitive and protected against WRITING
+  while left open to READING. **Whenever a policy names a path as sensitive, ask which verbs it
+  names it for.**
+  **THE FIX IS TWO HALVES AND THEY MUST SHIP TOGETHER.** `persist-credentials: false` ALONE BREAKS
+  THE PUSH: `cli.py`'s finalize was a bare `_run_command(["git", "push", …])` with no token and no
+  helper, depending entirely on the persisted config. Finalize now authenticates from the
+  environment it already had, via `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0` on
+  that one subprocess — **never argv**, which is visible in `ps` to anything on the runner, and
+  never a file. `gh` was unaffected throughout: it reads `GITHUB_TOKEN` from the environment
+  natively and never used the persisted config.
+  **A SECURITY FIX IN THE REUSABLE WORKFLOW IS NOT CLOSED WHEN IT MERGES.** Callers pin the
+  workflow by SHA and the CLI installs at that same SHA, so a caller on the old pin keeps the old
+  behaviour — correct, and it means `factory-runner#75` (`932571f`) was merged and INERT for a day.
+  It closed only when `RECOMMENDED_CALLER_PIN` and all six callers advanced. Budget the pin advance
+  as part of the fix, not as follow-up.
+  **`runner.caller` requires EXACT equality** (`used != pin`) and sits in `ADMISSION_CHECKS`, so
+  there is **no ordering of that advance that avoids a violation window** — only a choice of how
+  long it lasts and which side is red. Measured 2026-09-11: six callers then the pin, seven squash
+  merges, **33 seconds**.
+  **AND THE ERROR WORTH CARRYING IS HQ'S.** An assessment put the credential in `$RUNNER_TEMP`. HQ
+  read `git-auth-helper.ts` at the pinned SHA, saw the `http.<origin>/.extraheader` mechanism, and
+  "corrected" it to `.git/config` — confidently, in a report, calling the correction *"materially
+  worse"*. The assessment was right. **Reading how a mechanism works in source is not reading what
+  a version does with it**; v7.0.1 writes a separate config file and includes it. The exposure was
+  identical either way, which is exactly why the wrong correction survived being made.
+
 - **A FAILING JOB MAY SAY IN ITS OWN LOG THAT IT IS NOT A FAILURE — read it before treating a red
   as a finding.** `claude-octopus`' `Integration Tests` is a GATE job, not a test run:
   `Integration Tests did not run: blocked by Unit Tests (failure), not an integration failure.` The
