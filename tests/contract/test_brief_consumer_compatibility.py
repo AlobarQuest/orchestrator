@@ -1,14 +1,21 @@
 """WS-P2.23 part B: the offline half of the pull-request gate that refuses brief drift.
 
 `scripts/check_brief_consumer_compatibility.py` reads the consumer's brief model at the
-revision this repo's caller workflow pins and refuses a change that would serve a field
-that revision does not declare. The reading is over the network, so it runs as its own
+revision factory-runner recommends to every caller, and refuses a change that would serve a
+field that revision does not declare. The reading is over the network, so it runs as its own
 job rather than in the suite -- but everything it decides WITH is pure, and pure is what
 gets tested here:
 
 - the field parser agrees with pydantic, for the model that is importable on this side;
-- the pin reader accepts only an immutable, fully-resolved revision;
 - the comparison actually reports a served-but-undeclared field.
+
+- the revision reader refuses anything but an immutable, fully-resolved commit.
+
+That last reader CHANGED on 2026-09-11 and its cases moved here with it. It used to parse
+this repository's own caller workflow; ADR-0015's amendment declared the repository
+`factory_target = false` and deleted that file, so the script reads factory-runner's
+`RECOMMENDED_CALLER_PIN` instead -- which the capability twin was already reading, and whose
+cases now live here beside the reader rather than beside a second importer of it.
 
 The last one matters most. A guard built to catch a failure is worth nothing until it has
 been shown to fire, and this guard replaces a rule that was prose from WS-P2.12 to
@@ -64,29 +71,39 @@ def test_a_renamed_or_moved_consumer_model_is_loud() -> None:
         check.declared_fields("class SomethingElse(BaseModel):\n    x: int\n", "RunnerBrief")
 
 
-def test_the_real_caller_workflow_pins_an_immutable_revision() -> None:
-    repo, workflow, ref = check.pinned_consumer(check.CALLER_WORKFLOW.read_text())
+def test_a_recommendation_that_is_not_an_immutable_revision_is_loud(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RECOMMENDED_CALLER_PIN is read as a revision, so a branch name in it decides nothing.
 
-    assert repo == "AlobarQuest/factory-runner"
-    assert workflow == ".github/workflows/factory-runner.yml"
-    assert len(ref) == 40
-
-
-@pytest.mark.parametrize(
-    "uses",
-    [
-        "AlobarQuest/factory-runner/.github/workflows/factory-runner.yml@main",
-        "AlobarQuest/factory-runner/.github/workflows/factory-runner.yml@v1",
-        "AlobarQuest/factory-runner/.github/workflows/factory-runner.yml@b804912",
-    ],
-    ids=["branch", "tag", "short-sha"],
-)
-def test_a_mutable_pin_leaves_nothing_to_check_against(uses: str) -> None:
-    """`@main` resolves to different code tomorrow, so a compatibility answer would expire."""
-    workflow = f"jobs:\n  runner:\n    uses: {uses}\n"
+    A mutable ref resolves to different code tomorrow, so a compatibility answer against it
+    would expire -- the property this check's whole value rests on.
+    """
+    monkeypatch.setattr(check, "fetch", lambda *_: "main\n")
 
     with pytest.raises(check.Unresolvable, match="full 40-character commit"):
-        check.pinned_consumer(workflow)
+        check.recommended_revision()
+
+
+def test_the_recommendation_is_read_from_the_default_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deliberately mutable, unlike everything else this gate reads.
+
+    The recommendation is the estate's current answer to "what should every caller be pinned
+    to", so pinning THAT to a revision would freeze the question. Whitespace is stripped: the
+    file carries a trailing newline.
+    """
+    calls: list[tuple[str, ...]] = []
+
+    def record(*args: str) -> str:
+        calls.append(args)
+        return "f" * 40 + "\n"
+
+    monkeypatch.setattr(check, "fetch", record)
+
+    assert check.recommended_revision() == "f" * 40
+    assert calls == [("AlobarQuest/factory-runner", "RECOMMENDED_CALLER_PIN", "HEAD")]
 
 
 def test_a_consumer_that_stopped_installing_its_own_commit_is_loud() -> None:
@@ -107,7 +124,7 @@ def test_a_consumer_that_stopped_installing_its_own_commit_is_loud() -> None:
         check.assert_the_workflow_installs_its_own_commit(literal, "0" * 40)
 
 
-def test_the_comparison_names_every_field_the_pinned_consumer_cannot_use() -> None:
+def test_the_comparison_names_every_field_the_recommended_consumer_cannot_use() -> None:
     """The guard shown firing, on the exact shape of the 2026-07-30 outage.
 
     The orchestrator declares a field; the pinned consumer does not. Under the old regime
@@ -185,8 +202,9 @@ def test_a_failure_during_the_body_read_is_unresolvable(
 
 def test_the_ref_this_check_sends_cannot_carry_a_query_separator() -> None:
     """Named rather than fixed. An unquoted ref CAN truncate a query string -- `#` and `&` are both
-    legal in a branch name -- but `pinned_consumer` refuses anything that is not a full 40-character
-    hex commit before a ref ever reaches the URL, so the input this would guard cannot occur.
+    legal in a branch name -- but `recommended_revision` refuses anything that is not a full
+    40-character hex commit before a ref reaches the URL, so the input this would guard cannot
+    occur.
     """
     assert check.FULL_SHA.pattern == r"^[0-9a-f]{40}$"
     for hostile in ("hotfix#2", "a&b=c", "main"):

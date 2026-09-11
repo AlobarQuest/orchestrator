@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Refuse a pull request that serves a runner-brief key the pinned consumer cannot use.
+"""Refuse a pull request that serves a runner-brief key the recommended consumer cannot use.
 
 WS-P2.23 part B. The orchestrator deploys continuously; the worker that reads its runner
-brief is SHA-pinned by this repository's own caller workflow. On 2026-07-30 the
+brief is SHA-pinned by every target repository's caller workflow. On 2026-07-30 the
 orchestrator began serving an `enrichment` key against a consumer that had never heard of
 it, and every run in the estate died at brief-parse for a full day. Nothing noticed: the
 conformance check compares SHAs, and a SHA tells you nothing about whether the revision
@@ -13,11 +13,22 @@ and enforced by nothing. This is the enforcement, and it belongs in the pull-req
 because the pull request that adds the field is the thing that must not merge. A later
 release check would be a report on a decision already taken.
 
+WHICH REVISION IS VETTED, and why this repository no longer answers that question from a
+file of its own. Until ADR-0015's amendment of 2026-09-11 the answer came from this
+repository's own caller workflow, which is gone: this repository declares
+`factory_target = false` and hosts no caller. That file was never the source of the value
+in any case -- it was a copy of `RECOMMENDED_CALLER_PIN`, which factory-runner declares and
+every target repository's caller is held to by the conformance kit's `runner.caller` check.
+Reading the recommendation directly removes a hop rather than changing an answer: the two
+agreed at the moment of the change, and the sibling capability check had already been
+reading both and reporting them as one line whenever they coincided.
+
 What it does, once the consumer's reusable workflow installs its own commit (part A):
 
-1. read the pinned revision from this repo's caller workflow -- that SHA is now the
-   consumer revision, because the workflow at X installs the CLI at X;
-2. assert that premise still holds at that revision, rather than trusting it;
+1. read the revision every caller in the estate is expected to be pinned to, from the
+   consumer's own `RECOMMENDED_CALLER_PIN`;
+2. assert that the workflow at that revision still installs its own commit -- so the
+   revision named is the CLI revision a run would execute -- rather than trusting it;
 3. read the consumer's brief model at that revision and take its declared field names;
 4. require every field this repo's brief response declares to be one of them.
 
@@ -27,11 +38,15 @@ if this check asked "would it parse?" then part C would silently switch it off, 
 ordering rule would go back to being prose. A field the consumer does not declare is a
 field it cannot use, which is a feature that does not work.
 
+Residual, stated rather than papered over, and it is the same one the two sibling checks
+carry: a target repository whose caller has drifted off the recommendation runs a revision
+this never read. `runner.caller` is what sees that, per repository.
+
 Usage:
     python3 scripts/check_brief_consumer_compatibility.py
 
-Exit 0: every served field is declared by the pinned consumer. Exit 1: at least one is not,
-or the pin could not be resolved.
+Exit 0: every served field is declared by the recommended consumer. Exit 1: at least one is
+not, or the revision could not be resolved.
 """
 
 from __future__ import annotations
@@ -48,15 +63,14 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CALLER_WORKFLOW = REPO_ROOT / ".github/workflows/factory-runner-pilot.yml"
 SERVED_MODEL_SOURCE = REPO_ROOT / "src/orchestrator/api/schemas.py"
 SERVED_MODEL = "RunnerBriefResponse"
+CONSUMER_REPOSITORY = "AlobarQuest/factory-runner"
 CONSUMER_MODEL_PATH = "src/factory_runner/models.py"
 CONSUMER_MODEL = "RunnerBrief"
 CONSUMER_WORKFLOW_PATH = ".github/workflows/factory-runner.yml"
+RECOMMENDED_PIN_PATH = "RECOMMENDED_CALLER_PIN"
 
-# owner/repo/.github/workflows/<file>@<40-hex>
-USES = re.compile(r"^(?P<repo>[\w.-]+/[\w.-]+)/(?P<workflow>\.github/workflows/\S+?)@(?P<ref>\S+)$")
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -64,26 +78,21 @@ class Unresolvable(RuntimeError):
     """The check could not establish what it needed to compare. Never a silent pass."""
 
 
-def pinned_consumer(workflow_text: str) -> tuple[str, str, str]:
-    """The repository, workflow path and revision this repo's caller is pinned to."""
-    document = yaml.safe_load(workflow_text)
-    uses = [job["uses"] for job in document.get("jobs", {}).values() if "uses" in job]
-    if len(uses) != 1:
-        raise Unresolvable(
-            f"expected exactly one reusable-workflow `uses:` in {CALLER_WORKFLOW.name}, "
-            f"found {len(uses)}: {uses}"
-        )
-    match = USES.match(uses[0])
-    if match is None:
-        raise Unresolvable(f"cannot read a pinned reusable workflow from {uses[0]!r}")
-    ref = match["ref"]
+def recommended_revision(repo: str = CONSUMER_REPOSITORY) -> str:
+    """The revision every caller in the estate is expected to be pinned to.
+
+    Read from the consumer's default branch, which is where the estate declares it -- this
+    repository hosts no caller of its own (ADR-0015, 2026-09-11) and recovering the value
+    from one would have been indirection around a number declared elsewhere.
+    """
+    ref = fetch(repo, RECOMMENDED_PIN_PATH, "HEAD").strip()
     if not FULL_SHA.match(ref):
         raise Unresolvable(
-            f"the caller is pinned to {ref!r}, which is not a full 40-character commit. "
-            "A branch or tag is mutable, so there is no revision to check compatibility "
-            "against."
+            f"{repo}'s {RECOMMENDED_PIN_PATH} reads {ref!r}, which is not a full 40-character "
+            "commit, so there is no revision to check compatibility against. A branch or tag "
+            "is mutable, and an answer about one would expire."
         )
-    return match["repo"], match["workflow"], ref
+    return ref
 
 
 def fetch(repo: str, path: str, ref: str) -> str:
@@ -148,7 +157,7 @@ def declared_fields(source: str, class_name: str) -> set[str]:
 
 
 def assert_the_workflow_installs_its_own_commit(workflow_text: str, ref: str) -> None:
-    """The pin is the consumer revision only because the workflow installs itself.
+    """The recommendation is the consumer revision only because the workflow installs itself.
 
     That is what makes this one lookup instead of two. Asserting it costs one GET and
     converts a silent wrong answer -- vetting a revision the run would never use -- into a
@@ -171,8 +180,9 @@ def assert_the_workflow_installs_its_own_commit(workflow_text: str, ref: str) ->
 
 
 def main() -> int:
+    repo = CONSUMER_REPOSITORY
     try:
-        repo, workflow, ref = pinned_consumer(CALLER_WORKFLOW.read_text())
+        ref = recommended_revision(repo)
         assert_the_workflow_installs_its_own_commit(fetch(repo, CONSUMER_WORKFLOW_PATH, ref), ref)
         accepted = declared_fields(fetch(repo, CONSUMER_MODEL_PATH, ref), CONSUMER_MODEL)
     except Unresolvable as error:
@@ -182,19 +192,22 @@ def main() -> int:
     served = declared_fields(SERVED_MODEL_SOURCE.read_text(), SERVED_MODEL)
     undeclared = sorted(served - accepted)
 
-    print(f"consumer:  {repo}/{workflow}@{ref[:8]} -- {CONSUMER_MODEL} declares {len(accepted)}")
+    print(
+        f"consumer:  {repo}@{ref[:8]} (recommended to every caller) -- "
+        f"{CONSUMER_MODEL} declares {len(accepted)}"
+    )
     print(f"served:    {SERVED_MODEL} declares {len(served)}")
     if not undeclared:
         print(f"\nPASS: every served brief field is declared by {repo}@{ref[:8]}.")
         return 0
 
     print(
-        f"\nFAIL: {SERVED_MODEL} serves {len(undeclared)} field(s) the pinned consumer does "
-        f"not declare: {undeclared}\n\n"
+        f"\nFAIL: {SERVED_MODEL} serves {len(undeclared)} field(s) the recommended consumer "
+        f"does not declare: {undeclared}\n\n"
         f"The consumer at {repo}@{ref[:8]} cannot use them, so shipping this would add a "
         "field no worker reads.\n"
-        "Merge the field into the consumer first, then advance the pin in "
-        f"{CALLER_WORKFLOW.name}, then re-run.\n"
+        f"Merge the field into the consumer first, then advance {RECOMMENDED_PIN_PATH} and "
+        "every caller, then re-run.\n"
         "That ordering is not advice: it is the rule this check exists to enforce, and it "
         "was prose until it cost the estate a day of dead dispatches on 2026-07-30.",
         file=sys.stderr,

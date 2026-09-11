@@ -11,21 +11,25 @@ FORBIDDEN = (
     "deploy",
 )
 
-# factory-runner-pilot.yml and release-image.yml are deliberate, human-triggered
-# (workflow_dispatch) exceptions to the "no dispatch/deploy" guard: the former
-# invokes the factory runner against an approved work unit, the latter builds and
-# pushes a release image (its SECURITY_STANDARDS_DEPLOY_KEY secret name matches
-# "deploy" as a substring, and the actual runtime cutover stays a separate manual
-# step covered by tests/architecture/test_release_workflow.py's own no-deploy checks).
-# attest-exit-criteria.yml is a third, weaker exception: it is read-only (one unauthenticated
+# release-image.yml is a deliberate, human-triggered (workflow_dispatch) exception to the
+# "no dispatch/deploy" guard: it builds and pushes a release image (its
+# SECURITY_STANDARDS_DEPLOY_KEY secret name matches "deploy" as a substring, and the actual
+# runtime cutover stays a separate manual step covered by
+# tests/architecture/test_release_workflow.py's own no-deploy checks).
+# attest-exit-criteria.yml is a second, weaker exception: it is read-only (one unauthenticated
 # GET of production's public OpenAPI document) and carries workflow_dispatch so the guard can
 # be re-run on demand after a production image swap. It merges nothing and writes nothing.
 # attest-wave-exit.yml (WS-P2.39) is the same weakest kind for the same reason: read-only,
 # one unauthenticated GET, workflow_dispatch so a wave bar can be re-attested on demand.
+#
+# `factory-runner-pilot.yml` was a fourth until 2026-09-11. ADR-0015's amendment declared this
+# repository `factory_target = false` and deleted the caller, so the exemption named a file
+# that no longer exists. It came out in the same commit rather than being left to rot: this
+# allowlist is a `continue`, so a stale entry is SILENT — it would never have reddened, and a
+# later reader would have taken it as evidence the repository is still dispatchable.
 MANUAL_DISPATCH_WORKFLOWS = {
     "attest-exit-criteria.yml",
     "attest-wave-exit.yml",
-    "factory-runner-pilot.yml",
     "release-image.yml",
 }
 

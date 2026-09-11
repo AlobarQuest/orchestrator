@@ -1,16 +1,22 @@
 """The offline half of the gate that refuses drift in the factory's pull request marking.
 
-`scripts/check_pr_title_marking_compatibility.py` reads factory-runner's own source at the pinned
-and recommended revisions and asks whether the title it stamps is still one `change_proposer` can
-read. The reading is over the network, so it runs as its own CI step -- but everything it decides
-WITH is pure, and pure is what gets tested here:
+`scripts/check_pr_title_marking_compatibility.py` reads factory-runner's own source at the
+revision recommended to every caller and asks whether the title it stamps is still one
+`change_proposer` can read. The reading is over the network, so it runs as its own CI step -- but
+everything it decides WITH is pure, and pure is what gets tested here:
 
 - the parser reads the consumer's real spelling, and the rendered title is recognised;
 - a moved format is refused, in every shape a move can take;
 - a title interpolating some OTHER identifier is LOUD rather than silently rendering a specimen
   the recogniser happens to match -- a package id is a UUID too, so this is the one drift that
   could pass while every real title carried the wrong value;
-- one revision moving the format is enough to refuse, even when the other is in step.
+- a revision that moved the format is NAMED, rather than folded into a bare refusal.
+
+It read a SECOND revision until 2026-09-11 -- the pin in this repository's own caller workflow.
+ADR-0015's amendment declared the repository `factory_target = false` and deleted that file, and
+the recommendation was always the load-bearing half: dispatch fires the caller workflow in the
+unit's OWN target repository, so the revision that runs is that repository's pin, which follows
+the recommendation.
 
 The specimen below is a byte copy of factory-runner's call. It exists to pin the PARSER, exactly
 as the brief twin pins its own against `RunnerBriefResponse` -- the live comparison against the
@@ -146,13 +152,19 @@ def test_the_parser_is_loud_when_the_f_string_interpolates_nothing() -> None:
         _rendered(CONSUMER_SPELLING.replace(_TITLE_LITERAL, 'f"SDS a pull request {1 + 1}"'))
 
 
-def test_one_revision_moving_the_format_is_enough_to_refuse() -> None:
-    """The reason two revisions are read at all: dispatch fires the caller workflow in the unit's
-    own target repository, so the recommended revision is the one that will actually run."""
+def test_a_revision_that_moved_the_format_is_NAMED() -> None:
+    """The refusal says WHICH revision moved, not merely that one did.
+
+    Kept keyed by revision after 2026-09-11 left only one to read, for the same reason the
+    capability twin keeps its own: the message a person acts on names the revision. Both
+    directions are asserted, so a helper that reported every revision -- or none -- is caught.
+    """
     good = f"SDS {check.SPECIMEN_UNIT_ID}: {check.SPECIMEN_TEXT}"
     bad = f"SDS-{check.SPECIMEN_UNIT_ID}: {check.SPECIMEN_TEXT}"
 
-    assert check.unreadable_revisions({"pinned": good, "recommended": bad}) == {"recommended": bad}
+    assert check.unreadable_revisions({"recommended": good}) == {}
+    assert check.unreadable_revisions({"recommended": bad}) == {"recommended": bad}
+    assert check.unreadable_revisions({"a": good, "b": bad}) == {"b": bad}
 
 
 def test_the_specimen_is_a_valid_work_unit_identifier() -> None:

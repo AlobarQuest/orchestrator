@@ -3483,6 +3483,21 @@ style of that module.
   repository all three agreed on. `orchestrator` declares itself a target and cannot be dispatched
   to; `project-standards` was **deliberately excluded by ADR-0015 on 2026-08-04** and was allowlisted
   and given a caller on **2026-08-07** — by HQ, in commit `6aeff6f`, three days later.
+  **THIRD CORRECTION, 2026-09-11: "`orchestrator` … cannot be dispatched to" IS FALSE, and it was
+  false when written.** Its caller fired **22 times** (20 by `alobar-sds-dispatch[bot]`, 2 by
+  `AlobarQuest`), **four concluded `success`**, and unit `7a81c2c2-0835-5bba-a308-36e868719b62`
+  opened `orchestrator#135` — merged `a62f9637` on 2026-08-03, and cited twice as the Wave-3 exit
+  manifest's dependency-update proof. The estate carried the same capability claim in
+  `run-activation-sweep.sh`, in ADR-0030's enrolment paragraph and in ADR-0015's own amendment-2
+  consequence; all four are corrected together. **Devon ruled 2026-09-11 that `orchestrator` is
+  `factory_target = false` on the ground of DEFERRAL** — *"I had thought we would build out the
+  automation for SDS itself's updates later"* — and the caller was deleted with the declaration
+  (ADR-0015 amendment 3). Do not reach for factory-runner's self-reference argument here: that one
+  is structural (the harness ships through itself), and production runs a **built image**, so the
+  orchestrator that dispatches a change is not the tree being changed. **The fourth answer is now
+  `factory-target.toml` at a repository's root**, which superseded the `PROJECT.md` frontmatter this
+  bullet's own correction below names; both `src/pin_watcher/github.py` and
+  `src/revision_watcher/subjects.py` still cite this bullet for "four disagreeing answers".
   **CORRECTED 2026-09-10 ON TWO POINTS, both of which this bullet got wrong in the direction that
   makes the estate look worse than it is.** (1) This said the caller was added *"in a sweep that
   never consulted the decision sitting in the repository it was working in."* `6aeff6f`'s own

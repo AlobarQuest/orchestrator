@@ -47,10 +47,15 @@ concurrency:
 
 jobs:
   # Separate from Quality on purpose. It answers a different question -- can the consumer
-  # this repo is pinned to actually use the brief this branch would serve? -- and it must
-  # answer it on the pull request that adds the field, not on a later release. It needs no
-  # database and no dependency install, so it also reports in seconds rather than behind
-  # the full gate. A red here is unambiguous: merge the consumer first.
+  # the estate recommends to every caller can actually use the brief this branch would
+  # serve? -- and it must answer it on the pull request that adds the field, not on a later
+  # release. It needs no database and no dependency install, so it also reports in seconds
+  # rather than behind the full gate. A red here is unambiguous: merge the consumer first.
+  #
+  # THE REVISION IS READ FROM factory-runner's RECOMMENDED_CALLER_PIN, not from a caller
+  # workflow here. This repository hosted one until 2026-09-11, when ADR-0015's amendment
+  # declared it `factory_target = false` and deleted it; the pin it carried was a copy of
+  # that recommendation, so the three steps below lost a hop rather than an answer.
   consumer-compatibility:
     name: Runner consumer compatibility
     runs-on: ubuntu-latest
@@ -76,8 +81,8 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen
 
-      # Read-only: two GETs of a public repository at the pinned revision.
-      - name: Check served brief fields against the pinned consumer
+      # Read-only: three GETs of a public repository -- the recommendation, and two files at it.
+      - name: Check served brief fields against the recommended consumer
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python scripts/check_brief_consumer_compatibility.py
@@ -91,10 +96,10 @@ jobs:
       # covering both surfaces is the cost; renaming it and the protection rule together is
       # a follow-up, not something to do halfway.
       #
-      # Invoked as a MODULE, unlike its sibling above, so that it can import the pin reader,
-      # the fetcher and the premise assertion from it. Two readers of one pin could vet two
-      # different revisions.
-      - name: Check declared capabilities against the pinned consumer
+      # Invoked as a MODULE, unlike its sibling above, so that it can import the revision
+      # reader, the fetcher and the premise assertion from it. Two readers of one value could
+      # vet two different revisions.
+      - name: Check declared capabilities against the recommended consumer
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python -m scripts.check_capability_consumer_compatibility
@@ -116,7 +121,7 @@ jobs:
       # vocabularies and separate allowlists, and between them the bare words for shipping and
       # for the runner's own repository name are both refused HERE, in prose, whatever a comment
       # means by them. Reword; never take an exemption.
-      - name: Check the factory's pull request marking against the pinned consumer
+      - name: Check the factory's pull request marking against the recommended consumer
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python -m scripts.check_pr_title_marking_compatibility
