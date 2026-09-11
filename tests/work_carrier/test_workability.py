@@ -554,8 +554,14 @@ def test_a_declaration_missing_either_key_or_carrying_the_wrong_type_cannot_be_r
     assert parse(text).target is None
 
 
-def test_an_absent_declaration_is_an_answer_and_says_a_missing_repository_looks_the_same() -> None:
-    """GitHub answers 404 for a repository that does not exist and for a file that is not in one."""
+def test_an_absent_declaration_is_an_answer_and_names_what_else_answers_the_same() -> None:
+    """GitHub answers 404 three ways, and this is the one branch that returns a definite NO.
+
+    A definite NO decides through every UNKNOWN beside it, so the two states that are
+    indistinguishable from "has not opted in" -- a repository that does not exist, and a
+    private one this credential may not read -- have to be named in the line a person
+    reads, or a permission fault is served as a refusal with nothing saying so.
+    """
     import httpx
 
     source = GitHubDeclarationSource(
@@ -565,7 +571,9 @@ def test_an_absent_declaration_is_an_answer_and_says_a_missing_repository_looks_
     )
     answer = source.declaration("AlobarQuest/brain")
     assert answer.target is False
-    assert "does not exist answers the same way" in answer.detail
+    assert "does not exist" in answer.detail
+    assert "may not read" in answer.detail
+    assert "both answer the same way" in answer.detail
 
 
 @pytest.mark.parametrize("status", [401, 403, 429, 500])
@@ -656,6 +664,59 @@ def test_a_credential_in_the_environment_is_never_printed(monkeypatch: pytest.Mo
     out = io.StringIO()
     report([], out, portfolio=portfolio())
     assert "ghp-not-a-real-secret-0123456789" not in out.getvalue()
+
+
+def test_a_credential_that_makes_the_reader_raise_is_never_printed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ASCII case above cannot see this, and it is the one that reaches a log.
+
+    A token carrying a non-ASCII byte makes `httpx` raise while it encodes the
+    `Authorization` header -- inside the report's own broad guard, whose handler is
+    therefore holding an exception whose repr is `Bearer <token>` verbatim. The control
+    asserts the FAILURE PATH was taken as well as that the value is absent, or a report
+    that quietly succeeded would satisfy it.
+    """
+    secret = "ghp-not-a-real-secret-\u00ff\u0100"
+    monkeypatch.setenv("WORK_CARRIER_GITHUB_TOKEN", secret)
+    out = io.StringIO()
+    report([("a record", payload(TARGET))], out, portfolio=portfolio(project()))
+    text = out.getvalue()
+    assert "failed and changed nothing" in text, text
+    assert secret not in text
+    assert "ghp-not-a-real-secret" not in text
+    assert "Bearer" not in text
+
+
+def test_one_unjudgeable_subject_does_not_silence_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A guard one level too high makes the PASS total and leaves the REPORT partial.
+
+    The reader raises for one repository and answers for the other, so a guard wrapped
+    round the whole loop prints a single failure line and drops the second subject
+    entirely -- indistinguishable, to a reader, from a queue that was shorter. Both
+    halves are asserted: the failure is named AND the survivor is still judged.
+    """
+
+    class _RaisesFor:
+        def declaration(self, slug: str) -> Declaration:
+            if slug == "AlobarQuest/broken":
+                raise RuntimeError("the reader is broken")
+            return Declaration(True, "factory-target.toml declares factory_target = true")
+
+    out = io.StringIO()
+    report(
+        [("first", payload("AlobarQuest/broken")), ("second", payload(TARGET))],
+        out,
+        source=_RaisesFor(),
+        portfolio=portfolio(project()),
+    )
+    text = out.getvalue()
+    assert "judging first failed and changed nothing" in text, text
+    assert "RuntimeError" in text, text
+    assert WOULD_CARRY in text, text
+    assert "second" in text, text
 
 
 # -------------------------------------------------------------------------------------

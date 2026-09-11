@@ -301,7 +301,20 @@ def test_a_repository_name_this_program_may_not_ask_about_never_reaches_the_tran
         base_url="https://example.invalid",
         transport=httpx.MockTransport(handler),
     )
-    for refused in ("AlobarQuest/brain/../../secrets", "brain", "AlobarQuest/brain?ref=main", ""):
+    # `../..` IS THE CASE THAT MATTERS and every other entry here would pass
+    # without it. `.` is legal in a repository name, so the path pattern matches
+    # the segment `..`; the composed string is admitted and the path `httpx`
+    # actually builds is `/contents/factory-target.toml`, outside the route. The
+    # guard reads the built request for exactly this, so a control that only
+    # feeds it names with too many segments proves the wrong property.
+    for refused in (
+        "../..",
+        "a/..",
+        "AlobarQuest/brain/../../secrets",
+        "brain",
+        "AlobarQuest/brain?ref=main",
+        "",
+    ):
         answer = source.declaration(refused)
         assert answer.target is None, refused
         assert "may ask about" in answer.detail, refused

@@ -395,8 +395,15 @@ def report(
             opened = source = from_environment()
         _report(subjects, out, source, portfolio)
     except Exception as error:  # noqa: BLE001 - see the docstring: it may not raise
+        # THE TYPE NAME ONLY, for the reason `declaration.py` gives one field
+        # over: the credential is read inside this guard and reaches an
+        # exception's repr by way of the client's own headers, and this stream is
+        # a log file nobody is watching when it is written. Measured: a
+        # non-ASCII `WORK_CARRIER_GITHUB_TOKEN` makes client construction raise a
+        # `UnicodeEncodeError` whose repr carries `Bearer <token>` verbatim.
         print(
-            f"[WORKABILITY] the workability report failed and changed nothing: {error!r}",
+            "[WORKABILITY] the workability report failed and changed nothing: "
+            f"{type(error).__name__}",
             file=out,
         )
     finally:
@@ -421,6 +428,20 @@ def _report(
         return
 
     for label, payload in subjects:
-        repository = target_repository(payload)
-        verdict = assess(repository, _declaration_for(repository, source), loaded)
-        _print_one(label, verdict, out)
+        # PER SUBJECT, because the outer guard is one level too high on its own:
+        # it makes the PASS total and leaves the REPORT partial, so a defect
+        # reading subject three prints one line and silently drops the verdicts
+        # for four through ten. A reader cannot tell those missing rows from a
+        # queue that was shorter than it was. The outer guard still stands above
+        # this one -- it is what covers the header and the capability source, and
+        # it is what the exit-code argument rests on.
+        try:
+            repository = target_repository(payload)
+            verdict = assess(repository, _declaration_for(repository, source), loaded)
+            _print_one(label, verdict, out)
+        except Exception as error:  # noqa: BLE001 - the type name only, as above
+            print(
+                f"{_tag(_HEADER)} judging {label} failed and changed nothing: "
+                f"{type(error).__name__}",
+                file=out,
+            )

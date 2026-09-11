@@ -59,9 +59,19 @@ TOKEN_ENV: Final = "WORK_CARRIER_GITHUB_TOKEN"
 # path -- and the second is then UNFALSIFIABLE, because a name the first admits
 # always composes a path the second admits. A clause nothing can falsify sitting
 # beside clauses that can is how a test suite comes to report a green it did not
-# earn, so there is one predicate and the composed path is what it reads: a name
-# carrying a traversal segment, a query or a second slash fails here, which is
-# the same refusal one step later and is exercised by every case that matters.
+# earn, so there is one predicate, and what it reads is the path the TRANSPORT
+# WILL SEND rather than the one this module composed.
+#
+# **THAT DISTINCTION IS THE WHOLE GUARD, and reading the composed string instead
+# is a hole rather than a shortcut.** `.` is a legal character in a repository
+# name (`.github`, `foo.bar`), so `[A-Za-z0-9._-]+` matches the segment `..` --
+# and `httpx` resolves dot-segments when it builds the request. Measured:
+# `../..` composes `/repos/../../contents/factory-target.toml`, which this
+# pattern ADMITS, and leaves as `/contents/factory-target.toml`, which it does
+# not. So the composed path and the sent path are different strings and only one
+# of them is the request; checking the built request closes the class rather than
+# the instance. A name carrying a traversal segment, a query, a fragment or a
+# second slash all normalise to something this refuses.
 _ALLOWED = re.compile(rf"^/repos/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/contents/{re.escape(FILENAME)}$")
 
 
@@ -170,14 +180,23 @@ class GitHubDeclarationSource:
         finding about one record and must not take the pass down with it.
         """
         path = f"/repos/{slug}/contents/{FILENAME}"
-        if not is_allowed(path):
+        try:
+            # BUILD IT, THEN JUDGE WHAT WAS BUILT. The request is what reaches
+            # the network, and its path is not always the string composed above
+            # -- see the note on `_ALLOWED`. Building raises for the same three
+            # families sending does, so it is guarded the same way and nothing
+            # has left this process at this point.
+            request = self._client.build_request("GET", path)
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+            return Declaration(None, f"github is unreachable for {slug}: {type(error).__name__}")
+        if not is_allowed(request.url.path):
             return Declaration(
                 None,
                 f"{slug!r} is not a repository name this program may ask about; it reads "
                 f"one route, /repos/<owner>/<repo>/contents/{FILENAME}",
             )
         try:
-            response = self._client.get(path)
+            response = self._client.send(request)
         except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
             # Three families, because `httpx` raises three: an `InvalidURL` and
             # an `HTTPError` are the documented two, and IDNA encoding of a
@@ -188,12 +207,21 @@ class GitHubDeclarationSource:
             return Declaration(None, f"github is unreachable for {slug}: {type(error).__name__}")
         if response.status_code == 404:
             # ABSENCE IS AN ANSWER (ADR-0015): a repository that has said nothing
-            # has not opted in. A repository that does not exist answers
-            # identically, which the report names rather than hides.
+            # has not opted in. TWO OTHER STATES ANSWER IDENTICALLY and the
+            # detail names both rather than hiding them, because this is the one
+            # branch that returns a definite `False` and a definite `False`
+            # decides through every UNKNOWN beside it: GitHub answers 404 for a
+            # repository that does not exist, and 404 rather than 403 for a
+            # private one this credential may not read. The first is a typo and
+            # shows up again as a lookup miss in the capability data; the second
+            # would be a refusal manufactured from a permission fault, so a
+            # reader who sees this line on a repository he believes exists should
+            # check the credential's reach before believing the verdict.
             return Declaration(
                 False,
                 f"no {FILENAME} on {slug}'s default branch, so it has not opted in "
-                "-- a repository that does not exist answers the same way",
+                "-- a repository that does not exist, and a private one this credential "
+                "may not read, both answer the same way",
             )
         if response.status_code >= 400:
             return Declaration(
