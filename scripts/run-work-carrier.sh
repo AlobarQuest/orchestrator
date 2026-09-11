@@ -55,6 +55,13 @@
 #   3  something was found -- a record that could not be prepared, one the orchestrator refused
 #      to register, or one whose retirement change-manager refused. Each needs a person.
 #
+# IT ALSO REPORTS WHETHER SDS SHOULD WORK ON EACH TARGET REPOSITORY AT ALL, and REPORTS ONLY. A
+# repository is workable when it opts in (`factory-target.toml`), the conformance kit says it is
+# capable, and the permissions are sufficient. The lines that block prints change nothing: no carry
+# is skipped, no exit code moves, and nothing is registered or not registered because of them. It
+# is there so a person can see what a refusing version would refuse across the live queue before
+# anything refuses on it.
+#
 # A CARRIED RECORD IS NOT A FINDING, and neither is one merely prepared on a pass that was not
 # asked to register, nor one the carry finds it has ALREADY carried. Making any of them one
 # would leave this control permanently red for doing its job -- which this estate has now
@@ -206,6 +213,22 @@ else
   fi
 fi
 export WORK_WATCHER_ORCHESTRATOR_TOKEN="${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}"
+
+# THE DECLARATION CREDENTIAL, and it is NOT from BWS -- it is `gh auth token`, the same source
+# the ledger, the deploy watcher and the change proposer use for their GitHub reads. The carry's
+# workability report asks each target repository for its own `factory-target.toml` (ADR-0015), on
+# GitHub rather than in the checkout: nothing pulls the working trees on this machine, so seven of
+# eight did not carry the file hours after every declaration had landed, and a reader that took the
+# checkout's word would report every repository that HAS opted in as one that has not.
+#
+# ABSENT IS NOT FATAL, deliberately, and that is the difference from the blocks above. This header
+# promises the bare invocation works on any machine; a missing GitHub credential makes the report
+# say "could not tell" for every repository, which is honest and is not a refusal. So no FATAL
+# here, and `gh` not being installed must not take the pass down either.
+if [ -z "${WORK_CARRIER_GITHUB_TOKEN:-}" ]; then
+  WORK_CARRIER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
+  export WORK_CARRIER_GITHUB_TOKEN
+fi
 
 export PATH="$REPO_ROOT/.venv/bin:$PATH"
 

@@ -37,6 +37,8 @@ from pathlib import Path
 import pytest
 
 from work_carrier.change_manager import ForbiddenEndpointError, HttpWorkRecordSource, is_allowed
+from work_carrier.declaration import GitHubDeclarationSource
+from work_carrier.declaration import is_allowed as is_allowed_declaration
 from work_carrier.orchestrator_client import ForbiddenEndpointError as ForbiddenWriteError
 from work_carrier.orchestrator_client import (
     OrchestratorClient,
@@ -61,6 +63,9 @@ ALLOWED_TOP_LEVEL = {
     "re",
     "subprocess",
     "sys",
+    # The declaration reader's own age report and the TOML the repository declares it in.
+    "time",
+    "tomllib",
     "typing",
     "work_carrier",
 }
@@ -238,3 +243,83 @@ def test_a_forbidden_path_never_reaches_the_transport() -> None:
     with pytest.raises(ForbiddenEndpointError):
         source._get("/api/items/1/approve", {})
     assert seen == []
+
+
+def test_the_declaration_read_surface_is_one_route_and_no_more() -> None:
+    """One route, anchored on the filename as well as on the shape of a repository name.
+
+    The slug is interpolated from a package's own `profile_fields.target_repo`, so the
+    template is what has to be asserted: a traversal segment, a query, a second path
+    segment or a different file all have to fail. It may not reach the other two
+    services' routes either, and neither of their allowlists may admit this one.
+    """
+    assert is_allowed_declaration("/repos/AlobarQuest/brain/contents/factory-target.toml")
+    for forbidden in (
+        "/repos/AlobarQuest/brain/contents/factory-target.toml/",
+        "/repos/AlobarQuest/brain/contents/.env",
+        "/repos/AlobarQuest/brain/contents/factory-target.toml?ref=main",
+        "/repos/AlobarQuest/../../contents/factory-target.toml",
+        "/repos/AlobarQuest/brain/actions/secrets",
+        "/repos/AlobarQuest/brain",
+        "/api/items",
+        "/api/v1/package-intakes",
+    ):
+        assert not is_allowed_declaration(forbidden), forbidden
+    assert not is_allowed("/repos/AlobarQuest/brain/contents/factory-target.toml")
+    assert not is_allowed_read("/repos/AlobarQuest/brain/contents/factory-target.toml")
+    assert not is_allowed_write("/repos/AlobarQuest/brain/contents/factory-target.toml")
+
+
+def test_the_declaration_reader_asks_and_can_do_nothing_else() -> None:
+    """One public read method. A second is a surface nobody decided on."""
+    public = {
+        name
+        for name in vars(GitHubDeclarationSource)
+        if not name.startswith("_") and name not in {"close"}
+    }
+    assert public == {"declaration"}
+
+
+def test_a_repository_name_this_program_may_not_ask_about_never_reaches_the_transport() -> None:
+    """The refusal is BEFORE the request, and it is returned rather than raised.
+
+    A name is authored text in somebody's `package.yaml`, so a bad one must be a finding
+    about one record rather than an exception that ends the pass. The positive case is
+    here too: without it this asserts only that the reader refuses things, which a reader
+    that refused everything would also satisfy.
+    """
+    import httpx
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return httpx.Response(200, text='factory_target = true\nfactory_target_reason = "x"\n')
+
+    source = GitHubDeclarationSource(
+        token="t",
+        base_url="https://example.invalid",
+        transport=httpx.MockTransport(handler),
+    )
+    # `../..` IS THE CASE THAT MATTERS and every other entry here would pass
+    # without it. `.` is legal in a repository name, so the path pattern matches
+    # the segment `..`; the composed string is admitted and the path `httpx`
+    # actually builds is `/contents/factory-target.toml`, outside the route. The
+    # guard reads the built request for exactly this, so a control that only
+    # feeds it names with too many segments proves the wrong property.
+    for refused in (
+        "../..",
+        "a/..",
+        "AlobarQuest/br\x00ain",
+        "AlobarQuest/brain/../../secrets",
+        "brain",
+        "AlobarQuest/brain?ref=main",
+        "",
+    ):
+        answer = source.declaration(refused)
+        assert answer.target is None, refused
+        assert "may ask about" in answer.detail, refused
+    assert seen == []
+
+    assert source.declaration("AlobarQuest/brain").target is True
+    assert seen == ["/repos/AlobarQuest/brain/contents/factory-target.toml"]
