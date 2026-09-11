@@ -326,6 +326,21 @@ nobody has set rather than an impossibility.
   has no checkout, so a repo-local declaration still cannot reach **dispatch admission**. This
   repository declaring itself a non-target is consistent with that allowlist by coincidence rather
   than by mechanism, which is the same gap amendment 2 recorded.
+- **The kit still scopes its Q2 capability checks on `delivery_profile`, so this declaration does
+  not yet quiet them — and the remedy is not in this repository.** `PROJECT.md` keeps
+  `delivery_profile: dependency-update`, and `portfolio/factory_checks.py::in_q2_scope` reads that
+  key, calling itself in its own docstring *"an INTERIM PROXY for Q1's declaration, not Q1"*. So
+  `portfolio onboard` goes on running `factory.pat_access`, `factory.pat_scope`, `factory.secrets`
+  and `factory.landing_known` against a repository that has now explicitly declared itself out of
+  scope — precisely the noise this ADR exists to remove. Not admission-breaking today (all four
+  report `unknown` or `pass`), and the proxy's own justification has been discharged rather than
+  refuted: it reasoned that `orchestrator` declaring a profile while sitting off the dispatch
+  allowlist was *"a disagreement Q1's to resolve"*, and this amendment is Q1 resolving it.
+  **Do not close it by deleting `delivery_profile`.** That key feeds `profile.declared`, which is an
+  `ADMISSION_CHECKS` member, and the Wave-3 `repositories-onboarded` probe counts `admission_passed`
+  against a minimum of five — so removing it here risks reddening an exit bar that was met, which is
+  the back-dating ADR-0014 forbids. The fix is one repository over: key `in_q2_scope` on
+  `factory-target.toml`.
 - **This is a deferred design, and the trigger is a decision rather than a threshold.** What would
   reverse it is somebody building the automation for the SDS's own updates and Devon deciding it is
   ready — not dependency load, and not the conformance kit reporting anything.

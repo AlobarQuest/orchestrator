@@ -70,7 +70,6 @@ from __future__ import annotations
 
 import ast
 import sys
-from pathlib import Path
 
 from change_proposer.factory_marking import factory_unit_id
 from scripts.check_brief_consumer_compatibility import (
@@ -82,7 +81,6 @@ from scripts.check_brief_consumer_compatibility import (
     recommended_revision,
 )
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
 CONSUMER_SOURCE_PATH = "src/factory_runner/cli.py"
 
 # The command-line flag whose value IS the pull request title. Located by the flag rather than by
