@@ -20,6 +20,15 @@
 # notice. That is weaker than the estate's byte-identical cross-repo fixtures, and it is
 # the most this repository can do alone -- the other half needs a test in a repository this
 # change deliberately does not touch. Recorded as a residual rather than implied.
+#
+# And note WHICH contract this specimen carries, because the name invites the other reading:
+# it pins the CALLER's shape -- the inputs a target repository's workflow accepts -- and not
+# the reusable workflow's own `on.workflow_call.inputs` block, which is what those inputs are
+# passed through to and is the live ground truth for what a dispatch may send. That block is
+# readable at the recommended revision over the same contents API the three
+# consumer-compatibility gates already use, so a fourth gate could hold this repository to it;
+# none exists, deliberately -- it would be network in a unit test, and this change is not its
+# subject.
 name: Factory Runner Pilot
 
 on:
