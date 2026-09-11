@@ -183,6 +183,23 @@ def test_a_check_the_sweep_did_not_record_cannot_be_decided() -> None:
     assert "factory.landing_known" in verdict.constraints[1].detail
 
 
+def test_a_check_row_whose_status_is_not_a_string_cannot_be_decided() -> None:
+    """An unreadable row must not be indistinguishable from a measured one.
+
+    The sweep writes these rows and nothing here validates them, so a `null` status —
+    or a renamed field — has to reach the same answer as a check that was never
+    recorded, rather than a status nothing can compare against `pass`.
+    """
+    rows = portfolio(project())
+    for row in rows.projects[0]["factory"]:
+        if row["id"] == "factory.pat_access":
+            row["status"] = None
+    verdict = assess(TARGET, DECLARED_TRUE, rows)
+    assert verdict.decision == CANNOT_DECIDE
+    assert verdict.constraints[2].verdict == UNKNOWN
+    assert "factory.pat_access" in verdict.constraints[2].detail
+
+
 def test_a_check_that_is_unknown_rather_than_passing_cannot_be_decided() -> None:
     rows = portfolio(project(**{"factory.landing_known": "unknown"}))
     verdict = assess(TARGET, DECLARED_TRUE, rows)
@@ -376,14 +393,6 @@ def _record() -> WorkRecord:
         reasoning="the estate decided to do this",
         decided_by="devon",
     )
-
-
-def _carry(root: Path, monkeypatch: pytest.MonkeyPatch, *, reporting: bool) -> tuple[int, str]:
-    if not reporting:
-        monkeypatch.setattr("work_carrier.cli.report_workability", lambda *a, **k: None)
-    out = io.StringIO()
-    code = run(["--checkout-root", str(root)], source=_Source([_record()]), out=out)
-    return code, out.getvalue()
 
 
 def _carry(

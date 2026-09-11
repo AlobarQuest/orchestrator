@@ -232,13 +232,22 @@ def project_for(portfolio: Portfolio, repository: str) -> tuple[dict[str, Any] |
 
 
 def _checks(project: dict[str, Any]) -> dict[str, str]:
+    """The sweep's answers for this project, keyed by check id.
+
+    A row whose id or status is not a string is DROPPED rather than carried as a
+    value nothing can compare: it then reads as a check the sweep recorded
+    nothing for, which is UNKNOWN one function down. Admitting it as a status
+    would make an unreadable row indistinguishable from a measured one.
+    """
     block = project.get("factory")
     if not isinstance(block, list):
         return {}
     return {
-        row["id"]: row.get("status")
+        row["id"]: row["status"]
         for row in block
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
+        if isinstance(row, dict)
+        and isinstance(row.get("id"), str)
+        and isinstance(row.get("status"), str)
     }
 
 
