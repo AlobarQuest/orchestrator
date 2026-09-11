@@ -327,6 +327,20 @@ OUTBOUND_ALLOWLIST = {
     # what may be registered is evaluated inside the orchestrator, in the transaction that
     # records it -- and the payload it sends is the emitter's own bytes, unedited.
     Path("src/work_carrier/orchestrator_client.py"),
+    # The third file of the same program, and the first of its three that speaks to neither
+    # service. It makes ONE request -- a repository's own `factory-target.toml` on its default
+    # branch, GitHub's contents route -- to answer whether that repository has opted in to being
+    # worked on by the factory at all (ADR-0015). It is READ-ONLY by shape: one public method, one
+    # anchored route, and a repository name that would compose anything else is refused before the
+    # request leaves.
+    #
+    # IT READS GITHUB RATHER THAN THE CHECKOUT BECAUSE THE CHECKOUT IS NOT FRESH. Measured
+    # 2026-09-11, hours after the declarations landed: seven of the eight working trees on this
+    # machine did not carry the file, because nothing pulls them -- so a reader that took the
+    # checkout's word would have reported all five repositories that declare `true` as not having
+    # opted in, which is the answer inverted for the whole population and in the direction that
+    # looks like a working refusal.
+    Path("src/work_carrier/declaration.py"),
     # ADR-0029. `work_watcher` is the work lane's watcher, a SEPARATE program that shares the
     # carry's invocation and runs before it. TWO files, one route each. The change-manager
     # one is the only MUTATING egress either work-lane program has, and it is one-directional

@@ -68,6 +68,7 @@ from work_carrier.orchestrator_client import (
     OrchestratorError,
 )
 from work_carrier.prepare import Prepared, Refused, prepare
+from work_carrier.workability import report as report_workability
 
 EXIT_OK = 0
 EXIT_TOOL_FAILURE = 1
@@ -333,6 +334,22 @@ def run(
             f"{item.reason} — {item.detail}",
             file=out,
         )
+
+    # REPORTS AND CHANGES NOTHING. It is called for its output alone: it returns None, it cannot
+    # raise, and nothing below reads anything it produced -- so the carried set, the refusals and
+    # the exit code are what they were before it existed. Devon asked to see what the three
+    # constraints would refuse across the live population before anything refuses on them.
+    report_workability(
+        [
+            (
+                f"change record {item.record.change_record_id} "
+                f"({item.record.package_id} revision {item.record.package_revision})",
+                item.payload,
+            )
+            for item in prepared
+        ],
+        out,
+    )
 
     print(
         f"\n{len(records)} approved, {already_carried} already carried, "

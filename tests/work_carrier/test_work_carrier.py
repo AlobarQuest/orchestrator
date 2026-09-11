@@ -12,9 +12,7 @@ And that the carry FAILS CLOSED is proven by both.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -36,34 +34,6 @@ def record(**overrides) -> WorkRecord:
         "decided_by": "devon",
     }
     return WorkRecord(**{**base, **overrides})
-
-
-@pytest.fixture(autouse=True)
-def emitter_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The carrier resolves `orchestrator` from PATH, which is a real deployment requirement.
-
-    `scripts/run-work-carrier.sh` puts the repository venv's `bin` there; a bare `pytest`
-    invocation has not. Putting the running interpreter's own directory on PATH is what makes
-    the tests below exercise the REAL command rather than skipping to a "not on PATH" refusal,
-    and it is the same directory the launcher exports.
-    """
-    monkeypatch.setenv("PATH", f"{Path(sys.executable).parent}{os.pathsep}{os.environ['PATH']}")
-
-
-@pytest.fixture()
-def checkout_root(tmp_path: Path) -> Path:
-    """A checkout root laid out the way this machine lays one out.
-
-    The real fixture package is COPIED in rather than symlinked, so the layout the carrier
-    resolves (`<root>/<repo>/packages/<package_id>`) is exercised rather than assumed.
-    """
-    source = Path("tests/fixtures/intent-packages") / FIXTURE_PACKAGE
-    target = tmp_path / "intent-packages" / "packages" / FIXTURE_PACKAGE
-    target.parent.mkdir(parents=True)
-    target.mkdir()
-    for path in source.iterdir():
-        (target / path.name).write_bytes(path.read_bytes())
-    return tmp_path
 
 
 def payload_for(rec: WorkRecord) -> dict:
