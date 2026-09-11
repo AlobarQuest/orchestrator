@@ -1,0 +1,58 @@
+# The caller workflow every factory target hosts, as a SPECIMEN for the workflow contract.
+#
+# Copied byte-for-byte from the conformance kit's own template --
+# `project-standards/src/portfolio/templates/factory-runner-caller.yml` -- which is what
+# `portfolio onboard` writes into a target repository and what `runner.caller` holds each
+# one to. The `{{FACTORY_RUNNER_WORKFLOW_SHA}}` placeholder is deliberately left
+# unsubstituted: nothing here reads the pin, so there is no revision to keep current. The
+# three consumer-compatibility gates read `RECOMMENDED_CALLER_PIN` from factory-runner
+# directly.
+#
+# WHY A FIXTURE. Until 2026-09-11 `tests/contract/test_workflow_dispatch_contract.py` read
+# this repository's OWN caller workflow as the specimen. ADR-0015's amendment of that date
+# declared this repository `factory_target = false` and removed the caller, so the contract
+# -- what dispatch SENDS must be what a caller ACCEPTS -- lost the only copy it could read.
+# The contract is still live for the five repositories that do host a caller, so the
+# specimen moved here rather than the test being deleted.
+#
+# WHAT IS AND IS NOT PINNED. This is a one-sided copy: nothing in `project-standards`
+# asserts that it matches the template, so the template could move and this would not
+# notice. That is weaker than the estate's byte-identical cross-repo fixtures, and it is
+# the most this repository can do alone -- the other half needs a test in a repository this
+# change deliberately does not touch. Recorded as a residual rather than implied.
+#
+# And note WHICH contract this specimen carries, because the name invites the other reading:
+# it pins the CALLER's shape -- the inputs a target repository's workflow accepts -- and not
+# the reusable workflow's own `on.workflow_call.inputs` block, which is what those inputs are
+# passed through to and is the live ground truth for what a dispatch may send. That block is
+# readable at the recommended revision over the same contents API the three
+# consumer-compatibility gates already use, so a fourth gate could hold this repository to it;
+# none exists, deliberately -- it would be network in a unit test, and this change is not its
+# subject.
+name: Factory Runner Pilot
+
+on:
+  workflow_dispatch:
+    inputs:
+      work_unit_id:
+        description: Approved orchestrator work-unit ID
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+  checks: read
+
+jobs:
+  factory-runner:
+    uses: AlobarQuest/factory-runner/.github/workflows/factory-runner.yml@{{FACTORY_RUNNER_WORKFLOW_SHA}}
+    with:
+      work_unit_id: ${{ inputs.work_unit_id }}
+      orchestrator_url: https://sds.alobar.net
+    secrets:
+      FACTORY_RUNNER_TOKEN: ${{ secrets.FACTORY_RUNNER_TOKEN }}
+      FACTORY_RUNNER_CREDENTIAL_KEY_ID: ${{ secrets.FACTORY_RUNNER_CREDENTIAL_KEY_ID }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      FACTORY_PR_TOKEN: ${{ secrets.FACTORY_PR_TOKEN }}

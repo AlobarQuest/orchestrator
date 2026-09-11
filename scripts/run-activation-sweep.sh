@@ -60,11 +60,32 @@ SYSTEM_BEARER_UUID="221a48d5-3f29-4898-b300-b4820140c880"     # orchestrator-sys
 # then generalised HQ's list into that rule, which admitted `email-capture`, `FacelessTT` and
 # `~/.claude` -- none of them SDS repositories.
 #
-# The rule is now the estate's OWN definition of an SDS target, already ratified elsewhere and
-# not reinvented here: the repository self-identifies in `PROJECT.md` frontmatter (ADR-0015) and
-# the conformance kit judges it ready. `project-standards` declares `factory_target: false` and
-# is therefore correctly absent; `orchestrator` self-declares and is not on the dispatch
-# allowlist only because it IS the system and cannot be dispatched to.
+# WHAT THIS LIST IS NOT KEYED ON, since the answer changed under it on 2026-09-11 and the wrong
+# reading is the tidier one. It used to say membership WAS the factory-target declaration --
+# "`project-standards` declares `factory_target: false` and is therefore correctly absent;
+# `orchestrator` self-declares" -- and ADR-0015's amendment of that date made `orchestrator`
+# declare `factory_target = false` while leaving it on this list, which falsifies the rule as
+# stated. The two questions are genuinely different: the declaration answers MAY THE FACTORY BE
+# DISPATCHED WORK HERE, and this list answers WHOSE WORKING COPY ON THIS MACHINE IS WORTH
+# MEASURING AGAINST ITS UPSTREAM. A repository can be worth sweeping and be no target at all --
+# `orchestrator` is the proof, and eleven scheduled lanes run from its working copy.
+#
+# So the list is HAND-WRITTEN and the declaration does not derive it. `project-standards`'
+# absence is inherited from the 2026-08-24 pruning and now rests on nothing this comment can
+# state as a rule; it is a residual, not a decision, and the TODO below is where it is owed an
+# answer. Do NOT prune this list by the declaration: doing so drops `orchestrator` and silently
+# ends both the sweep and the machine-local release binding for the repository the lane was
+# built for.
+#
+# `orchestrator` IS ON THIS LIST AND IS NOT A FACTORY TARGET. This comment used to say it was
+# off the dispatch allowlist "only because it IS the system and cannot be dispatched to" -- a
+# capability claim, and false.
+# It could be and was: its caller fired 22 times, four of them successfully, and unit
+# 7a81c2c2-0835-5bba-a308-36e868719b62 opened and landed #135 on 2026-08-03. ADR-0015's
+# amendment of 2026-09-11 declares `factory_target = false` here on the ground Devon gave --
+# the SDS maintaining itself is DEFERRED to a purpose-built mechanism -- and the caller was
+# removed with it. What this sweep measures is the state of a working copy against its upstream,
+# which is true and useful for a repository whatever its dispatch scope.
 #
 # An earlier draft of this list added a SECOND condition -- "something on this machine executes
 # from the working copy" -- and dropped `change-manager` and `brain` on it. That condition was
@@ -74,10 +95,12 @@ SYSTEM_BEARER_UUID="221a48d5-3f29-4898-b300-b4820140c880"     # orchestrator-sys
 # else watches those two. The measurement this sweep files is the state of a working copy
 # relative to its upstream, which is true and useful for every SDS target.
 #
-# TODO(scope-registry): this list is the FOURTH place the estate answers "which repos are in
-# SDS scope", after `PROJECT.md` frontmatter, ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES
-# and the presence of a caller workflow -- and those three already disagree. It should be
-# DERIVED rather than written here; see the scope-registry spec.
+# TODO(scope-registry): this list is the FIFTH place the estate answers "which repos are in SDS
+# scope", after `factory-target.toml` (`PROJECT.md` frontmatter until 2026-09-11),
+# ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES, the presence of a caller workflow and
+# `PROJECT.md`'s own `delivery_profile` -- and they already disagree. It should be DERIVED
+# rather than written here; see the scope-registry spec. `project-standards`' absence above is
+# the first thing that derivation owes an answer for.
 CHECKOUTS=(
   "$HOME/Projects/orchestrator"
   "$HOME/Projects/intent-packages"

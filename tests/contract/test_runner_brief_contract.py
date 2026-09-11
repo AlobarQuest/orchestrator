@@ -59,7 +59,7 @@ def test_the_served_brief_has_exactly_the_contracted_keys(migrated_session: Sess
     assert set(served) == set(golden_brief()), (
         "the served brief's key set has drifted from the cross-repo fixture. "
         "A key factory-runner does not declare is a key no worker can read. Merge it "
-        "there first, advance the pin in factory-runner-pilot.yml, and change BOTH "
+        "there first, advance RECOMMENDED_CALLER_PIN and every caller, and change BOTH "
         "repos' fixtures and CONTRACT_SHA256 together."
     )
 

@@ -77,6 +77,14 @@ conformance kit judges it ready (`ADMISSION_CHECKS`). Measured 2026-08-24, that 
 `orchestrator` is absent from the production dispatch allowlist only because it IS the system and
 cannot be dispatched to.
 
+**[CORRECTED 2026-09-11, ADR-0015 amendment 3. That last sentence is false and was false when
+written: `orchestrator`'s caller fired 22 times, four successfully, and unit 7a81c2c2 landed #135
+on 2026-08-03. It is absent from the allowlist because updating the SDS through the SDS is a scope
+choice Devon has DEFERRED, and it now declares `factory_target = false` in `factory-target.toml`.
+The enrolled set this paragraph defines is unaffected — the sweep measures a working copy against
+its upstream, which is worth doing whatever a repository's dispatch scope. Note also that the
+declaration moved from `PROJECT.md` frontmatter to `factory-target.toml` on 2026-09-11.]**
+
 **An intermediate draft added a second condition — "something on this machine executes from the
 working copy" — and dropped `change-manager` and `brain` on it. That condition was invented here,
 is not the estate's, and is recorded because rejecting it is the useful part.** It was weaker than

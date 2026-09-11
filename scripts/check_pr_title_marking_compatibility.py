@@ -36,13 +36,20 @@ check never read. The conformance kit's `runner.caller` is what sees that, per r
 
 ## What it does
 
-1. read the pinned revision from this repo's caller workflow -- that SHA is the consumer
-   revision, because the workflow at X installs the CLI at X;
-2. assert that premise still holds at that revision, rather than trusting it;
-3. read the estate's recommended caller revision from the consumer's default branch;
-4. at BOTH revisions, read the literal title expression the consumer passes to `gh pr create`,
-   render it with a specimen work unit, and require this repository's recogniser to read that
-   specimen back out of it.
+1. read the estate's recommended caller revision from the consumer's default branch -- the
+   revision `runner.caller` holds every target repository's caller to, and therefore the CLI
+   revision a dispatched run executes;
+2. assert that the workflow at that revision still installs its own commit, rather than
+   trusting it;
+3. read the literal title expression the consumer passes to `gh pr create` there, render it
+   with a specimen work unit, and require this repository's recogniser to read that specimen
+   back out of it.
+
+Until ADR-0015's amendment of 2026-09-11 a SECOND revision was read as well -- the pin in
+this repository's own caller workflow. That file is gone: this repository declares
+`factory_target = false` and is not dispatched to, so a pin of its own described a run that
+cannot happen. The recommendation was always the load-bearing half, for the reason the
+residual above gives.
 
 Keyed on RECOGNITION rather than on byte equality of the expression, because recognition is the
 property that matters: a change to the part of the title after the identifier is harmless and
@@ -55,28 +62,25 @@ severe. An expression this cannot recognise as the work unit's id is loud rather
 Usage:
     python3 -m scripts.check_pr_title_marking_compatibility
 
-Exit 0: at both consumer revisions, the title the factory stamps is one this repository reads.
-Exit 1: at least one of them is not, or a revision could not be resolved.
+Exit 0: at the recommended consumer revision, the title the factory stamps is one this
+repository reads. Exit 1: it is not, or the revision could not be resolved.
 """
 
 from __future__ import annotations
 
 import ast
 import sys
-from pathlib import Path
 
 from change_proposer.factory_marking import factory_unit_id
 from scripts.check_brief_consumer_compatibility import (
+    CONSUMER_REPOSITORY,
     CONSUMER_WORKFLOW_PATH,
     Unresolvable,
     assert_the_workflow_installs_its_own_commit,
     fetch,
-    pinned_consumer,
+    recommended_revision,
 )
-from scripts.check_capability_consumer_compatibility import recommended_revision
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-CALLER_WORKFLOW = REPO_ROOT / ".github/workflows/factory-runner-pilot.yml"
 CONSUMER_SOURCE_PATH = "src/factory_runner/cli.py"
 
 # The command-line flag whose value IS the pull request title. Located by the flag rather than by
@@ -162,7 +166,8 @@ def unreadable_revisions(accepted: dict[str, str]) -> dict[str, str]:
     """Per consumer revision, the rendered title this repository cannot read -- empty when it can.
 
     Extracted from `main` so the load-bearing claim is assertable without the network: ONE
-    revision moving the format is enough to refuse, even when the other is in step.
+    revision moving the format is enough to refuse. It stays keyed by revision although only
+    one is read today, because the refusal message names the revision whose format moved.
     """
     return {
         revision: title
@@ -171,42 +176,37 @@ def unreadable_revisions(accepted: dict[str, str]) -> dict[str, str]:
     }
 
 
-def _roles(pinned: str, recommended: str) -> dict[str, str]:
-    """What each revision IS, for the human reading the output. Both, when they coincide."""
-    if pinned == recommended:
-        return {pinned: f"pinned by {CALLER_WORKFLOW.name}, and recommended to every caller"}
-    return {pinned: f"pinned by {CALLER_WORKFLOW.name}", recommended: "recommended to every caller"}
-
-
 def main() -> int:
+    repo = CONSUMER_REPOSITORY
     try:
-        repo, _workflow, ref = pinned_consumer(CALLER_WORKFLOW.read_text())
-        assert_the_workflow_installs_its_own_commit(fetch(repo, CONSUMER_WORKFLOW_PATH, ref), ref)
         recommended = recommended_revision(repo)
+        assert_the_workflow_installs_its_own_commit(
+            fetch(repo, CONSUMER_WORKFLOW_PATH, recommended), recommended
+        )
         titles = {
-            revision: rendered_title(title_expression(fetch(repo, CONSUMER_SOURCE_PATH, revision)))
-            for revision in dict.fromkeys((ref, recommended))
+            recommended: rendered_title(
+                title_expression(fetch(repo, CONSUMER_SOURCE_PATH, recommended))
+            )
         }
     except Unresolvable as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
 
-    role = _roles(ref, recommended)
     for revision, title in titles.items():
-        print(f"consumer:  {repo}@{revision[:8]} ({role[revision]}) -- stamps {title!r}")
+        print(f"consumer:  {repo}@{revision[:8]} (recommended to every caller) -- stamps {title!r}")
 
     unreadable = unreadable_revisions(titles)
     if not unreadable:
         print(
-            "\nPASS: at both consumer revisions the factory's pull request title carries a "
-            "marking this repository reads."
+            "\nPASS: at the recommended consumer revision the factory's pull request title "
+            "carries a marking this repository reads."
         )
         return 0
 
     for revision, title in unreadable.items():
         print(
-            f"\nFAIL: {repo}@{revision[:8]} ({role[revision]}) stamps {title!r}, from which "
-            f"`change_proposer.factory_marking.factory_unit_id` reads "
+            f"\nFAIL: {repo}@{revision[:8]} (recommended to every caller) stamps {title!r}, "
+            f"from which `change_proposer.factory_marking.factory_unit_id` reads "
             f"{factory_unit_id(title)!r} rather than the work unit.",
             file=sys.stderr,
         )

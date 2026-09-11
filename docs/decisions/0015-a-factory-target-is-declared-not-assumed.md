@@ -1,7 +1,8 @@
 # ADR-0015 — A factory target is declared, not assumed; and the runner may not maintain itself
 
-- **Status:** Accepted; **partially reversed 2026-08-07 and reinstated in full 2026-08-17 —
-  see the two amendments at the end.** Decision 2 shipped 2026-08-17; nothing here is outstanding.
+- **Status:** Accepted; **partially reversed 2026-08-07, reinstated in full 2026-08-17, and
+  applied to a third repository 2026-09-11 — see the three amendments at the end.** Decision 2
+  shipped 2026-08-17; nothing here is outstanding.
 - **Date:** 2026-08-04
 - **Workstream:** Wave-3 closeout (follows WS-P2.37)
 - **Supersedes:** nothing. **Relates to:** the conformance kit's `runner.caller` check
@@ -207,6 +208,10 @@ from inside the running orchestrator container is exactly five entries — `inte
   and the answer to it is **five of the eight candidates**, measured above. Do not read that as
   6 → 7 → 5: the earlier figures counted admission-clean repositories, and the eight include
   `orchestrator`, which is admission-clean and structurally undispatchable. Reach was never 6 or 7.
+  **["structurally undispatchable" is FALSE and was false when written — corrected 2026-09-11,
+  amendment 3. `orchestrator` was dispatched to 22 times and landed #135 from unit 7a81c2c2. The
+  arithmetic above is unaffected: it was never a factory target's-reach count, and five is still
+  five. Left in place per ADR-0014; the correction is the pointer, not a rewrite.]**
   "8 of 8 is not a goal" was always about reach, and it stands. No sweep was re-run for this
   amendment.
 - The implementation note is closed **for the kit**. What remains open is a different consumer
@@ -246,3 +251,96 @@ it.** For those ten days every readiness document anyone consulted showed a defe
 decision had been made, and the cheapest way to clear a defect is to satisfy it. That this
 particular reversal was consulted and ratified is what kept it honest; nothing in the mechanism
 required that, which is the whole reason the declaration had to be built.
+
+---
+
+## Amendment, 2026-09-11 — `orchestrator` declares itself not a target, and the reason is DEFERRAL
+
+**`orchestrator` declares `factory_target = false`** (Devon, 2026-09-11): *"It seems like a bad
+idea to have orchestrator update itself. I had thought we would build out the automation for SDS
+itself's updates later."* Decisions 1 and 2 are untouched and this is neither a reversal nor an
+extension of either — it is decision 2 being used, for the third repository, by the mechanism the
+implementation note asked for and amendment 2 built. The caller workflow was removed in the same
+commit, because a declared non-target that still hosts one stays a `violation` by design.
+
+**THE GROUND IS A SCOPE CHOICE, AND THIS AMENDMENT EXISTS CHIEFLY TO SAY IT IS NOT A CAPABILITY
+CLAIM.** The estate had recorded the opposite in three places — `scripts/run-activation-sweep.sh`
+("only because it IS the system and cannot be dispatched to"), ADR-0030's enrolment paragraph, and
+this document's own amendment-2 consequence ("admission-clean and structurally undispatchable"),
+which the orchestrator's `CLAUDE.md` then inherited. All three are false and all three are
+corrected alongside this. That is the precise conflation this ADR was written to prevent, made
+about this ADR's own subject: a repository's scope is declared, and describing an unmade choice as
+an incapacity is how it stops being re-decidable.
+
+**The evidence, re-derived rather than recalled.** The caller fired **22 times** — 20 triggered by
+`alobar-sds-dispatch[bot]` and 2 by `AlobarQuest` — of which **four concluded `success`**
+(2026-07-10, 07-15, 07-31, 08-02). Work unit `7a81c2c2-0835-5bba-a308-36e868719b62` opened
+`orchestrator#135` (*"SDS 7a81c2c2…: Update httpx2 to 2.9.1 in AlobarQuest/orchestrator"*), merged
+`a62f9637` on 2026-08-03. **That unit is the Wave-3 exit manifest's own dependency-update proof**,
+cited twice in `docs/operations/wave-exit-manifest.toml` — by `profiles-are-proven` and by
+`workflows-were-consecutive`. So the factory has been dispatched here, has landed a change here,
+and the estate's attestation that the dependency-update profile works at all rests on it.
+
+**factory-runner's self-reference argument does NOT transfer, and reaching for it would make this
+decision harder to revisit than it should be.** That one is structural: the reusable workflow
+installs its own commit, `RECOMMENDED_CALLER_PIN` lags by one by construction, so a change to the
+harness ships through the harness it is changing. The orchestrator has no such property. Production
+runs a **built image**, pointed at a tag by hand after a merge; the orchestrator that would dispatch
+a change to this repository is not the tree being changed, and a landing here is `inert` by App
+Brain's own determination. Nothing here is circular. The reason is deferral, and deferral is a date
+nobody has set rather than an impossibility.
+
+**Consequences.**
+
+- The declaration is `factory-target.toml` at this repository's root, matching the seven that
+  landed on 2026-09-11. `runner.caller` moves from **`violation`** — measured before the change,
+  `runner.caller-contradicts-declaration`: *"the repository has no factory-target.toml, and absence
+  means not a target, but it hosts factory-runner-pilot.yml"* — to **`not-applicable`**, which
+  satisfies admission.
+- **Three CI gates read the deleted caller for a value it never owned, and they were repointed
+  first.** `check_brief_consumer_compatibility.py`, `check_capability_consumer_compatibility.py`
+  and `check_pr_title_marking_compatibility.py` recovered the factory-runner revision they vet
+  against from this repository's `uses:` line. That line was a copy of `RECOMMENDED_CALLER_PIN`,
+  which is where they read it now — one hop fewer, and the two agreed at the moment of the change
+  (`932571f39fec5a31e963d5a957d3c70c740ddd16`), so nothing about any answer moved. All three sit in
+  the `Runner consumer compatibility` job, which **is a required status check on `main`**; its name
+  is unchanged, because moving a protected context is a paired operation and this change had no
+  reason to open one.
+- **`tests/contract/test_workflow_dispatch_contract.py` lost its specimen and kept its contract.**
+  It asserts that what dispatch SENDS is what a caller ACCEPTS, and it read this repository's caller
+  as the exemplar of a shape five other repositories host. The specimen is now
+  `tests/fixtures/factory_runner_caller.yml`, copied from the conformance kit's own template. Its
+  one dropped assertion — that a caller exists at the path dispatch assumes — asserted exactly the
+  state being removed; whether a given target hosts one is `runner.caller`'s question, per
+  repository.
+- **`src/pin_watcher/github.py` needed no change, and changing it would have broken a live lane.**
+  It reads that path in OTHER repositories over the API, and its population is self-describing by
+  design: a repository is watched because it carries a caller. This repository ceasing to carry one
+  is the population answering correctly, not a gap. Likewise `src/orchestrator/config.py`'s
+  `dispatch_workflow_id` — the file name dispatch addresses **in the target repository**, which is
+  unaffected by what this repository hosts.
+- **`ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` is untouched and already correct**: five
+  entries, `orchestrator` absent, verified from inside the running container on 2026-09-10. Nothing
+  was removed from it here, and nothing needed to be.
+- The implementation note's open half is unchanged and is now the only half left: the orchestrator
+  has no checkout, so a repo-local declaration still cannot reach **dispatch admission**. This
+  repository declaring itself a non-target is consistent with that allowlist by coincidence rather
+  than by mechanism, which is the same gap amendment 2 recorded.
+- **The kit still scopes its Q2 capability checks on `delivery_profile`, so this declaration does
+  not yet quiet them — and the remedy is not in this repository.** `PROJECT.md` keeps
+  `delivery_profile: dependency-update`, and `portfolio/factory_checks.py::in_q2_scope` reads that
+  key, calling itself in its own docstring *"an INTERIM PROXY for Q1's declaration, not Q1"*. So
+  `portfolio onboard` goes on running `factory.pat_access`, `factory.pat_scope`, `factory.secrets`
+  and `factory.landing_known` against a repository that has now explicitly declared itself out of
+  scope — precisely the noise this ADR exists to remove. Not admission-breaking today (all four
+  report `unknown` or `pass`), and the proxy's own justification has been discharged rather than
+  refuted: it reasoned that `orchestrator` declaring a profile while sitting off the dispatch
+  allowlist was *"a disagreement Q1's to resolve"*, and this amendment is Q1 resolving it.
+  **Do not close it by deleting `delivery_profile`.** That key feeds `profile.declared`, which is an
+  `ADMISSION_CHECKS` member, and the Wave-3 `repositories-onboarded` probe counts `admission_passed`
+  against a minimum of five — so removing it here risks reddening an exit bar that was met, which is
+  the back-dating ADR-0014 forbids. The fix is one repository over: key `in_q2_scope` on
+  `factory-target.toml`.
+- **This is a deferred design, and the trigger is a decision rather than a threshold.** What would
+  reverse it is somebody building the automation for the SDS's own updates and Devon deciding it is
+  ready — not dependency load, and not the conformance kit reporting anything.

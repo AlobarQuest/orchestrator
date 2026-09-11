@@ -1,0 +1,4 @@
+# Whether the SDS factory may be dispatched work in this repository.
+# Absence of this file means NO -- participation is declared, never assumed.
+factory_target = false
+factory_target_reason = "ADR-0015 amended 2026-09-11 — the SDS maintaining itself is deferred to a purpose-built mechanism, not judged impossible. The factory has been dispatched here and landed a change (unit 7a81c2c2, #135, merged 2026-08-03); this is a scope choice, and the caller workflow was removed with the declaration."

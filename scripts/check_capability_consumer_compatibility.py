@@ -16,11 +16,10 @@ name -- has been prose in a handoff. This is the enforcement, and it belongs in 
 pull-request gate because the pull request that adds the name is the thing that must not
 merge.
 
-TWO revisions are checked, and the second one is the load-bearing one. Dispatch fires the
-caller workflow **in the unit's own target repository** (`services/dispatch.py`, from
-`authority.constraints.target_repository`), so the revision that actually runs is that
-repository's caller pin -- not this one's. Checking only this repository's pin, as the brief
-twin does, vets the wrong caller for every unit that is not about this repository.
+THE REVISION CHECKED IS THE RECOMMENDATION, and that is what dispatch makes load-bearing.
+Dispatch fires the caller workflow **in the unit's own target repository**
+(`services/dispatch.py`, from `authority.constraints.target_repository`), so the revision
+that actually runs is that repository's caller pin -- never a pin this repository holds.
 
 The estate's answer to "what should every caller be pinned to" already exists:
 factory-runner's `RECOMMENDED_CALLER_PIN`, which the conformance kit's `runner.caller`
@@ -31,26 +30,26 @@ holds each target repository to it. Neither alone is sufficient and the composit
     runner.caller  : every target repository is AT the recommended revision
     this gate      : the recommended revision recognises every name we declare
 
-It deliberately does NOT assert that this repository's pin EQUALS the recommendation. That
-would red every open pull request here the moment factory-runner advanced its recommendation,
-punishing changes that have nothing to do with it -- and equality is a proxy for the property
-that matters, which is whether the revision can parse what we serve. Checking both revisions
-answers that directly and is silent on an unrelated move.
+Until ADR-0015's amendment of 2026-09-11 it read a SECOND revision as well -- the pin in
+this repository's own caller workflow -- and deliberately did not require the two to be
+equal. That file is gone: this repository declares `factory_target = false` and is not
+dispatched to, so a pin of its own would have described a run that cannot happen. Nothing
+about the answer moved, because the recommendation was already the load-bearing half and
+the two agreed at the moment of the change.
 
 Residual, stated rather than papered over: a target repository whose caller has drifted off
 the recommendation is invisible here. `runner.caller` is what sees that, and it runs per
 repository in the conformance kit rather than in this pull-request gate.
 
-What it does, reusing the brief check's pin reader, fetcher and premise assertion rather
-than keeping a second copy of them (two readers of one pin could vet two different
+What it does, reusing the brief check's revision reader, fetcher and premise assertion
+rather than keeping a second copy of them (two readers of one value could vet two different
 revisions):
 
-1. read the pinned revision from this repo's caller workflow -- that SHA is the consumer
-   revision, because the workflow at X installs the CLI at X;
-2. assert that premise still holds at that revision, rather than trusting it;
-3. read the estate's recommended caller revision from the consumer's default branch;
-4. read the consumer's capability vocabulary at BOTH revisions, from source;
-5. require every name this repo's runner vocabulary declares to be known at both.
+1. read the estate's recommended caller revision from the consumer's default branch;
+2. assert that the workflow at that revision installs its own commit, so the revision named
+   is the CLI revision a run would execute, rather than trusting it;
+3. read the consumer's capability vocabulary at that revision, from source;
+4. require every name this repo's runner vocabulary declares to be known there.
 
 One direction only, deliberately. A name the CONSUMER knows and this repo does not is
 harmless -- unit ingress refuses it here, so no envelope can carry it. The asymmetry is the
@@ -61,34 +60,30 @@ to be mutually understood.
 Usage:
     python3 -m scripts.check_capability_consumer_compatibility
 
-Exit 0: both the pinned and the recommended consumer revision recognise every runner
-capability this repo declares. Exit 1: one of them does not, or a revision could not be
-resolved.
+Exit 0: the recommended consumer revision recognises every runner capability this repo
+declares. Exit 1: it does not, or the revision could not be resolved.
 """
 
 from __future__ import annotations
 
 import ast
-import re
 import sys
 from pathlib import Path
 
 from scripts.check_brief_consumer_compatibility import (
+    CONSUMER_REPOSITORY,
     CONSUMER_WORKFLOW_PATH,
     Unresolvable,
     assert_the_workflow_installs_its_own_commit,
     fetch,
-    pinned_consumer,
+    recommended_revision,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CALLER_WORKFLOW = REPO_ROOT / ".github/workflows/factory-runner-pilot.yml"
 SERVED_VOCABULARY_SOURCE = REPO_ROOT / "src/orchestrator/capability_vocabulary.py"
 CONSUMER_VOCABULARY_PATH = "src/factory_runner/capability_vocabulary.py"
-RECOMMENDED_PIN_PATH = "RECOMMENDED_CALLER_PIN"
 VOCABULARY = "CAPABILITY_VOCABULARY"
 RUNNER_KEY = "runner"
-FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 def declared_capabilities(source: str, key: str = RUNNER_KEY) -> set[str]:
@@ -141,38 +136,15 @@ def _assigned_name(node: ast.Assign | ast.AnnAssign) -> str | None:
     return None
 
 
-def recommended_revision(repo: str) -> str:
-    """The revision every caller in the estate is expected to be pinned to."""
-    ref = fetch(repo, RECOMMENDED_PIN_PATH, "HEAD").strip()
-    if not FULL_SHA.match(ref):
-        raise Unresolvable(
-            f"{repo}'s {RECOMMENDED_PIN_PATH} reads {ref!r}, which is not a full 40-character "
-            "commit, so there is no revision to check the estate's callers against."
-        )
-    return ref
-
-
-def _roles(pinned: str, recommended: str) -> dict[str, str]:
-    """What each revision IS, for the human reading the output.
-
-    When the two coincide -- the healthy steady state -- a naive mapping keyed by revision
-    silently keeps whichever label was written last, so the line reads as though only the
-    recommendation was checked and the pin went unread. Say both.
-    """
-    if pinned == recommended:
-        return {pinned: f"pinned by {CALLER_WORKFLOW.name}, and recommended to every caller"}
-    return {pinned: f"pinned by {CALLER_WORKFLOW.name}", recommended: "recommended to every caller"}
-
-
 def revisions_that_cannot_parse(
     served: set[str], accepted: dict[str, set[str]]
 ) -> dict[str, list[str]]:
     """Per consumer revision, the names it does not recognise -- empty when all of them do.
 
     Extracted from `main` so the load-bearing claim is assertable without the network: ONE
-    revision falling behind is enough to refuse, so a recommendation the estate follows can
-    red a pull request whose own pin is perfectly in step. That is the whole reason two
-    revisions are read.
+    revision falling behind is enough to refuse. It stays keyed by revision although only
+    one is read today, because the refusal message names the revision that cannot parse and
+    a shape that can carry more than one costs nothing to keep.
     """
     return {
         revision: sorted(served - names) for revision, names in accepted.items() if served - names
@@ -180,37 +152,38 @@ def revisions_that_cannot_parse(
 
 
 def main() -> int:
+    repo = CONSUMER_REPOSITORY
     try:
-        repo, _workflow, ref = pinned_consumer(CALLER_WORKFLOW.read_text())
-        assert_the_workflow_installs_its_own_commit(fetch(repo, CONSUMER_WORKFLOW_PATH, ref), ref)
         recommended = recommended_revision(repo)
-        # `dict` rather than a set of revisions: order matters in the report, and the two are
-        # usually the same commit, which should read as one line rather than two.
+        assert_the_workflow_installs_its_own_commit(
+            fetch(repo, CONSUMER_WORKFLOW_PATH, recommended), recommended
+        )
         accepted = {
-            revision: declared_capabilities(fetch(repo, CONSUMER_VOCABULARY_PATH, revision))
-            for revision in dict.fromkeys((ref, recommended))
+            recommended: declared_capabilities(fetch(repo, CONSUMER_VOCABULARY_PATH, recommended))
         }
         served = declared_capabilities(SERVED_VOCABULARY_SOURCE.read_text())
     except Unresolvable as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
 
-    role = _roles(ref, recommended)
     for revision, names in accepted.items():
-        print(f"consumer:  {repo}@{revision[:8]} ({role[revision]}) -- recognises {len(names)}")
+        print(
+            f"consumer:  {repo}@{revision[:8]} (recommended to every caller) -- "
+            f"recognises {len(names)}"
+        )
     print(f"served:    {SERVED_VOCABULARY_SOURCE.name} declares {len(served)}")
 
     unknown = revisions_that_cannot_parse(served, accepted)
     if not unknown:
         print(
-            f"\nPASS: every runner capability this repo declares is known at the revision "
-            f"{CALLER_WORKFLOW.name} pins and at the one recommended to every caller."
+            "\nPASS: every runner capability this repo declares is known at the revision "
+            "recommended to every caller."
         )
         return 0
 
     for revision, names in unknown.items():
         print(
-            f"\nFAIL: {repo}@{revision[:8]} ({role[revision]}) does not recognise "
+            f"\nFAIL: {repo}@{revision[:8]} (recommended to every caller) does not recognise "
             f"{len(names)} capability(s) this repo declares: {names}",
             file=sys.stderr,
         )
@@ -219,10 +192,10 @@ def main() -> int:
         "envelope carrying\none of these does not merely go unused -- it kills that unit's run at "
         "envelope parse, with the attempt\nspent and nothing between here and there to notice. "
         "And dispatch fires the caller workflow in the UNIT'S\nOWN TARGET REPOSITORY, so the "
-        "revision that runs is that repository's pin, which follows the\nrecommendation rather "
-        "than this file.\n"
-        f"Merge the capability into the consumer first, then advance {RECOMMENDED_PIN_PATH} and "
-        f"every caller\nincluding {CALLER_WORKFLOW.name}, then re-run.",
+        "revision that runs is that repository's pin, which follows the\nrecommendation this "
+        "gate reads.\n"
+        "Merge the capability into the consumer first, then advance RECOMMENDED_CALLER_PIN and "
+        "every caller, then re-run.",
         file=sys.stderr,
     )
     return 1

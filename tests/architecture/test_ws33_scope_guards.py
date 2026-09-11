@@ -152,17 +152,22 @@ def _verified_approval() -> VerifiedApproval:
 
 def test_no_workflow_dispatch_or_factory_runner_dispatch_code_exists() -> None:
     forbidden = ("workflow_dispatch", "factory-runner", "factory_runner")
-    # factory-runner-pilot.yml legitimately dispatches the factory runner; release-image.yml
-    # is a separate, unrelated workflow_dispatch trigger (manual image build+push, no factory
-    # runner involvement) — both are deliberate human-triggered exceptions to this guard.
-    # attest-exit-criteria.yml is a third and weakest exception: read-only (one unauthenticated
+    # release-image.yml is a workflow_dispatch trigger for a manual image build+push, with no
+    # factory runner involvement — a deliberate human-triggered exception to this guard.
+    # attest-exit-criteria.yml is a second and weaker exception: read-only (one unauthenticated
     # GET of production's public OpenAPI document), carrying workflow_dispatch only so the
     # scorecard guard can be re-run on demand after a production image swap. attest-wave-exit.yml
-    # (WS-P2.39) is a fourth of exactly that kind: same read, same reason, for the wave exit bars.
+    # (WS-P2.39) is a third of exactly that kind: same read, same reason, for the wave exit bars.
+    #
+    # `factory-runner-pilot.yml` was the fourth until 2026-09-11, when ADR-0015's amendment
+    # declared this repository `factory_target = false` and deleted the caller. Its entry came
+    # out in the same commit: this allowlist filters by name, so a stale entry never reddens and
+    # would read as though the repository were still dispatchable. Note the twin allowlist in
+    # tests/architecture/test_no_automatic_merge.py, which scans the same directory with a
+    # different vocabulary — an edit to one that misses the other leaves that one wrong.
     manual_dispatch_workflows = {
         "attest-exit-criteria.yml",
         "attest-wave-exit.yml",
-        "factory-runner-pilot.yml",
         "release-image.yml",
     }
     workflow_paths = [

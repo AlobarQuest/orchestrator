@@ -1,16 +1,21 @@
 """WS-P3.7 Increment 3: the offline half of the pull-request gate that refuses capability drift.
 
 `scripts/check_capability_consumer_compatibility.py` reads the consumer's capability
-vocabulary at TWO revisions -- the one this repo's caller workflow pins, and the one
-factory-runner recommends to every caller -- and refuses a change declaring a name either
-does not recognise. The reading is over the network, so it runs as its own step rather than
-in the suite -- but everything it decides WITH is pure, and pure is what gets tested here:
+vocabulary at the revision factory-runner recommends to every caller, and refuses a change
+declaring a name that revision does not recognise. The reading is over the network, so it
+runs as its own step rather than in the suite -- but everything it decides WITH is pure, and
+pure is what gets tested here:
 
 - the source parser agrees with the shipped constant, for the vocabulary that is importable
   on this side;
 - a moved, renamed, restructured or EMPTY vocabulary is loud rather than silently empty;
-- the recommendation is refused unless it is an immutable revision;
-- one revision falling behind is enough to refuse, even when the other is in step.
+- a revision that does not recognise a declared name is named, rather than folded into a
+  bare refusal.
+
+It read TWO revisions until 2026-09-11 -- the second being the pin in this repository's own
+caller workflow. ADR-0015's amendment deleted that caller, and the properties those cases
+protected did not go with it: the revision reader now lives in the brief twin, and
+`test_brief_consumer_compatibility.py` owns its cases.
 
 The last one matters most. The brief twin exists because a served-but-undeclared field cost
 the estate a day of dead dispatches; a declared-but-unrecognised CAPABILITY is worse in
@@ -97,85 +102,31 @@ def test_a_vocabulary_the_parser_cannot_read_is_loud(source: str) -> None:
         check.declared_capabilities(source)
 
 
-def test_one_revision_falling_behind_is_enough_to_refuse() -> None:
-    """The reason two consumer revisions are read rather than one.
+def test_a_revision_that_cannot_parse_a_declared_name_is_NAMED() -> None:
+    """The refusal says WHICH revision fell short, not merely that one did.
 
-    Dispatch fires the caller workflow in the UNIT'S OWN target repository, so the runner
-    that executes is that repository's pin -- which follows factory-runner's
-    RECOMMENDED_CALLER_PIN, not this repository's caller workflow. A gate reading only this
-    repository's pin vets the wrong caller for every unit that is not about this repository.
+    Kept keyed by revision after 2026-09-11 left only one to read: the message a person acts
+    on names the revision, and a helper shaped to carry one answer would have to be rewritten
+    the next time a second becomes worth reading. Both directions are asserted, so a helper
+    that reported every revision -- or none -- is caught.
     """
     served = {"repo.read", "github.pr.merge"}
     in_step = {"repo.read", "github.pr.merge"}
     behind = {"repo.read"}
 
-    assert check.revisions_that_cannot_parse(served, {"aaa": in_step, "bbb": in_step}) == {}
+    assert check.revisions_that_cannot_parse(served, {"aaa": in_step}) == {}
+    assert check.revisions_that_cannot_parse(served, {"aaa": behind}) == {
+        "aaa": ["github.pr.merge"]
+    }
     assert check.revisions_that_cannot_parse(served, {"aaa": in_step, "bbb": behind}) == {
         "bbb": ["github.pr.merge"]
     }
-    assert check.revisions_that_cannot_parse(served, {"aaa": behind, "bbb": in_step}) == {
-        "aaa": ["github.pr.merge"]
-    }
 
 
-def test_a_revision_that_is_both_pinned_and_recommended_says_both() -> None:
-    """The healthy steady state must not read as though only one revision was checked.
-
-    A mapping keyed by revision silently keeps whichever label was written last when the two
-    coincide, so the output claimed the recommendation was read and said nothing about the
-    pin. Caught by running the PASS path rather than by reading it.
-    """
-    same = check._roles("a" * 40, "a" * 40)
-
-    assert len(same) == 1
-    assert "pinned by" in same["a" * 40] and "recommended" in same["a" * 40]
-
-    apart = check._roles("a" * 40, "b" * 40)
-
-    assert "pinned by" in apart["a" * 40] and "recommended" not in apart["a" * 40]
-    assert "recommended" in apart["b" * 40] and "pinned by" not in apart["b" * 40]
-
-
-def test_a_recommendation_that_is_not_an_immutable_revision_is_loud(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """RECOMMENDED_CALLER_PIN is read as a revision, so a branch name in it decides nothing.
-
-    Same rule the caller pin already carries, applied to the file the whole estate follows:
-    a mutable ref resolves to different code tomorrow, so a compatibility answer against it
-    would expire.
-    """
-    monkeypatch.setattr(check, "fetch", lambda *_: "main\n")
-
-    with pytest.raises(check.Unresolvable, match="full 40-character commit"):
-        check.recommended_revision("AlobarQuest/factory-runner")
-
-
-def test_the_recommendation_is_read_from_the_default_branch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Deliberately mutable, unlike everything else this gate reads.
-
-    The recommendation is the estate's current answer to "what should every caller be pinned
-    to", so pinning THAT to a revision would freeze the question. Whitespace is stripped: the
-    file carries a trailing newline.
-    """
-    calls: list[tuple[str, ...]] = []
-
-    def record(*args: str) -> str:
-        calls.append(args)
-        return "f" * 40 + "\n"
-
-    monkeypatch.setattr(check, "fetch", record)
-
-    assert check.recommended_revision("AlobarQuest/factory-runner") == "f" * 40
-    assert calls == [("AlobarQuest/factory-runner", "RECOMMENDED_CALLER_PIN", "HEAD")]
-
-
-def test_the_comparison_names_every_capability_the_pinned_consumer_cannot_parse() -> None:
+def test_the_comparison_names_every_capability_the_recommended_consumer_cannot_parse() -> None:
     """The guard shown firing, on the exact shape of the WS-P3.7 ordering hazard.
 
-    This repo declares a capability; the pinned consumer does not recognise it. Shipped in
+    This repo declares a capability; the recommended consumer does not recognise it. Shipped
     that order, every dispatch of a unit whose envelope names it dies at envelope parse.
     Here it is a set difference with a name on it.
     """
