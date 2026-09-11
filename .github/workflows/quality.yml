@@ -47,15 +47,18 @@ concurrency:
 
 jobs:
   # Separate from Quality on purpose. It answers a different question -- can the consumer
-  # the estate recommends to every caller can actually use the brief this branch would
-  # serve? -- and it must answer it on the pull request that adds the field, not on a later
+  # the estate recommends to every caller actually use the brief this branch would serve?
+  # -- and it must answer it on the pull request that adds the field, not on a later
   # release. It needs no database and no dependency install, so it also reports in seconds
   # rather than behind the full gate. A red here is unambiguous: merge the consumer first.
   #
-  # THE REVISION IS READ FROM factory-runner's RECOMMENDED_CALLER_PIN, not from a caller
-  # workflow here. This repository hosted one until 2026-09-11, when ADR-0015's amendment
-  # declared it `factory_target = false` and deleted it; the pin it carried was a copy of
-  # that recommendation, so the three steps below lost a hop rather than an answer.
+  # THE REVISION IS READ FROM the consumer repository's own RECOMMENDED_CALLER_PIN, not
+  # from a caller workflow here. This repository hosted one until 2026-09-11, when
+  # ADR-0015's amendment declared it `factory_target = false` and deleted it; the pin it
+  # carried was a copy of that recommendation, so the three steps below lost a hop rather
+  # than an answer. (The consumer is named in each script, not here: a workflow file in
+  # this repository may not carry that repository's name -- see
+  # tests/architecture/test_ws33_scope_guards.py, which scans this directory for it.)
   consumer-compatibility:
     name: Runner consumer compatibility
     runs-on: ubuntu-latest
