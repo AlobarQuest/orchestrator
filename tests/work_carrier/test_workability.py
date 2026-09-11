@@ -197,7 +197,11 @@ def test_a_check_row_whose_status_is_not_a_string_cannot_be_decided() -> None:
     verdict = assess(TARGET, DECLARED_TRUE, rows)
     assert verdict.decision == CANNOT_DECIDE
     assert verdict.constraints[2].verdict == UNKNOWN
-    assert "factory.pat_access" in verdict.constraints[2].detail
+    # NOT RECORDED, rather than recorded with a value nothing can read. Both reach UNKNOWN,
+    # so asserting the verdict alone cannot tell them apart -- and a reader told
+    # `factory.pat_access is None` goes looking for a check that answered, where one told the
+    # sweep recorded nothing goes looking at the sweep.
+    assert "recorded no factory.pat_access" in verdict.constraints[2].detail
 
 
 def test_a_check_that_is_unknown_rather_than_passing_cannot_be_decided() -> None:
