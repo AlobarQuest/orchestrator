@@ -310,6 +310,7 @@ def test_a_repository_name_this_program_may_not_ask_about_never_reaches_the_tran
     for refused in (
         "../..",
         "a/..",
+        "AlobarQuest/br\x00ain",
         "AlobarQuest/brain/../../secrets",
         "brain",
         "AlobarQuest/brain?ref=main",

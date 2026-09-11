@@ -183,12 +183,20 @@ class GitHubDeclarationSource:
         try:
             # BUILD IT, THEN JUDGE WHAT WAS BUILT. The request is what reaches
             # the network, and its path is not always the string composed above
-            # -- see the note on `_ALLOWED`. Building raises for the same three
-            # families sending does, so it is guarded the same way and nothing
-            # has left this process at this point.
+            # -- see the note on `_ALLOWED`. Nothing has left this process here:
+            # `build_request` composes and raises, and a name that cannot even be
+            # composed into a URL is a name this program may not ask about, which
+            # is why the refusal below is worded as that and not as a fault of
+            # GitHub's. Measured: a control character in the slug raises
+            # `InvalidURL`, which is not an `HTTPError`.
             request = self._client.build_request("GET", path)
         except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            return Declaration(None, f"github is unreachable for {slug}: {type(error).__name__}")
+            return Declaration(
+                None,
+                f"{slug!r} is not a repository name this program may ask about; it reads "
+                f"one route, /repos/<owner>/<repo>/contents/{FILENAME} "
+                f"({type(error).__name__})",
+            )
         if not is_allowed(request.url.path):
             return Declaration(
                 None,
