@@ -28,7 +28,14 @@ import httpx
 import pytest
 
 from work_carrier.change_manager import WorkRecord
-from work_carrier.cli import EXIT_OK, run
+from work_carrier.cli import (
+    EXIT_FINDINGS,
+    EXIT_OK,
+    EXIT_TOOL_FAILURE,
+    EXIT_UNUSABLE,
+    run,
+    worst,
+)
 from work_carrier.declaration import (
     FILENAME,
     Declaration,
@@ -38,17 +45,18 @@ from work_carrier.declaration import (
 )
 from work_carrier.prepare import emit_key
 from work_carrier.workability import (
-    CANNOT_DECIDE,
     NO,
+    NOT_WORKABLE,
+    UNDECIDED,
+    UNJUDGED,
     UNKNOWN,
-    WOULD_CARRY,
-    WOULD_REFUSE,
+    WORKABLE,
     YES,
     Portfolio,
     assess,
+    judge,
     load_portfolio,
     project_for,
-    report,
     target_repository,
 )
 
@@ -107,13 +115,13 @@ UNREADABLE = Declaration(None, "github rejected the read of the declaration: 403
 
 def test_a_repository_that_opts_in_and_measures_clean_would_be_carried() -> None:
     verdict = assess(TARGET, DECLARED_TRUE, portfolio(project()))
-    assert verdict.decision == WOULD_CARRY
+    assert verdict.decision == WORKABLE
     assert [c.verdict for c in verdict.constraints] == [YES, YES, YES]
 
 
 def test_a_repository_that_declared_false_would_be_refused() -> None:
     verdict = assess(TARGET, DECLARED_FALSE, portfolio(project()))
-    assert verdict.decision == WOULD_REFUSE
+    assert verdict.decision == NOT_WORKABLE
     assert verdict.constraints[0].verdict == NO
 
 
@@ -126,7 +134,7 @@ def test_a_capability_violation_would_be_refused_and_names_the_check() -> None:
     """
     rows = portfolio(project(**{"runner.caller": "violation"}))
     verdict = assess(TARGET, DECLARED_TRUE, rows)
-    assert verdict.decision == WOULD_REFUSE
+    assert verdict.decision == NOT_WORKABLE
     capable = verdict.constraints[1]
     assert capable.verdict == NO
     assert "runner.caller" in capable.detail
@@ -135,7 +143,7 @@ def test_a_capability_violation_would_be_refused_and_names_the_check() -> None:
 def test_a_permission_violation_is_its_own_constraint_not_folded_into_capability() -> None:
     rows = portfolio(project(**{"factory.pat_access": "violation"}))
     verdict = assess(TARGET, DECLARED_TRUE, rows)
-    assert verdict.decision == WOULD_REFUSE
+    assert verdict.decision == NOT_WORKABLE
     assert verdict.constraints[1].verdict == YES
     assert verdict.constraints[2].verdict == NO
     assert "factory.pat_access" in verdict.constraints[2].detail
@@ -155,8 +163,8 @@ def test_a_repository_no_project_row_matches_cannot_be_decided_and_is_not_refuse
     UNKNOWN — and the composition can never turn UNKNOWNs into a refusal.
     """
     verdict = assess("AlobarQuest/never-heard-of-it", DECLARED_TRUE, portfolio(project()))
-    assert verdict.decision == CANNOT_DECIDE
-    assert verdict.decision != WOULD_REFUSE
+    assert verdict.decision == UNDECIDED
+    assert verdict.decision != NOT_WORKABLE
     assert [c.verdict for c in verdict.constraints] == [YES, UNKNOWN, UNKNOWN]
     assert "lookup that found nothing" in verdict.constraints[1].detail
 
@@ -168,7 +176,7 @@ def test_two_projects_answering_to_one_name_cannot_be_decided_rather_than_picked
     found, why = project_for(rows, TARGET)
     assert found is None
     assert "more than one project" in why
-    assert assess(TARGET, DECLARED_TRUE, rows).decision == CANNOT_DECIDE
+    assert assess(TARGET, DECLARED_TRUE, rows).decision == UNDECIDED
 
 
 def test_a_repository_the_sweep_never_measured_cannot_be_decided() -> None:
@@ -177,7 +185,7 @@ def test_a_repository_the_sweep_never_measured_cannot_be_decided() -> None:
         {"name": "infraops-mcp-server", "path": "/x/infraops-mcp-server", "factory": []}
     )
     verdict = assess(TARGET, DECLARED_TRUE, rows)
-    assert verdict.decision == CANNOT_DECIDE
+    assert verdict.decision == UNDECIDED
     assert "recorded no factory checks" in verdict.constraints[1].detail
 
 
@@ -203,7 +211,7 @@ def test_a_check_row_whose_status_is_not_a_string_cannot_be_decided() -> None:
         if row["id"] == "factory.pat_access":
             row["status"] = None
     verdict = assess(TARGET, DECLARED_TRUE, rows)
-    assert verdict.decision == CANNOT_DECIDE
+    assert verdict.decision == UNDECIDED
     assert verdict.constraints[2].verdict == UNKNOWN
     # NOT RECORDED, rather than recorded with a value nothing can read. Both reach UNKNOWN,
     # so asserting the verdict alone cannot tell them apart -- and a reader told
@@ -215,13 +223,13 @@ def test_a_check_row_whose_status_is_not_a_string_cannot_be_decided() -> None:
 def test_a_check_that_is_unknown_rather_than_passing_cannot_be_decided() -> None:
     rows = portfolio(project(**{"factory.landing_known": "unknown"}))
     verdict = assess(TARGET, DECLARED_TRUE, rows)
-    assert verdict.decision == CANNOT_DECIDE
+    assert verdict.decision == UNDECIDED
     assert verdict.constraints[1].verdict == UNKNOWN
 
 
 def test_an_unreadable_declaration_cannot_be_decided_and_is_not_read_as_absence() -> None:
     verdict = assess(TARGET, UNREADABLE, portfolio(project()))
-    assert verdict.decision == CANNOT_DECIDE
+    assert verdict.decision == UNDECIDED
     assert verdict.constraints[0].verdict == UNKNOWN
 
 
@@ -237,18 +245,18 @@ def test_a_definite_refusal_beside_an_unknown_still_refuses() -> None:
     a NO decides through an UNKNOWN, and UNKNOWNs alone never produce a refusal.
     """
     verdict = assess("AlobarQuest/never-heard-of-it", DECLARED_FALSE, portfolio(project()))
-    assert verdict.decision == WOULD_REFUSE
+    assert verdict.decision == NOT_WORKABLE
 
 
 def test_no_combination_of_unknowns_produces_a_refusal() -> None:
     verdict = assess("AlobarQuest/never-heard-of-it", UNREADABLE, portfolio())
-    assert verdict.decision == CANNOT_DECIDE
+    assert verdict.decision == UNDECIDED
     assert all(c.verdict == UNKNOWN for c in verdict.constraints)
 
 
 def test_a_payload_naming_no_target_repository_is_nothing_to_judge_not_a_refusal() -> None:
     verdict = assess(None, Declaration(None, "no repository to ask about"), portfolio(project()))
-    assert verdict.decision == CANNOT_DECIDE
+    assert verdict.decision == UNDECIDED
     assert verdict.repository is None
 
 
@@ -260,27 +268,27 @@ def test_a_payload_naming_no_target_repository_is_nothing_to_judge_not_a_refusal
 def test_pat_scope_being_permanently_unknown_does_not_stop_a_repository_being_carried() -> None:
     """Its own check says it is ALWAYS unknown, so a term requiring it passes nothing, ever."""
     rows = portfolio(project(**{"factory.pat_scope": "unknown"}))
-    assert assess(TARGET, DECLARED_TRUE, rows).decision == WOULD_CARRY
+    assert assess(TARGET, DECLARED_TRUE, rows).decision == WORKABLE
 
 
 def test_the_workflow_residual_is_named_on_every_repository_that_would_be_carried() -> None:
     """Not disqualifying is not the same as not mattering, and the output must say so."""
     out = io.StringIO()
-    report(
+    judge(
         [("change record 1", payload())],
         out,
         source=_Declares(DECLARED_TRUE),
         portfolio=portfolio(project()),
     )
     text = out.getvalue()
-    assert WOULD_CARRY in text
+    assert WORKABLE in text
     assert "pat_scope" in text
     assert ".github/workflows/**" in text
 
 
 def test_the_residual_is_not_claimed_about_a_repository_that_would_not_be_carried() -> None:
     out = io.StringIO()
-    report(
+    judge(
         [("change record 1", payload())],
         out,
         source=_Declares(DECLARED_FALSE),
@@ -322,7 +330,7 @@ def test_every_hop_to_the_target_repository_is_defensive(broken: dict) -> None:
 
 def test_the_report_names_the_age_of_the_capability_source() -> None:
     out = io.StringIO()
-    report([], out, source=_Declares(DECLARED_TRUE), portfolio=portfolio(age_seconds=7200))
+    judge([], out, source=_Declares(DECLARED_TRUE), portfolio=portfolio(age_seconds=7200))
     assert "2h old" in out.getvalue()
 
 
@@ -332,7 +340,7 @@ def test_a_missing_capability_source_is_named_rather_than_read_as_no_capability(
     loaded = load_portfolio(tmp_path / "absent.json")
     assert loaded.projects == ()
     assert "could not be read" in loaded.detail
-    assert assess(TARGET, DECLARED_TRUE, loaded).decision == CANNOT_DECIDE
+    assert assess(TARGET, DECLARED_TRUE, loaded).decision == UNDECIDED
 
 
 def test_an_unreadable_capability_source_is_named_rather_than_raising(tmp_path: Path) -> None:
@@ -411,30 +419,24 @@ def _carry(
     root: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    report_into: io.StringIO | None = None,
-    source=None,
-) -> tuple[int, str]:
-    """Run the carry, sending the report's own output somewhere else.
+    source,
+    portfolio_rows=None,
+) -> tuple[int, str, list[dict]]:
+    """Run a real `--register` carry with the judgment's inputs injected.
 
-    THE DIFFERENTIAL IS TOTAL BECAUSE OF THIS, and a filter would not be. Subtracting
-    the report's lines from one stream means knowing every shape it can print: a shape
-    added later would start counting as a carry line, and a carry line the report had
-    suppressed would be subtracted with it and the comparison would pass. Routing the
-    report to its own buffer leaves `out` carrying exactly what the carry wrote, so the
-    two runs are compared byte for byte with nothing excluded.
+    THE WRITER IS WHAT DISCRIMINATES. A refusal that only changed the printed line would
+    satisfy an assertion about the exit code and still register the record, so every test
+    below reads what the writer was handed as well as what the pass returned.
     """
-    if report_into is None:
-        monkeypatch.setattr("work_carrier.cli.report_workability", lambda *a, **k: None)
-    else:
-        monkeypatch.setattr(
-            "work_carrier.cli.report_workability",
-            lambda subjects, out: report(
-                subjects, report_into, source=source, portfolio=portfolio(project())
-            ),
-        )
-    # The record must PREPARE, or the report short-circuits on an empty subject list and the
-    # differential proves nothing about the path that reads a declaration. The emitter is
-    # injected the way this package's other end-to-end tests inject it.
+    monkeypatch.setattr(
+        "work_carrier.cli.judge_workability",
+        lambda subjects, out: judge(
+            subjects,
+            out,
+            source=source,
+            portfolio=portfolio(project()) if portfolio_rows is None else portfolio_rows,
+        ),
+    )
     rec = _record()
     import work_carrier.cli as cli_module
     import work_carrier.prepare as prepare_module
@@ -445,70 +447,238 @@ def _carry(
         "prepare",
         lambda r, **kw: original(r, **kw, runner=_emitting(_emitted(r))),
     )
+    writer = _Registrar()
+    code, text = _run_registering(root, rec, writer)
+    return code, text, writer.payloads
+
+
+def _run_registering(root: Path, rec: WorkRecord, writer) -> tuple[int, str]:
+    """The `run` call, behind an unannotated `writer`.
+
+    The double is not an `OrchestratorClient` and pyright is right to say so: `run` takes
+    the concrete client because nothing yet declares the two methods the carry actually
+    uses as a protocol. `test_work_carrier.py` passes its own double through an
+    unannotated parameter for the same reason; this matches it rather than adding a
+    suppression comment that would be the first of its kind in this package.
+    """
     out = io.StringIO()
-    code = run(["--checkout-root", str(root)], source=_Source([rec]), out=out)
+    code = run(
+        ["--checkout-root", str(root), "--register"],
+        source=_Source([rec]),
+        registrar=writer,
+        out=out,
+    )
     return code, out.getvalue()
 
 
-def test_the_report_changes_neither_the_exit_code_nor_anything_the_carry_printed(
+class _Registrar:
+    """The smallest orchestrator client the carry will accept, recording what it was given."""
+
+    def __init__(self) -> None:
+        self.payloads: list[dict] = []
+
+    def carried_revisions(self, change_record_id: int) -> list[str]:
+        return []
+
+    def register_intake(self, payload: dict) -> dict:
+        self.payloads.append(payload)
+        return {"id": "11111111-1111-1111-1111-111111111111"}
+
+
+def test_all_three_yes_is_carried(checkout_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The positive control, without which every refusal below could pass for free.
+
+    A test suite in which nothing is ever carried cannot tell a working gate from a
+    program that registers nothing, so this runs the same path with an estate that
+    answers yes three times and asserts the record reached the writer.
+    """
+    code, text, payloads = _carry(checkout_root, monkeypatch, source=_Declares(DECLARED_TRUE))
+
+    assert code == EXIT_OK
+    assert len(payloads) == 1
+    assert WORKABLE in text
+    assert "residual" in text, "the pat_scope residual belongs on the line that authorises work"
+
+
+def test_a_repository_that_has_not_opted_in_is_not_carried_and_the_reason_is_printed(
     checkout_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The differential that makes this increment safe to land.
+    """Devon's rule: without all three, it is useless to go forward.
 
-    Reported and not-reported are run over the same queue and their carry streams
-    compared byte for byte. The record here is REFUSED by the real emitter, so the pass
-    prepares and is not registered, so the pass exits 0 — and the sibling below runs the
-    same differential with a report whose reader raises, which is the direction a report
-    would most plausibly move an exit code in.
+    A definite NO is a FINDING -- the record can never be carried while the repository
+    says what it says -- so it exits 3, which this lane's dead-man switch is armed to
+    treat as a pass that ran and reported rather than as a failure.
     """
-    block = io.StringIO()
-    reported_code, reported = _carry(
-        checkout_root, monkeypatch, report_into=block, source=_Declares(DECLARED_TRUE)
+    code, text, payloads = _carry(checkout_root, monkeypatch, source=_Declares(DECLARED_FALSE))
+
+    assert payloads == [], "a record that is not workable must never reach the writer"
+    assert code == EXIT_FINDINGS
+    assert NOT_WORKABLE in text
+    assert "NOT CARRIED" in text
+    assert "factory_target = false" in text
+
+
+def test_a_constraint_nobody_could_answer_holds_the_record_under_a_different_code(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An UNKNOWN is not a NO, and the two must stay tellable apart.
+
+    Nothing is wrong with this record -- a later pass may carry it -- so it is unusable
+    INPUT rather than a finding, and in this lane that is a different code which the
+    launcher ranks ABOVE a finding. Both halves are asserted, because a refusal that
+    used one code for both would satisfy "it was not carried" and tell a reader the
+    wrong thing about what to do.
+    """
+    code, text, payloads = _carry(checkout_root, monkeypatch, source=_Declares(UNREADABLE))
+
+    assert payloads == []
+    assert code == EXIT_UNUSABLE
+    assert code != EXIT_FINDINGS
+    assert UNDECIDED in text
+    assert NOT_WORKABLE not in text
+
+
+def test_a_judgment_that_raises_holds_the_record_and_reports_a_tool_failure(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old guard said "failed and changed nothing"; under a deciding check that sentence
+    would be a fail-open.
+
+    A record nobody judged must be held, not carried -- so the broad guard now yields a
+    fourth answer that is not WORKABLE, and the pass reports the tool itself having
+    failed. Asserting the writer saw nothing is the half that discriminates: a guard that
+    swallowed the error and returned WORKABLE would print the same failure line.
+    """
+    code, text, payloads = _carry(checkout_root, monkeypatch, source=_Raises())
+
+    assert payloads == []
+    assert code == EXIT_TOOL_FAILURE
+    assert UNJUDGED in text
+    assert "NOT carried" in text
+    assert "RuntimeError" in text
+    assert WORKABLE not in text
+
+
+def test_pat_scopes_permanent_unknown_does_not_prevent_a_carry(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The carve-out, asserted rather than assumed, and it is load-bearing.
+
+    `factory.pat_scope` is `unknown` BY CONSTRUCTION -- Actions secrets are write-only and
+    no API reports a fine-grained PAT's permissions -- so a constraint that required it to
+    pass would refuse every repository forever. The estate here reports it `violation`,
+    which is stronger than the live `unknown`: even then the permission constraint reads
+    only `factory.pat_access`, and the record is carried with the residual printed.
+    """
+    rows = portfolio(project(**{"factory.pat_scope": "violation"}))
+    code, text, payloads = _carry(
+        checkout_root, monkeypatch, source=_Declares(DECLARED_TRUE), portfolio_rows=rows
     )
-    silent_code, silent = _carry(checkout_root, monkeypatch)
 
-    assert reported_code == silent_code == EXIT_OK
-    assert reported == silent
-    assert reported != "", "the differential compared two empty streams"
-    assert "[WORKABILITY]" in block.getvalue()
+    assert code == EXIT_OK
+    assert len(payloads) == 1
+    assert "pat_scope is unknown by construction" in text
 
 
-def test_a_report_whose_reader_raises_changes_nothing_and_says_so(
+def test_a_subject_whose_line_cannot_be_written_is_held_rather_than_carried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Writing the reason is part of answering, so failing to write it holds the record.
+
+    The reverse order — record the decision, then print it — was proposed in review and
+    is the fail-open: it keeps WORKABLE, the print raises, the guard prints "NOT carried",
+    and the record is carried anyway, with the stream asserting the opposite of what
+    happened. Both halves are asserted here, because the printed line alone cannot tell
+    the two orders apart: the guard prints the same sentence either way, and only the
+    returned decision says whether the record will be offered to the writer.
+
+    The second subject still answers, which is the other half of the per-subject guard.
+    """
+    from work_carrier import workability as module
+
+    real = module._print_one
+    calls: list[str] = []
+
+    def explode(label: str, verdict, out) -> None:
+        calls.append(label)
+        if label == "first":
+            raise RuntimeError("the stream is gone")
+        real(label, verdict, out)
+
+    monkeypatch.setattr(module, "_print_one", explode)
+    out = io.StringIO()
+    decisions = judge(
+        [("first", payload(TARGET)), ("second", payload(TARGET))],
+        out,
+        source=_Declares(DECLARED_TRUE),
+        portfolio=portfolio(project()),
+    )
+
+    assert calls == ["first", "second"]
+    assert decisions == (UNJUDGED, WORKABLE)
+    assert "first could not be judged, so it is NOT carried" in out.getvalue()
+
+
+def test_the_exit_ranking_is_the_launchers_own(
     checkout_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A report that could raise could change the exit code. This one cannot.
+    """Two artifacts hold one ordering, so this reads the shell rather than restating it.
 
-    Same differential with a reader that raises: the carry stream must be unchanged,
-    and the report must SAY it failed rather than print a verdict it did not compute.
+    `run-work-carrier.sh` folds both phases with a `_rank` whose arms are the authority
+    for which outcome dominates, and the carry now returns more than one kind of code in
+    a single pass -- so a `max()` over the numbers would answer 3 for `{1, 3}` and put a
+    finding above a tool failure, inverting the launcher's verdict. The table is parsed
+    out of the script, so an edit to either side reds this.
     """
-    block = io.StringIO()
-    broken_code, broken = _carry(checkout_root, monkeypatch, report_into=block, source=_Raises())
-    silent_code, silent = _carry(checkout_root, monkeypatch)
+    from work_carrier.cli import _RANK
 
-    assert broken_code == silent_code == EXIT_OK
-    assert broken == silent
-    assert broken != "", "the differential compared two empty streams"
-    assert "failed and changed nothing" in block.getvalue()
-    assert WOULD_CARRY not in block.getvalue()
-    assert WOULD_REFUSE not in block.getvalue()
+    script = Path("scripts/run-work-carrier.sh").read_text(encoding="utf-8")
+    arms = re.findall(r"^\s+(\d+|\*)\) echo (\d+) ;;$", script, re.MULTILINE)
+    ranked = {int(code): int(rank) for code, rank in arms if code != "*"}
+
+    assert ranked, "the launcher's _rank arms were not found — this test is measuring nothing"
+    assert _RANK == ranked
+    assert worst([EXIT_TOOL_FAILURE, EXIT_FINDINGS]) == EXIT_TOOL_FAILURE
+    assert worst([EXIT_UNUSABLE, EXIT_TOOL_FAILURE, EXIT_FINDINGS]) == EXIT_UNUSABLE
+    assert worst([]) == EXIT_OK
+
+    # THE CATCH-ALL IS THE HALF THE TABLE CANNOT CARRY, and the shell says why: it ranks
+    # rather than folding so that a code nobody planned for -- 127 for a missing binary is
+    # the one that happens -- is preserved and DOMINANT instead of read as success. So the
+    # star arm is asserted to exist, and the Python side asserted to agree with it rather
+    # than raising a KeyError, which would be a pass that reported nothing because it could
+    # not classify its own outcome.
+    assert [rank for code, rank in arms if code == "*"] == ["4"]
+    assert worst([127, EXIT_UNUSABLE]) == 127
 
 
-def test_the_carry_really_does_print_the_report_into_its_own_output(
-    checkout_root: Path,
+def test_the_carry_really_does_ask_the_real_judge(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The wiring, unpatched — or the differential above would be about nothing.
+    """The wiring, unpatched — or every test above would be about a function nobody calls.
 
-    Both tests above replace `report_workability`, so neither of them can see that the
-    carry calls it at all. This one runs the real path and looks for the block in the
-    stream a person reads.
+    All of them replace `judge_workability`, so none can see that the carry reaches it at
+    all. This runs the real one, with a record that really prepares and with this package's
+    fail-closed defaults: no portfolio and no credential, so nothing can be answered, so
+    nothing is carried and the pass reports unusable input. The exit code is the half that
+    discriminates — the block alone would still print if the decision were thrown away.
     """
+    import work_carrier.cli as cli_module
+    import work_carrier.prepare as prepare_module
+
+    original = prepare_module.prepare
+    monkeypatch.setattr(
+        cli_module, "prepare", lambda r, **kw: original(r, **kw, runner=_emitting(_emitted(r)))
+    )
     out = io.StringIO()
-    run(["--checkout-root", str(checkout_root)], source=_Source([_record()]), out=out)
+    code = run(["--checkout-root", str(checkout_root)], source=_Source([_record()]), out=out)
     assert "[WORKABILITY]" in out.getvalue()
+    assert UNDECIDED in out.getvalue()
+    assert code == EXIT_UNUSABLE
 
 
 def test_an_empty_queue_still_says_the_check_ran(checkout_root: Path) -> None:
-    """Silence would be indistinguishable from the report having been removed."""
+    """Silence would be indistinguishable from the check having been removed."""
     out = io.StringIO()
     code = run(["--checkout-root", str(checkout_root)], source=_Source([]), out=out)
     assert code == EXIT_OK
@@ -526,7 +696,7 @@ def test_the_report_asks_about_the_package_target_and_never_the_records_reposito
     in and measures clean, so the check would pass everything forever.
     """
     asked = _Declares(DECLARED_TRUE)
-    report([("change record 1", payload())], io.StringIO(), source=asked, portfolio=portfolio())
+    judge([("change record 1", payload())], io.StringIO(), source=asked, portfolio=portfolio())
     assert asked.asked == [TARGET]
     assert "AlobarQuest/intent-packages" not in asked.asked
 
@@ -831,17 +1001,17 @@ def test_the_credential_is_read_from_the_environment_and_its_absence_is_not_a_re
     """A machine with no GitHub credential reports "could not tell", never "not a target"."""
     monkeypatch.delenv("WORK_CARRIER_GITHUB_TOKEN", raising=False)
     out = io.StringIO()
-    report([("change record 1", payload())], out, portfolio=portfolio(project()))
+    judge([("change record 1", payload())], out, portfolio=portfolio(project()))
     text = out.getvalue()
-    assert CANNOT_DECIDE in text
-    assert WOULD_REFUSE not in text
+    assert UNDECIDED in text
+    assert NOT_WORKABLE not in text
     assert "WORK_CARRIER_GITHUB_TOKEN" in text
 
 
 def test_a_credential_in_the_environment_is_never_printed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WORK_CARRIER_GITHUB_TOKEN", "ghp-not-a-real-secret-0123456789")
     out = io.StringIO()
-    report([], out, portfolio=portfolio())
+    judge([], out, portfolio=portfolio())
     assert "ghp-not-a-real-secret-0123456789" not in out.getvalue()
 
 
@@ -859,9 +1029,15 @@ def test_a_credential_that_makes_the_reader_raise_is_never_printed(
     secret = "ghp-not-a-real-secret-\u00ff\u0100"
     monkeypatch.setenv("WORK_CARRIER_GITHUB_TOKEN", secret)
     out = io.StringIO()
-    report([("a record", payload(TARGET))], out, portfolio=portfolio(project()))
+    decisions = judge([("a record", payload(TARGET))], out, portfolio=portfolio(project()))
     text = out.getvalue()
-    assert "failed and changed nothing" in text, text
+    # THE GUARD FIRES BEFORE ANY SUBJECT IS REACHED, so the decisions list is empty and the
+    # PADDING is what answers for the record. It must pad with something that is not
+    # WORKABLE: a subject nobody judged is held, which is the whole difference between this
+    # guard and the one it replaced, whose "failed and changed nothing" was true of a report
+    # and would be a fail-open here.
+    assert decisions == (UNJUDGED,)
+    assert "the workability judgment failed" in text, text
     assert secret not in text
     assert "ghp-not-a-real-secret" not in text
     assert "Bearer" not in text
@@ -885,16 +1061,16 @@ def test_one_unjudgeable_subject_does_not_silence_the_rest(
             return Declaration(True, "factory-target.toml declares factory_target = true")
 
     out = io.StringIO()
-    report(
+    judge(
         [("first", payload("AlobarQuest/broken")), ("second", payload(TARGET))],
         out,
         source=_RaisesFor(),
         portfolio=portfolio(project()),
     )
     text = out.getvalue()
-    assert "judging first failed and changed nothing" in text, text
+    assert "first could not be judged, so it is NOT carried" in text, text
     assert "RuntimeError" in text, text
-    assert WOULD_CARRY in text, text
+    assert WORKABLE in text, text
     assert "second" in text, text
 
 

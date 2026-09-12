@@ -29,8 +29,17 @@
      the moment it runs, and a record it missed is carried by the next one unchanged.
 
      The exit code is the report. launchd discards it, so read the log -- 0 every approved record
-     was carried or there were none, 1 the tool failed, 2 it could not use its inputs, 3 a record
-     could not be prepared or the orchestrator refused to register it, and either needs a person.
+     was carried or there were none, 1 the tool failed, 2 it could not use its inputs, 3 something
+     was found, and the last three each need a person.
+
+     A RECORD CAN NOW BE HELD RATHER THAN CARRIED, and the code says which kind of held. The pass
+     asks whether the SDS should work on each target repository at all -- does it opt in, is it
+     capable, are the permissions sufficient -- and carries only a record that answers yes three
+     times. A definite NO is a finding (3): the record can never be carried while the repository
+     says what it says. An answer nobody could reach is unusable input (2): nothing is wrong with
+     the record. 2 outranks 3, and the dead-man switch treats 3 as this lane's finding code, so a
+     pass held on a NO reports and does not page while one held on an UNKNOWN does -- a lane that
+     cannot tell whether a repository opted in has stopped being able to do its job.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

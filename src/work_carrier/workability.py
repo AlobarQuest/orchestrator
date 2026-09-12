@@ -1,4 +1,4 @@
-"""Should the SDS work on this repository at all? Asked at the carry, REPORTED ONLY.
+"""Should the SDS work on this repository at all? Asked at the carry, and it DECIDES.
 
 Devon's rule, 2026-09-11: a repository is workable by the SDS when all three of
 these hold -- it OPTS IN (`factory-target.toml` declares `factory_target =
@@ -6,12 +6,23 @@ true`), the conformance kit says it is CAPABLE, and the permissions needed to do
 the work are SUFFICIENT. "The intent was always to have SDS decide when starting
 a work package to check and make sure it should."
 
-**THIS MODULE ANSWERS AND DOES NOT ACT.** It prints, per record, what the three
-constraints say and what a refusing version of it would have done. Nothing here
-skips a carry, alters an exit code or stops an intake being registered, and the
-property that makes it safe to land is that the carried set and the exit code are
-identical with it and without it. Devon wants to see what it would refuse across
-the live population before it refuses anything.
+**IT USED TO ONLY REPORT, AND THAT INCREMENT'S SAFETY ARGUMENT IS NOW SPENT.** It
+landed answering and not acting -- the carried set and the exit code identical
+with it and without it -- so the estate could see what a refusing version would
+refuse across the live population before anything refused on it. It refused
+nothing: the approved work queue was empty (7 `work` records, 6 resolved, 1
+wontfix), and a hand-run assessment of all eight factory repositories gave five
+workable, three not, none undecided. So a record is now carried only when all
+three constraints answer YES, and anything else is NOT carried with the reason
+printed.
+
+**A REASON TO HOLD IS NOT A REASON TO FAIL, AND THE TWO EXIT DIFFERENTLY.** A
+definite NO is a FINDING -- an approved record that can never be carried while
+the repository says what it says, which waits on a person. An UNKNOWN is an input
+this pass could not use, which is a different code in this lane and, per
+`run-work-carrier.sh`'s ranking, the worse of the two. Nothing here knows those
+codes; it answers, and `work_carrier.cli` maps the answers onto the lane's own
+vocabulary.
 
 **WHY THE CARRY.** Everything expensive happens after it -- the package
 revision, the write-once authority envelope, both human approvals, the coding
@@ -46,8 +57,8 @@ and routed around it -- its capability checks ride in the report and never touch
 `admission_passed` -- and this follows that precedent. What it does NOT do is
 swallow the residual: `factory.pat_access` proves the token can push to the
 repository, so the permission constraint is answered EXCEPT for a change whose
-diff touches a workflow file, and the report says so in words on every repository
-it would carry. That exception is not hypothetical; it killed two work units on
+diff touches a workflow file, and the line that authorises a carry says so in
+words. That exception is not hypothetical; it killed two work units on
 2026-08-03, at the final push, after coding and verification had both succeeded.
 """
 
@@ -79,15 +90,19 @@ YES = "yes"
 NO = "no"
 UNKNOWN = "unknown"
 
-WOULD_CARRY = "WOULD CARRY"
-WOULD_REFUSE = "WOULD REFUSE"
-CANNOT_DECIDE = "CANNOT DECIDE"
+WORKABLE = "WORKABLE"
+NOT_WORKABLE = "NOT WORKABLE"
+UNDECIDED = "CANNOT DECIDE"
+# A FOURTH ANSWER THAT NO CONSTRAINT PRODUCES: the judgment itself failed. It
+# exists because this module now decides, so "the report broke" can no longer
+# mean "nothing changed" -- a record nobody judged must be held, not carried.
+UNJUDGED = "NOT JUDGED"
 
 # The decisions are different lengths, so a fixed indent leaves the longest one's continuation
 # lines out of line with the rest. Padding to the widest keeps one column for a reader scanning
 # a queue, which is the whole point of a report nobody can act on otherwise.
 _HEADER = "WORKABILITY"
-_WIDTH = max(len(word) for word in (WOULD_CARRY, WOULD_REFUSE, CANNOT_DECIDE, _HEADER)) + 2
+_WIDTH = max(len(word) for word in (WORKABLE, NOT_WORKABLE, UNDECIDED, UNJUDGED, _HEADER)) + 2
 _INDENT = " " * (_WIDTH + 1)
 
 
@@ -136,10 +151,10 @@ class Workability:
         """
         verdicts = {constraint.verdict for constraint in self.constraints}
         if NO in verdicts:
-            return WOULD_REFUSE
+            return NOT_WORKABLE
         if UNKNOWN in verdicts:
-            return CANNOT_DECIDE
-        return WOULD_CARRY
+            return UNDECIDED
+        return WORKABLE
 
 
 @dataclass(frozen=True)
@@ -169,6 +184,14 @@ def load_portfolio(path: Path | None = None, *, now: float | None = None) -> Por
     recorded this morning can describe a working tree weeks behind its remote.
     Measured 2026-09-11: the scan ran at 03:00 and recorded `runner.caller: pass`
     for a repository whose caller workflow had been deleted on the remote.
+
+    **NOTHING BOUNDS THAT AGE, AND SINCE THE ANSWER DECIDES, A STALE `pass` NOW
+    AUTHORISES.** The opt-in constraint was deliberately moved to a live GitHub
+    read for exactly this hazard; the other two still rest on this file. The age
+    is printed on the line that authorises the carry, which is the most this
+    module can do without inventing a threshold -- what age is too old is a
+    decision about the estate's scan cadence, and refusing on one would hold
+    every record on any morning the sweep had not run.
     """
     resolved = path or Path(os.environ.get(PORTFOLIO_ENV) or DEFAULT_PORTFOLIO).expanduser()
     try:
@@ -254,6 +277,16 @@ def _checks(project: dict[str, Any]) -> dict[str, str]:
 def _from_checks(name: str, project: dict[str, Any], wanted: tuple[str, ...]) -> Constraint:
     """One constraint over a named set of conformance checks.
 
+    **`not-applicable` FALLS IN WITH UNKNOWN, and that is a fold rather than a
+    decision.** The estate has now met "not applicable is a distinct answer from
+    not met" in three subsystems, and this is a fourth place it could bite. It
+    does not bite TODAY, and the reason is worth writing down rather than
+    rediscovering: the kit marks `runner.caller` not-applicable exactly when a
+    repository declares `factory_target = false`, so the two co-occur and the
+    definite NO on opt-in decides first. A check that became not-applicable for
+    some OTHER reason would hold a record under a code meaning "a later pass may
+    carry it", which would be the same category error again.
+
     An EMPTY factory block means the sweep did not measure this repository at all
     -- the kit scopes Q2 on the repository declaring a delivery profile -- and a
     check the scan recorded nothing for is the same answer one check down. Both
@@ -294,7 +327,20 @@ def assess(
 ) -> Workability:
     """The three constraints for one repository. Total, and it decides nothing."""
     if repository is None:
-        unknown = "the intake payload names no target repository, so there is nothing to judge"
+        # NOT A PROPERTY OF THIS RECORD, AND NOT ONE A LATER PASS MENDS. The field
+        # is read off the approved package's own profile fields, and only the
+        # `dependency-update` profile declares `target_repo` -- the others name
+        # their repository differently or not at all, and a package's schema is
+        # closed, so it cannot simply be added. So this line says what is true and
+        # stops: nobody can answer the three questions about a repository nothing
+        # named. Whether such work should be carried at all is a decision about
+        # the profiles, and holding it is the fail-closed side of that decision
+        # rather than an answer to it.
+        unknown = (
+            "the approved package's profile names no target repository under `target_repo`, so "
+            "there is nothing to ask the three questions about; this is a fact about the "
+            "profile rather than about this record, and no later pass changes it"
+        )
         return Workability(
             None,
             tuple(
@@ -328,7 +374,7 @@ def target_repository(payload: dict[str, Any]) -> str | None:
     `package.yaml` a second time: that snapshot is what the emitter verified and
     what the orchestrator will store, so there is no second reader to diverge.
     Every hop is defensive -- a profile that declares no `target_repo` is an
-    honest `None`, reported as "nothing to judge" and never as "not a target".
+    honest `None`, held as "could not be answered" and never refused as "not a target".
     """
     snapshot = payload.get("enforcement_snapshot")
     if not isinstance(snapshot, dict):
@@ -355,6 +401,18 @@ def _declaration_for(repository: str | None, source: DeclarationSource | None) -
     return source.declaration(repository)
 
 
+_CONSEQUENCE = {
+    NOT_WORKABLE: (
+        "NOT CARRIED — a constraint answered no, so this record can never be carried while "
+        "that stays true; a person decides what to do about it"
+    ),
+    UNDECIDED: (
+        "NOT CARRIED — a constraint could not be answered, so this pass does not know whether "
+        "the work belongs in that repository; nothing is wrong with the record"
+    ),
+}
+
+
 def _print_one(label: str, verdict: Workability, out) -> None:
     subject = verdict.repository or "no target repository"
     print(f"{_tag(verdict.decision)} {label} -> {subject}", file=out)
@@ -363,37 +421,54 @@ def _print_one(label: str, verdict: Workability, out) -> None:
             f"{_INDENT}{constraint.name:<11} {constraint.verdict:<7} {constraint.detail}",
             file=out,
         )
-    if verdict.decision == WOULD_CARRY:
+    if verdict.decision == WORKABLE:
+        # ON THE LINE THAT AUTHORISES WORK, which is the whole point of printing
+        # it: `factory.pat_scope` is unknown by construction, so the permission
+        # constraint is answered EXCEPT for a change whose diff touches a
+        # workflow file, and a reader must see that on the line that says yes.
         print(f"{_INDENT}residual    {PAT_SCOPE_RESIDUAL}", file=out)
+        return
+    print(f"{_INDENT}{_CONSEQUENCE[verdict.decision]}", file=out)
 
 
-def report(
+def judge(
     subjects: list[tuple[str, dict[str, Any]]],
     out,
     *,
     source: DeclarationSource | None = None,
     portfolio: Portfolio | None = None,
-) -> None:
-    """Print what the three constraints say about everything this pass would carry.
+) -> tuple[str, ...]:
+    """Decide, per subject, whether the carry may proceed -- and say why either way.
 
-    **TOTAL, AND THAT IS THE INCREMENT'S WHOLE SAFETY ARGUMENT.** It returns
-    nothing, and it cannot raise: a report that could raise could change the
-    carry's exit code, and this is landing precisely because it changes neither
-    the exit code nor the carried set. The broad guard is deliberate rather than
-    lazy -- every reader beneath it is already total, so anything reaching it is
-    a defect in this module, and a defect in a report must not stop a lane that
-    worked before the report existed.
+    Returns one decision per subject, in the order they were given and of the
+    same length, so a caller can pair them off positionally. The caller maps
+    those onto its own exit vocabulary; this module does not know one.
+
+    **STILL TOTAL, AND THE TOTALITY NOW MEANS SOMETHING ELSE.** It used to keep a
+    report from moving an exit code the carry owned. It now keeps a DEFECT IN THE
+    JUDGE from carrying a record nobody judged: every failure yields `UNJUDGED`,
+    which is not `WORKABLE`, so the record is held. Fail closed -- the opposite
+    of the old guard's "failed and changed nothing", which would now be a
+    sentence that admits work by being wrong.
+
+    The decisions list is built as the loop runs and padded on the way out, so a
+    failure BETWEEN subjects keeps the answers already reached rather than
+    discarding them; only the subjects never reached are padded. That is a
+    different question from a failure WITHIN one subject, which holds it -- see
+    the ordering note in `_judge`.
 
     `source` absent means OPEN ONE FROM THE ENVIRONMENT, which answers `None`
     when this machine holds no GitHub credential -- and every repository then
-    reports "could not tell", which is honest and is not a refusal. A caller
-    that injects a reader keeps it; one opened here is closed here.
+    reports "could not tell", which is honest, is not a refusal, and now holds
+    the record. A caller that injects a reader keeps it; one opened here is
+    closed here.
     """
+    decisions: list[str] = []
     opened = None
     try:
         if source is None:
             opened = source = from_environment()
-        _report(subjects, out, source, portfolio)
+        _judge(subjects, out, source, portfolio, decisions)
     except Exception as error:  # noqa: BLE001 - see the docstring: it may not raise
         # THE TYPE NAME ONLY, for the reason `declaration.py` gives one field
         # over: the credential is read inside this guard and reaches an
@@ -402,24 +477,26 @@ def report(
         # non-ASCII `WORK_CARRIER_GITHUB_TOKEN` makes client construction raise a
         # `UnicodeEncodeError` whose repr carries `Bearer <token>` verbatim.
         print(
-            "[WORKABILITY] the workability report failed and changed nothing: "
-            f"{type(error).__name__}",
+            f"{_tag(_HEADER)} the workability judgment failed, so nothing it had not already "
+            f"decided is carried: {type(error).__name__}",
             file=out,
         )
     finally:
         if opened is not None:
             opened.close()
+    return tuple(decisions) + (UNJUDGED,) * (len(subjects) - len(decisions))
 
 
-def _report(
+def _judge(
     subjects: list[tuple[str, dict[str, Any]]],
     out,
     source: DeclarationSource | None,
     portfolio: Portfolio | None,
+    decisions: list[str],
 ) -> None:
     loaded = portfolio if portfolio is not None else load_portfolio()
     print(
-        f"\n{_tag(_HEADER)} reporting only — nothing below skips a carry or changes the exit code.",
+        f"\n{_tag(_HEADER)} a record is carried only when all three answer yes.",
         file=out,
     )
     print(f"{_INDENT}capability source: {loaded.detail}", file=out)
@@ -438,10 +515,20 @@ def _report(
         try:
             repository = target_repository(payload)
             verdict = assess(repository, _declaration_for(repository, source), loaded)
+            # PRINTED BEFORE IT IS RECORDED, and the order is fail-closed rather
+            # than tidy. Writing the line is part of answering: a record carried
+            # under a reason that never finished printing is a carry nobody can
+            # read. So a failure anywhere in here -- including in the print --
+            # reaches the guard below and the subject is HELD. The other order
+            # was proposed in review and is the fail-open: it records WORKABLE,
+            # the print raises, the guard prints "NOT carried", and the record is
+            # carried anyway -- the stream saying the opposite of what happened.
             _print_one(label, verdict, out)
+            decisions.append(verdict.decision)
         except Exception as error:  # noqa: BLE001 - the type name only, as above
             print(
-                f"{_tag(_HEADER)} judging {label} failed and changed nothing: "
+                f"{_tag(UNJUDGED)} {label} could not be judged, so it is NOT carried: "
                 f"{type(error).__name__}",
                 file=out,
             )
+            decisions.append(UNJUDGED)
