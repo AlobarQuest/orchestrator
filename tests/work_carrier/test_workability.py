@@ -19,15 +19,23 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 
 from work_carrier.change_manager import WorkRecord
 from work_carrier.cli import EXIT_OK, run
-from work_carrier.declaration import Declaration, GitHubDeclarationSource, is_allowed, parse
+from work_carrier.declaration import (
+    FILENAME,
+    Declaration,
+    GitHubDeclarationSource,
+    is_allowed,
+    parse,
+)
 from work_carrier.prepare import emit_key
 from work_carrier.workability import (
     CANNOT_DECIDE,
@@ -554,31 +562,204 @@ def test_a_declaration_missing_either_key_or_carrying_the_wrong_type_cannot_be_r
     assert parse(text).target is None
 
 
-def test_an_absent_declaration_is_an_answer_and_names_what_else_answers_the_same() -> None:
+def _routed(
+    contents: httpx.Response | Exception, repository: httpx.Response | Exception
+) -> tuple[httpx.MockTransport, list[str]]:
+    """A transport that answers the two routes differently, and records what was asked.
+
+    The two are told apart by PATH rather than by call order, so a test cannot pass
+    because the reader happened to make the requests in the order the stub expected --
+    and the recorded list is what makes "the probe was never made" assertable.
+    """
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        answer = repository if request.url.path.endswith("/brain") else contents
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    return httpx.MockTransport(handler), seen
+
+
+def _reader(transport: httpx.MockTransport) -> GitHubDeclarationSource:
+    return GitHubDeclarationSource(
+        token="t", base_url="https://example.invalid", transport=transport
+    )
+
+
+def test_an_absent_declaration_is_an_answer_once_the_repository_itself_answers() -> None:
     """GitHub answers 404 three ways, and this is the one branch that returns a definite NO.
 
     A definite NO decides through every UNKNOWN beside it, so the two states that are
-    indistinguishable from "has not opted in" -- a repository that does not exist, and a
-    private one this credential may not read -- have to be named in the line a person
-    reads, or a permission fault is served as a refusal with nothing saying so.
+    otherwise indistinguishable from "has not opted in" -- a repository that does not
+    exist, and a private one this credential may not read -- are settled by one read of
+    the repository itself rather than named and left to the reader. This is the case
+    where that read ANSWERS, so the absence is the repository's own silence.
     """
-    import httpx
 
-    source = GitHubDeclarationSource(
-        token="t",
-        base_url="https://example.invalid",
-        transport=httpx.MockTransport(lambda request: httpx.Response(404, json={})),
-    )
-    answer = source.declaration("AlobarQuest/brain")
+    transport, seen = _routed(httpx.Response(404, json={}), httpx.Response(200, json={}))
+    answer = _reader(transport).declaration("AlobarQuest/brain")
     assert answer.target is False
-    assert "does not exist" in answer.detail
-    assert "may not read" in answer.detail
-    assert "both answer the same way" in answer.detail
+    assert "has not opted in" in answer.detail
+    assert seen == [
+        "/repos/AlobarQuest/brain/contents/factory-target.toml",
+        "/repos/AlobarQuest/brain",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("repository_status", "expected"),
+    [
+        (404, "does not exist or one this credential cannot see"),
+        (403, "not an answer either way"),
+        (429, "transient"),
+        (500, "transient"),
+        (502, "transient"),
+        (301, "renamed or moved"),
+    ],
+)
+def test_an_absence_the_repository_does_not_confirm_is_could_not_tell(
+    repository_status: int, expected: str
+) -> None:
+    """The behaviour change, and the whole reason the probe exists.
+
+    A slug nobody should have asked about and a private repository this credential
+    cannot see both 404 on the contents route, and both used to come back as a definite
+    "has not opted in" -- a refusal manufactured from a typo or a permission fault. The
+    repository does not answer, so there is no absence to report.
+
+    **THE VERDICT IS ONE THING AND THE DIAGNOSIS IS SEVERAL, and the parametrization
+    says so rather than pinning one sentence over all of them.** Every row answers
+    `None`; a `429` or a `502` is this estate's ordinary weather, and telling a reader
+    the repository does not exist would send him to check a name that is fine. That is
+    the same wrong-diagnosis defect this module exists to remove, one branch over.
+    """
+    transport, seen = _routed(
+        httpx.Response(404, json={}), httpx.Response(repository_status, json={})
+    )
+    answer = _reader(transport).declaration("AlobarQuest/brain")
+    assert answer.target is None
+    assert expected in answer.detail
+    assert len(seen) == 2
+
+
+def test_a_confirmed_absence_does_not_claim_the_credential_could_have_read_the_file() -> None:
+    """The one state the probe still cannot tell from an absence, named in the line.
+
+    `GET /repos/{slug}` needs only metadata; the contents route needs contents, and they
+    are separate permissions -- so a credential holding the first and not the second
+    answers 200 to the probe and 404 above for a PRIVATE repository, which is exactly the
+    shape of a confirmed absence. It is left that way deliberately: project-standards'
+    `_remote_contents` confirms the same fact by the same request, and a reader that grew
+    a third probe on its own would be the two drifting rather than the hole closing. What
+    must not happen is the LINE claiming more than was proved.
+    """
+    transport, _ = _routed(httpx.Response(404, json={}), httpx.Response(200, json={}))
+    detail = _reader(transport).declaration("AlobarQuest/brain").detail
+    assert "does NOT prove" in detail
+    assert "CONTENTS" in detail
+
+
+def test_a_redirect_on_the_declaration_is_a_rename_rather_than_a_malformed_file() -> None:
+    """A renamed repository used to be reported as a file that exists and is broken.
+
+    Redirects are not followed, so a 301 delivers GitHub's redirect envelope rather than
+    the file -- and it fell past both the 404 branch and the >= 400 branch into the
+    parser, which said `factory_target` must be a bool and got None. The verdict was
+    already "could not tell"; this asserts the sentence is true as well, and that the
+    reader did not go on to probe a repository it had been told nothing about.
+    """
+    transport, seen = _routed(httpx.Response(301, json={}), httpx.Response(200, json={}))
+    answer = _reader(transport).declaration("AlobarQuest/brain")
+    assert answer.target is None
+    assert "renamed or moved" in answer.detail
+    assert "factory_target" not in answer.detail
+    assert seen == ["/repos/AlobarQuest/brain/contents/factory-target.toml"]
+
+
+def test_the_probe_can_derive_its_path_only_because_the_guard_ends_at_the_file() -> None:
+    """The coupling that makes the derivation safe, asserted rather than assumed.
+
+    `_confirm_absence` strips `/contents/<file>` off a path `is_allowed` has admitted,
+    and `str.removesuffix` is a NO-OP when the suffix is absent -- so widening the route
+    guard past the file (a nested path, an optional directory segment) would silently
+    make the probe re-ask the contents route or ask for a directory, turning every
+    genuine absence into "could not tell" with nothing red. This reds on that edit, which
+    is what a second unfalsifiable pattern beside the first could not do.
+    """
+    from work_carrier.declaration import _ALLOWED
+
+    assert _ALLOWED.pattern.endswith(re.escape(f"/contents/{FILENAME}") + "$")
+
+
+def test_an_unreachable_repository_probe_is_could_not_tell_and_prints_no_request() -> None:
+    """The probe's own failure is the third state, not the absence by default."""
+
+    transport, _ = _routed(httpx.Response(404, json={}), httpx.ConnectError("no route"))
+    answer = _reader(transport).declaration("AlobarQuest/brain")
+    assert answer.target is None
+    assert "ConnectError" in answer.detail
+    assert "no route" not in answer.detail
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        pytest.param(None, id="transport-raised"),
+        pytest.param(500, id="server-error"),
+        pytest.param(429, id="rate-limited"),
+    ],
+)
+def test_a_transient_contents_failure_never_becomes_an_absence(contents: int | None) -> None:
+    """THE ORDERING RULE, and it is asserted by the probe NOT HAVING BEEN MADE.
+
+    project-standards' `_remote_contents` tests its diagnostic for 404 FIRST for this
+    reason: a contents call that failed for any other reason says nothing about whether
+    the file is there, and a repository probe that succeeds a moment later must not be
+    allowed to turn it into an absence. The repository here would answer 200 -- so a
+    reader that probed first, or probed on every failure, would report `False`.
+    """
+
+    failure = httpx.ConnectError("no route") if contents is None else httpx.Response(contents)
+    transport, seen = _routed(failure, httpx.Response(200, json={}))
+    answer = _reader(transport).declaration("AlobarQuest/brain")
+    assert answer.target is None
+    assert seen == ["/repos/AlobarQuest/brain/contents/factory-target.toml"]
+
+
+def test_the_probe_asks_the_bare_repository_route_and_nothing_else() -> None:
+    """What the probe sends, and that a refused slug sends nothing at all.
+
+    It does NOT discriminate the derivation, and saying so is the point: behind the
+    route guard, composing `/repos/{slug}` afresh would build the same request for every
+    slug that can reach the probe, so a control claiming otherwise would pass either way.
+    The derivation is chosen so that argument never has to be made -- on the repository
+    route a slug carrying a query builds an admissible PATH with the rest in the query,
+    which a path-only check admits, and the contents route being checked first is the
+    only reason that cannot happen here.
+    """
+
+    transport, seen = _routed(httpx.Response(404, json={}), httpx.Response(404, json={}))
+    assert _reader(transport).declaration("AlobarQuest/brain?ref=other").target is None
+    assert seen == []
+
+    asked: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request)
+        return httpx.Response(404 if "contents" in request.url.path else 200, json={})
+
+    assert _reader(httpx.MockTransport(handler)).declaration("AlobarQuest/brain").target is False
+    assert asked[1].url.path == "/repos/AlobarQuest/brain"
+    assert asked[1].url.query == b""
+    assert asked[1].headers["accept"] == "application/vnd.github+json"
 
 
 @pytest.mark.parametrize("status", [401, 403, 429, 500])
 def test_a_github_refusal_is_could_not_tell_rather_than_has_not_opted_in(status: int) -> None:
-    import httpx
 
     source = GitHubDeclarationSource(
         token="t",
@@ -590,7 +771,6 @@ def test_a_github_refusal_is_could_not_tell_rather_than_has_not_opted_in(status:
 
 def test_an_unreachable_github_is_could_not_tell_rather_than_a_traceback() -> None:
     """`httpx` raises three unrelated families and the third is a `ValueError`."""
-    import httpx
 
     def refuse(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("no route")
@@ -614,7 +794,6 @@ def test_a_malformed_host_is_could_not_tell_rather_than_a_unicode_error() -> Non
 
 def test_the_reader_asks_for_the_default_branch_and_the_raw_bytes() -> None:
     """No `ref`, so the branch asked about is the one a change would land on."""
-    import httpx
 
     seen: list[httpx.Request] = []
 
