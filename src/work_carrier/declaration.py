@@ -25,13 +25,31 @@ project-standards -- the canonical reader, and the one the conformance kit uses
 -- raises on an unreadable file for exactly this reason and leaves each consumer
 to name its own "could not tell"; this is ours.
 
-**ABSENCE IS AN ANSWER, and a mistyped repository is indistinguishable from it.**
-GitHub answers 404 both for a repository that does not exist and for a file that
-is not in one, so `absent` alone cannot tell a repository that never declared
-from a slug nobody should have asked about. The report does not need a second
-request to separate them: the same repository has to resolve in the estate's
-capability data for the other two constraints, so a name nothing knows shows up
-there as well, in the same line.
+**ABSENCE IS AN ANSWER, AND IT IS CONFIRMED RATHER THAN BELIEVED.** GitHub
+answers 404 for a file that is not there, for a repository that does not exist,
+and for a private one this credential may not read -- three states behind one
+status code, and this is the only branch that returns a definite `False`. A
+definite `False` decides through every UNKNOWN beside it, so mistaking one of
+the other two for it is not a vaguer answer: it is a refusal manufactured from a
+typo or a permission fault. A 404 is therefore followed by ONE read of the
+repository itself, and only a repository that answers lets the absence stand.
+
+That is project-standards' `onboard_checks._remote_contents`, whose docstring
+states the same rule; it is restated here rather than shared, because the two
+have different transports -- it shells `gh`, this speaks `httpx` -- and a module
+across that boundary is not on the table. What must agree is the semantics, and
+the ORDERING is the half worth naming in both: the contents failure is tested
+for 404 FIRST, so a transient fault cannot be turned into an absence by a
+repository probe that happens to succeed a moment later.
+
+**THE ARGUMENT THIS REPLACED WAS SOUND WHILE THE ANSWER WAS ONLY REPORTED.** It
+ran: no second request is needed, because the same repository has to resolve in
+the estate's capability data for the other two constraints, so a name nothing
+knows shows up again in the same line. That is true of a LINE a person reads
+whole, and it stops holding the moment the answer decides anything by itself --
+the refusal then fires on this field alone and says "it has not opted in" when
+the truth may be "we cannot see this repository". The same decision with the
+wrong diagnosis, at the moment the diagnosis is the whole output.
 """
 
 from __future__ import annotations
@@ -49,10 +67,21 @@ FILENAME: Final = "factory-target.toml"
 USER_AGENT: Final = "work-carrier/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 30.0
 TOKEN_ENV: Final = "WORK_CARRIER_GITHUB_TOKEN"
+# The media type for the REPOSITORY route, named here because the client's own
+# `Accept` was chosen for a different one. Measured 2026-09-12: `/repos/{slug}`
+# answers 200 under the raw contents type as well, so this changes no behaviour
+# today -- it is here so that a media type picked for the contents route does not
+# silently govern the probe, where a 415 would turn every genuine absence into
+# "could not tell".
+REPOSITORY_ACCEPT: Final = "application/vnd.github+json"
 
-# ONE route, anchored, the shape `work_carrier.orchestrator_client` already uses
-# for its read. The slug is interpolated, so what has to be asserted is a
-# TEMPLATE rather than a membership in a fixed set.
+# THE ONE ROUTE COMPOSED FROM A REPOSITORY NAME, anchored, the shape
+# `work_carrier.orchestrator_client` already uses for its read. The slug is
+# interpolated, so what has to be asserted is a TEMPLATE rather than a membership
+# in a fixed set. There is a second route -- the repository itself, read when
+# this one answers 404 -- and it is DERIVED from the path this pattern has
+# already admitted rather than composed afresh, so this stays the only place a
+# name a human typed is judged; see `_confirm_absence`.
 #
 # **IT IS ALSO THE ONLY CHECK ON THE SLUG, deliberately.** The obvious design is
 # two guards -- a `^owner/repo$` regex on the name and this one on the composed
@@ -130,13 +159,45 @@ def parse(text: str) -> Declaration:
     return Declaration(target, f"{FILENAME} declares factory_target = {str(target).lower()}")
 
 
+def _unanswered(slug: str, status: int) -> str:
+    """Why a repository's own read did not answer -- which is NOT one thing.
+
+    The verdict is the same for every branch here: nothing was confirmed, so
+    nothing is absent. Only the SENTENCE differs, and the sentence is the whole
+    reason this module grew a second request. Reporting a `429` or a `502` as
+    "the repository does not exist" sends a reader to check a name that is fine --
+    the same wrong-diagnosis defect one branch over from where it was fixed.
+    """
+    if status == 404:
+        return (
+            f"{slug} itself is not there either, so this is a repository that does not exist "
+            "or one this credential cannot see, and not one that has not opted in"
+        )
+    if status == 429 or status >= 500:
+        return (
+            f"{slug} itself answered {status}, which is transient -- this pass could not tell "
+            "and a later one may, so nothing is absent"
+        )
+    if 300 <= status < 400:
+        return (
+            f"{slug} itself answered {status}, so it appears to have been renamed or moved and "
+            "this reader does not follow that, so nothing is absent"
+        )
+    return (
+        f"{slug} itself answered {status}, which is not an answer either way, so nothing is absent"
+    )
+
+
 class GitHubDeclarationSource:
     """`factory-target.toml` on a repository's default branch. READ-ONLY by shape.
 
-    One method, one route, and the route is checked before the request leaves --
-    so a slug that composed a path to somewhere else never reaches the transport.
-    The default branch is whatever GitHub serves for a `contents` request with no
-    `ref`, which is the branch a dispatch would land on.
+    One method and TWO routes -- the declaration's, and the repository beneath it
+    when the first answers 404 -- of which only the first is composed from a name
+    this program was given. That one is checked before the request leaves, so a
+    slug that composed a path to somewhere else never reaches the transport, and
+    the second is derived from it afterwards (`_confirm_absence`). The default
+    branch is whatever GitHub serves for a `contents` request with no `ref`,
+    which is the branch a change would land on.
     """
 
     def __init__(
@@ -193,15 +254,15 @@ class GitHubDeclarationSource:
         except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
             return Declaration(
                 None,
-                f"{slug!r} is not a repository name this program may ask about; it reads "
-                f"one route, /repos/<owner>/<repo>/contents/{FILENAME} "
+                f"{slug!r} is not a repository name this program may ask about; the one "
+                f"route it composes from a name is /repos/<owner>/<repo>/contents/{FILENAME} "
                 f"({type(error).__name__})",
             )
         if not is_allowed(request.url.path):
             return Declaration(
                 None,
-                f"{slug!r} is not a repository name this program may ask about; it reads "
-                f"one route, /repos/<owner>/<repo>/contents/{FILENAME}",
+                f"{slug!r} is not a repository name this program may ask about; the one "
+                f"route it composes from a name is /repos/<owner>/<repo>/contents/{FILENAME}",
             )
         try:
             response = self._client.send(request)
@@ -215,21 +276,28 @@ class GitHubDeclarationSource:
             return Declaration(None, f"github is unreachable for {slug}: {type(error).__name__}")
         if response.status_code == 404:
             # ABSENCE IS AN ANSWER (ADR-0015): a repository that has said nothing
-            # has not opted in. TWO OTHER STATES ANSWER IDENTICALLY and the
-            # detail names both rather than hiding them, because this is the one
-            # branch that returns a definite `False` and a definite `False`
-            # decides through every UNKNOWN beside it: GitHub answers 404 for a
-            # repository that does not exist, and 404 rather than 403 for a
-            # private one this credential may not read. The first is a typo and
-            # shows up again as a lookup miss in the capability data; the second
-            # would be a refusal manufactured from a permission fault, so a
-            # reader who sees this line on a repository he believes exists should
-            # check the credential's reach before believing the verdict.
+            # has not opted in. TWO OTHER STATES ANSWER IDENTICALLY -- a
+            # repository that does not exist, and a private one this credential
+            # may not read, which GitHub answers 404 rather than 403 -- so the
+            # absence is confirmed against the repository itself before it is
+            # believed. **THE ORDER IS THE RULE.** This branch is reached only
+            # after a contents request that SUCCEEDED and said 404: a transport
+            # fault returned above and every other status returns below, so no
+            # transient failure can be turned into an absence by a probe that
+            # happens to answer a moment later.
+            return self._confirm_absence(slug, request.url.path)
+        if 300 <= response.status_code < 400:
+            # A RENAMED REPOSITORY, and it used to fall past both branches into
+            # `parse`. Redirects are not followed, so what arrives is GitHub's
+            # redirect envelope rather than the file -- which came out as
+            # "`factory_target` must be a bool, got None", a sentence asserting
+            # that the file is there and malformed about a repository that has
+            # merely moved. The verdict was already "could not tell"; this makes
+            # the diagnosis true as well.
             return Declaration(
-                False,
-                f"no {FILENAME} on {slug}'s default branch, so it has not opted in "
-                "-- a repository that does not exist, and a private one this credential "
-                "may not read, both answer the same way",
+                None,
+                f"{slug}'s {FILENAME} answered {response.status_code}: the repository appears "
+                "to have been renamed or moved, and this reader does not follow that",
             )
         if response.status_code >= 400:
             return Declaration(
@@ -240,6 +308,68 @@ class GitHubDeclarationSource:
         except (UnicodeDecodeError, httpx.HTTPError) as error:
             return Declaration(None, f"{slug}'s {FILENAME} is not readable text: {error}")
         return parse(text)
+
+    def _confirm_absence(self, slug: str, contents_path: str) -> Declaration:
+        """A contents 404, read again against the repository itself.
+
+        `False` when the repository answers -- the file is genuinely not on its
+        default branch, so it has said nothing and has not opted in. `None` when
+        the repository does not answer, because then the 404 was about the NAME
+        and not about the file: a slug nobody should have asked about, or one
+        this credential cannot see, neither of which is a repository declining to
+        be a target.
+
+        **THE PROBE'S PATH IS DERIVED FROM THE PATH THAT WAS JUDGED, never
+        composed from the slug a second time, and that is the guard rather than a
+        convenience.** `is_allowed` fullmatched the built contents path against
+        `^/repos/SEG/SEG/contents/FILENAME$`, so removing that suffix leaves
+        `/repos/SEG/SEG` by arithmetic -- there is nothing left to check, and a
+        second pattern here would be a clause nothing can falsify sitting beside
+        one that can. Composing `/repos/{slug}` afresh would NOT be equivalent
+        and the difference is measurable: a slug of `o/r?x=1` builds a contents
+        request whose path is `/repos/o/r`, which the guard above refuses, while
+        the same slug on the repository route builds `/repos/o/r` with the rest
+        in the QUERY -- a path-only check admits it. So the one route already
+        checked is the one this reuses.
+        """
+        try:
+            probe = self._client.send(
+                self._client.build_request(
+                    "GET",
+                    contents_path.removesuffix(f"/contents/{FILENAME}"),
+                    headers={"Accept": REPOSITORY_ACCEPT},
+                )
+            )
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+            # The type name only, for the reason given one branch up.
+            return Declaration(
+                None,
+                f"no {FILENAME} on {slug}'s default branch, and {slug} itself could not "
+                f"be read either ({type(error).__name__}), so this is not an absence",
+            )
+        if not 200 <= probe.status_code < 300:
+            # STRICTER THAN THE KIT, deliberately and in the fail-closed
+            # direction: `gh` follows redirects, so a renamed repository succeeds
+            # there and is "could not tell" here. Narrowing the one branch that
+            # returns a definite `False` costs a held record, where the
+            # alternative costs a manufactured refusal.
+            why = _unanswered(slug, probe.status_code)
+            return Declaration(None, f"no {FILENAME} on {slug}'s default branch, and {why}")
+        # WHAT THIS DOES NOT PROVE IS NAMED IN THE LINE, because the line is what
+        # a person acts on. Metadata and contents are separate permissions, so a
+        # credential holding the first and not the second answers 200 here and
+        # 404 above for a PRIVATE repository -- the one state still
+        # indistinguishable from an absence. It is left that way ON PURPOSE: the
+        # kit confirms the same fact by the same request, and a reader that
+        # quietly grew a third probe would be the two drifting rather than the
+        # hole closing. Whoever wants it closed should close it in both.
+        return Declaration(
+            False,
+            f"no {FILENAME} on {slug}'s default branch, so it has not opted in -- {slug} "
+            "itself answers, so this is not a name nothing knows; what it does NOT prove is "
+            "that this credential may read the repository's CONTENTS, which is a separate "
+            "permission from its metadata and answers exactly this way when it is missing",
+        )
 
 
 def from_environment(
