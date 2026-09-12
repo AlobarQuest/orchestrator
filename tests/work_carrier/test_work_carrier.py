@@ -22,6 +22,9 @@ from work_carrier.cli import EXIT_FINDINGS, EXIT_OK, EXIT_TOOL_FAILURE, EXIT_UNU
 from work_carrier.prepare import Prepared, Refused, emit_key, package_path, prepare
 
 FIXTURE_PACKAGE = "ws32-approved-software"
+# The repository the fixture package would be worked in, and the one `workable_target`
+# makes answer yes on all three constraints.
+TARGET = "AlobarQuest/infraops-mcp-server"
 
 
 def record(**overrides) -> WorkRecord:
@@ -36,6 +39,24 @@ def record(**overrides) -> WorkRecord:
     return WorkRecord(**{**base, **overrides})
 
 
+@pytest.fixture(autouse=True)
+def _workable_estate(workable_target: None) -> None:
+    """Every carry in this module runs against an estate that answers YES three times.
+
+    **THE SUBJECT OF THIS MODULE IS THE CARRY, NOT THE GATE.** Since the workability check began
+    refusing, a record whose repository cannot be judged is held -- so without this, every
+    end-to-end test below would assert about a record that never reached the writer, and the
+    carry's own mechanics would go untested. It is declared HERE, once and visibly, rather than in
+    the package conftest: `test_workability.py` deliberately reaches the real environment path in
+    two tests, and an ambient permissive default would turn both of those fail-closed controls
+    into passes.
+
+    The gate's own refusals -- a repository that has not opted in, one nothing could be learned
+    about, a judgment that raised -- are exercised in `test_workability.py`, including that such a
+    record is NOT registered.
+    """
+
+
 def payload_for(rec: WorkRecord) -> dict:
     return {
         "package_id": rec.package_id,
@@ -46,6 +67,11 @@ def payload_for(rec: WorkRecord) -> dict:
         "verification_mode": "caller_attested_cli_verified",
         "idempotency_key": emit_key(rec),
         "expected_version": 0,
+        # THE REPOSITORY THE FACTORY WOULD WORK IN, read by the workability check off the
+        # enforcement snapshot rather than off the record -- a `work` record's own
+        # `target_repository` is null on every row that exists. The real emitter puts the
+        # approved package's `profile_fields` here; this is the shape it produces.
+        "enforcement_snapshot": {"profile_fields": {"target_repo": TARGET}},
     }
 
 
@@ -225,7 +251,8 @@ def test_an_empty_queue_is_a_clean_pass(checkout_root: Path) -> None:
     code, report = _run([], checkout_root)
     assert code == EXIT_OK
     assert (
-        "0 approved, 0 already carried, 0 prepared, 0 carried, 0 refused, 0 not carried." in report
+        "0 approved, 0 already carried, 0 prepared, 0 held, 0 carried, 0 refused, 0 not carried."
+        in report
     )
 
 
@@ -246,7 +273,8 @@ def test_one_refusal_does_not_stop_the_other_records(checkout_root: Path) -> Non
     assert code == EXIT_FINDINGS
     assert report.count("[REFUSED]") == 2
     assert (
-        "2 approved, 0 already carried, 0 prepared, 0 carried, 2 refused, 0 not carried." in report
+        "2 approved, 0 already carried, 0 prepared, 0 held, 0 carried, 2 refused, 0 not carried."
+        in report
     )
 
 
@@ -290,7 +318,8 @@ def test_a_pass_that_was_not_asked_to_register_prints_the_payload(
     assert code == EXIT_OK, report
     assert "[PREPARED]" in report
     assert (
-        "1 approved, 0 already carried, 1 prepared, 0 carried, 0 refused, 0 not carried." in report
+        "1 approved, 0 already carried, 1 prepared, 0 held, 0 carried, 0 refused, 0 not carried."
+        in report
     )
     assert '"change_record_id": 77' in report or '"change_record_id":77' in report
     assert "not asked to (--register)" in report
@@ -570,7 +599,8 @@ def test_registering_carries_the_emitters_payload_unedited(checkout_root: Path) 
     assert writer.payloads == [payload_for(rec)]
     assert "carried: revision 11111111-1111-1111-1111-111111111111" in report
     assert (
-        "1 approved, 0 already carried, 1 prepared, 1 carried, 0 refused, 0 not carried." in report
+        "1 approved, 0 already carried, 1 prepared, 0 held, 1 carried, 0 refused, 0 not carried."
+        in report
     )
 
 
@@ -612,7 +642,8 @@ def test_a_registration_failure_is_a_finding_and_does_not_stop_the_queue(
     assert len(writer.payloads) == 2
     assert report.count("NOT CARRIED") == 2
     assert (
-        "2 approved, 0 already carried, 2 prepared, 0 carried, 0 refused, 2 not carried." in report
+        "2 approved, 0 already carried, 2 prepared, 0 held, 0 carried, 0 refused, 2 not carried."
+        in report
     )
 
 
@@ -842,7 +873,8 @@ def test_a_record_whose_work_already_exists_is_not_registered_again(
     assert "[CARRIED]" in report
     assert "7e597f88-6e35-4b1e-99f1-67386d11bc53" in report
     assert (
-        "1 approved, 1 already carried, 0 prepared, 0 carried, 0 refused, 0 not carried." in report
+        "1 approved, 1 already carried, 0 prepared, 0 held, 0 carried, 0 refused, 0 not carried."
+        in report
     )
     assert seen == [], "a record already carried needs no payload, so the emitter is not run"
 
@@ -863,7 +895,7 @@ def test_a_record_with_no_work_yet_is_carried(checkout_root: Path) -> None:
     assert code == EXIT_OK, report
     assert writer.payloads == [payload_for(rec)]
     assert "[CARRIED]" not in report
-    assert "1 approved, 0 already carried, 1 prepared, 1 carried" in report
+    assert "1 approved, 0 already carried, 1 prepared, 0 held, 1 carried" in report
 
 
 def test_a_carried_record_is_skipped_before_its_package_is_read(tmp_path: Path) -> None:
@@ -921,7 +953,7 @@ def test_a_record_the_pass_could_not_ask_about_is_a_finding_and_is_not_carried(
         "the record nobody could answer about is not registered, and the one after it still is"
     )
     assert "[FINDING]" in report
-    assert "2 approved, 0 already carried, 1 prepared, 1 carried" in report
+    assert "2 approved, 0 already carried, 1 prepared, 0 held, 1 carried" in report
 
 
 def test_a_bare_pass_does_not_ask_either(checkout_root: Path) -> None:

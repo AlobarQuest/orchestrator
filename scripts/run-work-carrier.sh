@@ -50,17 +50,29 @@
 # the WORST outcome is what the pass exits with -- see the ranking at the invocation below, which
 # deliberately does not use the `for rc in 1 3 2` fold that lets a 127 read as success.
 #   0  nothing needed doing, or everything that did was done.
-#   1  a tool itself failed (an unreadable credential, change-manager unreachable).
-#   2  a tool ran but could not use its inputs (no checkout root, no credential configured).
+#   1  a tool itself failed (an unreadable credential, change-manager unreachable, a workability
+#      judgment that raised).
+#   2  a tool ran but could not use its inputs (no checkout root, no credential configured, a
+#      workability constraint that could not be answered).
 #   3  something was found -- a record that could not be prepared, one the orchestrator refused
-#      to register, or one whose retirement change-manager refused. Each needs a person.
+#      to register, one whose retirement change-manager refused, or one a workability constraint
+#      answered NO for. Each needs a person.
 #
-# IT ALSO REPORTS WHETHER SDS SHOULD WORK ON EACH TARGET REPOSITORY AT ALL, and REPORTS ONLY. A
-# repository is workable when it opts in (`factory-target.toml`), the conformance kit says it is
-# capable, and the permissions are sufficient. The lines that block prints change nothing: no carry
-# is skipped, no exit code moves, and nothing is registered or not registered because of them. It
-# is there so a person can see what a refusing version would refuse across the live queue before
-# anything refuses on it.
+# IT DECIDES WHETHER SDS SHOULD WORK ON EACH TARGET REPOSITORY AT ALL, AND HOLDS WHAT IT CANNOT
+# ANSWER YES FOR. A repository is workable when it opts in (`factory-target.toml`), the conformance
+# kit says it is capable, and the permissions are sufficient; a record whose repository fails any
+# of the three is NOT registered, with the reason printed. The check shipped reporting only so the
+# estate could see what it would refuse before anything refused on it -- it refused nothing, across
+# an empty approved queue and a hand assessment of all eight factory repositories, and this is the
+# flip.
+#
+# THE TWO WAYS TO BE HELD EXIT DIFFERENTLY, and the difference is what a reader is being told. A
+# definite NO is a FINDING (3): an approved record that can never be carried while the repository
+# says what it says, waiting on a person. An UNKNOWN is unusable input (2): nothing is wrong with
+# the record and a later pass may carry it. **2 OUTRANKS 3 in the ranking below**, and the
+# dead-man switch is armed `--finding 3` -- so a held-on-NO pass pings success and says so in the
+# log, while a held-on-UNKNOWN pass pings /fail. That is deliberate: a lane that cannot tell
+# whether a repository opted in is a lane that has stopped being able to do its job.
 #
 # A CARRIED RECORD IS NOT A FINDING, and neither is one merely prepared on a pass that was not
 # asked to register, nor one the carry finds it has ALREADY carried. Making any of them one
@@ -221,10 +233,13 @@ export WORK_WATCHER_ORCHESTRATOR_TOKEN="${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}"
 # eight did not carry the file hours after every declaration had landed, and a reader that took the
 # checkout's word would report every repository that HAS opted in as one that has not.
 #
-# ABSENT IS NOT FATAL, deliberately, and that is the difference from the blocks above. This header
-# promises the bare invocation works on any machine; a missing GitHub credential makes the report
-# say "could not tell" for every repository, which is honest and is not a refusal. So no FATAL
-# here, and `gh` not being installed must not take the pass down either.
+# ABSENT IS NOT FATAL AND IS NO LONGER FREE. This header promises the bare invocation works on any
+# machine, and it still does: a missing GitHub credential makes every repository answer "could not
+# tell", so the pass runs, reports, carries nothing and exits 2. That is the honest outcome -- a
+# lane that cannot tell whether a repository opted in must not carry work into it -- and it is why
+# this stays a warning rather than a FATAL: the pass still says why. On the scheduled machine
+# `gh auth token` answers, so this is the shape an operator sees elsewhere, not here. `gh` not
+# being installed must not take the pass down either.
 if [ -z "${WORK_CARRIER_GITHUB_TOKEN:-}" ]; then
   WORK_CARRIER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
   export WORK_CARRIER_GITHUB_TOKEN

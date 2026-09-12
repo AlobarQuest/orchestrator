@@ -7,7 +7,11 @@ whether it was asked to.
 **A BARE INVOCATION WRITES NOTHING.** `--register` is what makes this pass act; without it the
 payloads go to stdout and both systems are left exactly as they were. That is not a leftover of
 the old design, it is the mode in which the lane is inspected: a person can read what would be
-registered without anything being.
+registered without anything being. **A HELD RECORD PRINTS ITS REASON AND NOT ITS PAYLOAD**, in
+this mode as in the other -- "not carried" means not carried whichever flag was given, and a
+payload printed under a heading saying it would be registered would be false. On a machine with
+no GitHub credential and no capability file that is EVERY record, which is the honest reading of
+"this pass cannot tell whether any of this work belongs where it is going".
 
 **WITH `--register`, THE LAST STEP IS NO LONGER A HUMAN PASTE.** ADR-0027 removed the
 `ActorRole.HUMAN` requirement from intake registration, having found that the gate was
@@ -18,9 +22,11 @@ pasting JSON did not. ADR-0006 is narrowed, not overturned: the breakdown approv
 authority approval are decisions and are still a human in a browser, so this pass ends at a
 queue for a person rather than at a running change.
 
-**IT STILL CANNOT DECIDE ANYTHING.** Every rule about what may be registered is evaluated inside
-the orchestrator, in the transaction that records it. This program relays a payload it did not
-compose, for a record it did not approve.
+**IT DECIDES ONE THING AND ONLY ONE: WHETHER TO OFFER THE RECORD AT ALL.** Every rule about what
+may be registered is still evaluated inside the orchestrator, in the transaction that records it;
+this program relays a payload it did not compose, for a record it did not approve. What it now
+decides is whether to relay it, and that decision can only ever WITHHOLD -- a record this program
+carries is admitted or refused by the orchestrator exactly as before.
 
 WHY IT ENUMERATES FROM CHANGE-MANAGER, naming the pipeline. `GET /api/items` withholds a proposed
 source from any caller that does not name one, because the 04:00 change-window executor lists
@@ -36,12 +42,23 @@ repository moved under a fixed idempotency key, i.e. a finding every day for a r
 was already being built. The orchestrator can answer the question directly (ADR-0029's
 `GET /api/v1/change-records/{id}/work`), so the carry asks rather than being told.
 
-EXIT CODES: 0 clean, 1 tool failure, 2 unusable input, 3 findings. A record that could not be
-PREPARED is a finding, so is one that could not be REGISTERED, and so is one this pass could not
-ASK about -- somebody has to look at why in all three cases. A record carried successfully is
-NOT, nor is one merely prepared on a pass that was not asked to register, nor one this pass finds
-it has ALREADY carried: making any of them a finding would leave this control permanently red for
-doing its job, which this estate has now recorded five times.
+**IT ASKS WHETHER THE SDS SHOULD WORK ON THE TARGET REPOSITORY AT ALL, AND REFUSES.** A record is
+carried only when all three of Devon's constraints answer yes -- the repository opts in, the
+conformance kit says it is capable, the permissions are sufficient -- and anything else is not
+carried, with the reason on the line. The check landed reporting only, so the estate could see
+what it would refuse before it refused anything; it refused nothing across an empty queue and all
+eight factory repositories, and this is the flip.
+
+EXIT CODES: 0 clean, 1 tool failure, 2 unusable input, 3 findings, and the WORST of them wins by
+`run-work-carrier.sh`'s ranking rather than by number -- see `_RANK`. A record that could not be
+PREPARED is a finding, so is one that could not be REGISTERED, so is one this pass could not ASK
+about, and so is one a constraint answered NO for: somebody has to look at why in all four cases.
+A record HELD because a constraint could not be answered is different -- nothing is wrong with it
+and a later pass may carry it -- so it reports unusable input, which in this lane outranks a
+finding. A record carried successfully is NOT a finding, nor is one merely prepared on a pass that
+was not asked to register, nor one this pass finds it has ALREADY carried: making any of them one
+would leave this control permanently red for doing its job, which this estate has now recorded
+five times.
 """
 
 from __future__ import annotations
@@ -68,12 +85,56 @@ from work_carrier.orchestrator_client import (
     OrchestratorError,
 )
 from work_carrier.prepare import Prepared, Refused, prepare
-from work_carrier.workability import report as report_workability
+from work_carrier.workability import (
+    NOT_WORKABLE,
+    UNDECIDED,
+    UNJUDGED,
+    WORKABLE,
+)
+from work_carrier.workability import judge as judge_workability
 
 EXIT_OK = 0
 EXIT_TOOL_FAILURE = 1
 EXIT_UNUSABLE = 2
 EXIT_FINDINGS = 3
+
+# THE WORST OUTCOME WINS, AND THE ORDER IS NOT THE NUMERIC ONE. `run-work-carrier.sh` ranks its
+# codes `0 < 3 < 1 < 2` in its own `_rank`, and the ranking is the lane's, not this program's:
+# "could not use its inputs" outranks "a tool failed" outranks "something was found". A `max()`
+# over the numbers would answer 3 for `{1, 3}` and put a finding above a tool failure, which is
+# the launcher's verdict inverted. `tests/work_carrier` pins this table to the shell's arms, so
+# the two cannot drift.
+_RANK = {EXIT_OK: 0, EXIT_FINDINGS: 1, EXIT_TOOL_FAILURE: 2, EXIT_UNUSABLE: 3}
+_UNRECOGNISED = 4
+
+# What holding a record costs, in this lane's vocabulary. A definite NO is a FINDING: an approved
+# record that can never be carried while the repository says what it says, which needs a person. An
+# UNKNOWN is an input this pass could not use -- nothing is wrong with the record, and a later pass
+# may answer. A judgment that RAISED is the tool itself failing, which is its own code again.
+_HELD_EXIT = {
+    NOT_WORKABLE: EXIT_FINDINGS,
+    UNDECIDED: EXIT_UNUSABLE,
+    UNJUDGED: EXIT_TOOL_FAILURE,
+}
+
+
+def worst(codes: list[int]) -> int:
+    """The dominant outcome of a pass, by the launcher's ranking rather than by number.
+
+    `list[int]` rather than an `Iterable`, and that is not fussiness: importing
+    `collections.abc` puts `collections` into this package's import set, which
+    `tests/architecture/test_work_carrier_isolation.py` asserts is confined. The carrier is
+    an out-of-process program whose whole dependency surface is declared; widening it to
+    spell one annotation would be the tail wagging the dog.
+
+    AN UNRECOGNISED CODE DOMINATES, mirroring the shell's `*) echo 4` arm rather than
+    raising. `run-work-carrier.sh` chose ranking over the `for rc in 1 3 2` fold precisely
+    so a code nobody planned for -- 127 for a missing binary is the one that happens --
+    is preserved and wins instead of being read as success. A `KeyError` here would be the
+    opposite: a pass that reported nothing because it could not classify its own outcome.
+    """
+    return max(codes, key=lambda code: _RANK.get(code, _UNRECOGNISED), default=EXIT_OK)
+
 
 DEFAULT_CHECKOUT_ROOT = "~/Projects"
 
@@ -327,19 +388,13 @@ def run(
         else:
             refused.append(outcome)
 
-    carried, unregistered = _carry_all(prepared, writer, out)
-    for item in refused:
-        print(
-            f"[REFUSED]  change record {item.record.change_record_id}: "
-            f"{item.reason} — {item.detail}",
-            file=out,
-        )
-
-    # REPORTS AND CHANGES NOTHING. It is called for its output alone: it returns None, it cannot
-    # raise, and nothing below reads anything it produced -- so the carried set, the refusals and
-    # the exit code are what they were before it existed. Devon asked to see what the three
-    # constraints would refuse across the live population before anything refuses on them.
-    report_workability(
+    # JUDGED BEFORE ANYTHING IS CARRIED, and the order is the substance rather than the layout:
+    # only a record the three constraints all answer YES for reaches the writer. Devon's rule --
+    # "is the repo opted in, is the repo capable, do we have the needed perms to do it" and
+    # "without all three, it seems useless to go forward". It runs on a bare pass too: a record
+    # that cannot be carried cannot be carried whichever flag was given, so the answer and the
+    # exit code do not depend on whether this pass was going to write.
+    decisions = judge_workability(
         [
             (
                 f"change record {item.record.change_record_id} "
@@ -350,14 +405,29 @@ def run(
         ],
         out,
     )
+    workable = [
+        item for item, decision in zip(prepared, decisions, strict=True) if decision == WORKABLE
+    ]
+    held = [decision for decision in decisions if decision != WORKABLE]
+
+    carried, unregistered = _carry_all(workable, writer, out)
+    for item in refused:
+        print(
+            f"[REFUSED]  change record {item.record.change_record_id}: "
+            f"{item.reason} — {item.detail}",
+            file=out,
+        )
 
     print(
         f"\n{len(records)} approved, {already_carried} already carried, "
-        f"{len(prepared)} prepared, {carried} carried, "
+        f"{len(prepared)} prepared, {len(held)} held, {carried} carried, "
         f"{len(refused)} refused, {len(unregistered)} not carried.",
         file=out,
     )
-    return EXIT_FINDINGS if (refused or unregistered or unanswered) else EXIT_OK
+    outcomes = [_HELD_EXIT[decision] for decision in held]
+    if refused or unregistered or unanswered:
+        outcomes.append(EXIT_FINDINGS)
+    return worst(outcomes)
 
 
 def main() -> int:
