@@ -5096,3 +5096,41 @@ style of that module.
   anywhere**, and three reds on the checks list had exactly one cause. Same family as
   `mergeable_state: blocked` covering four causes: a status is a summary, and a summary is not a
   diagnosis.
+
+- **SQUASH-MERGING A FORK'S UPSTREAM-SYNC PULL REQUEST FREEZES THE MERGE BASE, AND EVERY LATER SYNC
+  RE-CONFLICTS WITH THE FLATTENED COPY.** Measured 2026-09-13 landing `claude-octopus#14`. `#11`
+  landed as a MERGE COMMIT and left the base current. **`#12` landed as a SQUASH**, which rewrote
+  v11.2.0 onto `main` as a commit `upstream/main` does not contain, so the merge base stayed at
+  `3267de84` (v11.0.1) and everything upstream touched since re-conflicted against the squashed
+  copy. Proof rather than inference: all 17 conflicted files' fork blobs are byte-identical to some
+  upstream commit's blob — the fork had never edited any of them — so every conflict was an
+  artifact of the base, not a disagreement. **Say both halves**: the squash is why conflicts existed
+  at all; upstream drift is only why the count grew 3 → 18 over one day. The acceptance test for
+  the claim is cheap and has not yet been run — **the first sync pull request opened after an
+  upstream push should show zero conflicts.**
+  **The obvious reading of the numbers is the wrong one.** A session measuring 3 conflicts on one
+  day and 18 the next concludes the branch is drifting fast and reaches for urgency; the brief
+  written from that reading told a build session to land the same day. The real remedy is a merge
+  strategy, and it is invisible from the conflict count.
+  **Generalise past this fork: wherever a branch is repeatedly merged FROM a source you do not
+  control, the merge base is the asset.** Squash-merging is correct for a topic branch precisely
+  because it discards the branch's history — which is what makes it wrong here.
+
+- **A THREE-WAY MERGE SILENTLY DUPLICATES A SECTION WHEN BOTH SIDES ADD BYTE-IDENTICAL CONTENT AT
+  DIFFERENT OFFSETS — no conflict marker, no warning.** Same landing: the base had neither
+  `[11.2.0]` nor `[11.1.0]` in `CHANGELOG.md`, upstream had both, and the squashed copy had them
+  byte-identically at a different offset, so git took both sides and produced two copies of each.
+  Nothing about the resolution looked wrong, because nothing had been left to resolve.
+  **`git diff <the branch you merged>` AFTER resolving is what catches it** — a conflict-marker
+  sweep and a clean `git status` both report success. Expect it wherever an append-only document
+  (a changelog, a decisions log, a release-notes file) is merged from two lineages.
+
+- **LANDING A BOT PULL REQUEST'S CONTENT VIA A SIDE BRANCH MERGES THE BOT PULL REQUEST TOO, and
+  GitHub does it seconds later without being asked.** `#13`'s head was a parent of `#14`'s merge
+  commit, so GitHub marked `#13` merged two seconds after `#14` landed and `delete_branch_on_merge`
+  removed `upstream-sync`. A brief that says "leave `#13` alone" is honoured and the pull request is
+  still gone — **so an instruction not to touch a pull request is not a prediction that it survives.**
+  Benign here: `upstream-sync.yml` recreates the branch with `checkout -B` + `push --force`, and the
+  06:00Z gate then reads zero new upstream commits and prints *"No new upstream commits — nothing to
+  do"*. Note what it means for reporting, which is the part that misleads: two merged pull requests
+  now point at one landing.
