@@ -19,7 +19,7 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
 from orchestrator.services.estate_landing import EstateAnswer
 from orchestrator.services.estate_landing_admission import EstateGatewayError
-from orchestrator.services.estate_pr_merge import MergeOutcome
+from orchestrator.services.estate_pr_merge import MERGE_COMMIT, SQUASH, MergeOutcome
 from orchestrator.services.inert_landing_policy import InertLandingAnswer
 from orchestrator.services.inert_pr_merge import (
     INERT_LANDING_POLICY_TRAILER,
@@ -36,6 +36,9 @@ from tests.services.inert_landing_doubles import (
     INERT_POLICY_VERSION,
     INERT_REPOSITORY,
     LANDED_COMMIT,
+    SYNC_BOT,
+    SYNC_BRANCH,
+    UPDATE_BOT,
     ActingInertGateway,
     FakeInertPolicySource,
     rules,
@@ -334,7 +337,7 @@ def test_the_remote_is_asked_to_land_the_head_the_terms_were_evaluated_against(
 
     _land(migrated_session, gateway=gateway)
 
-    repository, number, head_sha, _ = gateway.merges[0]
+    repository, number, head_sha, _, _ = gateway.merges[0]
     assert (repository, number, head_sha) == (INERT_REPOSITORY, PR, HEAD)
 
 
@@ -390,3 +393,52 @@ def test_a_repository_the_policy_does_not_declare_lands_nothing(
     assert "inert_landing_repository_not_declared" in caught.value.message
     assert gateway.merges == []
     assert _rows(migrated_engine) == []
+
+
+# ---------------------------------------------------------------------------------------------
+# THE ACTING SURFACE for the landing method. The answer decides it; this is the half that proves
+# the decision reaches the remote rather than being recomputed, defaulted or dropped on the way.
+#
+# A report that says the right thing while the act sends the other value is exactly the failure
+# this lane has shipped before in the opposite direction, so both of these read the call.
+# ---------------------------------------------------------------------------------------------
+
+
+def _sync_policy() -> FakeInertPolicySource:
+    return FakeInertPolicySource(
+        InertLandingAnswer(
+            rules(
+                permitted_authors=frozenset({UPDATE_BOT, SYNC_BOT}),
+                non_ecosystem_authors=frozenset({SYNC_BOT}),
+            )
+        )
+    )
+
+
+def test_a_wholesale_upstream_sync_asks_the_remote_for_a_merge_commit(
+    migrated_session: Session,
+) -> None:
+    """The value the remote is actually sent, on the one subject whose commits a later sync has to
+    find. Asserting the record landed would pass under a squash just as well."""
+    gateway = ActingInertGateway(
+        pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+    )
+
+    _land(migrated_session, gateway=gateway, policy_source=_sync_policy())
+
+    assert gateway.merges[0][4] == MERGE_COMMIT
+
+
+def test_an_update_bot_pull_request_still_asks_for_a_squash(
+    migrated_session: Session,
+) -> None:
+    """THE MIRROR, under the SAME policy that exempts the sync author -- so the pair differs in
+    one thing only, which is the subject. Without it a predicate widened to "always keep the
+    commits" passes the case above."""
+    gateway = ActingInertGateway(
+        pull=pull_request(number=PR, head_ref=UV_BRANCH, author_login=UPDATE_BOT)
+    )
+
+    _land(migrated_session, gateway=gateway, policy_source=_sync_policy())
+
+    assert gateway.merges[0][4] == SQUASH

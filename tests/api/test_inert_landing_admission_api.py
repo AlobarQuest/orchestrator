@@ -91,3 +91,13 @@ def test_a_repository_that_is_not_owner_slash_name_is_refused_by_the_schema(
     )
 
     assert response.status_code == 422
+
+
+def test_the_body_names_how_the_landing_would_be_performed(db_client: TestClient) -> None:
+    """Served on a REFUSING answer as much as on a permitting one, and never empty: a report-only
+    pass reads this to say what a live pass would do, and a caller meeting an absent or invented
+    value could not report anything. This answer refuses -- no credentials are configured, so the
+    pull request is unreadable -- and still names the ordinary method."""
+    from orchestrator.services.estate_pr_merge import SQUASH
+
+    assert _admission(db_client)["merge_method"] == SQUASH

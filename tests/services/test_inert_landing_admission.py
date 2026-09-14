@@ -46,6 +46,7 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_PULL_REQUEST_UNREADABLE,
     EstateGatewayError,
 )
+from orchestrator.services.estate_pr_merge import MERGE_COMMIT, SQUASH
 from orchestrator.services.inert_landing_admission import (
     INERT_LANDING_AUTHOR_NOT_PERMITTED,
     INERT_LANDING_POLICY_SOURCE_UNCONFIGURED,
@@ -76,6 +77,8 @@ from tests.services.inert_landing_doubles import (
     EXCLUDED_ECOSYSTEM,
     INERT_POLICY_VERSION,
     INERT_REPOSITORY,
+    SYNC_BOT,
+    SYNC_BRANCH,
     UPDATE_BOT,
     FakeInertPolicySource,
     rules,
@@ -740,9 +743,6 @@ def test_the_admitted_author_is_the_rest_spelling_and_not_the_command_line_one(
 # ecosystem at all. Which subjects those are is DECLARED, never read off the branch name.
 # ---------------------------------------------------------------------------------------------
 
-SYNC_BOT = "octo-upstream-sync[bot]"
-SYNC_BRANCH = "upstream-sync"
-
 
 def test_a_declared_non_bump_author_is_not_asked_which_ecosystem_it_belongs_to(
     migrated_session: Session,
@@ -872,3 +872,126 @@ def test_the_exemption_is_case_folded_on_both_sides(migrated_session: Session) -
     )
 
     assert LANDING_ECOSYSTEM_UNREADABLE not in answer.refusals
+
+
+# ---------------------------------------------------------------------------------------------
+# HOW the landing is performed, which this answer decides because it is where the fact it turns
+# on is read.
+#
+# A squash gives a fork upstream's CONTENT without upstream's COMMITS, so the most recent commit
+# the two sides share stays where it was; the next sync compares against that stale point, finds
+# both sides carrying the same lines, and conflicts on files nobody here has touched. Measured
+# 2026-09-13 on `claude-octopus#14`: 18 conflicting paths, all 17 content files byte-identical to
+# an upstream blob.
+#
+# **The wrong answer here is SILENT.** A predicate that never recognises a sync lands it as a
+# squash, which is what this lane did yesterday -- so every assertion below names the value sent
+# rather than merely checking that nothing broke.
+# ---------------------------------------------------------------------------------------------
+
+
+def _sync_rules(**overrides):
+    return rules(
+        permitted_authors=frozenset({UPDATE_BOT, SYNC_BOT}),
+        non_ecosystem_authors=frozenset({SYNC_BOT}),
+        **overrides,
+    )
+
+
+def test_a_wholesale_upstream_sync_is_landed_as_a_merge_commit(
+    migrated_session: Session,
+) -> None:
+    """THE case, and the one a predicate keyed on the wrong thing fails QUIETLY."""
+    answer = _answer(
+        migrated_session,
+        gateway=FakeEstateGateway(
+            pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+        ),
+        policy_source=FakeInertPolicySource(InertLandingAnswer(_sync_rules())),
+    )
+
+    assert answer.merge_method == MERGE_COMMIT
+    assert answer.satisfied is True
+
+
+def test_the_update_bot_in_the_same_population_still_squashes(
+    migrated_session: Session,
+) -> None:
+    """THE MIRROR, and it is what stops the rule being widened into "everything keeps its
+    commits". Dependabot's branch is the end of its own lineage: nothing is ever merged from it
+    again, so discarding its commits costs nothing and is what the estate's history reads as."""
+    answer = _answer(
+        migrated_session,
+        gateway=FakeEstateGateway(
+            pull=pull_request(number=PR, head_ref=UV_BRANCH, author_login=UPDATE_BOT)
+        ),
+        policy_source=FakeInertPolicySource(InertLandingAnswer(_sync_rules())),
+    )
+
+    assert answer.merge_method == SQUASH
+    assert answer.satisfied is True
+
+
+def test_an_author_nobody_declared_exempt_squashes_even_on_the_sync_branch(
+    migrated_session: Session,
+) -> None:
+    """THE DEFAULT-DIRECTION CONTROL. The branch name is not what decides this and must not be:
+    an inferred value would let any branch call itself a sync. An author absent from the declared
+    exemption gets the ordinary landing, which is also yesterday's behaviour."""
+    answer = _answer(
+        migrated_session,
+        gateway=FakeEstateGateway(
+            pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+        ),
+        policy_source=FakeInertPolicySource(
+            InertLandingAnswer(rules(permitted_authors=frozenset({UPDATE_BOT, SYNC_BOT})))
+        ),
+    )
+
+    assert answer.merge_method == SQUASH
+
+
+def test_the_landing_method_is_case_folded_like_the_exemption_it_reads(
+    migrated_session: Session,
+) -> None:
+    """The fold belongs to `ecosystem_scoped`, and this is the second consumer of it. Folding at
+    one end only would land a sync as a squash on a login that differs only in case -- the quiet
+    direction, and invisible to the ecosystem assertion that already covers the same fold."""
+    answer = _answer(
+        migrated_session,
+        gateway=FakeEstateGateway(
+            pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT.upper())
+        ),
+        policy_source=FakeInertPolicySource(InertLandingAnswer(_sync_rules())),
+    )
+
+    assert answer.merge_method == MERGE_COMMIT
+
+
+def test_an_answer_composed_without_the_rules_still_names_a_real_landing_method(
+    migrated_session: Session,
+) -> None:
+    """An unreadable policy cannot be satisfied, so nothing acts on this answer -- but it is
+    SERVED, and a reader of the report must not meet an empty or invented value. The ordinary one
+    is what it carries."""
+    answer = _answer(
+        migrated_session,
+        policy_source=FakeInertPolicySource(InertLandingAnswer(None, "source_unreadable")),
+    )
+
+    assert answer.satisfied is False
+    assert answer.merge_method == SQUASH
+
+
+def test_an_unreadable_pull_request_still_names_a_real_landing_method(
+    migrated_session: Session,
+) -> None:
+    """The other early return out of the remote terms. Same reasoning: refused, served, and never
+    carrying a value no caller could interpret."""
+    answer = _answer(
+        migrated_session,
+        gateway=FakeEstateGateway(read_error=EstateGatewayError("pull_request_status", 502)),
+    )
+
+    assert answer.satisfied is False
+    assert answer.merge_method == SQUASH

@@ -98,6 +98,7 @@ from orchestrator.services.estate_landing_admission import (
     freshness_term,
     qualifies_for_branch_update,
 )
+from orchestrator.services.estate_pr_merge import MERGE_COMMIT, SQUASH
 from orchestrator.services.inert_landing_policy import (
     RULES_UNDECLARED,
     InertLandingPolicySource,
@@ -157,6 +158,11 @@ class InertLandingAdmission:
     # caller can report what a live pass would do without anything acting; the acting path
     # recomposes it from scratch and never trusts a caller's copy.
     branch_update_qualifies: bool
+    # HOW the landing is performed, decided here because this is where the fact it turns on is
+    # read. Carried for the same reason `policy_version` is: the act needs it and must not make a
+    # second, independent reading of the subject to get it. Always one of the two named values, so
+    # the act never has to decide what an absent one would mean.
+    merge_method: str
 
 
 def inert_landing_admission(
@@ -241,6 +247,7 @@ def inert_landing_admission(
         branch_update_qualifies=qualifies_for_branch_update(
             tuple(refusals), rollout_base_matches_pin=False
         ),
+        merge_method=remote.merge_method,
     )
 
 
@@ -303,6 +310,7 @@ def _policy_term(repository: str, policy_source: InertLandingPolicySource) -> _P
 class _RemoteTerms:
     term: Term
     head_sha: str | None
+    merge_method: str
 
 
 def _remote_terms(
@@ -320,7 +328,7 @@ def _remote_terms(
     try:
         pull = gateway.read_pull_request(repository=repository, number=pr_number)
     except EstateGatewayError:
-        return _RemoteTerms(Term(False, (LANDING_PULL_REQUEST_UNREADABLE,)), None)
+        return _RemoteTerms(Term(False, (LANDING_PULL_REQUEST_UNREADABLE,)), None, SQUASH)
 
     refusals: list[str] = []
     if pull.landed or not pull.open:
@@ -337,7 +345,11 @@ def _remote_terms(
     if rules is None:
         # Already reported by the policy term. Everything below is a condition this process was
         # not told, so it cannot be met and there is nothing further to say about it.
-        return _RemoteTerms(Term(False, tuple(refusals)), pull.head_sha)
+        #
+        # The method is the ordinary one rather than an absent value: this answer cannot be
+        # satisfied, so nothing will act on it, and a field that reads "we were not told" would
+        # oblige every later reader to handle a case the act can never see.
+        return _RemoteTerms(Term(False, tuple(refusals)), pull.head_sha, SQUASH)
 
     author = _author_term(pull, rules)
     fresh = freshness_term(repository, pull, gateway, required=rules.require_head_current_with_base)
@@ -351,10 +363,30 @@ def _remote_terms(
     # reading they had. What changes is whether this lane asks the question of a subject the
     # question is not about, and WHICH subjects those are is declared in the policy rather than
     # read off a branch name -- see `InertLandingRules.ecosystem_scoped`.
-    if rules.ecosystem_scoped(pull.author_login):
-        ecosystem = ecosystem_exclusion_term(pull, rules.excluded_ecosystems)
-    else:
+    #
+    # **TWO QUESTIONS, ONE ANSWER, AND THE SECOND ONE IS NOT ABOUT ECOSYSTEMS.** The policy field
+    # answers *does the ecosystem bound apply to this author's pull requests?* The method below
+    # needs *would discarding this branch's commits strand a source that will be merged from
+    # again?* Those are different questions and they are keyed on one declaration, because today
+    # they have one cause: the field names authors whose pull requests are somebody else's release
+    # carried over wholesale, and a wholesale carry is both the thing with no ecosystem to read and
+    # the thing whose commits a later merge needs to find. Stated here rather than left implicit so
+    # that an author ever declared non-ecosystem for some OTHER reason shows up as a coupling a
+    # reader can see and split, instead of silently acquiring a landing method nobody chose. The
+    # direction of the mistake, if it is ever made, is a merge commit where a squash would have
+    # done -- untidy, and not a landing that should not have happened.
+    wholesale = not rules.ecosystem_scoped(pull.author_login)
+    if wholesale:
         ecosystem = Term(True, ())
+    else:
+        ecosystem = ecosystem_exclusion_term(pull, rules.excluded_ecosystems)
+    # A squash gives a fork upstream's CONTENT without upstream's COMMITS, so the most recent
+    # commit the two sides share stays where it was and the next sync compares against it -- seeing
+    # both sides having rewritten the same lines and conflicting on files nobody here has touched.
+    # Keeping the commits is what stops that, and it is warranted for nothing else this lane
+    # touches: discarding history is the point of a squash everywhere the branch is the end of its
+    # own lineage.
+    merge_method = MERGE_COMMIT if wholesale else SQUASH
     refusals.extend(author.refusals)
     refusals.extend(fresh.refusals)
     refusals.extend(ecosystem.refusals)
@@ -369,7 +401,7 @@ def _remote_terms(
         and fresh.met
         and ecosystem.met
     )
-    return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha)
+    return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha, merge_method)
 
 
 def _author_term(pull: EstatePullRequest, rules: InertLandingRules) -> Term:

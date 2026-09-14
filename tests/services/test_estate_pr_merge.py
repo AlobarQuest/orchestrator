@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
@@ -19,11 +20,15 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
+from orchestrator.services import estate_pr_merge
 from orchestrator.services.estate_landing_admission import EstateGatewayError
 from orchestrator.services.estate_pr_merge import (
     CHANGE_RECORD_TRAILER,
+    MERGE_COMMIT,
     POLICY_VERSION_TRAILER,
+    SQUASH,
     EstateMergeCommand,
+    GitHubEstatePullRequests,
     MergeOutcome,
     _pull_from_body,
     land_estate_pull_request,
@@ -77,7 +82,9 @@ class ActingGateway(FakeEstateGateway):
         )
         self._merge_error = merge_error
         self._landed_after_refusal = landed_after_refusal
-        self.merges: list[tuple[str, int, str, str]] = []
+        # The fifth element is the landing method, recorded so a control can prove THIS lane
+        # keeps squashing while its sibling decides per pull request.
+        self.merges: list[tuple[str, int, str, str, str]] = []
 
     def read_pull_request(self, *, repository: str, number: int):
         if self.merges and self._reconcile_error is not None:
@@ -91,8 +98,8 @@ class ActingGateway(FakeEstateGateway):
             return pull_request(landed=self._landed_after_refusal, is_open=False)
         return super().read_pull_request(repository=repository, number=number)
 
-    def submit_merge(self, *, repository, number, head_sha, commit_message):
-        self.merges.append((repository, number, head_sha, commit_message))
+    def submit_merge(self, *, repository, number, head_sha, commit_message, merge_method):
+        self.merges.append((repository, number, head_sha, commit_message, merge_method))
         if self._merge_error is not None:
             raise self._merge_error
         return self._outcome
@@ -561,3 +568,59 @@ def test_a_body_that_does_not_name_the_head_is_UNREADABLE(head: dict) -> None:
     """
     with pytest.raises(EstateGatewayError):
         _pull_from_body(_wire_body(head=head), 67)
+
+
+# ---------------------------------------------------------------------------------------------
+# HOW this lane lands, and the wire it lands over.
+#
+# The sibling lane decides per pull request, because its population is not uniform: one declared
+# author's pull requests replay commits from a repository this estate does not own, and squashing
+# those strands the point a later merge resolves against. THIS lane's population is uniform -- an
+# update bot's branch, against a repository no other lineage takes from -- so it squashes, and
+# saying so in a test is what stops the sibling's rule leaking here unnoticed.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_this_lane_asks_for_a_SQUASH(migrated_session: Session) -> None:
+    """The value sent, not the outcome recorded: both methods land the pull request, so a record
+    assertion passes under either and cannot see this."""
+    gateway = ActingGateway(pull=pull_request(number=PR))
+
+    _land(migrated_session, gateway)
+
+    assert gateway.merges[0][4] == "squash"
+
+
+class _SentMerge:
+    """Stands in for the module-level `httpx.put`, recording the body that left the process."""
+
+    def __init__(self, status: int = 200) -> None:
+        self.status = status
+        self.calls: list[tuple[str, dict]] = []
+
+    def __call__(self, url, *, headers, json, timeout):
+        self.calls.append((url, json))
+        return httpx.Response(self.status, json={"merged": True, "sha": LANDED_COMMIT})
+
+
+@pytest.mark.parametrize("method", [SQUASH, MERGE_COMMIT], ids=["squash", "merge-commit"])
+def test_the_method_the_caller_names_is_what_reaches_the_remote(monkeypatch, method) -> None:
+    """THE REAL GATEWAY. Everything else in this file runs against a double, so nothing else can
+    see the body -- and a parameter accepted and then dropped for a literal is the shape that
+    leaves the report right and the act wrong. Parametrized over BOTH values, because a body
+    hard-coded to either one passes a test that only ever sends that one.
+    """
+    sent = _SentMerge()
+    monkeypatch.setattr(estate_pr_merge.httpx, "put", sent)
+
+    GitHubEstatePullRequests(lambda: "a-token").submit_merge(
+        repository=REPOSITORY,
+        number=PR,
+        head_sha=HEAD,
+        commit_message="SDS-Test: 1",
+        merge_method=method,
+    )
+
+    url, body = sent.calls[0]
+    assert url.endswith(f"/repos/{REPOSITORY}/pulls/{PR}/merge")
+    assert body == {"sha": HEAD, "merge_method": method, "commit_message": "SDS-Test: 1"}

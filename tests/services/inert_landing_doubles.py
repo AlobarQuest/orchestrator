@@ -33,6 +33,16 @@ INERT_POLICY_VERSION = 6
 # and it is the one the workflow this lane replaces keyed on.
 UPDATE_BOT = "dependabot[bot]"
 
+# The OTHER permitted identity, and the only one whose pull requests are not bumps. One App serves
+# both forks, so this is a single login across two repositories -- measured 2026-09-14 on
+# `claude-octopus#12`, `#13` and `rtk#7`. Older `rtk` syncs were authored by `github-actions[bot]`,
+# so nothing may key on this being the only value that has ever appeared here.
+SYNC_BOT = "octo-upstream-sync[bot]"
+
+# The branch both forks reset daily. Named plainly, which is why `ecosystem_of` reads no ecosystem
+# from it -- the fact ADR-0041 is about.
+SYNC_BRANCH = "upstream-sync"
+
 # The one ecosystem version 6 excludes for this population, and it is NOT the one the deploying
 # half excludes -- same principle, different ecosystem, because what the required checks leave
 # unexercised differs. A test that assumes the two lanes exclude the same thing is testing the
@@ -140,12 +150,22 @@ class ActingInertGateway(FakeEstateGateway):
         # THE LIST THAT CARRIES EVERY REFUSAL ASSERTION: a test proving this lane declined is a
         # test proving this stayed empty. Reading only the raised error would pass against an
         # implementation that acted first and complained afterwards.
-        self.merges: list[tuple[str, int, str, str]] = []
+        # FIVE ELEMENTS, and the last is the one a squash/merge-commit control reads. Recording
+        # the method rather than merely accepting it is what makes a test able to prove WHICH
+        # landing was asked for -- a gateway that took the argument and dropped it would satisfy
+        # every other assertion here.
+        self.merges: list[tuple[str, int, str, str, str]] = []
 
     def merge(
-        self, *, repository: str, number: int, head_sha: str, commit_message: str
+        self,
+        *,
+        repository: str,
+        number: int,
+        head_sha: str,
+        commit_message: str,
+        merge_method: str,
     ) -> MergeOutcome:
-        self.merges.append((repository, number, head_sha, commit_message))
+        self.merges.append((repository, number, head_sha, commit_message, merge_method))
         if self._merge_error is not None:
             raise self._merge_error
         return self._outcome

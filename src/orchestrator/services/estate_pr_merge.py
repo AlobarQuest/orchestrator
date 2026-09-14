@@ -103,6 +103,25 @@ MERGE_REFUSED_BY_REMOTE: Final = "merge_refused_by_remote"
 # conservative record is the right answer.
 NEVER_SENT: Final = "app_token_mint:"
 
+# How the remote is asked to bring a branch onto the default branch. GitHub's vocabulary, spelled
+# here because this is the one place either value crosses to it, and named rather than written
+# inline so a caller states which it means instead of repeating a literal.
+#
+# SQUASH discards the branch's own commits and lands one new commit for its content. That is right
+# for a branch whose commits nobody will merge from again, which is every subject either lane has
+# had until now.
+#
+# MERGE_COMMIT keeps them, and is right for exactly one thing: a branch replaying commits from a
+# source this estate does not own and WILL merge from again. Git resolves a later merge against the
+# most recent commit both sides share, so a squash leaves that shared point where it was -- the
+# content arrives without the commits carrying it, and the next sync compares against the stale
+# point and finds both sides having rewritten the same lines. It cannot tell the two rewrites are
+# one edit, so it conflicts, on files nobody here ever touched. Measured 2026-09-13 on
+# `claude-octopus#14`: 18 conflicting paths, and all 17 content files' fork blobs byte-identical to
+# some upstream commit's blob.
+MERGE_COMMIT: Final = "merge"
+SQUASH: Final = "squash"
+
 
 @dataclass(frozen=True)
 class MergeOutcome:
@@ -115,7 +134,13 @@ class EstatePullRequestGateway(EstateReadGateway, Protocol):
     """Everything the admission cascade reads, plus the one call that changes anything."""
 
     def submit_merge(
-        self, *, repository: str, number: int, head_sha: str, commit_message: str
+        self,
+        *,
+        repository: str,
+        number: int,
+        head_sha: str,
+        commit_message: str,
+        merge_method: str,
     ) -> MergeOutcome: ...
 
 
@@ -284,6 +309,12 @@ def _act(
             number=admission.pr_number,
             head_sha=head_sha,
             commit_message=_trailers(admission),
+            # STATED, never defaulted. Every subject of this lane is an update bot's branch against
+            # a repository whose commits no other lineage is merged from, so discarding the
+            # branch's own commits costs nothing and is what the estate's history reads as. The
+            # sibling lane decides per pull request because its population is not uniform; this one
+            # is, and saying so here is what makes that a claim rather than an omission.
+            merge_method=SQUASH,
         )
     except EstateGatewayError as error:
         if error.code.startswith(NEVER_SENT):
@@ -566,13 +597,38 @@ class GitHubEstatePullRequests:
         return tuple(runs)
 
     def submit_merge(
-        self, *, repository: str, number: int, head_sha: str, commit_message: str
+        self,
+        *,
+        repository: str,
+        number: int,
+        head_sha: str,
+        commit_message: str,
+        merge_method: str,
     ) -> MergeOutcome:
         """Ask for the landing, NAMING the head the terms were evaluated against.
 
         `sha` is the load-bearing parameter: the remote refuses when the pull request has moved,
         which closes the window between deciding and doing atomically and without this side having
         to have observed the move.
+
+        `merge_method` is REQUIRED, with no default. A default would be the one value most
+        subjects want, which is the shape that lets a caller needing the other one reach the
+        remote without ever naming it -- and the failure is silent, because the wrong method still
+        lands the pull request. Both callers state it.
+
+        The body reaches the artifact under either method, measured rather than assumed
+        (2026-09-14, a disposable public repository): with `commit_message` and no `commit_title`,
+        the landing commit's subject is the platform's own default -- which names this pull
+        request and the branch it came from -- followed by a blank line and then the body, and it
+        carries two parents. Under `squash` the subject is the pull request's own title. So no
+        title is sent: the default already identifies the subject, and a second thing to compose
+        would be a second thing to keep true.
+
+        Both values additionally depend on the target repository ALLOWING that method
+        (`allow_merge_commit`, `allow_squash_merge`), which nothing here checks. Measured
+        2026-09-14: all ten repositories of this estate permit both. A repository that stopped
+        would answer 405, which reaches the confirming re-read, records nothing permanent, and
+        stays retryable with the platform's own detail naming what it refused.
         """
         url = f"{GITHUB_API_URL}/repos/{repository}/pulls/{number}/merge"
         try:
@@ -581,7 +637,7 @@ class GitHubEstatePullRequests:
                 headers=self._headers(),
                 json={
                     "sha": head_sha,
-                    "merge_method": "squash",
+                    "merge_method": merge_method,
                     "commit_message": commit_message,
                 },
                 timeout=self._timeout,
