@@ -5134,3 +5134,18 @@ style of that module.
   06:00Z gate then reads zero new upstream commits and prints *"No new upstream commits — nothing to
   do"*. Note what it means for reporting, which is the part that misleads: two merged pull requests
   now point at one landing.
+  **DO NOT CLOSE THIS BY DISABLING `allow_squash_merge` ON THE FORK — measured 2026-09-14, that
+  breaks the estate's own landing lane.** Both `services/pr_merge.py` and
+  `services/estate_pr_merge.py` send `"merge_method": "squash"` as a LITERAL, and both forks
+  (`claude-octopus`, `rtk`) are in the inert-landing policy's repository set — so a repository that
+  refuses squash merges is one the lane can no longer land anything in. HQ made exactly this change
+  on `claude-octopus` and reverted it the same hour, having reasoned about the fork's merge history
+  and not about who merges there.
+  **The sharper finding the revert exposed: THE INERT LANDING LANE IS ITSELF A PRODUCER OF THIS
+  DEFECT.** A fork's upstream-sync pull request that is CLEAN gets landed unattended, by squash,
+  which freezes the base again. `claude-octopus#13` escaped only because it was conflicted and
+  therefore held — i.e. the lane has never yet had the chance to cause this, and the first clean
+  sync it lands will. That is a design question (per-repository merge method / remove the forks from
+  the inert set / accept periodic cleanups), not a setting, and it is unanswered. One coupling any
+  fix must check rather than assume: `inert_pr_merge.py` writes its trailer into the SQUASH body and
+  the ledger reads it back out, so a merge-commit landing must still carry it.
