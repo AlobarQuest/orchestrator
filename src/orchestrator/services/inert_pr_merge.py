@@ -37,6 +37,19 @@ Passing an explicit body replaces the one the repository setting would have comp
 accepted rather than overlooked: the bot's own dependency metadata stays on the pull request and
 its branch commits, and the ledger already falls back to the head commit for exactly that reason.
 
+## How it lands, which is not the same for every subject
+
+Almost every pull request this lane sees is the end of its own lineage -- one bot's branch, whose
+commits nothing will ever be merged from again -- and discarding them for a single commit carrying
+the content is exactly what a squash is for.
+
+One population is different: a fork's upstream sync replays commits from a repository this estate
+does not own and WILL take from again. Squashing those hands the fork the content while leaving the
+most recent commit the two sides share where it was, so the next sync compares against that stale
+point, finds both sides carrying the same lines, and conflicts on files nobody here has touched.
+Keeping the commits is what stops it. WHICH subjects those are is not decided here -- it follows
+from a fact the policy already declares about the author; see `inert_landing_admission`.
+
 ## Idempotency: check, act, reconcile, record
 
 A landing is not idempotent and its failure is asymmetric -- a lost success answers the same way a
@@ -85,8 +98,10 @@ from orchestrator.services.inert_landing_admission import (
 from orchestrator.services.inert_landing_policy import InertLandingPolicySource
 from orchestrator.services.lifecycle import ActorContext
 
-# The trailer the landing writes into the squash body, and the estate's ledger reads back out of
-# it. Named here because this is the only writer; the reader pins the same spelling on its own
+# The trailer the landing writes into the landing commit's body, and the estate's ledger reads back
+# out of it. It reaches the artifact under either landing method, measured rather than assumed --
+# see `submit_merge`, which records what each produces.
+# Named here because this is the only writer; the reader pins the same spelling on its own
 # side, and a disagreement between the two is a landing recorded with no basis rather than a
 # crash -- which is why both sides carry a test naming the literal rather than deriving it from
 # the other.
@@ -121,7 +136,13 @@ class InertPullRequestGateway(EstateReadGateway, Protocol):
     """
 
     def merge(
-        self, *, repository: str, number: int, head_sha: str, commit_message: str
+        self,
+        *,
+        repository: str,
+        number: int,
+        head_sha: str,
+        commit_message: str,
+        merge_method: str,
     ) -> MergeOutcome: ...
 
 
@@ -134,13 +155,20 @@ class GitHubInertPullRequests(GitHubEstatePullRequests):
     """
 
     def merge(
-        self, *, repository: str, number: int, head_sha: str, commit_message: str
+        self,
+        *,
+        repository: str,
+        number: int,
+        head_sha: str,
+        commit_message: str,
+        merge_method: str,
     ) -> MergeOutcome:
         return self.submit_merge(
             repository=repository,
             number=number,
             head_sha=head_sha,
             commit_message=commit_message,
+            merge_method=merge_method,
         )
 
 
@@ -306,6 +334,11 @@ def _act(
             number=admission.pr_number,
             head_sha=head_sha,
             commit_message=_trailers(admission),
+            # THREADED, never re-derived. The cascade read the pull request and the policy once and
+            # decided from both; asking either of them again here would be a second reading of a
+            # subject that can move between the two, and the act would then be performed under a
+            # rule the answer it was admitted on never saw.
+            merge_method=admission.merge_method,
         )
     except EstateGatewayError as error:
         if error.code.startswith(NEVER_SENT):

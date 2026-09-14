@@ -769,6 +769,11 @@ class InertLandingAdmissionResponse(BaseModel):
     There is no `change_record_id` and no `rollout_base_matches_pin`: this lane has no record, and
     it evaluates no rollout pin, so a field for either would be a column of nulls that a reader
     would reasonably take to mean something.
+
+    `merge_method` is served for the same reason every other field here is -- the answer is served
+    WHOLE, and a field the service composes but the model omits is the silent drop this docstring
+    opens by naming. It also gives a report-only pass the one thing it could not otherwise say
+    about a subject it declines to act on: HOW the landing would be performed.
     """
 
     repository: str
@@ -778,6 +783,7 @@ class InertLandingAdmissionResponse(BaseModel):
     head_sha: str | None
     policy_version: int | None
     branch_update_qualifies: bool
+    merge_method: str
 
 
 class InertBranchUpdateCommandModel(BaseModel):
