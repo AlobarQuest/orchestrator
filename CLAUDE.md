@@ -5134,3 +5134,33 @@ style of that module.
   06:00Z gate then reads zero new upstream commits and prints *"No new upstream commits — nothing to
   do"*. Note what it means for reporting, which is the part that misleads: two merged pull requests
   now point at one landing.
+
+- **A MULTI-TOKEN `FORBIDDEN_SEQUENCES` ENTRY MATCHES ORDINARY SPACED PROSE, so quoting a commit
+  message or a pull-request title in a docstring reddens the ws32 guard.** Measured 2026-09-14
+  against the guard's own functions. The entries are `(label, token-tuple)` pairs —
+  `("merge_pull_request", ("merge", "pull", "request"))` — `_tokenize` lowercases, splits camelCase
+  and splits on every non-alphanumeric run, and `_contains_sequence` looks for those tokens
+  CONSECUTIVELY. So all four of these are one match:
+
+      'Merge pull request #1 from AlobarQuest/branch-a'  -> merge_pull_request
+      'merge_pull_request'                               -> merge_pull_request
+      'merge-pull-request'                               -> merge_pull_request
+      'mergePullRequest'                                 -> merge_pull_request
+
+  and, as the discriminating controls, `'merge the pull request'` and `'request a pull merge'` match
+  NOTHING — it is a consecutive-token test, not a bag of words.
+  **The first line is GitHub's DEFAULT merge-commit subject**, which is exactly the string you reach
+  for when documenting what a merge-commit landing produces. `#264` did precisely that — its
+  docstring quoted its own probe's resulting commit — and reddened **ws32 and the ws33 phrase guard
+  together**, at the full gate, after a pre-flight scan for the literal `merge_pull_request` had
+  reported clean.
+  **Why a careful reader still gets this wrong.** This file documents the tokenizer for the
+  SINGLE-token entries — `post-deploy` matching `deploy` — and separately documents ws34's list as a
+  SUBSTRING match. Neither prepares you for a multi-token entry reaching prose, and the single-token
+  examples make the tokenizer look like a rule about compounds rather than about word sequences.
+  **The cheap check is to run the guard's own functions on the string** rather than to grep for the
+  literal: import `_tokenize` and `_contains_sequence` from
+  `tests/architecture/test_ws32_scope_guards.py` and pass it the exact text. A grep for the literal
+  cannot see any of the four forms above except the second.
+  Reword; never allowlist — the standing rule for this family is unchanged, and an exemption here
+  would excuse a file rather than a sentence.
