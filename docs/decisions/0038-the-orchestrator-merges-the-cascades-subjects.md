@@ -72,9 +72,21 @@ repositories whose Dependabot cadence is weekly. The split follows the deploying
 admission reports `branch_update_qualifies`, and the caller acts on it.
 
 **3. The landing ledger gains a fourth attribution basis, and Detector A an arm for it.** The lane
-stamps a trailer into the squash body naming the policy version that permitted the landing, exactly
-as `estate_pr_merge` already stamps `SDS-Change-Record` and `SDS-Policy-Version`; the ledger reads it
-back out of the commit. **Detector B is taught the policy rule or retired** — see Consequences.
+stamps a trailer into the landing commit's body naming the policy version that permitted the landing,
+exactly as `estate_pr_merge` already stamps `SDS-Change-Record` and `SDS-Policy-Version`; the ledger
+reads it back out of the commit.
+
+> **Corrected 2026-09-14.** This clause read "into the squash body" until the lane's merge method
+> stopped being a literal (`#264`). A pull request whose author the policy names in
+> `non_ecosystem_authors` — an upstream sync, which is somebody else's release wholesale rather than
+> a bump — now lands as a MERGE COMMIT, because a squash gives the fork upstream's content without
+> upstream's commits and so freezes the merge base, making every later sync conflict on files nobody
+> edited. Measured on `claude-octopus#14`: 18 conflicting paths, and all 17 content files' fork blobs
+> byte-identical to some upstream commit's blob. The trailer is unaffected, measured rather than
+> assumed: `merge_method: "merge"` with a `commit_message` and no `commit_title` produces
+> `Merge pull request #N from <branch>` followed by the trailer, against a squash control in the same
+> probe. Every other author still squashes, so this clause holds unchanged for the ledger's own eight
+> repositories — neither fork is among them, and Dependabot is their only permitted author. **Detector B is taught the policy rule or retired** — see Consequences.
 
 **4. `bump_proposer` reads the rule from change-manager instead of from `landing_ledger.rules`.**
 Both isolation guards are untouched. It gains a READ-scoped change-manager credential so a dry run
