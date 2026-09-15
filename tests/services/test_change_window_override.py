@@ -47,6 +47,7 @@ from orchestrator.services.pr_merge_admission import (
 from orchestrator.services.reach_admission import REACH_POLICY_UNREADABLE
 from tests.services.change_record_doubles import approved_record_source
 from tests.services.estate_doubles import inert_source, redeploying_source
+from tests.services.target_doubles import declared_source
 from tests.services.test_change_window import OPEN, SHUT, FrozenClock
 from tests.services.test_dispatch import FakeGitHubDispatcher, ready_unit, settings
 from tests.services.test_pr_merge import (
@@ -94,6 +95,7 @@ def _start(
         github or FakeGitHubDispatcher([]),
         inert_source(),
         clock,
+        target_source=declared_source(),
     )
 
 
@@ -298,7 +300,6 @@ def test_an_override_does_not_admit_work_whose_policy_could_not_be_read(
     ("overrides", "expected"),
     [
         ({"enabled": False}, "dispatch_disabled"),
-        ({"allowed_target_repositories": frozenset()}, "target_repository_not_allowed"),
         ({"enabled_capabilities": frozenset()}, "capability_not_enabled"),
         ({"allowed_change_classes": frozenset()}, "change_class_not_allowed"),
         ({"github_app_configured": False}, "github_app_credentials_missing"),
@@ -540,6 +541,7 @@ def test_a_recorded_start_override_grants_nothing_to_landing_the_pull_request(
         FakeGitHubDispatcher([]),
         inert_source(),
         FrozenClock(SHUT),
+        target_source=declared_source(),
     )
     assert _recorded(started) is not None
 

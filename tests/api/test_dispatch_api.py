@@ -16,6 +16,7 @@ from orchestrator.services.github_app import GitHubAppTokenError, reset_token_pr
 from tests.api.test_lifecycle_api import AUTHORITY as BASE_AUTHORITY
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM
 from tests.services.estate_doubles import FakeEstateLandingSource, inert_source
+from tests.services.target_doubles import FakeFactoryTargetSource, declared_source
 
 TARGET_REPOSITORY = "AlobarQuest/orchestrator"
 # Dispatch routes per-unit, so a dispatchable unit must declare its target repository.
@@ -53,6 +54,10 @@ def FakeEstateLandingSourceFactory(**_: object) -> FakeEstateLandingSource:
     return inert_source()
 
 
+def FakeFactoryTargetSourceFactory(*_: object, **__: object) -> FakeFactoryTargetSource:
+    return declared_source()
+
+
 @pytest.fixture
 def dispatch_client(
     auth_config: AuthConfig,
@@ -67,6 +72,8 @@ def dispatch_client(
     # anything already serving. Configured AND faked here for the same reason the workflow
     # client is: an unconfigured source refuses, which is the point of it.
     monkeypatch.setattr(routes, "HttpEstateLandingSource", FakeEstateLandingSourceFactory)
+    # ADR-0015: admission reads the target repository's own declaration from GitHub.
+    monkeypatch.setattr(routes, "GitHubFactoryTargetSource", FakeFactoryTargetSourceFactory)
     app = create_app(auth_config)
 
     def database_session() -> Iterator[Session]:
@@ -79,7 +86,6 @@ def dispatch_client(
             dispatch_enabled=True,
             dispatch_allowed_change_classes=frozenset({"repo.edit"}),
             dispatch_enabled_capabilities=frozenset({"repo.edit"}),
-            dispatch_allowed_target_repositories=frozenset({TARGET_REPOSITORY}),
             github_app_id="123456",
             github_app_installation_id="78901234",
             github_app_private_key_b64=SecretStr("cGVt"),

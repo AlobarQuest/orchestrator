@@ -37,6 +37,7 @@ from orchestrator.services.reach_admission import (
     REACH_ESTATE_UNKNOWN,
 )
 from tests.services.estate_doubles import FakeEstateLandingSource
+from tests.services.target_doubles import declared_source, undeclared_source
 from tests.services.test_change_window import OPEN, SHUT, FrozenClock
 from tests.services.test_dispatch import (
     FakeGitHubDispatcher,
@@ -67,9 +68,10 @@ def admit(
     return dispatch_work_unit(
         session,
         dispatch_command(unit.id, attempt=attempt),
-        settings(allowed_target_repositories=frozenset({repository})),
+        settings(),
         FakeGitHubDispatcher([]),
         landing_source,
+        target_source=declared_source(),
     )
 
 
@@ -198,10 +200,11 @@ def test_declaring_live_estate_is_admitted_and_the_estate_is_never_consulted(
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(allowed_target_repositories=frozenset({CHANGE_MANAGER})),
+        settings(),
         FakeGitHubDispatcher([]),
         landing_source,
         FrozenClock(OPEN),
+        target_source=declared_source(),
     )
 
     assert record.reason_code is None
@@ -224,10 +227,11 @@ def test_declaring_live_estate_costs_the_window_that_declaring_it_is_for(
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(allowed_target_repositories=frozenset({CHANGE_MANAGER})),
+        settings(),
         FakeGitHubDispatcher([]),
         source(EstateAnswer(LANDING_REDEPLOYS)),
         FrozenClock(SHUT),
+        target_source=declared_source(),
     )
 
     assert record.reason_code == "outside_change_window"
@@ -291,24 +295,27 @@ def test_the_off_switch_outranks_an_estate_that_cannot_be_read(
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(enabled=False, allowed_target_repositories=frozenset({CHANGE_MANAGER})),
+        settings(
+            enabled=False,
+        ),
         FakeGitHubDispatcher([]),
         landing_source,
+        target_source=declared_source(),
     )
 
     assert record.reason_code == "dispatch_disabled"
     assert landing_source.asked == []
 
 
-def test_the_estate_term_outranks_the_repository_allowlist(
+def test_the_estate_term_outranks_the_target_declaration(
     migrated_session: Session,
 ) -> None:
-    """A contradicted declaration is a defect in the package; an allowlist miss is a setting on
-    this deployment. Reporting the setting first would send somebody to change a list when the
-    package is the thing that is wrong."""
+    """A contradicted reach is a defect in the package; a missing target declaration is a fact
+    about the repository. Reporting the repository first would send somebody to change a file
+    there when the package is the thing that is wrong."""
     unit = ready_unit(
         migrated_session,
-        key="estate-outranks-allowlist",
+        key="estate-outranks-declaration",
         target_repository=CHANGE_MANAGER,
         reach=["source_repository"],
     )
@@ -316,9 +323,10 @@ def test_the_estate_term_outranks_the_repository_allowlist(
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(allowed_target_repositories=frozenset({ORCHESTRATOR})),
+        settings(),
         FakeGitHubDispatcher([]),
         source(EstateAnswer(LANDING_REDEPLOYS)),
+        target_source=undeclared_source(),
     )
 
     assert record.reason_code == REACH_CONTRADICTS_ESTATE

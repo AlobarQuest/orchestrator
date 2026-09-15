@@ -39,6 +39,11 @@ from orchestrator.services.packages import (
     register_revision,
 )
 from tests.services.estate_doubles import inert_source
+from tests.services.target_doubles import (
+    declared_source,
+    undeclared_source,
+    unreadable_source,
+)
 from tests.services.test_authority_known_good import uv_bump
 
 PILOT_REPOSITORY = "AlobarQuest/orchestrator"
@@ -91,7 +96,6 @@ def settings(**overrides: object) -> DispatchSettings:
         "enabled": True,
         "allowed_change_classes": frozenset({"repo.edit"}),
         "enabled_capabilities": frozenset({"repo.edit"}),
-        "allowed_target_repositories": frozenset({PILOT_REPOSITORY}),
         "workflow_id": "factory-runner-pilot.yml",
         "workflow_ref": "main",
         "github_app_configured": True,
@@ -194,6 +198,7 @@ def test_dispatch_fails_closed_when_global_switch_disabled(migrated_session: Ses
         settings(enabled=False),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "skipped"
@@ -225,6 +230,7 @@ def test_the_off_switch_outranks_the_most_permissive_policy_expressible(
         settings(enabled=False),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "skipped"
@@ -258,6 +264,7 @@ def test_dispatch_skips_legacy_invalid_dependency_update_authority(
         settings(allowed_change_classes=frozenset({"dependency-update"})),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "skipped"
@@ -305,6 +312,7 @@ def test_dispatch_blocks_a_legacy_capability_outside_the_runner_vocabulary(
         settings(allowed_change_classes=frozenset({"dependency-update"})),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "blocked"
@@ -328,7 +336,12 @@ def test_dispatch_uses_one_normalized_authority_snapshot(
     monkeypatch.setattr(dispatch_module, "normalize_authority", track_normalization)
 
     record = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        github,
+        inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "dispatched"
@@ -340,8 +353,22 @@ def test_dispatch_sends_ws41_workflow_dispatch_once(migrated_session: Session) -
     github = FakeGitHubDispatcher([])
     command = dispatch_command(unit.id)
 
-    first = dispatch_work_unit(migrated_session, command, settings(), github, inert_source())
-    replay = dispatch_work_unit(migrated_session, command, settings(), github, inert_source())
+    first = dispatch_work_unit(
+        migrated_session,
+        command,
+        settings(),
+        github,
+        inert_source(),
+        target_source=declared_source(),
+    )
+    replay = dispatch_work_unit(
+        migrated_session,
+        command,
+        settings(),
+        github,
+        inert_source(),
+        target_source=declared_source(),
+    )
 
     assert replay.id == first.id
     assert first.status == "dispatched"
@@ -365,6 +392,7 @@ def test_dispatch_blocks_unknown_conformance_without_calling_github(
         settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "blocked"
@@ -385,7 +413,12 @@ def test_dispatch_requires_green_or_accepted_conformance(migrated_session: Sessi
     github = FakeGitHubDispatcher([])
 
     record = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        github,
+        inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "blocked"
@@ -408,7 +441,12 @@ def test_dispatch_allows_explicitly_accepted_touched_standards(
     github = FakeGitHubDispatcher([])
 
     record = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        github,
+        inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "dispatched"
@@ -428,6 +466,7 @@ def test_dispatch_circuit_breaker_blocks_repeated_failure_signature(
         settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
     second = dispatch_work_unit(
         migrated_session,
@@ -435,6 +474,7 @@ def test_dispatch_circuit_breaker_blocks_repeated_failure_signature(
         settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
     third = dispatch_work_unit(
         migrated_session,
@@ -442,6 +482,7 @@ def test_dispatch_circuit_breaker_blocks_repeated_failure_signature(
         settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert first.status == "failed"
@@ -460,6 +501,7 @@ def test_dispatch_records_canonical_event(migrated_session: Session) -> None:
         settings(),
         FakeGitHubDispatcher([]),
         inert_source(),
+        target_source=declared_source(),
     )
 
     event = migrated_session.scalar(select(Event).where(Event.id == record.event_id))
@@ -476,9 +518,10 @@ def test_dispatch_routes_to_the_units_own_target_repository(migrated_session: Se
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(allowed_target_repositories=frozenset({"AlobarQuest/brain"})),
+        settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "dispatched"
@@ -495,7 +538,6 @@ def test_fanout_units_route_to_their_own_repositories_in_one_process(
     repository was configured at startup — a runner opening a dependency PR against the
     wrong repo, which fails open rather than closed.
     """
-    allowed = frozenset({"AlobarQuest/brain", "AlobarQuest/security-standards"})
     brain = ready_unit(migrated_session, key="fanout-a", target_repository="AlobarQuest/brain")
     standards = ready_unit(
         migrated_session, key="fanout-b", target_repository="AlobarQuest/security-standards"
@@ -505,16 +547,18 @@ def test_fanout_units_route_to_their_own_repositories_in_one_process(
     first = dispatch_work_unit(
         migrated_session,
         dispatch_command(brain.id),
-        settings(allowed_target_repositories=allowed),
+        settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
     second = dispatch_work_unit(
         migrated_session,
         dispatch_command(standards.id),
-        settings(allowed_target_repositories=allowed),
+        settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert first.target_repository == "AlobarQuest/brain"
@@ -532,7 +576,12 @@ def test_dispatch_blocks_when_unit_declares_no_target_repository(
     github = FakeGitHubDispatcher([])
 
     record = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        github,
+        inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "blocked"
@@ -540,37 +589,92 @@ def test_dispatch_blocks_when_unit_declares_no_target_repository(
     assert github.calls == []
 
 
-def test_dispatch_blocks_when_target_repository_is_not_allowlisted(
+def test_dispatch_blocks_when_the_target_repository_has_not_declared_itself_a_target(
     migrated_session: Session,
 ) -> None:
-    unit = ready_unit(migrated_session, key="off-list", target_repository="AlobarQuest/private")
+    """ADR-0015: a repository that says nothing, or says no, has not opted in."""
+    unit = ready_unit(migrated_session, key="undeclared", target_repository="AlobarQuest/private")
     github = FakeGitHubDispatcher([])
+    target_source = undeclared_source()
 
     record = dispatch_work_unit(
-        migrated_session, dispatch_command(unit.id), settings(), github, inert_source()
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        github,
+        inert_source(),
+        target_source=target_source,
     )
 
     assert record.status == "blocked"
-    assert record.reason_code == "target_repository_not_allowed"
+    assert record.reason_code == "target_repository_not_declared"
+    assert target_source.asked == ["AlobarQuest/private"]
     assert github.calls == []
 
 
-def test_dispatch_allowlist_is_empty_by_default(migrated_session: Session) -> None:
-    """Fail closed: an unconfigured allowlist dispatches nowhere."""
-    unit = ready_unit(migrated_session, key="empty-allowlist")
+def test_dispatch_blocks_when_the_declaration_cannot_be_read(migrated_session: Session) -> None:
+    """Fail closed, under its own name: not knowing is not a repository declining."""
+    unit = ready_unit(migrated_session, key="unreadable-declaration")
     github = FakeGitHubDispatcher([])
 
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(allowed_target_repositories=frozenset()),
+        settings(),
         github,
         inert_source(),
+        target_source=unreadable_source(),
     )
 
     assert record.status == "blocked"
-    assert record.reason_code == "target_repository_not_allowed"
+    assert record.reason_code == "target_repository_declaration_unreadable"
     assert github.calls == []
+
+
+def test_the_declaration_is_read_for_the_units_own_repository_and_only_after_cheaper_terms(
+    migrated_session: Session,
+) -> None:
+    """The paired control: a closed off-switch and a missing target never reach the read, and a
+    unit that passes every other term is asked about ITS repository, not a process-wide one."""
+    disabled = ready_unit(
+        migrated_session, key="read-disabled", target_repository="AlobarQuest/brain"
+    )
+    no_target = ready_unit(migrated_session, key="read-no-target", target_repository=None)
+    routed = ready_unit(migrated_session, key="read-routed", target_repository="AlobarQuest/brain")
+    target_source = declared_source()
+
+    off = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(disabled.id),
+        settings(enabled=False),
+        FakeGitHubDispatcher([]),
+        inert_source(),
+        target_source=target_source,
+    )
+    missing = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(no_target.id),
+        settings(),
+        FakeGitHubDispatcher([]),
+        inert_source(),
+        target_source=target_source,
+    )
+    assert (off.reason_code, missing.reason_code) == (
+        "dispatch_disabled",
+        "target_repository_missing",
+    )
+    assert target_source.asked == []
+
+    admitted = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(routed.id),
+        settings(),
+        FakeGitHubDispatcher([]),
+        inert_source(),
+        target_source=target_source,
+    )
+    assert admitted.status == "dispatched"
+    assert target_source.asked == ["AlobarQuest/brain"]
 
 
 def test_dispatch_replay_is_idempotent_against_the_per_unit_repository(
@@ -578,22 +682,23 @@ def test_dispatch_replay_is_idempotent_against_the_per_unit_repository(
 ) -> None:
     """Idempotent replay must compare the resolved per-unit repo, not a global setting."""
     unit = ready_unit(migrated_session, key="replay-repo", target_repository="AlobarQuest/brain")
-    allowed = frozenset({"AlobarQuest/brain"})
     github = FakeGitHubDispatcher([])
 
     first = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(allowed_target_repositories=allowed),
+        settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
     replay = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(allowed_target_repositories=allowed),
+        settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert replay.id == first.id
@@ -615,6 +720,7 @@ def test_dispatch_fails_closed_when_github_app_credentials_are_missing(
         settings(github_app_configured=False),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "blocked"
@@ -635,6 +741,7 @@ def test_dispatch_disabled_short_circuits_before_the_credentials_check(
         settings(enabled=False, github_app_configured=False),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "skipped"
@@ -683,6 +790,7 @@ def test_a_mint_failure_is_recorded_as_a_dispatch_failure_and_never_calls_github
         settings(),
         GitHubActionsDispatcher(explode),
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.status == "failed"
@@ -833,7 +941,6 @@ def recognised_unit(
 def recognising_settings(**overrides: object) -> DispatchSettings:
     return settings(
         allowed_change_classes=frozenset({"dependency-update"}),
-        allowed_target_repositories=frozenset({"AlobarQuest/change-manager"}),
         **overrides,
     )
 
@@ -861,6 +968,7 @@ def test_a_unit_nobody_approved_is_admitted_when_policy_recognises_its_envelope(
         recognising_settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert unit.authority_approval_id is None
@@ -892,6 +1000,7 @@ def test_the_same_unit_is_refused_when_no_pattern_recognises_its_envelope(
         recognising_settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert (record.status, record.reason_code) == ("blocked", "authority_approval_missing")
@@ -923,6 +1032,7 @@ def test_a_unit_whose_package_declared_no_reach_is_refused_and_still_needs_a_hum
         recognising_settings(),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert (record.status, record.reason_code) == ("blocked", "reach_undeclared")
@@ -946,6 +1056,7 @@ def test_a_lifted_gate_never_writes_an_approval_row(migrated_session: Session) -
         recognising_settings(),
         FakeGitHubDispatcher([]),
         inert_source(),
+        target_source=declared_source(),
     )
     migrated_session.commit()
 
@@ -969,6 +1080,7 @@ def test_a_lifted_gate_leaves_a_record_that_is_not_an_approval(
         recognising_settings(),
         FakeGitHubDispatcher([]),
         inert_source(),
+        target_source=declared_source(),
     )
     migrated_session.commit()
 
@@ -1000,6 +1112,7 @@ def test_a_unit_a_human_did_approve_records_no_suppression(migrated_session: Ses
         settings(),
         FakeGitHubDispatcher([]),
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert unit.authority_approval_id is not None
@@ -1022,6 +1135,7 @@ def test_the_off_switch_outranks_a_recognising_pattern(migrated_session: Session
         recognising_settings(enabled=False),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
     admitted = dispatch_work_unit(
         migrated_session,
@@ -1029,6 +1143,7 @@ def test_the_off_switch_outranks_a_recognising_pattern(migrated_session: Session
         recognising_settings(enabled=True),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert (blocked.status, blocked.reason_code) == ("skipped", "dispatch_disabled")
@@ -1076,6 +1191,7 @@ def test_dispatch_blocks_a_capability_level_the_runner_refuses(
         settings(allowed_change_classes=frozenset({"dependency-update"})),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.reason_code == "unknown_capability_level"
@@ -1113,6 +1229,7 @@ def test_dispatch_blocks_an_envelope_field_the_runner_forbids(
         settings(allowed_change_classes=frozenset({"dependency-update"})),
         github,
         inert_source(),
+        target_source=declared_source(),
     )
 
     assert record.reason_code == "authority_unknown_fields"

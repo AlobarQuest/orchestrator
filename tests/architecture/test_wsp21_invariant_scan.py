@@ -272,6 +272,12 @@ OUTBOUND_ALLOWLIST = {
     # shape) would put that answer outside the transaction that records the admission decision.
     # The credential is READ-ONLY and App Brain scopes it to two read paths.
     Path("src/orchestrator/services/estate_landing.py"),
+    # ADR-0015. Admission reads ONE file -- the target repository's own `factory-target.toml` --
+    # and, when that answers 404, the repository beneath it, so an absence is confirmed rather
+    # than believed. It writes nothing, borrows github_app.py's installation token, and replaced a
+    # hand-maintained allowlist; the read belongs inside the transaction that records the decision
+    # for the reason the two readers above give.
+    Path("src/orchestrator/services/factory_target.py"),
     # ADR-0019 Increment 3. Admission asks change-manager one question about the pull request it
     # would land -- has this change been routed through the estate's record, and did somebody
     # approve it -- and writes nothing. Same justification as the two above: the answer decides an

@@ -37,6 +37,7 @@ from orchestrator.services.dispatch import dispatch_work_unit
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 from orchestrator.services.reach_admission import REACH_POLICY_UNREADABLE, change_window_refusal
 from tests.services.estate_doubles import inert_source
+from tests.services.target_doubles import declared_source
 from tests.services.test_dispatch import (
     FakeGitHubDispatcher,
     dispatch_command,
@@ -504,6 +505,7 @@ def test_out_of_window_work_is_refused_at_admission_and_in_window_work_is_not(
         github,
         inert_source(),
         FrozenClock(SHUT),
+        target_source=declared_source(),
     )
     admitted = dispatch_work_unit(
         migrated_session,
@@ -512,6 +514,7 @@ def test_out_of_window_work_is_refused_at_admission_and_in_window_work_is_not(
         github,
         inert_source(),
         FrozenClock(OPEN),
+        target_source=declared_source(),
     )
 
     assert (refused.status, refused.reason_code) == ("skipped", OUTSIDE_CHANGE_WINDOW)
@@ -534,6 +537,7 @@ def test_a_window_refusal_is_recorded_as_skipped_not_as_a_unit_needing_attention
         FakeGitHubDispatcher([]),
         inert_source(),
         FrozenClock(SHUT),
+        target_source=declared_source(),
     )
 
     assert (record.status, record.failure_signature) == ("skipped", None)
@@ -559,6 +563,7 @@ def test_the_off_switch_outranks_the_window_and_the_window_outranks_nothing(
         github,
         inert_source(),
         FrozenClock(OPEN),
+        target_source=declared_source(),
     )
     off_in_window = dispatch_work_unit(
         migrated_session,
@@ -567,6 +572,7 @@ def test_the_off_switch_outranks_the_window_and_the_window_outranks_nothing(
         github,
         inert_source(),
         FrozenClock(OPEN),
+        target_source=declared_source(),
     )
     off_out_of_window = dispatch_work_unit(
         migrated_session,
@@ -575,6 +581,7 @@ def test_the_off_switch_outranks_the_window_and_the_window_outranks_nothing(
         github,
         inert_source(),
         FrozenClock(SHUT),
+        target_source=declared_source(),
     )
 
     assert (admitted.status, admitted.reason_code) == ("dispatched", None)
@@ -607,6 +614,7 @@ def test_a_standing_defect_is_reported_ahead_of_the_self_clearing_one(
         github,
         inert_source(),
         FrozenClock(SHUT),
+        target_source=declared_source(),
     )
 
     approved = ready_unit(migrated_session, key="transient-only", reach=["operator_machine"])
@@ -617,6 +625,7 @@ def test_a_standing_defect_is_reported_ahead_of_the_self_clearing_one(
         github,
         inert_source(),
         FrozenClock(SHUT),
+        target_source=declared_source(),
     )
 
     assert (unapproved.status, unapproved.reason_code) == ("blocked", "authority_approval_missing")
@@ -670,6 +679,7 @@ def test_a_unit_already_running_survives_the_window_closing_over_it(
         github,
         inert_source(),
         FrozenClock(OPEN),
+        target_source=declared_source(),
     )
     grant = claim_unit(migrated_session, unit.id, WORKER, "running-claim")
     assert isinstance(grant, LeaseGrant), grant
@@ -711,6 +721,7 @@ def test_a_unit_already_running_survives_the_window_closing_over_it(
         github,
         inert_source(),
         FrozenClock(SHUT),
+        target_source=declared_source(),
     )
 
     assert sent.status == "dispatched"
