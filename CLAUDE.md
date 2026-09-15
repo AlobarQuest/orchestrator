@@ -5164,3 +5164,31 @@ style of that module.
   cannot see any of the four forms above except the second.
   Reword; never allowlist — the standing rule for this family is unchanged, and an exemption here
   would excuse a file rather than a sentence.
+
+- **AN XCODE UPDATE RESETS THE LICENSE, AND AN UNACCEPTED LICENSE STOPS EVERY SCHEDULED LANE AT
+  ONCE — each failing with a message that names something other than Xcode.** Measured 2026-09-15.
+  Xcode 27.0 was installed at 2026-09-14 22:52 EDT. `/usr/bin/python3` and `/usr/bin/git` are Xcode
+  shims: with the license unaccepted, both print *"You have not agreed to the Xcode license
+  agreements"* instead of running, and `launchctl list` recorded exit **69** for the lanes that
+  surfaced it directly. launchd's PATH resolves bare `python3` to that shim, and every launcher parses
+  BWS output as `bws secret get … | python3 -c …`, so all eleven SDS lanes failed from the first pass
+  after the install. **Three different messages, one cause:** the launchers said a secret *could not
+  be read from BWS* (BWS was fine; `python3` died and `bws` got a broken pipe), the dead-man switch
+  said *the Healthchecks API key could not be read — alerting disabled this run*, and the activation
+  helper said *`~/Projects/orchestrator` is not a git checkout*. When many unrelated lanes fail at once
+  with plausible, different messages, look for what they share before believing any of them; here
+  `env -i PATH=/usr/bin:/bin HOME="$HOME" python3 -c pass` settled it in one command.
+  **The dead-man switch worked, and only its Healthchecks side could have.** Its lane side runs the
+  same broken pipeline, so it sent nothing — no `/start`, no `/fail`. Healthchecks' silence timer
+  needs nothing from the machine, and moved the checks to `down`, which emails Devon. Do not "fix"
+  the lane side by giving it a different interpreter: the silence path is the one that survives a
+  machine that cannot run anything. Two `infraops-mcp-server` lanes (`drift-audit.sh`,
+  `change-window.sh`) did send `/start` and `/fail`, so their ping path does not depend on the shim.
+  **What still ran without the license:** `/usr/bin/jq`,
+  `/opt/homebrew/opt/python@3.12/libexec/bin/python3`, and this repository's `.venv/bin/python`.
+  Local git did not, so the clean-tree rule could not be satisfied until the license was accepted.
+  **The fix is `sudo xcodebuild -license accept`, and it is Devon's** — `sudo` is on the deny list.
+  Don't work around it by re-pointing the launchers at another interpreter: that is a code change for
+  a one-command problem, and it would hide the next Xcode update behind a different failure.
+  Recovery was proven by running each lane once with `launchctl kickstart` and reading its
+  Healthchecks check back to `up`, not by the license probe alone.
