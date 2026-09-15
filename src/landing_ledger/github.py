@@ -194,19 +194,20 @@ def factory_claim(message: str) -> FactoryClaim | None:
 
     Read from the landing commit, falling back to the pull request's own head -- the same
     arrangement, and the same reason, as `update_metadata` twelve lines up. A first draft had no
-    fall-back, on the grounds that the orchestrator lands with `merge_method: "squash"` and a
-    squash carries the branch's messages through. **That premise stopped being unconditional on
-    2026-09-14 (orchestrator #264): the inert lane now decides its method per pull request, and a
-    wholesale upstream sync lands as a merge commit.** It remains true of every repository THIS
-    module reads -- the ledger's eight name `dependabot[bot]` as their only permitted author, and
-    neither fork is among them -- so nothing here changes. Widening the ledger's population to a
-    repository whose policy names a `non_ecosystem_authors` account is what would make the sentence
-    false in practice, and the fall-back below is already what absorbs it. The squash BODY is not the orchestrator's to
-    decide: it sends no `commit_message`, so what the landing commit contains is governed by the
-    repository's own `squash_merge_commit_message` setting, which anyone can change in a web form.
-    All eight repositories the ledger covers are `COMMIT_MESSAGES` today, measured -- but a setting
-    is not a literal in a merge call, and the failure it would cause is silent: no trailer, no
-    claim, no basis, and a factory landing recorded as `unattributed`, which no detector reads.
+    fall-back, on the grounds that the orchestrator lands with `merge_method: "squash"` and a squash
+    carries the branch's messages through. **That premise stopped being unconditional on 2026-09-14
+    (orchestrator #264): the inert lane now decides its method per pull request, and a wholesale
+    upstream sync lands as a merge commit.** It remains true of every repository THIS module reads
+    -- the ledger's eight name `dependabot[bot]` as their only permitted author, and neither fork is
+    among them -- so nothing here changes. Widening the ledger's population to a repository whose
+    policy names a `non_ecosystem_authors` account is what would make the sentence false in
+    practice, and the fall-back below is already what absorbs it. The squash BODY is not the
+    orchestrator's to decide: it sends no `commit_message`, so what the landing commit contains is
+    governed by the repository's own `squash_merge_commit_message` setting, which anyone can change
+    in a web form. All eight repositories the ledger covers are `COMMIT_MESSAGES` today, measured --
+    but a setting is not a literal in a merge call, and the failure it would cause is silent: no
+    trailer, no claim, no basis, and a factory landing recorded as `unattributed`, which no detector
+    reads.
 
     The revision is optional and the unit id is not: the unit id is what the audit resolves, and
     a claim without one selects nothing to check.
