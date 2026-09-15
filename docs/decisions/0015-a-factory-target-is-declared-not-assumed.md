@@ -379,5 +379,11 @@ leftover environment variable is ignored rather than breaking startup.
   Devon chose with that stated. The ruling itself was not re-decided here, and its second condition
   holds too: the answer to "which repositories are targets" is now derivable, which removes the
   main cost the ruling weighed against narrowing the installation.
+- **A GitHub App key that cannot mint now refuses at admission** as
+  `target_repository_declaration_unreadable` with a `blocked` record, because the declaration is
+  read first on the same token provider. Before this change it reached the dispatcher and was
+  recorded `failed` with an `app_token_mint` failure signature. Nothing dispatches on a schedule, so
+  losing that signature's contribution to the circuit breaker costs little, and a key that stops
+  minting between the two calls still takes the old path.
 - **The activation sweep's checkout list and the kit's `delivery_profile` scoping are still separate
   answers.** Neither reads the declaration yet.

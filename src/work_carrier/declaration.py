@@ -142,7 +142,7 @@ def parse(text: str) -> Declaration:
     """
     try:
         data = tomllib.loads(text)
-    except (tomllib.TOMLDecodeError, ValueError) as error:
+    except (tomllib.TOMLDecodeError, ValueError, RecursionError) as error:
         return Declaration(None, f"{FILENAME} exists and cannot be read: {error}")
     target = data.get("factory_target")
     if not isinstance(target, bool):

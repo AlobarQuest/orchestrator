@@ -94,7 +94,19 @@ def test_a_404_on_a_repository_that_does_not_answer_is_not_an_absence(probe_stat
 
 @pytest.mark.parametrize("status", [301, 302, 401, 403, 429, 500, 502])
 def test_any_other_status_is_could_not_tell_and_never_probes(status: int) -> None:
-    source, seen = _source(_routes({CONTENTS: httpx.Response(status)}))
+    """The redirects carry a `Location` pointing at a declaring file, so a client that followed
+    them would read `true` and ask twice."""
+    moved = f"/repos/AlobarQuest/moved/contents/{FILENAME}"
+    source, seen = _source(
+        _routes(
+            {
+                CONTENTS: httpx.Response(
+                    status, headers={"Location": f"https://api.github.com{moved}"}
+                ),
+                moved: httpx.Response(200, text=TRUE_FILE),
+            }
+        )
+    )
 
     assert source.declaration_for(REPOSITORY).target is None
     assert [request.url.path for request in seen] == [CONTENTS]
@@ -165,6 +177,7 @@ DECLARATIONS = [
     'factory_target = 1\nfactory_target_reason = "an integer"\n',
     "factory_target = true\nfactory_target_reason = 7\n",
     "factory_target = [\n",
+    "factory_target = " + "[" * 500,
     "",
 ]
 

@@ -153,8 +153,10 @@ def _parse_declaration(text: str) -> TargetDeclaration:
     """
     try:
         data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as error:
-        return TargetDeclaration(None, f"{FILENAME} is not valid TOML: {error}")
+    # `tomllib` parses recursively, so about 500 nested brackets raise `RecursionError`, which is
+    # not a `TOMLDecodeError`. The repository authors these bytes, so a hostile file must not 500.
+    except (tomllib.TOMLDecodeError, RecursionError) as error:
+        return TargetDeclaration(None, f"{FILENAME} is not valid TOML: {type(error).__name__}")
     target = data.get("factory_target")
     if not isinstance(target, bool):
         return TargetDeclaration(

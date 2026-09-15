@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -31,6 +32,7 @@ from orchestrator.services.dispatch import (
     failure_signature,
     signature_failure_count,
 )
+from orchestrator.services.factory_target import GitHubFactoryTargetSource
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
 from orchestrator.services.packages import (
@@ -797,6 +799,42 @@ def test_a_mint_failure_is_recorded_as_a_dispatch_failure_and_never_calls_github
     assert record.reason_code == "app_token_mint"
     assert record.failure_signature is not None
     assert record.failure_signature.startswith("workflow_dispatch:app_token_mint:")
+
+
+def _no_request(request: httpx.Request) -> httpx.Response:
+    raise AssertionError(f"no request may leave when the token cannot be minted: {request.url}")
+
+
+def test_a_mint_failure_now_refuses_at_admission_before_the_dispatcher_mints(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the real reader the declaration is read first, on the same token provider, so a key
+    that cannot mint refuses as an unreadable declaration and writes a BLOCKED record. The
+    dispatcher's own mint-failure branch above still covers a token that stops minting between the
+    two calls. Pinned so the change of record status is a decision rather than an accident."""
+    unit = ready_unit(migrated_session, key="mint-at-admission")
+
+    def unreachable(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("GitHub must not be called when the token cannot be minted")
+
+    def explode() -> str:
+        raise GitHubAppTokenError("private_key_invalid")
+
+    monkeypatch.setattr(dispatch_module.httpx, "post", unreachable)
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        GitHubActionsDispatcher(explode),
+        inert_source(),
+        target_source=GitHubFactoryTargetSource(
+            explode, transport=httpx.MockTransport(_no_request)
+        ),
+    )
+
+    assert record.status == "blocked"
+    assert record.reason_code == "target_repository_declaration_unreadable"
 
 
 def test_circuit_open_is_a_pure_at_rest_predicate() -> None:
