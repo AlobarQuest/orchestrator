@@ -344,3 +344,40 @@ nobody has set rather than an impossibility.
 - **This is a deferred design, and the trigger is a decision rather than a threshold.** What would
   reverse it is somebody building the automation for the SDS's own updates and Devon deciding it is
   ready — not dependency load, and not the conformance kit reporting anything.
+
+---
+
+## Amendment, 2026-09-15 — dispatch admission reads the declaration, and the allowlist is gone
+
+**Dispatch admission now reads `factory-target.toml` from the target repository's default branch,
+and `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` is removed** (Devon, 2026-09-15). He chose
+this over requiring both the declaration and the allowlist, and over leaving the allowlist as it
+was. That closes the open half amendments 2 and 3 recorded: the orchestrator has no checkout, so it
+reads the file through the dispatch App's installation token instead.
+
+**What shipped.** `services/factory_target.py` reads the file and, when GitHub answers 404, reads
+the repository itself, so an absence is confirmed rather than believed. Admission asks it in the
+slot the allowlist held, so every refusal is reported in the order it was before. There are two
+refusals: `target_repository_not_declared` for `false` or no file, and
+`target_repository_declaration_unreadable` for a read that failed or a file that does not parse. A
+leftover environment variable is ignored rather than breaking startup.
+
+**Consequences.**
+
+- **No repository's admission changed.** Measured from GitHub on 2026-09-15, the declarations are
+  `true` for `intent-packages`, `security-standards`, `infraops-mcp-server`, `change-manager` and
+  `brain`, and `false` for `orchestrator`, `project-standards` and `factory-runner`. The five
+  `true` repositories are the five the allowlist held when amendment 2 last read it.
+- **Changing factory scope is now a commit to the target repository, not an environment write.**
+  Whoever can land on a repository's default branch can make it a target. A declaration still
+  dispatches nothing alone: a unit also needs a caller workflow, the Actions secrets,
+  `FACTORY_PR_TOKEN` access, the estate's landing answer, and a human authority approval bound to
+  its envelope.
+- **This meets the first re-open condition of the dispatch App reach ruling** (orchestrator
+  `CLAUDE.md`, "THE DISPATCH APP'S REACH IS DELIBERATELY WIDER THAN ITS WORK"): admission no longer
+  bounds dispatch by an allowlist the orchestrator holds. The bound is the repository's declaration.
+  Devon chose with that stated. The ruling itself was not re-decided here, and its second condition
+  holds too: the answer to "which repositories are targets" is now derivable, which removes the
+  main cost the ruling weighed against narrowing the installation.
+- **The activation sweep's checkout list and the kit's `delivery_profile` scoping are still separate
+  answers.** Neither reads the declaration yet.

@@ -16,8 +16,13 @@ the runner may only mutate the repository it checked out. A process-global targe
 therefore misroute every fan-out unit — opening a PR against the wrong repository — rather
 than fail closed.
 
-`ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` bounds where dispatch may route.
-It is empty by default, so an unconfigured orchestrator dispatches nowhere.
+Dispatch routes only to a repository that declares itself a factory target (ADR-0015): a
+`factory-target.toml` at its root, on its default branch, with `factory_target = true` and a
+non-empty `factory_target_reason`. Admission reads that file through the dispatch App's
+installation token. A repository that declares `false` or has no file is refused as
+`target_repository_not_declared`; a declaration that cannot be read is refused as
+`target_repository_declaration_unreadable`. A 404 counts as an absence only after the repository
+itself answers, so a mistyped or invisible repository reports the second refusal, not the first.
 
 Every target repository must host the caller workflow at `.github/workflows/` under the file
 name `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`, and carry the `FACTORY_RUNNER_TOKEN`,
@@ -33,7 +38,6 @@ Dispatch is fail-closed by default.
   Read once per process (`get_settings` is `lru_cache`d), so flipping it needs a restart.
 - `ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES`: allowlisted change classes.
 - `ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES`: allowlisted runner capabilities.
-- `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`: allowlisted target repos. Empty by default.
 - `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`: workflow **file name** or numeric ID, default
   `factory-runner-pilot.yml`. Not a path — `POST /actions/workflows/{workflow_id}/dispatches`
   answers 404 for a path, which is indistinguishable from a missing workflow.
@@ -47,7 +51,7 @@ Dispatch is fail-closed by default.
 - `ORCHESTRATOR_DISPATCH_HUMAN_GATE_AGE_OUT_SECONDS`: optional age-out evidence threshold for human-gate states.
 
 The frozenset-valued variables are parsed as JSON, e.g.
-`ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES='["AlobarQuest/brain"]'`.
+`ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES='["repo.edit"]'`.
 
 The GitHub credential must be provided only through the approved BWS/Coolify secret
 path. Do not store raw tokens in tracked files, prompts, logs, package YAML,

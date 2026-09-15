@@ -30,7 +30,9 @@ The target repository must have **both**:
 
 - a caller workflow at `.github/workflows/factory-runner-pilot.yml`, pinned to factory-runner's
   `RECOMMENDED_CALLER_PIN`; and
-- membership in `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`.
+- a `factory-target.toml` at its root declaring `factory_target = true` (ADR-0015). Until
+  2026-09-15 this was membership in `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`, which
+  no longer exists.
 
 Measured 2026-08-07: six repositories have a caller (orchestrator, intent-packages, change-manager,
 brain, security-standards, infraops-mcp-server) and **the allowlist contains one**
