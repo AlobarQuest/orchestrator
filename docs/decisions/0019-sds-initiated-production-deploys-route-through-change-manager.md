@@ -1,6 +1,6 @@
 # ADR-0019 — SDS-initiated production deploys route through change-manager
 
-- **Status:** Accepted (principle). Implementation not started.
+- **Status:** Accepted, and IMPLEMENTED through increment 5b. *(Status line corrected 2026-09-14 — it still read "Implementation not started" while the lines directly below it recorded increments 1–5b DONE with merge SHAs. A status line that contradicts its own body is how a settled decision gets re-litigated, which this estate has now recorded twice.)*
   **THREE OF THIS DOCUMENT'S OWN PREMISES WERE MEASURED WRONG on 2026-08-10** — see
   `~/docs/software-delivery-system/2026-08-10-adr0019-implementation-plan.md`.
 
