@@ -95,10 +95,11 @@ SYSTEM_BEARER_UUID="221a48d5-3f29-4898-b300-b4820140c880"     # orchestrator-sys
 # else watches those two. The measurement this sweep files is the state of a working copy
 # relative to its upstream, which is true and useful for every SDS target.
 #
-# TODO(scope-registry): this list is the FIFTH place the estate answers "which repos are in SDS
-# scope", after `factory-target.toml` (`PROJECT.md` frontmatter until 2026-09-11),
-# ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES, the presence of a caller workflow and
-# `PROJECT.md`'s own `delivery_profile` -- and they already disagree. It should be DERIVED
+# TODO(scope-registry): this list is the FOURTH place the estate answers "which repos are in SDS
+# scope", after `factory-target.toml` (`PROJECT.md` frontmatter until 2026-09-11), the presence
+# of a caller workflow and `PROJECT.md`'s own `delivery_profile` -- and they already disagree.
+# ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES was a fifth until 2026-09-15, when dispatch
+# admission began reading `factory-target.toml` instead (ADR-0015 amendment 4). It should be DERIVED
 # rather than written here; see the scope-registry spec. `project-standards`' absence above is
 # the first thing that derivation owes an answer for.
 CHECKOUTS=(

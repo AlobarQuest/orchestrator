@@ -197,6 +197,7 @@ from orchestrator.services.evidence_pack import (
     evidence_pack_response,
     render_evidence_pack_markdown,
 )
+from orchestrator.services.factory_target import GitHubFactoryTargetSource
 from orchestrator.services.follow_ups import mint_due_follow_ups
 from orchestrator.services.github_app import github_app_credentials, token_provider_for
 from orchestrator.services.github_checks import CheckObserver, GitHubActionsCheckObserver
@@ -1045,14 +1046,14 @@ def dispatch_route(
         enabled=settings.dispatch_enabled,
         allowed_change_classes=settings.dispatch_allowed_change_classes,
         enabled_capabilities=settings.dispatch_enabled_capabilities,
-        allowed_target_repositories=settings.dispatch_allowed_target_repositories,
         workflow_id=settings.dispatch_workflow_id,
         workflow_ref=settings.dispatch_workflow_ref,
         github_app_configured=credentials is not None,
         failure_signature_threshold=settings.dispatch_failure_signature_threshold,
         orchestrator_url=settings.dispatch_orchestrator_url,
     )
-    dispatcher = GitHubActionsDispatcher(token_provider_for(credentials))
+    token_provider = token_provider_for(credentials)
+    dispatcher = GitHubActionsDispatcher(token_provider)
     return dispatch_work_unit(
         session,
         DispatchCommand(
@@ -1066,6 +1067,7 @@ def dispatch_route(
         dispatch_settings,
         dispatcher,
         landing_source,
+        target_source=GitHubFactoryTargetSource(token_provider),
     )
 
 

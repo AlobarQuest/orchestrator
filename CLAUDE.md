@@ -4621,7 +4621,9 @@ style of that module.
   that answer ever becomes derivable the cost side of the trade collapses. **The consumer that
   matters here is DISPATCH ADMISSION, and it is still unbuilt** — the kit-side half of ADR-0015
   shipped 2026-08-17, and it does not make the answer derivable for anything without a checkout.
-  This trigger has therefore NOT fired; do not re-open the ruling on the strength of the kit half.
+  That trigger had not fired as of 2026-09-02. **It fired on 2026-09-15**, when dispatch admission
+  began reading the declaration (ADR-0015 amendment 4, and the bullet at the end of this file).
+  Devon chose that with this ruling named, and did not re-decide the ruling itself.
   Two facts that make narrowing safe should it ever be chosen, measured the same day so nobody
   re-establishes them: the out-of-process lanes read GitHub with Devon's PAT (`gh auth token`), not
   this App, so the ledger and audit are unaffected; and `claude-octopus`'s `upstream-sync.yml`
@@ -5192,3 +5194,22 @@ style of that module.
   a one-command problem, and it would hide the next Xcode update behind a different failure.
   Recovery was proven by running each lane once with `launchctl kickstart` and reading its
   Healthchecks check back to `up`, not by the license probe alone.
+
+- **DISPATCH ADMISSION READS `factory-target.toml`, AND `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`
+  NO LONGER EXISTS** (ADR-0015 amendment 4, Devon, 2026-09-15). Every earlier bullet that names the
+  allowlist as an onboarding step or an admission term describes the estate before that date.
+  `services/factory_target.py` reads the file from the target repository's default branch with the
+  dispatch App's installation token, in the slot the allowlist held, and refuses as
+  `target_repository_not_declared` (declared `false`, or no file on a repository that answers) or
+  `target_repository_declaration_unreadable` (anything else, including a malformed file). **To make a
+  repository a factory target, land the declaration there**; it still needs the caller workflow, the
+  Actions secrets, `FACTORY_PR_TOKEN` access and the estate's landing answer before a unit can run.
+  Three things worth knowing before editing it. (1) **There are three readers of that file and one
+  pin**: `tests/services/test_factory_target.py` holds this reader's parse to
+  `work_carrier/declaration.py`'s over a table spanning all three answers; project-standards'
+  `factory_target.py` is the third reader and nothing here pins it. (2) **A leftover
+  `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` in the environment is ignored**, not a boot
+  failure: `pydantic-settings` reads only declared fields from the environment (measured
+  2026-09-15), so removing the variable from the deployment can happen in either order. (3) The
+  parser is private because `test_unreachable_guards` does not count a call from a method in the same
+  module as reachable; the agreement test reads through the client with a mock transport instead.

@@ -24,6 +24,7 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
 from orchestrator.services.authority_gate import AuthorityGate, human_authority_gate
 from orchestrator.services.estate_landing import EstateLandingSource
+from orchestrator.services.factory_target import FactoryTargetSource
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.reach_admission import (
@@ -33,6 +34,10 @@ from orchestrator.services.reach_admission import (
 )
 
 ORCHESTRATOR_URL = "https://sds.alobar.net"
+# Why admission refused a target repository (ADR-0015). The repository did not declare itself a
+# target, or its declaration could not be read.
+TARGET_REPOSITORY_NOT_DECLARED = "target_repository_not_declared"
+TARGET_REPOSITORY_DECLARATION_UNREADABLE = "target_repository_declaration_unreadable"
 
 
 @dataclass(frozen=True)
@@ -40,7 +45,6 @@ class DispatchSettings:
     enabled: bool
     allowed_change_classes: frozenset[str]
     enabled_capabilities: frozenset[str]
-    allowed_target_repositories: frozenset[str]
     workflow_id: str
     workflow_ref: str
     # Whether the App credentials are configured — never the credentials themselves, so no
@@ -145,9 +149,13 @@ def dispatch_work_unit(
     dispatcher: WorkflowDispatcher,
     landing_source: EstateLandingSource,
     clock: Clock | None = None,
+    *,
+    target_source: FactoryTargetSource,
 ) -> DispatchRecord:
     try:
-        record = _dispatch_work_unit(session, command, settings, dispatcher, landing_source, clock)
+        record = _dispatch_work_unit(
+            session, command, settings, dispatcher, landing_source, target_source, clock
+        )
         session.commit()
         return record
     except Exception:
@@ -161,6 +169,7 @@ def _dispatch_work_unit(
     settings: DispatchSettings,
     dispatcher: WorkflowDispatcher,
     landing_source: EstateLandingSource,
+    target_source: FactoryTargetSource,
     clock: Clock | None,
 ) -> DispatchRecord:
     _authorize_dispatch_actor(command.actor)
@@ -208,6 +217,7 @@ def _dispatch_work_unit(
         reach_admission_refusal(session, revision),
         change_window_refusal(session, revision, clock),
         landing_source,
+        target_source,
         command.change_window_override,
     )
     repository = admission.target_repository
@@ -329,6 +339,7 @@ def _blocked_reason(
     reach_refusal: str | None,
     window_refusal: str | None,
     landing_source: EstateLandingSource,
+    target_source: FactoryTargetSource,
     change_window_override: ChangeWindowOverride | None = None,
 ) -> AdmissionDecision:
     """Why this unit may not run, in the order the terms are cheapest to answer.
@@ -377,7 +388,7 @@ def _blocked_reason(
         return AdmissionDecision(estate_reason, target_repository)
     if unit.authority_approval_id is None and gate.refusals:
         return AdmissionDecision("authority_approval_missing", target_repository)
-    envelope_reason = _envelope_reason(unit, settings, envelope, target_repository)
+    envelope_reason = _envelope_reason(unit, settings, envelope, target_repository, target_source)
     window, overridden = suppressed(window_refusal, change_window_override)
     return AdmissionDecision(
         envelope_reason or window,
@@ -397,6 +408,7 @@ def _envelope_reason(
     settings: DispatchSettings,
     envelope: AuthorityEnvelope,
     target_repository: str,
+    target_source: FactoryTargetSource,
 ) -> str | None:
     """The terms the envelope itself decides, for a unit already past the gates above.
 
@@ -414,6 +426,13 @@ def _envelope_reason(
     PRESENT. A unit whose `required_capability` is a runner capability passes every term above
     while carrying a name the runner cannot parse; this is the term that sees it. Being the
     runner lane by construction, admission is the honest place for it.
+
+    **Where work may be sent is the target repository's own declaration (ADR-0015), not a list
+    this process holds.** It is read here, in the slot the hand-maintained allowlist occupied, so
+    the order every refusal is reported in is unchanged. It is the second network read admission
+    makes, and it is asked only once every cheaper term has passed. Both `False` and "could not
+    tell" refuse, under different names: one needs the repository to declare itself a target, the
+    other needs somebody to look at why the declaration could not be read.
     """
     if unit.required_capability not in settings.enabled_capabilities:
         return "capability_not_enabled"
@@ -426,8 +445,11 @@ def _envelope_reason(
         return "capability_outside_runner_vocabulary"
     if not target_repository:
         return "target_repository_missing"
-    if target_repository not in settings.allowed_target_repositories:
-        return "target_repository_not_allowed"
+    declared = target_source.declaration_for(target_repository).target
+    if declared is None:
+        return TARGET_REPOSITORY_DECLARATION_UNREADABLE
+    if not declared:
+        return TARGET_REPOSITORY_NOT_DECLARED
     return _authority_violation_reason(unit, envelope) or _conformance_blocked_reason(envelope)
 
 
