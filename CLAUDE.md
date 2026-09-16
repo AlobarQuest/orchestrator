@@ -5213,3 +5213,43 @@ style of that module.
   2026-09-15), so removing the variable from the deployment can happen in either order. (3) The
   parser is private because `test_unreachable_guards` does not count a call from a method in the same
   module as reachable; the agreement test reads through the client with a mock transport instead.
+
+- **A ROLLOUT WORKFLOW HAS TWO RATIFIED COPIES IN TWO REPOSITORIES, AND THE ONE THIS REPOSITORY
+  HOLDS IS NOT THE ONE THAT APPROVES A RECORD. A transcription that is current says nothing about
+  whether the policy ratified it.** Measured 2026-09-16, after brain's Dependabot queue sat for six
+  days with nothing reporting a finding.
+  `brain#62` (2026-09-07) moved `.github/workflows/ci.yml` from blob `c5c08871` to `7cf6ca2d`.
+  `src/deploy_watcher/workflows.py` gained the new revision in the same change, so
+  `change-proposer` printed `:: transcribed` and `0 findings` on every pass — **and that is the
+  half that misleads**, because what approves a record is change-manager's
+  `app/deploy_policy.py`, which still ratified version 3's criteria text and still pinned the old
+  blob. `objections()` compares the record's derived `acceptance_criteria` **byte-for-byte**
+  against the ratified copy, so every brain record drew `acceptance_criteria_not_ratified` and
+  `_apply_policy` left it `pending`.
+  **THE SYMPTOM IS SILENCE, NOT A FINDING.** The estate lander's `_ASK_ABOUT` is `{"approved"}`,
+  so a pending record is never considered and never appears in its report. Three green pull
+  requests from 2026-09-10 were invisible to every lane: the proposer reported them `replayed
+  … status=pending` and counted zero findings, the lander did not mention them at all, and the
+  ledger audited 875 landings with nothing to say. **Read `status=pending` in the proposer's
+  replay lines as the stall**; nothing else in the estate says it out loud.
+  **BOTH HALVES OF A VERSION MOVE TOGETHER.** The ratified criteria and
+  `landing.rollout_workflows[repo].blob_sha` are separate terms with separate consumers — the
+  criteria decide APPROVAL here, the pin is refused at the ACT as `landing_rollout_moved` — so
+  bumping one leaves the queue stalled one step further along.
+  **NOTHING NEEDS RE-APPROVING BY HAND AFTER A BUMP, and that is worth knowing before anyone plans
+  a migration around it.** `_apply_policy` runs on every repeat proposal, and it carries a branch
+  for a record that still conforms under a newer version. Measured across the v8 bump: brain's
+  three records went `pending → approved` under 8, change-manager's two were re-approved from 7 to
+  8 with an event recording the fresh grant, and the two records belonging to already-merged pull
+  requests were left on versions 6 and 7 untouched, because the proposer skips a merged pull
+  request and `_apply_policy` never runs for it.
+  **Two probe traps met the same day.** `GET /api/deploy-policy` serves `repositories`,
+  `change_classes`, `risks`, `landing`, `inert_landing`, `version`, `decided` and `rationale` —
+  **not `acceptance_criteria`**, so a probe reading that key finds nothing and proves nothing about
+  what was ratified. And **a bare invocation of `run-change-proposer.sh` or `run-estate-landing.sh`
+  is a DRY RUN**: each plist passes `--submit` explicitly, so a hand-run pass that prints
+  `would-propose` has written nothing and left the stall in place.
+  Shipped as deploy policy **v8** (change-manager `#88`, merge `4f7298f9`, 2026-09-16). The
+  ratified text must equal what `change_proposer.criteria.acceptance_criteria` derives at the
+  pinned revision, and the cheap way to know is to import both sides and compare rather than to
+  read the two documents side by side.
