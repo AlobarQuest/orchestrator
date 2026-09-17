@@ -5253,3 +5253,42 @@ style of that module.
   ratified text must equal what `change_proposer.criteria.acceptance_criteria` derives at the
   pinned revision, and the cheap way to know is to import both sides and compare rather than to
   read the two documents side by side.
+
+- **EXACTLY TWO ESTATE HOSTS SIT BEHIND CLOUDFLARE, AND `change-mgr.alobar.net` IS ONE OF THEM —
+  so a 5xx from change-manager may never have reached the origin, and a client with a default
+  Python User-Agent is refused before the app sees it.** Measured 2026-09-16/17 by reading the
+  `server` header of every estate host, because this file already records that `sds.alobar.net` is
+  NOT proxied and a reader generalises that to the estate:
+
+  | host | address | `server` |
+  |---|---|---|
+  | `change-mgr.alobar.net` | 104.21.75.189 | `cloudflare` (+ `cf-ray`) |
+  | `id.alobar.net` | 172.67.180.223 | `cloudflare` (+ `cf-ray`) |
+  | `sds.alobar.net` | 178.156.247.239 | `uvicorn` |
+  | `app-brain` / `code-brain` / `infra-brain` / `open-brain`.devonwatkins.com | 178.156.247.239 | `uvicorn` |
+
+  **THE PORTFOLIO-WIDE 1010 BULLET IS RIGHT ABOUT THE MECHANISM AND WRONG ABOUT THE POPULATION.**
+  It says Cloudflare 403s default Python User-Agents "on proxied `alobar.net`/`devonwatkins.com`
+  endpoints". Measured today in both directions: `change-mgr.alobar.net/api/health` answers **403
+  `error code: 1010`** to `urllib`'s default agent and **200** to a named one, while
+  `app-brain.devonwatkins.com/api/health` answers **200** to the default agent — because no
+  `devonwatkins.com` brain is proxied at all. Read the `server` header, never the domain.
+
+  **CONSEQUENCE 1, and it is the one that costs a diagnosis: a 5xx from change-manager is not
+  evidence the origin failed.** On 2026-09-16 the deploy watcher recorded
+  `change-manager rejected POST /api/items/52/deploy-observation: 502: <non-json>` and exited 3,
+  which pinged `/fail` and took `sds-deploy-watcher` down. The origin container had **zero
+  restarts**, logged only 200s, and the VPS proxy logged **zero** 5xx in that window. **`<non-json>`
+  is itself the tell**: change-manager answers JSON on every path, so a non-JSON body at the client
+  is an error page from in front of it. Check the origin before reading a 5xx as an application
+  fault — `docker logs` on the container and the proxy, which is one `vps_exec` call.
+
+  **CONSEQUENCE 2: a new client that speaks to change-manager is one line away from a 403 that
+  reads like an auth failure.** Every module that reaches it today sets a User-Agent —
+  `services/change_record.py`, `services/inert_landing_policy.py`, and `change_manager.py` in
+  `deploy_watcher`, `work_carrier` and `bump_proposer`; the two landers reach it only through
+  clients that set one, and neither lander package imports an HTTP client of its own. So the hazard
+  is covered and stays covered only while that is true. A 403 carrying `error code: 1010` and no
+  `WWW-Authenticate` header never reached the application.
+
+  The one-command check is the header, not the address: `curl -sI https://<host>/ | grep -i '^server:'`.
