@@ -8,8 +8,9 @@ producer:
 
     Dependabot opens a major bump
       -> the declared landing rule does not cover it
-      -> HERE: revise the standing package, approve the revision by policy, publish the
-         commit that carries it (ADR-0033), propose a record
+      -> HERE: FILE THE OBSERVATION stating the bump, then revise the standing package,
+         approve the revision by policy, publish the commit that carries it (ADR-0033),
+         propose a record naming that observation as its cause
       -> a human approves the record in change-manager
       -> the carry registers an intake -> decomposition -> envelope -> dispatch
 
@@ -31,7 +32,10 @@ rather than a guess.
 
 **IT APPROVES A PACKAGE REVISION AND NOTHING ELSE.** It cannot approve the change record it
 writes: the record is created `pending` by construction, change-manager's `propose` scope
-refuses every status-moving route, and this program's own client asserts a two-path surface.
+refuses every status-moving route, and this program's own change-manager client asserts a
+two-path surface. Its SECOND client is narrower still: the orchestrator one names exactly one
+route, the observation ingest, and the credential behind it can neither transition a unit nor
+create work.
 The human decision ADR-0028 keeps is the record, and this producer is on the other side of it.
 
 **A REPEAT PASS IS A REPLAY, in both halves.** A standing package whose tip revision already

@@ -46,7 +46,9 @@
 #      An absent declaration is a REFUSAL and not a waiver: it is a version that did not decide
 #      the question, and this pass will not guess what it would have decided).
 #   3  something was found -- a standing package targeting a repository the landing policy does
-#      not declare inert, a pull request whose title and update trailer disagree, a record
+#      not declare inert, a pull request whose title and update trailer disagree, a bump whose
+#      CAUSE COULD NOT BE FILED (G1+G2: the observation is the cause a proposal names, so a bump
+#      that cannot be stated is reported `unobserved` and nothing is proposed for it), a record
 #      stranded by a bump that moved, a refused proposal, or a revision that was committed and
 #      could not be published (ADR-0033: a failed publish is a finding, not a warning; the line
 #      names the sha it stranded).

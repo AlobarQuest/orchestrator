@@ -24,8 +24,10 @@
      arrangement work-carrier's --register and change-proposer's --submit already use.
 
      THE HUMAN GATE DOES NOT MOVE. ADR-0028 keeps it at record approval, downstream of the mint,
-     and the bearer this job holds is propose-scoped: it cannot approve the record it writes.
-     change-manager refuses every status-moving route for that scope whatever the client sends.
+     and NEITHER bearer this job holds can move it: the change-manager one is propose-scoped, so
+     it cannot approve the record it writes, and the OBSERVER one states a fact and decides
+     nothing. change-manager refuses every status-moving route for that scope whatever the
+     client sends.
 
      06:50, AND THE SLOT BUYS LESS THAN THE WRAPPER'S HEADER CLAIMS. Daily rather than hourly
      is the wrapper's argument and it holds: every writing pass commits to a checkout on this
