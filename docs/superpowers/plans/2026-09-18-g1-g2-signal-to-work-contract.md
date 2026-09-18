@@ -55,6 +55,10 @@ Two things it must say, because they are the parts a later reader will otherwise
   orchestrator has no egress, so without the second carry *"what work did this signal cause?"* needs
   a hop across a boundary the orchestrator cannot cross.
 
+**Point at the spec for the clauses themselves.** C1–C7 are written in
+`docs/superpowers/specs/2026-09-18-g1-g2-signal-to-work-contract-design.md`, and someone grepping
+`docs/decisions/` for the contract will otherwise find the ADR and not the clauses.
+
 Leave the original decision text untouched. ADR-0014's back-dating rule applies to the ADR itself.
 
 ---
@@ -80,12 +84,22 @@ change-manager redeploys on push to `main`, so the gap is minutes, but it is rea
 
 ### Two decisions a build session must make, not assume
 
-**1. Is `originating_observation_id` in `_ASSERTED_FIELDS`?** That tuple is what a re-proposal
-re-asserts onto an existing record. `actor` is deliberately excluded. **HQ's reading is that it must
-be excluded too**, because the spec's own obligation says a re-proposal replaying onto an existing
-record does not retro-fill the id — including it would do exactly that, back-dating a cause onto a
-record created before the contract. But the opposite argument is real: a producer that corrected a
-wrong cause could not. Decide it, and say which in the module.
+**1. Is `originating_observation_id` in `_ASSERTED_FIELDS`?** (`app/work_changes.py:58-65`; `actor`
+is deliberately excluded from it today.)
+
+**Read `propose_work_change` (`work_changes.py:92-146`) before deciding, because what that tuple
+FEEDS decides the failure, and this plan does not assert which.** Two mechanisms are consistent with
+the name, and they fail differently:
+
+- if it is **what a re-proposal re-asserts onto an existing record**, including the field retro-fills
+  a cause onto a pre-contract record — which the spec's own obligation forbids;
+- if it feeds the **`WorkChangeConflict` comparison**, including it makes every replay onto a
+  pre-contract record a **409**, which `bump_proposer` classifies as `refused` — a finding, and
+  therefore exit 3 on every pass, forever.
+
+Both point at excluding it; they are different reasons and only one is true. Establish which, then
+say so in the module. The opposite argument is real and survives either way: a producer that recorded
+a wrong cause could never correct it.
 
 **2. What shape does change-manager validate?** It cannot verify the observation exists — it has no
 egress, and `WorkChangeIn`'s own docstring states the principle (*"a registrar that inferred what it
@@ -139,10 +153,22 @@ variable at all. So this increment adds:
   (`services/observations.py:226`). **Use the OBSERVER bearer** — `orchestrator-observer`, the one
   credential every observe-and-report producer shares by design, whose entire write surface is this
   route (`api/dependencies.py:35`). Do not reach for the SYSTEM bearer: it can transition units and
-  merge, and this lane must not be able to. The launcher gains the fetch in the shape
-  `run-bump-proposer.sh` already uses for its two change-manager bearers, and **read the Keychain item
-  directly** rather than sourcing `sds-token.sh` alongside a default — this launcher already juggles
-  two BWS identities and the estate has a recorded failure from exactly that collision.
+  merge, and this lane must not be able to.
+
+**This makes `run-bump-proposer.sh` a TWO-IDENTITY launcher, and its own current shape is the wrong
+exemplar to copy.** It bootstraps with `BWS_ACCESS_TOKEN_VPS_BACKUP` — the BROAD account — at
+`:99-107`, and fetches both change-manager bearers with it. The OBSERVER bearer (`f793576f`) lives in
+the **SDS Operator** project, readable only by the narrow `sds-operator` account
+(`BWS_ACCESS_TOKEN_SDS`). So copying this launcher's existing pattern fetches the observer credential
+with an identity that cannot read it.
+
+Copy **`run-estate-landing.sh`** instead, which already solves this with a distinct
+`BWS_ACCESS_TOKEN_BROAD` variable per identity. Read each Keychain item directly; never source
+`sds-token.sh` alongside a `${BWS_ACCESS_TOKEN:-…}` default, because that helper respects an
+already-set value and one ambient token then becomes both identities, with no value of it working.
+**Name the failure when you test it: `bws` answers `404 Resource not found` for a DENIED secret**,
+which reads as a missing secret rather than as the wrong identity, and has cost this estate a
+diagnosis more than once.
 
 ### Identity and facts, which is where this lane can wedge permanently
 
@@ -176,11 +202,35 @@ but prove that, because the alternative (a local cache) is a second source of tr
   (`services/observations.py:88-90`). A client reaching for `.id` on the result gets an
   `AttributeError` naming an attribute instead of naming the conflict.
 
-### The proposal
+Two more shapes the plan will not leave to improvisation:
+
+- **`idempotency_key` is required** (`CommandBase`, `api/schemas.py:14`) and must identify the
+  **operation**, not the tree: per-bump and stable, never per-run. A content digest identifies a tree
+  and an idempotency key identifies an operation, and they coincide only where one tree produces one
+  operation — which is not this lane, since every bump in a repository shares a HEAD. The
+  machine-activation check nearly shipped keyed on a digest and would have refused every sibling on
+  its first live pass, permanently, with no delete route to undo it.
+- **`subject_reference` spelling is shared.** `subject_type: "repo"` is already used by the landing
+  ledger. Match its spelling of the repository, or one repository becomes two subjects across two
+  producers and no query joins them.
+
+### The proposal, and the field set increment 4 will pin against
 
 `_proposal` (`src/bump_proposer/cli.py:263-271`) gains the field. The write is at `cli.py:337`.
 C2's order is load-bearing: **observe, then propose.** A record naming an observation that does not
 exist is a dangling cause with no repair.
+
+**`_proposal` returns a bare dict literal, so there is no local model for increment 4's check to pin
+against — and this increment is where that is fixed.** The brief check pins its AST parse against
+`RunnerBriefResponse.model_fields`; there is no equivalent here. Introduce a declared field set —
+a `PROPOSAL_FIELDS` tuple or a `TypedDict` that `_proposal` is tested to emit **exactly** — so
+increment 4 compares change-manager's declaration against a single local declaration rather than
+against a list retyped into the check script. A hardcoded list in the check is a second copy of the
+vocabulary, which is the defect class this repository has now re-learned for BWS UUIDs, capability
+names and the dependency-update budget.
+
+Do the same for the deploy side: the check vets **both** change-manager schemas, so
+`change_proposer`'s payload needs a declared field set too, or half the check has nothing to compare.
 
 ---
 
@@ -191,7 +241,11 @@ exist is a dangling cause with no repair.
 ### The carry
 
 `PackageIntakeRegistration` (`api/schemas.py:1164-1188`) and `work_package_revisions`
-(`persistence/models.py:210-275`) gain `originating_observation_id` beside `change_record_id`. The
+(`persistence/models.py:210-275`) gain `originating_observation_id` beside `change_record_id`, in
+**this increment's own migration**. Increments 2 and 3 are separate pull requests, so this is the
+second orchestrator migration of the sequence: its `down_revision` is whatever increment 2 created
+(`0035_…`), **not** `0034_revision_watcher_obs`. Read the `revision = ` line of the file increment 2
+added rather than inferring it from a filename. The
 precedent is exact and worth reading rather than paraphrasing: the comment at `models.py:263-274`
 explains why `change_record_id` has **deliberately no foreign key** (it belongs to a foreign system)
 and why NULL means *"nothing recorded a cause"* and never *"no cause exists."* An observation id is
@@ -259,8 +313,12 @@ whose docstring reads *"The check could not establish what it needed to compare.
 pass."*; the three ordered exception clauses around the fetch; `Accept: application/vnd.github.raw`
 with an optional bearer; and exit 1 for both a real divergence and an unresolvable answer.
 
-**Pin the parser**, the way the brief check pins its AST parse against `RunnerBriefResponse.model_fields`
-— a parser that stopped agreeing with pydantic must be caught before it can vet anything wrongly.
+**Pin the parser against the declared field sets increment 2 introduced**, the way the brief check
+pins its AST parse against `RunnerBriefResponse.model_fields` — a parser that stopped agreeing with
+its own side must be caught before it can vet anything wrongly. **Do not retype the field names into
+this script.** The orchestrator side of this comparison is a declaration in the producer, not a list
+in the check; if increment 2 did not leave one, stop and add it there rather than working around it
+here.
 
 ### Where it runs — a deliberate deviation from the spec's letter
 
@@ -318,8 +376,11 @@ vocabulary that drifts.
   prose *"Merge pull request #1 from …"*. Reword; never allowlist.
 - **No new ingress POST**, so no `COVERAGE_MATRIX` row — unless increment 2's client work adds one,
   which it should not.
-- **Two migrations, in two repositories**, each needing its `down_revision` read from the file rather
-  than the filename.
+- **Three migrations, in two repositories** — change-manager's column (increment 1), the orchestrator's
+  vocabulary CHECK (increment 2), and the orchestrator's revision column (increment 3). Increments 2
+  and 3 are separate pull requests, so they are separate migrations and the second chains onto the
+  first. Each needs its `down_revision` read from the file's `revision = ` line rather than inferred
+  from a filename; the two disagree for `0032_pin_watcher_observations.py` already.
 
 ## What must be proven, not asserted
 
@@ -355,11 +416,14 @@ vocabulary that drifts.
 
 ## Open questions for the human
 
-1. **Foreign key on `work_package_revisions.originating_observation_id`, or not?** Unlike
-   `change_record_id`, this database owns the referenced table, so the constraint is available. Against
-   it: the sibling column deliberately has none, and matching the precedent is worth something.
-2. **Is the observation id in change-manager's `_ASSERTED_FIELDS`?** See increment 1. It decides
-   whether a producer can ever correct a wrong cause, which is the one place this contract touches the
-   withdrawal question C5 leaves open.
-3. **Does the deviation in increment 4 stand?** The spec says the `Quality` job; the measured precedent
-   says `consumer-compatibility`. Same stated property, different job.
+1. **Foreign key on `work_package_revisions.originating_observation_id`, or not? Recommended: yes, as
+   a belt on top of braces.** Unlike `change_record_id`, this database owns the referenced table, so
+   the constraint is available; against it, the sibling column deliberately has none. What settles the
+   framing: **an FK alone is not the guard**, because a violation surfaces as `IntegrityError`, which
+   has no registered handler and reaches the wire as a bare HTTP 500. The service-level `DomainError`
+   refusal of an unknown id is required either way. So the FK is not an alternative to that check —
+   it is a second line under it, catching a write path that bypasses the service.
+2. **Is the observation id in change-manager's `_ASSERTED_FIELDS`?** See increment 1, and note that
+   the build must first establish what that tuple feeds — the plan deliberately does not assert it.
+   It decides whether a producer can ever correct a wrong cause, which is the one place this contract
+   touches the withdrawal question C5 leaves open.
