@@ -27,10 +27,16 @@
 #   scripts/run-bump-proposer.sh          # dry run: reports, and cannot write
 #
 # A DRY RUN STILL NEEDS TWO CREDENTIALS, and the wrapper's own comment is the precise one: what
-# `--submit` gates is "the credential that could write". A bare run reads the Keychain bootstrap
-# token and a GitHub token unconditionally and exits 1 without either, so an operator running
+# `--submit` gates is "the credential that could write". A bare run reads the broad Keychain
+# identity and a GitHub token unconditionally and exits 1 without either, so an operator running
 # this check on a machine where `gh` is not logged in gets a FATAL that is about their login and
-# not about this installation. Only the propose-scoped change-manager bearer is withheld.
+# not about this installation.
+#
+# TWO ARE WITHHELD FROM A DRY RUN, not one: the propose-scoped change-manager bearer, and -- since
+# G1+G2 -- the orchestrator's OBSERVER bearer, which is fetched under a SECOND, narrower Keychain
+# identity the broad account cannot substitute for. Filing an observation is a write, and a dry
+# run proposes nothing and so has no cause to file. An operator checking the installation on a
+# machine holding only the broad identity therefore still gets a clean dry run.
 #
 # Uninstall with:
 #   launchctl bootout "gui/$(id -u)/com.devon.bump-proposer"

@@ -327,6 +327,19 @@ OUTBOUND_ALLOWLIST = {
     # own property: reading the rule a dry run reports against does not touch the credential that
     # could write.
     Path("src/bump_proposer/landing_policy.py"),
+    # G1+G2. The THIRD file of the same program, and the first that speaks to the orchestrator at
+    # all -- which is a narrowing of a property this producer used to hold outright, taken openly
+    # rather than by finding a route the guards do not cover. It makes ONE request, `POST
+    # /api/v1/observations`, with the shared OBSERVER bearer whose entire write surface that route
+    # is. It reads nothing, and it takes no path argument that a bad repository name could compose
+    # into another route.
+    #
+    # WHAT IT BUYS is the signal->work contract's first clause: a proposed change record must name
+    # the observation that caused it, so the cause is a durable fact in a table this estate owns
+    # rather than prose inside the record. WHAT IT CANNOT DO is unchanged -- it cannot register an
+    # intake, transition a unit or land anything, because the credential it holds is refused every
+    # one of those routes and this module names only the one path.
+    Path("src/bump_proposer/orchestrator_client.py"),
     # ADR-0027. The other half of the same program: the intake registration that completes the
     # carry. ONE write, `POST /api/v1/package-intakes`, enforced in code by `is_allowed_write`
     # and in tests by test_work_carrier_isolation.py. It composes no decision -- every rule about

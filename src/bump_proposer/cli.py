@@ -47,7 +47,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
 
 from bump_proposer.change_manager import (
     DEFAULT_BASE_URL,
@@ -59,6 +59,13 @@ from bump_proposer.landing_policy import (
     InertLanding,
     LandingPolicyError,
     read_inert_landing,
+)
+from bump_proposer.observation import ObservationUncomposable, bump_observation
+from bump_proposer.orchestrator_client import (
+    ObservationWriteError,
+    OrchestratorClient,
+    UnusableEndpointError,
+    open_client,
 )
 from bump_proposer.standing import (
     PACKAGES_REPOSITORY,
@@ -89,6 +96,27 @@ EXIT_FINDINGS: Final = 3
 
 ACTOR: Final = "bump-proposer"
 RISK: Final = "caution"
+
+# EXACTLY the keys `_proposal` emits, declared rather than left implicit in a dict literal.
+#
+# IT EXISTS SO THE CROSS-REPO FIELD CHECK HAS ONE LOCAL DECLARATION TO COMPARE AGAINST. The
+# alternative is a list of field names retyped into the check script, which would be a second copy
+# of this vocabulary -- the defect this repository has now re-learned for BWS UUIDs, capability
+# names and the dependency-update budget, where only the copies that run get corrected. The brief
+# check pins its parser against `RunnerBriefResponse.model_fields` for the same reason; a bare
+# dict literal offers nothing to pin.
+#
+# `tests/bump_proposer/test_pass.py` holds it to what `_proposal` actually returns, so the
+# declaration cannot drift from the payload it describes.
+PROPOSAL_FIELDS: Final = (
+    "package_id",
+    "package_revision",
+    "package_source_repository",
+    "risk",
+    "reasoning",
+    "actor",
+    "originating_observation_id",
+)
 
 # How long a concluded failure must stand before this producer reads it as the cascade's answer.
 #
@@ -133,6 +161,11 @@ FINDING_STATUSES: Final = frozenset(
         "not-declared-inert",
         "superseded",
         "refused",
+        # G1+G2. The cause could not be filed, so nothing was proposed -- and a bump this lane
+        # would otherwise have taken is now sitting unproposed with only this line to say so.
+        # It is a finding for the same reason `refused` is: the pass reached its subject, could
+        # not complete the act, and no later pass repairs it on its own.
+        "unobserved",
     }
 )
 
@@ -260,7 +293,21 @@ def _reasoning(package: StandingPackage, bump: Bump, pending: PendingUpdate) -> 
     )
 
 
-def _proposal(package: StandingPackage, bump: Bump, pending: PendingUpdate) -> dict[str, Any]:
+def _proposal(
+    package: StandingPackage,
+    bump: Bump,
+    pending: PendingUpdate,
+    observation_id: str,
+) -> dict[str, Any]:
+    """The record's facts, including the observation that caused it (G1+G2 clause C1).
+
+    `originating_observation_id` is NOT one of change-manager's asserted fields, deliberately, and
+    that decision belongs to the other side of this boundary rather than to this payload. It is
+    written once at construction and never compared, so a replay onto a record proposed before the
+    column existed answers 200 rather than 409 -- which is what stops this scheduled producer
+    wedging on every pre-contract record, permanently, with no repair route. The cost is the other
+    half of the same trade: a producer that named the wrong cause cannot correct it.
+    """
     return {
         "package_id": package.package_id,
         "package_revision": package.revision,
@@ -268,6 +315,7 @@ def _proposal(package: StandingPackage, bump: Bump, pending: PendingUpdate) -> d
         "risk": RISK,
         "reasoning": _reasoning(package, bump, pending),
         "actor": ACTOR,
+        "originating_observation_id": observation_id,
     }
 
 
@@ -307,6 +355,7 @@ def _act(
     bump: Bump,
     pending: PendingUpdate,
     client: ChangeManagerClient | None,
+    observer: OrchestratorClient | None,
     records: list[dict[str, Any]],
     root: Path,
 ) -> list[Outcome]:
@@ -322,6 +371,21 @@ def _act(
             )
         ]
 
+    # OBSERVE, THEN PROPOSE (G1+G2 clause C2), and the order is load-bearing rather than tidy.
+    # The observation is the durable fact and the record is a decision about it, so a record
+    # naming an observation that does not exist is a dangling cause with no repair: observations
+    # are append-only, with no supersession model and no delete route.
+    #
+    # BEFORE THE ADVANCE, NOT MERELY BEFORE THE PROPOSAL, which is the stronger placement and the
+    # one that costs nothing. A package revision cannot be unminted and a published commit cannot
+    # be unpublished, so filing first means a pass that cannot state the fact has spent neither --
+    # where observing after the mint would leave a revision standing for work nothing proposed.
+    if observer is None:  # pragma: no cover - run() refuses --submit without the credential
+        raise ObservationWriteError(
+            "no orchestrator credential, so the cause cannot be filed and nothing may be proposed"
+        )
+    observation_id = observer.record_observation(bump_observation(pending, bump))
+
     published: str | None = None
     if not (package.carries(bump) and package.approved):
         # ASKED AGAIN, PER UNIT, and not only once at the top of the pass. A refused publish is
@@ -334,7 +398,7 @@ def _act(
         snapshot_hash(package, root)
         published = commit(package, bump, root)
 
-    record, created = client.propose(_proposal(package, bump, pending))
+    record, created = client.propose(_proposal(package, bump, pending, observation_id))
     # THE SHA IS REPORTED BECAUSE THE PASS IS THE ONLY THING THAT KNOWS IT. `source_commit` on
     # the intake this record eventually causes is that commit, and until ADR-0033 the pass
     # discarded it -- so a reader wanting to know what had been written to the authoring
@@ -358,6 +422,7 @@ def _repository_pass(
     rule: InertLanding,
     packages: dict[tuple[str, str], StandingPackage],
     client: ChangeManagerClient | None,
+    observer: OrchestratorClient | None,
     records: list[dict[str, Any]],
     root: Path,
     now: datetime,
@@ -397,7 +462,13 @@ def _repository_pass(
             outcomes.append(Outcome(repository, pending.number, status, detail))
             continue
         try:
-            outcomes.extend(_act(package, bump, pending, client, records, root))
+            outcomes.extend(_act(package, bump, pending, client, observer, records, root))
+        except (ObservationUncomposable, ObservationWriteError) as error:
+            # ONE STATUS FOR BOTH, because the consequence is identical and it is the consequence
+            # a reader acts on: this bump has no cause on record, so nothing was proposed for it.
+            # They differ in whose fault it is -- a bump this producer cannot state, against an
+            # orchestrator that would not take it -- and the detail line carries that.
+            outcomes.append(Outcome(repository, pending.number, "unobserved", str(error)))
         except StandingError as error:
             outcomes.append(Outcome(repository, pending.number, "error", str(error)))
         except ProposalRefused as error:
@@ -475,6 +546,95 @@ def _declared_rule(read_token: str, *, base_url: str) -> InertLanding | None:
     return rule
 
 
+def _report(outcomes: list[Outcome], rule: InertLanding) -> int:
+    """Print the pass and answer its exit code.
+
+    Extracted from `run` rather than inlined, because `run` now carries the observer credential's
+    own refusal as well as change-manager's and reads past what a reader can hold at once. The
+    exit code is composed HERE, beside the lines it summarises, so the count a reader sees and the
+    code a scheduled run reports cannot come apart.
+    """
+    for outcome in outcomes:
+        subject = f"{outcome.repository}#{outcome.number or '-'}"
+        print(f"{subject}  {outcome.status:<19} {outcome.detail}")
+    findings = [o for o in outcomes if o.status in FINDING_STATUSES]
+    proposed = [o for o in outcomes if o.status in {"proposed", "would-advance"}]
+    print(
+        f"\n{len(outcomes)} considered, {len(proposed)} to propose, {len(findings)} findings "
+        f"(landing policy version {rule.version})"
+    )
+    return EXIT_FINDINGS if findings else EXIT_OK
+
+
+class _Credentials(NamedTuple):
+    """Everything this pass reads from the environment, in one shape.
+
+    THE TWO SERVICES ARE NOT SYMMETRIC and the field names are where that shows. change-manager is
+    reached with two bearers of different scope -- the READ one on every pass, the PROPOSE one only
+    for a writing one -- while the orchestrator is reached with a single OBSERVER bearer, also only
+    for a writing one.
+    """
+
+    github: str
+    change_manager: str
+    change_manager_read: str
+    change_manager_url: str
+    orchestrator_url: str
+    orchestrator_key_id: str
+    orchestrator_token: str
+
+
+def _credentials(*, submit: bool) -> _Credentials | None:
+    """Read and validate every credential this pass needs, or None -- which stops the pass.
+
+    ONE FUNCTION BECAUSE IT IS ONE CONCERN, and because `run` reads past what a reader can hold at
+    once when three services' worth of guards sit inline in it.
+
+    THE OBSERVER BEARER IS READ FROM THE ESTATE-WIDE VARIABLES, not from `BUMP_PROPOSER_` ones.
+    `orchestrator-observer` is the single credential every observe-and-report lane holds by design,
+    and the three lanes that already hold it read it from exactly those three names; a fourth
+    spelling would be a second name for one credential.
+
+    TWO OF THE THREE ARE WITHHELD FROM A DRY RUN, and for one reason: a dry run proposes nothing,
+    so it neither writes to change-manager nor has a cause to file -- and this lane's standing
+    property is that it therefore touches no credential that could write. Refusing HERE rather than
+    per pull request matters for the observer bearer in particular, because the alternative spends
+    a package revision, which cannot be unminted, discovering it.
+    """
+    github = os.environ.get("BUMP_PROPOSER_GITHUB_TOKEN", "")
+    change_manager = os.environ.get("BUMP_PROPOSER_CHANGE_MANAGER_TOKEN", "")
+    # ADR-0038. TWO change-manager credentials, and which is fetched when is the property the
+    # launcher's header states. This one is READ-scoped and is needed on EVERY pass, because the
+    # rule a dry run reports against is now read rather than transcribed; the one above can
+    # WRITE and is still needed only for `--submit`. Sharing one would have surrendered the
+    # property that a dry run cannot touch the credential that could write.
+    read = os.environ.get("BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN", "")
+    url = os.environ.get("BUMP_PROPOSER_CHANGE_MANAGER_URL", "")
+    observer_url = os.environ.get("ORCHESTRATOR_API_URL", "")
+    observer_key_id = os.environ.get("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "")
+    observer_token = os.environ.get("ORCHESTRATOR_API_TOKEN", "")
+
+    missing = ""
+    if not github:
+        missing = "BUMP_PROPOSER_GITHUB_TOKEN is unset"
+    elif submit and not change_manager:
+        missing = "BUMP_PROPOSER_CHANGE_MANAGER_TOKEN is unset; --submit needs it"
+    elif submit and not (observer_url and observer_key_id and observer_token):
+        # G1+G2, and fail closed BEFORE anything is minted: the contract requires every proposed
+        # record to name the observation that caused it, so a pass that cannot file one cannot
+        # propose at all.
+        missing = (
+            "the orchestrator observer credential is unset; --submit needs it "
+            "(ORCHESTRATOR_API_URL, ORCHESTRATOR_API_CREDENTIAL_KEY_ID, ORCHESTRATOR_API_TOKEN)"
+        )
+    if missing:
+        print(missing, file=sys.stderr)
+        return None
+    return _Credentials(
+        github, change_manager, read, url, observer_url, observer_key_id, observer_token
+    )
+
+
 def run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -490,21 +650,18 @@ def run(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    github_token = os.environ.get("BUMP_PROPOSER_GITHUB_TOKEN", "")
-    cm_token = os.environ.get("BUMP_PROPOSER_CHANGE_MANAGER_TOKEN", "")
-    # ADR-0038. TWO change-manager credentials, and which is fetched when is the property the
-    # launcher's header states. This one is READ-scoped and is needed on EVERY pass, because the
-    # rule a dry run reports against is now read rather than transcribed; the one above can
-    # WRITE and is still needed only for `--submit`. Sharing one would have surrendered the
-    # property that a dry run cannot touch the credential that could write.
-    read_token = os.environ.get("BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN", "")
-    cm_url = os.environ.get("BUMP_PROPOSER_CHANGE_MANAGER_URL", "")
-    if not github_token:
-        print("BUMP_PROPOSER_GITHUB_TOKEN is unset", file=sys.stderr)
+    resolved_credentials = _credentials(submit=args.submit)
+    if resolved_credentials is None:
         return EXIT_UNUSABLE
-    if args.submit and not cm_token:
-        print("BUMP_PROPOSER_CHANGE_MANAGER_TOKEN is unset; --submit needs it", file=sys.stderr)
-        return EXIT_UNUSABLE
+    (
+        github_token,
+        cm_token,
+        read_token,
+        cm_url,
+        orchestrator_url,
+        orchestrator_key_id,
+        orchestrator_token,
+    ) = resolved_credentials
 
     rule = _declared_rule(read_token, base_url=cm_url or DEFAULT_BASE_URL)
     if rule is None:
@@ -517,34 +674,40 @@ def run(argv: list[str] | None = None) -> int:
     packages, scope = resolved
 
     client = None
+    observer = None
     outcomes: list[Outcome] = []
     now = datetime.now(UTC)
     try:
         if args.submit:
             client = ChangeManagerClient(cm_token, base_url=cm_url or DEFAULT_BASE_URL)
+            observer = open_client(
+                base_url=orchestrator_url,
+                credential_key_id=orchestrator_key_id,
+                token=orchestrator_token,
+            )
         records = client.work_records() if client is not None else []
         with GitHubReader(token=github_token) as reader:
             for repository in scope:
                 outcomes.extend(
-                    _repository_pass(reader, repository, rule, packages, client, records, root, now)
+                    _repository_pass(
+                        reader, repository, rule, packages, client, observer, records, root, now
+                    )
                 )
-    except ChangeManagerError as error:
+    except (UnusableEndpointError, ChangeManagerError) as error:
+        # BOTH ARE "this pass could not use its inputs" rather than "this pass found something",
+        # which is what makes one handler honest rather than a convenience. A typo in the
+        # orchestrator URL is the tool being unusable for every bump at once, deliberately not the
+        # per-bump failure that would report as a finding; change-manager being unreachable is the
+        # same fact about the other service.
         print(str(error), file=sys.stderr)
         return EXIT_UNUSABLE
     finally:
         if client is not None:
             client.close()
+        if observer is not None:
+            observer.close()
 
-    for outcome in outcomes:
-        subject = f"{outcome.repository}#{outcome.number or '-'}"
-        print(f"{subject}  {outcome.status:<19} {outcome.detail}")
-    findings = [o for o in outcomes if o.status in FINDING_STATUSES]
-    proposed = [o for o in outcomes if o.status in {"proposed", "would-advance"}]
-    print(
-        f"\n{len(outcomes)} considered, {len(proposed)} to propose, {len(findings)} findings "
-        f"(landing policy version {rule.version})"
-    )
-    return EXIT_FINDINGS if findings else EXIT_OK
+    return _report(outcomes, rule)
 
 
 def main() -> None:

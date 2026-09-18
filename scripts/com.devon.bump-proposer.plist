@@ -3,8 +3,17 @@
      scripts/install-bump-proposer-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
      writes ~/Library/LaunchAgents/com.devon.bump-proposer.plist.
 
-     No secrets live here: the wrapper fetches the propose-scoped change-manager bearer from BWS
-     at runtime under the broad machine account, and falls back to `gh auth token` for GitHub.
+     No secrets live here: the wrapper fetches its bearers from BWS at runtime and falls back to
+     `gh auth token` for GitHub. It uses TWO BWS identities and neither can read the other's
+     secret -- the change-manager bearers under the broad machine account, and the orchestrator's
+     OBSERVER bearer under the narrow read-only one, whose project the broad account is denied.
+
+     A WRITING PASS NOW FILES A FACT BEFORE IT PROPOSES (G1+G2). The signal->work contract
+     requires every machine-proposed record to name the observation that caused it, so the pass
+     posts that observation first and puts its id on the proposal. The credential for it is the
+     OBSERVER bearer, whose entire write surface is that one route: it cannot transition a unit,
+     land a pull request or create work, so this job's reach is unchanged in every direction that
+     matters. A pass that cannot file the fact proposes nothing and reports a finding.
 
      THIS JOB WRITES, AND IT WRITES MORE THAN ITS SIBLINGS DO. It passes --submit, so a pass
      edits two lines of a standing package in the intent-packages checkout, takes the revision

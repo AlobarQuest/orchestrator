@@ -15,6 +15,7 @@ each other while both cited one document.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 PROPOSER = Path("src/bump_proposer")
@@ -40,6 +41,10 @@ ALLOWED_TOP_LEVEL = {
     # have settled against it, because "the cascade permits this" stopped meaning "the cascade
     # lands this" and a concluded failure is only final once nothing more is still running.
     "datetime",
+    # G1+G2. The observation's facts are content-addressed, so an unchanged re-run replays and a
+    # changed fact refuses rather than opening a quiet second row. Standard library, and a digest
+    # rather than a capability: it reaches nothing.
+    "hashlib",
     "httpx",
     "json",
     "landing_ledger",
@@ -49,6 +54,10 @@ ALLOWED_TOP_LEVEL = {
     "subprocess",
     "sys",
     "typing",
+    # `urllib.parse` only, for the orchestrator base-URL shape check. `urllib.request` is an HTTP
+    # client and is in the invariant scan's own `HTTP_CLIENTS` set, so it could never arrive here
+    # unnoticed.
+    "urllib",
 }
 
 
@@ -79,13 +88,51 @@ def test_the_producers_third_party_deps_are_confined() -> None:
     assert offenders == set()
 
 
-def test_the_producer_cannot_reach_the_orchestrators_api_at_all() -> None:
-    """It writes to change-manager and to a checkout, and to nothing else.
+def test_the_only_orchestrator_route_this_producer_names_is_the_observation_one() -> None:
+    """It writes to change-manager, to a checkout, and -- since G1+G2 -- one FACT to the
+    orchestrator. Nothing else.
 
-    The orchestrator learns about this work through the carry, from an APPROVED record -- so a
-    producer that could register an intake itself would be the machine approving its own
-    proposal, which ADR-0026 deliberately did not decide.
+    **THIS ASSERTED THAT THE PRODUCER COULD NOT REACH THE ORCHESTRATOR AT ALL, AND THE NARROWING
+    IS DELIBERATE.** It is recorded here rather than in a commit message because a guard that
+    loosens silently is worth less than no guard, and because the property it was protecting is
+    unchanged and is still asserted below.
+
+    What made it worth having: the orchestrator learns about this work through the carry, from a
+    record a person APPROVED, so a producer that could register an intake would be the machine
+    approving its own proposal -- which ADR-0026 deliberately did not decide. Filing an
+    observation is the opposite act. It states a fact, decides nothing, and uses the OBSERVER
+    bearer, whose entire write surface is that single route; the signal->work contract requires
+    it precisely so the cause of a record is a durable fact rather than prose inside the record.
+
+    So the prohibition moves from "no orchestrator route" to "no orchestrator route but this
+    one", and every route that could create work, move a unit or land anything stays named.
     """
     text = "\n".join(path.read_text() for path in sorted(PROPOSER.rglob("*.py")))
-    for forbidden in ("/api/v1/", "sds.alobar.net", "package-intakes"):
+
+    assert "/api/v1/observations" in text
+    for forbidden in (
+        # The production host stays absent: the launcher supplies it, so a URL this program
+        # could not have been pointed away from is not a value it needs to carry.
+        "sds.alobar.net",
+        "package-intakes",
+        "/api/v1/work-units",
+        "/api/v1/change-records",
+        "/api/v1/revisions",
+        "/api/v1/package-intakes",
+        "/api/v1/observations/",
+    ):
         assert forbidden not in text, forbidden
+
+
+def test_no_second_orchestrator_path_can_be_spelled_at_all() -> None:
+    """The complement of the list above, which is a denylist and therefore cannot be complete.
+
+    Every `/api/v1/...` string in the package must be the one route. A route added later is
+    caught by this even if nobody thinks to add it to the names above -- the direction that
+    fails closed.
+    """
+    paths = set()
+    for path in sorted(PROPOSER.rglob("*.py")):
+        paths |= set(re.findall(r"/api/v1/[A-Za-z0-9_\-/{}]*", path.read_text()))
+
+    assert paths == {"/api/v1/observations"}

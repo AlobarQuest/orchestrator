@@ -61,6 +61,12 @@ def checkout(tmp_path, monkeypatch):
     monkeypatch.setenv("BUMP_PROPOSER_GITHUB_TOKEN", "gh")
     monkeypatch.setenv("BUMP_PROPOSER_CHANGE_MANAGER_TOKEN", "cm")
     monkeypatch.setenv("BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN", "cm-read")
+    # G1+G2. The OBSERVER credential, in the estate-wide spelling every observe-and-report lane
+    # reads it from -- a writing pass files the cause before it proposes, and refuses to propose
+    # at all without it.
+    monkeypatch.setenv("ORCHESTRATOR_API_URL", "https://sds.example.net")
+    monkeypatch.setenv("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "orchestrator-observer")
+    monkeypatch.setenv("ORCHESTRATOR_API_TOKEN", "observer")
     return tmp_path
 
 
@@ -152,8 +158,38 @@ class _Estate:
         return httpx.Response(201, json=record)
 
 
+class _Spine:
+    """An orchestrator that behaves as the real one does: one row per reference, then replayed.
+
+    `record_observation` returns the EXISTING row for a repeat of the same key rather than filing
+    a second one, and that is the half of this lane a first pass cannot show. `posted` counts the
+    ACTS and `rows` the distinct facts, because the two are equal on a first pass and diverge on
+    every one after it -- which is exactly what the replay property is about.
+    """
+
+    def __init__(self):
+        self.posted: list[dict] = []
+        self.rows: dict[str, str] = {}
+        self.status = 201
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        self.posted.append(payload)
+        if self.status >= 400:
+            return httpx.Response(self.status, json={"detail": "no"})
+        identifier = self.rows.setdefault(
+            payload["idempotency_key"], f"0bbe0000-0000-4000-8000-{len(self.rows):012d}"
+        )
+        return httpx.Response(self.status, json={"id": identifier, **payload})
+
+
 @pytest.fixture
-def rig(checkout, monkeypatch):
+def spine():
+    return _Spine()
+
+
+@pytest.fixture
+def rig(checkout, monkeypatch, spine):
     estate = _Estate()
     calls: list[tuple[str, ...]] = []
 
@@ -190,6 +226,18 @@ def rig(checkout, monkeypatch):
         ),
     )
     monkeypatch.setattr(cli, "read_inert_landing", lambda token, base_url: parse(LIVE))
+    monkeypatch.setattr(
+        cli,
+        "open_client",
+        lambda *, base_url, credential_key_id, token: __import__(
+            "bump_proposer.orchestrator_client", fromlist=["OrchestratorClient"]
+        ).OrchestratorClient(
+            base_url=base_url,
+            credential_key_id=credential_key_id,
+            token=token,
+            transport=httpx.MockTransport(spine.handler),
+        ),
+    )
     monkeypatch.setattr(
         cli,
         "ChangeManagerClient",
@@ -620,3 +668,114 @@ def test_a_refused_publish_stops_the_pass_minting_a_further_revision(
     assert calls == []
     assert estate.proposals == []
     assert "origin does not" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------------------------
+# THE CAUSE (G1+G2). A machine-proposed record names the observation that caused it, and the
+# producer files that observation first.
+#
+# THESE ASSERT ON THE PROPOSAL, not on what the client returned. Twice in one day this estate
+# shipped a change fully tested in the module that computes a value and untested in the module
+# that consumes it -- and the consumer here is the payload, which is the only thing change-manager
+# ever sees.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_the_proposal_CARRIES_the_id_of_the_observation_just_filed(rig, spine) -> None:
+    estate, _calls = rig
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert len(spine.posted) == 1
+    assert len(estate.proposals) == 1
+    filed = spine.posted[0]["idempotency_key"]
+    assert estate.proposals[0]["originating_observation_id"] == spine.rows[filed]
+
+
+def test_the_observation_is_filed_BEFORE_anything_is_minted(rig, spine, capsys) -> None:
+    """The order is the contract's, and it is asserted at the expensive end rather than the cheap
+    one. A package revision cannot be unminted and a published commit cannot be unpublished, so
+    filing before the ladder means a pass that cannot state the fact has spent neither -- where
+    observing merely before the PROPOSAL would leave a revision standing for work nothing
+    proposed, and a human approval spent on it.
+    """
+    estate, calls = rig
+    spine.status = 500
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert spine.posted != []
+    assert calls == []
+    assert estate.proposals == []
+    assert "unobserved" in capsys.readouterr().out
+
+
+def test_a_bump_that_cannot_be_OBSERVED_is_a_finding_rather_than_a_quiet_skip(
+    rig, spine, capsys
+) -> None:
+    """The bump is real and unproposed, and this line is the only thing that says so. No later
+    pass repairs it on its own, which is what makes it a finding rather than a skip."""
+    _estate, _calls = rig
+    spine.status = 500
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert "1 findings" in capsys.readouterr().out
+
+
+def test_a_second_pass_names_the_SAME_observation_and_files_no_second_row(rig, spine) -> None:
+    """The replay property at the producer end. The orchestrator returns the existing row for a
+    repeated reference, so the pass names what it already filed -- and this asserts it through
+    the ACTS rather than the final state, which is identical either way.
+    """
+    estate, _calls = rig
+
+    assert run(["--submit"]) == EXIT_OK
+    assert run(["--submit"]) == EXIT_OK
+
+    assert len(spine.posted) == 2
+    assert len(spine.rows) == 1
+    causes = {proposal["originating_observation_id"] for proposal in estate.proposals}
+    assert len(causes) == 1
+
+
+def test_a_dry_run_files_NOTHING(rig, spine) -> None:
+    """Filing an observation is a write, and this launcher's standing property is that a dry run
+    touches no credential that could write. A dry run proposes nothing, so it has no cause to
+    file."""
+    estate, calls = rig
+
+    assert run([]) == EXIT_OK
+
+    assert spine.posted == []
+    assert calls == []
+    assert estate.proposals == []
+
+
+def test_submit_without_the_observer_credential_is_UNUSABLE_rather_than_a_record_with_no_cause(
+    rig, spine, monkeypatch, capsys
+) -> None:
+    """Fail closed, and before anything is minted. Refusing per pull request instead would spend a
+    package revision discovering it."""
+    estate, calls = rig
+    monkeypatch.delenv("ORCHESTRATOR_API_TOKEN")
+
+    assert run(["--submit"]) == EXIT_UNUSABLE
+
+    assert spine.posted == []
+    assert calls == []
+    assert estate.proposals == []
+    assert "observer credential is unset" in capsys.readouterr().err
+
+
+def test_the_declared_field_set_is_EXACTLY_what_the_proposal_emits(rig, spine) -> None:
+    """The declaration exists so the cross-repo field check has one local thing to compare
+    change-manager's schema against, instead of a list retyped into the check script. A
+    declaration that drifted from the payload would let the check vet the wrong vocabulary while
+    passing -- so it is pinned to the real call rather than to a handwritten dict.
+    """
+    estate, _calls = rig
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert set(estate.proposals[0]) == set(cli.PROPOSAL_FIELDS)
+    assert len(cli.PROPOSAL_FIELDS) == len(set(cli.PROPOSAL_FIELDS))
