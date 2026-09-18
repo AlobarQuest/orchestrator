@@ -143,3 +143,53 @@ become work."
   unit-scoped-only, or the chain still cannot carry the signal that caused the work.
 - **change-manager resumes**, in the direction it was always headed: the approved item now has
   somewhere to go.
+
+---
+
+## Amendment, 2026-09-18 — decision 3 extended to the revision; decision 6 retired
+
+The G1+G2 entry gates asked for this lane as a **written contract** rather than as a demonstration.
+Writing it down (`docs/superpowers/specs/2026-09-18-g1-g2-signal-to-work-contract-design.md`)
+settled two things about this document that reading it today gets wrong.
+
+**Decision 6 is RETIRED, not deferred.** It reads *"OBSERVER gains propose; no new role"*, and it
+became moot the moment decision 1 placed the proposing in change-manager: the decision-needing item
+is a change-manager record, so an OBSERVER that proposes has nothing in the orchestrator to propose
+to. Left standing as Accepted it is an active hazard rather than dead text — it invites a future
+session to build a `propose` route and to widen `_confine_observer`'s allowlist to admit it, which
+would enlarge the single credential every observe-and-report producer shares. **Retired rather than
+deferred, because there is no later date on which it becomes wanted.** OBSERVER's write surface is
+unchanged and stays exactly `POST /api/v1/observations`.
+
+**Decision 3 is EXTENDED: the revision carries the observation id as well as the change record id.**
+As written, the chain carries the observation id onto the **record** and the change record id onto
+the **revision** — the diagram above says so — which is one hop short of the orchestrator being able
+to answer for itself.
+
+The reason is structural, not a convenience. Measured 2026-09-18: `resolve_anchors`
+(`services/traceability.py:69`) is a flat if-chain over six anchor kinds — `work_unit`, `revision`,
+`artifact_digest`, `commit`, `pr`, `environment` — and **every branch is a local `session` query**.
+The module imports no HTTP client, and the orchestrator has no egress by design. So with the id
+resting only on the change record, *"what work did this signal cause?"* can only be answered by a
+hop into change-manager, across a boundary this service structurally cannot cross. The second carry
+is what keeps the question answerable where the query already runs.
+
+**The clauses themselves are in the spec, deliberately.** C1–C7 and the Reach section are written
+there rather than restated here, because a contract with two copies has two meanings. A reader who
+greps `docs/decisions/` for the signal→work contract finds this ADR and must follow it to the spec.
+
+**Consequences.**
+
+- **The original decision text is untouched.** ADR-0014's rule against back-dating applies to this
+  document as much as to anything it governs: decision 6 was right when written against the draft
+  that placed proposing in the orchestrator, and decision 1 is what made it moot. It is retired
+  here, not rewritten there.
+- **A second producer now has a specification to conform to rather than a working example to copy.**
+  That was the gate's actual complaint — the lane was demonstrated once and contracted nowhere.
+- **This does not close the observation hop.** The Consequences above already note that the hop must
+  stop being unit-scoped-only; it still is (`services/traceability.py`), and there is no observation
+  anchor kind today. Carrying the id onto the revision is a precondition for fixing that, not the
+  fix.
+- **Nothing here makes the lane autonomous.** The "What this deliberately does NOT do" section stands
+  unchanged, and the contract does not weaken it: a written contract makes the lane conformable, not
+  self-driving.
