@@ -105,6 +105,14 @@ remove. The alternative considered and rejected — requiring an observation onl
 not otherwise addressable — leaves each producer classifying its own cause, and a wrong
 classification is silent.
 
+**A derived record is not a proposed record, and WS-P3.2's input is derived.** change-manager's
+app-conformance items arrive from the drift audit as `source=drift` and are re-asserted by every
+scan, so they sit outside `PROPOSED_SOURCES` and outside C1. WS-P3.2 does not bring them inside it:
+it **bridges**, proposing a `work` record that names an observation, and the record it creates is
+what C1 binds. Which observation that is — the drift digest's existing row for the same condition,
+or one WS-P3.2's own producer posts — is WS-P3.2's decision, not this contract's. C1 needs no
+widening for it.
+
 ## 4. The record and the join
 
 **change-manager side.** `change_items` gains `originating_observation_id`, and both `WorkChangeIn`
@@ -140,6 +148,17 @@ why the near miss is wrong — the pattern every preceding lane followed (`pin_w
 `tool_installer` over `machine_activation`). The cost is a migration touching both the model's CHECK
 constraints and the frozen copy inside the migration, since migrations inline the vocabulary rather
 than importing it.
+
+**Identity and facts.** `bump_proposer` runs on a schedule and replays, so the observation's
+`source_reference` identifies the **bump** — repository, pull request number and target version —
+rather than the run or a content digest. Two measured traps bound this. A reference that is not
+content-addressed wedges a re-runnable producer permanently at `observation_conflict`, since
+observations have no supersession model and no delete route. And the update bot has been observed
+rewriting a bump in place under a stable pull request number, so the target version belongs in the
+reference or two different bumps collide on one row. `facts` carry only claims that stay true —
+never a date, never a count, never where a value was read — because `idempotency_key` is
+content-addressed over them and a later correction is refused. On a replay the pass names the
+observation it already posted rather than posting a second one.
 
 **Intake replay.** `_matches_legacy_shape` compares a stored event against the expected payload and
 carries three legacy exemptions, each firing **only when the stored event actually lacks the key** —
@@ -199,6 +218,25 @@ pointed at the check itself.
 4. **No `change_record` anchor.** The observation anchor answers the signal question; a record anchor
    is a sibling nobody has asked for, and a surface added on speculation is a surface to maintain.
 5. **G3 and WS-P3.2** are the next two cycles, in that order, each with its own spec.
+
+### Obligations on the implementing change
+
+These belong to the plan rather than to the contract, and are recorded here so the build session
+cannot miss them.
+
+- **Refuse an unknown observation id, fail-closed.** change-manager cannot verify the observation
+  exists; the orchestrator owns the table and can. C2's rationale — a dangling cause has no repair —
+  argues for refusing an intake that names an unknown id, as a `DomainError` with the UUID parse
+  wrapped, since an unwrapped `uuid.UUID(bad)` reaches the wire as a bare HTTP 500. The
+  `resolve_anchors` branch answers `observation_not_found` the way its `work_unit` sibling does.
+- **Amend ADR-0026 in the same change.** This spec retires decision 6 and extends decision 3, and a
+  reader who greps `docs/decisions/` finds decision 6 still Accepted. The implementing change writes
+  ADR-0026 amendment 1 recording both. A document under `docs/superpowers/specs/` is not where this
+  estate records a decision.
+- **Existing rows are left as they are.** Records 59–62 and their revisions predate the contract,
+  which binds records created after it ships. Nothing is back-filled, and a re-proposal replaying
+  onto an existing record does not retro-fill the id — back-dating a judgement about settled rows is
+  the mistake ADR-0014 names.
 
 ## 9. Decisions taken in this design
 
