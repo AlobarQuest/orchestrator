@@ -722,6 +722,38 @@ def test_a_bump_that_cannot_be_OBSERVED_is_a_finding_rather_than_a_quiet_skip(
     assert "1 findings" in capsys.readouterr().out
 
 
+def test_a_REFUSED_OBSERVER_CREDENTIAL_stops_the_pass_rather_than_marking_each_bump(
+    rig, spine, capsys
+) -> None:
+    """THE PAIR WITH THE 500 CASE ABOVE IS THE POINT, and either alone proves nothing.
+
+    A 500 is an orchestrator that would not take THIS bump: the pull request loses its row, the
+    pass reports a finding, and a later pass may well succeed. A 401 is the CREDENTIAL, which is
+    every bump and every pass after it -- and reported per bump it exits with this lane's finding
+    code, which `sds-deadman.sh` pings as SUCCESS. The lane would then propose nothing for as long
+    as the bearer stayed revoked while its dead-man check read `up`.
+    """
+    _estate, _calls = rig
+    spine.status = 401
+
+    assert run(["--submit"]) == EXIT_UNUSABLE
+    assert "unobserved" not in capsys.readouterr().out
+
+
+def test_a_NON_OBSERVER_key_id_refuses_BEFORE_anything_is_written(rig, monkeypatch, capsys) -> None:
+    """The three `ORCHESTRATOR_API_*` names are the estate-wide ones every orchestrator client
+    reads, and the route admits SYSTEM as well as OBSERVER. A hand-run `--submit` from a shell
+    already carrying the SYSTEM bearer -- which is how the factory is driven by hand -- would file
+    observations that SUCCEED, attributed to `orchestrator-system`, into an append-only table with
+    no delete route. The attribution is permanent, so the refusal has to come first.
+    """
+    _estate, _calls = rig
+    monkeypatch.setenv("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "orchestrator-system")
+
+    assert run(["--submit"]) == EXIT_UNUSABLE
+    assert "orchestrator-observer" in capsys.readouterr().err
+
+
 def test_a_second_pass_names_the_SAME_observation_and_files_no_second_row(rig, spine) -> None:
     """The replay property at the producer end. The orchestrator returns the existing row for a
     repeated reference, so the pass names what it already filed -- and this asserts it through

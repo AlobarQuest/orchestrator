@@ -9,6 +9,7 @@ would clear. These pin the answer.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -26,6 +27,20 @@ from landing_ledger.titles import bump_of
 REPOSITORY = "AlobarQuest/infraops-mcp-server"
 TITLE = "build(deps): bump zod from 3.25.76 to 4.4.3"
 OPENED = datetime(2026, 8, 1, 9, 30, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("compose", [reference_for, summary_of, bump_observation])
+def test_a_pull_request_with_NO_dependency_metadata_is_refused_by_every_public_piece(
+    compose,
+) -> None:
+    """`reference_for` and `summary_of` defaulted the dependency to `"unknown"` while `bump_facts`
+    raised, and through `bump_observation` that default was unreachable because the facts are
+    composed first. All three are public and directly tested, so a later caller reaching for the
+    reference alone would have baked `"unknown"` into an IMMUTABLE identity -- a row that can
+    never be corrected -- rather than being told this bump cannot be stated at all.
+    """
+    with pytest.raises(ObservationUncomposable):
+        compose(replace(_pending(), update=None), _bump())
 
 
 def _bump(title: str = TITLE):

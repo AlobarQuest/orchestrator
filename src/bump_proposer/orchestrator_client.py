@@ -25,6 +25,7 @@ refactor break this one's schedule, and each ships its own isolation test saying
 
 from __future__ import annotations
 
+import re
 from typing import Any, Final
 from urllib.parse import urlsplit
 
@@ -46,6 +47,12 @@ TIMEOUT_SECONDS: Final = 30.0
 # guard, and the triggers are ordinary environment-variable typos.
 MAX_DNS_LABEL: Final = 63
 
+# A `DomainError` reaches the wire NESTED -- `{"error": {"code": ...}}` -- and `code` is a closed
+# snake_case vocabulary. That is what makes it safe to print where the BODY is not: a rejection
+# body echoes the command back. Matched rather than trusted, so a server that answered something
+# else cannot put arbitrary text in this lane's log.
+_SAFE_CODE: Final = re.compile(r"[a-z0-9_]{1,64}")
+
 
 class ObservationError(Exception):
     """The orchestrator could not be asked, or refused in a way this pass cannot interpret."""
@@ -57,6 +64,20 @@ class ObservationWriteError(ObservationError):
 
 class ForbiddenEndpointError(ObservationWriteError):
     """This program tried to reach a path it is not allowed to reach."""
+
+
+class ObservationCredentialError(ObservationError):
+    """The orchestrator refused this producer's IDENTITY, so no cause can be filed at all.
+
+    Deliberately NOT an `ObservationWriteError`, for the reason `UnusableEndpointError` is not
+    one: a refused credential is not one bad bump, it is every bump. Caught per pull request it
+    reports each one `unobserved` and exits with this lane's FINDING code -- which
+    `sds-deadman.sh` pings as SUCCESS, because a declared finding code means the pass ran and
+    reported. A revoked bearer would then propose nothing for as long as it stayed revoked while
+    the dead-man check read `up`, which is the permanently-quiet twin of a permanently-red
+    control. The sibling change-manager bearer never had that hazard, and not by design: its
+    first call happens BEFORE the loop, so it raises where nothing can absorb it.
+    """
 
 
 class UnusableEndpointError(ObservationError):
@@ -71,6 +92,26 @@ class UnusableEndpointError(ObservationError):
 
 def is_allowed_write(path: str) -> bool:
     return path == OBSERVATIONS_ENDPOINT
+
+
+def _named_code(response: httpx.Response) -> str:
+    """The orchestrator's own error code when it sent one, and nothing else.
+
+    Without it an undeployed vocabulary (`observation_invalid`), a fact that moved under a frozen
+    row (`observation_conflict`) and a stale version all print as one number -- and the three want
+    different acts from whoever reads the line.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(body, dict):
+        return ""
+    error = body.get("error")
+    code = error.get("code") if isinstance(error, dict) else None
+    if isinstance(code, str) and _SAFE_CODE.fullmatch(code):
+        return f" ({code})"
+    return ""
 
 
 def _validate_base_url(base_url: str) -> None:
@@ -167,6 +208,13 @@ class OrchestratorClient:
             raise ObservationWriteError(
                 f"the orchestrator is unreachable for POST {path}: {type(error).__name__}"
             ) from None
+        if response.status_code in (401, 403):
+            # BEFORE the generic branch, because this one must not be absorbed per bump. See
+            # `ObservationCredentialError`: a refused identity is every bump, not one.
+            raise ObservationCredentialError(
+                f"the orchestrator refused this producer's credential on POST {path}: "
+                f"{response.status_code}{_named_code(response)}"
+            )
         if not 200 <= response.status_code < 300:
             # ANY non-2xx, not `>= 400`, so a redirect is named as one: this route is not behind
             # the forward-auth chain today, but a proxy is a thing that gets reconfigured, and a
@@ -175,7 +223,8 @@ class OrchestratorClient:
             # command back, and printing what it was given is how a value that should not be in a
             # log gets into one.
             raise ObservationWriteError(
-                f"the orchestrator rejected POST {path}: {response.status_code}"
+                f"the orchestrator rejected POST {path}: "
+                f"{response.status_code}{_named_code(response)}"
             )
         try:
             body = response.json()

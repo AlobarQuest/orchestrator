@@ -34,7 +34,7 @@ import hashlib
 import json
 from typing import Any
 
-from landing_ledger.model import PendingUpdate
+from landing_ledger.model import PendingUpdate, UpdateMetadata
 from landing_ledger.titles import Bump
 
 SOURCE_SYSTEM = "bump_proposer"
@@ -69,24 +69,44 @@ class ObservationUncomposable(ValueError):
     """
 
 
+def _update(pending: PendingUpdate) -> UpdateMetadata:
+    """The dependency metadata this bump names, or a refusal -- never a placeholder.
+
+    ONE REFUSAL FOR THREE CALLERS. `bump_facts` raised while `reference_for` and `summary_of`
+    defaulted to `"unknown"`, and through `bump_observation` that default was unreachable because
+    the facts are composed first. All three are public and directly tested, so a later caller
+    reaching for the reference alone would have baked `"unknown"` into an IMMUTABLE identity
+    rather than being told the bump cannot be stated.
+    """
+    if pending.update is None:
+        raise ObservationUncomposable(
+            f"{pending.repository}#{pending.number} carries no dependency metadata, "
+            "so there is no bump to state"
+        )
+    return pending.update
+
+
 def bump_facts(pending: PendingUpdate, bump: Bump) -> dict[str, Any]:
     """Everything that stays true of this bump for as long as it is this bump.
 
     NOTHING THAT MOVES GOES IN HERE. `head_commit` moves on a rebase, `armed` moves when the
     estate arms or disarms the update, and the check conclusions move whenever a job is re-run --
-    each of them would re-derive a frozen fact and refuse. What is left is the delta itself, which
-    is also what the reference names, so a conflict here can only ever be a reworded summary.
+    each of them would re-derive a frozen fact and refuse. What is left is the delta itself.
+
+    **NOT ALL OF THE DELTA IS IN THE REFERENCE, and the difference is worth stating exactly.**
+    `ecosystem` is a fact and is NOT part of the identity, so a bump whose ecosystem were ever
+    re-reported differently would move the key under a stable reference and wedge the row the
+    same way a reworded summary would. It is read from the same metadata as the dependency and
+    has never been seen to move for a fixed pull request, which is why it stays out of a
+    reference a person reads -- but "a conflict here can only ever be a reworded summary" would
+    be false, and this module's whole purpose is that the frozen-row property is stated truly.
     """
-    if pending.update is None:  # pragma: no cover - `_consider` refuses these before this runs
-        raise ObservationUncomposable(
-            f"{pending.repository}#{pending.number} carries no dependency metadata, "
-            "so there is no bump to state"
-        )
+    update = _update(pending)
     return {
         "repository": pending.repository,
         "pull_request": pending.number,
-        "dependency": pending.update.dependency,
-        "ecosystem": pending.update.ecosystem,
+        "dependency": update.dependency,
+        "ecosystem": update.ecosystem,
         "from_version": bump.from_version,
         "to_version": bump.to_version,
         "kind": bump.kind,
@@ -105,7 +125,7 @@ def reference_for(pending: PendingUpdate, bump: Bump) -> str:
     common case, a moved base under a stable target is the one that would otherwise refuse this
     pull request forever with no repair route.
     """
-    dependency = pending.update.dependency if pending.update is not None else "unknown"
+    dependency = _update(pending).dependency
     return (
         f"dependency-update:{pending.repository}#{pending.number}:"
         f"{dependency}@{bump.from_version}->{bump.to_version}"
@@ -114,7 +134,7 @@ def reference_for(pending: PendingUpdate, bump: Bump) -> str:
 
 def summary_of(pending: PendingUpdate, bump: Bump) -> str:
     """What is true, and nothing about what should happen to it. See the module docstring."""
-    dependency = pending.update.dependency if pending.update is not None else "unknown"
+    dependency = _update(pending).dependency
     return (
         f"{pending.repository} carries an open dependency update of {dependency} "
         f"from {bump.from_version} to {bump.to_version} (pull request {pending.number})"

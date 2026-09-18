@@ -13,6 +13,7 @@ import pytest
 
 from bump_proposer.orchestrator_client import (
     ForbiddenEndpointError,
+    ObservationCredentialError,
     ObservationWriteError,
     OrchestratorClient,
     UnusableEndpointError,
@@ -74,12 +75,61 @@ def test_a_body_without_an_id_is_REFUSED_rather_than_read_as_no_cause() -> None:
 
 
 def test_a_rejected_write_carries_the_status_and_nothing_else() -> None:
-    """A rejection body echoes the command back; printing it is how a secret reaches a log."""
-    with pytest.raises(ObservationWriteError) as raised:
-        _client(lambda r: httpx.Response(403, json={"echo": "sensitive"})).record_observation({})
+    """A rejection body echoes the command back; printing it is how a secret reaches a log.
 
-    assert "403" in str(raised.value)
+    409 rather than 403 deliberately: an auth status is no longer a per-bump write error at all
+    (see below), so using one here would assert this property against the wrong branch.
+    """
+    with pytest.raises(ObservationWriteError) as raised:
+        _client(lambda r: httpx.Response(409, json={"echo": "sensitive"})).record_observation({})
+
+    assert "409" in str(raised.value)
     assert "sensitive" not in str(raised.value)
+
+
+def test_a_REFUSED_CREDENTIAL_is_not_a_per_bump_failure() -> None:
+    """Behaviour rather than taxonomy, and the consequence is what makes it matter.
+
+    A per-bump error reports the bump `unobserved` and the pass exits with this lane's FINDING
+    code -- which `sds-deadman.sh` pings as SUCCESS, because a declared finding code means the
+    pass ran and reported. A revoked bearer is not one bad bump, it is every bump, so absorbing
+    it per pull request would leave the lane proposing nothing while its check read `up`.
+    """
+    assert not issubclass(ObservationCredentialError, ObservationWriteError)
+
+    for status in (401, 403):
+        with pytest.raises(ObservationCredentialError, match=str(status)):
+            _client(lambda r, s=status: httpx.Response(s, json={})).record_observation({})
+
+
+def test_the_orchestrators_OWN_error_code_is_named_and_the_rest_of_the_body_is_not() -> None:
+    """An undeployed vocabulary and a fact that moved under a frozen row are the same NUMBER and
+    different acts, so the status alone cannot tell a reader which one happened."""
+    body = {"error": {"code": "observation_conflict", "message": "echoed command"}}
+    with pytest.raises(ObservationWriteError) as raised:
+        _client(lambda r: httpx.Response(409, json=body)).record_observation({})
+
+    assert "observation_conflict" in str(raised.value)
+    assert "echoed command" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(409, text="<html/>"),
+        httpx.Response(409, json=["not", "an", "object"]),
+        httpx.Response(409, json={"error": "a string, not an object"}),
+        httpx.Response(409, json={"error": {"code": "Not A Safe Code"}}),
+        httpx.Response(409, json={"error": {"code": "x" * 200}}),
+    ],
+)
+def test_an_unreadable_or_UNSAFE_error_body_contributes_nothing(response: httpx.Response) -> None:
+    """The code is MATCHED rather than trusted, so a server answering something else cannot put
+    arbitrary text into this lane's log. Each of these still raises, carrying the status alone."""
+    with pytest.raises(ObservationWriteError) as raised:
+        _client(lambda r, x=response: x).record_observation({})
+
+    assert str(raised.value).endswith("409")
 
 
 def test_a_redirect_is_named_as_one_rather_than_read_as_a_broken_body() -> None:

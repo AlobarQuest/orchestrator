@@ -18,6 +18,13 @@
 # origin under every other lane that reads this checkout. It surrenders no gate: that branch
 # takes a direct push and reports its required checks afterwards whoever performs it.
 #
+# ORDER MATTERS ON THE DAY THE OBSERVATION LANE SHIPS, AND GETTING IT WRONG IS QUIET. This pass
+# files the fact before it proposes, and the orchestrator accepts this producer's vocabulary only
+# once the image carrying it is live AND its migration has been applied -- neither of which a
+# `git pull` of this checkout does, and this lane adds no console script to pause at. Land it,
+# migrate, roll the image, then pull here. Out of that order every bump reports `unobserved`,
+# nothing is proposed, and the pass exits 3 rather than failing loudly.
+#
 # IT REFUSES A DIRTY CHECKOUT. Committing is not tidiness -- the orchestrator's intake payload
 # records `source_commit` as that checkout's git HEAD, so a revision left uncommitted is
 # registered against a commit that does not contain it. Refusing a dirty tree is what stops

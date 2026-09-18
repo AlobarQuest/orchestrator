@@ -66,6 +66,7 @@ from bump_proposer.landing_policy import (
 )
 from bump_proposer.observation import ObservationUncomposable, bump_observation
 from bump_proposer.orchestrator_client import (
+    ObservationCredentialError,
     ObservationWriteError,
     OrchestratorClient,
     UnusableEndpointError,
@@ -616,6 +617,13 @@ def _credentials(*, submit: bool) -> _Credentials | None:
     url = os.environ.get("BUMP_PROPOSER_CHANGE_MANAGER_URL", "")
     observer_url = os.environ.get("ORCHESTRATOR_API_URL", "")
     observer_key_id = os.environ.get("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "")
+    # PINNED, because the route admits SYSTEM as well as OBSERVER and `recorded_by` is permanent.
+    # The three variables above are the estate-wide names every orchestrator client reads, so a
+    # hand-run `--submit` from a shell already carrying the SYSTEM bearer -- which is how the
+    # factory is driven by hand -- would file observations that SUCCEED, attributed to
+    # `orchestrator-system`, into an append-only table with no delete route. The launcher always
+    # sets this; the guard is for the shell that did not.
+    OBSERVER_KEY_ID: Final = "orchestrator-observer"
     observer_token = os.environ.get("ORCHESTRATOR_API_TOKEN", "")
 
     missing = ""
@@ -630,6 +638,12 @@ def _credentials(*, submit: bool) -> _Credentials | None:
         missing = (
             "the orchestrator observer credential is unset; --submit needs it "
             "(ORCHESTRATOR_API_URL, ORCHESTRATOR_API_CREDENTIAL_KEY_ID, ORCHESTRATOR_API_TOKEN)"
+        )
+    elif submit and observer_key_id != OBSERVER_KEY_ID:
+        missing = (
+            f"ORCHESTRATOR_API_CREDENTIAL_KEY_ID is {observer_key_id!r}, not "
+            f"{OBSERVER_KEY_ID!r}; this producer files observations as the observer and "
+            "attribution cannot be corrected once written"
         )
     if missing:
         print(missing, file=sys.stderr)
@@ -697,7 +711,7 @@ def run(argv: list[str] | None = None) -> int:
                         reader, repository, rule, packages, client, observer, records, root, now
                     )
                 )
-    except (UnusableEndpointError, ChangeManagerError) as error:
+    except (UnusableEndpointError, ObservationCredentialError, ChangeManagerError) as error:
         # BOTH ARE "this pass could not use its inputs" rather than "this pass found something",
         # which is what makes one handler honest rather than a convenience. A typo in the
         # orchestrator URL is the tool being unusable for every bump at once, deliberately not the

@@ -15,6 +15,11 @@
      land a pull request or create work, so this job's reach is unchanged in every direction that
      matters. A pass that cannot file the fact proposes nothing and reports a finding.
 
+     THE ORDER THIS SHIPS IN IS NOT FREE. The orchestrator accepts this producer's vocabulary
+     only once the image carrying it is live and its migration has been applied, and a `git pull`
+     of the checkout moves this pass without moving either. Land, migrate, roll the image, then
+     pull. Out of that order every bump reports `unobserved` and nothing is proposed.
+
      THIS JOB WRITES, AND IT WRITES MORE THAN ITS SIBLINGS DO. It passes --submit, so a pass
      edits two lines of a standing package in the intent-packages checkout, takes the revision
      through that repository's audited lifecycle, approves it by conformance to
