@@ -5292,3 +5292,30 @@ style of that module.
   `WWW-Authenticate` header never reached the application.
 
   The one-command check is the header, not the address: `curl -sI https://<host>/ | grep -i '^server:'`.
+
+- **IN change-manager, A FIELD-LIST TUPLE IS ALSO THE CONSTRUCTION PAYLOAD, so excluding a field
+  from it silently stops the field being STORED — and the two decisions that tuple makes are
+  different questions.** Measured 2026-09-18 building the signal→work contract's increment 1.
+  `propose_work_change` (`app/work_changes.py`) builds `proposed = {f: getattr(body, f) for f in
+  _ASSERTED_FIELDS}`, uses it for the `WorkChangeConflict` comparison in `_existing`, **and then
+  splats the same dict as `**proposed` into `ChangeItem(...)`**. The deploy sibling is the same
+  shape one tuple over: `_PROPOSED_FIELDS = _ASSERTED_FIELDS + _DERIVED_FIELDS`, and `_proposed`
+  selects out of the body. So *"should this field participate in conflict detection?"* and *"should
+  this field be stored?"* are answered by ONE list, and excluding for the first reason silently
+  answers the second. A field deliberately kept out of the comparison must be passed as an
+  **explicit constructor kwarg**, or it is declared on the schema, accepted at the door, and never
+  written — the inbound twin of a FastAPI `response_model` dropping an undeclared key, and just as
+  silent.
+  **THE WORK LANE HAS NO REFRESH PATH AT ALL, and a plan that says otherwise is describing the
+  deploy sibling.** `_existing` selects, raises, and returns the row **unmutated**; nothing
+  re-asserts onto an existing work record, so a repeat proposal is a genuine no-op. Only the deploy
+  ingress re-asserts, via `_refresh_derived` over `_DERIVED_FIELDS`. The orchestrator's own plan for
+  that increment offered "what a re-proposal re-asserts onto an existing record" as a candidate
+  mechanism and it was **false for this lane** — caught only because the plan told the session to
+  read `propose_work_change` rather than assume. Read it again before keying anything on that tuple.
+  **The standing consequence for any field added to either tuple:** both producers replay their
+  whole population on every scheduled pass, and every row predating the column stores null, so a
+  null-versus-value comparison answers **409 forever**, which `bump_proposer` classifies as
+  `refused` — a finding on every pass, on a write-once row whose status only a human can move, with
+  no supersede route. Additive fields belong in neither tuple unless the whole standing population
+  can satisfy them.

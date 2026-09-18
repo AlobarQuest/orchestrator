@@ -65,6 +65,9 @@ Leave the original decision text untouched. ADR-0014's back-dating rule applies 
 
 ## Increment 1 — change-manager declares the field
 
+**SHIPPED 2026-09-18** — change-manager `#89`, merge `8b42783`. Read this increment for the record
+of what was decided and why; the corrections below are what it measured, not what it was told.
+
 **Repo:** `change-manager`. Nothing in the orchestrator may ship before this merges *and deploys* —
 change-manager redeploys on push to `main`, so the gap is minutes, but it is real.
 
@@ -87,19 +90,35 @@ change-manager redeploys on push to `main`, so the gap is minutes, but it is rea
 **1. Is `originating_observation_id` in `_ASSERTED_FIELDS`?** (`app/work_changes.py:58-65`; `actor`
 is deliberately excluded from it today.)
 
-**Read `propose_work_change` (`work_changes.py:92-146`) before deciding, because what that tuple
-FEEDS decides the failure, and this plan does not assert which.** Two mechanisms are consistent with
-the name, and they fail differently:
+**SETTLED 2026-09-18 BY MEASUREMENT, and one of the two candidates this plan offered was FALSE.**
+It asked a build session to read `propose_work_change` before deciding; it did, and the answer
+corrects this document rather than confirming it.
 
-- if it is **what a re-proposal re-asserts onto an existing record**, including the field retro-fills
-  a cause onto a pre-contract record — which the spec's own obligation forbids;
-- if it feeds the **`WorkChangeConflict` comparison**, including it makes every replay onto a
-  pre-contract record a **409**, which `bump_proposer` classifies as `refused` — a finding, and
-  therefore exit 3 on every pass, forever.
+`_ASSERTED_FIELDS` feeds **exactly two** things: the **construction payload** — it is splatted as
+`**proposed` into `ChangeItem(...)` — and the **`WorkChangeConflict` comparison** in `_existing`.
 
-Both point at excluding it; they are different reasons and only one is true. Establish which, then
-say so in the module. The opposite argument is real and survives either way: a producer that recorded
-a wrong cause could never correct it.
+**It does NOT re-assert anything onto an existing record.** `_existing` selects, raises, and returns
+the row unmutated, and `propose_work_change` returns it untouched, so a repeat proposal on this lane
+is a genuine no-op. That candidate describes the **deploy sibling**, which does have a refresh path
+(`_refresh_derived` over `_DERIVED_FIELDS`); the work lane has no derived facts and therefore no
+refresh. A later reader reaching for "what a re-proposal re-asserts" is holding the wrong lane.
+
+So the only consequence of adding the field was the comparison, and it is permanent: every record
+proposed before the column existed stores null, `bump_proposer` replays all of them every pass, and
+a null-versus-id comparison answers **409** forever — classified as `refused`, i.e. a finding on
+every pass, with no repair route. **Excluded**, with the accepted cost asserted by a test rather
+than left in a comment: a producer that named the wrong cause cannot correct it.
+
+**TWO CONSEQUENCES THIS PLAN DID NOT NAME, both found in the build and both load-bearing.**
+
+- **Excluding the field from `_ASSERTED_FIELDS` also removes it from the WRITE**, because that tuple
+  *is* the construction payload. The field must be passed as an **explicit constructor kwarg** or it
+  is silently never stored. "Should this participate in conflict detection?" and "should this be
+  stored?" are different questions answered by one tuple.
+- **The deploy side needed exclusion from `_DERIVED_FIELDS` as well, while still being stored.**
+  `_PROPOSED_FIELDS = _ASSERTED_FIELDS + _DERIVED_FIELDS` and `_proposed` selects out of the body,
+  so a field in neither tuple is dropped rather than stored — the inbound twin of a `response_model`
+  dropping an undeclared key. It needs the same explicit kwarg.
 
 **2. What shape does change-manager validate?** It cannot verify the observation exists — it has no
 egress, and `WorkChangeIn`'s own docstring states the principle (*"a registrar that inferred what it
