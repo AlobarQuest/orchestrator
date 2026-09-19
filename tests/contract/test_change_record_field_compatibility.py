@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import http.client
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -176,9 +177,9 @@ def test_the_serializer_parser_reads_exactly_the_keys_the_function_returns() -> 
         '        "originating_observation_id": it.originating_observation_id,\n'
         "    }\n"
     )
-    namespace: dict[str, object] = {}
-    exec(compile(source, "<fixture>", "exec"), namespace)  # noqa: S102 - the fixture IS the pin
-    executed = set(namespace["_item_dict"](_Row()))  # type: ignore[operator]
+    namespace: dict[str, Any] = {}
+    exec(compile(source, "<fixture>", "exec"), namespace)  # the fixture IS the pin
+    executed = set(namespace["_item_dict"](_Row()))
 
     assert check.served_keys(source) == executed
 
@@ -297,7 +298,7 @@ def test_the_other_lane_is_compared_against_its_own_schema_too(monkeypatch, caps
     assert "DeployChangeIn" in captured.err
 
 
-def test_an_annotated_private_attribute_is_not_a_field(monkeypatch) -> None:
+def test_an_annotated_private_attribute_is_not_a_field() -> None:
     """pydantic does not make one a field, so neither may the parse.
 
     `model_config` alone does not pin this: it is a plain assignment, which the parse never
