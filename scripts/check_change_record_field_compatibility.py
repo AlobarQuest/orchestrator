@@ -216,7 +216,7 @@ def served_keys(
     parse and no `model_fields` to read. The keys are the declaration.
     """
     for node in _module(source, where).body:
-        if isinstance(node, ast.FunctionDef) and node.name == function_name:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
             returns = [child for child in ast.walk(node) if isinstance(child, ast.Return)]
             if len(returns) != 1:
                 raise Unresolvable(
@@ -259,7 +259,7 @@ def assert_the_listing_serves_through(source: str, where: str = API_PATH) -> Non
     still reads green, which is the failure mode of having no check at all.
     """
     for node in _module(source, where).body:
-        if isinstance(node, ast.FunctionDef) and node.name == LISTING_ROUTE:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == LISTING_ROUTE:
             if any(
                 isinstance(child, ast.Name) and child.id == SERIALIZER for child in ast.walk(node)
             ):

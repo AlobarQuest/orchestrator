@@ -441,3 +441,22 @@ def test_the_ref_this_check_sends_is_a_literal_and_needs_no_encoding() -> None:
     assert check.REF == "main"
     assert "{" not in check.SCHEMAS_PATH
     assert "{" not in check.API_PATH
+
+
+def test_an_async_far_side_is_read_rather_than_reported_missing() -> None:
+    """`ast.AsyncFunctionDef` is NOT a subclass of `ast.FunctionDef`, and FastAPI routes are
+    routinely `async def`.
+
+    Matching only the sync node would red this repository's REQUIRED status check on every pull
+    request the day change-manager converts either function, and the refusal would name a rename
+    that never happened -- a red whose reason is wrong beside it. Both parsers must read the
+    async form identically to the sync one.
+    """
+    api = API.replace("def _item_dict(", "async def _item_dict(", 1).replace(
+        "def list_items(", "async def list_items(", 1
+    )
+    assert "async def _item_dict(" in api, "the fixture edit did not apply"
+    assert "async def list_items(" in api, "the fixture edit did not apply"
+
+    assert check.served_keys(api) == check.served_keys(API)
+    check.assert_the_listing_serves_through(api)
