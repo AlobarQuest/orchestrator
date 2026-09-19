@@ -355,7 +355,8 @@ def test_a_cause_free_command_does_not_replay_against_an_intake_that_named_one(
     It does NOT exercise the exemption's gate on the observed event, though an earlier version of
     this docstring claimed it did. Here the two identities differ in the key's VALUE, so they are
     unequal whether or not the key is popped -- both forms refuse, and a mutant that drops the
-    gate survives this test. The control for the gate itself is the one below.
+    gate survives this test. The NAMED control for the gate itself is the one below -- which is
+    not the same as the only thing that kills that mutant; the one below records what else does.
     """
     observation = _observation(migrated_session)
     register_package_intake(
@@ -445,6 +446,15 @@ def test_the_exemption_is_withheld_when_the_stored_event_carries_the_key(
 
     The sibling clause for the OLDER key still pops, which is what makes `observed != expected`
     and so brings the comparison into play at all -- the caller consults it only then.
+
+    This is the NAMED control, not the only one, and saying otherwise was wrong: measured
+    2026-09-19, dropping this gate also reds
+    `test_package_intake.py::test_a_pre_wsp28_intake_event_still_replays` and
+    `::test_package_intake_replays_ws32_event_identity_without_new_task6_fields`. Those build
+    their stored event from `_command_identity` and pop only their OWN target key, so every
+    later-added optional key lands in it and they guard this gate incidentally. That is robust
+    today and disappears the day somebody "corrects" them to model true prefix shapes by popping
+    every later key -- a named control survives that, an incidental one does not.
     """
     revision = _revision_carrying_this_key_but_not_an_older_one(migrated_session)
     replayed = register_package_intake(migrated_session, intake_command(), human_actor())
