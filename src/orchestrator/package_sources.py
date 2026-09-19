@@ -479,12 +479,18 @@ def load_package_intake_payload(
     *,
     source_repository: str,
     change_record_id: int | None = None,
+    originating_observation_id: str | None = None,
 ) -> dict[str, object]:
     """The intake payload for an approved package.
 
     `change_record_id` (ADR-0026) is the one field here that is NOT derived from the package:
     it says what caused the work, and a package cannot know that. It is supplied by whoever
     invokes the emitter -- the carry, from the approved change-manager record it is carrying.
+
+    `originating_observation_id` (ADR-0026 amendment 1) is the second such field and arrives
+    the same way, from the same record. It is relayed as the STRING the record carries and is
+    not parsed here: this module composes a payload and validates the package, and whether the
+    id names an observation is a question only the orchestrator's own database can answer.
     """
     resolved_path = _resolve_source_path(path)
     package = _read_yaml(resolved_path / "package.yaml")
@@ -498,6 +504,7 @@ def load_package_intake_payload(
         intake_purpose="executable",
         protocol_fixture_only=False,
         change_record_id=change_record_id,
+        originating_observation_id=originating_observation_id,
     )
 
 
@@ -529,6 +536,7 @@ def _load_intake_payload(
     intake_purpose: str,
     protocol_fixture_only: bool,
     change_record_id: int | None = None,
+    originating_observation_id: str | None = None,
 ) -> dict[str, object]:
     acceptance_criteria = _acceptance_criteria(package.get("acceptance"))
     revision = package.get("revision")
@@ -601,4 +609,9 @@ def _load_intake_payload(
     # it used to be is a smaller claim than one that is merely equivalent.
     if change_record_id is not None:
         payload["change_record_id"] = change_record_id
+    # Omitted on the same terms and for the same reason. Every payload emitted before ADR-0026
+    # amendment 1 lacked this key, and the intake replay's legacy exemption keys on the key
+    # being missing from the stored event.
+    if originating_observation_id is not None:
+        payload["originating_observation_id"] = originating_observation_id
     return payload

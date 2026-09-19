@@ -114,8 +114,13 @@ def prepare(
         emit_key(record),
         "--change-record",
         str(record.change_record_id),
-        "--json",
     ]
+    # Passed only when the record carries one. An empty string is not a missing value, and a
+    # record proposed before the contract carries no observation and never will (ADR-0014), so
+    # an unconditional flag would make the emitter name a cause that does not exist.
+    if record.originating_observation_id is not None:
+        command += ["--originating-observation", record.originating_observation_id]
+    command.append("--json")
     try:
         completed = runner(command, capture_output=True, text=True, timeout=EMIT_TIMEOUT_SECONDS)
     except FileNotFoundError:
@@ -143,6 +148,18 @@ def prepare(
     if not isinstance(payload, dict):
         return Refused(record, "emitter_output_unreadable", "payload is not a JSON object")
 
+    disagreement = _disagreement(record, payload)
+    if disagreement is not None:
+        return disagreement
+    return Prepared(record=record, package_path=path, payload=payload)
+
+
+def _disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None:
+    """Everything the built payload must agree with the record about, or None.
+
+    Split out of `prepare` so each subject is one clause rather than a branch in a function that
+    also shells out, parses and handles four failure modes of the emitter.
+    """
     if payload.get("revision") != record.package_revision:
         return Refused(
             record,
@@ -166,4 +183,22 @@ def prepare(
             "join_missing",
             "the prepared payload does not name the change record that caused it",
         )
-    return Prepared(record=record, package_path=path, payload=payload)
+    if payload.get("originating_observation_id") != record.originating_observation_id:
+        # ADR-0026 amendment 1. A DISAGREEMENT, not an absence: both sides are legitimately
+        # None for every record proposed before the contract, and this fires only when the two
+        # differ. The sibling check above can be unconditional because a record always has its
+        # own id; this one cannot, and reading it as "missing" would refuse the whole
+        # pre-contract queue.
+        #
+        # It is a re-read of what this function just passed IN, which is the point: the emitter
+        # composes the payload and nothing here can see what it did with the flag. change-manager
+        # never updates the field once stored (the proposing side writes it at construction and
+        # excludes it from conflict comparison), so the record's value is stable across replays
+        # and a mismatch means the payload is wrong rather than the record having moved.
+        return Refused(
+            record,
+            "originating_observation_mismatch",
+            "the prepared payload names a different originating observation than the record "
+            "that caused it",
+        )
+    return None

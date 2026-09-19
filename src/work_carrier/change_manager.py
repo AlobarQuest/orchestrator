@@ -26,6 +26,7 @@ parameter would read an empty list and report a clean pass having carried nothin
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
@@ -44,6 +45,46 @@ WORK_SOURCE: Final = "work"
 APPROVED: Final = "approved"
 
 _ITEMS: Final = "/api/items"
+# The SHAPE change-manager stores, mirrored so this program refuses at the door what the
+# orchestrator would refuse at the end of a much longer path.
+#
+# IT CAN ONLY EVER REJECT WHAT THE WRITER WOULD NEVER HAVE STORED -- read at source rather than
+# assumed: `app/schemas.py` runs this same `fullmatch` on BOTH proposal schemas, and its
+# validator's docstring records the lowercase-only decision (the orchestrator serialises
+# `str(uuid)`, which is always lowercase, so an uppercase value is one no producer emits). So
+# this is a second reading of one rule, not a second rule: a canonical id always passes.
+#
+# Without it a malformed id reaches `prepare`, which runs the whole emitter subprocess -- resolve
+# the checkout, verify the approval lineage against the tamper-evident chain, read git HEAD --
+# and then agrees with itself, because both sides carry the same bad value. The orchestrator
+# refuses it as a request-model 422, which surfaces as a generic registration failure and points
+# a morning reader away from the cause.
+_CANONICAL_OBSERVATION_ID: Final = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+
+# EXACTLY the keys this program reads off a change-manager row, declared rather than left
+# implicit in `_record`'s body.
+#
+# IT EXISTS SO THE CROSS-REPO FIELD CHECK HAS A LOCAL DECLARATION FOR THE READING SIDE. That
+# check vets what change-manager DECLARES against what this repository's producers SEND and what
+# the carry READS; the two producers already carry a `PROPOSAL_FIELDS` tuple each, and without
+# this one the reading half would have to retype the names into the check script -- a second copy
+# of a vocabulary, which is the defect this repository has re-learned in four others.
+#
+# `tests/work_carrier/test_work_carrier.py` holds it to the keys `_record` actually reads, so the
+# declaration cannot drift from the parse it describes.
+RECORD_FIELDS: Final = (
+    "source",
+    "status",
+    "id",
+    "package_id",
+    "package_revision",
+    "package_source_repository",
+    "reasoning",
+    "decided_by",
+    "originating_observation_id",
+)
 
 
 class ChangeManagerError(Exception):
@@ -74,6 +115,11 @@ class WorkRecord:
     package_source_repository: str
     reasoning: str
     decided_by: str | None
+    # ADR-0026 amendment 1: the observation the proposing producer named as this record's cause.
+    # OPTIONAL, and it has to be: the records this lane was built for were proposed before the
+    # contract existed, they carry null, and nothing back-fills them (ADR-0014). Requiring it
+    # would refuse work a person has already approved, permanently, with no repair.
+    originating_observation_id: str | None = None
 
 
 class WorkRecordSource(Protocol):
@@ -155,6 +201,21 @@ def _record(row: dict[str, Any]) -> WorkRecord:
         raise ChangeManagerError(f"change record {change_record_id} names no package revision")
     if not isinstance(repository, str) or not repository:
         raise ChangeManagerError(f"change record {change_record_id} names no package repository")
+    observation = row.get("originating_observation_id")
+    # Absent and null are ONE answer -- nobody named a cause -- because a record proposed before
+    # the contract and a record served by a change-manager that predates the column are the same
+    # state to this program. Anything else is REFUSED rather than coerced: `str(None)` would file
+    # work under a cause named "None", and a number would be relayed to the emitter as text.
+    #
+    # The `isinstance` arm stays ahead of the shape test because `fullmatch` RAISES on a
+    # non-string rather than answering, and an empty string fails the pattern, so that case needs
+    # no clause of its own.
+    if observation is not None and (
+        not isinstance(observation, str) or not _CANONICAL_OBSERVATION_ID.fullmatch(observation)
+    ):
+        raise ChangeManagerError(
+            f"change record {change_record_id} names an unusable originating observation"
+        )
     return WorkRecord(
         change_record_id=change_record_id,
         package_id=package_id,
@@ -162,4 +223,5 @@ def _record(row: dict[str, Any]) -> WorkRecord:
         package_source_repository=repository,
         reasoning=str(row.get("reasoning") or ""),
         decided_by=row.get("decided_by") if isinstance(row.get("decided_by"), str) else None,
+        originating_observation_id=observation,
     )

@@ -488,6 +488,7 @@ def package_intake_command(body: PackageIntakeRegistration) -> PackageIntakeComm
         intake_purpose=body.intake_purpose,
         follow_up=body.follow_up,
         change_record_id=body.change_record_id,
+        originating_observation_id=body.originating_observation_id,
     )
 
 
@@ -2148,11 +2149,16 @@ def traceability_route(
     pr_number: int | None = None,
     source_repository: str | None = None,
     environment: str | None = None,
+    observation_id: str | None = None,
 ) -> object:
     """WS-P2.6: the intent -> unit -> PR -> commit -> artifact -> deployment -> observation chain.
 
     Authentication-only, no role gate, matching the other read surfaces this composes
     (evidence-pack, release-artifacts, deployment-observations). Read-only: it writes nothing.
+
+    `observation_id` (ADR-0026 amendment 1) is the anchor that asks the question from the other
+    end: what work did this signal cause? It is a query parameter on the existing route rather
+    than a route of its own, so the exactly-one-anchor rule covers it without anything moving.
     """
     anchor = _parse_traceability_anchor(
         work_unit_id=work_unit_id,
@@ -2162,6 +2168,7 @@ def traceability_route(
         pr_number=pr_number,
         source_repository=source_repository,
         environment=environment,
+        observation_id=observation_id,
     )
     return traceability_response(session, anchor)
 
@@ -2175,6 +2182,7 @@ def _parse_traceability_anchor(
     pr_number: int | None,
     source_repository: str | None,
     environment: str | None,
+    observation_id: str | None,
 ) -> TraceabilityAnchor:
     active = [
         (kind, value)
@@ -2185,6 +2193,7 @@ def _parse_traceability_anchor(
             ("commit", commit),
             ("pr", pr_number),
             ("environment", environment),
+            ("observation", observation_id),
         )
         if value is not None
     ]
@@ -2208,6 +2217,16 @@ def _build_work_unit_anchor(value: object, _source_repository: str | None) -> Tr
 def _build_revision_anchor(value: object, _source_repository: str | None) -> TraceabilityAnchor:
     assert isinstance(value, str)
     return TraceabilityAnchor(kind="revision", revision_id=_parse_uuid(value, "revision_id"))
+
+
+def _build_observation_anchor(value: object, _source_repository: str | None) -> TraceabilityAnchor:
+    assert isinstance(value, str)
+    # `_parse_uuid` rather than a bare `uuid.UUID`: an unwrapped parse raises `ValueError`, and
+    # only `DomainError` and `APIAuthenticationError` have registered handlers, so a mistyped
+    # anchor would reach the caller as an unhandled HTTP 500 instead of a named refusal.
+    return TraceabilityAnchor(
+        kind="observation", observation_id=_parse_uuid(value, "observation_id")
+    )
 
 
 def _build_commit_anchor(value: object, _source_repository: str | None) -> TraceabilityAnchor:
@@ -2243,6 +2262,7 @@ _ANCHOR_BUILDERS = {
     "commit": _build_commit_anchor,
     "pr": _build_pr_anchor,
     "environment": _build_environment_anchor,
+    "observation": _build_observation_anchor,
 }
 
 
@@ -2328,6 +2348,7 @@ def _package_intake_payload(
         "authority": command.get("authority"),
         "follow_up": revision.follow_up,
         "change_record_id": revision.change_record_id,
+        "originating_observation_id": revision.originating_observation_id,
         "registry_version": revision.registry_version,
         "registered_by": revision.registered_by,
         "registered_at": revision.registered_at,

@@ -25,6 +25,9 @@ FIXTURE_PACKAGE = "ws32-approved-software"
 # The repository the fixture package would be worked in, and the one `workable_target`
 # makes answer yes on all three constraints.
 TARGET = "AlobarQuest/infraops-mcp-server"
+# The observation a record names as its cause (ADR-0026 amendment 1). A string here, not a UUID
+# object: change-manager stores it as text and this program relays it to the emitter unparsed.
+OBSERVATION = "7a1f0f3e-2b6d-4a0e-9c2f-8d1b5a4c6e70"
 
 
 def record(**overrides) -> WorkRecord:
@@ -58,7 +61,7 @@ def _workable_estate(workable_target: None) -> None:
 
 
 def payload_for(rec: WorkRecord) -> dict:
-    return {
+    payload = {
         "package_id": rec.package_id,
         "revision": rec.package_revision,
         "source_repository": rec.package_source_repository,
@@ -73,6 +76,11 @@ def payload_for(rec: WorkRecord) -> dict:
         # approved package's `profile_fields` here; this is the shape it produces.
         "enforcement_snapshot": {"profile_fields": {"target_repo": TARGET}},
     }
+    # OMITTED when the record names none, exactly as the real emitter omits it: a record
+    # proposed before the signal→work contract carries no observation and never will.
+    if rec.originating_observation_id is not None:
+        payload["originating_observation_id"] = rec.originating_observation_id
+    return payload
 
 
 def runner_returning(payload, *, returncode: int = 0, stderr: str = ""):
@@ -203,6 +211,50 @@ def test_a_prepared_payload_names_the_change_record(checkout_root: Path) -> None
     assert outcome.payload["change_record_id"] == rec.change_record_id
     assert "--change-record" in seen[0]
     assert seen[0][seen[0].index("--change-record") + 1] == str(rec.change_record_id)
+
+
+def test_a_prepared_payload_names_the_originating_observation(checkout_root: Path) -> None:
+    """ADR-0026 amendment 1. The flag is passed and the built payload agrees with the record."""
+    rec = record(originating_observation_id=OBSERVATION)
+    runner, seen = runner_returning(payload_for(rec))
+    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    assert isinstance(outcome, Prepared)
+    assert outcome.payload["originating_observation_id"] == OBSERVATION
+    assert "--originating-observation" in seen[0]
+    assert seen[0][seen[0].index("--originating-observation") + 1] == OBSERVATION
+
+
+def test_no_observation_flag_is_passed_when_the_record_names_none(checkout_root: Path) -> None:
+    """The population this lane was built for: every record proposed before the contract carries
+    null, is never back-filled, and must still carry. An unconditional flag would make the
+    emitter name a cause that does not exist."""
+    rec = record()
+    runner, seen = runner_returning(payload_for(rec))
+    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    assert isinstance(outcome, Prepared)
+    assert "--originating-observation" not in seen[0]
+    assert "originating_observation_id" not in outcome.payload
+
+
+def test_a_payload_naming_a_different_observation_is_refused(checkout_root: Path) -> None:
+    """A DISAGREEMENT rather than an absence, which is why this check cannot be written like its
+    change-record sibling: both sides are legitimately None for the pre-contract population."""
+    rec = record(originating_observation_id=OBSERVATION)
+    runner, _ = runner_returning(
+        {**payload_for(rec), "originating_observation_id": "11111111-1111-1111-1111-111111111111"}
+    )
+    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    assert isinstance(outcome, Refused)
+    assert outcome.reason == "originating_observation_mismatch"
+
+
+def test_a_payload_naming_a_cause_the_record_does_not_is_refused(checkout_root: Path) -> None:
+    """The other direction. A carry must not file work under a cause its record never named."""
+    rec = record()
+    runner, _ = runner_returning({**payload_for(rec), "originating_observation_id": OBSERVATION})
+    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    assert isinstance(outcome, Refused)
+    assert outcome.reason == "originating_observation_mismatch"
 
 
 def test_the_emit_key_is_derived_so_two_passes_print_the_same_bytes() -> None:
@@ -451,6 +503,100 @@ def test_a_row_missing_any_locator_field_is_refused_rather_than_guessed_at(
     with pytest.raises(ChangeManagerError) as raised:
         source.approved_work()
     assert str(raised.value).endswith(message), str(raised.value)
+
+
+def _served(row: dict):
+    """One change-manager row, through the real reader and a mock transport."""
+    import httpx
+
+    from work_carrier.change_manager import HttpWorkRecordSource
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[row])
+
+    return HttpWorkRecordSource(
+        base_url="https://example.invalid",
+        token="t",
+        client=httpx.Client(
+            base_url="https://example.invalid", transport=httpx.MockTransport(handler)
+        ),
+    )
+
+
+def _approved_row(**overrides) -> dict:
+    base = {
+        "id": 9,
+        "source": "work",
+        "status": "approved",
+        "package_id": FIXTURE_PACKAGE,
+        "package_revision": 1,
+        "package_source_repository": "AlobarQuest/intent-packages",
+    }
+    return {**base, **overrides}
+
+
+def test_a_row_naming_an_originating_observation_carries_it() -> None:
+    record_read = _served(_approved_row(originating_observation_id=OBSERVATION)).approved_work()[0]
+    assert record_read.originating_observation_id == OBSERVATION
+
+
+@pytest.mark.parametrize("row", [_approved_row(), _approved_row(originating_observation_id=None)])
+def test_absent_and_null_are_one_answer(row: dict) -> None:
+    """A record proposed before the contract and a change-manager that predates the column are
+    the same state to this program: nobody named a cause. The control for the refusals below."""
+    assert _served(row).approved_work()[0].originating_observation_id is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        9,
+        "",
+        True,
+        ["a"],
+        # SHAPE, not merely type. Each of these is a string change-manager would never have
+        # stored -- it runs the same canonical-lowercase check on both proposal schemas -- and
+        # each would otherwise survive to `prepare`, spend a whole emitter subprocess, and then
+        # agree with itself because both sides carry the same bad value.
+        "not-a-uuid",
+        OBSERVATION.upper(),
+        OBSERVATION[:-1],
+    ],
+)
+def test_an_unusable_originating_observation_is_refused_rather_than_coerced(value: object) -> None:
+    """`str(None)` would file work under a cause named "None", and a number would be relayed to
+    the emitter as text. Refusing is the only answer that cannot invent a cause."""
+    from work_carrier.change_manager import ChangeManagerError
+
+    with pytest.raises(ChangeManagerError) as raised:
+        _served(_approved_row(originating_observation_id=value)).approved_work()
+    assert str(raised.value).endswith("names an unusable originating observation")
+
+
+def test_the_declared_read_fields_are_the_ones_the_parse_actually_reads() -> None:
+    """`RECORD_FIELDS` exists so the cross-repo field check has a local declaration for the
+    READING side rather than a list retyped into the check script. A declaration that drifted
+    from the parse would vet the wrong vocabulary, so it is derived here and compared.
+    """
+    import ast
+    import inspect
+
+    from work_carrier import change_manager
+
+    tree = ast.parse(inspect.getsource(change_manager._record))
+    read = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "row"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+    }
+    assert read, "the scan found no `row.get(...)` calls; it has stopped seeing the parse"
+    assert read == set(change_manager.RECORD_FIELDS)
 
 
 def test_a_complete_row_is_accepted() -> None:

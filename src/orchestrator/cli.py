@@ -177,13 +177,17 @@ def _reason_option(value: str) -> str:
 
 
 def _load_intake_payload(
-    path: Path, source_repository: str, change_record_id: int | None = None
+    path: Path,
+    source_repository: str,
+    change_record_id: int | None = None,
+    originating_observation_id: str | None = None,
 ) -> JsonObject:
     try:
         return load_package_intake_payload(
             path,
             source_repository=source_repository,
             change_record_id=change_record_id,
+            originating_observation_id=originating_observation_id,
         )
     except PackageSourceError as error:
         raise CliError({"code": "package_source_error", "message": str(error)}) from error
@@ -194,9 +198,12 @@ def _build_intake_payload(
     source_repository: str,
     idempotency_key: str,
     change_record_id: int | None = None,
+    originating_observation_id: str | None = None,
 ) -> JsonObject:
     return {
-        **_load_intake_payload(path, source_repository, change_record_id),
+        **_load_intake_payload(
+            path, source_repository, change_record_id, originating_observation_id
+        ),
         "idempotency_key": idempotency_key,
         "expected_version": 0,
     }
@@ -295,11 +302,26 @@ def emit_intake_payload(
             ),
         ),
     ] = None,
+    originating_observation: Annotated[
+        str | None,
+        typer.Option(
+            "--originating-observation",
+            help=(
+                "The observation the change record was a decision about (ADR-0026 amendment "
+                "1). Omitted when the record names none, which is every record proposed "
+                "before the contract."
+            ),
+        ),
+    ] = None,
     json_output: JsonOption = False,
 ) -> None:
     def operation() -> Any:
         payload = _build_intake_payload(
-            Path(path), source_repository, idempotency_key, change_record
+            Path(path),
+            source_repository,
+            idempotency_key,
+            change_record,
+            originating_observation,
         )
         if out is None:
             return payload
