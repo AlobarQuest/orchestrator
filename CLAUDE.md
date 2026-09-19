@@ -5319,3 +5319,43 @@ style of that module.
   `refused` — a finding on every pass, on a write-once row whose status only a human can move, with
   no supersede route. Additive fields belong in neither tuple unless the whole standing population
   can satisfy them.
+
+- **THE ORCHESTRATOR IMAGE DOES NOT SELF-MIGRATE, change-manager's DOES, AND THIS REPOSITORY'S TWO
+  RECORDED RECIPES DISAGREE ABOUT IT.** Settled 2026-09-19 from the image rather than from prose,
+  during the G1+G2 deploys. The orchestrator's `Dockerfile` ends at a bare
+  `CMD ["uvicorn", "orchestrator.main:app", …]` — **no entrypoint script and no `alembic` anywhere**
+  — so a swap applies no migration. change-manager is the opposite: its `entrypoint.sh` runs
+  `alembic upgrade head` at container start, which is where the "no manual migrate step" line in the
+  ADR-0019 Increment 1 report comes from. Two notes here conflict and both are about the
+  orchestrator: `docs/superpowers/plans/2026-07-30-wsp212-context-enrichment.md:1719` says migrate
+  against production, then build, then point Coolify; `…/2026-07-27-wsp27-inc2-inbound-reconciliation.md:1190`
+  says point Coolify and deploy, then run alembic **in the new container**. The first is right, and
+  the reason the second reads plausibly is that it describes what change-manager does.
+  **THE MECHANISM IS THE PART NOBODY WROTE DOWN, and the obvious reading of "migrate first" is
+  impossible:** the new migration exists only in the new image, and the running container carries
+  the old code. So the order is **build → migrate → swap**, where BUILDING DEPLOYS NOTHING
+  (`release-image.yml` only pushes; `build_pack: dockerimage` means Coolify pulls a prebuilt tag and
+  never builds). Migrate by running alembic **from the new image** on the `coolify` network, with
+  the database URL extracted inside the VPS from the running container's own environment and never
+  printed:
+  `DB=$(docker inspect <c> --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^ORCHESTRATOR_DATABASE_URL=' | cut -d= -f2-)`
+  then `docker run --rm --network coolify -e ORCHESTRATOR_DATABASE_URL="$DB" <new-image> sh -c 'cd /app && .venv/bin/alembic upgrade head'`.
+  Measured twice that day — `0034→0035` and `0035→0036`, `current == heads` after each, swap ~50s,
+  `/health/ready` back to 200 — and the drift window between migrate and swap is exactly the
+  documented one: the old container reports `migration_drift` 503 on a readiness endpoint that
+  Coolify's own check (`health_check_enabled: false`) and the Dockerfile `HEALTHCHECK`
+  (`/health/live`) both ignore. Keep it short; do the tag write BEFORE the migration so the swap is
+  one call afterwards.
+
+- **`/code-review`'s FORKED AGENT INHERITS THE SESSION'S CWD, AND WILL CONFIDENTLY REVIEW A
+  DIFFERENT TREE.** Observed 2026-09-19 by the G1+G2 increment-4 build session: it invoked the
+  review from its worktree, the forked agent resolved to `~/Projects/orchestrator` — HQ's main tree,
+  sitting on `origin/main` — and returned a **detailed, specific, entirely irrelevant** review of
+  already-merged PR #278 instead of the branch under test. Re-run with an explicit pull-request
+  target and a stated checkout path, it reviewed the right tree and found a real medium defect.
+  This repository already records the drifted-cwd hazard for a backgrounded `make check`, where the
+  tell is pytest's `rootdir:` line. **A review agent has no such line**, and its failure is worse in
+  the direction that matters: a gate reading the wrong tree returns a suspicious green, where a
+  reviewer reading the wrong tree returns plausible prose about real code that is not yours — which
+  a reader acts on. **Name the pull request and the checkout path when invoking it**, and check that
+  what it reviewed is what you changed before believing any finding, including a clean one.

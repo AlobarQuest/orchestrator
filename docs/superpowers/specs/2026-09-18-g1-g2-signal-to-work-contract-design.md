@@ -192,6 +192,24 @@ change-manager at `main` through the GitHub contents API, AST-parse `WorkChangeI
 `DeployChangeIn`, and fail if either fails to declare a field the orchestrator's producers send or
 `work_carrier` reads. change-manager is a public repository, so `github.token` reaches it.
 
+**CORRECTED 2026-09-19, BY BUILDING IT (#279). THE CLAUSE ABOVE IS UNSATISFIABLE AS WRITTEN, AND
+HELD LITERALLY IT REPORTS FOUR FALSE DIVERGENCES ON ITS FIRST RUN.** `work_carrier` does not read a
+request body. It reads a **response row** off `GET /api/items`, and four of the nine keys in its
+`RECORD_FIELDS` — `source`, `status`, `id`, `decided_by` — exist only on the response and appear on
+neither `WorkChangeIn` nor `DeployChangeIn`. Vetting the reading side against the proposal schemas
+therefore asks the wrong document. The shipped check compares it against **`app/api.py::_item_dict`**,
+the row serializer, and **asserts the premise** that `list_items` serialises through it rather than
+assuming it — a serializer swap on the far side would otherwise leave the check vetting a function
+nothing serves, which is a wrong answer that still reads green.
+
+Two smaller corrections in the same paragraph. **The comparison is SUBSET, never equality**:
+change-manager legitimately declares fields no producer here sends and serves keys the carry does
+not read, because it has other callers; the failure worth catching is asymmetric — a name on THIS
+side the far side does not know. And **"pinned against the local models" cannot be done literally
+here** — an AST parse cannot be pinned against a tuple. The three local vocabularies are *imported*
+from the programs that own them (`PROPOSAL_FIELDS` in each producer, `RECORD_FIELDS` in the carry),
+which is stronger than a pin because no copy exists to drift; what is pinned is the far-side parser.
+
 The parse is pinned against the local models the way the brief check pins its parser against
 `RunnerBriefResponse.model_fields`, so a parser that stopped agreeing with pydantic is caught before
 it can vet anything wrongly.
