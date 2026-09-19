@@ -108,6 +108,17 @@ OBSERVATION_SOURCE_SYSTEMS = (
     # reusing one would be false provenance in a table with no supersession model and no delete
     # route.
     "tool_installer",
+    # The bump proposer: a dependency update is open on a repository, and these are its two
+    # versions. One member for the lane, following its siblings; `subject_reference` names the
+    # repository. THIS IS THE FIRST MEMBER WHOSE LANE ALSO PROPOSES -- every producer above only
+    # observes -- and the member exists precisely to keep those two acts separable: the row is
+    # the durable FACT, and the change record a person decides on is a DECISION about it
+    # (ADR-0026 decision 2). `github` is the near miss and is wrong for the reason the pin
+    # watcher already records: it names the system a fact came from, where every member here
+    # names the PRODUCER. `drift_digest` is wrong because it names the infrastructure drift lane,
+    # whose subject is a hosted estate rather than a repository's dependencies. Reusing either
+    # would write false provenance into a table with no supersession model and no delete route.
+    "bump_proposer",
 )
 OBSERVATION_TRUST_CLASSIFICATIONS = ("orchestrator", "delivery_system", "monitor", "external")
 OBSERVATION_SUBJECT_TYPES = (
@@ -176,6 +187,17 @@ OBSERVATION_TYPES = (
     # only that something was enumerated: this asserts something specific and falsifiable about
     # a binary that filters every command on that machine.
     "tool_revision",
+    # An open dependency update on a repository, and the two versions it names. It asserts that
+    # the update EXISTS and nothing about what should happen to it: whether the estate lands it
+    # by itself, and whether it becomes work, are judgments read from a policy version that moves
+    # under a fact that does not. Keeping them out is what lets the row stay frozen while the
+    # judgment is re-taken every pass. `github_pr` is the near miss and is wrong -- it already
+    # means "a fact about a pull request bound to a work unit" in the reconciliation lane
+    # (`reconciliation_runner/facts.py`), whose rows are subject_type `work_unit`; this one is
+    # `repo`, and relying on two namespaces staying disjoint is a coincidence rather than a
+    # design. `drift` belongs to the infrastructure drift digest, and `inventory` asserts only
+    # that something was enumerated, where this states two specific falsifiable versions.
+    "dependency_update",
 )
 OBSERVATION_STATUSES = (
     "passed",

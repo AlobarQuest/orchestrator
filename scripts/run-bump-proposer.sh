@@ -18,6 +18,13 @@
 # origin under every other lane that reads this checkout. It surrenders no gate: that branch
 # takes a direct push and reports its required checks afterwards whoever performs it.
 #
+# ORDER MATTERS ON THE DAY THE OBSERVATION LANE SHIPS, AND GETTING IT WRONG IS QUIET. This pass
+# files the fact before it proposes, and the orchestrator accepts this producer's vocabulary only
+# once the image carrying it is live AND its migration has been applied -- neither of which a
+# `git pull` of this checkout does, and this lane adds no console script to pause at. Land it,
+# migrate, roll the image, then pull here. Out of that order every bump reports `unobserved`,
+# nothing is proposed, and the pass exits 3 rather than failing loudly.
+#
 # IT REFUSES A DIRTY CHECKOUT. Committing is not tidiness -- the orchestrator's intake payload
 # records `source_commit` as that checkout's git HEAD, so a revision left uncommitted is
 # registered against a commit that does not contain it. Refusing a dirty tree is what stops
@@ -46,7 +53,9 @@
 #      An absent declaration is a REFUSAL and not a waiver: it is a version that did not decide
 #      the question, and this pass will not guess what it would have decided).
 #   3  something was found -- a standing package targeting a repository the landing policy does
-#      not declare inert, a pull request whose title and update trailer disagree, a record
+#      not declare inert, a pull request whose title and update trailer disagree, a bump whose
+#      CAUSE COULD NOT BE FILED (G1+G2: the observation is the cause a proposal names, so a bump
+#      that cannot be stated is reported `unobserved` and nothing is proposed for it), a record
 #      stranded by a bump that moved, a refused proposal, or a revision that was committed and
 #      could not be published (ADR-0033: a failed publish is a finding, not a warning; the line
 #      names the sha it stranded).
@@ -76,6 +85,16 @@ CHANGE_MANAGER_PROPOSE_UUID="${BUMP_PROPOSER_BWS_UUID:-acccb346-4baa-43ec-a1d4-b
 # reached -- with the propose one. The scope is enforced by change-manager, not merely declared.
 CHANGE_MANAGER_READ_UUID="${BUMP_PROPOSER_READ_BWS_UUID:-314f276d-55ca-4ddc-a24d-b4a3013508cd}"
 
+# The orchestrator's OBSERVER bearer (G1+G2). The signal->work contract requires every proposed
+# record to name the observation that caused it, so a writing pass files that fact first -- and
+# this is the credential whose ENTIRE write surface is `POST /api/v1/observations`. Deliberately
+# not the SYSTEM bearer, which can transition units and land pull requests: this lane must not be
+# able to, and the whole point of the record it writes is that a person decides.
+#
+# It is the same bearer every observe-and-report lane holds, by design, which is why the three
+# variables exported for it below are the estate-wide spelling rather than a `BUMP_PROPOSER_` one.
+OBSERVER_BEARER_UUID="${BUMP_PROPOSER_OBSERVER_BWS_UUID:-f793576f-e9aa-4f9d-8089-b4a000b9e2d5}"
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export BUMP_PROPOSER_PACKAGES_CHECKOUT="${BUMP_PROPOSER_PACKAGES_CHECKOUT:-$HOME/Projects/intent-packages}"
 
@@ -93,55 +112,85 @@ export BUMP_PROPOSER_PACKAGES_CHECKOUT="${BUMP_PROPOSER_PACKAGES_CHECKOUT:-$HOME
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-bump-proposer --finding 3 "$@"
 
-# The change-manager tokens live in a BWS project the narrow `sds-operator` account behind
-# scripts/sds-token.sh cannot read, so this launcher bootstraps with the broad machine account
-# -- named rather than silently different, exactly as the deploy producer's launcher names it.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  BWS_ACCESS_TOKEN="$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)"
-  export BWS_ACCESS_TOKEN
-fi
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: BWS_ACCESS_TOKEN not found in Keychain (service Claude)" >&2
-  exit 1
-fi
-
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
-# pipe, which breaks the parse below.
+# pipe, which breaks the parse below. The IDENTITY IS THE SECOND ARGUMENT rather than an ambient
+# export -- see the block underneath.
 _bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE bws secret get "$1" --output json --color no \
+  env -u FORCE_COLOR -u CLICOLOR_FORCE BWS_ACCESS_TOKEN="$2" \
+    bws secret get "$1" --output json --color no \
     | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
 }
+
+# TWO BWS IDENTITIES SINCE G1+G2, AND NEITHER CAN READ THE OTHER'S SECRET. The change-manager
+# bearers live in a project only the BROAD machine account can read; the orchestrator's observer
+# bearer lives in `SDS Operator`, readable only by the narrow read-only `sds-operator` account.
+# Each is read directly from its own Keychain item into its own variable and passed to the fetch
+# that needs it, so no identity is ever ambient and each fetch says which one it used.
+#
+# THIS SCRIPT USED TO EXPORT ONE, and that was correct while every secret it read belonged to the
+# broad account. The upgrade is NOT "add a source of sds-token.sh": that helper respects an
+# already-set `BWS_ACCESS_TOKEN` and exports, so alongside the old bootstrap one ambient value
+# would have served as both identities -- after which NO value of it works, a failure that appears
+# only in an operator's shell and never under launchd.
+#
+# NAME THE FAILURE, because it does not name itself: `bws` answers `404 Resource not found` for a
+# secret an identity is DENIED, which reads as a missing secret rather than as the wrong identity
+# and has cost this estate a diagnosis more than once.
+BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
+  -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
+if [ -z "$BROAD_IDENTITY" ]; then
+  echo "FATAL: no broad BWS identity for the change-manager credentials (service Claude)" >&2
+  exit 1
+fi
 
 # FETCHED ON EVERY RUN, dry or writing. The landing policy is what this pass reports against, so
 # a dry run needs it; it is READ-scoped, so needing it surrenders nothing. Fetched BEFORE the
 # propose credential so that a run which can read but not write fails on the write path, where
 # the message names the credential that is actually missing.
-BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN="$(_bws_value "$CHANGE_MANAGER_READ_UUID")"
+BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN="$(_bws_value "$CHANGE_MANAGER_READ_UUID" "$BROAD_IDENTITY")"
 export BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN
 if [ -z "${BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN:-}" ]; then
-  echo "FATAL: could not read the READ-scoped change-manager credential from BWS" >&2
+  echo "FATAL: could not read the READ-scoped change-manager credential from BWS (broad)" >&2
   exit 1
 fi
 
 # ONLY FETCHED FOR A WRITING RUN. A dry run reports what it would do and sends nothing, so it
-# must not need -- or touch -- the credential that could write.
+# must not need -- or touch -- a credential that could write. THE OBSERVER BEARER IS ON THIS SIDE
+# OF THAT LINE: filing an observation is a write, and a dry run proposes nothing, so it has no
+# cause to file.
 case " $* " in
   *" --submit "*) NEEDS_CREDENTIAL=1 ;;
   *) NEEDS_CREDENTIAL=0 ;;
 esac
 
 if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
-  BUMP_PROPOSER_CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_PROPOSE_UUID")"
+  BUMP_PROPOSER_CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" "$BROAD_IDENTITY")"
   export BUMP_PROPOSER_CHANGE_MANAGER_TOKEN
+
+  SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
+    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
+  if [ -z "$SDS_IDENTITY" ]; then
+    echo "FATAL: no narrow BWS identity for the observer bearer (service Claude)" >&2
+    exit 1
+  fi
+  ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
+  ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
+  ORCHESTRATOR_API_TOKEN="$(_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
+  export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
 fi
 
-# `set -e` is deliberately not used, so a failed fetch would otherwise leave this EMPTY and
+# `set -e` is deliberately not used, so a failed fetch would otherwise leave these EMPTY and
 # fall through. The tool refuses an empty credential and would exit 2 -- fail-closed, but
-# reporting "unusable input" for what is actually a credential failure.
+# reporting "unusable input" for what is actually a credential failure. Named separately so the
+# message points at the identity that could not read, which is the question a 404 from `bws`
+# does not answer by itself.
 if [ "$NEEDS_CREDENTIAL" -eq 1 ] && [ -z "${BUMP_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
-  echo "FATAL: could not read the propose-scoped change-manager credential from BWS" >&2
+  echo "FATAL: could not read the propose-scoped change-manager credential from BWS (broad)" >&2
+  exit 1
+fi
+if [ "$NEEDS_CREDENTIAL" -eq 1 ] && [ -z "${ORCHESTRATOR_API_TOKEN:-}" ]; then
+  echo "FATAL: could not read the orchestrator observer bearer from BWS (narrow)" >&2
   exit 1
 fi
 

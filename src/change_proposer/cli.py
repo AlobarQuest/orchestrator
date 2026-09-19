@@ -132,6 +132,29 @@ EXIT_UNUSABLE = 2
 # a magic string in two places and the recogniser silently ceasing to match.
 REFUSAL_PREFIX = "REFUSED: "
 
+# EXACTLY the keys `_proposal` emits, declared rather than left implicit in a dict literal.
+#
+# IT EXISTS SO THE CROSS-REPO FIELD CHECK HAS BOTH SIDES TO COMPARE. That check vets both of
+# change-manager's proposal schemas, so a declaration for the work lane alone would leave half of
+# it with nothing on this side to hold the other to. Retyping the names into the check script
+# instead would be a second copy of this vocabulary, which is the defect this repository has now
+# re-learned in three other vocabularies.
+#
+# THIS LANE IS DELIBERATELY NOT MADE TO CONFORM to the signal→work contract in this increment:
+# `originating_observation_id` is absent because this producer posts no observation, and the
+# contract's own document names that non-conformance rather than leaving it to be discovered. The
+# check will see it from the day it ships, which is the point of writing this declaration now.
+PROPOSAL_FIELDS = (
+    "target_repository",
+    "pull_request_number",
+    "change_class",
+    "risk",
+    "reasoning",
+    "acceptance_criteria",
+    "rollback_plan",
+    "actor",
+)
+
 # What makes a pass a FINDING rather than a clean run.
 #
 # `underivable` is here and that is the whole point of this constant. It used to be reported
