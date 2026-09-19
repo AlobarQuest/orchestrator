@@ -150,7 +150,27 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python scripts/check_profile_budget_agreement.py
 
-  # A FIFTH SURFACE, AND THE FIRST THAT IS DELIBERATELY ITS OWN JOB RATHER THAN A STEP ABOVE.
+      # THE FIFTH SURFACE, AND THE ONLY ONE WHOSE FAILURE IS AN OUTRIGHT REFUSAL RATHER THAN A
+      # FEATURE THAT QUIETLY DOES NOT EXIST. Three out-of-process programs here speak to
+      # change-manager: two propose records and one reads them back. Both proposal schemas over
+      # there forbid extra keys, so a field this repository sends that change-manager has not
+      # declared is answered 422 and no record is written at all. That is why the signal->work
+      # contract's increments had to ship that repository first, and the ordering was prose
+      # until this step existed.
+      #
+      # It vets the READING side against the row serializer rather than against a proposal
+      # schema, because the carry reads a response and four of the keys it needs exist only
+      # there. The script's own header says why, and what it still cannot see.
+      #
+      # Same job as its four siblings, for the reason they give: the required status check
+      # already protecting them protects this one too, and the job NAME stays as it is because
+      # it is the protected context string.
+      - name: Check the change-record vocabulary against change-manager
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .venv/bin/python scripts/check_change_record_field_compatibility.py
+
+  # A SIXTH SURFACE, AND THE FIRST THAT IS DELIBERATELY ITS OWN JOB RATHER THAN A STEP ABOVE.
   #
   # This repository transcribes, per blob revision, what a green rollout run of `brain` and
   # `change-manager` attests. When those bytes move, the transcription goes stale and two
