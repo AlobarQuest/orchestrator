@@ -206,6 +206,7 @@ def register_revision(
     verification_limitations: Mapping[str, Any] | list[Any] | None = None,
     follow_up: Mapping[str, Any] | None = None,
     change_record_id: int | None = None,
+    originating_observation_id: uuid.UUID | None = None,
     acceptance_criteria: Sequence[Mapping[str, Any]] | None = None,
     actor_id: str,
     actor_role: ActorRole,
@@ -290,6 +291,13 @@ def register_revision(
         # principal in production. The intake path's own replay comparison is one layer up and
         # DOES carry an exemption, in `package_intake._legacy_identity_matches`.
         "change_record_id": change_record_id,
+        # ADR-0026 amendment 1, and it is in `candidate` for the reason above rather than for a
+        # new one: a re-registration of one revision naming a DIFFERENT originating fact is a
+        # conflict, not an overwrite. It stays a `uuid.UUID` here -- the comparison at the
+        # bottom of this function is against the mapped column, and a string would read as a
+        # conflict on a legitimate re-registration. `_json_identity` stringifies it for the
+        # event.
+        "originating_observation_id": originating_observation_id,
         "registered_by": actor_id,
     }
     command = {

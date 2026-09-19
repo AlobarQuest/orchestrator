@@ -73,6 +73,47 @@ def test_the_payload_OMITS_the_key_when_nothing_caused_the_work(
     assert "change_record_id" not in payload
 
 
+def test_the_payload_carries_the_originating_observation_when_one_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0026 amendment 1, arriving the same way the change record does and from the same
+    record. Relayed as the STRING the carry holds: whether it names a row is a question only the
+    orchestrator's own database can answer, and it answers it at intake."""
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+        raising=False,
+    )
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef", raising=False)
+    payload = load_package_intake_payload(
+        Path("tests/fixtures/intent-packages/ws32-approved-software"),
+        source_repository="AlobarQuest/intent-packages",
+        originating_observation_id="7a1f0f3e-2b6d-4a0e-9c2f-8d1b5a4c6e70",
+    )
+    assert payload["originating_observation_id"] == "7a1f0f3e-2b6d-4a0e-9c2f-8d1b5a4c6e70"
+
+
+def test_the_payload_OMITS_the_observation_key_when_no_signal_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absent, not null, on the same terms as the change record: every payload emitted before
+    this key lacked it, and the intake replay's legacy exemption keys on the key being MISSING
+    from the stored event."""
+    monkeypatch.setattr(
+        package_sources,
+        "_verify_current_approval",
+        lambda *args: _verified_approval(),
+        raising=False,
+    )
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef", raising=False)
+    payload = load_package_intake_payload(
+        Path("tests/fixtures/intent-packages/ws32-approved-software"),
+        source_repository="AlobarQuest/intent-packages",
+    )
+    assert "originating_observation_id" not in payload
+
+
 def test_package_source_reader_builds_intake_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         package_sources,

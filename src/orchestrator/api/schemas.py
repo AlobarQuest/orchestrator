@@ -1186,6 +1186,11 @@ class PackageIntakeRegistration(CommandBase):
     # because the column is an Integer, and `strict` because pydantic's lax mode reads `true`
     # as 1 -- which would attribute a revision to change record 1 rather than refusing.
     change_record_id: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
+    # ADR-0026 amendment 1: the observation that caused the record above. Typed as a UUID so
+    # pydantic refuses a malformed one with a 422 rather than letting an unwrapped
+    # `uuid.UUID(bad)` reach the wire as a bare 500 further in. Whether the id names a row that
+    # EXISTS is a database question and is answered in the service, not here.
+    originating_observation_id: UUID | None = None
 
 
 class PackageAcceptanceCriterionResponse(BaseModel):
@@ -1202,6 +1207,7 @@ class PackageAcceptanceCriterionResponse(BaseModel):
 class PackageIntakeResponse(BaseModel):
     id: UUID
     change_record_id: int | None = None
+    originating_observation_id: UUID | None = None
     package_id: str
     source_repository: str
     revision: int
@@ -1880,6 +1886,11 @@ class TraceabilityIntentHop(BaseModel):
     # link is stored -- an observation would not do, because the observation hop filters on
     # `subject_type="work_unit"`, so a revision-scoped observation never reaches any chain.
     change_record_id: int | None = None
+    # ADR-0026 amendment 1. The other half of the same join, and it rides the SAME hop for the
+    # same reason: the observation hop is unit-scoped, so the fact that caused this work could
+    # never arrive through it. Declared here because a FastAPI `response_model` silently drops
+    # any key it does not declare -- the service could set it and the consumer read nothing.
+    originating_observation_id: UUID | None = None
 
 
 class TraceabilityUnitHop(BaseModel):

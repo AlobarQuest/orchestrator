@@ -28,6 +28,7 @@ from orchestrator.api.schemas import (
 from orchestrator.errors import DomainError
 from orchestrator.persistence.models import (
     DeploymentObservation,
+    Observation,
     ReconciliationCondition,
     ReconciliationResolution,
     ReleaseArtifactBinding,
@@ -52,6 +53,7 @@ class TraceabilityAnchor:
     pr_number: int | None = None
     source_repository: str | None = None
     environment: str | None = None
+    observation_id: uuid.UUID | None = None
 
     @property
     def display_value(self) -> str:
@@ -62,6 +64,7 @@ class TraceabilityAnchor:
             "commit": self.commit,
             "pr": self.pr_number,
             "environment": self.environment,
+            "observation": self.observation_id,
         }[self.kind]
         return str(value)
 
@@ -81,6 +84,8 @@ def resolve_anchors(session: Session, anchor: TraceabilityAnchor) -> tuple[uuid.
                 .order_by(WorkUnit.unit_key)
             )
         )
+    if anchor.kind == "observation":
+        return _resolve_observation(session, anchor.observation_id)
     if anchor.kind == "artifact_digest":
         return _distinct_units(
             session,
@@ -115,6 +120,48 @@ def _distinct_units(session: Session, stmt: Select[tuple[uuid.UUID]]) -> tuple[u
     for unit_id in session.scalars(stmt):
         seen.setdefault(unit_id, None)
     return tuple(seen)
+
+
+def _resolve_observation(
+    session: Session, observation_id: uuid.UUID | None
+) -> tuple[uuid.UUID, ...]:
+    """What work did this signal cause? ADR-0026 amendment 1.
+
+    It resolves through the revisions that NAME the observation rather than through the
+    observation hop, which is unit-scoped and therefore can never carry a repository-scoped
+    signal -- the shape every signal producer in this estate emits.
+
+    THE EXISTENCE CHECK IS WHAT MAKES THE EMPTY ANSWER MEAN SOMETHING. "This signal caused
+    nothing yet" is ordinary -- it is the state of every observation nobody has acted on -- and
+    "that is not an observation" is a caller error. Without the check both answer with an empty
+    chain list and a reader cannot tell them apart.
+    """
+    if session.get(Observation, observation_id) is None:
+        raise DomainError("observation_not_found", "observation does not exist", None)
+    return tuple(
+        session.scalars(
+            select(WorkUnit.id)
+            .join(
+                WorkPackageRevision,
+                WorkUnit.work_package_revision_id == WorkPackageRevision.id,
+            )
+            .where(WorkPackageRevision.originating_observation_id == observation_id)
+            # One observation can cause more than one revision -- a package is revised, and each
+            # revision carries the originating reference forward explicitly -- so the order is
+            # across revisions first and by unit key within one.
+            #
+            # REVISION, NEVER THE PRIMARY KEY. `UUIDPrimaryKey.id` defaults to `uuid4`, so an
+            # id-first order is arbitrary and two databases holding the same logical rows answer
+            # differently -- which is the order this clause used to have, under this same
+            # comment. `id` survives only as a total-order tiebreak across DIFFERENT packages,
+            # which share no revision sequence; within one package `revision` is unique.
+            .order_by(
+                WorkPackageRevision.revision,
+                WorkPackageRevision.id,
+                WorkUnit.unit_key,
+            )
+        )
+    )
 
 
 def _resolve_pr(session: Session, anchor: TraceabilityAnchor) -> tuple[uuid.UUID, ...]:
@@ -226,6 +273,7 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
             source_commit=revision.source_commit,
             registered_by=revision.registered_by,
             change_record_id=revision.change_record_id,
+            originating_observation_id=revision.originating_observation_id,
         ),
         unit=TraceabilityUnitHop(
             id=unit.id,

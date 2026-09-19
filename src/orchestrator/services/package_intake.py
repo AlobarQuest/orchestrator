@@ -10,7 +10,12 @@ from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Event, PackageAcceptanceCriterion, WorkPackageRevision
+from orchestrator.persistence.models import (
+    Event,
+    Observation,
+    PackageAcceptanceCriterion,
+    WorkPackageRevision,
+)
 from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.reach_vocabulary import carry_reach, validate_reach
 from orchestrator.services.follow_ups import validate_follow_up
@@ -72,6 +77,12 @@ class PackageIntakeCommand:
     # same trade against the same service -- the permission, written down at the moment it was
     # exercised.
     change_record_id: int | None = None
+    # ADR-0026 amendment 1: the observation the record above was a decision ABOUT. Unlike the
+    # change record it is NOT recorded on trust -- this database owns `observations`, so
+    # `_require_known_originating_observation` refuses an id naming no row. The argument that
+    # keeps the change record on trust (a foreign service's outage must not refuse work a
+    # person approved) does not reach a local table.
+    originating_observation_id: uuid.UUID | None = None
 
 
 def register_package_intake(
@@ -106,6 +117,7 @@ def register_package_intake(
     follow_up = validate_follow_up(command.follow_up)
     reach = validate_reach(command.enforcement_snapshot.get("reach"))
     acceptance_criteria = _validated_acceptance_criteria(command.acceptance_criteria)
+    _require_known_originating_observation(session, command.originating_observation_id)
     PackageRepository(session).lock_package_intake(command.package_id)
     replay = _intake_replay(session, command, actor)
     if replay is not None:
@@ -143,6 +155,7 @@ def register_package_intake(
             verification_limitations=command.verification_limitations,
             follow_up=follow_up,
             change_record_id=command.change_record_id,
+            originating_observation_id=command.originating_observation_id,
             actor_id=actor.actor_id,
             actor_role=actor.role,
             admitted_registrar_roles=INTAKE_REGISTRAR_ROLES,
@@ -224,6 +237,14 @@ def _require_intake_registrar(actor: ActorContext, change_record_id: int | None)
     approved items and is the component that already holds that answer, so the check belongs
     there, before the call. A reader must not take this guard for validation of the record.
 
+    THE OBSERVATION ID IS NOT REQUIRED HERE, AND THAT IS A DECISION RATHER THAN AN OMISSION.
+    ADR-0026 amendment 1 adds a second reference to the same join, but the change records that
+    predate the contract carry no observation and are never back-filled (ADR-0014), so a
+    machine carrying one of those would be refused work a person had already approved.
+    `_require_known_originating_observation` therefore validates the id when one is given and
+    demands nothing when it is not. Tightening this once the pre-contract queue is drained is a
+    separate decision, and belongs to whoever can see that it is drained.
+
     The requirement is blanket across `intake_purpose` rather than scoped to the executable
     lane. A protocol fixture cannot create work units, so it is not the canonical work the rule
     is about -- but nothing registers one by machine today, and a machine that ever does can
@@ -240,6 +261,40 @@ def _require_intake_registrar(actor: ActorContext, change_record_id: int | None)
             "intake_change_record_required",
             "a machine-registered intake must name the approved change record that caused it",
             "register it with the change record id, or register it as a human",
+        )
+
+
+def _require_known_originating_observation(
+    session: Session, originating_observation_id: uuid.UUID | None
+) -> None:
+    """The cause must name a fact this database actually holds. ADR-0026 amendment 1.
+
+    THE ASYMMETRY WITH THE CHANGE RECORD IS THE POINT, and it is not an inconsistency.
+    `_require_intake_registrar` records the change record on TRUST because verifying it would
+    put a synchronous read of a foreign service inside the transaction that writes canonical
+    work. `observations` is this database's own table, read in the same transaction, so that
+    argument does not reach it and the check costs one primary-key lookup.
+
+    IT IS REFUSED RATHER THAN DROPPED because the contract's order is observe-then-propose: a
+    record naming an observation that does not exist is a dangling cause with no repair, since
+    observations are append-only with no supersession model and no delete route. Silently
+    storing an id that resolves to nothing would make the chain answer confidently and wrongly.
+
+    THE CODE DOES NOT END IN `_not_found`, deliberately. `main.py` maps that suffix to HTTP 404,
+    and a 404 from a POST is indistinguishable to a client from a route the deployed image does
+    not serve -- a confusion this estate has already paid for. A 409 says what is true: the
+    request named something that is not there.
+
+    The foreign key on the column is the second line under this, not an alternative to it: an
+    `IntegrityError` has no registered handler and would reach the wire as a bare HTTP 500.
+    """
+    if originating_observation_id is None:
+        return
+    if session.get(Observation, originating_observation_id) is None:
+        raise DomainError(
+            "intake_originating_observation_unknown",
+            "the intake names an originating observation this orchestrator does not hold",
+            "post the observation before proposing the work it caused",
         )
 
 
@@ -316,6 +371,9 @@ def _legacy_identity_matches(
       that goes with it is scoped the same way, for the same reason.
     - `change_record_id` (ADR-0026) applies to every intake_purpose, like `follow_up`, and for
       the same reason: both lanes could have been registered before the key existed.
+    - `originating_observation_id` (ADR-0026 amendment 1) is the same shape again, and its
+      legacy population is EVERY intake in existence when it shipped -- the contract binds
+      records created after it, and nothing is back-filled (ADR-0014).
     """
     if not isinstance(observed, dict):
         return False
@@ -324,6 +382,8 @@ def _legacy_identity_matches(
         legacy.pop("follow_up", None)
     if command.change_record_id is None and "change_record_id" not in observed:
         legacy.pop("change_record_id", None)
+    if command.originating_observation_id is None and "originating_observation_id" not in observed:
+        legacy.pop("originating_observation_id", None)
     if command.intake_purpose == "executable" and "intake_purpose" not in observed:
         legacy.pop("intake_purpose", None)
         expected_limitations = legacy.get("verification_limitations")
@@ -364,6 +424,14 @@ def _command_identity(
         # make the second a silent replay of the first -- which defeats recording a cause at all.
         # It therefore needs the legacy exemption below, exactly as `follow_up` does.
         "change_record_id": command.change_record_id,
+        # ADR-0026 amendment 1, in the identity for the same reason and stringified because
+        # `_normalize_json` passes a `uuid.UUID` through untouched and this dict is stored as
+        # the event payload's JSON.
+        "originating_observation_id": (
+            str(command.originating_observation_id)
+            if command.originating_observation_id is not None
+            else None
+        ),
         "enforcement_snapshot": _normalize_json(command.enforcement_snapshot),
         "authority": command.authority.normalized(),
         "registry_version": command.registry_version,

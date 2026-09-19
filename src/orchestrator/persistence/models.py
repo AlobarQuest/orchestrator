@@ -294,6 +294,29 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
     # NULL means "nothing recorded a cause", which is every revision registered before this
     # column and every revision a human intakes without one. It never means "no cause exists".
     change_record_id: Mapped[int | None] = mapped_column(Integer)
+    # ADR-0026 amendment 1 (G1+G2 clause C3): WHAT FACT CAUSED THE DECISION that caused this
+    # work. The change record above says which decision; this says what the decision was about.
+    # Both are carried because the chain threads two services: change-manager holds the
+    # decision, this database holds the fact, and a query that had only the record would have
+    # to cross a boundary this service has no egress for.
+    #
+    # IT CARRIES A FOREIGN KEY WHERE ITS NEIGHBOUR DELIBERATELY DOES NOT, and the difference is
+    # the neighbour's own stated reason rather than an inconsistency. That comment refuses a
+    # constraint because the referenced rows belong to a FOREIGN system, so the database cannot
+    # enforce it. This database owns `observations`, so the constraint is available and means
+    # what it says. `ReconciliationCondition.observation_id` is the same shape against the same
+    # table.
+    #
+    # THE CONSTRAINT IS NOT THE GUARD. An `IntegrityError` has no registered handler and
+    # reaches the wire as a bare HTTP 500, so `package_intake` refuses an unknown id with a
+    # named `DomainError` before the write. This catches a path that bypassed that service.
+    #
+    # NULL means "nothing recorded a cause", exactly as above: every revision registered before
+    # this column, and every revision whose record predates the contract. Never "no cause
+    # exists".
+    originating_observation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("observations.id")
+    )
     work_package: Mapped[WorkPackage] = relationship()
 
 
