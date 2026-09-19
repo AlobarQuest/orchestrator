@@ -1,6 +1,19 @@
 # The signal→work contract, and making one lane conform
 
-**Status:** proposed, not started. **Repos:** `AlobarQuest/change-manager`, `AlobarQuest/orchestrator`.
+**Status: SHIPPED 2026-09-19.** All five increments merged, and the orchestrator's half deployed and
+verified in production. **Repos:** `AlobarQuest/change-manager`, `AlobarQuest/orchestrator`.
+
+| increment | landed |
+|---|---|
+| 0 — ADR-0026 amendment 1 | `b9810a7` (#275) |
+| 1 — change-manager declares the field | change-manager `8b42783` (#89) |
+| 2 — vocabulary, producer, credential | `cd0ee8f` (#277) |
+| 3 — the carry, the refusal, the query | `8081371` (#278) |
+| 4 — the cross-repo check | `8b672f2` (#279) |
+
+Production serves `8081371` at database head `0036_adr26_originating_obs`; increment 4 is CI-only and
+needs no deploy. **Read the increments for the record of what was decided and why — each one
+corrected something in this plan, and those corrections are inline rather than appended.**
 **Spec:** `docs/superpowers/specs/2026-09-18-g1-g2-signal-to-work-contract-design.md` (merged `3184c999`).
 **Implements:** ADR-0026 decision 2, which has neither half built; extends decision 3; retires decision 6.
 
