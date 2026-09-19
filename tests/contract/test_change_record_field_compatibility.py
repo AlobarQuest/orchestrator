@@ -85,8 +85,8 @@ def list_items(db: Session = Depends(get_db)) -> list[dict]:
 CONTRACT_LINE = "    originating_observation_id: str | None = None\n"
 
 
-def _schemas_missing_from(class_name: str) -> str:
-    """The fixture with the contract field removed from ONE named class.
+def _schemas_missing_from(class_name: str, line: str = CONTRACT_LINE) -> str:
+    """The fixture with one declaration removed from ONE named class.
 
     Targeted rather than `SCHEMAS.replace(..., 1)`, which removes it from whichever class the
     fixture happens to declare first and therefore tests whichever lane happens to come first.
@@ -98,7 +98,8 @@ def _schemas_missing_from(class_name: str) -> str:
     declaration = f"class {class_name}(BaseModel):"
     head, found, tail = SCHEMAS.partition(declaration)
     assert found, f"the fixture declares no {class_name}"
-    return head + found + tail.replace(CONTRACT_LINE, "", 1)
+    assert line in tail, f"{class_name} does not declare {line.strip()}"
+    return head + found + tail.replace(line, "", 1)
 
 
 def _fetch(schemas: str = SCHEMAS, api: str = API):
@@ -272,6 +273,47 @@ def test_a_producer_sending_an_undeclared_field_is_refused(monkeypatch, capsys) 
     captured = capsys.readouterr()
     assert "originating_observation_id" in captured.err
     assert "WorkChangeIn" in captured.err
+
+
+def test_the_other_lane_is_compared_against_its_own_schema_too(monkeypatch, capsys) -> None:
+    """The second comparison, pinned against being tautological.
+
+    Without this the deploy-lane arm could compare that producer's declaration to ITSELF and
+    every test here would still pass, because no other case makes that lane diverge -- it is the
+    one producer whose fields all predate the contract. A mutation proved exactly that: replacing
+    its far side with the local set survived the whole module.
+    """
+    monkeypatch.setattr(
+        check,
+        "fetch",
+        _fetch(
+            schemas=_schemas_missing_from("DeployChangeIn", "    rollback_plan: RollbackPlanIn\n")
+        ),
+    )
+
+    assert check.main() == 1
+    captured = capsys.readouterr()
+    assert "rollback_plan" in captured.err
+    assert "DeployChangeIn" in captured.err
+
+
+def test_an_annotated_private_attribute_is_not_a_field(monkeypatch) -> None:
+    """pydantic does not make one a field, so neither may the parse.
+
+    `model_config` alone does not pin this: it is a plain assignment, which the parse never
+    collects whatever the name filter does. An ANNOTATED underscore or `model_` name is the only
+    shape the filter actually decides, and a mutant dropping that filter survived until this case
+    existed.
+    """
+    source = (
+        "class WorkChangeIn(BaseModel):\n"
+        '    model_config = ConfigDict(extra="forbid")\n'
+        "    model_computed: str\n"
+        "    _internal: int = 0\n"
+        "    package_id: str\n"
+    )
+
+    assert check.declared_fields(source, "WorkChangeIn") == {"package_id"}
 
 
 def test_the_carry_reading_an_unserved_key_is_refused(monkeypatch, capsys) -> None:
