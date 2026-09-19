@@ -346,12 +346,16 @@ def test_a_command_naming_a_cause_does_not_replay_against_a_legacy_event(
     assert raised.value.code == "idempotency_conflict"
 
 
-def test_the_exemption_is_not_applied_when_the_stored_event_carries_the_key(
+def test_a_cause_free_command_does_not_replay_against_an_intake_that_named_one(
     migrated_session: Session,
 ) -> None:
-    """The exemption's other gate, on the OBSERVED event. Applied unconditionally there, an event
-    that legitimately names an observation would compare against an identity that had it popped,
-    so a replay naming NO cause would be accepted against an intake that named one.
+    """The VALUE dimension: two intakes of one revision naming different causes are two
+    registrations, so the one naming none must not be handed the one that named an observation.
+
+    It does NOT exercise the exemption's gate on the observed event, though an earlier version of
+    this docstring claimed it did. Here the two identities differ in the key's VALUE, so they are
+    unequal whether or not the key is popped -- both forms refuse, and a mutant that drops the
+    gate survives this test. The control for the gate itself is the one below.
     """
     observation = _observation(migrated_session)
     register_package_intake(
@@ -363,6 +367,88 @@ def test_the_exemption_is_not_applied_when_the_stored_event_carries_the_key(
     with pytest.raises(DomainError) as raised:
         register_package_intake(migrated_session, intake_command(), human_actor())
     assert raised.value.code == "idempotency_conflict"
+
+
+def _revision_carrying_this_key_but_not_an_older_one(
+    migrated_session: Session,
+) -> WorkPackageRevision:
+    """A stored event carrying THIS key while lacking an OLDER one.
+
+    Every event a writer has produced carries a temporal PREFIX of the identity's optional keys --
+    `intake_purpose`, `follow_up`, `change_record_id` and this one were added in that order and
+    ADR-0014 forbids back-filling -- and for a prefix-shaped event the gate on the observed event
+    is satisfied anyway, so it never changes an answer there. The shape built here is the one it
+    is load-bearing for, and it is what a back-fill or a partial-identity writer would produce.
+
+    The identity is built by the production function and has exactly the OLDER key removed, so
+    the fixture cannot drift from what the comparison expects. The event is INSERTED rather than
+    edited, because `events` is append-only at the database.
+    """
+    command = intake_command()
+    actor = human_actor()
+    revision = register_revision(
+        migrated_session,
+        package_id=command.package_id,
+        source_repository=command.source_repository,
+        revision=command.revision,
+        content_hash=command.content_hash,
+        source_path=command.source_path,
+        source_commit=command.source_commit,
+        approved_by=command.approved_by,
+        approved_at=command.approved_at,
+        approval_event_id=command.approval_event_id,
+        enforcement_snapshot=command.enforcement_snapshot,
+        authority=command.authority,
+        registry_version=command.registry_version,
+        profile=command.profile,
+        status_at_intake=command.status_at_intake,
+        intake_source="package_cli",
+        approval_ledger_commit=command.approval_ledger_commit,
+        verification_mode=command.verification_mode,
+        verification_limitations=command.verification_limitations,
+        actor_id=actor.actor_id,
+        actor_role=actor.role,
+    )
+    migrated_session.flush()
+    legacy = dict(_command_identity(command, actor))
+    assert "originating_observation_id" in legacy, (
+        "the key is not in the identity; the gate under test is unreachable"
+    )
+    assert "follow_up" in legacy, "the older key is not in the identity; the shape is not built"
+    del legacy["follow_up"]
+    migrated_session.add(
+        Event(
+            occurred_at=datetime(2026, 9, 1, tzinfo=UTC),
+            actor_id=actor.actor_id,
+            action="package_revision.intake_registered",
+            subject_type="work_package_revision",
+            subject_id=revision.id,
+            from_state=None,
+            to_state=None,
+            payload={"command": legacy},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=command.idempotency_key,
+        )
+    )
+    migrated_session.commit()
+    return revision
+
+
+def test_the_exemption_is_withheld_when_the_stored_event_carries_the_key(
+    migrated_session: Session,
+) -> None:
+    """The gate on the OBSERVED event, driven by the one input that can tell it apart.
+
+    Popped on the command alone, `legacy` loses a key `observed` still carries, the two differ by
+    a key rather than by a value, and this ordinary cause-free replay is refused as a conflict.
+    The gate withholds the pop precisely because the stored event has the key.
+
+    The sibling clause for the OLDER key still pops, which is what makes `observed != expected`
+    and so brings the comparison into play at all -- the caller consults it only then.
+    """
+    revision = _revision_carrying_this_key_but_not_an_older_one(migrated_session)
+    replayed = register_package_intake(migrated_session, intake_command(), human_actor())
+    assert replayed.id == revision.id
 
 
 def _unit_on_a_revision_caused_by(
