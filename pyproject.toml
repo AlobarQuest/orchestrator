@@ -80,8 +80,8 @@ tool-installer = "tool_installer.cli:app"
 dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.6",
-  "ruff==0.16.6",
-  "pyright==1.1.413",
+  "ruff==0.16.8",
+  "pyright==1.1.414",
   "httpx2>=2.10.0",
 ]
 
