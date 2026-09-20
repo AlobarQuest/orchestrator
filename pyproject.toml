@@ -81,7 +81,7 @@ dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.6",
   "ruff==0.16.8",
-  "pyright==1.1.413",
+  "pyright==1.1.414",
   "httpx2>=2.10.0",
 ]
 
