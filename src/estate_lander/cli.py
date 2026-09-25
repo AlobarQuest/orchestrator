@@ -27,13 +27,12 @@ deliberate declining rather than a condition; see `_FRESHNESS` for the condition
 `_freshness_derived` for which refusals are caused by the position. Every refusal is printed either
 way, so the line always says what was missed.
 
-**THERE ARE TWO ACTS, and the second one is new in ADR-0019 Increment 6.** After the landing pass,
-the program asks the orchestrator to bring up to date any branch whose ONLY remaining obstacle is
-that it is behind its base -- a condition this lane creates itself, because a landing moves the
-base and stales every sibling in that repository. Which ones qualify is the orchestrator's answer,
-composed from the same terms and composed again inside the transaction that acts; this program
-relays it, exactly as it does for the landing. A record can therefore print two lines in one pass,
-one per act considered, and the summary counts lines rather than records.
+**IT HAS ONE ACT, THE LANDING.** Until ADR-0045 it had a second: after the landing pass it asked
+the orchestrator to bring up to date any branch whose only remaining obstacle was being behind its
+base. That act merged the base into the head under the orchestrator's own identity, after which
+the update bot disowns the branch and will not rebase it, so it was deleted rather than narrowed:
+every pull request this lane serves is the update bot's by construction. Being behind is still
+reported, and is still not a finding beside an exception.
 """
 
 from __future__ import annotations
@@ -125,19 +124,19 @@ _DELIBERATE = frozenset({"landing_pace_exhausted", "landing_outside_change_windo
 _EXCEPTION = frozenset({"landing_update_type_unparseable"})
 
 # The refusal that says only THIS BRANCH IS BEHIND ITS BASE. It belongs to NEITHER set above, and
-# a set could not express its treatment anyway: alone it is a FINDING -- transient, and the
-# branch-update pass clears it on a later run -- while beside an exception it is not. Membership is
-# a property of the code; this is a property of the company it keeps.
+# a set could not express its treatment anyway: alone it is a FINDING -- transient, and the update
+# bot's own rebase clears it on a later run -- while beside an exception it is not. Membership is a
+# property of the code; this is a property of the company it keeps.
 #
 # WHY THE CONDITION IS "AN EXCEPTION IS PRESENT" RATHER THAN "THIS LANE DECLINED TO FRESHEN IT".
-# Those two read as the same rule and are not, and the difference is the whole of it. The lane
-# declines to freshen anything carrying a refusal it cannot clear, which INCLUDES
-# `landing_checks_not_clean` -- so keying on the declining would silence a pull request whose checks
-# are failing, and that is a real condition a person can act on. What separates them is DURABILITY:
-# red checks can go green, after which being behind matters again and the lane will act on it; an
-# exception never clears, so such a branch is behind precisely because this program has decided,
-# permanently, not to touch it. A refusal the system produced by deliberately declining to act
-# carries no information a reader could act on. (Devon's third refusal ruling, 2026-08-14.)
+# Those two read as the same rule and are not, and the difference is the whole of it. When this lane
+# still freshened branches (until ADR-0045) it declined anything carrying a refusal it could not
+# clear, which INCLUDED `landing_checks_not_clean` -- so keying on the declining would silence a
+# pull request whose checks are failing, a real condition a person can act on. What separates
+# them is DURABILITY: red checks can go green, after which being behind matters again; an exception
+# never clears, so such a branch is behind precisely because nothing will ever land it. A refusal
+# that carries no information a reader could act on is not a finding. (Devon's third refusal
+# ruling, 2026-08-14.)
 _FRESHNESS = "landing_head_not_current_with_base"
 
 
@@ -152,32 +151,9 @@ _ROLLOUT_MOVED = "landing_rollout_moved"
 # with nothing saying why.
 _BASE_MATCHES_PIN = "rollout_base_matches_pin"
 
-# ADR-0019 Increment 6. Refusals the BRANCH-UPDATE act raises that say only *the answer moved
-# between the read and the request*, which the next pass re-decides on its own.
-#
-# The answer and the act are separate transactions by design: the orchestrator recomposes every
-# term inside the one that acts, and it reads the platform again while doing so. So a head the
-# update bot rebased in that window, or a mergeability the platform had not finished computing,
-# both arrive here -- and neither is a condition anybody can act on. `landing_mergeability_unknown`
-# in particular is ordinary rather than exotic: the platform answers `unknown` while it works.
-#
-# Reporting these as findings would rebuild the class Devon's ruling closed one commit ago -- a
-# deliberate, self-clearing refusal reported as something that could not be measured. Every OTHER
-# refusal stays a finding, including one this program cannot parse a code from, so the polarity is
-# the one this file argues for everywhere.
-_UPDATE_SELF_CLEARING = frozenset(
-    {"estate_branch_update_head_moved", "estate_branch_update_not_qualified"}
-)
-
 # Statuses that are not findings, stated as the set to EXCLUDE so a status nobody has thought of
 # fails toward being reported. Same polarity argument as `_ASK_ABOUT`, one column over.
-#
-# A branch brought up to date is the lane clearing a condition the lane itself caused, which is
-# the system working -- so it is printed and it is not a finding. `would-update` likewise: it is
-# what a dry run has to say in order to be worth running.
-_NOT_A_FINDING = frozenset(
-    {"landed", "would-land", "settled", "deliberate", "exception", "updated", "would-update"}
-)
+_NOT_A_FINDING = frozenset({"landed", "would-land", "settled", "deliberate", "exception"})
 
 # Every status a pass can produce, in report order, so the summary's counts sum to what was
 # considered. A summary whose parts do not add up leaves the reader to infer the remainder, and the
@@ -192,8 +168,6 @@ _REPORTED = (
     "settled",
     "unreadable",
     "error",
-    "updated",
-    "would-update",
 )
 
 
@@ -220,16 +194,6 @@ def _key(repository: str, number: int, head_sha: str) -> str:
     after a rebase is a genuinely new key.
     """
     return f"estate-landing:{repository}:{number}:{head_sha[:12]}"
-
-
-def _update_key(repository: str, number: int, head_sha: str) -> str:
-    """Content-addressed over the head, for the reason above and one more that is specific here.
-
-    A successful update CHANGES the head, so the next legitimate update -- after the base moves
-    again -- necessarily carries a different key and can never be barred by this one. That is what
-    makes an idempotency key safe on an act whose whole nature is that repeating it is right.
-    """
-    return f"estate-branch-update:{repository}:{number}:{head_sha[:12]}"
 
 
 def _freshness_derived(refusals: set[str], *, rollout_base_matches_pin: bool) -> frozenset[str]:
@@ -400,10 +364,6 @@ def _subjects(records: RecordSource) -> Selection:
     order the listing happened to answer in -- which matters because the orchestrator permits one
     landing per repository per window, so WHICH one lands is decided here.
 
-    ONE function, used by both passes, so the landing pass and the branch-update pass can never
-    disagree about which pull requests this program is for. Each pass is given this result rather
-    than reading for itself, because the read is a live request.
-
     A DEFERRED RECORD GETS NO OUTCOME AND IS NOT A FINDING. It is not that this lane tried and
     could not; it is that the record is another lane's business, the way a draft or a person's own
     pull request is. But it is COUNTED and reported, because a subject that vanishes without a line
@@ -444,75 +404,6 @@ def _pass(
     return [_consider(client, repository, number, submit) for repository, number in subjects]
 
 
-def _branch_updates(
-    subjects: list[tuple[str, int]], client: OrchestratorClient, submit: bool
-) -> list[Outcome]:
-    """Bring up to date the branches whose only remaining obstacle is that they are behind.
-
-    **AFTER the landing pass, and that ordering is load-bearing.** A landing moves the base, so it
-    is the act that puts every sibling behind; going first would bring a branch up to date and
-    then immediately stale it again by landing something else, spending a real build on a tree
-    that is out of date before it finishes.
-
-    IT RUNS ON EVERY PASS, not only on one that landed something. A pull request a person merged
-    themselves stales its siblings exactly as ours does, and one staled that way is invisible to
-    anything that only reacts to this program's own acts.
-
-    The answer is READ AGAIN rather than carried over from the landing pass, because the landing
-    pass may have changed it -- which is the whole reason this runs second.
-
-    WHICH ONES QUALIFY IS NOT DECIDED HERE. The orchestrator says so on the answer, and it says so
-    again inside the transaction that acts. A record that does not qualify gets no line, because
-    the landing pass has already printed one naming every condition it misses.
-    """
-    outcomes: list[Outcome] = []
-    for repository, number in subjects:
-        try:
-            answer = client.admission(repository, number)
-        except OrchestratorError as error:
-            outcomes.append(Outcome(repository, number, "unreadable", str(error)))
-            continue
-        if not answer.get("branch_update_qualifies"):
-            continue
-        head = answer.get("head_sha")
-        if not isinstance(head, str) or not head:
-            outcomes.append(
-                Outcome(repository, number, "unreadable", "qualifies but names no head")
-            )
-            continue
-        if not submit:
-            outcomes.append(Outcome(repository, number, "would-update", f"head {head[:12]}"))
-            continue
-        try:
-            answered = client.update_branch(
-                repository,
-                number,
-                head_sha=head,
-                idempotency_key=_update_key(repository, number, head),
-            )
-        except LandingRefused as error:
-            status = "deliberate" if error.code in _UPDATE_SELF_CLEARING else "held"
-            outcomes.append(Outcome(repository, number, status, str(error)))
-        except OrchestratorError as error:
-            outcomes.append(Outcome(repository, number, "error", str(error)))
-        else:
-            if answered.get("replayed"):
-                # ASKED BEFORE, AT THIS SAME HEAD, AND THE BRANCH HAS NOT MOVED. The key is
-                # content-addressed over the head and a success moves it, so this is the platform
-                # having accepted the work and not delivered it. Reporting it as an update would
-                # describe that as success on every pass, forever.
-                outcomes.append(
-                    Outcome(
-                        repository, number, "held", f"asked before at {head[:12]}, still behind"
-                    )
-                )
-            else:
-                outcomes.append(
-                    Outcome(repository, number, "updated", f"was behind at {head[:12]}")
-                )
-    return outcomes
-
-
 def run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -538,12 +429,8 @@ def run(argv: list[str] | None = None) -> int:
             ChangeManagerClient(cm_token, base_url=cm_url or CM_DEFAULT_BASE_URL) as records,
             OrchestratorClient(token, SYSTEM_KEY_ID, base_url=url or DEFAULT_BASE_URL) as client,
         ):
-            # READ ONCE, used by both passes. Reading again between them would put a second
-            # network call inside the `try`, where its failure discards `outcomes` entirely and
-            # returns a bare tool error -- losing the report of a landing that already happened.
             selection = _subjects(records)
             outcomes = _pass(selection.subjects, client, args.submit)
-            outcomes.extend(_branch_updates(selection.subjects, client, args.submit))
     except (ChangeManagerError, OrchestratorError) as error:
         print(str(error), file=sys.stderr)
         return EXIT_TOOL_FAILURE

@@ -62,10 +62,6 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # ADR-0019 Increment 5b: the orchestrator lands a pull request that has no work
         # unit, into a repository where landing changes something already serving.
         "/api/v1/estate-pr-merge",
-        # ADR-0019 Increment 6: the lane brings a pull request's head up to date with the base
-        # it has itself moved. The lane's second act, and much the smaller: it writes to a topic
-        # branch that nothing serves, and only where being behind is the sole remaining obstacle.
-        "/api/v1/estate-pr-branch-update",
         # ADR-0038 part 2: the orchestrator lands a pull request the update bot opened into a
         # repository where landing changes NOTHING already serving -- the population the removed
         # GitHub-native cascade used to land. No change record, no change window, no pace.

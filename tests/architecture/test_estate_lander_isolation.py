@@ -73,16 +73,14 @@ def test_the_landers_third_party_deps_are_confined() -> None:
     assert offenders == set()
 
 
-def test_the_write_surface_is_two_routes_and_no_more() -> None:
-    """TWO since ADR-0019 Increment 6, and the count is in the name so the second one had to be
-    written down rather than acquired. The surface GREW by a named path; it did not open. The
-    addition is much the smaller act of the two -- it brings a topic branch up to date with its
-    base, where the other rewrites a default branch and starts a rollout on a running service."""
+def test_the_write_surface_is_one_route_and_no_more() -> None:
+    """ONE since ADR-0045, and the count is in the name so a second one would have to be written
+    down rather than acquired. ADR-0019 Increment 6 had grown it to two, adding the act of
+    bringing a topic branch up to date with its base; that act was deleted, and the surface shrank
+    with it."""
     assert is_allowed_write("/api/v1/estate-pr-merge")
-    assert is_allowed_write("/api/v1/estate-pr-branch-update")
     for forbidden in (
         "/api/v1/estate-pr-merge/",
-        "/api/v1/estate-pr-branch-update/",
         "/api/v1/estate-pr-merge-admission",
         "/api/v1/work-units/x/pr-merge",
         "/api/v1/work-units/x/dispatch",
@@ -95,10 +93,9 @@ def test_the_write_surface_is_two_routes_and_no_more() -> None:
 def test_the_read_surface_is_one_route_and_no_more() -> None:
     assert is_allowed_read("/api/v1/estate-pr-merge-admission")
     for forbidden in (
-        "/api/v1/estate-pr-merge",
         # A write path is not thereby readable: the two allowlists are separate and each names
-        # its own paths, so the branch-update route cannot be reached by a GET.
-        "/api/v1/estate-pr-branch-update",
+        # its own paths, so the landing route cannot be reached by a GET.
+        "/api/v1/estate-pr-merge",
         "/api/v1/status-ledger",
         "/api/v1/in-flight-units",
     ):

@@ -30,10 +30,8 @@ carrying one idempotency key both read no spent event, both act, and the loser's
 the globally unique index -- an `IntegrityError`, which has no registered handler and so reaches the
 caller as a bare HTTP 500 over an act that in fact happened twice.
 
-The lock key is the one the sibling lane already uses, because it is per repository and the two
-populations cannot overlap: each lane requires the opposite answer from the estate about the same
-repository, and the estate gives one answer per repository. One repository, one branch-update lock,
-whichever lane is asking.
+The lock is per repository. It was once shared with the estate lane's copy of this act, which
+ADR-0045 deleted; this lane is now the only one that takes it.
 
 ## Every fact about this act is read from the composed answer
 
@@ -167,7 +165,12 @@ def _update(
     # exactly what a row lock cannot hold.
     session.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-        {"key": f"estate_pr_branch_update:{repository}"},
+        # One lock per repository for the branch-update act. It was named for the estate lane's
+        # copy of this act until that act was deleted; the name is neutral now because only this
+        # lane takes it. Renaming a lock key is safe here and would not be everywhere: the
+        # orchestrator's swap drops the old container before the new one serves, so no two
+        # containers ever hold the two spellings at once.
+        {"key": f"pr_branch_update:{repository}"},
     )
 
     spent = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))

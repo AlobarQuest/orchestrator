@@ -487,10 +487,11 @@ def test_this_lanes_keys_can_never_collide_with_the_SIBLING_lanes() -> None:
     estate about a repository -- but a shared prefix would make that a fact a reader has to know
     rather than one the key states."""
     from estate_lander.cli import _key as estate_key
-    from estate_lander.cli import _update_key as estate_update_key
 
     assert _key(REPOSITORY, 1, HEAD) != estate_key(REPOSITORY, 1, HEAD)
-    assert _update_key(REPOSITORY, 1, HEAD) != estate_update_key(REPOSITORY, 1, HEAD)
+    # The sibling lane's branch update was deleted by ADR-0045, but the events it spent stay in the
+    # one global key space for good, so its retired prefix is still a prefix this lane must not use.
+    assert not _update_key(REPOSITORY, 1, HEAD).startswith("estate-branch-update:")
 
 
 # --------------------------------------------------------------------------------------------

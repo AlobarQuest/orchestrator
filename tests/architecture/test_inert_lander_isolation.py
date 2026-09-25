@@ -95,7 +95,6 @@ def test_the_write_surface_is_two_routes_and_no_more() -> None:
         # change window and a daily pace. Reaching them from here would be this lane acting on
         # the other lane's population with none of the other lane's conditions.
         "/api/v1/estate-pr-merge",
-        "/api/v1/estate-pr-branch-update",
         "/api/v1/work-units/x/pr-merge",
         "/api/v1/work-units/x/dispatch",
         "/api/v1/observations",

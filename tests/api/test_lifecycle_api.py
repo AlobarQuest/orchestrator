@@ -61,13 +61,7 @@ def test_every_api_success_response_has_an_explicit_schema() -> None:
 # the failure this repository has already recorded twice in guards of this shape.
 EXPECTED_VALUE_EXCEPTIONS = {
     "/api/v1/estate-pr-merge": "expected_head_sha",
-    # ADR-0019 Increment 6. A SECOND entry, and it is the SAME judgment rather than a new one:
-    # the subject is again a pull request in a foreign system, which has no version of ours, and
-    # again its head is the value that moves. Both routes act on a head a caller read, and both
-    # name it. The exception has not been widened -- what it covers is still "a subject with no
-    # version of ours", and both members are the same subject type.
-    "/api/v1/estate-pr-branch-update": "expected_head_sha",
-    # ADR-0038 part 2. A THIRD and FOURTH entry, and still the same judgment rather than a new
+    # ADR-0038 part 2. A SECOND and THIRD entry, and still the same judgment rather than a new
     # one: both act on a pull request in a foreign system, which has no version of ours, and both
     # name the head the caller read. What the exception covers has not widened -- every member is
     # the same subject type, and a route whose subject DOES have a version of ours would still
@@ -90,15 +84,16 @@ def test_every_api_mutation_requires_idempotency_key_and_expected_version() -> N
         assert {"idempotency_key", expected} <= required, path
 
 
-def test_the_expected_value_exception_is_exactly_four_routes_wide() -> None:
+def test_the_expected_value_exception_is_exactly_three_routes_wide() -> None:
     """The exception states a judgment, so it needs its own cross-check.
 
     Emptying it would leave the test above green while protecting less, and adding an entry
     without a reason is how "every mutation states what it read" becomes "most do". Each named
     route must exist, and must genuinely lack a version of ours to state.
 
-    IT IS FOUR ROUTES SINCE ADR-0038 part 2, and the count is in the NAME so that growing it is an
-    edit somebody has to make on purpose. Every member is the same judgment about the same kind of
+    IT IS THREE ROUTES SINCE ADR-0045 (four from ADR-0038 part 2 until the estate lane's
+    branch-update route was deleted), and the count is in the NAME so that growing it is an edit
+    somebody has to make on purpose. Every member is the same judgment about the same kind of
     subject -- a pull request in a foreign system -- so what the exception covers has not widened,
     only the number of lanes acting on that kind of subject. An entry naming a subject that DOES
     have a version of ours would be the failure this test exists to make visible, and it would
@@ -108,7 +103,6 @@ def test_the_expected_value_exception_is_exactly_four_routes_wide() -> None:
 
     assert EXPECTED_VALUE_EXCEPTIONS == {
         "/api/v1/estate-pr-merge": "expected_head_sha",
-        "/api/v1/estate-pr-branch-update": "expected_head_sha",
         "/api/v1/inert-pr-merge": "expected_head_sha",
         "/api/v1/inert-pr-branch-update": "expected_head_sha",
     }
