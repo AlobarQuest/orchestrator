@@ -61,7 +61,8 @@ inherited: given freshness, a landing stales every sibling, so at most one pull 
 repository is landable per pass and freshness serialises the lane by itself. So there is no
 refusal it can raise that clears on a clock, and every refusal that is not a settled subject is a
 finding somebody can act on. An empty set copied from the sibling would look like an oversight;
-having none is the statement.
+having none is the statement. `waiting` (ADR-0045) does not change that: it is keyed on an
+update-bot sibling the orchestrator observed edited and queued to land, not on a clock.
 
 **A refusal excused for ACTING is not thereby excused for REPORTING**, and the one candidate was
 measured rather than assumed. `qualifies_for_branch_update` excuses `landing_checks_awaiting_
@@ -139,6 +140,12 @@ SYSTEM_KEY_ID = "orchestrator-system"
 # nothing about the conditions beside it -- and this lane has no deliberate refusal at all.
 _SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open"})
 
+# ADR-0045. The key on the orchestrator's answer saying the branch update is withheld because
+# another update-bot pull request this lane already edited is queued to land. Named once, for the
+# reason the base comparison's key is: read by a name the server does not serve, `.get` returns
+# `None`, which reads as false, and every queued sibling becomes a finding with nothing saying why.
+_WITHHELD_FOR_SIBLING = "branch_update_withheld_for_sibling"
+
 # Refusals the BRANCH-UPDATE act raises that say only *the answer moved between the read and the
 # request*, which the next pass re-decides on its own.
 #
@@ -150,8 +157,17 @@ _SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open
 #
 # SPELLED `inert_*`, WHICH IS WHY IT COULD NOT HAVE BEEN SHARED with the sibling lane's set even
 # had everything else been shareable.
+#
+# ADR-0045 adds the third: a sibling this lane has already edited is queued to land, so this branch
+# was left Dependabot's on purpose. It clears when the branch ahead lands. Its twin
+# `inert_branch_update_siblings_unreadable` is DELIBERATELY absent -- that one says the
+# orchestrator could not read, and not knowing clears on nothing, so it stays a finding.
 _UPDATE_SELF_CLEARING = frozenset(
-    {"inert_branch_update_head_moved", "inert_branch_update_not_qualified"}
+    {
+        "inert_branch_update_head_moved",
+        "inert_branch_update_not_qualified",
+        "inert_branch_update_sibling_holding",
+    }
 )
 
 # Refusals that CURRENT POLICY can never clear. The deploy policy names the ecosystems whose
@@ -206,10 +222,27 @@ _DEFERRAL_AUTHOR = "not-a-declared-author"
 # A branch brought up to date is the lane clearing a condition the lane itself caused, which is
 # the system working. `would-update` likewise: it is what a dry run has to say in order to be
 # worth running.
+#
+# `waiting` (ADR-0045): a sibling left alone while an update-bot branch this lane already edited is
+# queued to land ahead of it. Its own category, because it clears when that branch lands -- neither
+# on a clock like a deliberate refusal nor never like an exception.
 _NOT_A_FINDING = frozenset(
-    {"landed", "would-land", "settled", "deliberate", "exception", "updated", "would-update"}
+    {
+        "landed",
+        "would-land",
+        "settled",
+        "deliberate",
+        "exception",
+        "waiting",
+        "updated",
+        "would-update",
+    }
 )
 
+# Named `waiting`, never `withheld`: a status that contains another as a substring (`held`) makes
+# every substring reader of the report -- an operator's `grep held`, a test asserting a status is
+# absent -- match both. `test_no_reported_status_is_a_substring_of_another` holds it.
+#
 # Every status a pass can produce, in report order, so the summary's counts sum to what was
 # considered. A summary whose parts do not add up leaves the reader to infer the remainder, and
 # the remainder is where the findings are.
@@ -219,6 +252,7 @@ _REPORTED = (
     "held",
     "deliberate",
     "exception",
+    "waiting",
     "settled",
     "unreadable",
     "error",
@@ -361,8 +395,8 @@ def _subjects(reader: PullRequestSource, rule: InertLanding) -> Selection:
     return Selection(subjects=subjects, deferred=deferred, unreadable=unreadable)
 
 
-def _unsatisfied_status(refusals: list[str]) -> str:
-    """`held` or `exception`, for an answer that is unsatisfied and not settled.
+def _unsatisfied_status(refusals: list[str], *, withheld_for_sibling: bool = False) -> str:
+    """`held`, `exception` or `waiting`, for an answer that is unsatisfied and not settled.
 
     NO REFUSALS AT ALL IS HELD, never a vacuous pass. An answer unsatisfied while naming nothing is
     the orchestrator failing to say why, which is exactly the thing worth reporting -- and a bare
@@ -375,14 +409,25 @@ def _unsatisfied_status(refusals: list[str]) -> str:
 
     EVERY OTHER CODE STAYS A FINDING, including one this program does not enumerate, so a refusal
     nobody has thought of fails toward being reported.
+
+    `waiting` (ADR-0045) is the same conditional suppression keyed on a different observed fact:
+    the orchestrator serves that an edited update-bot sibling is queued ahead of this branch, so it
+    was left behind on purpose. An exception still outranks it, and a key with no freshness refusal
+    to subtract changes nothing. The default is False, so a caller that forgets it gets `held`.
     """
     present = set(refusals)
     unexplained = present - _EXCEPTION
-    if _EXCEPTION & present:
+    if _EXCEPTION & present or withheld_for_sibling:
         unexplained.discard(_FRESHNESS)
     if unexplained or not refusals:
         return "held"
-    return "exception"
+    if _EXCEPTION & present:
+        return "exception"
+    # Only one input survives to here: no exception, so `unexplained` emptied only because the
+    # sibling key subtracted the freshness refusal, and a non-empty `refusals` whose every member
+    # was that one refusal. A trailing `held` after a re-test of those two facts could never be
+    # returned, and a clause no input can falsify is one no mutation can kill.
+    return "waiting"
 
 
 def _consider(client: LandingClient, repository: str, number: int, submit: bool) -> Outcome:
@@ -401,7 +446,10 @@ def _consider(client: LandingClient, repository: str, number: int, submit: bool)
     if _SETTLED & set(refusals):
         return Outcome(repository, number, "settled", ", ".join(refusals))
     if not answer.get("satisfied"):
-        return Outcome(repository, number, _unsatisfied_status(refusals), ", ".join(refusals))
+        status = _unsatisfied_status(
+            refusals, withheld_for_sibling=answer.get(_WITHHELD_FOR_SIBLING) is True
+        )
+        return Outcome(repository, number, status, ", ".join(refusals))
 
     head = answer.get("head_sha")
     if not isinstance(head, str) or not head:
@@ -428,6 +476,18 @@ def _pass(subjects: list[tuple[str, int]], client: LandingClient, submit: bool) 
     return [_consider(client, repository, number, submit) for repository, number in subjects]
 
 
+def _wants_update(answer: dict[str, Any]) -> bool:
+    """Does the answer say this branch should be brought up to date now?
+
+    Only when it qualifies AND is not withheld for a sibling (ADR-0045). A missing withheld key
+    reads as not withheld, which is what an orchestrator older than this program serves -- and
+    that orchestrator freshens exactly as it always did.
+    """
+    return bool(answer.get("branch_update_qualifies")) and (
+        answer.get(_WITHHELD_FOR_SIBLING) is not True
+    )
+
+
 def _branch_updates(
     subjects: list[tuple[str, int]], client: LandingClient, submit: bool
 ) -> list[Outcome]:
@@ -449,7 +509,8 @@ def _branch_updates(
     again inside the transaction that acts; this program relays it. A `branch_update_qualifies`
     key the deployed image does not serve reads as False, which withholds the act -- the direction
     to fail in, and not hypothetical: its sibling read a key that was not there for two days and
-    freshened nothing while reporting zero.
+    freshened nothing while reporting zero. A subject the answer says is withheld for a sibling
+    (ADR-0045) gets no line either, because the landing pass has already printed why.
     """
     outcomes: list[Outcome] = []
     for repository, number in subjects:
@@ -458,7 +519,7 @@ def _branch_updates(
         except OrchestratorError as error:
             outcomes.append(Outcome(repository, number, "unreadable", str(error)))
             continue
-        if not answer.get("branch_update_qualifies"):
+        if not _wants_update(answer):
             continue
         head = answer.get("head_sha")
         if not isinstance(head, str) or not head:

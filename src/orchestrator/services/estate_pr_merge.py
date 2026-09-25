@@ -71,6 +71,8 @@ from orchestrator.services.estate_landing_admission import (
     EstatePullRequest,
     EstateReadGateway,
     HeadCheckRun,
+    OpenPullRequest,
+    PullRequestCommit,
     estate_landing_admission,
     gateway_failure_detail,
 )
@@ -78,6 +80,13 @@ from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import ActorContext
 
 GITHUB_API_URL: Final = "https://api.github.com"
+
+# List reads (ADR-0045). The page size is the platform's maximum, so the ordinary answer is one
+# call; the page bound is a backstop against a listing that never ends, not an expected limit.
+_LIST_PAGE_SIZE: Final = 100
+_MAX_LIST_PAGES: Final = 20
+# The platform's own ceiling on the pull request commits listing, whatever the paging.
+_COMMITS_LIST_CAP: Final = 250
 
 # The trailers the landing writes into the squash body, and the ledger reads back out of it. Named
 # here because this is the only writer; the reader pins the same spellings on its own side, and a
@@ -469,7 +478,7 @@ def _record(
 
 
 class GitHubEstatePullRequests:
-    """The real gateway. Five calls, and two of them change anything.
+    """The real gateway. Seven calls, and two of them change anything.
 
     Holds a token PROVIDER rather than a token, because an installation token expires within the
     hour and a long-lived process would otherwise carry a dead one. Nothing here logs, formats or
@@ -596,6 +605,113 @@ class GitHubEstatePullRequests:
             )
         return tuple(runs)
 
+    def _get_pages(self, url: str, *, cap: int | None = None) -> list[Any]:
+        """Every row of a paginated list answer, or a raise. ADR-0045.
+
+        **Separate from `_get`, which turns a 404 into `None`.** That is right for a single object
+        and wrong for a list: a list answer of 404 read as absent would read as EMPTY, which for
+        the sibling rule means "this repository has no other pull requests" -- the most permissive
+        answer there is. Here any status but 200, on any page, raises.
+
+        A page shorter than the page size ends the list, so the common case costs one call. A
+        failed page after the first raises rather than ending the list: a shorter list that looks
+        complete is the failure pagination exists to prevent. `cap` stops paging once that many
+        rows are held, for a listing the platform itself truncates; what a capped list means is the
+        caller's to decide.
+        """
+        joiner = "&" if "?" in url else "?"
+        rows: list[Any] = []
+        for page in range(1, _MAX_LIST_PAGES + 1):
+            paged = f"{url}{joiner}per_page={_LIST_PAGE_SIZE}&page={page}"
+            try:
+                response = httpx.get(paged, headers=self._headers(), timeout=self._timeout)
+            except (httpx.RequestError, httpx.InvalidURL, ValueError) as error:
+                raise EstateGatewayError(f"request_error:{error.__class__.__name__}") from error
+            if response.status_code != 200:
+                raise EstateGatewayError("list_status", response.status_code)
+            try:
+                body = response.json()
+            except ValueError as error:
+                raise EstateGatewayError("list_response_invalid") from error
+            if not isinstance(body, list):
+                raise EstateGatewayError("list_response_invalid")
+            rows.extend(body)
+            if len(body) < _LIST_PAGE_SIZE or (cap is not None and len(rows) >= cap):
+                return rows
+        raise EstateGatewayError("list_pagination_exceeded")
+
+    def open_pull_requests(self, *, repository: str) -> tuple[OpenPullRequest, ...]:
+        """Every open pull request in the repository, with its author and head. ADR-0045.
+
+        Each row is read strictly: a row with no number cannot be matched to anything and a row
+        with no head cannot be compared with its commits, and dropping either would shorten the
+        list without saying so.
+        """
+        rows = self._get_pages(f"{GITHUB_API_URL}/repos/{repository}/pulls?state=open")
+        pulls: list[OpenPullRequest] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise EstateGatewayError("open_pulls_response_invalid")
+            number = row.get("number")
+            head = row.get("head")
+            head_sha = head.get("sha") if isinstance(head, dict) else None
+            if not isinstance(number, int) or isinstance(number, bool):
+                raise EstateGatewayError("open_pulls_response_invalid")
+            if not isinstance(head_sha, str) or not head_sha:
+                raise EstateGatewayError("open_pulls_response_invalid")
+            user = row.get("user")
+            user = user if isinstance(user, dict) else {}
+            login = user.get("login")
+            pulls.append(
+                OpenPullRequest(
+                    number=number,
+                    head_sha=head_sha,
+                    author_login=login if isinstance(login, str) else "",
+                    author_is_bot=str(user.get("type", "")).lower() == "bot",
+                )
+            )
+        return tuple(pulls)
+
+    def pull_request_commits(
+        self, *, repository: str, number: int
+    ) -> tuple[PullRequestCommit, ...]:
+        """Every commit on the pull request's branch, oldest first. ADR-0045.
+
+        **The platform returns at most 250 commits here however it is paged**, so a list that
+        reaches that many is not known to be complete and raises: a truncated read is an unread
+        one. Update-bot branches carry one to three commits, so this never fires in practice; it
+        exists so that the day it would, the answer is "unread" rather than "these are all".
+
+        The logins are the top-level `author` / `committer` objects -- the accounts GitHub LINKED
+        the commit to -- not the free-text names inside the commit, which anyone can set. Verified
+        is true only when the platform says exactly `true`.
+        """
+        rows = self._get_pages(
+            f"{GITHUB_API_URL}/repos/{repository}/pulls/{number}/commits",
+            cap=_COMMITS_LIST_CAP,
+        )
+        if len(rows) >= _COMMITS_LIST_CAP:
+            raise EstateGatewayError("commits_list_truncated")
+        commits: list[PullRequestCommit] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise EstateGatewayError("commits_response_invalid")
+            sha = row.get("sha")
+            if not isinstance(sha, str) or not sha:
+                raise EstateGatewayError("commits_response_invalid")
+            commit = row.get("commit")
+            verification = commit.get("verification") if isinstance(commit, dict) else None
+            verified = verification.get("verified") if isinstance(verification, dict) else None
+            commits.append(
+                PullRequestCommit(
+                    sha=sha,
+                    author_login=_linked_login(row.get("author")),
+                    committer_login=_linked_login(row.get("committer")),
+                    verified=verified is True,
+                )
+            )
+        return tuple(commits)
+
     def submit_merge(
         self,
         *,
@@ -685,6 +801,14 @@ class GitHubEstatePullRequests:
             raise EstateGatewayError(f"request_error:{error.__class__.__name__}") from error
         if response.status_code != 202:
             raise EstateGatewayError("branch_update_status", response.status_code)
+
+
+def _linked_login(account: Any) -> str | None:
+    """The login of a linked account object, or None when the platform linked no account."""
+    if not isinstance(account, dict):
+        return None
+    login = account.get("login")
+    return login if isinstance(login, str) and login else None
 
 
 def _pull_from_body(body: dict[str, Any], number: int) -> EstatePullRequest:

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -55,6 +56,8 @@ from orchestrator.services.estate_pr_branch_update import (
     BRANCH_UPDATE_HEAD_MOVED,
     BRANCH_UPDATE_NOT_QUALIFIED,
     BRANCH_UPDATE_REFUSED_BY_REMOTE,
+    BRANCH_UPDATE_SIBLING_HOLDING,
+    BRANCH_UPDATE_SIBLINGS_UNREADABLE,
     BRANCH_UPDATE_SUBJECT,
     EstateBranchUpdateCommand,
     update_estate_pull_request_branch,
@@ -67,7 +70,10 @@ from tests.services.estate_landing_doubles import (
     HEAD,
     REPOSITORY,
     FakeEstateGateway,
+    SiblingGateway,
     approved,
+    dependabot_commit,
+    foreign_commit,
     pull_request,
 )
 
@@ -110,6 +116,7 @@ def _update(
     moment: datetime = IN_WINDOW,
     expected_head: str = HEAD,
     key: str = "branch-update-1",
+    record_source: FakeChangeRecordSource | None = None,
 ):
     return update_estate_pull_request_branch(
         session,
@@ -122,7 +129,7 @@ def _update(
         ),
         gateway,
         landing or redeploying_source(),
-        FakeChangeRecordSource({(REPOSITORY, PR): record or approved()}),
+        record_source or FakeChangeRecordSource({(REPOSITORY, PR): record or approved()}),
         enabled=enabled,
         credentials_configured=credentials,
         clock=FixedClock(moment),
@@ -462,6 +469,36 @@ def test_the_WIRE_KEY_the_lander_reads_the_base_comparison_from_is_a_field_this_
     from estate_lander.cli import _BASE_MATCHES_PIN
 
     assert _BASE_MATCHES_PIN in EstateLandingAdmission.__dataclass_fields__
+
+
+def test_the_WIRE_KEY_the_lander_reads_the_withheld_fact_from_is_a_field_this_side_SERVES() -> None:
+    """ADR-0045. Same hazard as the base comparison above: a lander reading the withheld fact by
+    a name the server does not serve gets `None`, treats it as false, and reports every queued
+    sibling as a finding with nothing saying why."""
+    from estate_lander.cli import _WITHHELD_FOR_SIBLING
+
+    assert _WITHHELD_FOR_SIBLING in EstateLandingAdmission.__dataclass_fields__
+
+
+def test_composing_the_answer_alone_observes_no_sibling(migrated_session: Session) -> None:
+    """The admission function never scans siblings -- that would recurse -- so it sets the fact
+    false even on an answer that qualifies. Only the route fills it in."""
+    from orchestrator.services.estate_landing_admission import estate_landing_admission
+
+    answer = estate_landing_admission(
+        migrated_session,
+        REPOSITORY,
+        PR,
+        redeploying_source(),
+        FakeChangeRecordSource({(REPOSITORY, PR): approved()}),
+        _behind(),
+        enabled=True,
+        credentials_configured=True,
+        clock=FixedClock(IN_WINDOW),
+    )
+
+    assert answer.branch_update_qualifies is True
+    assert answer.branch_update_withheld_for_sibling is False
 
 
 def test_the_exception_the_lander_suppresses_beside_is_exactly_the_one_composed_here() -> None:
@@ -991,6 +1028,290 @@ def test_an_unreachable_platform_is_a_gateway_error_and_never_an_escape(monkeypa
 
 
 # --------------------------------------------------------------------------------------------
+# The two LIST reads the sibling rule needs. Both are paginated, and the pagination is the part
+# that fails silently: a reader that stops after page one, or treats a failed later page as the
+# end of the list, answers with a shorter list that looks complete -- and a sibling missing from
+# it is a sibling the rule never considered.
+# --------------------------------------------------------------------------------------------
+
+
+class _Pages:
+    """Stands in for the module-level `httpx.get`, answering by the `page=` query parameter."""
+
+    def __init__(self, pages: dict[int, httpx.Response]) -> None:
+        self.pages = pages
+        self.urls: list[str] = []
+
+    def __call__(self, url, *, headers, timeout):
+        self.urls.append(url)
+        page = int(parse_qs(urlsplit(url).query)["page"][0])
+        return self.pages.get(page, httpx.Response(200, json=[]))
+
+
+def _reader(monkeypatch, pages: _Pages) -> GitHubEstatePullRequests:
+    monkeypatch.setattr(estate_pr_merge.httpx, "get", pages)
+    return GitHubEstatePullRequests(lambda: "a-token")
+
+
+def _open_row(number: int, *, login: str = "dependabot[bot]", kind: str = "Bot") -> dict:
+    return {
+        "number": number,
+        "head": {"sha": f"head-{number}"},
+        "user": {"login": login, "type": kind},
+    }
+
+
+def _commit_row(
+    sha: str,
+    *,
+    author: str | None = "dependabot[bot]",
+    committer: str | None = "web-flow",
+    verified: object = True,
+) -> dict:
+    return {
+        "sha": sha,
+        "author": None if author is None else {"login": author},
+        "committer": None if committer is None else {"login": committer},
+        "commit": {"verification": {"verified": verified}},
+    }
+
+
+def test_the_open_list_follows_every_page(monkeypatch) -> None:
+    pages = _Pages(
+        {
+            1: httpx.Response(200, json=[_open_row(n) for n in range(1, 101)]),
+            2: httpx.Response(200, json=[_open_row(n) for n in range(101, 104)]),
+        }
+    )
+
+    pulls = _reader(monkeypatch, pages).open_pull_requests(repository=REPOSITORY)
+
+    assert len(pulls) == 103
+    assert [p.number for p in pulls] == list(range(1, 104))
+    first, second = (parse_qs(urlsplit(u).query) for u in pages.urls)
+    assert first["state"] == ["open"] and second["state"] == ["open"]
+    assert first["per_page"] == ["100"] and second["per_page"] == ["100"]
+    assert first["page"] == ["1"] and second["page"] == ["2"]
+    assert all(f"/repos/{REPOSITORY}/pulls?" in u for u in pages.urls)
+
+
+def test_a_failing_LATER_page_of_the_open_list_raises(monkeypatch) -> None:
+    """The failure this whole section exists for: page one read, page two refused, and a reader
+    that treats the refusal as the end of the list returns 100 rows that look complete."""
+    pages = _Pages(
+        {
+            1: httpx.Response(200, json=[_open_row(n) for n in range(1, 101)]),
+            2: httpx.Response(500, json={"message": "boom"}),
+        }
+    )
+
+    with pytest.raises(EstateGatewayError) as raised:
+        _reader(monkeypatch, pages).open_pull_requests(repository=REPOSITORY)
+
+    assert raised.value.status_code == 500
+
+
+def test_a_404_on_the_open_list_raises_rather_than_reading_empty(monkeypatch) -> None:
+    """The single-object reader turns a 404 into `None`. A LIST that answers 404 is not an empty
+    list -- read as one, it would say this repository has no siblings at all."""
+    pages = _Pages({1: httpx.Response(404, json={"message": "Not Found"})})
+
+    with pytest.raises(EstateGatewayError) as raised:
+        _reader(monkeypatch, pages).open_pull_requests(repository=REPOSITORY)
+
+    assert raised.value.status_code == 404
+
+
+def test_the_open_list_reads_author_type_and_head(monkeypatch) -> None:
+    pages = _Pages(
+        {
+            1: httpx.Response(
+                200,
+                json=[
+                    _open_row(7),
+                    _open_row(8, login="AlobarQuest", kind="User"),
+                ],
+            )
+        }
+    )
+
+    bot, person = _reader(monkeypatch, pages).open_pull_requests(repository=REPOSITORY)
+
+    assert (bot.number, bot.head_sha, bot.author_login, bot.author_is_bot) == (
+        7,
+        "head-7",
+        "dependabot[bot]",
+        True,
+    )
+    assert (person.author_login, person.author_is_bot) == ("AlobarQuest", False)
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"head": {"sha": "x"}, "user": {"login": "dependabot[bot]", "type": "Bot"}},
+        {"number": True, "head": {"sha": "x"}, "user": {"login": "dependabot[bot]", "type": "Bot"}},
+        {"number": 5, "head": {}, "user": {"login": "dependabot[bot]", "type": "Bot"}},
+        {"number": 5, "user": {"login": "dependabot[bot]", "type": "Bot"}},
+        "not a row",
+    ],
+)
+def test_an_open_list_row_missing_its_number_or_head_raises(monkeypatch, row) -> None:
+    """A row with no number cannot be matched to anything, and a row with no head cannot be
+    compared with its commits -- neither may be dropped silently, which would shorten the list."""
+    pages = _Pages({1: httpx.Response(200, json=[_open_row(1), row])})
+
+    with pytest.raises(EstateGatewayError) as raised:
+        _reader(monkeypatch, pages).open_pull_requests(repository=REPOSITORY)
+
+    assert raised.value.code == "open_pulls_response_invalid"
+
+
+def test_commits_follow_every_page_and_keep_order(monkeypatch) -> None:
+    """ORDER IS LOAD-BEARING: the rule compares the LAST commit's sha with the head the list call
+    named, so a reader that reordered would compare the wrong commit."""
+    pages = _Pages(
+        {
+            1: httpx.Response(200, json=[_commit_row(f"c{n}") for n in range(100)]),
+            2: httpx.Response(200, json=[_commit_row("c100"), _commit_row("newest")]),
+        }
+    )
+
+    commits = _reader(monkeypatch, pages).pull_request_commits(repository=REPOSITORY, number=PR)
+
+    assert len(commits) == 102
+    assert commits[0].sha == "c0"
+    assert commits[-1].sha == "newest"
+    assert all(f"/repos/{REPOSITORY}/pulls/{PR}/commits?" in u for u in pages.urls)
+
+
+def test_a_failing_later_page_of_the_commits_raises(monkeypatch) -> None:
+    pages = _Pages(
+        {
+            1: httpx.Response(200, json=[_commit_row(f"c{n}") for n in range(100)]),
+            2: httpx.Response(502, text="bad gateway"),
+        }
+    )
+
+    with pytest.raises(EstateGatewayError) as raised:
+        _reader(monkeypatch, pages).pull_request_commits(repository=REPOSITORY, number=PR)
+
+    assert raised.value.status_code == 502
+
+
+def test_a_commit_list_that_reaches_the_platform_cap_is_not_believed_complete(monkeypatch) -> None:
+    """The commits listing returns at most 250 entries however it is paged. A list that reaches
+    the cap may have been cut short, so it is an unread list rather than a complete one."""
+    pages = _Pages(
+        {
+            1: httpx.Response(200, json=[_commit_row(f"a{n}") for n in range(100)]),
+            2: httpx.Response(200, json=[_commit_row(f"b{n}") for n in range(100)]),
+            3: httpx.Response(200, json=[_commit_row(f"c{n}") for n in range(50)]),
+        }
+    )
+
+    with pytest.raises(EstateGatewayError) as raised:
+        _reader(monkeypatch, pages).pull_request_commits(repository=REPOSITORY, number=PR)
+
+    assert raised.value.code == "commits_list_truncated"
+
+
+def test_a_commit_list_one_short_of_the_cap_is_believed(monkeypatch) -> None:
+    """The pair to the case above, so the cap is pinned at its value rather than anywhere below."""
+    pages = _Pages(
+        {
+            1: httpx.Response(200, json=[_commit_row(f"a{n}") for n in range(100)]),
+            2: httpx.Response(200, json=[_commit_row(f"b{n}") for n in range(100)]),
+            3: httpx.Response(200, json=[_commit_row(f"c{n}") for n in range(49)]),
+        }
+    )
+
+    commits = _reader(monkeypatch, pages).pull_request_commits(repository=REPOSITORY, number=PR)
+
+    assert len(commits) == 249
+
+
+def test_an_unlinked_author_or_committer_reads_as_None(monkeypatch) -> None:
+    """A commit whose email links to no GitHub account carries `author: null` at the top level.
+    That is not the update bot and not somebody else either -- it is unknown, and the classifier
+    downstream is what decides what unknown means."""
+    pages = _Pages(
+        {
+            1: httpx.Response(
+                200,
+                json=[
+                    _commit_row("no-author", author=None),
+                    _commit_row("no-committer", committer=None),
+                ],
+            )
+        }
+    )
+
+    unlinked_author, unlinked_committer = _reader(monkeypatch, pages).pull_request_commits(
+        repository=REPOSITORY, number=PR
+    )
+
+    assert unlinked_author.author_login is None
+    assert unlinked_author.committer_login == "web-flow"
+    assert unlinked_committer.author_login == "dependabot[bot]"
+    assert unlinked_committer.committer_login is None
+
+
+def test_verification_is_true_only_when_the_platform_says_true(monkeypatch) -> None:
+    pages = _Pages(
+        {
+            1: httpx.Response(
+                200,
+                json=[
+                    _commit_row("yes", verified=True),
+                    _commit_row("string", verified="true"),
+                    _commit_row("absent", verified=None),
+                    {"sha": "no-commit-object", "author": None, "committer": None},
+                ],
+            )
+        }
+    )
+
+    commits = _reader(monkeypatch, pages).pull_request_commits(repository=REPOSITORY, number=PR)
+
+    assert [c.verified for c in commits] == [True, False, False, False]
+
+
+def test_a_commit_row_with_no_sha_raises(monkeypatch) -> None:
+    pages = _Pages({1: httpx.Response(200, json=[_commit_row("ok"), {"author": None}])})
+
+    with pytest.raises(EstateGatewayError) as raised:
+        _reader(monkeypatch, pages).pull_request_commits(repository=REPOSITORY, number=PR)
+
+    assert raised.value.code == "commits_response_invalid"
+
+
+def test_a_token_never_appears_in_a_list_read_error(monkeypatch) -> None:
+    pages = _Pages({1: httpx.Response(403, json={"message": "Resource not accessible"})})
+
+    with pytest.raises(EstateGatewayError) as raised:
+        _reader(monkeypatch, pages).open_pull_requests(repository=REPOSITORY)
+
+    assert raised.value.status_code == 403
+    assert "a-token" not in str(raised.value)
+    assert "a-token" not in repr(raised.value)
+
+
+def test_an_unreachable_platform_on_a_list_read_is_a_gateway_error(monkeypatch) -> None:
+    def explode(url, *, headers, timeout):
+        raise httpx.ConnectError("no route")
+
+    monkeypatch.setattr(estate_pr_merge.httpx, "get", explode)
+
+    with pytest.raises(EstateGatewayError) as raised:
+        GitHubEstatePullRequests(lambda: "a-token").pull_request_commits(
+            repository=REPOSITORY, number=PR
+        )
+
+    assert raised.value.code.startswith("request_error:")
+
+
+# --------------------------------------------------------------------------------------------
 # `events.idempotency_key` is unique across the WHOLE table rather than per act, so "spent on a
 # different subject" has three shapes and every one of them reaches this replay path.
 # --------------------------------------------------------------------------------------------
@@ -1091,5 +1412,148 @@ def test_the_self_clearing_codes_are_exactly_the_ones_this_service_raises() -> N
     """
     from estate_lander.cli import _UPDATE_SELF_CLEARING
 
-    assert _UPDATE_SELF_CLEARING == {BRANCH_UPDATE_HEAD_MOVED, BRANCH_UPDATE_NOT_QUALIFIED}
+    assert _UPDATE_SELF_CLEARING == {
+        BRANCH_UPDATE_HEAD_MOVED,
+        BRANCH_UPDATE_NOT_QUALIFIED,
+        BRANCH_UPDATE_SIBLING_HOLDING,
+    }
     assert BRANCH_UPDATE_REFUSED_BY_REMOTE not in _UPDATE_SELF_CLEARING
+
+
+def test_an_UNREADABLE_scan_is_NOT_self_clearing() -> None:
+    """ADR-0045. The two sibling refusals look alike and mean opposite things to the lander.
+
+    A holding sibling is a deliberate withhold that clears when the branch ahead lands. A scan that
+    could not read is the orchestrator not knowing, and nothing about not knowing clears on its
+    own -- so an act refused for it must stay a finding every pass until the reads succeed.
+    """
+    from estate_lander.cli import _UPDATE_SELF_CLEARING
+
+    assert BRANCH_UPDATE_SIBLINGS_UNREADABLE not in _UPDATE_SELF_CLEARING
+
+
+def test_neither_new_code_contains_the_other() -> None:
+    """A code that is a substring of another satisfies every substring reader of the other -- the
+    report greps, and the discriminating tests that assert a code is ABSENT on one pass and PRESENT
+    on the next. Checked over all four sibling codes, across both lanes."""
+    from orchestrator.services.inert_pr_branch_update import (
+        INERT_BRANCH_UPDATE_SIBLING_HOLDING,
+        INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE,
+    )
+
+    codes = [
+        BRANCH_UPDATE_SIBLING_HOLDING,
+        BRANCH_UPDATE_SIBLINGS_UNREADABLE,
+        INERT_BRANCH_UPDATE_SIBLING_HOLDING,
+        INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE,
+    ]
+    assert len(set(codes)) == 4
+    for one in codes:
+        for other in codes:
+            if one != other:
+                assert one not in other, (one, other)
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0045: the lane edits one Dependabot branch per repository at a time.
+#
+# Every case here composes a REAL sibling admission through the act, over a gateway that answers
+# each pull request for itself -- so what is tested is the act computing the rule, not a value
+# somebody handed it. The single-target fake would hand every sibling the target's answer.
+# --------------------------------------------------------------------------------------------
+
+SIBLING = 50
+SIBLING_HEAD = "b" * 40
+
+
+def _beside_sibling(*, sibling_commits=None, target_commits=None, **kwargs) -> SiblingGateway:
+    """The target behind its base, beside one Dependabot sibling also behind its base.
+
+    Both are otherwise landable, so the sibling's own composed answer names only freshness -- a
+    holding answer. Whether it HOLDS therefore turns on its ownership alone, which is the variable
+    each pair below moves.
+    """
+    commits = {}
+    if sibling_commits is not None:
+        commits[SIBLING] = sibling_commits
+    if target_commits is not None:
+        commits[PR] = target_commits
+    return SiblingGateway(
+        target=PR,
+        pulls={
+            PR: pull_request(number=PR),
+            SIBLING: pull_request(number=SIBLING, head_sha=SIBLING_HEAD),
+        },
+        behind={PR: 3, SIBLING: 3},
+        commits=commits,
+        **kwargs,
+    )
+
+
+def _both_records() -> FakeChangeRecordSource:
+    return FakeChangeRecordSource({(REPOSITORY, PR): approved(), (REPOSITORY, SIBLING): approved()})
+
+
+def _no_update_event_readable(engine: Engine) -> bool:
+    with Session(engine) as reader:
+        return reader.scalar(select(Event).where(Event.action == BRANCH_UPDATE_ACTION)) is None
+
+
+def test_an_owned_branch_beside_an_edited_sibling_that_holds_is_never_touched(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """THE DISCRIMINATING CONTROL, at the surface that writes to a repository. The sibling carries
+    this estate's commit, so Dependabot will no longer rebase it; making the target edited too is
+    the deadlock's whole precondition. The assertion is on the untouched branch and the absent
+    record, not only on the code."""
+    gateway = _beside_sibling(sibling_commits=(foreign_commit(SIBLING_HEAD),))
+
+    with pytest.raises(DomainError) as raised:
+        _update(migrated_session, gateway=gateway, record_source=_both_records())
+
+    assert raised.value.code == BRANCH_UPDATE_SIBLING_HOLDING
+    assert gateway.branch_updates == []
+    assert _no_update_event_readable(migrated_engine)
+
+
+def test_the_same_branch_beside_an_OWNED_sibling_is_brought_up_to_date(
+    migrated_session: Session,
+) -> None:
+    """The pair to the case above, identical but for the sibling's ownership. Only the rule makes
+    the two answers differ, and the act must compute it itself: nothing on the admission answer
+    it composes says so."""
+    gateway = _beside_sibling()
+
+    _update(migrated_session, gateway=gateway, record_source=_both_records())
+
+    assert gateway.branch_updates == [(REPOSITORY, PR, HEAD)]
+
+
+def test_an_already_edited_branch_is_freshened_again_beside_a_holding_sibling(
+    migrated_session: Session,
+) -> None:
+    """It has already lost Dependabot's ownership, so updating it again costs nothing -- and this
+    is what keeps a repository that already has several edited branches workable."""
+    gateway = _beside_sibling(
+        sibling_commits=(foreign_commit(SIBLING_HEAD),),
+        target_commits=(dependabot_commit("a" * 40), foreign_commit(HEAD)),
+    )
+
+    _update(migrated_session, gateway=gateway, record_source=_both_records())
+
+    assert gateway.branch_updates == [(REPOSITORY, PR, HEAD)]
+
+
+def test_an_unreadable_scan_refuses_with_its_own_code_and_touches_nothing(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Not the holding code: the orchestrator could not establish that no other edited branch is
+    queued, and the lander must be able to tell that apart from a repository waiting its turn."""
+    gateway = _beside_sibling(open_error=EstateGatewayError("open_pull_requests_status", 502))
+
+    with pytest.raises(DomainError) as raised:
+        _update(migrated_session, gateway=gateway, record_source=_both_records())
+
+    assert raised.value.code == BRANCH_UPDATE_SIBLINGS_UNREADABLE
+    assert gateway.branch_updates == []
+    assert _no_update_event_readable(migrated_engine)

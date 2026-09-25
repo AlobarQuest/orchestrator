@@ -724,8 +724,13 @@ def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered
         # bringing a branch up to date is the lane clearing a condition the lane itself caused.
         "updated",
         "would-update",
+        # ADR-0045: a sibling withheld while an edited branch ahead of it is queued to land. Its own
+        # category, not a finding, and not `deliberate` -- it clears when that branch lands, not on
+        # a clock.
+        "waiting",
     }
     assert _NOT_A_FINDING < set(_REPORTED)
+    assert "waiting" in _NOT_A_FINDING
 
 
 # ------------------------------------------------------------------------------------------------
@@ -1268,3 +1273,106 @@ def test_the_predicate_has_one_definition_used_by_both_readers() -> None:
     assert _deferral_reason({"change_class": BOT_CHANGE_CLASS}) is None
     assert _deferral_reason({"change_class": FACTORY_CHANGE_CLASS}) == FACTORY_CHANGE_CLASS
     assert _deferral_reason({}) == "unreadable-class"
+
+
+# ------------------------------------------------------------------------------------------------
+# ADR-0045: a sibling withheld because an edited branch ahead of it is queued to land.
+#
+# The key is a fact the orchestrator observed, never a record of the lane declining, and a key
+# alone never quiets a line: `waiting` needs the key TRUE and a freshness refusal actually
+# subtracted. A missing or false key removes nothing, which is the direction to fail when the
+# deployed orchestrator is older than this program.
+# ------------------------------------------------------------------------------------------------
+
+_WITHHELD = "branch_update_withheld_for_sibling"
+
+
+def _landing_line(refusals: list[str], **extra: Any) -> str:
+    client = FakeOrchestrator({(REPOSITORY, 49): _answer(refusals, **extra)})
+    (outcome,) = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+    return outcome.status
+
+
+@pytest.mark.parametrize(
+    ("refusals", "extra", "verdict"),
+    [
+        pytest.param([_PACE, _BEHIND], {_WITHHELD: True}, "waiting", id="pace-behind-key"),
+        pytest.param([_PACE, _BEHIND], {}, "held", id="pace-behind-no-key"),
+        pytest.param([_PACE, _BEHIND], {_WITHHELD: False}, "held", id="pace-behind-key-false"),
+        pytest.param([_BEHIND], {_WITHHELD: True}, "waiting", id="behind-key"),
+        # Guards this program on its own: the orchestrator cannot produce this (a failing check
+        # disqualifies the update), but a lander that silenced it on the key would hide red CI.
+        pytest.param([_BEHIND, _CHECKS], {_WITHHELD: True}, "held", id="behind-checks-key"),
+        # An exception outranks the withhold, because it is the durable fact.
+        pytest.param(
+            [_BEHIND, _ROLLOUT, _UNPARSEABLE],
+            {_WITHHELD: True, "rollout_base_matches_pin": True},
+            "exception",
+            id="exception-beside-key",
+        ),
+        # A key with nothing to subtract quiets nothing new: the pace alone is still deliberate.
+        pytest.param([_PACE], {_WITHHELD: True}, "deliberate", id="pace-alone-key"),
+    ],
+)
+def test_a_sibling_WITHHELD_for_a_holding_branch_reads_waiting_only_on_the_key(
+    refusals: list[str], extra: dict[str, Any], verdict: str
+) -> None:
+    assert _landing_line(refusals, **extra) == verdict
+
+
+def test_waiting_is_not_a_finding() -> None:
+    assert report([Outcome(REPOSITORY, 49, "waiting", "")]) == EXIT_OK
+
+
+def test_the_update_pass_SKIPS_a_withheld_sibling_with_no_line() -> None:
+    """Its landing line has already said why. Skipping it here also makes a dry run honest: it
+    reports `would-update` only for what a live pass would actually update."""
+    client = FakeOrchestrator({(REPOSITORY, 49): _qualifies() | {_WITHHELD: True}})
+
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert outcomes == []
+    assert client.updated == []
+
+
+@pytest.mark.parametrize("key", [False, None], ids=["false", "absent"])
+def test_the_update_pass_acts_when_the_key_is_false_or_absent(key: bool | None) -> None:
+    """An older orchestrator serves no key: the act is asked, and that orchestrator freshens as it
+    always did."""
+    answer = _qualifies() if key is None else _qualifies() | {_WITHHELD: key}
+    client = FakeOrchestrator({(REPOSITORY, 49): answer})
+
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["updated"]
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [
+        ("estate_branch_update_sibling_holding", "deliberate"),
+        ("estate_branch_update_siblings_unreadable", "held"),
+    ],
+)
+def test_an_act_refused_for_a_sibling_reads_by_WHICH_sibling_code(code: str, status: str) -> None:
+    """The served answer and the act can disagree -- they are separate transactions -- so the act
+    may refuse a sibling the answer did not report. Holding is self-clearing; a scan that could not
+    read is the orchestrator not knowing, and stays a finding."""
+    client = FakeOrchestrator(
+        {(REPOSITORY, 49): _qualifies()}, update_error=LandingRefused("sibling", code)
+    )
+
+    outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == [status]
+
+
+def test_no_reported_status_is_a_substring_of_another() -> None:
+    """A status that contains another breaks every substring reader of the report.
+
+    An operator greps the pass's output and the tests assert on its text, so `waiting` beside
+    `held` meant `grep held` matched both and an "absent" assertion on `held` failed for a
+    status that was not `held` at all. Holds for every pair, including statuses added later.
+    """
+    collisions = [(a, b) for a in _REPORTED for b in _REPORTED if a != b and a in b]
+    assert collisions == []

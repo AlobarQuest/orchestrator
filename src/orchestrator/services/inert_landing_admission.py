@@ -163,6 +163,10 @@ class InertLandingAdmission:
     # second, independent reading of the subject to get it. Always one of the two named values, so
     # the act never has to decide what an absent one would mean.
     merge_method: str
+    # ADR-0045. Is the branch update withheld because another Dependabot pull request this lane has
+    # already edited is queued to land? ALWAYS FALSE AS COMPOSED HERE: finding out means composing
+    # each sibling's own answer, which must never ask the same of its siblings. The route fills it.
+    branch_update_withheld_for_sibling: bool
 
 
 def inert_landing_admission(
@@ -248,6 +252,7 @@ def inert_landing_admission(
             tuple(refusals), rollout_base_matches_pin=False
         ),
         merge_method=remote.merge_method,
+        branch_update_withheld_for_sibling=False,
     )
 
 

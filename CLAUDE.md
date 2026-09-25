@@ -2043,6 +2043,13 @@ style of that module.
   first time that control has been green in a real run rather than in a differential. Note the shape, because it will recur: **each
   fix in this family has generated the next category**, and each time the fail-open is the
   over-general version of the correct rule.
+  **CORRECTED 2026-09-25 (ADR-0045): "the lane brings up to date the branches it stales" is no
+  longer unconditional.** For Dependabot pull requests the lane now edits at most one branch per
+  repository at a time, and a sibling it leaves alone reads **`waiting`**, a separate non-finding
+  status. That does not reopen this ruling: `waiting` is keyed on an OBSERVED holding sibling
+  (the served `branch_update_withheld_for_sibling`), never on the lane declining, so the
+  durability discriminator above stands unchanged. And the family's pattern held once more — the
+  status was first spelled `withheld`, which contains `held`, and had to be renamed.
 
   **What `pace_exhausted` actually is, since it reads like a failure and is not: one landing per
   repository per occurrence of the change window.** Record 52 landing `#50` at 05:17 consumed
@@ -3189,6 +3196,24 @@ style of that module.
   `landing_update_type_unparseable` can never land whatever is done to its branch, so updating it is
   pure CI waste that reads as progress. `change-manager#48` (a requirement-range bump, permanently
   unclassifiable) is the standing live control: it must never be touched.
+  **AMENDED 2026-09-25 (ADR-0045): the lane now edits at most ONE edited, landable Dependabot
+  branch per repository.** Update-branch merges base into head under the App's identity, and
+  Dependabot then refuses to rebase the branch ("edited by someone other than Dependabot"), and the
+  App cannot ask it to recreate one. Two such branches in one repository plus a landing is the
+  whole precondition of the deadlock, measured in all four stuck cases (`brain#70`,
+  `change-manager#87`, `#93`, `factory-runner#71`); in every one the lane freshened BOTH members of
+  the pair seconds apart in one pass, and in two of them both were first edits — which is why
+  ownership reads the event log (an update under ten minutes old at the current head) as well as
+  GitHub's commits. So both acts withhold a FIRST edit while another edited Dependabot pull request
+  in the repository still holds (`…_branch_update_sibling_holding`, served as
+  `branch_update_withheld_for_sibling`, reported by both landers as **`waiting`**, not a finding),
+  and refuse as a FINDING when they cannot establish that (`…_branch_update_siblings_unreadable`).
+  An already-edited branch may always be freshened again.
+  **Freshening cannot be handed back to Dependabot** — that was the 2026-09-20 decision, reversed
+  by measurement: across 51 weekly runs Dependabot rebased 0 merely-behind branches, and stretches
+  behind reached about 20 days. The "sole remaining obstacle" rule above still decides WHETHER a
+  branch may be freshened; the sibling rule decides WHICH ONE, and lives at the acts, never in the
+  shared predicate.
 
 - **All four brain applications pull the SAME moving `:latest` tag, so one app pinned elsewhere
   would hang every deploy for the full verification deadline.** Established 2026-08-14 while giving
@@ -3356,6 +3381,13 @@ style of that module.
   Two consequences for onboarding a repository to the cascade: a queue does not drain by itself at
   the rate the arming suggests, and **the number of eligible pull requests that land unattended in a
   day is one**, not N.
+  **CORRECTED 2026-09-25 (ADR-0045), both halves of the "same defect" paragraph.** The landing lane
+  no longer brings every staled sibling up to date — for Dependabot it edits one branch per
+  repository at a time. And "the self-healing that exists is Dependabot's own rebase … on
+  Dependabot's schedule" was inferred and is now measured, and it is weaker than stated:
+  **Dependabot does not rebase a merely-behind branch at all** (0 of 51 weekly runs; 1 rebase from
+  580 unrelated pushes). It pushes to a branch it owns only on conflict (about two minutes after
+  the conflicting push), on a newer version, or on a user's request.
 
 - **A `schedule:` trigger added INSIDE a `code-standards:managed` block is deleted by the next
   `code-standards sync`, with nothing reporting it — and four of the six lane repositories were in
@@ -5359,3 +5391,19 @@ style of that module.
   reviewer reading the wrong tree returns plausible prose about real code that is not yours — which
   a reader acts on. **Name the pull request and the checkout path when invoking it**, and check that
   what it reviewed is what you changed before believing any finding, including a clean one.
+
+- **A HOLDING DEPENDABOT BRANCH WHOSE CHECKS NEVER FINISH STALLS ITS WHOLE REPOSITORY, and that is a
+  chosen residual, not a defect to test away.** ADR-0045 lets the lane edit only one Dependabot
+  branch per repository at a time, and a sibling waits while that branch HOLDS — while every refusal
+  it names is one that clears without anyone acting. Three members of the holding set are there
+  only for the minutes after an update, and each can outlive them: `landing_checks_awaiting_verdict`
+  on a head that is already current (runs cancelled — the Actions quota did it on 2026-08-17 and
+  2026-08-22 — and nothing in the estate re-runs an abandoned check), `landing_checks_in_flight`
+  that never gets a runner or an approval, and `landing_mergeability_unknown` that never resolves.
+  They stay in the set anyway: without them the branch just freshened would stop holding in the very
+  pass that freshened it, and the sibling behind it would be edited too — the defect itself.
+  **How it surfaces:** once, as `held` on the holding branch's own line, because none of the three
+  is in either lander's non-finding set; the siblings behind it read `waiting` and do not multiply
+  it. The remedy is a person re-running the checks on that one branch. **Do not write a test
+  asserting that every holding member clears on its own** — three of them demonstrably need not,
+  and a test saying otherwise would pin a claim the design explicitly declines to make.

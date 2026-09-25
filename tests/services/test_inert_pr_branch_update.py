@@ -8,6 +8,7 @@ as though this pull request had been brought up to date.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -19,11 +20,14 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event
 from orchestrator.services.estate_landing import EstateAnswer
 from orchestrator.services.estate_landing_admission import EstateGatewayError
+from orchestrator.services.inert_landing_policy import InertLandingAnswer
 from orchestrator.services.inert_pr_branch_update import (
     INERT_BRANCH_UPDATE_ACTION,
     INERT_BRANCH_UPDATE_HEAD_MOVED,
     INERT_BRANCH_UPDATE_NOT_QUALIFIED,
     INERT_BRANCH_UPDATE_REFUSED_BY_REMOTE,
+    INERT_BRANCH_UPDATE_SIBLING_HOLDING,
+    INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE,
     InertBranchUpdateCommand,
     update_inert_pull_request_branch,
 )
@@ -32,12 +36,18 @@ from tests.services.estate_doubles import LANDING_REDEPLOYS, FakeEstateLandingSo
 from tests.services.estate_landing_doubles import (
     HEAD,
     FakeEstateGateway,
+    SiblingGateway,
+    foreign_commit,
     pull_request,
     run,
 )
 from tests.services.inert_landing_doubles import (
     INERT_REPOSITORY,
+    SYNC_BOT,
+    SYNC_BRANCH,
+    UPDATE_BOT,
     FakeInertPolicySource,
+    rules,
 )
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
@@ -79,6 +89,7 @@ def _update(
     command: InertBranchUpdateCommand | None = None,
     enabled: bool = True,
     credentials_configured: bool = True,
+    clock=None,
 ):
     return update_inert_pull_request_branch(
         session,
@@ -88,6 +99,7 @@ def _update(
         policy_source or FakeInertPolicySource(),
         enabled=enabled,
         credentials_configured=credentials_configured,
+        clock=clock,
     )
 
 
@@ -351,6 +363,7 @@ def test_the_callers_SELF_CLEARING_set_is_exactly_the_codes_this_act_raises_for_
     assert _UPDATE_SELF_CLEARING == {
         INERT_BRANCH_UPDATE_HEAD_MOVED,
         INERT_BRANCH_UPDATE_NOT_QUALIFIED,
+        INERT_BRANCH_UPDATE_SIBLING_HOLDING,
     }
 
 
@@ -361,6 +374,44 @@ def test_the_remote_REFUSING_is_NOT_one_of_them() -> None:
     from inert_lander.cli import _UPDATE_SELF_CLEARING
 
     assert INERT_BRANCH_UPDATE_REFUSED_BY_REMOTE not in _UPDATE_SELF_CLEARING
+
+
+def test_an_UNREADABLE_scan_is_NOT_self_clearing() -> None:
+    """ADR-0045. A holding sibling clears when the branch ahead lands; a scan that could not read
+    is the orchestrator not knowing, which clears on nothing. Folding the second in with the first
+    would make a repository whose reads keep failing look like one waiting its turn."""
+    from inert_lander.cli import _UPDATE_SELF_CLEARING
+
+    assert INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE not in _UPDATE_SELF_CLEARING
+
+
+def test_the_WIRE_KEY_the_caller_reads_the_withheld_fact_from_is_a_field_this_side_SERVES() -> None:
+    """ADR-0045. Read by a name the server does not serve, the key reads as absent, the caller
+    treats it as false, and every queued sibling is reported as a finding with nothing saying why.
+    Pinned against the service dataclass, which is what the route serializes."""
+    from inert_lander.cli import _WITHHELD_FOR_SIBLING
+    from orchestrator.services.inert_landing_admission import InertLandingAdmission
+
+    assert _WITHHELD_FOR_SIBLING in InertLandingAdmission.__dataclass_fields__
+
+
+def test_composing_the_answer_alone_observes_no_sibling(migrated_session: Session) -> None:
+    """The admission function never scans siblings; only the route fills the fact in."""
+    from orchestrator.services.inert_landing_admission import inert_landing_admission
+
+    answer = inert_landing_admission(
+        migrated_session,
+        INERT_REPOSITORY,
+        PR,
+        FakeEstateLandingSource(),
+        FakeInertPolicySource(),
+        _behind_gateway(),
+        enabled=True,
+        credentials_configured=True,
+    )
+
+    assert answer.branch_update_qualifies is True
+    assert answer.branch_update_withheld_for_sibling is False
 
 
 def test_the_callers_SETTLED_set_is_exactly_the_refusals_that_mean_there_is_nothing_left_to_land():
@@ -383,3 +434,172 @@ def test_the_caller_composes_the_key_THIS_TEST_FILE_IS_WRITTEN_AGAINST() -> None
     from inert_lander.cli import _update_key
 
     assert _update_key(INERT_REPOSITORY, PR, HEAD) == KEY
+
+
+# ------------------------------------------------------------------------------------------
+# ADR-0045: the lane edits one Dependabot branch per repository at a time.
+# ------------------------------------------------------------------------------------------
+
+SIBLING = 4
+SIBLING_HEAD = "b" * 40
+SIBLING_BRANCH = "dependabot/uv/alembic-1.19.0"
+MOMENT = datetime(2026, 9, 25, 6, 15, tzinfo=UTC)
+
+
+class _FixedClock:
+    def __init__(self, moment: datetime) -> None:
+        self._moment = moment
+
+    def now(self, session: Session) -> datetime:
+        return self._moment
+
+
+def _beside_sibling(
+    *,
+    target_author: str = UPDATE_BOT,
+    sibling_commits=None,
+    target_commits=None,
+    **kwargs,
+) -> SiblingGateway:
+    """The target behind its base beside one Dependabot sibling, also behind and otherwise
+    landable -- so the sibling's own composed answer names only freshness, a holding answer."""
+    return SiblingGateway(
+        target=PR,
+        pulls={
+            PR: pull_request(
+                number=PR,
+                head_ref=SYNC_BRANCH if target_author == SYNC_BOT else UV_BRANCH,
+                author_login=target_author,
+            ),
+            SIBLING: pull_request(number=SIBLING, head_sha=SIBLING_HEAD, head_ref=SIBLING_BRANCH),
+        },
+        behind={PR: 2, SIBLING: 2},
+        commits={
+            **({} if sibling_commits is None else {SIBLING: sibling_commits}),
+            **({} if target_commits is None else {PR: target_commits}),
+        },
+        **kwargs,
+    )
+
+
+def _no_update_event_readable(engine: Engine) -> bool:
+    with Session(engine) as reader:
+        return (
+            reader.scalar(select(Event).where(Event.action == INERT_BRANCH_UPDATE_ACTION)) is None
+        )
+
+
+def test_an_owned_branch_beside_an_edited_sibling_that_holds_is_never_touched(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    gateway = _beside_sibling(sibling_commits=(foreign_commit(SIBLING_HEAD),))
+
+    with pytest.raises(DomainError) as caught:
+        _update(migrated_session, gateway=gateway)
+
+    assert caught.value.code == INERT_BRANCH_UPDATE_SIBLING_HOLDING
+    assert gateway.branch_updates == []
+    assert _no_update_event_readable(migrated_engine)
+
+
+def test_the_same_branch_beside_an_OWNED_sibling_is_brought_up_to_date(
+    migrated_session: Session,
+) -> None:
+    """The pair: identical but for the sibling's ownership."""
+    gateway = _beside_sibling()
+
+    _update(migrated_session, gateway=gateway)
+
+    assert gateway.branch_updates == [(INERT_REPOSITORY, PR, HEAD)]
+
+
+def test_an_already_edited_branch_is_freshened_again_beside_a_holding_sibling(
+    migrated_session: Session,
+) -> None:
+    gateway = _beside_sibling(
+        sibling_commits=(foreign_commit(SIBLING_HEAD),), target_commits=(foreign_commit(HEAD),)
+    )
+
+    _update(migrated_session, gateway=gateway)
+
+    assert gateway.branch_updates == [(INERT_REPOSITORY, PR, HEAD)]
+
+
+def test_an_unreadable_scan_refuses_with_its_own_code_and_touches_nothing(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    gateway = _beside_sibling(open_error=EstateGatewayError("open_pull_requests_status", 502))
+
+    with pytest.raises(DomainError) as caught:
+        _update(migrated_session, gateway=gateway)
+
+    assert caught.value.code == INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE
+    assert gateway.branch_updates == []
+    assert _no_update_event_readable(migrated_engine)
+
+
+def test_a_sync_bot_branch_is_never_withheld(migrated_session: Session) -> None:
+    """The sync bot rebuilds its branch daily with a force-push, so an edit disowns nothing and
+    the rule's premise -- Dependabot refusing to maintain a branch -- does not hold for it."""
+    gateway = _beside_sibling(
+        target_author=SYNC_BOT, sibling_commits=(foreign_commit(SIBLING_HEAD),)
+    )
+    policy = FakeInertPolicySource(
+        InertLandingAnswer(
+            rules(
+                permitted_authors=frozenset({UPDATE_BOT, SYNC_BOT}),
+                non_ecosystem_authors=frozenset({SYNC_BOT}),
+            )
+        )
+    )
+
+    _update(migrated_session, gateway=gateway, policy_source=policy)
+
+    assert gateway.branch_updates == [(INERT_REPOSITORY, PR, HEAD)]
+
+
+def _update_event(session: Session, *, occurred_at: datetime) -> None:
+    """An update this lane recorded against the SIBLING's current head -- the platform has
+    accepted it and not yet delivered, so the sibling's commits are still all the bot's."""
+    session.add(
+        Event(
+            occurred_at=occurred_at,
+            actor_id="orchestrator-system",
+            action=INERT_BRANCH_UPDATE_ACTION,
+            subject_type="inert_pull_request",
+            subject_id=uuid.uuid4(),
+            payload={
+                "repository": INERT_REPOSITORY,
+                "pr_number": SIBLING,
+                "head_sha": SIBLING_HEAD,
+            },
+            correlation_id=uuid.uuid4(),
+            idempotency_key=f"earlier-{uuid.uuid4()}",
+        )
+    )
+    session.flush()
+
+
+def test_the_ten_minute_bound_reads_the_injected_clock(migrated_session: Session) -> None:
+    """Eleven minutes: the undelivered update has lapsed, the sibling reads as the bot's, and the
+    target is freshened."""
+    _update_event(migrated_session, occurred_at=MOMENT - timedelta(minutes=11))
+    gateway = _beside_sibling()
+
+    _update(migrated_session, gateway=gateway, clock=_FixedClock(MOMENT))
+
+    assert gateway.branch_updates == [(INERT_REPOSITORY, PR, HEAD)]
+
+
+def test_inside_the_bound_the_undelivered_update_still_holds(migrated_session: Session) -> None:
+    """The pair: nine minutes, same fixture. Only the injected clock separates the two, so an act
+    that ignored it would read the event's age against the real clock and agree with one of them
+    for the wrong reason."""
+    _update_event(migrated_session, occurred_at=MOMENT - timedelta(minutes=9))
+    gateway = _beside_sibling()
+
+    with pytest.raises(DomainError) as caught:
+        _update(migrated_session, gateway=gateway, clock=_FixedClock(MOMENT))
+
+    assert caught.value.code == INERT_BRANCH_UPDATE_SIBLING_HOLDING
+    assert gateway.branch_updates == []

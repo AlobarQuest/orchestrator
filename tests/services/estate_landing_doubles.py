@@ -20,6 +20,8 @@ from orchestrator.services.estate_landing_admission import (
     EstateGatewayError,
     EstatePullRequest,
     HeadCheckRun,
+    OpenPullRequest,
+    PullRequestCommit,
 )
 
 REPOSITORY = "alobarquest/change-manager"
@@ -171,8 +173,34 @@ class FakeEstateGateway:
         update_error: EstateGatewayError | None = None,
         runs: tuple[HeadCheckRun, ...] = (),
         runs_error: EstateGatewayError | None = None,
+        open_pulls: tuple[OpenPullRequest, ...] | None = None,
+        commits: dict[int, tuple[PullRequestCommit, ...]] | None = None,
+        open_error: EstateGatewayError | None = None,
+        commits_error: dict[int, EstateGatewayError] | None = None,
     ) -> None:
         self._pull = pull or pull_request()
+        # ADR-0045. THE DEFAULT IS THE TARGET ALONE, POSITIVELY OWNED: an open list naming only
+        # this pull request, and (below) one update-bot commit at its head. That is the sibling
+        # rule's "no edited sibling, readable commits" hygiene made the default, so every fixture
+        # written before the rule still asks the question it was written to ask -- the rule
+        # reaches its releasing outcome honestly, not because the scan was skipped.
+        self._open_pulls = (
+            (
+                OpenPullRequest(
+                    number=self._pull.number,
+                    head_sha=self._pull.head_sha,
+                    author_login=self._pull.author_login,
+                    author_is_bot=self._pull.author_is_bot,
+                ),
+            )
+            if open_pulls is None
+            else open_pulls
+        )
+        self._commits = commits or {}
+        self._open_error = open_error
+        self._commits_error = commits_error or {}
+        self.open_reads: list[str] = []
+        self.commit_reads: list[tuple[str, int]] = []
         self._behind = behind
         self._blob = blob
         # What the pinned path reads as at the pull request's OWN head, when that differs from the
@@ -228,8 +256,116 @@ class FakeEstateGateway:
         if self._update_error is not None:
             raise self._update_error
 
+    def open_pull_requests(self, *, repository: str) -> tuple[OpenPullRequest, ...]:
+        self.open_reads.append(repository)
+        if self._open_error is not None:
+            raise self._open_error
+        return self._open_pulls
+
+    def pull_request_commits(
+        self, *, repository: str, number: int
+    ) -> tuple[PullRequestCommit, ...]:
+        """The configured commits, else one update-bot commit at that pull request's listed head.
+
+        A number the open list does not name has no head to put a commit at, so it answers with
+        no commits -- which the rule reads as not positively owned, never as owned.
+        """
+        self.commit_reads.append((repository, number))
+        if number in self._commits_error:
+            raise self._commits_error[number]
+        if number in self._commits:
+            return self._commits[number]
+        heads = {p.number: p.head_sha for p in self._open_pulls}
+        return (dependabot_commit(heads[number]),) if number in heads else ()
+
 
 def run(status: str = "completed", conclusion: str | None = "success") -> HeadCheckRun:
     """One workflow run at a head. Defaults to the one that permits, so a fixture states the
     interesting half rather than restating the boring one."""
     return HeadCheckRun(status=status, conclusion=conclusion)
+
+
+def dependabot_commit(sha: str) -> PullRequestCommit:
+    """A commit exactly as the update bot's own commits read: linked to its account, committed
+    through the platform's web-flow identity, and signed by the platform. Measured on 63 of 63
+    update-bot commits across six repositories, 2026-09-25."""
+    return PullRequestCommit(
+        sha=sha, author_login="dependabot[bot]", committer_login="web-flow", verified=True
+    )
+
+
+def foreign_commit(sha: str, author: str = "alobar-sds-dispatch[bot]") -> PullRequestCommit:
+    """A commit someone other than the update bot authored. The default is this estate's own App,
+    whose update-branch commits ALSO carry committer web-flow and a platform signature -- the
+    author is what tells the two apart."""
+    return PullRequestCommit(
+        sha=sha, author_login=author, committer_login="web-flow", verified=True
+    )
+
+
+def open_pull(
+    number: int, head_sha: str, author: str = "dependabot[bot]", is_bot: bool = True
+) -> OpenPullRequest:
+    return OpenPullRequest(
+        number=number, head_sha=head_sha, author_login=author, author_is_bot=is_bot
+    )
+
+
+class SiblingGateway(FakeEstateGateway):
+    """A repository with SEVERAL open pull requests, each answering for itself. ADR-0045.
+
+    The single-target fake answers every read about one pull request, whichever number is asked.
+    That is exactly wrong for the sibling rule, whose composer reads each sibling's own admission:
+    it would hand every sibling the target's answer and test nothing about siblings. Here the pull
+    request, how far behind it is and its runs are looked up by number (the latter two by the head
+    the cascade passes, which names one pull request).
+
+    The open list is derived from `pulls` unless given, so a fixture states the population once.
+    """
+
+    def __init__(
+        self,
+        *,
+        target: int,
+        pulls: dict[int, EstatePullRequest],
+        behind: dict[int, int] | None = None,
+        runs: dict[int, tuple[HeadCheckRun, ...]] | None = None,
+        open_pulls: tuple[OpenPullRequest, ...] | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            pull=pulls[target],
+            open_pulls=(
+                tuple(
+                    open_pull(p.number, p.head_sha, p.author_login, p.author_is_bot)
+                    for p in pulls.values()
+                )
+                if open_pulls is None
+                else open_pulls
+            ),
+            **kwargs,
+        )
+        self._pulls = pulls
+        self._behind_by = behind or {}
+        self._runs_by = runs or {}
+
+    def _number_at(self, head_sha: str) -> int | None:
+        return next((n for n, p in self._pulls.items() if p.head_sha == head_sha), None)
+
+    def read_pull_request(self, *, repository: str, number: int) -> EstatePullRequest:
+        self.reads.append((repository, number))
+        if self._read_error is not None:
+            raise self._read_error
+        return self._pulls[number]
+
+    def commits_behind_base(self, *, repository: str, base_ref: str, head_sha: str) -> int:
+        self.compares.append((repository, base_ref, head_sha))
+        if self._compare_error is not None:
+            raise self._compare_error
+        return self._behind_by.get(self._number_at(head_sha) or -1, 0)
+
+    def head_check_runs(self, *, repository: str, head_sha: str) -> tuple[HeadCheckRun, ...]:
+        self.run_reads.append((repository, head_sha))
+        if self._runs_error is not None:
+            raise self._runs_error
+        return self._runs_by.get(self._number_at(head_sha) or -1, ())
