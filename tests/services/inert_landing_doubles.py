@@ -112,6 +112,19 @@ def rules(
     )
 
 
+def both_authors_rules() -> InertLandingRules:
+    """Policy v8's shape: both declared authors, the sync author exempt from the ecosystem bound.
+
+    ADR-0045. Freshness controls use the SYNC author under this policy because the update bot's
+    branches are never freshened at all -- a freshness control written against the update bot
+    asserts "not freshened" whatever the shared predicate says, and stops discriminating on it.
+    """
+    return rules(
+        permitted_authors=frozenset({UPDATE_BOT, SYNC_BOT}),
+        non_ecosystem_authors=frozenset({SYNC_BOT}),
+    )
+
+
 class FakeInertPolicySource:
     """Records that it was asked, so a test can assert on a question NOT put."""
 

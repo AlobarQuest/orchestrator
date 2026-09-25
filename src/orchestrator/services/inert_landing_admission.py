@@ -89,6 +89,7 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_PULL_REQUEST_NOT_OPEN,
     LANDING_PULL_REQUEST_UNREADABLE,
     MERGEABLE_UNKNOWN,
+    UPDATE_BOT_LOGIN,
     EstateGatewayError,
     EstatePullRequest,
     EstateReadGateway,
@@ -244,8 +245,18 @@ def inert_landing_admission(
         # `rollout_base_matches_pin=False` WITHHOLDS the carve-out, which is correct rather than
         # merely safe: the carve-out excuses a refusal this lane cannot raise, so withholding it
         # changes no answer here and cannot silently excuse something later.
-        branch_update_qualifies=qualifies_for_branch_update(
-            tuple(refusals), rollout_base_matches_pin=False
+        #
+        # ADR-0045. The update bot's branches are EXCLUDED here, at the call site, rather than
+        # inside the predicate, for the reason given above about reuse: that predicate is one
+        # definition with two readers, and teaching it about authors would move the reporting
+        # agent's semantics as a side effect. A branch update merges base into head under the
+        # App's identity, after which Dependabot refuses to rebase a branch somebody else edited;
+        # a competing bump then conflicts it and no party can act. This lane's other declared
+        # author rebuilds its own branch daily and has none of that disowning behaviour, so it
+        # keeps being freshened.
+        branch_update_qualifies=(
+            not remote.author_is_update_bot
+            and qualifies_for_branch_update(tuple(refusals), rollout_base_matches_pin=False)
         ),
         merge_method=remote.merge_method,
     )
@@ -311,6 +322,18 @@ class _RemoteTerms:
     term: Term
     head_sha: str | None
     merge_method: str
+    # ADR-0045. A FACT about the pull request, not a verdict about it: what to do with it is the
+    # caller's. `True` when the remote could not be read at all -- an author nobody established
+    # must withhold, and asserting "is the update bot" of an unknown author is the fail-closed
+    # reading rather than an observation.
+    author_is_update_bot: bool
+
+
+def _is_update_bot(pull: EstatePullRequest) -> bool:
+    """Folded, like `permits_author`: the policy admits the login in any case, so an exact
+    comparison here would let a differently-cased spelling of the update bot be permitted AND
+    freshened -- the fail-open direction."""
+    return pull.author_login.lower() == UPDATE_BOT_LOGIN.lower()
 
 
 def _remote_terms(
@@ -328,7 +351,7 @@ def _remote_terms(
     try:
         pull = gateway.read_pull_request(repository=repository, number=pr_number)
     except EstateGatewayError:
-        return _RemoteTerms(Term(False, (LANDING_PULL_REQUEST_UNREADABLE,)), None, SQUASH)
+        return _RemoteTerms(Term(False, (LANDING_PULL_REQUEST_UNREADABLE,)), None, SQUASH, True)
 
     refusals: list[str] = []
     if pull.landed or not pull.open:
@@ -349,7 +372,9 @@ def _remote_terms(
         # The method is the ordinary one rather than an absent value: this answer cannot be
         # satisfied, so nothing will act on it, and a field that reads "we were not told" would
         # oblige every later reader to handle a case the act can never see.
-        return _RemoteTerms(Term(False, tuple(refusals)), pull.head_sha, SQUASH)
+        return _RemoteTerms(
+            Term(False, tuple(refusals)), pull.head_sha, SQUASH, _is_update_bot(pull)
+        )
 
     author = _author_term(pull, rules)
     fresh = freshness_term(repository, pull, gateway, required=rules.require_head_current_with_base)
@@ -401,7 +426,9 @@ def _remote_terms(
         and fresh.met
         and ecosystem.met
     )
-    return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha, merge_method)
+    return _RemoteTerms(
+        Term(met, tuple(refusals)), pull.head_sha, merge_method, _is_update_bot(pull)
+    )
 
 
 def _author_term(pull: EstatePullRequest, rules: InertLandingRules) -> Term:

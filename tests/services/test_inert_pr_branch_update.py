@@ -19,6 +19,7 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event
 from orchestrator.services.estate_landing import EstateAnswer
 from orchestrator.services.estate_landing_admission import EstateGatewayError
+from orchestrator.services.inert_landing_policy import InertLandingAnswer
 from orchestrator.services.inert_pr_branch_update import (
     INERT_BRANCH_UPDATE_ACTION,
     INERT_BRANCH_UPDATE_HEAD_MOVED,
@@ -37,7 +38,10 @@ from tests.services.estate_landing_doubles import (
 )
 from tests.services.inert_landing_doubles import (
     INERT_REPOSITORY,
+    SYNC_BOT,
+    SYNC_BRANCH,
     FakeInertPolicySource,
+    both_authors_rules,
 )
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
@@ -46,6 +50,16 @@ HUMAN = ActorContext("devon", ActorRole.HUMAN)
 
 PR = 3
 UV_BRANCH = "dependabot/uv/typer-0.21.0"
+
+
+def _sync_pull(**overrides: Any):
+    """ADR-0045. The act's subject is freshness, so its controls use the author whose branches are
+    still freshened; against the update bot every refusal below would hold whatever freshness
+    said."""
+    overrides.setdefault("number", PR)
+    return pull_request(head_ref=SYNC_BRANCH, author_login=SYNC_BOT, **overrides)
+
+
 # Content-addressed over the head, exactly as the caller composes it -- which is what makes a spent
 # key mean "this same request against this same head" and nothing wider. The head is TRUNCATED,
 # matching the sibling lane; `test_the_caller_composes_the_key_THIS_TEST_FILE_IS_WRITTEN_AGAINST`
@@ -65,7 +79,7 @@ def _command(*, key: str = KEY, head: str = HEAD, actor: ActorContext = SYSTEM):
 
 
 def _behind_gateway(**kwargs) -> FakeEstateGateway:
-    kwargs.setdefault("pull", pull_request(number=PR, head_ref=UV_BRANCH))
+    kwargs.setdefault("pull", _sync_pull())
     kwargs.setdefault("behind", 2)
     return FakeEstateGateway(**kwargs)
 
@@ -85,7 +99,7 @@ def _update(
         command or _command(),
         gateway or _behind_gateway(),
         landing_source or FakeEstateLandingSource(),
-        policy_source or FakeInertPolicySource(),
+        policy_source or FakeInertPolicySource(InertLandingAnswer(both_authors_rules())),
         enabled=enabled,
         credentials_configured=credentials_configured,
     )
@@ -114,6 +128,18 @@ def test_a_branch_whose_only_obstacle_is_freshness_is_brought_up_to_date(
     }
 
 
+def test_a_stale_branch_the_UPDATE_BOT_owns_is_never_touched(migrated_session: Session) -> None:
+    """ADR-0045, at the act. The act re-asks admission rather than trusting its caller, so the
+    exclusion holds here even if a caller asked anyway."""
+    gateway = _behind_gateway(pull=pull_request(number=PR, head_ref=UV_BRANCH))
+
+    with pytest.raises(DomainError) as caught:
+        _update(migrated_session, gateway=gateway)
+
+    assert caught.value.code == INERT_BRANCH_UPDATE_NOT_QUALIFIED
+    assert gateway.branch_updates == []
+
+
 def test_a_branch_that_is_not_behind_is_never_touched(migrated_session: Session) -> None:
     """Freshness must be the obstacle; a current branch has nothing to clear."""
     gateway = _behind_gateway(behind=0)
@@ -140,7 +166,7 @@ def test_a_branch_carrying_a_second_obstacle_is_never_touched(
     """Updating a pull request that could not land anyway spends a real build on a branch whose
     answer does not change -- and a build running is indistinguishable from progress to whoever
     reads the report."""
-    gateway = _behind_gateway(pull=pull_request(number=PR, head_ref=UV_BRANCH, **beside))
+    gateway = _behind_gateway(pull=_sync_pull(**beside))
 
     with pytest.raises(DomainError) as caught:
         _update(migrated_session, gateway=gateway)
@@ -155,7 +181,7 @@ def test_a_behind_branch_whose_checks_reached_no_verdict_is_still_brought_up_to_
     """The one refusal excused because updating is what ANSWERS it: nothing else in the estate
     re-runs a check that was abandoned, so such a pull request waits forever otherwise."""
     gateway = _behind_gateway(
-        pull=pull_request(number=PR, head_ref=UV_BRANCH, mergeable_state="blocked"),
+        pull=_sync_pull(mergeable_state="blocked"),
         runs=(run(conclusion="cancelled"),),
     )
 
@@ -171,7 +197,7 @@ def test_a_behind_branch_whose_checks_are_failing_is_never_touched(
     """A red verdict is not made green by a fresher base, and this boundary is the whole value of
     telling the three blocked causes apart."""
     gateway = _behind_gateway(
-        pull=pull_request(number=PR, head_ref=UV_BRANCH, mergeable_state="blocked"),
+        pull=_sync_pull(mergeable_state="blocked"),
         runs=(run(conclusion="failure"),),
     )
 
@@ -292,7 +318,7 @@ def test_a_key_spent_on_a_different_pull_request_is_refused_rather_than_replayed
         idempotency_key=KEY,
         expected_head_sha=HEAD,
     )
-    gateway = _behind_gateway(pull=pull_request(number=PR + 1, head_ref=UV_BRANCH))
+    gateway = _behind_gateway(pull=_sync_pull(number=PR + 1))
 
     with pytest.raises(DomainError) as caught:
         _update(migrated_session, gateway=gateway, command=other)

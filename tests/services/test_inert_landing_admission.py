@@ -54,6 +54,7 @@ from orchestrator.services.inert_landing_admission import (
     INERT_LANDING_REPOSITORY_NOT_DECLARED,
     INERT_LANDING_RULES_UNDECLARED,
     INERT_LANDING_TARGET_NOT_INERT,
+    _remote_terms,
     inert_landing_admission,
 )
 from orchestrator.services.inert_landing_policy import (
@@ -81,12 +82,21 @@ from tests.services.inert_landing_doubles import (
     SYNC_BRANCH,
     UPDATE_BOT,
     FakeInertPolicySource,
+    both_authors_rules,
     rules,
 )
 
 PR = 3
 DOCKER_BRANCH = f"dependabot/{EXCLUDED_ECOSYSTEM}/python-3.14-slim"
 UV_BRANCH = "dependabot/uv/typer-0.21.0"
+
+
+def _both_authors() -> FakeInertPolicySource:
+    return FakeInertPolicySource(InertLandingAnswer(both_authors_rules()))
+
+
+def _sync_pull(**overrides: Any):
+    return pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT, **overrides)
 
 
 def _inert_source() -> FakeEstateLandingSource:
@@ -435,9 +445,9 @@ def test_a_clean_head_is_never_asked_about_its_runs(migrated_session: Session) -
 def test_a_head_behind_its_base_is_refused_and_qualifies_for_a_branch_update(
     migrated_session: Session,
 ) -> None:
-    gateway = FakeEstateGateway(pull=pull_request(number=PR, head_ref=UV_BRANCH), behind=2)
+    gateway = FakeEstateGateway(pull=_sync_pull(), behind=2)
 
-    answer = _answer(migrated_session, gateway=gateway)
+    answer = _answer(migrated_session, gateway=gateway, policy_source=_both_authors())
 
     assert answer.satisfied is False
     assert answer.refusals == (LANDING_HEAD_NOT_CURRENT_WITH_BASE,)
@@ -462,11 +472,11 @@ def test_a_policy_that_does_not_require_freshness_never_asks_how_far_behind(
 
 def test_an_unreadable_comparison_refuses(migrated_session: Session) -> None:
     gateway = FakeEstateGateway(
-        pull=pull_request(number=PR, head_ref=UV_BRANCH),
+        pull=_sync_pull(),
         compare_error=EstateGatewayError("read_status", 500),
     )
 
-    answer = _answer(migrated_session, gateway=gateway)
+    answer = _answer(migrated_session, gateway=gateway, policy_source=_both_authors())
 
     assert LANDING_FRESHNESS_UNREADABLE in answer.refusals
     assert answer.branch_update_qualifies is False
@@ -486,11 +496,9 @@ def test_a_second_obstacle_disqualifies_the_branch_update(
     """The rule is that freshness is the SOLE remaining obstacle. Anything else means the branch
     could not land whatever is done to it, so freshening spends a real build to learn nothing --
     and a build running is indistinguishable from progress to whoever reads the report."""
-    gateway = FakeEstateGateway(
-        pull=pull_request(number=PR, head_ref=UV_BRANCH, **beside), behind=2
-    )
+    gateway = FakeEstateGateway(pull=_sync_pull(**beside), behind=2)
 
-    answer = _answer(migrated_session, gateway=gateway)
+    answer = _answer(migrated_session, gateway=gateway, policy_source=_both_authors())
 
     assert LANDING_HEAD_NOT_CURRENT_WITH_BASE in answer.refusals
     assert answer.branch_update_qualifies is False
@@ -502,15 +510,91 @@ def test_a_head_behind_its_base_whose_checks_reached_no_verdict_still_qualifies(
     """The one refusal excused because bringing the branch up to date is what ANSWERS it rather
     than what tolerates it: nothing else in the estate re-runs a check that was abandoned."""
     gateway = FakeEstateGateway(
-        pull=pull_request(number=PR, head_ref=UV_BRANCH, mergeable_state="blocked"),
+        pull=_sync_pull(mergeable_state="blocked"),
         behind=2,
         runs=(run(conclusion="cancelled"),),
     )
 
-    answer = _answer(migrated_session, gateway=gateway)
+    answer = _answer(migrated_session, gateway=gateway, policy_source=_both_authors())
 
     assert LANDING_CHECKS_AWAITING_VERDICT in answer.refusals
     assert answer.branch_update_qualifies is True
+
+
+# ---------------------------------------------------------------------------------------------
+# ADR-0045 -- the update bot's branches are never freshened; the sync author's still are.
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("login", [UPDATE_BOT, UPDATE_BOT.upper()])
+def test_a_stale_branch_the_UPDATE_BOT_owns_is_never_freshened(
+    migrated_session: Session, login: str
+) -> None:
+    """ADR-0045. A branch update merges base into head under the App's identity, and Dependabot
+    then refuses to rebase a branch somebody else edited. A competing bump conflicts it and no
+    party can act, so the lane declines to create that state.
+
+    The upper-cased spelling is permitted by the policy, which folds case, so it must be withheld
+    too -- an exact comparison would permit and freshen it."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref=UV_BRANCH, author_login=login), behind=2
+    )
+
+    answer = _answer(migrated_session, gateway=gateway, policy_source=_both_authors())
+
+    # Freshness is the SOLE obstacle, so only the author exclusion can be what withholds it.
+    assert answer.refusals == (LANDING_HEAD_NOT_CURRENT_WITH_BASE,)
+    assert answer.branch_update_qualifies is False
+
+
+def test_a_stale_branch_the_SYNC_BOT_owns_is_STILL_freshened(
+    migrated_session: Session,
+) -> None:
+    """The half that makes the test above mean something. The exclusion is keyed on the author
+    that disowns an edited branch, not on freshening being withdrawn -- a suite where nothing is
+    ever freshened would pass the test above for the wrong reason."""
+    gateway = FakeEstateGateway(pull=_sync_pull(), behind=2)
+
+    answer = _answer(migrated_session, gateway=gateway, policy_source=_both_authors())
+
+    assert answer.refusals == (LANDING_HEAD_NOT_CURRENT_WITH_BASE,)
+    assert answer.branch_update_qualifies is True
+
+
+def test_an_author_the_remote_never_named_withholds_the_branch_update() -> None:
+    """The gateway-error return knows no author at all, and an unknown author withholds.
+
+    Asserted on `_RemoteTerms` DIRECTLY rather than through the composed answer, deliberately:
+    that return already refuses with `landing_pull_request_unreadable`, which the predicate does
+    not subtract, so the composed verdict is False whatever this field says. A control read
+    through the answer cannot tell a fail-closed default from a fail-open one.
+    """
+    gateway = FakeEstateGateway(read_error=EstateGatewayError("read_pull_request", 500))
+
+    remote = _remote_terms(INERT_REPOSITORY, PR, None, gateway)
+
+    assert remote.head_sha is None
+    assert remote.author_is_update_bot is True
+
+
+@pytest.mark.parametrize(
+    ("login", "expected"), [(UPDATE_BOT, True), (UPDATE_BOT.upper(), True), (SYNC_BOT, False)]
+)
+@pytest.mark.parametrize("with_rules", [False, True])
+def test_the_author_fact_is_carried_on_both_returns_that_hold_a_pull_request(
+    login: str, expected: bool, with_rules: bool
+) -> None:
+    """Also asserted on `_RemoteTerms` directly. The return taken when the policy did not read
+    is unobservable through the composed answer -- the policy refusal already withholds -- so
+    only this control can see that return carrying the wrong fact."""
+    gateway = FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=login)
+    )
+    policy = both_authors_rules() if with_rules else None
+
+    remote = _remote_terms(INERT_REPOSITORY, PR, policy, gateway)
+
+    assert remote.author_is_update_bot is expected
 
 
 # ---------------------------------------------------------------------------------------------
