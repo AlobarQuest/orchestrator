@@ -314,8 +314,30 @@ And four made while building, which the plan did not settle:
   Dependabot's (author kept, committer `web-flow`, signed), so a person's server-side rebase would
   read as owned. Not measured. Probe: use it on a disposable repository's Dependabot pull request,
   read the commits, ask `@dependabot rebase`. It cannot fail worse than the lane before this rule.
-- **Scan cost grows with queue depth**: about 12 extra calls per act at five open Dependabot pull
-  requests, run under the advisory lock with the transaction open; cache per pass if queues grow.
+- **Scan cost grows with queue depth, and it runs three times per qualifying pull request per
+  pass**: on the landing pass's admission read, on the update pass's re-read, and in the act. Each
+  run is about 2 + N GitHub reads for N Dependabot siblings, plus one full sibling admission per
+  edited sibling, which itself reads change-manager and App Brain. After one landing stales a queue
+  of about ten, that is roughly 360 installation-token reads per pass against the shared 5,000 per
+  hour. The act holds the per-repository advisory lock with the transaction open throughout;
+  harmless while the landers run one at a time. Cache per pass if queues grow.
+- **An edited sibling in a RELEASING state does not hold**, so the lane can make a second edited
+  branch beside it. That is the design, not a gap: a sibling with red checks, an unapproved record
+  or a superseded policy version is not going to land, and holding behind it would stall the
+  repository. It does mean the rule prevents the deadlock only while the edited sibling is still
+  queued. A policy-version bump can briefly flip a holding sibling to releasing.
+- **The served fact swallows non-database errors as `False`.** A coding error in the rule would
+  serve a quiet answer while the act raises; it still surfaces, as the act's error line in the
+  lander's report, but only there.
+- **A sibling that closes between the list read and its commits read** makes that pass's act
+  refuse with the unreadable code: one spurious finding, gone on the next pass.
+- **The event query has no supporting index.** `_recently_updated_heads` filters `events` on
+  `action`, `occurred_at` and a JSONB key, none of them indexed. A full scan today; add an index if
+  the table grows enough to matter.
+- **Deploy order is not symmetric.** A lander that predates this change reads the new
+  `*_sibling_holding` refusal as unknown and reports `held`, a finding, on every withheld sibling. A
+  new lander against an old orchestrator finds the served key absent, reads it as false, and
+  freshens as before. So the main tree, where the landers run, moves first, then the image.
 - **The rule has not yet run in production.** Deploy is the plan's Task 13.
 
 ## Consequences
