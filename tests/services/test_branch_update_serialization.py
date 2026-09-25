@@ -17,15 +17,32 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event
+from orchestrator.services import estate_landing_admission, inert_landing_admission
 from orchestrator.services.branch_update_serialization import (
+    _HOLDING_BESIDE_THE_CRITERION,
     BRANCH_UPDATE_ACTION,
     INERT_BRANCH_UPDATE_ACTION,
+    READ_FAILURE_REFUSALS,
     Ownership,
+    SiblingAnswer,
+    _answer_class,
     _commit_class,
     _ownership,
     _recently_updated_heads,
 )
-from orchestrator.services.estate_landing_admission import PullRequestCommit
+from orchestrator.services.estate_landing_admission import (
+    DELIBERATE_REFUSALS,
+    LANDING_CHECKS_AWAITING_VERDICT,
+    LANDING_CHECKS_IN_FLIGHT,
+    LANDING_CHECKS_NOT_CLEAN,
+    LANDING_HEAD_NOT_CURRENT_WITH_BASE,
+    LANDING_MERGEABILITY_UNKNOWN,
+    LANDING_OUTSIDE_CHANGE_WINDOW,
+    LANDING_PACE_EXHAUSTED,
+    LANDING_PULL_REQUEST_CONFLICTED,
+    LANDING_ROLLOUT_MOVED,
+    PullRequestCommit,
+)
 from orchestrator.services.estate_pr_branch_update import (
     EstateBranchUpdateCommand,
     update_estate_pull_request_branch,
@@ -256,3 +273,151 @@ def test_the_event_the_REAL_act_writes_is_the_one_arm_b_reads(migrated_session: 
 class _InWindow:
     def now(self, session: Session) -> datetime:
         return datetime(2026, 8, 11, 7, 30, tzinfo=UTC)
+
+
+# --------------------------------------------------------------------------------------------
+# The three sets a sibling's refusals fall into: holding, read failure, releasing.
+# --------------------------------------------------------------------------------------------
+
+# THE RELEASING SET, SPELLED OUT. At runtime releasing is the complement -- a code in neither of
+# the other two sets releases, which is the pre-change behaviour and the right polarity for a
+# positively named condition. This literal exists so that a NEW code reds the completeness test
+# below until somebody decides which set it belongs in; without it a new `..._unreadable` code
+# would silently release, which is the one direction the read-failure set exists to prevent.
+RELEASING = {
+    "inert_landing_author_not_permitted",
+    "inert_landing_repository_not_declared",
+    "inert_landing_rules_undeclared",
+    "inert_landing_target_not_inert",
+    "landing_already_recorded",
+    "landing_author_not_the_update_bot",
+    "landing_base_not_default_branch",
+    "landing_change_window_not_declared",
+    "landing_checks_not_clean",
+    "landing_ecosystem_excluded",
+    "landing_not_enabled",
+    "landing_policy_version_superseded",
+    "landing_pull_request_conflicted",
+    "landing_pull_request_not_open",
+    "landing_record_absent",
+    "landing_record_has_live_objections",
+    "landing_record_not_approved",
+    "landing_record_not_policy_approved",
+    "landing_rollout_unpinned",
+    "landing_target_not_routed",
+    "landing_update_type_not_permitted",
+    "landing_update_type_unparseable",
+}
+
+# The holding vocabulary: the two deliberate refusals, the freshness criterion's two members, and
+# the three an edited branch reports in the minutes after an update. `landing_rollout_moved` is
+# holding only when freshness-derived; it sits here as the criterion's vocabulary, and the
+# releasing case of a genuinely moved rollout is pinned separately below.
+HOLDING = (
+    DELIBERATE_REFUSALS
+    | {LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_ROLLOUT_MOVED}
+    | _HOLDING_BESIDE_THE_CRITERION
+)
+
+
+def _refusal_codes() -> set[str]:
+    """Every refusal-code constant both admission modules define, by VALUE.
+
+    The value predicate excludes the platform words (`clean`, `blocked`...), the run vocabulary,
+    the update-type labels, the bot login and the branch prefix, none of which is a refusal.
+    """
+    codes: set[str] = set()
+    for module in (estate_landing_admission, inert_landing_admission):
+        for name, value in vars(module).items():
+            if (
+                name.isupper()
+                and isinstance(value, str)
+                and value.startswith(("landing_", "inert_landing_"))
+            ):
+                codes.add(value)
+    return codes
+
+
+def test_every_refusal_code_is_classified_exactly_once() -> None:
+    """A new refusal code reds this until it is placed in one of the three sets."""
+    codes = _refusal_codes()
+
+    assert HOLDING | READ_FAILURE_REFUSALS | RELEASING == codes, (
+        f"{len(codes)} refusal codes defined; unclassified: "
+        f"{sorted(codes - HOLDING - READ_FAILURE_REFUSALS - RELEASING)}; "
+        f"classified but undefined: {sorted((HOLDING | READ_FAILURE_REFUSALS | RELEASING) - codes)}"
+    )
+    assert not HOLDING & READ_FAILURE_REFUSALS
+    assert not HOLDING & RELEASING
+    assert not READ_FAILURE_REFUSALS & RELEASING
+    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 18, 22)
+
+
+def _class(*refusals: str, base_matches: bool = False) -> str:
+    return _answer_class(SiblingAnswer(tuple(refusals), rollout_base_matches_pin=base_matches))
+
+
+@pytest.mark.parametrize(
+    "code",
+    sorted(
+        {
+            LANDING_PACE_EXHAUSTED,
+            LANDING_OUTSIDE_CHANGE_WINDOW,
+            LANDING_HEAD_NOT_CURRENT_WITH_BASE,
+            LANDING_CHECKS_IN_FLIGHT,
+            LANDING_CHECKS_AWAITING_VERDICT,
+            LANDING_MERGEABILITY_UNKNOWN,
+        }
+    ),
+)
+def test_each_holding_code_holds_alone_and_beside_behind(code: str) -> None:
+    assert _class(code) == "holding"
+    assert _class(code, LANDING_HEAD_NOT_CURRENT_WITH_BASE) == "holding"
+
+
+def test_a_rollout_pin_that_differs_BECAUSE_the_head_is_behind_holds() -> None:
+    assert (
+        _class(LANDING_ROLLOUT_MOVED, LANDING_HEAD_NOT_CURRENT_WITH_BASE, base_matches=True)
+        == "holding"
+    )
+
+
+def test_a_GENUINELY_moved_rollout_releases() -> None:
+    """The base does not carry the pinned bytes, so the workflow really moved and no freshening
+    puts it right. Such a sibling is not queued to land; the queue moves past it."""
+    assert (
+        _class(LANDING_ROLLOUT_MOVED, LANDING_HEAD_NOT_CURRENT_WITH_BASE, base_matches=False)
+        == "releasing"
+    )
+
+
+def test_a_moved_rollout_on_a_head_that_is_NOT_behind_releases() -> None:
+    """A refusal cannot be caused by a position the head is not in: a pull request whose own diff
+    edits the pinned workflow is not merely stale, whatever the base says."""
+    assert _class(LANDING_ROLLOUT_MOVED, base_matches=True) == "releasing"
+
+
+@pytest.mark.parametrize(
+    "code",
+    [LANDING_CHECKS_NOT_CLEAN, LANDING_PULL_REQUEST_CONFLICTED, "landing_invented_condition"],
+)
+def test_a_positively_named_condition_releases(code: str) -> None:
+    """Releasing is exactly the pre-change behaviour, so on a condition the orchestrator read and
+    named the rule can never withhold more than the lane did before it existed. A made-up code is
+    here because at runtime releasing is the complement."""
+    assert _class(code) == "releasing"
+    assert _class(code, LANDING_HEAD_NOT_CURRENT_WITH_BASE) == "releasing"
+
+
+@pytest.mark.parametrize("code", sorted(READ_FAILURE_REFUSALS))
+def test_each_read_failure_is_unreadable_even_beside_a_releasing_code(code: str) -> None:
+    """Checked FIRST: a sibling whose reads failed is a sibling whose state was not established,
+    and a releasing code beside the failure does not establish it."""
+    assert _class(code) == "unreadable"
+    assert _class(code, LANDING_CHECKS_NOT_CLEAN) == "unreadable"
+    assert _class(code, LANDING_HEAD_NOT_CURRENT_WITH_BASE) == "unreadable"
+
+
+def test_a_sibling_whose_answer_names_nothing_holds() -> None:
+    """Its own admission is satisfied: it would land. That is the branch queued next."""
+    assert _class() == "holding"

@@ -13,6 +13,7 @@ question in one place.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Final, Literal
@@ -21,7 +22,35 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import Event
-from orchestrator.services.estate_landing_admission import UPDATE_BOT_LOGIN, PullRequestCommit
+from orchestrator.services.estate_landing_admission import (
+    DELIBERATE_REFUSALS,
+    LANDING_APP_CREDENTIALS_MISSING,
+    LANDING_CHECKS_AWAITING_VERDICT,
+    LANDING_CHECKS_IN_FLIGHT,
+    LANDING_CHECKS_VERDICT_UNREADABLE,
+    LANDING_CONDITIONS_UNREADABLE,
+    LANDING_ECOSYSTEM_UNREADABLE,
+    LANDING_ESTATE_SOURCE_UNCONFIGURED,
+    LANDING_ESTATE_SOURCE_UNREADABLE,
+    LANDING_ESTATE_UNKNOWN,
+    LANDING_FRESHNESS_UNREADABLE,
+    LANDING_MERGEABILITY_UNKNOWN,
+    LANDING_MERGEABILITY_UNRECOGNISED,
+    LANDING_POLICY_UNREADABLE,
+    LANDING_PULL_REQUEST_UNREADABLE,
+    LANDING_RECORD_AMBIGUOUS,
+    LANDING_RECORD_SOURCE_UNCONFIGURED,
+    LANDING_RECORD_SOURCE_UNREADABLE,
+    LANDING_RECORD_UNIDENTIFIED,
+    LANDING_ROLLOUT_UNREADABLE,
+    UPDATE_BOT_LOGIN,
+    PullRequestCommit,
+    freshness_derived_refusals,
+)
+from orchestrator.services.inert_landing_admission import (
+    INERT_LANDING_POLICY_SOURCE_UNCONFIGURED,
+    INERT_LANDING_POLICY_SOURCE_UNREADABLE,
+)
 
 # The event actions the two branch-update acts record, one per lane. They live HERE rather than in
 # the act modules because the sibling rule reads them back out of the event log, and the act
@@ -147,3 +176,92 @@ def _recently_updated_heads(
         if isinstance(head, str) and head:
             heads.setdefault(number, set()).add(head)
     return heads
+
+
+# HOLDING, beside the two sets reused rather than restated. What an edited branch reports in the
+# minutes after an update: checks re-running, runs cancelled or not yet started, or the platform
+# still computing mergeability. Without these the branch the lane has just freshened would stop
+# counting as holding in the very pass that freshened it, and the sibling behind it would be edited
+# too -- which is the defect.
+#
+# EACH OF THE THREE CAN OUTLIVE THOSE MINUTES, and that is a stall residual rather than an
+# oversight: abandoned runs nothing re-runs, a run with no runner, mergeability that never
+# resolves. It is reported once, as `held` on the holding branch's own line, because none of them
+# is in any lander's non-finding set. Nothing here asserts that every member clears on its own.
+#
+# Built from the imported names, like every refusal set in this estate, so no code is spelled
+# twice. What keeps the three sets complete is the test that enumerates every refusal constant.
+_HOLDING_BESIDE_THE_CRITERION: Final = frozenset(
+    {LANDING_CHECKS_IN_FLIGHT, LANDING_CHECKS_AWAITING_VERDICT, LANDING_MERGEABILITY_UNKNOWN}
+)
+
+# READ FAILURE: the orchestrator could not establish the sibling's state. Any one of these in a
+# sibling's composed answer withholds the target -- as a finding, never quietly -- because a sibling
+# whose reads failed is exactly a sibling whose state was not established. One set for both lanes:
+# which lane can raise which code is not derivable mechanically, and a member a lane never raises
+# is harmless in it.
+#
+# The repository-level members (the two unconfigured sources, the missing credentials) would
+# refuse the target's own answer too, so the rule never runs beside them; they are listed so the
+# classification is complete. `landing_mergeability_unknown` is deliberately NOT here: it is the
+# ordinary transient after an update. `..._unrecognised` is a word the platform has invented since
+# the code was written, and nothing can be concluded from it.
+READ_FAILURE_REFUSALS: Final = frozenset(
+    {
+        LANDING_PULL_REQUEST_UNREADABLE,
+        LANDING_CHECKS_VERDICT_UNREADABLE,
+        LANDING_FRESHNESS_UNREADABLE,
+        LANDING_ROLLOUT_UNREADABLE,
+        LANDING_ECOSYSTEM_UNREADABLE,
+        LANDING_POLICY_UNREADABLE,
+        LANDING_CONDITIONS_UNREADABLE,
+        LANDING_RECORD_SOURCE_UNREADABLE,
+        LANDING_RECORD_SOURCE_UNCONFIGURED,
+        LANDING_RECORD_AMBIGUOUS,
+        LANDING_RECORD_UNIDENTIFIED,
+        LANDING_ESTATE_SOURCE_UNREADABLE,
+        LANDING_ESTATE_SOURCE_UNCONFIGURED,
+        LANDING_ESTATE_UNKNOWN,
+        LANDING_MERGEABILITY_UNRECOGNISED,
+        LANDING_APP_CREDENTIALS_MISSING,
+        INERT_LANDING_POLICY_SOURCE_UNREADABLE,
+        INERT_LANDING_POLICY_SOURCE_UNCONFIGURED,
+    }
+)
+
+
+@dataclass(frozen=True)
+class SiblingAnswer:
+    """What a sibling's own composed admission says, as the holding test needs it."""
+
+    refusals: tuple[str, ...]
+    # The freshness criterion's one fact. The inert lane pins no rollout, so its composer always
+    # passes False, under which a moved rollout can never be excused as staleness.
+    rollout_base_matches_pin: bool
+
+
+def _answer_class(answer: SiblingAnswer) -> Literal["holding", "releasing", "unreadable"]:
+    """Is this sibling still queued to land, not, or not known?
+
+    **Unreadable is checked first**, so a read failure beside a releasing code is still a read
+    failure: the releasing code was read, the failed one was not, and the sibling's state as a whole
+    was not established.
+
+    **Holding** when every refusal is one that clears without anyone acting: a deliberate one, a
+    freshness-derived one (which the lane itself clears, since the holding branch is already edited
+    and may always be freshened again), or one of the three post-update transients. An empty list
+    holds too -- that sibling's own answer is satisfied, so it is the branch queued next.
+
+    **Releasing** otherwise. At runtime releasing is the complement, the pre-change behaviour: on a
+    condition the orchestrator positively read and named, the rule never withholds more than the
+    lane did before it existed.
+    """
+    present = set(answer.refusals)
+    if present & READ_FAILURE_REFUSALS:
+        return "unreadable"
+    derived = freshness_derived_refusals(
+        present, rollout_base_matches_pin=answer.rollout_base_matches_pin
+    )
+    if present <= DELIBERATE_REFUSALS | derived | _HOLDING_BESIDE_THE_CRITERION:
+        return "holding"
+    return "releasing"
