@@ -54,17 +54,17 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event
+from orchestrator.services.branch_update_serialization import INERT_BRANCH_UPDATE_ACTION
 from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.estate_landing_admission import (
     EstateGatewayError,
-    EstateReadGateway,
+    SiblingReadGateway,
     gateway_failure_detail,
 )
 from orchestrator.services.inert_landing_admission import inert_landing_admission
 from orchestrator.services.inert_landing_policy import InertLandingPolicySource
 from orchestrator.services.lifecycle import ActorContext
 
-INERT_BRANCH_UPDATE_ACTION: Final = "inert_pr_branch_update.updated"
 INERT_BRANCH_UPDATE_SUBJECT: Final = "inert_pull_request"
 
 # The composed answer does not name freshness as this pull request's sole remaining obstacle. The
@@ -99,7 +99,7 @@ class InertBranchUpdateOutcome:
     replayed: bool
 
 
-class InertBranchUpdateGateway(EstateReadGateway, Protocol):
+class InertBranchUpdateGateway(SiblingReadGateway, Protocol):
     """Everything the composed answer reads, plus the one call that changes anything."""
 
     def update_branch(self, *, repository: str, number: int, expected_head_sha: str) -> None: ...

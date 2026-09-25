@@ -67,17 +67,17 @@ from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event
+from orchestrator.services.branch_update_serialization import BRANCH_UPDATE_ACTION
 from orchestrator.services.change_record import ChangeRecordSource
 from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.estate_landing_admission import (
     EstateGatewayError,
-    EstateReadGateway,
+    SiblingReadGateway,
     estate_landing_admission,
     gateway_failure_detail,
 )
 from orchestrator.services.lifecycle import ActorContext
 
-BRANCH_UPDATE_ACTION: Final = "estate_pr_branch_update.updated"
 BRANCH_UPDATE_SUBJECT: Final = "estate_pull_request"
 
 # The composed answer does not name freshness as this pull request's sole remaining obstacle. The
@@ -113,7 +113,7 @@ class BranchUpdateOutcome:
     replayed: bool
 
 
-class EstateBranchUpdateGateway(EstateReadGateway, Protocol):
+class EstateBranchUpdateGateway(SiblingReadGateway, Protocol):
     """Everything the composed answer reads, plus the one call that changes anything."""
 
     def update_branch(self, *, repository: str, number: int, expected_head_sha: str) -> None: ...

@@ -412,6 +412,53 @@ class EstateReadGateway(Protocol):
 
 
 @dataclass(frozen=True)
+class OpenPullRequest:
+    """One row of a repository's open pull requests, as the sibling rule needs it (ADR-0045).
+
+    Only what the list answer carries, so nothing here costs a read per pull request: the number
+    to address it by, the head the rest of the rule compares against, and the author test the
+    admission cascade already applies to the target.
+    """
+
+    number: int
+    head_sha: str
+    author_login: str
+    author_is_bot: bool
+
+
+@dataclass(frozen=True)
+class PullRequestCommit:
+    """One commit on a pull request's branch, as the sibling rule classifies it (ADR-0045).
+
+    The logins are the LINKED accounts GitHub resolved from the commit's author and committer, and
+    `None` when an address links to no account. None is carried as None rather than defaulted to an
+    empty string, because "no linked account" is its own answer to the ownership question and must
+    not read as "an account with an empty name".
+    """
+
+    sha: str
+    author_login: str | None
+    committer_login: str | None
+    verified: bool
+
+
+class SiblingReadGateway(EstateReadGateway, Protocol):
+    """The composed answer's reads plus the two the sibling rule adds. ADR-0045.
+
+    A narrower protocol than a widened `EstateReadGateway`, deliberately: the unit-bound landing
+    path shares that base and nothing on it asks about siblings, so its fakes grow nothing. The two
+    branch-update acts take this one. It lives here, beside the shared read shapes, because every
+    party already imports this module; defining it beside the rule would make an import cycle.
+    """
+
+    def open_pull_requests(self, *, repository: str) -> tuple[OpenPullRequest, ...]: ...
+
+    def pull_request_commits(
+        self, *, repository: str, number: int
+    ) -> tuple[PullRequestCommit, ...]: ...
+
+
+@dataclass(frozen=True)
 class EstateLandingAdmission:
     """The composed answer, plus what the act needs in order to name what it acted on."""
 
