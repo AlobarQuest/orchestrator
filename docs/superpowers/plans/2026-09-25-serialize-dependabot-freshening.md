@@ -67,7 +67,7 @@ The `git diff --stat` must print nothing (no `src`/`tests` difference). The node
 The code wins in each case. Carry all of these into ADR-0045 (Task 11).
 
 1. **§11 "Build hazards": `test_cross_boundary_vocabulary` — the spec says the holding set and the read-failure set "must be registered in `VOCABULARY_REGISTRY`".** The scanner only discovers collections whose every element is an `ast.Constant` string (`tests/architecture/test_cross_boundary_vocabulary.py:150-165`, `_is_string_collection`). House style builds refusal sets from imported **names** (`DELIBERATE_REFUSALS = frozenset({LANDING_PACE_EXHAUSTED, LANDING_OUTSIDE_CHANGE_WINDOW})`, `estate_landing_admission.py:321`), which the scanner does not see; CLAUDE.md lists derived/union collections as structural exclusions "do NOT try to register". So: **build both sets from the imported constants and do not register them.** What pins the vocabulary instead is the completeness test (spec test 11, Task 3). A literal-string spelling that the scanner *would* discover is the worse option: it is a second spelling of 25 codes.
-2. **§5 "What it reads": "Both gateways gain two read methods … on `EstateReadGateway`. Every fake gateway must implement them."** `EstateReadGateway` (`estate_landing_admission.py:402`) is also the base of the unit-bound landing path's gateways, whose fakes (`tests/services/test_pr_merge.py:54`, `tests/api/test_pr_merge_api.py:37`) would have to grow methods nothing calls. **Instead a new `SiblingReadGateway(EstateReadGateway, Protocol)`** lives in the new module and is the base of `EstateBranchUpdateGateway` (`estate_pr_branch_update.py:116`) and `InertBranchUpdateGateway` (`inert_pr_branch_update.py:102`). The real methods are written once on `GitHubEstatePullRequests` (`estate_pr_merge.py:471`); `GitHubInertPullRequests` (`inert_pr_merge.py:149`) inherits them and overrides nothing. `FakeEstateGateway` (`tests/services/estate_landing_doubles.py:158`) implements them with defaults, so `ActingInertGateway` and every act fixture inherit them.
+2. **§5 "What it reads": "Both gateways gain two read methods … on `EstateReadGateway`. Every fake gateway must implement them."** `EstateReadGateway` (`estate_landing_admission.py:402`) is also the base of the unit-bound landing path's gateways, whose fakes (`tests/services/test_pr_merge.py:54`, `tests/api/test_pr_merge_api.py:37`) would have to grow methods nothing calls. **Instead a new `SiblingReadGateway(EstateReadGateway, Protocol)`** lives in `estate_landing_admission.py` beside `EstateReadGateway`, `EstatePullRequest` and `HeadCheckRun` (with the two new read shapes, `OpenPullRequest` and `PullRequestCommit`), and is the base of `EstateBranchUpdateGateway` (`estate_pr_branch_update.py:116`) and `InertBranchUpdateGateway` (`inert_pr_branch_update.py:102`). **They may NOT live in the new module: that would be an import cycle** — `estate_pr_merge` would import `branch_update_serialization`, which imports `INERT_LANDING_POLICY_SOURCE_*` from `inert_landing_admission`, which imports `MERGE_COMMIT, SQUASH` from `estate_pr_merge` (`inert_landing_admission.py`, the `estate_pr_merge` import) → `ImportError` on a partially initialised module. `estate_landing_admission` is already every party's shared import, so the shapes go there; the recursion guard (no admission module imports the new module) is untouched. The real methods are written once on `GitHubEstatePullRequests` (`estate_pr_merge.py:471`); `GitHubInertPullRequests` (`inert_pr_merge.py:149`) inherits them and overrides nothing. `FakeEstateGateway` (`tests/services/estate_landing_doubles.py:158`) implements them with defaults, so `ActingInertGateway` and every act fixture inherit them.
 3. **§9 "The mechanism": the field is served "the way `rollout_base_matches_pin` is served".** It cannot be computed the same way — `rollout_base_matches_pin` is computed *inside* `estate_landing_admission`, and the spec forbids the scan from living there. Three existing pins assert that the served body's keys equal the admission **dataclass** fields (`tests/services/test_estate_pr_branch_update.py:885-899`; `tests/api/test_estate_landing_admission_api.py::test_the_body_carries_every_field_of_the_composed_answer`; `tests/api/test_inert_landing_admission_api.py:35-40`), and the lander mirror-key pins are against the dataclass (`test_estate_pr_branch_update.py:445-464`). So **the field is added to both dataclasses with NO default**; each admission function sets it to `False` explicitly at its single constructor (`estate_landing_admission.py:684`, `inert_landing_admission.py:229`), and the **route** fills it with `dataclasses.replace(...)`. The act never reads that field (it calls the rule itself). No default, so a new constructor cannot forget it silently.
 4. **§5 "Definitions": arm (b) is compared with "the reading transaction's clock".** Neither `inert_landing_admission` nor `update_inert_pull_request_branch` (`inert_pr_branch_update.py:120-129`) takes a clock. The new function takes `clock: Clock | None = None` (default `TransactionClock()`), the estate act passes its existing `clock`, and **the inert act gains `clock: Clock | None = None`** purely so the bound is testable. The routes pass nothing.
 5. **§5 "What it reads": "paginated to the end: normally 1 call."** `GitHubEstatePullRequests._get` (`estate_pr_merge.py:494`) discards response headers and turns a 404 into `None`. Pagination needs a new page loop, and a 404 on a list read must raise, never read as empty. Separately, **`GET /repos/{r}/pulls/{n}/commits` returns at most 250 commits** in total whatever the paging (GitHub REST docs); a list that reaches 250 is not known to be complete and must raise (treated as unread). Dependabot branches carry 1–3 commits, so this never fires in practice; the guard exists so a truncated read is an unread one (spec §5 "a truncated read is an unread one").
@@ -96,7 +96,7 @@ The code wins in each case. Carry all of these into ADR-0045 (Task 11).
 
 | Path | Responsibility |
 |---|---|
-| `src/orchestrator/services/branch_update_serialization.py` | The rule: `SiblingReadGateway`, `OpenPullRequest`, `PullRequestCommit`, the moved action strings, `HOLDING_REFUSALS`, `READ_FAILURE_REFUSALS`, `SiblingAnswer`, `SiblingOutcome`, `branch_update_sibling_outcome(...)`, `withheld_for_sibling(...)`. |
+| `src/orchestrator/services/branch_update_serialization.py` | The rule: the moved action strings, `HOLDING_REFUSALS`, `READ_FAILURE_REFUSALS`, `SiblingAnswer`, `SiblingOutcome`, `branch_update_sibling_outcome(...)`, `withheld_for_sibling(...)`. |
 | `tests/services/test_branch_update_serialization.py` | Classification, ownership, arm (b), the three sets, the outcome function (spec tests 1–7, 9, 11). |
 | `docs/decisions/0045-the-lane-edits-one-dependabot-branch-per-repository.md` | ADR. |
 
@@ -104,10 +104,10 @@ The code wins in each case. Carry all of these into ADR-0045 (Task 11).
 
 | Path | Change |
 |---|---|
-| `src/orchestrator/services/estate_pr_merge.py` | `GitHubEstatePullRequests` gains `open_pull_requests`, `pull_request_commits`, a private page loop. |
+| `src/orchestrator/services/estate_pr_merge.py` | `GitHubEstatePullRequests` gains `open_pull_requests`, `pull_request_commits`, a private page loop; its class docstring's "Five calls" becomes seven. |
 | `src/orchestrator/services/estate_pr_branch_update.py` | Gateway protocol base → `SiblingReadGateway`; action string imported; two new codes; the conjunct. |
 | `src/orchestrator/services/inert_pr_branch_update.py` | Same, plus a `clock` parameter. |
-| `src/orchestrator/services/estate_landing_admission.py` | `EstateLandingAdmission.branch_update_withheld_for_sibling: bool`, set `False` at `:684`. |
+| `src/orchestrator/services/estate_landing_admission.py` | `OpenPullRequest`, `PullRequestCommit`, `SiblingReadGateway` beside `EstateReadGateway` (`:402`) — Correction 2; and `EstateLandingAdmission.branch_update_withheld_for_sibling: bool`, set `False` at `:684`. |
 | `src/orchestrator/services/inert_landing_admission.py` | `InertLandingAdmission.branch_update_withheld_for_sibling: bool`, set `False` at `:229`. |
 | `src/orchestrator/api/schemas.py` | Both admission response models (`:637`, `:755`) gain the field and its docstring. |
 | `src/orchestrator/api/routes.py` | Both admission routes (`:773`, `:873`) fill the field. |
@@ -123,8 +123,9 @@ The code wins in each case. Carry all of these into ADR-0045 (Task 11).
 ### Task 1: The two paginated GitHub reads and their fakes
 
 **Files:**
-- Create: `src/orchestrator/services/branch_update_serialization.py` (skeleton: protocol + two dataclasses + the two moved action strings only)
-- Modify: `src/orchestrator/services/estate_pr_merge.py` (after `head_check_runs`, `:557-597`)
+- Modify: `src/orchestrator/services/estate_landing_admission.py` (two dataclasses + `SiblingReadGateway`, after `EstateReadGateway` at `:402-411`)
+- Create: `src/orchestrator/services/branch_update_serialization.py` (skeleton: the two moved action strings only)
+- Modify: `src/orchestrator/services/estate_pr_merge.py` (after `head_check_runs`, `:557-597`; class docstring `:472`)
 - Modify: `tests/services/estate_landing_doubles.py` (`FakeEstateGateway`, `:158`)
 - Test: `tests/services/test_estate_pr_branch_update.py` (append beside the existing monkeypatched-httpx gateway tests at `:927-998`)
 
@@ -135,6 +136,7 @@ The code wins in each case. Carry all of these into ADR-0045 (Task 11).
 BRANCH_UPDATE_ACTION: Final = "estate_pr_branch_update.updated"      # moved, value unchanged
 INERT_BRANCH_UPDATE_ACTION: Final = "inert_pr_branch_update.updated" # moved, value unchanged
 
+# estate_landing_admission.py (Correction 2 -- NOT the new module; see the import-cycle note)
 @dataclass(frozen=True)
 class OpenPullRequest:
     number: int
@@ -170,8 +172,8 @@ class SiblingReadGateway(EstateReadGateway, Protocol):
 cd /Users/devon/Projects/orchestrator/.worktrees/serialize-freshening && .venv/bin/python -m pytest tests/services/test_estate_pr_branch_update.py -k "open_list or commits or commit_list or unlinked or verification" -x 2>&1 | tail -15
 ```
 
-- [ ] **Step 3: Implement.** In `estate_pr_merge.py`: a private `_get_pages(self, url: str, *, cap: int | None) -> list[Any]` that appends `per_page=100&page=N`, calls `httpx.get` with the same exception tuple as `_get` (`httpx.RequestError, httpx.InvalidURL, ValueError`), raises `EstateGatewayError("list_status", status)` on **any** non-200 including 404, stops on a page shorter than 100, and raises `EstateGatewayError("list_pagination_exceeded")` after 20 pages. Then `open_pull_requests` (`/repos/{r}/pulls?state=open`) and `pull_request_commits` (`/repos/{r}/pulls/{n}/commits`, raising `commits_list_truncated` at ≥250 rows). Parse defensively in the style of `_pull_from_body` (`:690`): every unrecognised shape raises. Import the dataclasses from `branch_update_serialization` — the new module must not import `estate_pr_merge`.
-- [ ] **Step 4: Move the two action strings.** Define them in the new module; in `estate_pr_branch_update.py:80` and `inert_pr_branch_update.py:67` replace the definitions with `from orchestrator.services.branch_update_serialization import BRANCH_UPDATE_ACTION` / `INERT_BRANCH_UPDATE_ACTION`. Tests that import them from the act modules keep working. Change both act gateway protocols' base from `EstateReadGateway` to `SiblingReadGateway`.
+- [ ] **Step 3: Implement.** In `estate_pr_merge.py`: a private `_get_pages(self, url: str, *, cap: int | None) -> list[Any]` that appends `per_page=100&page=N`, calls `httpx.get` with the same exception tuple as `_get` (`httpx.RequestError, httpx.InvalidURL, ValueError`), raises `EstateGatewayError("list_status", status)` on **any** non-200 including 404, stops on a page shorter than 100, and raises `EstateGatewayError("list_pagination_exceeded")` after 20 pages. Then `open_pull_requests` (`/repos/{r}/pulls?state=open`) and `pull_request_commits` (`/repos/{r}/pulls/{n}/commits`, raising `commits_list_truncated` at ≥250 rows). Parse defensively in the style of `_pull_from_body` (`:690`): every unrecognised shape raises. Import the dataclasses from `estate_landing_admission` (never from the new module — Correction 2's cycle). Update the class docstring at `:472` ("Five calls, and two of them change anything") to seven.
+- [ ] **Step 4: Move the two action strings.** Define them in the new module; in `estate_pr_branch_update.py:80` and `inert_pr_branch_update.py:67` replace the definitions with `from orchestrator.services.branch_update_serialization import BRANCH_UPDATE_ACTION` / `INERT_BRANCH_UPDATE_ACTION`. Tests that import them from the act modules keep working. Change both act gateway protocols' base from `EstateReadGateway` to `SiblingReadGateway` (imported from `estate_landing_admission`). Then prove there is no cycle from every entry point: `.venv/bin/python -c "import orchestrator.services.estate_pr_merge; import orchestrator.services.inert_landing_admission; import orchestrator.services.branch_update_serialization; import orchestrator.api.routes"` in a fresh interpreter each, all four orders.
 - [ ] **Step 5: Fakes.** `FakeEstateGateway.__init__` gains `open_pulls: tuple[OpenPullRequest, ...] | None = None`, `commits: dict[int, tuple[PullRequestCommit, ...]] | None = None`, `open_error`, `commits_error: dict[int, EstateGatewayError] | None = None`, and records `self.open_reads`, `self.commit_reads`. **Defaults:** `open_pulls=None` → `(OpenPullRequest(self._pull.number, self._pull.head_sha, self._pull.author_login, self._pull.author_is_bot),)`; a number absent from `commits` → `(dependabot_commit(sha=<that PR's head>),)`. Add module helpers `dependabot_commit(sha)`, `foreign_commit(sha, author="alobar-sds-dispatch[bot]")`, `open_pull(number, head_sha, author="dependabot[bot]", is_bot=True)`. Docstring states that the default is the spec's test-12 hygiene: the target alone, positively owned.
 - [ ] **Step 6: Green:**
 
@@ -473,7 +475,7 @@ Keep the lambda bodies small; if they grow, give the new module two public helpe
   - Service: both admission functions return `branch_update_withheld_for_sibling is False` (composition alone observes no sibling).
   - The existing pins (`test_estate_pr_branch_update.py:885`, both API `…every_field_of_the_composed_answer`) go red until the model gains the field, then green — no edit to them.
   - Mirror-key pins beside `test_estate_pr_branch_update.py:445-464`: `from estate_lander.cli import _WITHHELD_FOR_SIBLING; assert _WITHHELD_FOR_SIBLING in EstateLandingAdmission.__dataclass_fields__`; the same in `test_inert_pr_branch_update.py` against `InertLandingAdmission` with `inert_lander.cli._WITHHELD_FOR_SIBLING`. (These import constants Task 7/8 create — so either add the constants to both `cli.py` files in this commit, or put these two pins in Tasks 7/8. **Put them in this commit** and add the two one-line constants here, so the key name is pinned the moment it is served.)
-  - API, **observing `True` on the wire** (the WS-P2.12 hazard — a field that only ever serializes `False` is unproven): monkeypatch `orchestrator.api.routes.GitHubEstatePullRequests` (and `GitHubInertPullRequests`) to return a `SiblingGateway` producing outcome 2, and `orchestrator.api.routes.github_app_credentials` to return a non-`None` credential; for estate, override the record-source dependency with a `FakeChangeRecordSource` holding both records and the landing-source dependency with `redeploying_source()` (inert: `inert_source()` and an `inert_landing_doubles.FakeInertPolicySource`). Assert `body["branch_update_qualifies"] is True` **and** `body["branch_update_withheld_for_sibling"] is True`; the sibling-owned variant → `False`.
+  - API, **observing `True` on the wire** (the WS-P2.12 hazard — a field that only ever serializes `False` is unproven). Precedent for faking a gateway at the API layer: `tests/api/test_pr_merge_api.py:37` (`FakeGateway`). Before writing it, confirm `routes.py` imports `GitHubEstatePullRequests`/`GitHubInertPullRequests` by name (they are the monkeypatch targets — measured: `routes.py` constructs them inline at `:799`/`:900`) and read what `token_provider_for` does with a non-`None` credential, so the fake is reached without minting a token. Then monkeypatch `orchestrator.api.routes.GitHubEstatePullRequests` (and `GitHubInertPullRequests`) to return a `SiblingGateway` producing outcome 2, and `orchestrator.api.routes.github_app_credentials` to return a non-`None` credential; for estate, override the record-source dependency with a `FakeChangeRecordSource` holding both records and the landing-source dependency with `redeploying_source()` (inert: `inert_source()` and an `inert_landing_doubles.FakeInertPolicySource`). Assert `body["branch_update_qualifies"] is True` **and** `body["branch_update_withheld_for_sibling"] is True`; the sibling-owned variant → `False`.
   - API: with no credentials (the existing fixture) the key is present and `False` (qualifies is false, so no scan runs).
   - Served fact versus act (spec test 8): for the same `SiblingGateway` fixture, the route's field is `True` iff the act refuses `…_SIBLING_HOLDING`; with `open_error` the field is `False` and the act refuses `…_SIBLINGS_UNREADABLE`.
 - [ ] **Step 2: Run, watch fail. Step 3: Implement. Step 4: Green:**
@@ -495,7 +497,7 @@ cd /Users/devon/Projects/orchestrator/.worktrees/serialize-freshening && .venv/b
 **Classifier** (Ambiguity 7):
 
 ```python
-def _held_status(refusals, *, rollout_base_matches_pin: bool, withheld_for_sibling: bool) -> str:
+def _held_status(refusals, *, rollout_base_matches_pin: bool, withheld_for_sibling: bool = False) -> str:
     present = set(refusals)
     unexplained = present - _DELIBERATE - _EXCEPTION
     derived = _freshness_derived(present, rollout_base_matches_pin=rollout_base_matches_pin)
@@ -510,7 +512,7 @@ def _held_status(refusals, *, rollout_base_matches_pin: bool, withheld_for_sibli
     return "deliberate"
 ```
 
-`_consider` passes `withheld_for_sibling=answer.get(_WITHHELD_FOR_SIBLING) is True` (a missing key is `False` — the old-orchestrator direction). `_branch_updates` skips when `answer.get(_WITHHELD_FOR_SIBLING) is True`, with no line. `_NOT_A_FINDING` and `_REPORTED` gain `"withheld"` (place it after `"exception"` in `_REPORTED`). Extend the docstrings: `withheld` is keyed on an observed sibling, clears when the branch ahead lands, and is its own category (Devon's ruling that collapsing categories loses which is which).
+The default is `False` deliberately: the existing parametrized callers (`test_estate_lander.py:575` onward) keep compiling and keep asserting what they asserted, and a caller that forgets the argument gets `held` — the fail-toward-a-finding direction. `_consider` passes `withheld_for_sibling=answer.get(_WITHHELD_FOR_SIBLING) is True` (a missing key is `False` — the old-orchestrator direction). `_branch_updates` skips when `answer.get(_WITHHELD_FOR_SIBLING) is True`, with no line. `_NOT_A_FINDING` and `_REPORTED` gain `"withheld"` (place it after `"exception"` in `_REPORTED`). Extend the docstrings: `withheld` is keyed on an observed sibling, clears when the branch ahead lands, and is its own category (Devon's ruling that collapsing categories loses which is which).
 
 - [ ] **Step 1: Failing tests (spec test 10):**
   - `{pace, behind}` + key `True` → `withheld`; key absent → `held`; key `False` → `held`.
@@ -533,7 +535,7 @@ def _held_status(refusals, *, rollout_base_matches_pin: bool, withheld_for_sibli
 - Test: `tests/inert_lander/test_inert_lander.py`
 
 ```python
-def _unsatisfied_status(refusals, *, withheld_for_sibling: bool) -> str:
+def _unsatisfied_status(refusals, *, withheld_for_sibling: bool = False) -> str:
     present = set(refusals)
     unexplained = present - _EXCEPTION
     if _EXCEPTION & present or withheld_for_sibling:
@@ -651,7 +653,7 @@ Measured at plan time: `0044-a-failed-rollout-production-has-moved-past-is-an-ex
   6. **Reporting:** the served fact, `withheld` as its own category, why `…_siblings_unreadable` stays a finding.
   7. **Alternatives rejected** (spec §6): strict, `!= dirty`, G*, older-sibling-first, and the "older sibling about to land" clause with its revisit trigger.
   8. **Residuals** (spec §13), including queue jumping, lost response, server-side rebase probe, `[dependabot skip]` follow-up probe, stall residuals, the pre-existing edited population.
-  9. **Corrections against the spec** — all seven from this plan's header.
+  9. **Corrections against the spec** — all seven from this plan's header (Correction 2 including the import-cycle note).
 - [ ] **Step 3:** word-guard check any sentence reused in a docstring (Task 2 Step 5, pointed at the ADR). **Step 4: Commit** — `docs: ADR-0045, the lane edits one Dependabot branch per repository at a time`, trailer lines.
 
 ---
