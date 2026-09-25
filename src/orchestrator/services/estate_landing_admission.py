@@ -413,7 +413,13 @@ class EstateReadGateway(Protocol):
 
 @dataclass(frozen=True)
 class EstateLandingAdmission:
-    """The composed answer, plus what the act needs in order to name what it acted on."""
+    """The composed answer, plus what the act needs in order to name what it acted on.
+
+    It carries no branch-update verdict. This lane had one until ADR-0045, when the act it
+    permitted was deleted: our update-branch call is an edit under the App's identity, and
+    Dependabot disowns a branch it did not write last. `qualifies_for_branch_update` survives
+    unchanged for the inert lane, which serves an author with no such behaviour.
+    """
 
     satisfied: bool
     refusals: tuple[str, ...]
@@ -422,11 +428,6 @@ class EstateLandingAdmission:
     head_sha: str | None
     change_record_id: int | None
     policy_version: int | None
-    # A SECOND, much smaller permission composed from the same terms: not "may this land" but "may
-    # the lane bring this branch up to date with its base". Served on the read surface so a dry run
-    # can report what a live pass would do without anything acting -- the acting path recomposes
-    # this from scratch and never trusts a caller's copy of it.
-    branch_update_qualifies: bool
     # ADR-0024. The fact the freshness-derived criterion below takes as an argument, served so the
     # OTHER consumer -- the out-of-process reporting agent, which cannot import this module -- can
     # ask the same question this process asks. It is a fact rather than a verdict: what to do with
@@ -689,9 +690,6 @@ def estate_landing_admission(
         head_sha=remote.head_sha,
         change_record_id=record.record_id,
         policy_version=record.policy_version,
-        branch_update_qualifies=qualifies_for_branch_update(
-            tuple(refusals), rollout_base_matches_pin=remote.rollout_base_matches_pin
-        ),
         rollout_base_matches_pin=remote.rollout_base_matches_pin,
     )
 

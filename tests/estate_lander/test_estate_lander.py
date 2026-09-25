@@ -377,7 +377,6 @@ def test_a_check_that_reached_no_verdict_is_a_finding(refusals: list[str]) -> No
             (REPOSITORY, 60): {
                 "satisfied": False,
                 "refusals": refusals,
-                "branch_update_qualifies": True,
                 "head_sha": HEAD,
             }
         }

@@ -648,16 +648,12 @@ class EstateLandingAdmissionResponse(BaseModel):
     head_sha: str | None
     change_record_id: int | None
     policy_version: int | None
-    # ADR-0019 Increment 6. DECLARED HERE OR IT DOES NOT EXIST ON THE WIRE: a response model drops
-    # every key the service returns and the model does not name, silently and with no error, so a
-    # field added to the service alone would pass every service-level assertion and reach no
-    # caller. This estate has already shipped that exact defect once, on the runner brief.
-    branch_update_qualifies: bool
-    # ADR-0024, and it is here under the same hazard as the line above. The reporting agent
-    # classifies a rollout-pin refusal by whether the BASE carries the pinned bytes -- a fact it
-    # cannot observe for itself, because it reads no repository and this is the only surface that
-    # could tell it. Undeclared, the answer carries the field on the service object and nothing on
-    # the wire, and the agent falls back to its fail-toward-a-finding default forever.
+    # ADR-0024. DECLARED HERE OR IT DOES NOT EXIST ON THE WIRE: a response model drops every key
+    # the service returns and the model does not name, silently and with no error. The reporting
+    # agent classifies a rollout-pin refusal by whether the BASE carries the pinned bytes -- a fact
+    # it cannot observe for itself, because it reads no repository and this is the only surface
+    # that could tell it. Undeclared, the answer carries the field on the service object and
+    # nothing on the wire, and the agent falls back to its fail-toward-a-finding default forever.
     rollout_base_matches_pin: bool
 
 
