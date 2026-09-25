@@ -56,6 +56,8 @@ from orchestrator.services.estate_pr_branch_update import (
     BRANCH_UPDATE_HEAD_MOVED,
     BRANCH_UPDATE_NOT_QUALIFIED,
     BRANCH_UPDATE_REFUSED_BY_REMOTE,
+    BRANCH_UPDATE_SIBLING_HOLDING,
+    BRANCH_UPDATE_SIBLINGS_UNREADABLE,
     BRANCH_UPDATE_SUBJECT,
     EstateBranchUpdateCommand,
     update_estate_pull_request_branch,
@@ -68,7 +70,10 @@ from tests.services.estate_landing_doubles import (
     HEAD,
     REPOSITORY,
     FakeEstateGateway,
+    SiblingGateway,
     approved,
+    dependabot_commit,
+    foreign_commit,
     pull_request,
 )
 
@@ -111,6 +116,7 @@ def _update(
     moment: datetime = IN_WINDOW,
     expected_head: str = HEAD,
     key: str = "branch-update-1",
+    record_source: FakeChangeRecordSource | None = None,
 ):
     return update_estate_pull_request_branch(
         session,
@@ -123,7 +129,7 @@ def _update(
         ),
         gateway,
         landing or redeploying_source(),
-        FakeChangeRecordSource({(REPOSITORY, PR): record or approved()}),
+        record_source or FakeChangeRecordSource({(REPOSITORY, PR): record or approved()}),
         enabled=enabled,
         credentials_configured=credentials,
         clock=FixedClock(moment),
@@ -1376,5 +1382,148 @@ def test_the_self_clearing_codes_are_exactly_the_ones_this_service_raises() -> N
     """
     from estate_lander.cli import _UPDATE_SELF_CLEARING
 
-    assert _UPDATE_SELF_CLEARING == {BRANCH_UPDATE_HEAD_MOVED, BRANCH_UPDATE_NOT_QUALIFIED}
+    assert _UPDATE_SELF_CLEARING == {
+        BRANCH_UPDATE_HEAD_MOVED,
+        BRANCH_UPDATE_NOT_QUALIFIED,
+        BRANCH_UPDATE_SIBLING_HOLDING,
+    }
     assert BRANCH_UPDATE_REFUSED_BY_REMOTE not in _UPDATE_SELF_CLEARING
+
+
+def test_an_UNREADABLE_scan_is_NOT_self_clearing() -> None:
+    """ADR-0045. The two sibling refusals look alike and mean opposite things to the lander.
+
+    A holding sibling is a deliberate withhold that clears when the branch ahead lands. A scan that
+    could not read is the orchestrator not knowing, and nothing about not knowing clears on its
+    own -- so an act refused for it must stay a finding every pass until the reads succeed.
+    """
+    from estate_lander.cli import _UPDATE_SELF_CLEARING
+
+    assert BRANCH_UPDATE_SIBLINGS_UNREADABLE not in _UPDATE_SELF_CLEARING
+
+
+def test_neither_new_code_contains_the_other() -> None:
+    """A code that is a substring of another satisfies every substring reader of the other -- the
+    report greps, and the discriminating tests that assert a code is ABSENT on one pass and PRESENT
+    on the next. Checked over all four sibling codes, across both lanes."""
+    from orchestrator.services.inert_pr_branch_update import (
+        INERT_BRANCH_UPDATE_SIBLING_HOLDING,
+        INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE,
+    )
+
+    codes = [
+        BRANCH_UPDATE_SIBLING_HOLDING,
+        BRANCH_UPDATE_SIBLINGS_UNREADABLE,
+        INERT_BRANCH_UPDATE_SIBLING_HOLDING,
+        INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE,
+    ]
+    assert len(set(codes)) == 4
+    for one in codes:
+        for other in codes:
+            if one != other:
+                assert one not in other, (one, other)
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0045: the lane edits one Dependabot branch per repository at a time.
+#
+# Every case here composes a REAL sibling admission through the act, over a gateway that answers
+# each pull request for itself -- so what is tested is the act computing the rule, not a value
+# somebody handed it. The single-target fake would hand every sibling the target's answer.
+# --------------------------------------------------------------------------------------------
+
+SIBLING = 50
+SIBLING_HEAD = "b" * 40
+
+
+def _beside_sibling(*, sibling_commits=None, target_commits=None, **kwargs) -> SiblingGateway:
+    """The target behind its base, beside one Dependabot sibling also behind its base.
+
+    Both are otherwise landable, so the sibling's own composed answer names only freshness -- a
+    holding answer. Whether it HOLDS therefore turns on its ownership alone, which is the variable
+    each pair below moves.
+    """
+    commits = {}
+    if sibling_commits is not None:
+        commits[SIBLING] = sibling_commits
+    if target_commits is not None:
+        commits[PR] = target_commits
+    return SiblingGateway(
+        target=PR,
+        pulls={
+            PR: pull_request(number=PR),
+            SIBLING: pull_request(number=SIBLING, head_sha=SIBLING_HEAD),
+        },
+        behind={PR: 3, SIBLING: 3},
+        commits=commits,
+        **kwargs,
+    )
+
+
+def _both_records() -> FakeChangeRecordSource:
+    return FakeChangeRecordSource({(REPOSITORY, PR): approved(), (REPOSITORY, SIBLING): approved()})
+
+
+def _no_update_event_readable(engine: Engine) -> bool:
+    with Session(engine) as reader:
+        return reader.scalar(select(Event).where(Event.action == BRANCH_UPDATE_ACTION)) is None
+
+
+def test_an_owned_branch_beside_an_edited_sibling_that_holds_is_never_touched(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """THE DISCRIMINATING CONTROL, at the surface that writes to a repository. The sibling carries
+    this estate's commit, so Dependabot will no longer rebase it; making the target edited too is
+    the deadlock's whole precondition. The assertion is on the untouched branch and the absent
+    record, not only on the code."""
+    gateway = _beside_sibling(sibling_commits=(foreign_commit(SIBLING_HEAD),))
+
+    with pytest.raises(DomainError) as raised:
+        _update(migrated_session, gateway=gateway, record_source=_both_records())
+
+    assert raised.value.code == BRANCH_UPDATE_SIBLING_HOLDING
+    assert gateway.branch_updates == []
+    assert _no_update_event_readable(migrated_engine)
+
+
+def test_the_same_branch_beside_an_OWNED_sibling_is_brought_up_to_date(
+    migrated_session: Session,
+) -> None:
+    """The pair to the case above, identical but for the sibling's ownership. Only the rule makes
+    the two answers differ, and the act must compute it itself: nothing on the admission answer
+    it composes says so."""
+    gateway = _beside_sibling()
+
+    _update(migrated_session, gateway=gateway, record_source=_both_records())
+
+    assert gateway.branch_updates == [(REPOSITORY, PR, HEAD)]
+
+
+def test_an_already_edited_branch_is_freshened_again_beside_a_holding_sibling(
+    migrated_session: Session,
+) -> None:
+    """It has already lost Dependabot's ownership, so updating it again costs nothing -- and this
+    is what keeps a repository that already has several edited branches workable."""
+    gateway = _beside_sibling(
+        sibling_commits=(foreign_commit(SIBLING_HEAD),),
+        target_commits=(dependabot_commit("a" * 40), foreign_commit(HEAD)),
+    )
+
+    _update(migrated_session, gateway=gateway, record_source=_both_records())
+
+    assert gateway.branch_updates == [(REPOSITORY, PR, HEAD)]
+
+
+def test_an_unreadable_scan_refuses_with_its_own_code_and_touches_nothing(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Not the holding code: the orchestrator could not establish that no other edited branch is
+    queued, and the lander must be able to tell that apart from a repository waiting its turn."""
+    gateway = _beside_sibling(open_error=EstateGatewayError("open_pull_requests_status", 502))
+
+    with pytest.raises(DomainError) as raised:
+        _update(migrated_session, gateway=gateway, record_source=_both_records())
+
+    assert raised.value.code == BRANCH_UPDATE_SIBLINGS_UNREADABLE
+    assert gateway.branch_updates == []
+    assert _no_update_event_readable(migrated_engine)

@@ -52,6 +52,25 @@ handler and so reaches the caller as a bare HTTP 500 over an act that in fact ha
 So it takes the same advisory lock its sibling does, for a different reason and over a row that
 may not exist yet, which is what a row lock cannot cover. It is released with the transaction
 whichever way that ends.
+
+## It edits one Dependabot branch per repository at a time. ADR-0045.
+
+Bringing a Dependabot pull request up to date writes a commit under this estate's identity, and
+from then on Dependabot refuses to rebase that branch. Two such branches in one repository, and a
+landing of either, is the whole precondition of a deadlock: the landing conflicts the other,
+Dependabot will not rebase it because it was edited, and this lane will not freshen a conflicted
+head. Nobody can act.
+
+So before the remote is asked, the act asks whether another Dependabot pull request in the
+repository is already edited and still queued to land. If it is and this branch is still
+Dependabot's, the branch is left alone -- and staying Dependabot's is exactly what keeps it safe,
+because a sibling Dependabot still owns is one it rebases when a landing conflicts it. A branch
+that is already edited is always freshened again: it has nothing left to lose. When the siblings
+cannot be read the act refuses with a code of its own, because not knowing is a finding and
+waiting one's turn is not.
+
+The act works this out for itself, inside its own transaction and under the repository lock it
+already holds. It never reads the served answer's copy of the fact.
 """
 
 from __future__ import annotations
@@ -67,11 +86,17 @@ from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event
-from orchestrator.services.branch_update_serialization import BRANCH_UPDATE_ACTION
+from orchestrator.services.branch_update_serialization import (
+    BRANCH_UPDATE_ACTION,
+    SiblingAnswer,
+    SiblingOutcome,
+    branch_update_sibling_outcome,
+)
 from orchestrator.services.change_record import ChangeRecordSource
 from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.estate_landing_admission import (
     EstateGatewayError,
+    EstateLandingAdmission,
     SiblingReadGateway,
     estate_landing_admission,
     gateway_failure_detail,
@@ -92,6 +117,18 @@ BRANCH_UPDATE_REFUSED_BY_REMOTE: Final = "estate_branch_update_refused_by_remote
 
 # The pull request moved between the answer the caller read and this call.
 BRANCH_UPDATE_HEAD_MOVED: Final = "estate_branch_update_head_moved"
+
+# ADR-0045. Another Dependabot pull request this lane has already edited is queued to land, and this
+# one is still Dependabot's. Editing it too would make two branches Dependabot will no longer
+# rebase, and a landing of either conflicts the other with nobody able to act. A deliberate
+# withhold: it clears when the branch ahead lands, so the caller treats it as self-clearing.
+BRANCH_UPDATE_SIBLING_HOLDING: Final = "estate_branch_update_sibling_holding"
+
+# ADR-0045. The open pull requests, their commits, or a sibling's own answer could not be read, so
+# it is not established that no other edited branch is queued. NOT self-clearing, and spelled so
+# that neither sibling code contains the other: not knowing clears on nothing, and a repository
+# whose reads keep failing must stay a finding rather than look like one waiting its turn.
+BRANCH_UPDATE_SIBLINGS_UNREADABLE: Final = "estate_branch_update_siblings_unreadable"
 
 
 @dataclass(frozen=True)
@@ -236,6 +273,40 @@ def _update(
             "re-read the landing-admission answer and ask again",
         )
 
+    outcome = branch_update_sibling_outcome(
+        session,
+        repository=admission.repository,
+        target_number=admission.pr_number,
+        gateway=gateway,
+        compose=lambda number: _sibling_answer(
+            estate_landing_admission(
+                session,
+                admission.repository,
+                number,
+                landing_source,
+                record_source,
+                gateway,
+                enabled=enabled,
+                credentials_configured=credentials_configured,
+                clock=clock,
+            )
+        ),
+        clock=clock,
+    )
+    if outcome is SiblingOutcome.WITHHOLD_SIBLING_HOLDING:
+        raise DomainError(
+            BRANCH_UPDATE_SIBLING_HOLDING,
+            "another Dependabot pull request this lane has already edited is queued to land, "
+            "and this branch is still Dependabot's",
+            "the pull request ahead of it lands first; the next pass asks again",
+        )
+    if outcome is SiblingOutcome.WITHHOLD_SIBLINGS_UNREADABLE:
+        raise DomainError(
+            BRANCH_UPDATE_SIBLINGS_UNREADABLE,
+            "it could not be established that no other edited branch is queued to land",
+            "read the open pull requests and their commits; nothing was changed",
+        )
+
     try:
         gateway.update_branch(
             repository=admission.repository,
@@ -255,6 +326,11 @@ def _update(
         head_sha=head_sha,
         replayed=False,
     )
+
+
+def _sibling_answer(admission: EstateLandingAdmission) -> SiblingAnswer:
+    """A sibling's own composed answer, as far as the holding test reads it."""
+    return SiblingAnswer(admission.refusals, admission.rollout_base_matches_pin)
 
 
 def _subject_id(repository: str, pr_number: int) -> uuid.UUID:

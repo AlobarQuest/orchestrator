@@ -165,8 +165,17 @@ _BASE_MATCHES_PIN = "rollout_base_matches_pin"
 # deliberate, self-clearing refusal reported as something that could not be measured. Every OTHER
 # refusal stays a finding, including one this program cannot parse a code from, so the polarity is
 # the one this file argues for everywhere.
+#
+# ADR-0045 adds the third: a sibling this lane has already edited is queued to land, so this branch
+# was left Dependabot's on purpose. It clears when the branch ahead lands. Its twin
+# `estate_branch_update_siblings_unreadable` is DELIBERATELY absent -- that one says the
+# orchestrator could not read, and not knowing clears on nothing, so it stays a finding.
 _UPDATE_SELF_CLEARING = frozenset(
-    {"estate_branch_update_head_moved", "estate_branch_update_not_qualified"}
+    {
+        "estate_branch_update_head_moved",
+        "estate_branch_update_not_qualified",
+        "estate_branch_update_sibling_holding",
+    }
 )
 
 # Statuses that are not findings, stated as the set to EXCLUDE so a status nobody has thought of

@@ -40,6 +40,25 @@ whichever lane is asking.
 The permission, the head, the off-switch and the credential check all come off one cascade, so a
 deployment that has not been told it may land anything cannot be made to touch a branch either --
 by the same term, not by a second one somebody has to remember to write.
+
+## It edits one Dependabot branch per repository at a time. ADR-0045.
+
+Bringing a Dependabot pull request up to date writes a commit under this estate's identity, and
+from then on Dependabot refuses to rebase that branch. Two such branches in one repository, and a
+landing of either, is the whole precondition of a deadlock: the landing conflicts the other,
+Dependabot will not rebase it because it was edited, and this lane will not freshen a conflicted
+head. Nobody can act.
+
+So before the remote is asked, the act asks whether another Dependabot pull request in the
+repository is already edited and still queued to land. If it is and this branch is still
+Dependabot's, the branch is left alone -- and staying Dependabot's is exactly what keeps it safe,
+because a sibling Dependabot still owns is one it rebases when a landing conflicts it. A branch
+that is already edited is always freshened again: it has nothing left to lose. When the siblings
+cannot be read the act refuses with a code of its own, because not knowing is a finding and
+waiting one's turn is not.
+
+The act works this out for itself, inside its own transaction and under the repository lock it
+already holds. It never reads the served answer's copy of the fact.
 """
 
 from __future__ import annotations
@@ -51,17 +70,26 @@ from typing import Final, Protocol
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event
-from orchestrator.services.branch_update_serialization import INERT_BRANCH_UPDATE_ACTION
+from orchestrator.services.branch_update_serialization import (
+    INERT_BRANCH_UPDATE_ACTION,
+    SiblingAnswer,
+    SiblingOutcome,
+    branch_update_sibling_outcome,
+)
 from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.estate_landing_admission import (
     EstateGatewayError,
     SiblingReadGateway,
     gateway_failure_detail,
 )
-from orchestrator.services.inert_landing_admission import inert_landing_admission
+from orchestrator.services.inert_landing_admission import (
+    InertLandingAdmission,
+    inert_landing_admission,
+)
 from orchestrator.services.inert_landing_policy import InertLandingPolicySource
 from orchestrator.services.lifecycle import ActorContext
 
@@ -79,6 +107,14 @@ INERT_BRANCH_UPDATE_REFUSED_BY_REMOTE: Final = "inert_branch_update_refused_by_r
 
 # The pull request moved between the answer the caller read and this call.
 INERT_BRANCH_UPDATE_HEAD_MOVED: Final = "inert_branch_update_head_moved"
+
+# ADR-0045. Another Dependabot pull request this lane has already edited is queued to land, and this
+# one is still Dependabot's. A deliberate withhold that clears when the branch ahead lands.
+INERT_BRANCH_UPDATE_SIBLING_HOLDING: Final = "inert_branch_update_sibling_holding"
+
+# ADR-0045. It could not be established that no other edited branch is queued to land. Not
+# self-clearing: not knowing clears on nothing.
+INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE: Final = "inert_branch_update_siblings_unreadable"
 
 
 @dataclass(frozen=True)
@@ -126,6 +162,7 @@ def update_inert_pull_request_branch(
     *,
     enabled: bool,
     credentials_configured: bool,
+    clock: Clock | None = None,
 ) -> InertBranchUpdateOutcome:
     """Own the transaction, because it writes the event that records the act.
 
@@ -141,6 +178,7 @@ def update_inert_pull_request_branch(
             policy_source,
             enabled=enabled,
             credentials_configured=credentials_configured,
+            clock=clock,
         )
         session.commit()
         return outcome
@@ -158,6 +196,7 @@ def _update(
     *,
     enabled: bool,
     credentials_configured: bool,
+    clock: Clock | None,
 ) -> InertBranchUpdateOutcome:
     _authorize_actor(command.actor)
     repository = command.repository.lower()
@@ -207,6 +246,39 @@ def _update(
             "re-read the landing-admission answer and ask again",
         )
 
+    outcome = branch_update_sibling_outcome(
+        session,
+        repository=admission.repository,
+        target_number=admission.pr_number,
+        gateway=gateway,
+        compose=lambda number: _sibling_answer(
+            inert_landing_admission(
+                session,
+                admission.repository,
+                number,
+                landing_source,
+                policy_source,
+                gateway,
+                enabled=enabled,
+                credentials_configured=credentials_configured,
+            )
+        ),
+        clock=clock,
+    )
+    if outcome is SiblingOutcome.WITHHOLD_SIBLING_HOLDING:
+        raise DomainError(
+            INERT_BRANCH_UPDATE_SIBLING_HOLDING,
+            "another Dependabot pull request this lane has already edited is queued to land, "
+            "and this branch is still Dependabot's",
+            "the pull request ahead of it lands first; the next pass asks again",
+        )
+    if outcome is SiblingOutcome.WITHHOLD_SIBLINGS_UNREADABLE:
+        raise DomainError(
+            INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE,
+            "it could not be established that no other edited branch is queued to land",
+            "read the open pull requests and their commits; nothing was changed",
+        )
+
     try:
         gateway.update_branch(
             repository=admission.repository,
@@ -226,6 +298,12 @@ def _update(
         head_sha=head_sha,
         replayed=False,
     )
+
+
+def _sibling_answer(admission: InertLandingAdmission) -> SiblingAnswer:
+    """A sibling's own composed answer, as far as the holding test reads it. This lane pins no
+    rollout, so a moved rollout can never be excused as staleness here."""
+    return SiblingAnswer(admission.refusals, rollout_base_matches_pin=False)
 
 
 def _subject_id(repository: str, pr_number: int) -> uuid.UUID:

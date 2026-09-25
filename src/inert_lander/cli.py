@@ -150,8 +150,17 @@ _SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open
 #
 # SPELLED `inert_*`, WHICH IS WHY IT COULD NOT HAVE BEEN SHARED with the sibling lane's set even
 # had everything else been shareable.
+#
+# ADR-0045 adds the third: a sibling this lane has already edited is queued to land, so this branch
+# was left Dependabot's on purpose. It clears when the branch ahead lands. Its twin
+# `inert_branch_update_siblings_unreadable` is DELIBERATELY absent -- that one says the
+# orchestrator could not read, and not knowing clears on nothing, so it stays a finding.
 _UPDATE_SELF_CLEARING = frozenset(
-    {"inert_branch_update_head_moved", "inert_branch_update_not_qualified"}
+    {
+        "inert_branch_update_head_moved",
+        "inert_branch_update_not_qualified",
+        "inert_branch_update_sibling_holding",
+    }
 )
 
 # Refusals that CURRENT POLICY can never clear. The deploy policy names the ecosystems whose
