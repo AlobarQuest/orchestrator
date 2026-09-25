@@ -309,3 +309,63 @@ def open_pull(
     return OpenPullRequest(
         number=number, head_sha=head_sha, author_login=author, author_is_bot=is_bot
     )
+
+
+class SiblingGateway(FakeEstateGateway):
+    """A repository with SEVERAL open pull requests, each answering for itself. ADR-0045.
+
+    The single-target fake answers every read about one pull request, whichever number is asked.
+    That is exactly wrong for the sibling rule, whose composer reads each sibling's own admission:
+    it would hand every sibling the target's answer and test nothing about siblings. Here the pull
+    request, how far behind it is and its runs are looked up by number (the latter two by the head
+    the cascade passes, which names one pull request).
+
+    The open list is derived from `pulls` unless given, so a fixture states the population once.
+    """
+
+    def __init__(
+        self,
+        *,
+        target: int,
+        pulls: dict[int, EstatePullRequest],
+        behind: dict[int, int] | None = None,
+        runs: dict[int, tuple[HeadCheckRun, ...]] | None = None,
+        open_pulls: tuple[OpenPullRequest, ...] | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            pull=pulls[target],
+            open_pulls=(
+                tuple(
+                    open_pull(p.number, p.head_sha, p.author_login, p.author_is_bot)
+                    for p in pulls.values()
+                )
+                if open_pulls is None
+                else open_pulls
+            ),
+            **kwargs,
+        )
+        self._pulls = pulls
+        self._behind_by = behind or {}
+        self._runs_by = runs or {}
+
+    def _number_at(self, head_sha: str) -> int | None:
+        return next((n for n, p in self._pulls.items() if p.head_sha == head_sha), None)
+
+    def read_pull_request(self, *, repository: str, number: int) -> EstatePullRequest:
+        self.reads.append((repository, number))
+        if self._read_error is not None:
+            raise self._read_error
+        return self._pulls[number]
+
+    def commits_behind_base(self, *, repository: str, base_ref: str, head_sha: str) -> int:
+        self.compares.append((repository, base_ref, head_sha))
+        if self._compare_error is not None:
+            raise self._compare_error
+        return self._behind_by.get(self._number_at(head_sha) or -1, 0)
+
+    def head_check_runs(self, *, repository: str, head_sha: str) -> tuple[HeadCheckRun, ...]:
+        self.run_reads.append((repository, head_sha))
+        if self._runs_error is not None:
+            raise self._runs_error
+        return self._runs_by.get(self._number_at(head_sha) or -1, ())

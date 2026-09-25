@@ -12,15 +12,17 @@ question in one place.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Final, Literal
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from orchestrator.clock import Clock, TransactionClock
 from orchestrator.persistence.models import Event
 from orchestrator.services.estate_landing_admission import (
     DELIBERATE_REFUSALS,
@@ -44,7 +46,10 @@ from orchestrator.services.estate_landing_admission import (
     LANDING_RECORD_UNIDENTIFIED,
     LANDING_ROLLOUT_UNREADABLE,
     UPDATE_BOT_LOGIN,
+    EstateGatewayError,
+    OpenPullRequest,
     PullRequestCommit,
+    SiblingReadGateway,
     freshness_derived_refusals,
 )
 from orchestrator.services.inert_landing_admission import (
@@ -265,3 +270,176 @@ def _answer_class(answer: SiblingAnswer) -> Literal["holding", "releasing", "unr
     if present <= DELIBERATE_REFUSALS | derived | _HOLDING_BESIDE_THE_CRITERION:
         return "holding"
     return "releasing"
+
+
+class SiblingOutcome(Enum):
+    """The four answers the act reaches, in the order they are checked."""
+
+    # 1. The target is already edited: it has lost Dependabot's ownership, so freshening it again
+    #    costs nothing. This is what keeps a repository with several edited branches workable.
+    RELEASE_TARGET_EDITED = "release_target_edited"
+    # 2. Another Dependabot pull request is positively edited and holding, and the target is
+    #    positively owned. A deliberate withhold, and it clears when the branch ahead lands.
+    WITHHOLD_SIBLING_HOLDING = "withhold_sibling_holding"
+    # 3. The act could not establish that no other edited branch is queued to land. A withhold
+    #    that is a finding: nothing about not knowing clears on its own.
+    WITHHOLD_SIBLINGS_UNREADABLE = "withhold_siblings_unreadable"
+    # 4. Every other Dependabot pull request is owned, or edited and not holding.
+    RELEASE = "release"
+
+
+def _is_update_bot(pull: OpenPullRequest) -> bool:
+    """The author test the admission cascade already applies: the login AND the account type."""
+    return pull.author_login == UPDATE_BOT_LOGIN and pull.author_is_bot
+
+
+def branch_update_sibling_outcome(
+    session: Session,
+    *,
+    repository: str,
+    target_number: int,
+    gateway: SiblingReadGateway,
+    compose: Callable[[int], SiblingAnswer],
+    clock: Clock | None = None,
+) -> SiblingOutcome:
+    """May the lane make this Dependabot branch edited, given its siblings? ADR-0045.
+
+    **Why this lives outside both admission modules.** Testing whether a sibling holds means
+    composing THAT sibling's admission. If this rule lived inside the admission, composing a
+    sibling would compose the sibling's siblings, without end. Out here, `compose` answers one
+    question -- what does this sibling's own admission say -- and that answer never asks this one.
+    It is also how "which lane" is parameterized: each caller hands in its own lane's composer, and
+    everything else is one definition for both.
+
+    **The order is the spec's, and every sibling is evaluated before deciding.** A positively
+    observed holding sibling beside an owned target is the deliberate withhold even when some other
+    read failed; the served fact is therefore true exactly on outcome 2.
+
+    **Unknowns fail in opposite directions on the two sides.** An unestablished target is never
+    treated as edited (that would make it a second edited branch) and an unestablished sibling is
+    never treated as owned (that would let a first edit go ahead beside one). Where either matters,
+    the answer is outcome 3 -- a withhold that is reported, never a silent one.
+
+    A database failure propagates from anywhere in here, including out of `compose`: the caller's
+    transaction is broken, and a broken transaction is not an answer about siblings.
+    """
+    repository = repository.lower()
+    now = (clock or TransactionClock()).now(session)
+
+    try:
+        open_pulls = gateway.open_pull_requests(repository=repository)
+    except EstateGatewayError:
+        return SiblingOutcome.WITHHOLD_SIBLINGS_UNREADABLE
+    target = next((p for p in open_pulls if p.number == target_number), None)
+    if target is None:
+        # A race, or the platform lagging. The target's author and head are unknown, and releasing
+        # would decide a Dependabot branch's ownership by default.
+        return SiblingOutcome.WITHHOLD_SIBLINGS_UNREADABLE
+    if not _is_update_bot(target):
+        # A sync bot rebuilds its branch daily with a force-push, and anyone else's pull request is
+        # not one Dependabot maintains: an edit disowns nothing, so nothing is withheld.
+        return SiblingOutcome.RELEASE
+
+    siblings = [p for p in open_pulls if _is_update_bot(p) and p.number != target_number]
+    events = _recently_updated_heads(
+        session, repository, [target_number, *(p.number for p in siblings)], now
+    )
+
+    target_ownership = _read_ownership(
+        target, repository=repository, gateway=gateway, events=events
+    )
+    if target_ownership is Ownership.EDITED:
+        return SiblingOutcome.RELEASE_TARGET_EDITED
+
+    verdicts = {
+        _sibling_verdict(
+            sibling, repository=repository, gateway=gateway, events=events, compose=compose
+        )
+        for sibling in siblings
+    }
+    read_failed = target_ownership is None or "unknown" in verdicts
+    if "holding" in verdicts and target_ownership is Ownership.OWNED:
+        return SiblingOutcome.WITHHOLD_SIBLING_HOLDING
+    if "holding" in verdicts or read_failed:
+        return SiblingOutcome.WITHHOLD_SIBLINGS_UNREADABLE
+    return SiblingOutcome.RELEASE
+
+
+def _read_ownership(
+    pull: OpenPullRequest,
+    *,
+    repository: str,
+    gateway: SiblingReadGateway,
+    events: dict[int, set[str]],
+) -> Ownership | None:
+    """One pull request's ownership, or None when its commits could not be read in full.
+
+    None is distinct from UNESTABLISHED on purpose: an unread list is a read failure wherever it
+    occurs, where an unclassified commit makes only this pull request's ownership unknown.
+    """
+    try:
+        commits = gateway.pull_request_commits(repository=repository, number=pull.number)
+    except EstateGatewayError:
+        return None
+    return _ownership(
+        commits,
+        listed_head=pull.head_sha,
+        edited_by_event=pull.head_sha in events.get(pull.number, set()),
+    )
+
+
+def _sibling_verdict(
+    sibling: OpenPullRequest,
+    *,
+    repository: str,
+    gateway: SiblingReadGateway,
+    events: dict[int, set[str]],
+    compose: Callable[[int], SiblingAnswer],
+) -> Literal["clear", "holding", "unknown"]:
+    """Does this sibling hold the repository, not hold it, or is that unknown?
+
+    An owned sibling is clear without composing anything: Dependabot will rebase it if a landing
+    conflicts it. Otherwise its own admission is composed, and an unestablished sibling whose answer
+    would hold is unknown rather than holding -- whether it is edited was never established.
+    """
+    ownership = _read_ownership(sibling, repository=repository, gateway=gateway, events=events)
+    if ownership is None:
+        return "unknown"
+    if ownership is Ownership.OWNED:
+        return "clear"
+    try:
+        answer = compose(sibling.number)
+    except SQLAlchemyError:
+        raise
+    except Exception:
+        # Composing the sibling's answer failed rather than answered: its state is unknown.
+        return "unknown"
+    verdict = _answer_class(answer)
+    if verdict == "unreadable":
+        return "unknown"
+    if verdict == "holding":
+        return "holding" if ownership is Ownership.EDITED else "unknown"
+    return "clear"
+
+
+def withheld_for_sibling(*, qualifies: bool, outcome: Callable[[], SiblingOutcome]) -> bool:
+    """The fact both admission answers serve: is this branch update withheld for a sibling?
+
+    True ONLY for a positively observed holding sibling (outcome 2). False on outcome 3, so a scan
+    whose reads failed never produces a quiet line -- the act meets the same failure and refuses
+    with its own code, which the landers keep a finding. It is a fact about an observed sibling,
+    never a record of the lane declining.
+
+    The scan runs only when the branch qualifies, because a branch that does not qualify is not
+    being freshened whatever its siblings say. A scan that fails in any way but a database error
+    leaves the admission read answering, with this false; a database error propagates, because the
+    read's transaction is then broken.
+    """
+    if not qualifies:
+        return False
+    try:
+        return outcome() is SiblingOutcome.WITHHOLD_SIBLING_HOLDING
+    except SQLAlchemyError:
+        raise
+    except Exception:
+        return False
