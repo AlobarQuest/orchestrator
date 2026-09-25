@@ -215,8 +215,8 @@ The same fact is also served on both admission responses (§9). The act always w
 and never trusts a caller's copy, which is how the `branch_update_qualifies` flag is handled today.
 
 It is implemented as **one function**, called by both routes and both acts. It is parameterized by
-which lane's admission it composes when testing whether a sibling is holding, and by that lane's
-read-failure set. Keep it outside `estate_landing_admission` and `inert_landing_admission`, so that
+which lane's admission it composes when testing whether a sibling is holding; the read-failure set
+is one set for both lanes (§6). Keep it outside `estate_landing_admission` and `inert_landing_admission`, so that
 composing a sibling's answer can never recurse into composing that sibling's siblings.
 
 ### Why ownership comes from GitHub and the event log together, and why neither alone works
@@ -318,21 +318,22 @@ freshened would stop counting as holding in the very pass that freshened it, and
 it would be edited too. That would recreate the defect.
 
 **Read failure.** The orchestrator could not establish the sibling's state. Any one of these makes
-the act reach outcome 3 (§5), a withhold that is a finding. Measured by grep of both admission
-modules at `6df1d09`:
+the act reach outcome 3 (§5), a withhold that is a finding. **One set serves both lanes.** Measured
+by grep of both admission modules at `6df1d09`:
 
-- **Estate lane:** `landing_pull_request_unreadable`, `landing_checks_verdict_unreadable`,
-  `landing_freshness_unreadable`, `landing_rollout_unreadable`, `landing_ecosystem_unreadable`,
-  `landing_policy_unreadable`, `landing_conditions_unreadable`, `landing_record_source_unreadable`,
-  `landing_record_source_unconfigured`, `landing_record_ambiguous`, `landing_record_unidentified`,
-  `landing_estate_source_unreadable`, `landing_estate_source_unconfigured`, `landing_estate_unknown`,
-  `landing_mergeability_unrecognised`, `landing_app_credentials_missing`.
-- **Inert lane:** the shared codes it imports or reaches through the shared terms
-  (`landing_pull_request_unreadable`, `landing_checks_verdict_unreadable`,
-  `landing_freshness_unreadable`, `landing_ecosystem_unreadable`,
-  `landing_estate_source_unreadable`, `landing_estate_source_unconfigured`, `landing_estate_unknown`,
-  `landing_mergeability_unrecognised`, `landing_app_credentials_missing`), plus its own
-  `inert_landing_policy_source_unreadable` and `inert_landing_policy_source_unconfigured`.
+`landing_pull_request_unreadable`, `landing_checks_verdict_unreadable`,
+`landing_freshness_unreadable`, `landing_rollout_unreadable`, `landing_ecosystem_unreadable`,
+`landing_policy_unreadable`, `landing_conditions_unreadable`, `landing_record_source_unreadable`,
+`landing_record_source_unconfigured`, `landing_record_ambiguous`, `landing_record_unidentified`,
+`landing_estate_source_unreadable`, `landing_estate_source_unconfigured`, `landing_estate_unknown`,
+`landing_mergeability_unrecognised`, `landing_app_credentials_missing`,
+`inert_landing_policy_source_unreadable`, `inert_landing_policy_source_unconfigured`.
+
+The inert lane reaches only some of these (it has no change record and no rollout pin, and it reaches
+several shared codes through `checks_term`, `freshness_term` and `ecosystem_exclusion_term`, which the
+estate module defines). Which lane can raise which code is not derivable mechanically, and a member
+a lane can never raise is harmless in its set, so a per-lane split would add machinery and a way to
+get it wrong for nothing.
 
 The repository-level members (`…_unconfigured`, `landing_app_credentials_missing`) would refuse the
 target's own admission too, so the target would not qualify and the scan would never run. They are
@@ -360,11 +361,17 @@ contradicted §5, which withholds when a read fails: a sibling whose reads faile
 whose state was not established. Read failures now withhold, and the withhold is reported (§9), so a
 repository whose reads keep failing is visible as a finding every pass rather than quietly released.
 
-**A completeness guard, so a new code forces a decision.** The three sets are vocabularies. A build
-must add a test that collects every refusal-code constant both admission modules define or raise and
-asserts each is in exactly one of the three sets, for each lane. Without it, a new `…_unreadable`
-code added next year would silently land in "releasing", which is the one direction this section
-exists to prevent.
+**A completeness guard, so a new code forces a decision — and the split between runtime and test
+is what makes it one.** At runtime, releasing stays the complement: a code in neither the holding
+set nor the read-failure set releases, which is the pre-change behaviour and the right polarity for
+a positively named condition. A test that only checks "each code is in one of three sets" would be
+vacuous against a complement, so the test does something different, the way `_NOT_A_FINDING` and
+the report-order list are already held together: it spells out the **releasing set as an explicit
+literal** and asserts that holding ∪ read-failure ∪ releasing equals every refusal-code constant
+both admission modules define, with the three disjoint. A new code then reds CI until somebody
+classifies it, without changing what the runtime does with it. Without that, a new `…_unreadable`
+code added next year would silently release, which is the one direction this section exists to
+prevent.
 
 **Four members of the holding set can outlive the minutes after an update, and each is a stall
 residual.**
@@ -575,9 +582,10 @@ and `change-manager#93` as `held (landing_pull_request_conflicted, landing_head_
 **`brain#73` lands first** (measured). The estate lander walks subjects in `(target_repository,
 record id)` order (`estate_lander/cli.py::_subjects`), and every pass in
 `~/Library/Logs/estate-landing.log` prints `brain#73` before `#74` and `#75`, so `#73` has the lowest
-record id. The pull request numbers are misleading here: `#74` and `#75` were opened at 07:24 on
-09-24 and `#73`'s Dependabot commit is from 08:17, so the record id, not the number or the age, is
-what decides.
+record id. Here the record ids agree with the pull request numbers and the opening times (`#73`,
+`#74` and `#75` were opened at 07:24:04, :08 and :13 on 09-24; `#73`'s 08:17 Dependabot commit is a
+later rebase of its own branch). The record id is still what decides, so the agreement is a fact
+about tonight, not a rule.
 
 **What the rule does on day one:**
 
@@ -642,7 +650,7 @@ would move past it, and it would stay an exception on its own line.
    (outcome 3 when its answer is holding-only). Neither case updates.
 6. **The holding gate, row by row.** For each member of §6's holding set, a positively edited
    sibling holds (outcome 2). For `landing_checks_not_clean`, `landing_pull_request_conflicted`, and
-   a made-up positive code, it does not (outcome 4). For each member of the lane's read-failure set,
+   a made-up positive code, it does not (outcome 4). For each member of the read-failure set,
    the act reaches outcome 3, including when the same answer also names a releasing refusal. A
    composition that raises reaches outcome 3.
 7. **Read failures reach outcome 3:** the list call fails, a later page of the list fails, a commits
@@ -663,8 +671,10 @@ would move past it, and it would stay an exception on its own line.
     on its own. An exception beside the key reads `exception`, not `withheld`. `withheld` is in
     `_NOT_A_FINDING` and in the report-order list, and the summary's counts still sum. Each mirror
     constant is pinned to the orchestrator's field name.
-11. **Completeness of the three sets** (§6): every refusal-code constant in both admission modules is
-    classified into exactly one set, per lane.
+11. **Completeness of the three sets** (§6): the releasing set is spelled out as a literal in the
+    test, and holding ∪ read-failure ∪ releasing equals every refusal-code constant both admission
+    modules define, the three disjoint. A new code reds this test until it is classified; the
+    runtime still treats an unlisted positive code as releasing.
 12. **Add-a-term hygiene.** Every existing "qualifies → acts" fixture in
     `tests/services/test_estate_pr_branch_update.py`, `tests/services/test_inert_pr_branch_update.py`,
     and both landers' suites (`tests/estate_lander/`, `tests/inert_lander/`) must set up a repository
@@ -685,7 +695,7 @@ after each mutation, set `PYTHONDONTWRITEBYTECODE=1`, and read the kills rather 
 
 **Build hazards: whole-repo gates a per-task loop will not see.**
 
-- **`test_cross_boundary_vocabulary`.** The holding set and the per-lane read-failure sets are
+- **`test_cross_boundary_vocabulary`.** The holding set and the read-failure set are
   module-level string collections tested with `in`. Each must be registered in
   `VOCABULARY_REGISTRY` (they mirror the refusal codes the admission modules raise and each lander
   classifies) or carry a justified `# not-a-vocabulary:` marker. Register them; an exemption that
@@ -795,8 +805,10 @@ The adversarial review of 2026-09-25 returned **accept with changes**. Each item
 **Should-fix**
 
 1. **Release on a sibling whose reads failed.** Accepted. §6 now has three sets, and a read-failure
-   code in a sibling's answer reaches outcome 3, a withhold. The set is enumerated per lane from both
-   admission modules, with a completeness test (§6, test 11).
+   code in a sibling's answer reaches outcome 3, a withhold. The set is enumerated from both admission
+   modules as one set for both lanes, and a completeness test spells out the releasing set as a
+   literal so a new code reds CI until classified while runtime keeps releasing as the complement
+   (§6, test 11).
 2. **Served fact versus act on read failure.** Accepted. The served fact is true only for outcome 2,
    a positively observed holding sibling. Outcome 3 has its own code,
    `…_siblings_unreadable`, kept out of both landers' `_UPDATE_SELF_CLEARING`, so it stays a finding.
