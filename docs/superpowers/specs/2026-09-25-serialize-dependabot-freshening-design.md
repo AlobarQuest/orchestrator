@@ -98,8 +98,10 @@ freshens it a second time, and it lands the night after. Under serialization C i
 the second night, and still lands on the third. The queue drains at the same rate with fewer builds.
 
 **The one case where it does cost time** is when the edited pull request at the front of the queue
-fails its checks. The sibling behind it is freshened on the pass after the failure is visible (§6),
-not in advance, so it lands one window later than it would have today.
+fails its checks. The sibling behind it is freshened on the first pass after the failure is visible
+(§6), not in advance. In the inert lane, which runs every hour, that is one pass later than today.
+In the estate lane it usually costs nothing (inferred): the failure is normally visible by the next
+hourly pass in the same window, and pace holds any landing to the next window anyway.
 
 ## 5. The rule, precisely
 
@@ -108,8 +110,13 @@ not in advance, so it lands one window later than it would have today.
 - **Dependabot pull request:** open, and authored by `dependabot[bot]` with `author_is_bot`. This is
   the same test `_remote_terms` already applies (`UPDATE_BOT_LOGIN`).
 - **Edited:** at least one of these holds.
-  - **(a)** The pull request carries a commit whose author login is not `dependabot[bot]`. A commit
-    with no linked author counts as edited.
+  - **(a)** The pull request carries a commit whose author login is not `dependabot[bot]`. **A
+    commit with no linked author, or a commit list that cannot be read, is resolved in whichever
+    direction withholds.** On the *target* it counts as owned, so the rule may still withhold. On a
+    *sibling* it counts as edited, so the sibling may hold. The same classification applied to both
+    would fail open on the target: it would read as already edited, never be withheld, and become a
+    second edited branch. Measured, every commit in 68 Dependabot pull requests carried a linked
+    author, so this matters only in theory, but the rule must not depend on that.
   - **(b)** The orchestrator's event log holds a branch update for this pull request
     (`estate_pr_branch_update.updated` or `inert_pr_branch_update.updated`, matching `repository`
     and `pr_number` in the payload) whose recorded `head_sha` equals the pull request's **current**
@@ -210,11 +217,24 @@ DELIBERATE_REFUSALS                         (pace, window)
     landing_mergeability_unknown }
 ```
 
-Each member clears without anyone acting. The pace and window reset on a clock. Being behind is
-cleared by the lane itself, because the holding branch is already edited and may always be freshened
-again. The last three are what an edited branch reports in the minutes after an update. Without
-them, the branch the lane has just freshened would stop counting as holding in the very pass that
-freshened it, and the sibling behind it would be edited too. That would recreate the defect.
+Every member but one clears without anyone acting. The pace and window reset on a clock. Being
+behind is cleared by the lane itself, because the holding branch is already edited and may always be
+freshened again. A run in flight finishes. The last three members are what an edited branch reports
+in the minutes after an update. Without them, the branch the lane has just freshened would stop
+counting as holding in the very pass that freshened it, and the sibling behind it would be edited
+too. That would recreate the defect.
+
+**The exception is `landing_checks_awaiting_verdict` on a head that is current.** `checks_term`
+raises it when runs were cancelled or never happened. The shared predicate excuses it only beside
+`behind`, and nothing in the estate re-runs an abandoned check (CLAUDE.md). So an edited sibling
+whose freshened head had its runs cancelled, for example by the Actions quota (seen 2026-08-17 and
+2026-08-22), holds the repository until a person re-runs them. It stays in the set anyway, and that
+is deliberate. It is needed for the window just after an update. Whether GitHub reports that window
+as `landing_mergeability_unknown` (which `_remote_terms` checks first, before `checks_term` runs)
+or as `awaiting_verdict` was not measured and cannot be read from the data. **Residual:** the stall
+is visible as a single finding, because `awaiting_verdict` is in no lander set, so the holding
+branch's own line reads `held`. That is one finding, not one per withheld sibling. A build session
+must not write a test asserting that every member clears on its own.
 
 A sibling with any other refusal does **not** hold, so the queue moves past it. The cases that
 matter:
@@ -305,18 +325,30 @@ Both landers classify each landing-pass line with `_held_status` (estate) or `_u
 
 - Estate lane today: siblings staled by a landing read `held (pace, behind)` for one pass, get
   freshened, and read `deliberate (pace)` from then on.
-- Under serialization with no reporting change: every queued sibling reads `held` on every pass of
-  every night until its turn. The estate lane runs 4 passes a night and lands one pull request per
-  repository per night, so a queue of *N* keeps the lane at exit 3 for about *N* − 1 nights. The
-  dead-man switch is not affected, because the finding code pings success (CLAUDE.md), but the exit
-  code would stop being able to say anything new.
+- Under serialization with no reporting change: every queued sibling reads `held` on all four
+  passes of each night until its turn, instead of on one.
+
+**The nightly exit code does not change either way.** Today the estate lane already exits 3 on
+every night that has a queued sibling. The pass right after a landing reports those siblings `held`
+(measured: `4 held` on the 06:15Z pass in `~/Library/Logs/estate-landing.log`), and during any drain
+the exit code already cannot say anything new. The dead-man switch is unaffected in both cases,
+because the finding code pings success (CLAUDE.md). What serialization changes is how many `held`
+lines each queued sibling contributes per night: about four instead of one.
+
+**So "no reporting change" is a viable option, not a dismissed one.** It means the same nightly
+exit code, three more `held` lines per sibling per night, and no new field, pin, or lander edit. The
+served fact below is recommended for honesty line by line, since a sibling that is waiting its turn
+is not a condition anyone needs to act on. It is a cheap choice, and HQ can reverse it before
+building.
 
 ### Is the withholding deliberate? Only under the holding gate, and that is what earns it
 
 Devon's ruling is that a **deliberate** refusal must clear on its own. Under §6's gate, a sibling is
-withheld only behind a branch whose every remaining refusal clears on its own. In the estate lane
-that branch lands at the next window by pace. In the inert lane it lands on the next pass. So the
-withholding clears on its own. Under the rejected strict rule it would not (`#93`), and there the
+withheld only while the holding branch's own condition lasts. For every member of §6's set except an
+abandoned check on a current head, that condition clears on its own. In the estate lane the branch
+lands at the next window by pace; in the inert lane it lands on the next pass. In the one exception,
+the stall is still reported, on the holding branch's own `held` line (§6). So the withholding clears
+on its own everywhere except in that one named case, which is visible. Under the rejected strict rule it would not (`#93`), and there the
 withheld line would have to stay a finding. **The gate and the reporting are one decision.**
 
 ### The mechanism: a served fact, the way `rollout_base_matches_pin` is served
@@ -404,8 +436,11 @@ past it, and it would stay an exception on its own line.
 3. **Arm (b) alone.** A sibling whose commits are all Dependabot's, but whose current head equals an
    update event's recorded head, is edited. The same sibling whose head has moved (a recreate) is
    owned. This covers the 202 race and the recreate case separately.
-4. **Arm (a) catches a human author.** A commit by `AlobarQuest` means edited. So does a commit with
-   no linked author.
+4. **Arm (a) catches a human author.** A commit by `AlobarQuest` means edited. **A commit with no
+   linked author, or an unreadable commit list, is split by polarity:** the target counts as owned,
+   so it is withheld when a holding sibling exists, and a sibling counts as edited, so it holds. Each
+   direction needs its own control. A single classification passes one of the two and fails open on
+   the other.
 5. **The holding gate, row by row.** For each member of §6's set, the sibling holds. For
    `landing_checks_not_clean`, `landing_pull_request_conflicted`, and a made-up code, it does not.
    A composition that raises means withhold.
@@ -480,6 +515,8 @@ The landers run from the main tree's working copy, so merging is what deploys th
   commit-message endpoint for combining a base into a branch, is a different write act. It has not
   been probed, and naming it in `src/` would trip the ws33 word guard. It is recorded as a follow-up
   probe, run on a public disposable repository per CLAUDE.md, and is not part of this design.
+- **An abandoned check on the holding branch stalls its repository** until a person re-runs it. It
+  is reported as one `held` finding on that branch's own line (§6).
 - **The pre-existing edited population** in `brain` and `change-manager#93`, per §10.
 - **Two edited branches after the queue moves past a red one**, per §6.
 
