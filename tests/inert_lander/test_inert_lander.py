@@ -816,3 +816,91 @@ def test_a_route_the_deployed_image_does_not_serve_is_an_ERROR_naming_the_status
         client.admission("o/r", 1)
     assert "404" in str(raised.value)
     assert not isinstance(raised.value, LandingRefused)
+
+
+# --------------------------------------------------------------------------------------------
+# ADR-0045: a sibling withheld because an edited branch ahead of it is queued to land.
+#
+# Keyed on a sibling the orchestrator OBSERVED, never on a clock -- so this lane still has no
+# deliberate refusal. A key alone never quiets a line: `withheld` needs the key TRUE and the
+# freshness refusal actually present to subtract.
+# --------------------------------------------------------------------------------------------
+
+_BEHIND = "landing_head_not_current_with_base"
+_WITHHELD = "branch_update_withheld_for_sibling"
+
+
+def _line(answer: dict[str, Any]) -> str:
+    (outcome,) = _pass([(REPOSITORY, 1)], FakeOrchestrator({(REPOSITORY, 1): answer}), True)
+    return outcome.status
+
+
+@pytest.mark.parametrize(
+    ("answer", "verdict"),
+    [
+        pytest.param(_held(_BEHIND) | {_WITHHELD: True}, "withheld", id="behind-key"),
+        pytest.param(_held(_BEHIND), "held", id="behind-no-key"),
+        pytest.param(_held(_BEHIND) | {_WITHHELD: False}, "held", id="behind-key-false"),
+        # Guards this program on its own: a failing check beside the key is red CI, never quiet.
+        pytest.param(
+            _held(_BEHIND, "landing_checks_not_clean") | {_WITHHELD: True},
+            "held",
+            id="behind-checks-key",
+        ),
+        # An exception outranks the withhold, because it is the durable fact.
+        pytest.param(
+            _held(_BEHIND, "landing_ecosystem_excluded") | {_WITHHELD: True},
+            "exception",
+            id="exception-beside-key",
+        ),
+        # Nothing to subtract: the key alone changes nothing.
+        pytest.param(
+            _held("landing_checks_in_flight") | {_WITHHELD: True}, "held", id="no-freshness-key"
+        ),
+    ],
+)
+def test_a_sibling_WITHHELD_for_a_holding_branch_reads_withheld_only_on_the_key(
+    answer: dict[str, Any], verdict: str
+) -> None:
+    assert _line(answer) == verdict
+
+
+def test_withheld_is_not_a_finding() -> None:
+    assert report([Outcome(REPOSITORY, 1, "withheld", "")], {}, 6) == EXIT_OK
+    assert "withheld" in _REPORTED
+
+
+def test_the_update_pass_SKIPS_a_withheld_sibling_with_no_line() -> None:
+    client = FakeOrchestrator({(REPOSITORY, 1): _qualifies(**{_WITHHELD: True})})
+
+    outcomes = _branch_updates([(REPOSITORY, 1)], client, True)
+
+    assert outcomes == []
+    assert client.updated == []
+
+
+@pytest.mark.parametrize("key", [False, None], ids=["false", "absent"])
+def test_the_update_pass_acts_when_the_key_is_false_or_absent(key: bool | None) -> None:
+    answer = _qualifies() if key is None else _qualifies(**{_WITHHELD: key})
+    client = FakeOrchestrator({(REPOSITORY, 1): answer})
+
+    outcomes = _branch_updates([(REPOSITORY, 1)], client, True)
+
+    assert [o.status for o in outcomes] == ["updated"]
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [
+        ("inert_branch_update_sibling_holding", "deliberate"),
+        ("inert_branch_update_siblings_unreadable", "held"),
+    ],
+)
+def test_an_act_refused_for_a_sibling_reads_by_WHICH_sibling_code(code: str, status: str) -> None:
+    client = FakeOrchestrator(
+        {(REPOSITORY, 1): _qualifies()}, update_error=LandingRefused("sibling", code)
+    )
+
+    outcomes = _branch_updates([(REPOSITORY, 1)], client, True)
+
+    assert [o.status for o in outcomes] == [status]
