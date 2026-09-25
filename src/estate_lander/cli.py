@@ -191,10 +191,10 @@ _UPDATE_SELF_CLEARING = frozenset(
 # the system working -- so it is printed and it is not a finding. `would-update` likewise: it is
 # what a dry run has to say in order to be worth running.
 #
-# ADR-0045 adds `withheld`: a sibling left alone while an update-bot branch this lane already edited
+# ADR-0045 adds `waiting`: a sibling left alone while an update-bot branch this lane already edited
 # is queued to land ahead of it. Its own category rather than `deliberate` or `exception`, by
 # Devon's ruling that collapsing categories loses which is which -- a deliberate refusal clears on
-# a clock, an exception never clears, and a withheld sibling clears when the branch ahead lands.
+# a clock, an exception never clears, and a waiting sibling clears when the branch ahead lands.
 _NOT_A_FINDING = frozenset(
     {
         "landed",
@@ -202,12 +202,16 @@ _NOT_A_FINDING = frozenset(
         "settled",
         "deliberate",
         "exception",
-        "withheld",
+        "waiting",
         "updated",
         "would-update",
     }
 )
 
+# Named `waiting`, never `withheld`: a status that contains another as a substring (`held`) makes
+# every substring reader of the report -- an operator's `grep held`, a test asserting a status is
+# absent -- match both. `test_no_reported_status_is_a_substring_of_another` holds it.
+#
 # Every status a pass can produce, in report order, so the summary's counts sum to what was
 # considered. A summary whose parts do not add up leaves the reader to infer the remainder, and the
 # remainder is where the findings are -- `unreadable`, `error` and (on a dry run) `would-land` were
@@ -218,7 +222,7 @@ _REPORTED = (
     "held",
     "deliberate",
     "exception",
-    "withheld",
+    "waiting",
     "settled",
     "unreadable",
     "error",
@@ -343,7 +347,7 @@ def _held_status(
     because they are behind, held and reported every night forever. A fifth member arrives the same
     way, and is answered here by construction rather than by another edit.
 
-    **`withheld` (ADR-0045) is the same conditional suppression, keyed on a different observed
+    **`waiting` (ADR-0045) is the same conditional suppression, keyed on a different observed
     fact.** The orchestrator serves that an update-bot branch this lane already edited is queued to
     land ahead of this one, so this branch was left behind on purpose -- and freshness-derived
     refusals are subtracted exactly as they are beside an exception. It is keyed on an OBSERVED
@@ -361,7 +365,7 @@ def _held_status(
     if _EXCEPTION & present:
         return "exception"
     if withheld_for_sibling and derived:
-        return "withheld"
+        return "waiting"
     return "deliberate"
 
 

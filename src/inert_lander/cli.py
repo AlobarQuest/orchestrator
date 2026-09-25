@@ -61,7 +61,7 @@ inherited: given freshness, a landing stales every sibling, so at most one pull 
 repository is landable per pass and freshness serialises the lane by itself. So there is no
 refusal it can raise that clears on a clock, and every refusal that is not a settled subject is a
 finding somebody can act on. An empty set copied from the sibling would look like an oversight;
-having none is the statement. `withheld` (ADR-0045) does not change that: it is keyed on an
+having none is the statement. `waiting` (ADR-0045) does not change that: it is keyed on an
 update-bot sibling the orchestrator observed edited and queued to land, not on a clock.
 
 **A refusal excused for ACTING is not thereby excused for REPORTING**, and the one candidate was
@@ -223,7 +223,7 @@ _DEFERRAL_AUTHOR = "not-a-declared-author"
 # the system working. `would-update` likewise: it is what a dry run has to say in order to be
 # worth running.
 #
-# `withheld` (ADR-0045): a sibling left alone while an update-bot branch this lane already edited is
+# `waiting` (ADR-0045): a sibling left alone while an update-bot branch this lane already edited is
 # queued to land ahead of it. Its own category, because it clears when that branch lands -- neither
 # on a clock like a deliberate refusal nor never like an exception.
 _NOT_A_FINDING = frozenset(
@@ -233,12 +233,16 @@ _NOT_A_FINDING = frozenset(
         "settled",
         "deliberate",
         "exception",
-        "withheld",
+        "waiting",
         "updated",
         "would-update",
     }
 )
 
+# Named `waiting`, never `withheld`: a status that contains another as a substring (`held`) makes
+# every substring reader of the report -- an operator's `grep held`, a test asserting a status is
+# absent -- match both. `test_no_reported_status_is_a_substring_of_another` holds it.
+#
 # Every status a pass can produce, in report order, so the summary's counts sum to what was
 # considered. A summary whose parts do not add up leaves the reader to infer the remainder, and
 # the remainder is where the findings are.
@@ -248,7 +252,7 @@ _REPORTED = (
     "held",
     "deliberate",
     "exception",
-    "withheld",
+    "waiting",
     "settled",
     "unreadable",
     "error",
@@ -392,7 +396,7 @@ def _subjects(reader: PullRequestSource, rule: InertLanding) -> Selection:
 
 
 def _unsatisfied_status(refusals: list[str], *, withheld_for_sibling: bool = False) -> str:
-    """`held`, `exception` or `withheld`, for an answer that is unsatisfied and not settled.
+    """`held`, `exception` or `waiting`, for an answer that is unsatisfied and not settled.
 
     NO REFUSALS AT ALL IS HELD, never a vacuous pass. An answer unsatisfied while naming nothing is
     the orchestrator failing to say why, which is exactly the thing worth reporting -- and a bare
@@ -406,7 +410,7 @@ def _unsatisfied_status(refusals: list[str], *, withheld_for_sibling: bool = Fal
     EVERY OTHER CODE STAYS A FINDING, including one this program does not enumerate, so a refusal
     nobody has thought of fails toward being reported.
 
-    `withheld` (ADR-0045) is the same conditional suppression keyed on a different observed fact:
+    `waiting` (ADR-0045) is the same conditional suppression keyed on a different observed fact:
     the orchestrator serves that an edited update-bot sibling is queued ahead of this branch, so it
     was left behind on purpose. An exception still outranks it, and a key with no freshness refusal
     to subtract changes nothing. The default is False, so a caller that forgets it gets `held`.
@@ -419,9 +423,11 @@ def _unsatisfied_status(refusals: list[str], *, withheld_for_sibling: bool = Fal
         return "held"
     if _EXCEPTION & present:
         return "exception"
-    if withheld_for_sibling and _FRESHNESS in present:
-        return "withheld"
-    return "held"
+    # Only one input survives to here: no exception, so `unexplained` emptied only because the
+    # sibling key subtracted the freshness refusal, and a non-empty `refusals` whose every member
+    # was that one refusal. A trailing `held` after a re-test of those two facts could never be
+    # returned, and a clause no input can falsify is one no mutation can kill.
+    return "waiting"
 
 
 def _consider(client: LandingClient, repository: str, number: int, submit: bool) -> Outcome:

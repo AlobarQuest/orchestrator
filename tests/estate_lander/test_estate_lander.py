@@ -727,10 +727,10 @@ def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered
         # ADR-0045: a sibling withheld while an edited branch ahead of it is queued to land. Its own
         # category, not a finding, and not `deliberate` -- it clears when that branch lands, not on
         # a clock.
-        "withheld",
+        "waiting",
     }
     assert _NOT_A_FINDING < set(_REPORTED)
-    assert "withheld" in _NOT_A_FINDING
+    assert "waiting" in _NOT_A_FINDING
 
 
 # ------------------------------------------------------------------------------------------------
@@ -1279,7 +1279,7 @@ def test_the_predicate_has_one_definition_used_by_both_readers() -> None:
 # ADR-0045: a sibling withheld because an edited branch ahead of it is queued to land.
 #
 # The key is a fact the orchestrator observed, never a record of the lane declining, and a key
-# alone never quiets a line: `withheld` needs the key TRUE and a freshness refusal actually
+# alone never quiets a line: `waiting` needs the key TRUE and a freshness refusal actually
 # subtracted. A missing or false key removes nothing, which is the direction to fail when the
 # deployed orchestrator is older than this program.
 # ------------------------------------------------------------------------------------------------
@@ -1296,10 +1296,10 @@ def _landing_line(refusals: list[str], **extra: Any) -> str:
 @pytest.mark.parametrize(
     ("refusals", "extra", "verdict"),
     [
-        pytest.param([_PACE, _BEHIND], {_WITHHELD: True}, "withheld", id="pace-behind-key"),
+        pytest.param([_PACE, _BEHIND], {_WITHHELD: True}, "waiting", id="pace-behind-key"),
         pytest.param([_PACE, _BEHIND], {}, "held", id="pace-behind-no-key"),
         pytest.param([_PACE, _BEHIND], {_WITHHELD: False}, "held", id="pace-behind-key-false"),
-        pytest.param([_BEHIND], {_WITHHELD: True}, "withheld", id="behind-key"),
+        pytest.param([_BEHIND], {_WITHHELD: True}, "waiting", id="behind-key"),
         # Guards this program on its own: the orchestrator cannot produce this (a failing check
         # disqualifies the update), but a lander that silenced it on the key would hide red CI.
         pytest.param([_BEHIND, _CHECKS], {_WITHHELD: True}, "held", id="behind-checks-key"),
@@ -1314,14 +1314,14 @@ def _landing_line(refusals: list[str], **extra: Any) -> str:
         pytest.param([_PACE], {_WITHHELD: True}, "deliberate", id="pace-alone-key"),
     ],
 )
-def test_a_sibling_WITHHELD_for_a_holding_branch_reads_withheld_only_on_the_key(
+def test_a_sibling_WITHHELD_for_a_holding_branch_reads_waiting_only_on_the_key(
     refusals: list[str], extra: dict[str, Any], verdict: str
 ) -> None:
     assert _landing_line(refusals, **extra) == verdict
 
 
-def test_withheld_is_not_a_finding() -> None:
-    assert report([Outcome(REPOSITORY, 49, "withheld", "")]) == EXIT_OK
+def test_waiting_is_not_a_finding() -> None:
+    assert report([Outcome(REPOSITORY, 49, "waiting", "")]) == EXIT_OK
 
 
 def test_the_update_pass_SKIPS_a_withheld_sibling_with_no_line() -> None:
@@ -1365,3 +1365,14 @@ def test_an_act_refused_for_a_sibling_reads_by_WHICH_sibling_code(code: str, sta
     outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == [status]
+
+
+def test_no_reported_status_is_a_substring_of_another() -> None:
+    """A status that contains another breaks every substring reader of the report.
+
+    An operator greps the pass's output and the tests assert on its text, so `waiting` beside
+    `held` meant `grep held` matched both and an "absent" assertion on `held` failed for a
+    status that was not `held` at all. Holds for every pair, including statuses added later.
+    """
+    collisions = [(a, b) for a in _REPORTED for b in _REPORTED if a != b and a in b]
+    assert collisions == []

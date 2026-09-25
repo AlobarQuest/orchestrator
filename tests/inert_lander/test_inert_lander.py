@@ -822,7 +822,7 @@ def test_a_route_the_deployed_image_does_not_serve_is_an_ERROR_naming_the_status
 # ADR-0045: a sibling withheld because an edited branch ahead of it is queued to land.
 #
 # Keyed on a sibling the orchestrator OBSERVED, never on a clock -- so this lane still has no
-# deliberate refusal. A key alone never quiets a line: `withheld` needs the key TRUE and the
+# deliberate refusal. A key alone never quiets a line: `waiting` needs the key TRUE and the
 # freshness refusal actually present to subtract.
 # --------------------------------------------------------------------------------------------
 
@@ -838,7 +838,7 @@ def _line(answer: dict[str, Any]) -> str:
 @pytest.mark.parametrize(
     ("answer", "verdict"),
     [
-        pytest.param(_held(_BEHIND) | {_WITHHELD: True}, "withheld", id="behind-key"),
+        pytest.param(_held(_BEHIND) | {_WITHHELD: True}, "waiting", id="behind-key"),
         pytest.param(_held(_BEHIND), "held", id="behind-no-key"),
         pytest.param(_held(_BEHIND) | {_WITHHELD: False}, "held", id="behind-key-false"),
         # Guards this program on its own: a failing check beside the key is red CI, never quiet.
@@ -859,15 +859,15 @@ def _line(answer: dict[str, Any]) -> str:
         ),
     ],
 )
-def test_a_sibling_WITHHELD_for_a_holding_branch_reads_withheld_only_on_the_key(
+def test_a_sibling_WITHHELD_for_a_holding_branch_reads_waiting_only_on_the_key(
     answer: dict[str, Any], verdict: str
 ) -> None:
     assert _line(answer) == verdict
 
 
-def test_withheld_is_not_a_finding() -> None:
-    assert report([Outcome(REPOSITORY, 1, "withheld", "")], {}, 6) == EXIT_OK
-    assert "withheld" in _REPORTED
+def test_waiting_is_not_a_finding() -> None:
+    assert report([Outcome(REPOSITORY, 1, "waiting", "")], {}, 6) == EXIT_OK
+    assert "waiting" in _REPORTED
 
 
 def test_the_update_pass_SKIPS_a_withheld_sibling_with_no_line() -> None:
@@ -904,3 +904,14 @@ def test_an_act_refused_for_a_sibling_reads_by_WHICH_sibling_code(code: str, sta
     outcomes = _branch_updates([(REPOSITORY, 1)], client, True)
 
     assert [o.status for o in outcomes] == [status]
+
+
+def test_no_reported_status_is_a_substring_of_another() -> None:
+    """A status that contains another breaks every substring reader of the report.
+
+    An operator greps the pass's output and the tests assert on its text, so `waiting` beside
+    `held` meant `grep held` matched both and an "absent" assertion on `held` failed for a
+    status that was not `held` at all. Holds for every pair, including statuses added later.
+    """
+    collisions = [(a, b) for a in _REPORTED for b in _REPORTED if a != b and a in b]
+    assert collisions == []
