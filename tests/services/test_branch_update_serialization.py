@@ -555,6 +555,31 @@ def test_a_target_edited_only_by_a_fresh_event_is_released_too(migrated_session:
     assert compose.asked == []
 
 
+def test_a_target_event_at_a_head_it_has_since_LEFT_does_not_make_it_edited(
+    migrated_session: Session,
+) -> None:
+    """The recreate, through the rule rather than through the query. The event is inside the bound
+    and names this pull request, but was recorded at a head the branch has left -- so the target is
+    the bot's again, and beside a holding sibling it is withheld, not released as edited.
+
+    `test_an_update_event_at_a_DIFFERENT_head_does_not` reaches only the query and compares heads in
+    its own helper, so the comparison the rule actually makes had no control of its own.
+    """
+    _event(
+        migrated_session,
+        occurred_at=NOW - timedelta(minutes=1),
+        head_sha="before-recreate",
+        pr_number=TARGET,
+    )
+
+    assert (
+        _outcome(
+            migrated_session, _repo(sibling_commits=EDITED_SIBLING), _Composer({SIBLING: HOLDS})
+        )
+        is SiblingOutcome.WITHHOLD_SIBLING_HOLDING
+    )
+
+
 def test_a_sibling_edited_only_by_a_fresh_event_holds(migrated_session: Session) -> None:
     """The 202 race on the SIBLING, which is how two of the four stuck pairs were made: the first
     sibling updated seconds ago still reads as the bot's, and only the event says otherwise."""
