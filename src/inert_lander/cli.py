@@ -139,6 +139,12 @@ SYSTEM_KEY_ID = "orchestrator-system"
 # nothing about the conditions beside it -- and this lane has no deliberate refusal at all.
 _SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open"})
 
+# ADR-0045. The key on the orchestrator's answer saying the branch update is withheld because
+# another update-bot pull request this lane already edited is queued to land. Named once, for the
+# reason the base comparison's key is: read by a name the server does not serve, `.get` returns
+# `None`, which reads as false, and every queued sibling becomes a finding with nothing saying why.
+_WITHHELD_FOR_SIBLING = "branch_update_withheld_for_sibling"
+
 # Refusals the BRANCH-UPDATE act raises that say only *the answer moved between the read and the
 # request*, which the next pass re-decides on its own.
 #

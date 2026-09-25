@@ -479,6 +479,12 @@ class EstateLandingAdmission:
     # ask the same question this process asks. It is a fact rather than a verdict: what to do with
     # it differs between the two, and only the term that read the blobs knows it.
     rollout_base_matches_pin: bool
+    # ADR-0045. Is the branch update withheld because another Dependabot pull request this lane has
+    # already edited is queued to land? ALWAYS FALSE AS COMPOSED HERE, and deliberately so: finding
+    # out means composing each sibling's own answer, and a sibling answer that asked the same of ITS
+    # siblings would never stop. The rule lives outside this module and the route fills this in.
+    # No default, so a constructor that forgot it would fail rather than serve a quiet false.
+    branch_update_withheld_for_sibling: bool
 
 
 def freshness_derived_refusals(
@@ -740,6 +746,7 @@ def estate_landing_admission(
             tuple(refusals), rollout_base_matches_pin=remote.rollout_base_matches_pin
         ),
         rollout_base_matches_pin=remote.rollout_base_matches_pin,
+        branch_update_withheld_for_sibling=False,
     )
 
 

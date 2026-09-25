@@ -385,6 +385,35 @@ def test_an_UNREADABLE_scan_is_NOT_self_clearing() -> None:
     assert INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE not in _UPDATE_SELF_CLEARING
 
 
+def test_the_WIRE_KEY_the_caller_reads_the_withheld_fact_from_is_a_field_this_side_SERVES() -> None:
+    """ADR-0045. Read by a name the server does not serve, the key reads as absent, the caller
+    treats it as false, and every queued sibling is reported as a finding with nothing saying why.
+    Pinned against the service dataclass, which is what the route serializes."""
+    from inert_lander.cli import _WITHHELD_FOR_SIBLING
+    from orchestrator.services.inert_landing_admission import InertLandingAdmission
+
+    assert _WITHHELD_FOR_SIBLING in InertLandingAdmission.__dataclass_fields__
+
+
+def test_composing_the_answer_alone_observes_no_sibling(migrated_session: Session) -> None:
+    """The admission function never scans siblings; only the route fills the fact in."""
+    from orchestrator.services.inert_landing_admission import inert_landing_admission
+
+    answer = inert_landing_admission(
+        migrated_session,
+        INERT_REPOSITORY,
+        PR,
+        FakeEstateLandingSource(),
+        FakeInertPolicySource(),
+        _behind_gateway(),
+        enabled=True,
+        credentials_configured=True,
+    )
+
+    assert answer.branch_update_qualifies is True
+    assert answer.branch_update_withheld_for_sibling is False
+
+
 def test_the_callers_SETTLED_set_is_exactly_the_refusals_that_mean_there_is_nothing_left_to_land():
     """The two the caller reports as settled rather than as findings. Read from the admission
     module that raises them, so a rename there reddens this rather than making one landing a

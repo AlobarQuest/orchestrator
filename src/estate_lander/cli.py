@@ -152,6 +152,12 @@ _ROLLOUT_MOVED = "landing_rollout_moved"
 # with nothing saying why.
 _BASE_MATCHES_PIN = "rollout_base_matches_pin"
 
+# ADR-0045. The key on the orchestrator's answer saying the branch update is withheld because
+# another update-bot pull request this lane already edited is queued to land. Named once, for the
+# reason the base comparison's key is: read by a name the server does not serve, `.get` returns
+# `None`, which reads as false, and every queued sibling becomes a finding with nothing saying why.
+_WITHHELD_FOR_SIBLING = "branch_update_withheld_for_sibling"
+
 # ADR-0019 Increment 6. Refusals the BRANCH-UPDATE act raises that say only *the answer moved
 # between the read and the request*, which the next pass re-decides on its own.
 #

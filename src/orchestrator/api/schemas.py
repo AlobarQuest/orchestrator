@@ -659,6 +659,15 @@ class EstateLandingAdmissionResponse(BaseModel):
     # could tell it. Undeclared, the answer carries the field on the service object and nothing on
     # the wire, and the agent falls back to its fail-toward-a-finding default forever.
     rollout_base_matches_pin: bool
+    # ADR-0045, DECLARED HERE OR IT DOES NOT EXIST ON THE WIRE. True ONLY when the branch update
+    # would be withheld for a sibling: this pull request qualifies, is the update bot's, is still
+    # the update bot's own, and another of the update bot's pull requests here was positively seen
+    # edited by this lane and still queued to land. FALSE when the siblings could not be read, so
+    # a failed scan never produces a quiet line -- the act meets the same failure and refuses with a
+    # code of its own, which stays a finding. It never co-occurs with a failing check, which
+    # disqualifies the update outright. It is a fact about an observed sibling, NOT a record of the
+    # lane declining. A scan that fails leaves this answer answering, with the fact false.
+    branch_update_withheld_for_sibling: bool
 
 
 class EstateBranchUpdateCommandModel(BaseModel):
@@ -784,6 +793,15 @@ class InertLandingAdmissionResponse(BaseModel):
     policy_version: int | None
     branch_update_qualifies: bool
     merge_method: str
+    # ADR-0045, DECLARED HERE OR IT DOES NOT EXIST ON THE WIRE. True ONLY when the branch update
+    # would be withheld for a sibling: this pull request qualifies, is the update bot's, is still
+    # the update bot's own, and another of the update bot's pull requests here was positively seen
+    # edited by this lane and still queued to land. FALSE when the siblings could not be read, so
+    # a failed scan never produces a quiet line -- the act meets the same failure and refuses with a
+    # code of its own, which stays a finding. It never co-occurs with a failing check, which
+    # disqualifies the update outright. It is a fact about an observed sibling, NOT a record of the
+    # lane declining. A scan that fails leaves this answer answering, with the fact false.
+    branch_update_withheld_for_sibling: bool
 
 
 class InertBranchUpdateCommandModel(BaseModel):

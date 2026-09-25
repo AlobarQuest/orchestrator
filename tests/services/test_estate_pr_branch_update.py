@@ -471,6 +471,36 @@ def test_the_WIRE_KEY_the_lander_reads_the_base_comparison_from_is_a_field_this_
     assert _BASE_MATCHES_PIN in EstateLandingAdmission.__dataclass_fields__
 
 
+def test_the_WIRE_KEY_the_lander_reads_the_withheld_fact_from_is_a_field_this_side_SERVES() -> None:
+    """ADR-0045. Same hazard as the base comparison above: a lander reading the withheld fact by
+    a name the server does not serve gets `None`, treats it as false, and reports every queued
+    sibling as a finding with nothing saying why."""
+    from estate_lander.cli import _WITHHELD_FOR_SIBLING
+
+    assert _WITHHELD_FOR_SIBLING in EstateLandingAdmission.__dataclass_fields__
+
+
+def test_composing_the_answer_alone_observes_no_sibling(migrated_session: Session) -> None:
+    """The admission function never scans siblings -- that would recurse -- so it sets the fact
+    false even on an answer that qualifies. Only the route fills it in."""
+    from orchestrator.services.estate_landing_admission import estate_landing_admission
+
+    answer = estate_landing_admission(
+        migrated_session,
+        REPOSITORY,
+        PR,
+        redeploying_source(),
+        FakeChangeRecordSource({(REPOSITORY, PR): approved()}),
+        _behind(),
+        enabled=True,
+        credentials_configured=True,
+        clock=FixedClock(IN_WINDOW),
+    )
+
+    assert answer.branch_update_qualifies is True
+    assert answer.branch_update_withheld_for_sibling is False
+
+
 def test_the_exception_the_lander_suppresses_beside_is_exactly_the_one_composed_here() -> None:
     """The CONDITION of the suppression, which this increment made load-bearing twice over.
 

@@ -2,6 +2,7 @@ import re
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Final
@@ -130,6 +131,12 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
+)
+from orchestrator.services.branch_update_serialization import (
+    branch_update_sibling_outcome,
+    estate_sibling_composer,
+    inert_sibling_composer,
+    withheld_for_sibling,
 )
 from orchestrator.services.change_record import ChangeRecordSource, HttpChangeRecordSource
 from orchestrator.services.change_record_work import work_for_change_record
@@ -790,16 +797,40 @@ def estate_landing_admission_route(
     never attest to credentials the actor does not hold.
     """
     credentials = github_app_credentials(settings)
-    return estate_landing_admission(
+    gateway = GitHubEstatePullRequests(token_provider_for(credentials))
+    enabled = settings.estate_landing_enabled
+    credentials_configured = credentials is not None
+    admission = estate_landing_admission(
         session,
         repository,
         pr_number,
         landing_source,
         record_source,
-        GitHubEstatePullRequests(token_provider_for(credentials)),
-        enabled=settings.estate_landing_enabled,
-        credentials_configured=credentials is not None,
+        gateway,
+        enabled=enabled,
+        credentials_configured=credentials_configured,
     )
+    # ADR-0045. Filled in HERE, because the admission itself must never scan siblings: finding out
+    # composes each sibling's own answer, which would otherwise ask the same of its siblings.
+    withheld = withheld_for_sibling(
+        qualifies=admission.branch_update_qualifies,
+        outcome=lambda: branch_update_sibling_outcome(
+            session,
+            repository=admission.repository,
+            target_number=admission.pr_number,
+            gateway=gateway,
+            compose=estate_sibling_composer(
+                session,
+                admission.repository,
+                landing_source,
+                record_source,
+                gateway,
+                enabled=enabled,
+                credentials_configured=credentials_configured,
+            ),
+        ),
+    )
+    return replace(admission, branch_update_withheld_for_sibling=withheld)
 
 
 @router.post("/estate-pr-merge", response_model=EstatePrMergeResponse)
@@ -891,16 +922,39 @@ def inert_landing_admission_route(
     never attest to credentials the actor does not hold.
     """
     credentials = github_app_credentials(settings)
-    return inert_landing_admission(
+    gateway = GitHubInertPullRequests(token_provider_for(credentials))
+    enabled = settings.inert_landing_enabled
+    credentials_configured = credentials is not None
+    admission = inert_landing_admission(
         session,
         repository,
         pr_number,
         landing_source,
         policy_source,
-        GitHubInertPullRequests(token_provider_for(credentials)),
-        enabled=settings.inert_landing_enabled,
-        credentials_configured=credentials is not None,
+        gateway,
+        enabled=enabled,
+        credentials_configured=credentials_configured,
     )
+    # ADR-0045, filled in here for the reason the sibling route gives.
+    withheld = withheld_for_sibling(
+        qualifies=admission.branch_update_qualifies,
+        outcome=lambda: branch_update_sibling_outcome(
+            session,
+            repository=admission.repository,
+            target_number=admission.pr_number,
+            gateway=gateway,
+            compose=inert_sibling_composer(
+                session,
+                admission.repository,
+                landing_source,
+                policy_source,
+                gateway,
+                enabled=enabled,
+                credentials_configured=credentials_configured,
+            ),
+        ),
+    )
+    return replace(admission, branch_update_withheld_for_sibling=withheld)
 
 
 @router.post("/inert-pr-merge", response_model=InertPrMergeResponse)

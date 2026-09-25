@@ -88,15 +88,14 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event
 from orchestrator.services.branch_update_serialization import (
     BRANCH_UPDATE_ACTION,
-    SiblingAnswer,
     SiblingOutcome,
     branch_update_sibling_outcome,
+    estate_sibling_composer,
 )
 from orchestrator.services.change_record import ChangeRecordSource
 from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.estate_landing_admission import (
     EstateGatewayError,
-    EstateLandingAdmission,
     SiblingReadGateway,
     estate_landing_admission,
     gateway_failure_detail,
@@ -278,18 +277,15 @@ def _update(
         repository=admission.repository,
         target_number=admission.pr_number,
         gateway=gateway,
-        compose=lambda number: _sibling_answer(
-            estate_landing_admission(
-                session,
-                admission.repository,
-                number,
-                landing_source,
-                record_source,
-                gateway,
-                enabled=enabled,
-                credentials_configured=credentials_configured,
-                clock=clock,
-            )
+        compose=estate_sibling_composer(
+            session,
+            admission.repository,
+            landing_source,
+            record_source,
+            gateway,
+            enabled=enabled,
+            credentials_configured=credentials_configured,
+            clock=clock,
         ),
         clock=clock,
     )
@@ -326,11 +322,6 @@ def _update(
         head_sha=head_sha,
         replayed=False,
     )
-
-
-def _sibling_answer(admission: EstateLandingAdmission) -> SiblingAnswer:
-    """A sibling's own composed answer, as far as the holding test reads it."""
-    return SiblingAnswer(admission.refusals, admission.rollout_base_matches_pin)
 
 
 def _subject_id(repository: str, pr_number: int) -> uuid.UUID:

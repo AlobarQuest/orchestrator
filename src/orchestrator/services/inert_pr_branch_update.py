@@ -76,9 +76,9 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event
 from orchestrator.services.branch_update_serialization import (
     INERT_BRANCH_UPDATE_ACTION,
-    SiblingAnswer,
     SiblingOutcome,
     branch_update_sibling_outcome,
+    inert_sibling_composer,
 )
 from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.estate_landing_admission import (
@@ -86,10 +86,7 @@ from orchestrator.services.estate_landing_admission import (
     SiblingReadGateway,
     gateway_failure_detail,
 )
-from orchestrator.services.inert_landing_admission import (
-    InertLandingAdmission,
-    inert_landing_admission,
-)
+from orchestrator.services.inert_landing_admission import inert_landing_admission
 from orchestrator.services.inert_landing_policy import InertLandingPolicySource
 from orchestrator.services.lifecycle import ActorContext
 
@@ -251,17 +248,14 @@ def _update(
         repository=admission.repository,
         target_number=admission.pr_number,
         gateway=gateway,
-        compose=lambda number: _sibling_answer(
-            inert_landing_admission(
-                session,
-                admission.repository,
-                number,
-                landing_source,
-                policy_source,
-                gateway,
-                enabled=enabled,
-                credentials_configured=credentials_configured,
-            )
+        compose=inert_sibling_composer(
+            session,
+            admission.repository,
+            landing_source,
+            policy_source,
+            gateway,
+            enabled=enabled,
+            credentials_configured=credentials_configured,
         ),
         clock=clock,
     )
@@ -298,12 +292,6 @@ def _update(
         head_sha=head_sha,
         replayed=False,
     )
-
-
-def _sibling_answer(admission: InertLandingAdmission) -> SiblingAnswer:
-    """A sibling's own composed answer, as far as the holding test reads it. This lane pins no
-    rollout, so a moved rollout can never be excused as staleness here."""
-    return SiblingAnswer(admission.refusals, rollout_base_matches_pin=False)
 
 
 def _subject_id(repository: str, pr_number: int) -> uuid.UUID:

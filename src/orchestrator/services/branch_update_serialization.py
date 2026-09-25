@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -50,12 +50,20 @@ from orchestrator.services.estate_landing_admission import (
     OpenPullRequest,
     PullRequestCommit,
     SiblingReadGateway,
+    estate_landing_admission,
     freshness_derived_refusals,
 )
 from orchestrator.services.inert_landing_admission import (
     INERT_LANDING_POLICY_SOURCE_UNCONFIGURED,
     INERT_LANDING_POLICY_SOURCE_UNREADABLE,
+    inert_landing_admission,
 )
+
+if TYPE_CHECKING:
+    from orchestrator.services.change_record import ChangeRecordSource
+    from orchestrator.services.estate_landing import EstateLandingSource
+    from orchestrator.services.estate_landing_admission import EstateReadGateway
+    from orchestrator.services.inert_landing_policy import InertLandingPolicySource
 
 # The event actions the two branch-update acts record, one per lane. They live HERE rather than in
 # the act modules because the sibling rule reads them back out of the event log, and the act
@@ -420,6 +428,71 @@ def _sibling_verdict(
     if verdict == "holding":
         return "holding" if ownership is Ownership.EDITED else "unknown"
     return "clear"
+
+
+def estate_sibling_composer(
+    session: Session,
+    repository: str,
+    landing_source: EstateLandingSource,
+    record_source: ChangeRecordSource,
+    gateway: EstateReadGateway,
+    *,
+    enabled: bool,
+    credentials_configured: bool,
+    clock: Clock | None = None,
+) -> Callable[[int], SiblingAnswer]:
+    """The deploying lane's answer to "what does this sibling's own admission say?".
+
+    One definition, called by the act and by the admission route, so the two ask about a sibling
+    in exactly the same words -- which is what lets the served fact and the act agree.
+    """
+
+    def compose(number: int) -> SiblingAnswer:
+        answer = estate_landing_admission(
+            session,
+            repository,
+            number,
+            landing_source,
+            record_source,
+            gateway,
+            enabled=enabled,
+            credentials_configured=credentials_configured,
+            clock=clock,
+        )
+        return SiblingAnswer(answer.refusals, answer.rollout_base_matches_pin)
+
+    return compose
+
+
+def inert_sibling_composer(
+    session: Session,
+    repository: str,
+    landing_source: EstateLandingSource,
+    policy_source: InertLandingPolicySource,
+    gateway: EstateReadGateway,
+    *,
+    enabled: bool,
+    credentials_configured: bool,
+) -> Callable[[int], SiblingAnswer]:
+    """The inert lane's answer to the same question, for the act and the route alike.
+
+    This lane pins no rollout, so a moved rollout can never be excused as staleness here.
+    """
+
+    def compose(number: int) -> SiblingAnswer:
+        answer = inert_landing_admission(
+            session,
+            repository,
+            number,
+            landing_source,
+            policy_source,
+            gateway,
+            enabled=enabled,
+            credentials_configured=credentials_configured,
+        )
+        return SiblingAnswer(answer.refusals, rollout_base_matches_pin=False)
+
+    return compose
 
 
 def withheld_for_sibling(*, qualifies: bool, outcome: Callable[[], SiblingOutcome]) -> bool:
