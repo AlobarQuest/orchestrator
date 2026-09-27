@@ -38,8 +38,10 @@ from work_carrier.change_manager import PipelineRecord
 
 LIVE: Final = frozenset({"pending", "approved"})
 
+# Read with `match`, which anchors at the start: the clause must OPEN the reasoning, as
+# `_reasoning` writes it, not merely appear somewhere inside a hand-written text.
 _PULL_REQUEST: Final = re.compile(
-    r"^(?P<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) carries an open dependency update of "
+    r"(?P<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+) carries an open dependency update of "
     r".+? \(pull request (?P<number>[0-9]{1,9})\)"
 )
 
