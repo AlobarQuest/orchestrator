@@ -229,7 +229,7 @@ def inert_landing_admission(
     remote = _remote_terms(repository, pr_number, policy.rules, gateway)
 
     remote_refusals, unrecorded = remote.term.refusals, None
-    if prior is None:
+    if enabled and prior is None:
         remote_refusals, unrecorded = attribute_unrecorded_landing(
             remote_refusals,
             remote.landed_commit,

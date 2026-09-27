@@ -451,10 +451,12 @@ def attribute_unrecorded_landing(
 ) -> tuple[tuple[str, ...], UnrecordedLanding | None]:
     """Name a landing this lane made that no row records. Shared by both landing lanes.
 
-    Called only when no row exists. Returns the refusals, with `not open` replaced when the landing
-    commit's trailers say the act was this lane's, and what to record it by. The trailers are
-    the evidence because each lane is their only writer and the other landing path writes neither;
-    a landing nobody can attribute keeps `not open`, which is what it was before.
+    Called only when no row exists and the lane is enabled -- a disabled lane changes nothing,
+    recording included, and a lost row waits for the next enabled pass. Returns the refusals, with
+    `not open` replaced when the landing commit's trailers say the act was this lane's, and what to
+    record it by. The trailers are the evidence because each lane is their only writer and the
+    other landing path writes neither; a landing nobody can attribute keeps `not open`, which is
+    what it was before.
 
     A commit that cannot be read replaces `not open` with `unreadable`: whose landing it was is a
     question that went unanswered, and settling it would decide the answer is "somebody else's".
@@ -798,7 +800,7 @@ def estate_landing_admission(
     conditions = record.conditions
     remote = _remote_terms(repository, pr_number, conditions, gateway)
     remote_refusals, unrecorded = remote.term.refusals, None
-    if prior is None and record.record_id is not None:
+    if enabled and prior is None and record.record_id is not None:
         remote_refusals, unrecorded = attribute_unrecorded_landing(
             remote_refusals,
             remote.landed_commit,

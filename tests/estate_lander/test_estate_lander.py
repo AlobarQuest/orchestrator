@@ -1426,3 +1426,22 @@ def test_an_unrecorded_act_the_orchestrator_will_not_record_is_a_finding() -> No
 
     assert [o.status for o in outcomes] == ["held"]
     assert report(outcomes) == EXIT_FINDINGS
+
+
+def test_a_settled_answer_that_also_names_an_unrecorded_act_settles() -> None:
+    """The orchestrator never serves both -- a row suppresses the attribution -- but if it did, the
+    row exists and there is nothing to record, so settling is the answer that asks nothing."""
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 49): {
+                "satisfied": False,
+                "refusals": ["landing_already_recorded", "landing_act_unrecorded"],
+                "head_sha": HEAD,
+            }
+        }
+    )
+
+    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["settled"]
+    assert client.landed == []

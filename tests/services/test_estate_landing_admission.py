@@ -427,6 +427,16 @@ def test_a_landing_already_recorded_is_not_attributed_again(migrated_session: Se
     assert gateway.message_reads == []
 
 
+def test_a_disabled_lane_does_not_attribute_a_landing(migrated_session: Session) -> None:
+    gateway = _landed_gateway("bump (#49)\n\nSDS-Change-Record: 52\nSDS-Policy-Version: 2")
+
+    answer = _ask(migrated_session, gateway=gateway, enabled=False)
+
+    assert LANDING_PULL_REQUEST_NOT_OPEN in answer.refusals
+    assert LANDING_ACT_UNRECORDED not in answer.refusals
+    assert gateway.message_reads == []
+
+
 def test_a_landing_whose_commit_cannot_be_read_is_unreadable_not_settled(
     migrated_session: Session,
 ) -> None:

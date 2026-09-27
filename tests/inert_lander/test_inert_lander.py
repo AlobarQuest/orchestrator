@@ -951,3 +951,14 @@ def test_an_unrecorded_act_the_orchestrator_will_not_record_is_a_finding() -> No
 
     assert [o.status for o in outcomes] == ["held"]
     assert report(outcomes, {}, 6) == EXIT_FINDINGS
+
+
+def test_a_settled_answer_that_also_names_an_unrecorded_act_settles() -> None:
+    client = FakeOrchestrator(
+        {(REPOSITORY, 1): _held("landing_already_recorded", "landing_act_unrecorded")}
+    )
+
+    outcomes = _pass([(REPOSITORY, 1)], client, True)
+
+    assert [o.status for o in outcomes] == ["settled"]
+    assert client.landed == []

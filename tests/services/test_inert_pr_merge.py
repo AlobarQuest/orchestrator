@@ -480,6 +480,7 @@ def test_a_landing_this_lane_made_whose_row_was_lost_is_recorded_as_already_merg
     assert record.reason_code == "landing_act_unrecorded"
     assert record.merge_commit_sha == LANDED_COMMIT
     assert record.policy_version == INERT_POLICY_VERSION - 1
+    assert record.head_sha == HEAD
     assert gateway.merges == []
     assert [row.status for row in _rows(migrated_engine)] == ["already_merged"]
 
@@ -495,4 +496,29 @@ def test_a_pull_request_somebody_else_landed_is_refused_and_never_recorded(
 
     assert "landing_pull_request_not_open" in str(error.value)
     assert gateway.merges == []
+    assert _rows(migrated_engine) == []
+
+
+def test_a_disabled_inert_lane_records_nothing_even_for_its_own_lost_landing(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    gateway = _lost_row(_OUR_MESSAGE)
+
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, gateway=gateway, enabled=False)
+
+    assert "landing_act_unrecorded" not in str(error.value)
+    assert gateway.message_reads == []
+    assert _rows(migrated_engine) == []
+
+
+def test_recording_an_inert_lost_row_still_requires_the_head_the_caller_read(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    gateway = _lost_row(_OUR_MESSAGE)
+
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, gateway=gateway, command=_command(head="f" * 40))
+
+    assert error.value.code == INERT_MERGE_HEAD_MOVED
     assert _rows(migrated_engine) == []

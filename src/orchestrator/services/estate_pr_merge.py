@@ -264,17 +264,25 @@ def _land(
         # the table holds nothing and the pace rule -- which counts rows -- does not count a
         # landing that happened. Recorded now, as `already_merged`: the status that asserts no
         # authorship, whose other writer is the reconciling read below. No other term is asked,
-        # because recording an act that already happened is not landing anything.
+        # because recording an act that already happened is not landing anything -- but the head
+        # the caller read must still be the head the remote reports, as for every act here.
         landed = admission.unrecorded_landing
+        head = admission.head_sha
+        if landed is None or head is None or head != command.expected_head_sha:
+            raise DomainError(
+                ESTATE_MERGE_HEAD_MOVED,
+                "the pull request's head is not the one the caller read",
+                "re-read the landing-admission answer and ask again",
+            )
         return _record(
             session,
             command,
             # The version the landing commit carries, not the one in force now.
-            replace(admission, policy_version=landed.policy_version if landed else None),
-            admission.head_sha or command.expected_head_sha,
+            replace(admission, policy_version=landed.policy_version),
+            head,
             status="already_merged",
             reason_code=LANDING_ACT_UNRECORDED,
-            merge_commit_sha=landed.merge_commit_sha if landed else None,
+            merge_commit_sha=landed.merge_commit_sha,
         )
     if not admission.satisfied:
         # No record: nothing was acted on, and consuming this pull request's one row here would

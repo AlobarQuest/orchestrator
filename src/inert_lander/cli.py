@@ -142,7 +142,8 @@ _SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open
 
 # The one refusal this pass answers by ACTING though the answer is unsatisfied: the orchestrator
 # landed this pull request and the row recording that was lost. It names that in place of `not
-# open`, so it never meets `_SETTLED`; asking the act route to land it records `already_merged`,
+# open`, so it does not meet `_SETTLED`, which is tested FIRST: if both ever arrive, the row exists
+# and there is nothing to record; asking the act route to land it records `already_merged`,
 # after which the subject reads `landing_already_recorded` and settles. Mirrored from the
 # deploying lane's lander, which this program cannot import.
 _UNRECORDED = "landing_act_unrecorded"
@@ -454,10 +455,10 @@ def _consider(client: LandingClient, repository: str, number: int, submit: bool)
         return Outcome(repository, number, "unreadable", str(error))
 
     refusals = [str(r) for r in (answer.get("refusals") or [])]
-    if _UNRECORDED in refusals:
-        return _record_lost_act(client, repository, number, answer, submit)
     if _SETTLED & set(refusals):
         return Outcome(repository, number, "settled", ", ".join(refusals))
+    if _UNRECORDED in refusals:
+        return _record_lost_act(client, repository, number, answer, submit)
     if not answer.get("satisfied"):
         status = _unsatisfied_status(
             refusals, withheld_for_sibling=answer.get(_WITHHELD_FOR_SIBLING) is True

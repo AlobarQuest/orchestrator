@@ -440,6 +440,7 @@ def test_a_landing_this_lane_made_whose_row_was_lost_is_recorded_as_already_merg
     assert record.merge_commit_sha == LANDED_COMMIT
     assert record.change_record_id == 52
     assert record.policy_version == 1
+    assert record.head_sha == HEAD
     assert gateway.merges == []
     with Session(migrated_engine) as reader:
         stored = reader.scalar(select(EstatePrMerge))
@@ -467,6 +468,38 @@ def test_a_pull_request_somebody_else_landed_is_refused_and_never_recorded(
 
     assert "landing_pull_request_not_open" in str(error.value)
     assert gateway.merges == []
+    with Session(migrated_engine) as reader:
+        assert reader.scalar(select(EstatePrMerge)) is None
+
+
+def test_recording_a_lost_row_still_requires_the_head_the_caller_read(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Recording is not landing, so no other term is asked -- but the head is. A caller that names
+    a head the remote does not report is told so, and nothing is written in its name."""
+    gateway = _lost_row_gateway(OUR_LANDING)
+
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, gateway, expected_head="f" * 40)
+
+    assert error.value.code == "estate_merge_head_moved"
+    with Session(migrated_engine) as reader:
+        assert reader.scalar(select(EstatePrMerge)) is None
+
+
+def test_a_disabled_lane_records_nothing_even_for_its_own_lost_landing(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """The off-switch means a release carrying this code changes nothing, recording included. The
+    lost row waits for the next enabled pass."""
+    gateway = _lost_row_gateway(OUR_LANDING)
+
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, gateway, enabled=False)
+
+    assert "landing_pull_request_not_open" in str(error.value)
+    assert "landing_act_unrecorded" not in str(error.value)
+    assert gateway.message_reads == []
     with Session(migrated_engine) as reader:
         assert reader.scalar(select(EstatePrMerge)) is None
 
