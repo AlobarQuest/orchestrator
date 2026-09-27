@@ -29,8 +29,16 @@ incomplete is not a finding: that is what an approved queue IS, and reporting it
 control red for every record waiting its turn. A record with no work at all is not a finding
 either -- it has not been carried yet, which is the carry's business and not this pass's.
 
-A finding is a record this pass could not get an answer about, and a retirement change-manager
-refused. Both need a person to look at why.
+A finding is a record this pass could not get an answer about, a retirement change-manager
+refused, and -- since ruling B1 (Devon, 2026-09-27) -- a STALE record: one pending or approved while
+a newer revision's record has superseded it, or while the Dependabot pull request it names was
+closed or merged by hand. All of them need a person to look at why, and a stale record needs a
+person to RETIRE it: this pass reports it and holds no write that could (see
+`work_watcher/staleness.py` for why the report belongs here and in this order). A record whose
+staleness cannot be assessed because its reasoning names no pull request is printed and is NOT a
+finding. A pass that needed GitHub and had no credential for it exits 2, which outranks 3 exactly
+as the launcher ranks them: a lane that cannot tell whether a record is stale has stopped doing its
+job.
 """
 
 from __future__ import annotations
@@ -38,6 +46,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import Protocol
 
 from work_carrier.change_manager import (
     DEFAULT_BASE_URL as CHANGE_MANAGER_DEFAULT_BASE_URL,
@@ -47,6 +56,7 @@ from work_carrier.change_manager import (
 )
 from work_carrier.change_manager import (
     HttpWorkRecordSource,
+    PipelineRecord,
     WorkRecord,
     WorkRecordSource,
 )
@@ -55,6 +65,13 @@ from work_watcher.change_manager import (
     RetirementClient,
     RetirementRefused,
 )
+from work_watcher.github import (
+    CLOSED,
+    GITHUB_TOKEN_ENV,
+    MERGED,
+    GitHubError,
+    PullRequestReader,
+)
 from work_watcher.orchestrator_client import (
     DEFAULT_BASE_URL as ORCHESTRATOR_DEFAULT_BASE_URL,
 )
@@ -62,6 +79,7 @@ from work_watcher.orchestrator_client import (
     OrchestratorClient,
     OrchestratorError,
 )
+from work_watcher.staleness import LIVE, pull_request_of, superseded_by
 
 EXIT_OK = 0
 EXIT_TOOL_FAILURE = 1
@@ -102,7 +120,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _source(args: argparse.Namespace) -> WorkRecordSource | None:
+def _source(args: argparse.Namespace) -> HttpWorkRecordSource | None:
     """The listing, read with the RETIREMENT bearer rather than the carry's read-only one.
 
     The `propose` scope includes every read route, so one credential serves both halves of this
@@ -121,6 +139,19 @@ def _retirer(args: argparse.Namespace) -> RetirementClient | None:
     return RetirementClient(base_url=args.change_manager_url, token=token)
 
 
+class PipelineSource(WorkRecordSource, Protocol):
+    """The carry's listing plus the whole pipeline, which the staleness report reads."""
+
+    def work_pipeline(self) -> tuple[PipelineRecord, ...]: ...
+
+
+def _github() -> PullRequestReader | None:
+    token = os.environ.get(GITHUB_TOKEN_ENV, "")
+    if not token:
+        return None
+    return PullRequestReader(token)
+
+
 def _reader(args: argparse.Namespace) -> OrchestratorClient | None:
     token = os.environ.get("WORK_WATCHER_ORCHESTRATOR_TOKEN", "")
     if not token:
@@ -128,17 +159,79 @@ def _reader(args: argparse.Namespace) -> OrchestratorClient | None:
     return OrchestratorClient(token, SYSTEM_KEY_ID, base_url=args.orchestrator_url)
 
 
+class _Stale:
+    """What the staleness question answered for one live record.
+
+    `finding` is set for a stale record AND for one whose pull request could not be read -- both
+    need a person. `note` is the suffix a not-stale line carries, so an unassessed record says why.
+    `unusable` marks a record that needed GitHub on a pass with no credential for it.
+    """
+
+    __slots__ = ("finding", "note", "unusable")
+
+    def __init__(
+        self, *, finding: str | None = None, note: str = "", unusable: bool = False
+    ) -> None:
+        self.finding = finding
+        self.note = note
+        self.unusable = unusable
+
+
+def _staleness(
+    change_record_id: int,
+    package_id: str,
+    package_revision: int,
+    reasoning: str,
+    pipeline: tuple[PipelineRecord, ...],
+    github: PullRequestReader | None,
+) -> _Stale:
+    """Ruling B1: is this live record superseded, or has its pull request gone? REPORTED ONLY."""
+    newer = superseded_by(package_id, package_revision, pipeline)
+    if newer is not None:
+        return _Stale(
+            finding=(
+                f"STALE: superseded by change record {newer.change_record_id} "
+                f"(revision {newer.package_revision}, {newer.status}); the carry can never "
+                "register this revision -- a person retires it"
+            )
+        )
+    named = pull_request_of(reasoning)
+    if named is None:
+        return _Stale(note="; staleness not assessed: the reasoning names no pull request")
+    repository, number = named
+    if github is None:
+        return _Stale(
+            note=f"; staleness not assessed: no GitHub credential ({GITHUB_TOKEN_ENV})",
+            unusable=True,
+        )
+    try:
+        state = github.state(repository, number)
+    except GitHubError as error:
+        return _Stale(finding=f"could not read {repository}#{number}: {error}")
+    if state in (CLOSED, MERGED):
+        verb = "merged" if state == MERGED else "closed without merging"
+        return _Stale(
+            finding=(
+                f"STALE: {repository}#{number} was {verb} and the work is not built; "
+                "a person retires this record"
+            )
+        )
+    return _Stale(note=f"; {repository}#{number} is open")
+
+
 def _consider(
     record: WorkRecord,
     reader: OrchestratorClient,
     retirer: RetirementClient | None,
     out,
-) -> tuple[bool, str | None]:
+    pipeline: tuple[PipelineRecord, ...] = (),
+    github: PullRequestReader | None = None,
+) -> tuple[bool, str | None, bool]:
     """Report one record, and retire it when its work is done and this pass was asked to.
 
-    Returns `(retired, finding)`. Per-record isolation, deliberately: one record this pass cannot
-    answer about must not stop the rest being retired, and each retirement is its own transaction
-    in change-manager, so there is nothing partial to unwind.
+    Returns `(retired, finding, unusable)`. Per-record isolation, deliberately: one record this
+    pass cannot answer about must not stop the rest being retired, and each retirement is its own
+    transaction in change-manager, so there is nothing partial to unwind.
     """
     label = (
         f"change record {record.change_record_id}: "
@@ -148,16 +241,29 @@ def _consider(
         answer = reader.work_for(record.change_record_id)
     except OrchestratorError as error:
         print(f"[FINDING]  {label}: {error}", file=out)
-        return False, str(error)
+        return False, str(error), False
 
     if not answer.all_units_completed:
+        # COMPLETION FIRST, STALENESS SECOND, and the order is the whole rule: a record whose
+        # work the factory built is retired above even though its pull request is now closed.
         states = ", ".join(answer.unit_states) or "no units yet"
-        print(f"[WAITING]  {label}: {states}", file=out)
-        return False, None
+        stale = _staleness(
+            record.change_record_id,
+            record.package_id,
+            record.package_revision,
+            record.reasoning,
+            pipeline,
+            github,
+        )
+        if stale.finding is not None:
+            print(f"[FINDING]  {label}: {stale.finding} ({states})", file=out)
+            return False, stale.finding, False
+        print(f"[WAITING]  {label}: {states}{stale.note}", file=out)
+        return False, None, stale.unusable
 
     if retirer is None:
         print(f"[COMPLETE] {label}: would retire — this pass was not asked to (--retire)", file=out)
-        return False, None
+        return False, None, False
 
     try:
         retirer.retire(
@@ -167,17 +273,44 @@ def _consider(
         )
     except (RetirementRefused, ChangeManagerError) as error:
         print(f"[FINDING]  {label}: NOT RETIRED: {error}", file=out)
-        return False, str(error)
+        return False, str(error), False
     print(f"[RETIRED]  {label}", file=out)
-    return True, None
+    return True, None, False
+
+
+def _consider_pending(
+    row: PipelineRecord,
+    pipeline: tuple[PipelineRecord, ...],
+    github: PullRequestReader | None,
+    out,
+) -> tuple[str | None, bool]:
+    """A PENDING record has caused no work -- the carry reads only approved ones -- so the only
+    question about it is staleness. Returns `(finding, unusable)`."""
+    label = (
+        f"change record {row.change_record_id}: {row.package_id} revision {row.package_revision}"
+    )
+    stale = _staleness(
+        row.change_record_id,
+        row.package_id,
+        row.package_revision,
+        row.reasoning,
+        pipeline,
+        github,
+    )
+    if stale.finding is not None:
+        print(f"[FINDING]  {label}: {stale.finding} (pending)", file=out)
+        return stale.finding, False
+    print(f"[PENDING]  {label}: awaiting a person's decision{stale.note}", file=out)
+    return None, stale.unusable
 
 
 def run(
     argv: list[str],
     *,
-    source: WorkRecordSource | None = None,
+    source: PipelineSource | None = None,
     reader: OrchestratorClient | None = None,
     retirer: RetirementClient | None = None,
+    github: PullRequestReader | None = None,
     out=sys.stdout,
 ) -> int:
     args = _parse_args(argv)
@@ -203,22 +336,39 @@ def run(
 
     try:
         records = records_source.approved_work()
+        pipeline = records_source.work_pipeline()
     except ListingError as error:
         print(f"[TOOL FAILURE] {error}", file=out)
         return EXIT_TOOL_FAILURE
 
+    pull_requests = github if github is not None else _github()
+
     retired = 0
+    unusable = False
     findings: list[str] = []
     for record in records:
-        moved, finding = _consider(record, work_reader, writer, out)
+        moved, finding, blind = _consider(record, work_reader, writer, out, pipeline, pull_requests)
         retired += 1 if moved else 0
+        unusable = unusable or blind
         if finding is not None:
             findings.append(finding)
 
+    pending = [row for row in pipeline if row.status in LIVE and row.status != "approved"]
+    for row in pending:
+        finding, blind = _consider_pending(row, pipeline, pull_requests, out)
+        unusable = unusable or blind
+        if finding is not None:
+            findings.append(finding)
+
+    stale = sum(1 for finding in findings if finding.startswith("STALE:"))
     print(
-        f"\n{len(records)} approved, {retired} retired, {len(findings)} findings.",
+        f"\n{len(records)} approved, {retired} retired, {len(findings)} findings "
+        f"({stale} stale, {len(pending)} pending).",
         file=out,
     )
+    if unusable:
+        print(f"[UNUSABLE] {GITHUB_TOKEN_ENV} is not set; staleness was not assessed", file=out)
+        return EXIT_UNUSABLE
     return EXIT_FINDINGS if findings else EXIT_OK
 
 

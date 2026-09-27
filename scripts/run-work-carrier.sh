@@ -55,8 +55,11 @@
 #   2  a tool ran but could not use its inputs (no checkout root, no credential configured, a
 #      workability constraint that could not be answered).
 #   3  something was found -- a record that could not be prepared, one the orchestrator refused
-#      to register, one whose retirement change-manager refused, or one a workability constraint
-#      answered NO for. Each needs a person.
+#      to register, one whose retirement change-manager refused, one a workability constraint
+#      answered NO for, or (ruling B1, 2026-09-27) a STALE record: pending or approved while a
+#      newer revision's record superseded it, or while its Dependabot pull request was closed or
+#      merged by hand. Each needs a person, and a stale record needs a person to RETIRE it --
+#      the watcher reports it and holds no write that could.
 #
 # IT DECIDES WHETHER SDS SHOULD WORK ON EACH TARGET REPOSITORY AT ALL, AND HOLDS WHAT IT CANNOT
 # ANSWER YES FOR. A repository is workable when it opts in (`factory-target.toml`), the conformance
@@ -240,6 +243,11 @@ export WORK_WATCHER_ORCHESTRATOR_TOKEN="${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}"
 # this stays a warning rather than a FATAL: the pass still says why. On the scheduled machine
 # `gh auth token` answers, so this is the shape an operator sees elsewhere, not here. `gh` not
 # being installed must not take the pass down either.
+#
+# THE WATCHER READS IT TOO (ruling B1): one GET of the pull request a live work record names, to
+# report a record whose pull request was closed or merged by hand. Same credential, same name --
+# a second variable would be a second name for one token. Absent, the watcher prints what it could
+# not assess and exits 2, for the same reason the carry does.
 if [ -z "${WORK_CARRIER_GITHUB_TOKEN:-}" ]; then
   WORK_CARRIER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
   export WORK_CARRIER_GITHUB_TOKEN

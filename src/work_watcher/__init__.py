@@ -16,4 +16,8 @@ allowlist.
 this repository already hold the same change-manager scope and each asserts a narrower surface
 than the scope permits. Sharing a pass with the carry costs nothing that matters and saves a
 scheduled job on a lane that has none.
+
+**IT ALSO REPORTS STALE RECORDS, AND RETIRES NONE OF THEM** (ruling B1, Devon 2026-09-27): a live
+record superseded by a newer revision, or whose Dependabot pull request was closed or merged by
+hand, is a finding a person acts on. See `work_watcher/staleness.py`.
 """

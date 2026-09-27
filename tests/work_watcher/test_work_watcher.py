@@ -17,7 +17,7 @@ import io
 
 import pytest
 
-from work_carrier.change_manager import ChangeManagerError, WorkRecord
+from work_carrier.change_manager import ChangeManagerError, PipelineRecord, WorkRecord
 from work_watcher.change_manager import RetirementRefused
 from work_watcher.cli import EXIT_FINDINGS, EXIT_OK, EXIT_TOOL_FAILURE, EXIT_UNUSABLE, run
 from work_watcher.orchestrator_client import OrchestratorError, WorkCompletion
@@ -36,14 +36,38 @@ def record(**overrides) -> WorkRecord:
 
 
 class Source:
-    def __init__(self, *records: WorkRecord, error: Exception | None = None) -> None:
+    """change-manager's work pipeline. By default the pipeline IS the approved records, so the
+    staleness report (ruling B1) has nothing extra to see unless a test hands it more rows."""
+
+    def __init__(
+        self,
+        *records: WorkRecord,
+        error: Exception | None = None,
+        others: tuple[PipelineRecord, ...] = (),
+    ) -> None:
         self._records = records
         self._error = error
+        self._others = others
 
     def approved_work(self) -> tuple[WorkRecord, ...]:
         if self._error is not None:
             raise self._error
         return self._records
+
+    def work_pipeline(self) -> tuple[PipelineRecord, ...]:
+        if self._error is not None:
+            raise self._error
+        approved = tuple(
+            PipelineRecord(
+                change_record_id=r.change_record_id,
+                status="approved",
+                package_id=r.package_id,
+                package_revision=r.package_revision,
+                reasoning=r.reasoning,
+            )
+            for r in self._records
+        )
+        return approved + self._others
 
 
 class Reader:
