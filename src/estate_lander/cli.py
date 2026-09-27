@@ -109,14 +109,6 @@ _DEFERRAL_UNREADABLE = "unreadable-class"
 # lifecycle question, named in this increment's report rather than decided here.
 _SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open"})
 
-# The one refusal this pass answers by ACTING though the answer is unsatisfied: the orchestrator
-# landed this pull request and the row recording that was lost. It names that in place of `not
-# open`, so it does not meet `_SETTLED`, which is tested FIRST: if both ever arrive, the row exists
-# and there is nothing to record; asking the act route to land it records `already_merged`,
-# after which the subject reads `landing_already_recorded` and settles. Printed as `recorded` and
-# not a finding -- the lane recording its own act -- unless the act route refuses.
-_UNRECORDED = "landing_act_unrecorded"
-
 # Refusals that are the system REFUSING ON PURPOSE: the daily pace for this repository is spent, or
 # the clock is outside the hours policy declares for changing something already serving. Neither
 # names a condition anybody can act on, and each clears itself when the window next opens.
@@ -207,8 +199,6 @@ _NOT_A_FINDING = frozenset(
     {
         "landed",
         "would-land",
-        "recorded",
-        "would-record",
         "settled",
         "deliberate",
         "exception",
@@ -229,8 +219,6 @@ _NOT_A_FINDING = frozenset(
 _REPORTED = (
     "landed",
     "would-land",
-    "recorded",
-    "would-record",
     "held",
     "deliberate",
     "exception",
@@ -390,8 +378,6 @@ def _consider(client: OrchestratorClient, repository: str, number: int, submit: 
     refusals = [str(r) for r in (answer.get("refusals") or [])]
     if _SETTLED & set(refusals):
         return Outcome(repository, number, "settled", ", ".join(refusals))
-    if _UNRECORDED in refusals:
-        return _record_lost_act(client, repository, number, answer, submit)
     if not answer.get("satisfied"):
         # A MISSING key reads as False, which withholds the criterion's one conditional member and
         # leaves the line a finding. That is the direction to fail in, and it is not hypothetical:
@@ -422,34 +408,6 @@ def _consider(client: OrchestratorClient, repository: str, number: int, submit: 
     except OrchestratorError as error:
         return Outcome(repository, number, "error", str(error))
     return Outcome(repository, number, "landed", f"status={landed.get('status')}")
-
-
-def _record_lost_act(
-    client: OrchestratorClient,
-    repository: str,
-    number: int,
-    answer: dict[str, Any],
-    submit: bool,
-) -> Outcome:
-    """Ask the act route to record a landing the orchestrator made and did not record.
-
-    Same idempotency key as the landing itself, because it is the same act: the original request's
-    row and event were rolled back with the commit that failed, so the key is unspent.
-    """
-    head = answer.get("head_sha")
-    if not isinstance(head, str) or not head:
-        return Outcome(repository, number, "unreadable", "an unrecorded act that names no head")
-    if not submit:
-        return Outcome(repository, number, "would-record", f"head {head[:12]}")
-    try:
-        recorded = client.land(
-            repository, number, head_sha=head, idempotency_key=_key(repository, number, head)
-        )
-    except LandingRefused as error:
-        return Outcome(repository, number, "held", str(error))
-    except OrchestratorError as error:
-        return Outcome(repository, number, "error", str(error))
-    return Outcome(repository, number, "recorded", f"status={recorded.get('status')}")
 
 
 @dataclass(frozen=True)

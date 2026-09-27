@@ -51,7 +51,7 @@ until somebody writes an environment variable.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Final, Protocol
 from urllib.parse import quote
 
@@ -66,9 +66,6 @@ from orchestrator.persistence.models import EstatePrMerge, Event
 from orchestrator.services.change_record import ChangeRecordSource
 from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.estate_landing_admission import (
-    CHANGE_RECORD_TRAILER,
-    LANDING_ACT_UNRECORDED,
-    POLICY_VERSION_TRAILER,
     EstateGatewayError,
     EstateLandingAdmission,
     EstatePullRequest,
@@ -91,11 +88,12 @@ _MAX_LIST_PAGES: Final = 20
 # The platform's own ceiling on the pull request commits listing, whatever the paging.
 _COMMITS_LIST_CAP: Final = 250
 
-# The trailers the landing writes into the squash body, and the ledger reads back out of it. This
-# is their only writer; they are DEFINED in the admission module, which reads them back to
-# attribute a landing whose row was lost, and imported here. The ledger pins the same spellings on
-# its own side, and a disagreement between the two is a landing recorded with no basis rather than
-# a crash -- which is why both sides carry a test naming the literal rather than deriving it.
+# The trailers the landing writes into the squash body, and the ledger reads back out of it. Named
+# here because this is the only writer; the reader pins the same spellings on its own side, and a
+# disagreement between the two is a landing recorded with no basis rather than a crash -- which is
+# why both sides carry a test naming the literal rather than deriving it from the other.
+CHANGE_RECORD_TRAILER: Final = "SDS-Change-Record"
+POLICY_VERSION_TRAILER: Final = "SDS-Policy-Version"
 
 # Refusals that leave NO RECORD, because nothing happened and each can be tried again.
 ESTATE_MERGE_NOT_ADMISSIBLE: Final = "estate_merge_not_admissible"
@@ -259,31 +257,6 @@ def _land(
         credentials_configured=credentials_configured,
         clock=clock,
     )
-    if LANDING_ACT_UNRECORDED in admission.refusals:
-        # THE LOST ROW. This lane landed the pull request and the commit recording it failed, so
-        # the table holds nothing and the pace rule -- which counts rows -- does not count a
-        # landing that happened. Recorded now, as `already_merged`: the status that asserts no
-        # authorship, whose other writer is the reconciling read below. No other term is asked,
-        # because recording an act that already happened is not landing anything -- but the head
-        # the caller read must still be the head the remote reports, as for every act here.
-        landed = admission.unrecorded_landing
-        head = admission.head_sha
-        if landed is None or head is None or head != command.expected_head_sha:
-            raise DomainError(
-                ESTATE_MERGE_HEAD_MOVED,
-                "the pull request's head is not the one the caller read",
-                "re-read the landing-admission answer and ask again",
-            )
-        return _record(
-            session,
-            command,
-            # The version the landing commit carries, not the one in force now.
-            replace(admission, policy_version=landed.policy_version),
-            head,
-            status="already_merged",
-            reason_code=LANDING_ACT_UNRECORDED,
-            merge_commit_sha=landed.merge_commit_sha,
-        )
     if not admission.satisfied:
         # No record: nothing was acted on, and consuming this pull request's one row here would
         # refuse every later legitimate attempt. The reasons are already served by the read
@@ -550,15 +523,6 @@ class GitHubEstatePullRequests:
         if not isinstance(body, dict):
             raise EstateGatewayError("read_response_invalid")
         return _pull_from_body(body, number)
-
-    def commit_message(self, *, repository: str, sha: str) -> str:
-        """The full message of one commit -- read only to attribute a landing whose row was lost."""
-        body = self._get(f"{GITHUB_API_URL}/repos/{repository}/commits/{quote(sha, safe='')}")
-        commit = body.get("commit") if isinstance(body, dict) else None
-        message = commit.get("message") if isinstance(commit, dict) else None
-        if not isinstance(message, str):
-            raise EstateGatewayError("commit_response_invalid")
-        return message
 
     def commits_behind_base(self, *, repository: str, base_ref: str, head_sha: str) -> int:
         """How many commits the base has that the head does not.
@@ -893,9 +857,4 @@ def _pull_from_body(body: dict[str, Any], number: int) -> EstatePullRequest:
         author_login=login if isinstance(login, str) else "",
         author_is_bot=str(user.get("type", "")).lower() == "bot",
         mergeable_state=str(body.get("mergeable_state") or ""),
-        merge_commit_sha=_optional_sha(body.get("merge_commit_sha")),
     )
-
-
-def _optional_sha(value: Any) -> str | None:
-    return value if isinstance(value, str) and value else None

@@ -248,24 +248,3 @@ def test_the_served_fact_is_true_EXACTLY_when_the_act_refuses_for_a_holding_sibl
 
     assert raised.value.code == refused_with
     assert gateway.branch_updates == []
-
-
-def test_an_unrecorded_landing_is_served_with_the_commit_and_the_version_it_carries(
-    sibling_client: tuple[TestClient, dict[str, Any]],
-) -> None:
-    """Pre-work recovery on the wire. A nested field that only ever serializes None is unproven,
-    so this drives the route to a landed pull request whose commit carries this lane's trailer."""
-    from tests.services.estate_landing_doubles import FakeEstateGateway
-
-    client, slot = sibling_client
-    landed = "c" * 40
-    slot["gateway"] = FakeEstateGateway(
-        pull=pull_request(number=TARGET, is_open=False, landed=True, merge_commit_sha=landed),
-        commit_messages={landed: "bump (#49)\n\nSDS-Change-Record: 52\nSDS-Policy-Version: 1"},
-    )
-
-    body = _served(client)
-
-    assert "landing_act_unrecorded" in body["refusals"]
-    assert "landing_pull_request_not_open" not in body["refusals"]
-    assert body["unrecorded_landing"] == {"merge_commit_sha": landed, "policy_version": 1}

@@ -634,14 +634,6 @@ class EstatePrMergeResponse(BaseModel):
     updated_at: datetime
 
 
-class UnrecordedLandingResponse(BaseModel):
-    """A landing a lane made and no row records: the commit it landed as, and the policy version
-    that commit carries -- not the one in force now."""
-
-    merge_commit_sha: str
-    policy_version: int | None
-
-
 class EstateLandingAdmissionResponse(BaseModel):
     """Whether this pull request may be landed, and every term that is unmet.
 
@@ -676,10 +668,6 @@ class EstateLandingAdmissionResponse(BaseModel):
     # disqualifies the update outright. It is a fact about an observed sibling, NOT a record of the
     # lane declining. A scan that fails leaves this answer answering, with the fact false.
     branch_update_withheld_for_sibling: bool
-    # Pre-work recovery. Present only beside `landing_act_unrecorded`: this lane landed the pull
-    # request and no row records it. Served so a reader of the answer can see what the act route
-    # will record, rather than having to trust that it knows.
-    unrecorded_landing: UnrecordedLandingResponse | None
 
 
 class EstateBranchUpdateCommandModel(BaseModel):
@@ -814,9 +802,6 @@ class InertLandingAdmissionResponse(BaseModel):
     # disqualifies the update outright. It is a fact about an observed sibling, NOT a record of the
     # lane declining. A scan that fails leaves this answer answering, with the fact false.
     branch_update_withheld_for_sibling: bool
-    # Pre-work recovery, as on the deploying lane's answer: present only beside
-    # `landing_act_unrecorded`.
-    unrecorded_landing: UnrecordedLandingResponse | None
 
 
 class InertBranchUpdateCommandModel(BaseModel):

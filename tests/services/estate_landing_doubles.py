@@ -141,7 +141,6 @@ def pull_request(
     author_login: str = "dependabot[bot]",
     author_is_bot: bool = True,
     mergeable_state: str = "clean",
-    merge_commit_sha: str | None = None,
 ) -> EstatePullRequest:
     return EstatePullRequest(
         number=number,
@@ -155,7 +154,6 @@ def pull_request(
         author_login=author_login,
         author_is_bot=author_is_bot,
         mergeable_state=mergeable_state,
-        merge_commit_sha=merge_commit_sha,
     )
 
 
@@ -179,16 +177,8 @@ class FakeEstateGateway:
         commits: dict[int, tuple[PullRequestCommit, ...]] | None = None,
         open_error: EstateGatewayError | None = None,
         commits_error: dict[int, EstateGatewayError] | None = None,
-        commit_messages: dict[str, str] | None = None,
-        commit_message_error: EstateGatewayError | None = None,
     ) -> None:
         self._pull = pull or pull_request()
-        # Pre-work recovery. EMPTY by default, and an unknown sha raises rather than answering "":
-        # the message is read only for a landed pull request with no record, so a fixture that does
-        # not set this is asserting the question was never asked.
-        self._commit_messages = commit_messages or {}
-        self._commit_message_error = commit_message_error
-        self.message_reads: list[tuple[str, str]] = []
         # ADR-0045. THE DEFAULT IS THE TARGET ALONE, POSITIVELY OWNED: an open list naming only
         # this pull request, and (below) one update-bot commit at its head. That is the sibling
         # rule's "no edited sibling, readable commits" hygiene made the default, so every fixture
@@ -241,14 +231,6 @@ class FakeEstateGateway:
         if self._read_error is not None:
             raise self._read_error
         return self._pull
-
-    def commit_message(self, *, repository: str, sha: str) -> str:
-        self.message_reads.append((repository, sha))
-        if self._commit_message_error is not None:
-            raise self._commit_message_error
-        if sha not in self._commit_messages:
-            raise AssertionError(f"the fixture was not told about commit {sha}")
-        return self._commit_messages[sha]
 
     def commits_behind_base(self, *, repository: str, base_ref: str, head_sha: str) -> int:
         self.compares.append((repository, base_ref, head_sha))

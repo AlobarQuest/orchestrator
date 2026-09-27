@@ -398,123 +398,21 @@ def test_an_unreconcilable_refusal_is_recorded_as_ambiguous(
         assert reader.scalar(select(EstatePrMerge)) is not None
 
 
-def _lost_row_gateway(message: str | None) -> ActingGateway:
-    """A pull request this lane landed, as a retry finds it once the row recording that was lost.
-
-    The state a failed commit leaves behind: the remote says landed, the table holds nothing.
-    `message` is the landing commit's message; `None` makes that read fail.
-    """
-    return ActingGateway(
-        pull=pull_request(landed=True, is_open=False, merge_commit_sha=LANDED_COMMIT),
-        commit_messages=None if message is None else {LANDED_COMMIT: message},
-        commit_message_error=(EstateGatewayError("read_status", 502) if message is None else None),
-    )
-
-
-OUR_LANDING = (
-    f"build(deps): bump alembic from 1.18.5 to 1.19.0 (#49)\n\n"
-    # Version 1 while the record now reads 2: the row carries the permission AS IT WAS EXERCISED.
-    f"{CHANGE_RECORD_TRAILER}: 52\n{POLICY_VERSION_TRAILER}: 1"
-)
-
-
-@pytest.mark.parametrize("moment", [IN_WINDOW, OUT_OF_WINDOW])
-def test_a_landing_this_lane_made_whose_row_was_lost_is_recorded_as_already_merged(
-    migrated_session: Session, migrated_engine: Engine, moment: datetime
+def test_a_pull_request_found_already_landed_is_refused_and_leaves_no_row(
+    migrated_session: Session, migrated_engine: Engine
 ) -> None:
-    """THE CRASH CASE. The landing happened and its commit failed, so the next attempt finds the
-    pull request closed and no row.
-
-    Before, the cascade refused it as not open and the lander settled it: nothing recorded the
-    act, and the pace rule -- which counts rows -- no longer counted a landing that happened. The
-    landing commit carries this lane's own change-record trailer naming THIS record, which only
-    this lane writes, so it is recorded -- as `already_merged`, the status that asserts no
-    authorship, never as `merged`. Outside the window too: recording a past act is not landing.
+    """A landed pull request is not one this lane may land, so the cascade refuses it before the act
+    and writes nothing. That holds whoever landed it -- including this lane, when the commit
+    recording its own landing failed: this path does not try to tell the two apart. That fact is
+    not lost, because the landing ledger records every landing from GitHub independently; see
+    `docs/operations/pre-work-recovery.md` for what the ledger does and does not report about it.
     """
-    gateway = _lost_row_gateway(OUR_LANDING)
-
-    record = _land(migrated_session, gateway, moment=moment)
-
-    assert record.status == "already_merged"
-    assert record.reason_code == "landing_act_unrecorded"
-    assert record.merge_commit_sha == LANDED_COMMIT
-    assert record.change_record_id == 52
-    assert record.policy_version == 1
-    assert record.head_sha == HEAD
-    assert gateway.merges == []
-    with Session(migrated_engine) as reader:
-        stored = reader.scalar(select(EstatePrMerge))
-        assert stored is not None and stored.status == "already_merged"
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
-        # A person landed it: GitHub's own squash body, no trailer at all.
-        "build(deps): bump alembic from 1.18.5 to 1.19.0 (#49)\n\n* bump alembic\n",
-        # This lane's trailer, naming a DIFFERENT record.
-        f"bump (#49)\n\n{CHANGE_RECORD_TRAILER}: 51\n{POLICY_VERSION_TRAILER}: 2",
-    ],
-)
-def test_a_pull_request_somebody_else_landed_is_refused_and_never_recorded(
-    migrated_session: Session, migrated_engine: Engine, message: str
-) -> None:
-    """THE CONTROL. Recording somebody else's landing would be worse than recording nothing: the
-    row would count against the pace rule for an act this lane never took."""
-    gateway = _lost_row_gateway(message)
-
+    gateway = ActingGateway(pull=pull_request(landed=True, is_open=False))
     with pytest.raises(DomainError) as error:
         _land(migrated_session, gateway)
 
     assert "landing_pull_request_not_open" in str(error.value)
     assert gateway.merges == []
-    with Session(migrated_engine) as reader:
-        assert reader.scalar(select(EstatePrMerge)) is None
-
-
-def test_recording_a_lost_row_still_requires_the_head_the_caller_read(
-    migrated_session: Session, migrated_engine: Engine
-) -> None:
-    """Recording is not landing, so no other term is asked -- but the head is. A caller that names
-    a head the remote does not report is told so, and nothing is written in its name."""
-    gateway = _lost_row_gateway(OUR_LANDING)
-
-    with pytest.raises(DomainError) as error:
-        _land(migrated_session, gateway, expected_head="f" * 40)
-
-    assert error.value.code == "estate_merge_head_moved"
-    with Session(migrated_engine) as reader:
-        assert reader.scalar(select(EstatePrMerge)) is None
-
-
-def test_a_disabled_lane_records_nothing_even_for_its_own_lost_landing(
-    migrated_session: Session, migrated_engine: Engine
-) -> None:
-    """The off-switch means a release carrying this code changes nothing, recording included. The
-    lost row waits for the next enabled pass."""
-    gateway = _lost_row_gateway(OUR_LANDING)
-
-    with pytest.raises(DomainError) as error:
-        _land(migrated_session, gateway, enabled=False)
-
-    assert "landing_pull_request_not_open" in str(error.value)
-    assert "landing_act_unrecorded" not in str(error.value)
-    assert gateway.message_reads == []
-    with Session(migrated_engine) as reader:
-        assert reader.scalar(select(EstatePrMerge)) is None
-
-
-def test_a_landing_whose_commit_cannot_be_read_is_refused_as_unreadable(
-    migrated_session: Session, migrated_engine: Engine
-) -> None:
-    """Whose landing it was is a question that was not answered: neither settled nor recorded."""
-    gateway = _lost_row_gateway(None)
-
-    with pytest.raises(DomainError) as error:
-        _land(migrated_session, gateway)
-
-    assert "landing_pull_request_unreadable" in str(error.value)
-    assert "landing_pull_request_not_open" not in str(error.value)
     with Session(migrated_engine) as reader:
         assert reader.scalar(select(EstatePrMerge)) is None
 

@@ -308,8 +308,6 @@ RELEASING = {
     "landing_policy_version_superseded",
     "landing_pull_request_conflicted",
     "landing_pull_request_not_open",
-    # A landed pull request this lane's own act left unrecorded: as settled as `not open`.
-    "landing_act_unrecorded",
     "landing_record_absent",
     "landing_record_has_live_objections",
     "landing_record_not_approved",
@@ -361,7 +359,7 @@ def test_every_refusal_code_is_classified_exactly_once() -> None:
     assert not HOLDING & READ_FAILURE_REFUSALS
     assert not HOLDING & RELEASING
     assert not READ_FAILURE_REFUSALS & RELEASING
-    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 18, 23)
+    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 18, 22)
 
 
 def _class(*refusals: str, base_matches: bool = False) -> str:

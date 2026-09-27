@@ -1644,3 +1644,44 @@ def test_an_inert_landing_is_counted_on_its_own_denominator_and_reported_through
     observation = audit_observation(audit, "20260831T120000Z", NOW)
     assert observation["facts"]["inert_landings"] == 2
     assert "2 inert-policy landing(s)" in observation["summary"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Pre-work recovery: what the ledger says about a lane landing whose ORCHESTRATOR ROW WAS LOST.
+#
+# When a landing lane's merge succeeds and its database commit fails, the orchestrator holds no
+# `estate_pr_merge` row, and a retry is refused as `landing_pull_request_not_open`. The recovery
+# the estate relies on is that the ledger records the landing from GitHub independently. This
+# pins exactly how much that covers: the fact and its basis are recorded; NOTHING reports that the
+# orchestrator's own row is missing, because no arm of the audit reads that row for these bases.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_lane_landing_with_no_orchestrator_row_is_recorded_and_reported_by_nothing() -> None:
+    """Built through the recorder, so the facts are the ones a real pass would store. The units
+    reader RAISES on any read: the pass completing proves the audit never asks the orchestrator
+    about these two bases -- which is exactly why a lost row is invisible to it."""
+    from landing_ledger.record import BASIS_CHANGE_RECORD, landing_observation
+    from tests.landing_ledger.test_record import inert_landing, policy_landing
+
+    estate = landing_observation(policy_landing())["facts"]
+    inert_facts = landing_observation(inert_landing())["facts"]
+    assert estate["permitted_by"]["basis"] == BASIS_CHANGE_RECORD
+    assert estate["permitted_by"]["change_record"] == 52
+    assert inert_facts["permitted_by"]["basis"] == BASIS_INERT_POLICY
+
+    audit = audit_repository(
+        repository=REPO,
+        landings=[estate, inert_facts],
+        pending=(),
+        rule_revision=UNDERSCORED,
+        units=UnreachableUnits(),
+        now=NOW,
+        branch=GREEN,
+    )
+
+    assert audit.findings == ()
+    assert audit.caveats == ()
+    assert not audit.unavailable
+    # The inert landing is counted; the change-record landing is on no denominator at all.
+    assert (audit.permitted_landings, audit.factory_landings, audit.inert_landings) == (0, 0, 1)

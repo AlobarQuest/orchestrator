@@ -714,9 +714,6 @@ def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered
     assert set(_REPORTED) == {
         "landed",
         "would-land",
-        # Pre-work recovery: the orchestrator recording a landing of its own whose row was lost.
-        "recorded",
-        "would-record",
         "held",
         "deliberate",
         "exception",
@@ -1379,69 +1376,3 @@ def test_no_reported_status_is_a_substring_of_another() -> None:
     """
     collisions = [(a, b) for a in _REPORTED for b in _REPORTED if a != b and a in b]
     assert collisions == []
-
-
-# ------------------------------------------------------------------------------------------------
-# Pre-work recovery: a landing the orchestrator made whose row was lost is recorded, not settled.
-# ------------------------------------------------------------------------------------------------
-
-
-def _unrecorded(**extra: Any) -> FakeOrchestrator:
-    answer = {
-        "satisfied": False,
-        # `not open` is ABSENT: the orchestrator replaces it with this code, so the subject never
-        # meets the settled set. The other refusals are what a closed pull request ordinarily draws.
-        "refusals": ["landing_act_unrecorded", "landing_checks_not_clean"],
-        "head_sha": HEAD,
-    }
-    return FakeOrchestrator({(REPOSITORY, 49): answer}, **extra)
-
-
-def test_an_unrecorded_act_is_recorded_under_the_landings_own_key() -> None:
-    """Before, the orchestrator answered `not open` and this pass settled it: the landing stayed
-    unrecorded forever and the pace rule, which counts rows, did not count it."""
-    client = _unrecorded()
-
-    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
-
-    assert [o.status for o in outcomes] == ["recorded"]
-    assert client.landed == [(REPOSITORY, 49, HEAD, _key(REPOSITORY, 49, HEAD))]
-    assert report(outcomes) == EXIT_OK
-
-
-def test_a_dry_run_says_it_would_record_and_asks_nothing() -> None:
-    client = _unrecorded()
-
-    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=False)  # type: ignore[arg-type]
-
-    assert [o.status for o in outcomes] == ["would-record"]
-    assert client.landed == []
-    assert report(outcomes) == EXIT_OK
-
-
-def test_an_unrecorded_act_the_orchestrator_will_not_record_is_a_finding() -> None:
-    client = _unrecorded(land_error=LandingRefused("estate_merge_not_admissible"))
-
-    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
-
-    assert [o.status for o in outcomes] == ["held"]
-    assert report(outcomes) == EXIT_FINDINGS
-
-
-def test_a_settled_answer_that_also_names_an_unrecorded_act_settles() -> None:
-    """The orchestrator never serves both -- a row suppresses the attribution -- but if it did, the
-    row exists and there is nothing to record, so settling is the answer that asks nothing."""
-    client = FakeOrchestrator(
-        {
-            (REPOSITORY, 49): {
-                "satisfied": False,
-                "refusals": ["landing_already_recorded", "landing_act_unrecorded"],
-                "head_sha": HEAD,
-            }
-        }
-    )
-
-    outcomes = _pass(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
-
-    assert [o.status for o in outcomes] == ["settled"]
-    assert client.landed == []

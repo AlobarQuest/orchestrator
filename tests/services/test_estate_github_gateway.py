@@ -137,30 +137,3 @@ def test_a_repository_the_remote_does_not_know_is_an_error_and_not_an_empty_answ
 
     with pytest.raises(EstateGatewayError):
         gateway.head_check_runs(repository=REPOSITORY, head_sha=HEAD)
-
-
-# ---------------------------------------------------------------------------
-# Pre-work recovery: the two reads that attribute a landing whose row was lost.
-# ---------------------------------------------------------------------------
-
-
-def test_the_commit_message_read_returns_the_whole_message(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    message = "bump (#49)\n\nSDS-Change-Record: 52\nSDS-Policy-Version: 2"
-    gateway, recorder = _gateway(monkeypatch, {"sha": HEAD, "commit": {"message": message}})
-
-    assert gateway.commit_message(repository=REPOSITORY, sha=HEAD) == message
-    assert recorder.urls == [f"https://api.github.com/repos/{REPOSITORY}/commits/{HEAD}"]
-
-
-@pytest.mark.parametrize("body", [{"commit": {}}, {"commit": "x"}, [], None])
-def test_a_commit_with_no_readable_message_raises_rather_than_reading_as_empty(
-    monkeypatch: pytest.MonkeyPatch, body: Any
-) -> None:
-    """An empty message would read as "carries no trailer" -- somebody else's landing -- which is
-    an answer to a question that was not answered."""
-    gateway, _ = _gateway(monkeypatch, body, status_code=404 if body is None else 200)
-
-    with pytest.raises(EstateGatewayError):
-        gateway.commit_message(repository=REPOSITORY, sha=HEAD)
