@@ -561,3 +561,19 @@ def test_the_source_tuple_constraint_itself_refuses_a_duplicate_carrying_nulls(
             },
         )
     migrated_session.rollback()
+
+
+def test_release_artifact_refuses_every_key_the_other_ingresses_refuse(
+    migrated_session: Session,
+) -> None:
+    """Before the detector was consolidated this ingress checked four key parts and the
+    observation ingresses ten or eleven, so `build_log` was refused there and accepted here."""
+    unit = completed_unit(migrated_session, key="union-key")
+
+    result = record_release_artifact(
+        migrated_session,
+        replace(command(unit, key="union-key"), summary={"build_log": "ci output"}),
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "release_artifact_secret_rejected"

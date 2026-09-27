@@ -2,13 +2,13 @@ import pytest
 from alembic import command
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import Table, create_engine, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import WorkUnit
+from orchestrator.persistence.models import Event, WorkUnit
 from orchestrator.services.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
@@ -855,3 +855,35 @@ def test_migration_0020_adds_a_nullable_follow_up_column() -> None:
 
     assert columns["follow_up"]["nullable"] is True
     assert columns["follow_up"]["default"] is None
+
+
+def test_events_carry_the_indexes_their_readers_filter_on(migrated_engine) -> None:
+    """The SLO report filters events on `action` and an `occurred_at` window; `/history` and the
+    claim-time budget check filter on `subject_id`. Without these every such read scanned the
+    whole table."""
+    config = alembic_config()
+
+    def event_indexes() -> dict[str, list[str | None]]:
+        return {
+            index["name"]: index["column_names"]
+            for index in inspect(migrated_engine).get_indexes("events")
+            if index["name"] is not None
+        }
+
+    expected = {
+        "ix_events_action_occurred_at": ["action", "occurred_at"],
+        "ix_events_subject_id": ["subject_id"],
+    }
+    assert expected.items() <= event_indexes().items()
+
+    command.downgrade(config, "0036_adr26_originating_obs")
+    assert not set(expected) & set(event_indexes())
+
+    command.upgrade(config, "head")
+    assert expected.items() <= event_indexes().items()
+
+    # The model declares the same indexes, so metadata and migrations describe one schema.
+    table = Event.__table__
+    assert isinstance(table, Table)
+    declared = {index.name: [c.name for c in index.columns] for index in table.indexes}
+    assert declared == expected

@@ -6,10 +6,10 @@ import json
 
 import pytest
 
+from orchestrator.kernel.secret_metadata import SECRET_KEY_PARTS
 from orchestrator.services.observations import (
     MAX_FACT_BYTES,
     MAX_SUMMARY,
-    SECRET_KEY_PARTS,
 )
 from pin_watcher.compare import Caller
 from pin_watcher.record import pin_observation, reference_for, summary_of

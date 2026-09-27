@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
+from orchestrator.kernel.secret_metadata import secret_metadata_path
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     CONTAINER_IMAGE_KIND,
@@ -26,8 +27,6 @@ from orchestrator.services.lifecycle import ActorContext
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533532
 SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 GIT_SHA = re.compile(r"^[0-9a-f]{7,40}$")
-BWS_TOKEN_SHAPE = re.compile(r"\b0\.[0-9a-fA-F-]{36}\.[A-Za-z0-9_=-]{8,}")
-SECRET_KEY_PARTS = ("authorization", "password", "secret", "token")
 
 
 @dataclass(frozen=True)
@@ -295,7 +294,7 @@ def _validate_command_shape(command: ReleaseArtifactCommand) -> None:
     _validate_digests(command)
     _validate_commits(command)
     _validate_positive_numbers(command)
-    secret_path = _secret_metadata_path(_command_payload(command))
+    secret_path = secret_metadata_path(_command_payload(command))
     if secret_path is not None:
         raise DomainError(
             "release_artifact_secret_rejected",
@@ -567,29 +566,6 @@ def _optional_text(value: str | None) -> str | None:
 
 def _text(value: str | None) -> bool:
     return value is not None and bool(value.strip())
-
-
-def _secret_metadata_path(value: object, path: str = "$") -> str | None:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            key_text = str(key)
-            lowered = key_text.lower()
-            child_path = f"{path}.{key_text}"
-            if any(part in lowered for part in SECRET_KEY_PARTS):
-                return child_path
-            found = _secret_metadata_path(child, child_path)
-            if found is not None:
-                return found
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            found = _secret_metadata_path(child, f"{path}[{index}]")
-            if found is not None:
-                return found
-    elif isinstance(value, str):
-        lowered = value.lower()
-        if "authorization: bearer " in lowered or BWS_TOKEN_SHAPE.search(value):
-            return path
-    return None
 
 
 def _lock_idempotency_key(session: Session, idempotency_key: str) -> None:

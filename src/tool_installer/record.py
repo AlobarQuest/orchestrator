@@ -144,7 +144,7 @@ def installation_facts(installation: Installation) -> dict[str, Any]:
     Every value is a repository name, a path, a revision, a version, a state name, an action name
     or a bounded probe line, so the record is small by shape rather than by trimming. No key
     contains a fragment the orchestrator's secret detector reads as metadata
-    (`services/observations.py::SECRET_KEY_PARTS` matches nine substrings against key NAMES, so
+    (`kernel/secret_metadata.py::SECRET_KEY_PARTS` is matched as substrings of key NAMES, so
     a key merely CALLED something like `install_log` would be refused on its name alone).
     """
     facts: dict[str, Any] = {

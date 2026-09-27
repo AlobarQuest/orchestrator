@@ -189,6 +189,10 @@ def test_infra_lane_link_rejects_secret_shaped_metadata(
             {"change_manager_url": bearer_header},
             {"payload": {"api_token": "not-a-real-token-fixture"}},
             {"payload": {"nested": {"value": shaped_like_bws_token}}},
+            # Refused by the observation ingresses and, until the detector was unified, accepted
+            # here, whose list held only four parts.
+            {"payload": {"build_log": "ci output"}},
+            {"payload": {"http_response": "200"}},
         )
     ):
         result = record_infra_lane_link(

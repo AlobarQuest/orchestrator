@@ -224,3 +224,16 @@ def test_lists_observations_with_filters(migrated_session: Session) -> None:
         migrated_session,
         ObservationFilters(observation_type="uptime", observed_from=OBSERVED_AT),
     ) == (health,)
+
+
+def test_observation_refuses_a_key_only_the_deployment_ingress_used_to_refuse(
+    migrated_session: Session,
+) -> None:
+    """`response` was in the deployment-observation list alone until the lists were unified."""
+    result = record_observation(
+        migrated_session,
+        replace(command(key="union-key"), facts={"http_response": "200"}),
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "observation_secret_rejected"

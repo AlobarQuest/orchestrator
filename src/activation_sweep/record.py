@@ -108,7 +108,7 @@ def activation_facts(checkout: Checkout) -> dict[str, Any]:
     """Everything the record says, bounded by construction.
 
     No key here contains a fragment the orchestrator's secret detector reads as metadata
-    (`services/observations.py::SECRET_KEY_PARTS` -- `token`, `credential`, `log` and six more
+    (`kernel/secret_metadata.py::SECRET_KEY_PARTS` -- `token`, `credential`, `log` and the rest
     are matched as SUBSTRINGS of a key name, so `commit_log` would be refused on its name alone).
 
     `missing` is the only variable-length member, and `_fit` trims it -- deterministically, longest

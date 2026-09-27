@@ -64,7 +64,7 @@ def pin_facts(caller: Caller, recommended: str) -> dict[str, Any]:
     Every value is a repository name, a path, a revision, a state name or a count, so the record
     is small by shape rather than by trimming -- there is no variable-length member to fit. No key
     contains a fragment the orchestrator's secret detector reads as metadata
-    (`services/observations.py::SECRET_KEY_PARTS` matches nine substrings against key NAMES).
+    (`kernel/secret_metadata.py::SECRET_KEY_PARTS` is matched as substrings of key NAMES).
     """
     facts: dict[str, Any] = {
         "caller": {
