@@ -992,6 +992,60 @@ def test_require_revision_idempotency_replays_and_conflicts(
     assert error.value.code == "idempotency_conflict"
 
 
+@pytest.mark.parametrize(
+    "decide",
+    [reject_decomposition_proposal, require_decomposition_revision],
+    ids=["rejected", "revision-required"],
+)
+def test_a_breakdown_resubmitted_after_a_human_turned_one_down_is_accepted_and_approvable(
+    migrated_session: Session, decide
+) -> None:
+    """PRE-WORK RECOVERY. A human turning a breakdown down is not a dead end for the revision.
+
+    Only an APPROVED breakdown bars another (`decomposition_already_approved`); a rejected or
+    revision-required one is terminal for ITSELF and nothing else. So the recovery from either
+    decision is to submit a corrected proposal, which is accepted and can then be approved into
+    units -- and the turned-down proposal stays exactly as the human left it.
+    """
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    first = submit_decomposition_proposal(
+        migrated_session, proposal_command(revision.id, ac_ids), worker_actor()
+    )
+    decide(
+        migrated_session,
+        first.id,
+        actor=human_actor(),
+        reason="Split the chain differently.",
+        idempotency_key="proposal-decision-1",
+    )
+
+    second = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(
+            revision.id, ac_ids, rationale="Corrected split.", idempotency_key="proposal-2"
+        ),
+        worker_actor(),
+    )
+    approved = approve_decomposition_proposal(
+        migrated_session,
+        second.id,
+        actor=human_actor(),
+        reason="The corrected split is right.",
+        idempotency_key="proposal-approve-2",
+    )
+
+    assert second.id != first.id
+    assert approved.state == "approved"
+    assert approved.created_work_unit_ids
+    assert migrated_session.scalar(select(func.count()).select_from(WorkUnit)) == len(
+        approved.created_work_unit_ids
+    )
+    turned_down = migrated_session.get(DecompositionProposal, first.id)
+    assert turned_down is not None and turned_down.state in {"rejected", "revision_required"}
+    assert turned_down.created_work_unit_ids is None
+
+
 def test_approval_idempotency_replays_without_duplicate_units(
     migrated_session: Session,
 ) -> None:
