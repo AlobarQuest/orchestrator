@@ -633,8 +633,8 @@ class Adjudication(UUIDPrimaryKey, Base):
 
 class Event(UUIDPrimaryKey, Base):
     __tablename__ = "events"
-    # Mirrors migration 0037: the budget check and the SLO report filter on action and a window
-    # of occurred_at, and a unit's history filters on subject_id.
+    # Mirrors migration 0037: the SLO report filters on action and a window of occurred_at; a
+    # unit's history and the claim-time budget check filter on subject_id.
     __table_args__ = (
         Index("ix_events_action_occurred_at", "action", "occurred_at"),
         Index("ix_events_subject_id", "subject_id"),

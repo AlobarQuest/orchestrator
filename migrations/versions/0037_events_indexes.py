@@ -1,8 +1,9 @@
 """Index `events` on what its readers filter by.
 
-The budget check at claim time and the SLO report filter events on `action` and a window of
-`occurred_at`; a unit's history filters on `subject_id`. The table carried only its primary key
-and the unique idempotency key, so each of those reads scanned it whole.
+The SLO report filters events on `action` and a window of `occurred_at`; a unit's history and
+the claim-time budget check (`action`, `subject_type`, `subject_id`, no window) filter on
+`subject_id`. The table carried only its primary key and the unique idempotency key, so each of
+those reads scanned it whole.
 
 Plain CREATE INDEX, not CONCURRENTLY, for the reason 0014 records: alembic runs inside a
 transaction, and a failed CONCURRENTLY build leaves an INVALID index behind. The table is modest,

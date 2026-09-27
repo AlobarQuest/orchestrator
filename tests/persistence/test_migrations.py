@@ -858,9 +858,9 @@ def test_migration_0020_adds_a_nullable_follow_up_column() -> None:
 
 
 def test_events_carry_the_indexes_their_readers_filter_on(migrated_engine) -> None:
-    """Budget checks at claim time and the SLO report filter events on `action` and
-    `occurred_at`, and `/history` filters on `subject_id`; without these every such read
-    scanned the whole table."""
+    """The SLO report filters events on `action` and an `occurred_at` window; `/history` and the
+    claim-time budget check filter on `subject_id`. Without these every such read scanned the
+    whole table."""
     config = alembic_config()
 
     def event_indexes() -> dict[str, list[str | None]]:
