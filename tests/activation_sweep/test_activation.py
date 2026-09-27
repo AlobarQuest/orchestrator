@@ -36,15 +36,16 @@ from activation_sweep.activation import (
 )
 
 
-# `uv sync --check` DOES NOT EXIST BEFORE uv 0.9, and this repository's CI pins **0.5.31**
-# (`quality.yml`, `astral-sh/setup-uv`). Measured 2026-08-25: `uvx uv@0.5.31 sync --help` lists
-# `--frozen` and `--locked` and no `--check`, so there the flag is an unknown argument and uv
+# `uv sync --check` DOES NOT EXIST BEFORE uv 0.9. Measured 2026-08-25: `uvx uv@0.5.31 sync --help`
+# lists `--frozen` and `--locked` and no `--check`, so there the flag is an unknown argument and uv
 # exits 2 — which this module correctly reports as unmeasurable rather than as an answer.
 #
-# The lane runs on the operator machine, where uv is current, so that is where the real-tool
-# tests below belong. The EXIT-CODE CONTRACT is tested everywhere instead, against a stub binary:
-# what this module promises is a mapping from uv's status to an answer, and a stub is the right
-# subject for that promise where a real project is the right subject for the flag's semantics.
+# CI pinned 0.5.31 until 2026-09-27, so the real-tool tests below skipped there on every run. It
+# now pins 0.10.9 (`quality.yml`, `astral-sh/setup-uv`), matching the operator machine the lane
+# runs on, and they execute in CI. The skip survives only for a machine whose uv is older still.
+# The EXIT-CODE CONTRACT is tested everywhere regardless, against a stub binary: what this module
+# promises is a mapping from uv's status to an answer, and a stub is the right subject for that
+# promise where a real project is the right subject for the flag's semantics.
 def _uv_supports_check() -> bool:
     found = shutil.which("uv")
     if found is None:
@@ -57,7 +58,7 @@ def _uv_supports_check() -> bool:
 
 needs_modern_uv = pytest.mark.skipif(
     not _uv_supports_check(),
-    reason="this uv has no `sync --check`; CI pins 0.5.31, which predates the flag",
+    reason="this uv has no `sync --check`, which was added in uv 0.9",
 )
 
 PYPROJECT = """\

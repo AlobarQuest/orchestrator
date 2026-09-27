@@ -50,9 +50,12 @@ WS53_POST_DEPLOY_PATHS = {
 # ADR-0020's named exception, in this guard. The two allowlists above are FILE-scoped: a path in
 # them is excused from every forbidden sequence at once, including `deploy` and `coolify`. That is
 # far wider than a merge exception needs to be, so this one is keyed by (path, label) -- a module
-# admitted here may name the merge it performs and nothing else. It ships EMPTY, while nothing in
-# the repository may land a pull request, so that the first entry arrives into a mechanism already
-# shown to fire in both directions.
+# admitted here may name the merge it performs and nothing else. It is EMPTY, and not because
+# nothing lands a pull request: `services/pr_merge.py` (ADR-0020) and `services/estate_pr_merge.py`
+# (ADR-0019) both do, and are exempted for it in `test_wsp21_invariant_scan.py::MERGE_EXEMPT_PATHS`.
+# Neither spells either label below in a runtime string, so neither needs an entry here. The
+# mechanism was built first, while nothing needed it, so that a first entry arrives into a door
+# already shown to fire in both directions.
 MERGE_LABELS = frozenset({"merge_pull_request", "auto_merge"})
 MERGE_EXEMPT_PATHS: set[Path] = set()
 

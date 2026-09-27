@@ -64,9 +64,9 @@ MERGE_ACTIONS = (
 
 # ADR-0020 lifts the prohibition for a bounded class, and says it must be lifted OPENLY -- by
 # amending this guard with a named exception, never by finding a verb it does not cover. This is
-# that exception, and it ships EMPTY: nothing in the repository may land a pull request today, and
-# the mechanism is built now, while nothing is entitled to use it, so that its first entry arrives
-# into a door already shown to open and to close.
+# that exception. It was built EMPTY, before anything was entitled to use it, so that its first
+# entry arrived into a door already shown to open and to close; it now carries the entries below,
+# each with its own justification.
 #
 # Keyed by exact relative path, the shape OUTBOUND_ALLOWLIST and ws32's WS42_DISPATCH_PATHS
 # already use. Every entry carries a reason, and the rot check below refuses one that no longer

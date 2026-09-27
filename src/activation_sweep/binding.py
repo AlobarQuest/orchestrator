@@ -34,7 +34,6 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 
 from activation_sweep.checkout import (
@@ -59,15 +58,6 @@ _ARCHIVE_CHUNK = 1 << 20
 
 class BindingError(GitError):
     """This working copy could not answer. The answer is missing, never negative."""
-
-
-@dataclass(frozen=True)
-class Activation:
-    """What one working copy says about one unit's landing commit."""
-
-    activated: bool
-    head: str
-    digest: str
 
 
 def has_activated(path: Path, commit: str) -> bool:

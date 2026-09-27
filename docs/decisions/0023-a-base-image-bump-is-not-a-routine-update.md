@@ -1,9 +1,15 @@
 # ADR-0023 — A base-image bump is not a routine update
 
-- **Status:** Accepted
+- **Status:** **Superseded 2026-08-31 by ADR-0038** as to mechanism; the rule stands. (Accepted 2026-08-15.)
 - **Date:** 2026-08-15
 - **Decided by:** Devon
 - **Constrains:** ADR-0018 (the auto-merge gate is a cascade, not a disjunction)
+
+> **SUPERSEDED 2026-08-31 by ADR-0038, as to MECHANISM.** The cascade this constrained was removed.
+> The rule itself survived the move: change-manager's deploy policy excludes `docker` from its
+> inert-landing declaration (`excluded_ecosystems`, from version 5 onward), so a base-image bump
+> still routes to a human. The reasoning below is left as written. Read ADR-0038 for the lane that
+> now carries it.
 
 ## Decision
 

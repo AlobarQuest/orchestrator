@@ -1,6 +1,7 @@
 # The lane stops freshening Dependabot's branches
 
-**Status:** accepted, 2026-09-20. **Repos:** `AlobarQuest/orchestrator`.
+**Status:** superseded 2026-09-25 by ADR-0045 (accepted 2026-09-20). **Repos:** `AlobarQuest/orchestrator`.
+**Superseded by:** `docs/decisions/0045-the-lane-edits-one-dependabot-branch-per-repository.md` -- measurement reversed this design; the lane still freshens, one Dependabot branch per repository at a time.
 **Supersedes in part:** ADR-0019 Increment 6 (the branch-update act), for the estate lane only.
 
 **Format note.** Every file:line below was measured on 2026-09-20 at `0213d9f`. Read the code; do

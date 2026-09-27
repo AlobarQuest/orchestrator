@@ -1,10 +1,15 @@
 # ADR-0016 — Native auto-merge takes routine dependency updates; the factory takes the ones that fail
 
-- **Status:** Accepted
+- **Status:** **Superseded 2026-08-31 by ADR-0038.** (Accepted 2026-08-06.)
 - **Date:** 2026-08-06
 - **Decided by:** Devon
 - **Relates to:** the Phase-3 input-layer plan (WS-P3.1), ADR-0009 (`reach`), ADR-0015 (a factory
   target is declared)
+
+> **SUPERSEDED 2026-08-31 by ADR-0038.** The GitHub-native auto-merge cascade this decided was
+> removed from all six repositories that carried it, and the orchestrator now merges its subjects
+> (the inert-landing lane). The reasoning below is left as written; it is the record of why the
+> cascade existed. Read ADR-0038 for what replaced it.
 
 ## Context
 

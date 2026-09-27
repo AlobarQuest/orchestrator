@@ -1,10 +1,15 @@
 # ADR-0018 — The auto-merge gate asks one question at a time
 
-- **Status:** Accepted
+- **Status:** **Superseded 2026-08-31 by ADR-0038.** (Accepted 2026-08-08.)
 - **Date:** 2026-08-08
 - **Decided by:** Devon
 - **Relates to:** ADR-0016 (native auto-merge for routine updates), `STANDARDS.md`
   "One question per predicate", Code Brain rule #68
+
+> **SUPERSEDED 2026-08-31 by ADR-0038.** The auto-merge workflow whose gate this shaped no longer
+> exists: ADR-0038 removed the cascade and moved the rule into change-manager's deploy policy as the
+> inert-landing declaration. The reasoning below is left as written. Read ADR-0038 for the current
+> rule.
 
 ## Context
 

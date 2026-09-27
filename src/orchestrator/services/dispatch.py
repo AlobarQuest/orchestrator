@@ -557,16 +557,6 @@ def circuit_open(count: int, threshold: int) -> bool:
     return count >= threshold
 
 
-def _next_runner_attempt(session: Session, unit: WorkUnit) -> int:
-    latest = session.scalar(
-        select(DispatchRecord.runner_attempt)
-        .where(DispatchRecord.work_unit_id == unit.id)
-        .order_by(DispatchRecord.runner_attempt.desc())
-        .limit(1)
-    )
-    return max(unit.attempt_count, latest or 0) + 1
-
-
 def _payload(
     unit: WorkUnit,
     settings: DispatchSettings,

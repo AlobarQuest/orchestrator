@@ -1082,10 +1082,15 @@ style of that module.
   `(work_unit_id, runner_attempt)` and, if one exists, **returns that existing record** — HTTP 200,
   `status: "dispatched"`, `reason_code: null` — **without triggering any `workflow_dispatch`.** The
   response is byte-shaped like a real dispatch; only the `id` differs, and only if you knew the
-  prior one. The correct next ordinal is `_next_runner_attempt` =
-  `max(unit.attempt_count, latest_runner_attempt) + 1`; read the prior ordinal from the last
-  `dispatch.dispatched` event's `payload.runner_attempt` (a `UniqueConstraint("work_unit_id",
-  "runner_attempt")` backs this). **Verify a dispatch by confirming a NEW record id and a new
+  prior one. **The caller supplies the ordinal and nothing computes it for you** — the route takes
+  `runner_attempt` in the body, and `dispatch_unit` only rejects a non-positive value and looks the
+  pair up. (This bullet used to name `_next_runner_attempt` =
+  `max(unit.attempt_count, latest_runner_attempt) + 1` as the correct next ordinal; that helper lost
+  its only caller in WS-P2.15 (`6e2614c`) and was deleted as dead code on 2026-09-27.) Pick one
+  greater than every ordinal already recorded: read the prior one from the last
+  `dispatch.dispatched` event's `payload.runner_attempt` in `GET /work-units/{id}/history` (a
+  `UniqueConstraint("work_unit_id", "runner_attempt")` backs this), remembering that a skipped
+  dispatch also spends its ordinal. **Verify a dispatch by confirming a NEW record id and a new
   Actions run — never by the `status` field alone.** Note this compounds the already-documented
   independence of dispatch and claim ordinals: they drift apart the moment a dispatch is skipped or
   a claim is reclaimed, so "attempt_count + 1" is not a safe substitute. (Verified 2026-07-29,

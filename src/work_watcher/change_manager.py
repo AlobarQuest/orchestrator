@@ -33,7 +33,6 @@ from typing import Any, Final
 
 import httpx
 
-DEFAULT_BASE_URL: Final = "https://change-mgr.alobar.net"
 USER_AGENT: Final = "work-watcher/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 30.0
 
