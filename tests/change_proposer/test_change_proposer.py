@@ -188,33 +188,51 @@ def test_brain_rolls_back_to_an_image_never_a_commit() -> None:
 
 
 def test_brains_derived_criteria_are_the_pair_change_managers_deploy_policy_must_carry() -> None:
-    """THE CROSS-REPO PAIR, spelled out, because nothing mechanical joins the two sides.
+    """THE CROSS-REPO PAIR, spelled out as a literal of THIS side's derivation.
 
-    `change-manager`'s `deploy_policy.objections` byte-compares a record's stored criteria against
-    the tuple its current version pins, and a record's stored criteria are what this function
-    derived. So these two strings are the same judgment held in two repositories on purpose --
-    that second copy is what makes a rollout-workflow change stop unattended landing until a human
-    ratifies it. The failure mode if they drift is silent and total: every `brain` record objects
-    `acceptance_criteria_not_ratified` forever, and nothing anywhere says which side moved.
+    change-manager's `deploy_policy.objections` byte-compares a record's stored criteria against
+    the tuple its current version ratifies, and a record's stored criteria are what this function
+    derived. This test used to pin the version-3 text for `c5c0887` and claim change-manager
+    asserted "the same literal"; by 2026-09-27 change-manager pinned version 8 for `7cf6ca2d`, so
+    the two tests were two versions apart and both green. The literal here now names the revision
+    change-manager's CURRENT version pins.
 
-    Literals rather than a derivation, for the reason the registry's own count test gives: a
-    derived assertion would let the string change and stay green, which is exactly the direction
-    that breaks the other repository. Change this and change deploy policy v3 in the same breath.
+    What actually joins the two sides is `scripts/check_deploy_policy_ratification.py`, which
+    reads change-manager's policy and compares it with this derivation on every pull request.
+    This literal is the offline half: a wording change here must be deliberate, and it reds here
+    before it reds there. Change it and ratify the new text as a new policy version together.
 
-    Note there are TWO criteria and no third: the NOTE line is appended only below
-    `ATTESTS_REVISION`, and `c5c0887` is at it.
+    Two criteria and no third: the NOTE line is appended only below `ATTESTS_REVISION`, and
+    `7cf6ca2d` is at it.
     """
     criteria = acceptance_criteria(
-        "alobarquest/brain", attestation_for("c5c088719cd340f0071b875c6a82439292ed8756")
+        "alobarquest/brain", attestation_for("7cf6ca2d2a508b1643cdb5ac0d5390357f397d54")
     )
     assert criteria == (
         "the rollout runs for this merge on alobarquest/brain, and its production step "
         "concludes success (job 'deploy', step 'Deploy brain apps')",
         "every brain application this rollout triggered answered /api/health reporting the "
-        "merged commit as its revision and a status of ok, within 600 seconds; an application "
-        "whose Coolify UUID secret is unset is neither triggered nor checked, and a rollout "
-        "that triggered none fails rather than passing empty",
+        "merged commit as its revision and a status of ok, within 600 seconds, and Coolify "
+        "named a deployment for each one it was asked to deploy; a trigger whose 2xx response "
+        "names no deployment fails the rollout rather than counting as queued, and a deployment "
+        "Coolify itself reports as failed fails the run at once rather than at the deadline; an "
+        "application whose Coolify UUID secret is unset is neither triggered nor checked, and a "
+        "rollout that triggered none fails rather than passing empty",
     )
+
+
+def test_brains_rollback_plan_is_the_one_change_managers_policy_ratifies() -> None:
+    """The same pair one field over. `rollback_plan` is byte-compared too, and until 2026-09-27 it
+    was pinned on change-manager's side only."""
+    plan = rollback_for("alobarquest/brain")
+    assert {"steps": list(plan.steps), "target": plan.target} == {
+        "steps": [
+            "re-point each affected app's moving image tag at the previous per-SHA tag "
+            "and redeploy",
+            "revert the merge commit on main, so main and production agree again",
+        ],
+        "target": "image",
+    }
 
 
 def test_every_in_scope_repository_has_both_halves() -> None:
