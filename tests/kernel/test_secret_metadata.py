@@ -82,6 +82,10 @@ def test_a_string_over_the_bound_is_refused_only_when_a_bound_is_given() -> None
     assert secret_metadata_path({"v": "a" * 512}, max_string=512) is None
 
 
+def test_the_string_bound_reaches_strings_inside_lists() -> None:
+    assert secret_metadata_path({"v": ["ok", "a" * 513]}, max_string=512) == "$.v[1]"
+
+
 def test_no_service_keeps_a_copy_of_the_detector() -> None:
     """A second copy is how the four lists drifted apart; the kernel module is the only one."""
     copies = []
