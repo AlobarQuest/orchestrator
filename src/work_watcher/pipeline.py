@@ -70,11 +70,7 @@ class PipelineListing(HttpWorkRecordSource):
 
 
 def _pipeline_record(row: dict[str, Any]) -> PipelineRecord:
-    """One pipeline row, or a refusal."""
-    if row.get("source") != WORK_SOURCE:
-        raise ChangeManagerError(
-            f"change-manager served a '{row.get('source')}' record to a query for '{WORK_SOURCE}'"
-        )
+    """One pipeline row, or a refusal. Its source was checked by the caller, for the whole listing."""
     change_record_id = row.get("id")
     status = row.get("status")
     package_id = row.get("package_id")
