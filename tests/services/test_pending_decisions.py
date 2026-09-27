@@ -14,6 +14,7 @@ from orchestrator.persistence.models import (
 from orchestrator.services.claims import authorize_retry
 from orchestrator.services.decomposition import (
     approve_decomposition_proposal,
+    reject_decomposition_proposal,
     submit_decomposition_proposal,
 )
 from orchestrator.services.lifecycle import ActorContext
@@ -128,6 +129,45 @@ def test_every_kind_of_pending_decision_appears(migrated_session: Session) -> No
     for entry in entries:
         assert entry["decision"]
         assert entry["href"].startswith("/review")
+
+
+def test_a_rejected_breakdown_returns_its_revision_to_the_queue_and_the_text_says_so(
+    migrated_session: Session,
+) -> None:
+    """Ruling B2 (Devon, 2026-09-27): the queue promised "or decide it goes no further", and no
+    control does that. The entry now says what IS possible, and this pins it to what happens.
+
+    The discriminating half is the round trip. While a proposal is pending the revision is off
+    the queue (its proposal is the entry); once that proposal is REJECTED the revision comes
+    back, because nothing records "declined" for a revision. Text claiming a person can make it
+    go away would be false in exactly that state.
+    """
+    revision = _seed_registered_package(migrated_session, "b2-rejected")
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(
+            revision.id,
+            package_ac_ids(migrated_session, revision.id),
+            idempotency_key="proposal-pending-b2",
+        ),
+        worker_actor(),
+    )
+    assert _kinds(migrated_session) == {"decomposition_proposal"}
+
+    reject_decomposition_proposal(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="This package should go no further.",
+        idempotency_key="proposal-reject-b2",
+    )
+    entries = pending_decisions(migrated_session, execution_stall_grace_seconds=GRACE)
+
+    assert [entry["kind"] for entry in entries] == ["package_breakdown"]
+    [entry] = entries
+    assert "no further" not in entry["decision"]
+    assert "No control retires a revision" in entry["detail"]
+    assert "reject control" in entry["detail"]
 
 
 def _approve_authority(session: Session, unit: WorkUnit) -> None:
