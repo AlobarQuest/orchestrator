@@ -24,7 +24,7 @@ from bump_proposer.cli import _reasoning
 from bump_proposer.standing import StandingPackage
 from landing_ledger.model import PendingUpdate
 from landing_ledger.titles import Bump
-from work_carrier.change_manager import WorkRecord
+from work_carrier.change_manager import ChangeManagerError, WorkRecord
 from work_watcher.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
 from work_watcher.github import CLOSED, MERGED, OPEN, GitHubError, PullRequestReader
 from work_watcher.orchestrator_client import WorkCompletion
@@ -248,6 +248,50 @@ def test_a_superseded_record_is_still_retired_when_its_work_was_built() -> None:
     assert code == EXIT_OK
     assert retirer.calls == [61]
     assert "STALE" not in out
+
+
+def test_a_superseded_record_whose_work_is_in_flight_says_so_rather_than_can_never_register() -> (
+    None
+):
+    """Review finding: revision r was carried and is executing when r+1 is proposed. Still a
+    finding, but "the carry can never register this revision" would be false -- it already did."""
+    newer = row(change_record_id=80, package_revision=3, reasoning=reasoning(number=90))
+    code, out = _run(
+        [],
+        Source(record(), others=(newer,)),
+        Reader({61: incomplete()}),
+        GitHub({(REPO, 90): OPEN}),
+    )
+    assert code == EXIT_FINDINGS
+    assert "already in flight" in out
+    assert "can never register" not in out
+
+
+def test_a_superseded_record_with_no_work_yet_can_never_be_registered() -> None:
+    newer = row(change_record_id=80, package_revision=3, reasoning=reasoning(number=90))
+    none_yet = WorkCompletion(all_units_completed=False, unit_states=(), revision_count=0)
+    code, out = _run(
+        [], Source(record(), others=(newer,)), Reader({61: none_yet}), GitHub({(REPO, 90): OPEN})
+    )
+    assert code == EXIT_FINDINGS
+    assert "can never register" in out and "already in flight" not in out
+
+
+class _BrokenPipeline(Source):
+    def work_pipeline(self) -> tuple[PipelineRecord, ...]:
+        raise ChangeManagerError("a resolved record names no package revision")
+
+
+def test_an_unreadable_pipeline_does_not_stop_retirement() -> None:
+    """Review finding: the staleness listing reads every status, so a malformed OLD record must
+    cost a finding, never the retirement that runs before the carry."""
+    retirer = Retirer()
+    code, out = _run(
+        ["--retire"], _BrokenPipeline(record()), Reader({61: complete()}), GitHub({}), retirer
+    )
+    assert retirer.calls == [61]
+    assert code == EXIT_FINDINGS
+    assert "work pipeline is unreadable" in out
 
 
 # --- pending records: only staleness applies -----------------------------------------------------

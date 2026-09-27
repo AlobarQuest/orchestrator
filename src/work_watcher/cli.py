@@ -183,15 +183,28 @@ def _staleness(
     reasoning: str,
     pipeline: tuple[PipelineRecord, ...],
     github: PullRequestReader | None,
+    *,
+    in_flight: bool = False,
 ) -> _Stale:
-    """Ruling B1: is this live record superseded, or has its pull request gone? REPORTED ONLY."""
+    """Ruling B1: is this live record superseded, or has its pull request gone? REPORTED ONLY.
+
+    `in_flight` is whether the record already caused work that is not finished. A superseded record
+    in that state is still a finding -- its units are building a bump that is no longer the one on
+    offer -- but "the carry can never register it" would be false: it already did, and the work may
+    yet finish and be retired. The line says which case it is, because the remedies differ.
+    """
     newer = superseded_by(package_id, package_revision, pipeline)
     if newer is not None:
+        consequence = (
+            "its work is already in flight for the older revision -- a person decides whether "
+            "to let it finish or cancel it and retire the record"
+            if in_flight
+            else "the carry can never register this revision -- a person retires it"
+        )
         return _Stale(
             finding=(
                 f"STALE: superseded by change record {newer.change_record_id} "
-                f"(revision {newer.package_revision}, {newer.status}); the carry can never "
-                "register this revision -- a person retires it"
+                f"(revision {newer.package_revision}, {newer.status}); {consequence}"
             )
         )
     named = pull_request_of(reasoning)
@@ -253,6 +266,7 @@ def _consider(
             record.reasoning,
             pipeline,
             github,
+            in_flight=bool(answer.unit_states),
         )
         if stale.finding is not None:
             print(f"[FINDING]  {label}: {stale.finding} ({states})", file=out)
@@ -303,6 +317,25 @@ def _consider_pending(
     return None, stale.unusable
 
 
+def _read_pipeline(source: PipelineSource, out) -> tuple[tuple[PipelineRecord, ...], list[str]]:
+    """The whole work pipeline, or nothing plus a finding -- NEVER a stop.
+
+    THE STALENESS LISTING MUST NOT BE ABLE TO STOP RETIREMENT. It reads every status, so one
+    malformed old record the carry never sees would otherwise end the pass before anything was
+    retired -- and the carry, running next, would re-register finished work. Its failure is a
+    finding (this pass could not get an answer about staleness), and retirement proceeds with what
+    the approved listing alone supports: no supersession, no pending records.
+    """
+    try:
+        return source.work_pipeline(), []
+    except ListingError as error:
+        print(
+            f"[FINDING]  staleness not assessed: the work pipeline is unreadable: {error}",
+            file=out,
+        )
+        return (), [str(error)]
+
+
 def run(
     argv: list[str],
     *,
@@ -335,16 +368,17 @@ def run(
 
     try:
         records = records_source.approved_work()
-        pipeline = records_source.work_pipeline()
     except ListingError as error:
         print(f"[TOOL FAILURE] {error}", file=out)
         return EXIT_TOOL_FAILURE
+
+    pipeline, listing_findings = _read_pipeline(records_source, out)
 
     pull_requests = github if github is not None else _github()
 
     retired = 0
     unusable = False
-    findings: list[str] = []
+    findings: list[str] = list(listing_findings)
     for record in records:
         moved, finding, blind = _consider(record, work_reader, writer, out, pipeline, pull_requests)
         retired += 1 if moved else 0
