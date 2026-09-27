@@ -67,7 +67,11 @@ WHAT ELSE COUNTS AS A CHANNEL TO THE ORCHESTRATOR
   it can execute of every other program it imports, transitively -- at SYMBOL granularity across
   that boundary. `from other.mod import NAME` charges the top-level statements NAME depends on
   through that module's own names; `import other.mod` charges the whole module; and the imported
-  package's `__init__.py` is charged its import-time statements, because Python runs it. The
+  package's `__init__.py` is charged its import-time statements, because Python runs it. Import
+  statements always run, so they are always kept, but what they import is charged only as far as
+  the kept code USES the bound name -- a function that is imported and never called sends nothing.
+  Every binding of a name is followed (a rebinding does not hide the first), and relative imports
+  are resolved. The
   granularity is load-bearing, measured: at MODULE granularity `change_proposer` (which imports only
   the `WORK_UNIT_ID` regex from `deploy_watcher.orchestrator`) and `estate_lander` (through it)
   both read as writing `/api/v1/observations` -- a false finding whose only cure would have been an
@@ -79,6 +83,10 @@ WHAT ELSE COUNTS AS A CHANNEL TO THE ORCHESTRATOR
   (with the module-level helpers it calls) reaches `request(` is a write and must also appear in
   `writes` as `cli:<name>`; one that cannot be found statically fails, because it cannot be
   verified.
+* **Joins.** A served read route can be the base of a write: `f"/api/v1/things/{id}"` is a GET,
+  and `…/{id}/approve` a POST. So any orchestrator path extended at run time -- `BASE + "/x"`,
+  `BASE + suffix`, `f"{BASE}/x"`, `f"{BASE}{suffix}"` -- fails, whatever the base resolved to.
+  An interpolation followed by prose (`f"rejected {PATH}: {status}"`) is not a join.
 * **Paths that are not the orchestrator's.** Coolify also serves `/api/v1/…`, and the Todoist
   base URL ends in `/api/v1`. A fully literal hit matching no orchestrator template, and any bare
   `/api/v1` fragment or strict prefix of a template (the base-URL-join construct), must be declared
@@ -107,7 +115,8 @@ KNOWN BLIND SPOTS
 Named so their absence is not mistaken for coverage:
 
 * A path assembled from pieces that are not themselves `/api/v1`-bearing -- `"/api/" + "v1/x"`,
-  `"/".join([...])`, a path read from the environment or a file.
+  `"/".join([...])`, a path read from the environment or a file -- and a join written with `%`,
+  `.format`, `urljoin`, or on an attribute (`self.BASE + "/x"`) rather than a name.
 * A name reached only through `getattr`, `importlib`, or a function passed in from elsewhere: the
   symbol closure follows names, not values.
 * A payload built by `dict(...)`, by mutation (`payload["kind"] = ...`) or by `**` spreading, which
