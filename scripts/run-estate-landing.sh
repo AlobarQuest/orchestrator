@@ -91,11 +91,8 @@ sds_deadman_arm sds-estate-landing --finding 3 "$@"
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
 # which breaks the parse below.
-_bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE BWS_ACCESS_TOKEN="$2" \
-    bws secret get "$1" --output json --color no \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
-}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 
 # SOURCED, not executed. `sds-token.sh` EXPORTS the value and prints nothing -- its own header says
 # so -- so command-substituting it yields the empty string and every fetch below fails with a
@@ -122,11 +119,11 @@ if [ -z "$BROAD_IDENTITY" ]; then
 fi
 
 if [ -z "${ESTATE_LANDING_CHANGE_MANAGER_TOKEN:-}" ]; then
-  ESTATE_LANDING_CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_UUID" "$BROAD_IDENTITY")"
+  ESTATE_LANDING_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_UUID" "$BROAD_IDENTITY")"
   export ESTATE_LANDING_CHANGE_MANAGER_TOKEN
 fi
 if [ -z "${ESTATE_LANDING_ORCHESTRATOR_TOKEN:-}" ]; then
-  ESTATE_LANDING_ORCHESTRATOR_TOKEN="$(_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
+  ESTATE_LANDING_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
   export ESTATE_LANDING_ORCHESTRATOR_TOKEN
 fi
 

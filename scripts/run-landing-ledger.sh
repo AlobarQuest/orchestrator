@@ -76,12 +76,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 # make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe, which breaks the
 # parse below -- a portfolio-wide defect that has been fixed locally in three repos and generalised
 # in none. It costs nothing where the behaviour never fires.
-_bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE bws secret get "$1" --output json --color no \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
-}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 
-LANDING_LEDGER_TOKEN="$(_bws_value "$OBSERVER_BEARER_UUID")"
+LANDING_LEDGER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
 export LANDING_LEDGER_TOKEN
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD. The backfill was run by hand with an ad-hoc token, so

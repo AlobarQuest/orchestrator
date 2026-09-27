@@ -22,6 +22,11 @@ LABEL="com.devon.change-proposer"
 TEMPLATE="$REPO_ROOT/scripts/$LABEL.plist"
 TARGET="$HOME/Library/LaunchAgents/$LABEL.plist"
 
+# Refuses to run from a linked worktree: REPO_ROOT is written into the plist verbatim.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-install.sh"
+sds_refuse_linked_worktree "$REPO_ROOT"
+
 if [ ! -x "$REPO_ROOT/.venv/bin/change-proposer" ]; then
   echo "FATAL: $REPO_ROOT/.venv/bin/change-proposer is missing — run 'uv pip install -e .' first" >&2
   exit 1

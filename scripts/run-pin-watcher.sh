@@ -61,14 +61,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR / CLICOLOR_FORCE
 # make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe, which breaks the
 # parse below -- a portfolio-wide defect fixed locally in three repos and generalised in none.
-_bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE bws secret get "$1" --output json --color no \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
-}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
-ORCHESTRATOR_API_TOKEN="$(_bws_value "$OBSERVER_BEARER_UUID")"
+ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
 export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD, the same gap the landing ledger carries and for the same

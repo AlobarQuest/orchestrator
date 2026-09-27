@@ -38,12 +38,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 # The trigger is the environment rather than the bws version, so this fires wherever FORCE_COLOR
 # is set -- which is every agent session on this machine, and is how it was found. It costs
 # nothing where the behaviour never fires.
-_bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE bws secret get "$1" --output json --color no \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
-}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 
-ORCHESTRATOR_API_TOKEN="$(_bws_value "$SYSTEM_BEARER_UUID")"
+ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$SYSTEM_BEARER_UUID")"
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-system"
 export ORCHESTRATOR_API_TOKEN ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID

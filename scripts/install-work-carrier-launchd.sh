@@ -31,6 +31,11 @@ LABEL="com.devon.work-carrier"
 TEMPLATE="$REPO_ROOT/scripts/$LABEL.plist"
 TARGET="$HOME/Library/LaunchAgents/$LABEL.plist"
 
+# Refuses to run from a linked worktree: REPO_ROOT is written into the plist verbatim.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-install.sh"
+sds_refuse_linked_worktree "$REPO_ROOT"
+
 for _program in work-watcher work-carrier; do
   if [ ! -x "$REPO_ROOT/.venv/bin/$_program" ]; then
     # `work-watcher` is the one that will be missing after an ADR-0029 pull without `uv sync`: the
