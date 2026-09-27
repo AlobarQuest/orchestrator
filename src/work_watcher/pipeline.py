@@ -70,7 +70,7 @@ class PipelineListing(HttpWorkRecordSource):
 
 
 def _pipeline_record(row: dict[str, Any]) -> PipelineRecord:
-    """One pipeline row, or a refusal. Its source was checked by the caller, for the whole listing."""
+    """One pipeline row, or a refusal. The caller checked its source for the whole listing."""
     change_record_id = row.get("id")
     status = row.get("status")
     package_id = row.get("package_id")
