@@ -23,6 +23,7 @@ from orchestrator.persistence.models import EstatePrMerge
 from orchestrator.services.change_record import ChangeRecordAnswer, WorkflowPin
 from orchestrator.services.estate_landing_admission import (
     LANDING_ACT_UNRECORDED,
+    LANDING_ALREADY_RECORDED,
     LANDING_APP_CREDENTIALS_MISSING,
     LANDING_AUTHOR_NOT_THE_UPDATE_BOT,
     LANDING_BASE_NOT_DEFAULT_BRANCH,
@@ -356,9 +357,9 @@ _LANDED = "cccccccccccccccccccccccccccccccccccccccc"
 
 def _landed_gateway(message: str | None, *, landed: bool = True) -> FakeEstateGateway:
     return FakeEstateGateway(
-        pull=pull_request(
-            is_open=False, landed=landed, merge_commit_sha=_LANDED if landed else None
-        ),
+        # The commit is set even when not landed: GitHub fills `merge_commit_sha` with a throwaway
+        # test-merge commit on an unmerged pull request, so only `landed` may decide.
+        pull=pull_request(is_open=False, landed=landed, merge_commit_sha=_LANDED),
         commit_messages=None if message is None else {_LANDED: message},
     )
 
@@ -400,6 +401,29 @@ def test_a_closed_unlanded_pull_request_reads_no_commit(migrated_session: Sessio
     answer = _ask(migrated_session, gateway=gateway)
 
     assert LANDING_PULL_REQUEST_NOT_OPEN in answer.refusals
+    assert gateway.message_reads == []
+
+
+def test_a_landing_already_recorded_is_not_attributed_again(migrated_session: Session) -> None:
+    """With a row, the subject is settled as `already recorded`. Naming the act unrecorded as well
+    would send the lander to the act route every night for a pull request nothing can change."""
+    migrated_session.add(
+        EstatePrMerge(
+            repository=REPOSITORY,
+            pr_number=PR,
+            head_sha=HEAD,
+            status="merged",
+            idempotency_key="prior",
+        )
+    )
+    migrated_session.commit()
+    gateway = _landed_gateway("bump (#49)\n\nSDS-Change-Record: 52\nSDS-Policy-Version: 2")
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert LANDING_ALREADY_RECORDED in answer.refusals
+    assert LANDING_PULL_REQUEST_NOT_OPEN in answer.refusals
+    assert LANDING_ACT_UNRECORDED not in answer.refusals
     assert gateway.message_reads == []
 
 
