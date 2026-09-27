@@ -486,8 +486,12 @@ def test_the_reader_names_a_refused_credential(status: int) -> None:
     [(404, {"message": "Not Found"}), (200, {"state": "draft"}), (200, ["not", "an", "object"])],
 )
 def test_the_reader_refuses_what_it_cannot_interpret(status: int, body: object) -> None:
-    with pytest.raises(GitHubError):
+    with pytest.raises(GitHubError) as raised:
         _reader(status, body).state(REPO, 71)
+    # NOT the credential class: a 404 is a fact about this pull request (deleted, or its repository
+    # gone) and needs a person per record. `GitHubCredentialRefused` subclasses `GitHubError`, so
+    # `raises` alone would pass a reader that paged the whole lane on a missing pull request.
+    assert not isinstance(raised.value, GitHubCredentialRefused)
 
 
 # --- the pipeline listing ----------------------------------------------------------------------
