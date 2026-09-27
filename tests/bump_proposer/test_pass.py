@@ -273,6 +273,29 @@ def test_a_second_pass_replays_and_advances_nothing(rig, capsys) -> None:
     assert "replayed" in capsys.readouterr().out
 
 
+def test_a_replay_onto_a_record_a_human_declined_is_not_a_finding(rig, capsys) -> None:
+    """PRE-WORK RECOVERY, the rejection half. A person set the record `wontfix`; the bump is still
+    open, so the next pass proposes it again. That replays onto the declined record -- the same
+    package revision is the same record -- and is neither a finding nor a new revision: the
+    decline stands until the world offers a DIFFERENT bump, which mints a new revision and a new
+    pending record. Change-manager pins the other half: a replay does not move the status.
+    """
+    estate, calls = rig
+    assert run(["--submit"]) == EXIT_OK
+    estate.records[0]["status"] = "wontfix"
+    calls.clear()
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_OK
+
+    out = capsys.readouterr().out
+    assert calls == []
+    assert len(estate.records) == 1
+    assert "replayed" in out
+    assert "status=wontfix" in out
+    assert "superseded" not in out
+
+
 def test_a_package_carrying_the_bump_but_not_yet_approved_is_still_advanced(
     rig, capsys, monkeypatch
 ) -> None:

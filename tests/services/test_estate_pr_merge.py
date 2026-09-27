@@ -398,19 +398,23 @@ def test_an_unreconcilable_refusal_is_recorded_as_ambiguous(
         assert reader.scalar(select(EstatePrMerge)) is not None
 
 
-def test_a_pull_request_found_already_landed_is_recorded_as_somebody_elses_act(
-    migrated_session: Session,
+def test_a_pull_request_found_already_landed_is_refused_and_leaves_no_row(
+    migrated_session: Session, migrated_engine: Engine
 ) -> None:
-    """Terminal and true, so it is recorded -- but never as ours. It is also the state a crash
-    between acting and recording leaves behind."""
+    """A landed pull request is not one this lane may land, so the cascade refuses it before the act
+    and writes nothing. That holds whoever landed it -- including this lane, when the commit
+    recording its own landing failed: this path does not try to tell the two apart. That fact is
+    not lost, because the landing ledger records every landing from GitHub independently; see
+    `docs/operations/pre-work-recovery.md` for what the ledger does and does not report about it.
+    """
     gateway = ActingGateway(pull=pull_request(landed=True, is_open=False))
     with pytest.raises(DomainError) as error:
         _land(migrated_session, gateway)
 
-    # The cascade refuses it before the act, which is the honest answer: a landed pull request is
-    # not one this lane may land, and recording somebody else's act as ours would be worse.
     assert "landing_pull_request_not_open" in str(error.value)
     assert gateway.merges == []
+    with Session(migrated_engine) as reader:
+        assert reader.scalar(select(EstatePrMerge)) is None
 
 
 def test_the_repository_lock_actually_SERIALISES_two_landings(migrated_engine: Engine) -> None:
