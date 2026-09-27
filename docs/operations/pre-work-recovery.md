@@ -26,13 +26,6 @@ What to do depends on what went wrong and how far the work has got:
 said it. A later, different fact is a new record, not a correction of the old one. Consumers already
 pick the newest row, so appending is all a change of fact ever needs.
 
-**Not provably inert, so left alone (checked 2026-09-27).** `landing_ledger/cli.py`'s skip of the
-six known-defective landings has a comment saying they leave the lookback around 2026-09-27. That is
-true only for the 30-day default. The scheduled pass runs `--days 7`, so it has not reached those
-rows since early September. But a hand-run `record --days 30` or longer still would, and
-`run-landing-ledger.sh` tells an operator to run exactly that after a long gap. The audit also still
-reads the same list. So the skip stays.
-
 ## B. Generated but unreviewed proposals
 
 These are things a machine generated that a person has not yet decided on. **None of them is
@@ -53,6 +46,8 @@ work-carrier pass (`scripts/run-work-carrier.sh`, 07:05 daily). That pass then e
 lane's finding code. The dead-man check stays up; the log line is the signal. A record whose work
 the factory *did* build is retired automatically before it is looked at, so a factory landing never
 shows up as stale.
+
+**The same superseded record may also appear in the bump-proposer pass** as `superseded`, but only on a morning when an open pull request still maps to its package. That is one record reported by two lanes, not two problems.
 
 **What to do.** Retire the record in change-manager: `wontfix` if the change should not happen,
 `resolve` if it already happened some other way. `resolved` is terminal by design; if the

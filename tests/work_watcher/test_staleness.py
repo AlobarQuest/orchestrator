@@ -14,14 +14,15 @@ record does, and only the completion verdict tells them apart.
 from __future__ import annotations
 
 import io
+from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from bump_proposer.cli import _reasoning
 from bump_proposer.standing import StandingPackage
+from landing_ledger.model import PendingUpdate
 from landing_ledger.titles import Bump
 from work_carrier.change_manager import PipelineRecord, WorkRecord
 from work_watcher.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
@@ -46,7 +47,15 @@ def reasoning(number: int = 71, repository: str = REPO) -> str:
         to_version="4.4.3",
     )
     bump = Bump(from_version="3.25.76", to_version="4.4.3", kind="major")
-    return _reasoning(package, bump, SimpleNamespace(number=number))  # type: ignore[arg-type]
+    pending = PendingUpdate(
+        repository=repository,
+        number=number,
+        head_commit="0" * 40,
+        opened_at=datetime(2026, 9, 1, tzinfo=UTC),
+        armed=False,
+        title="Bump zod from 3.25.76 to 4.4.3",
+    )
+    return _reasoning(package, bump, pending)
 
 
 def record(**overrides) -> WorkRecord:
