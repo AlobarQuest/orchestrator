@@ -29,6 +29,7 @@ from activation_sweep.record import (
     summary_of,
 )
 from orchestrator.api.schemas import ObservationCommandModel
+from orchestrator.kernel.secret_metadata import SECRET_KEY_PARTS
 from orchestrator.persistence.models import (
     OBSERVATION_SEVERITIES,
     OBSERVATION_SOURCE_SYSTEMS,
@@ -40,7 +41,6 @@ from orchestrator.persistence.models import (
 from orchestrator.services.observations import (
     MAX_FACT_BYTES,
     MAX_SUMMARY,
-    SECRET_KEY_PARTS,
 )
 from tests.activation_sweep.conftest import Estate
 

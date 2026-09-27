@@ -213,7 +213,7 @@ def test_a_field_OUTSIDE_facts_moves_the_reference() -> None:
 
 
 def test_the_record_carries_no_key_the_secret_detector_reads_as_metadata() -> None:
-    """`services/observations.py::SECRET_KEY_PARTS` matches nine substrings against key NAMES, so
+    """`kernel/secret_metadata.py::SECRET_KEY_PARTS` is matched as substrings of key NAMES, so
     a key merely CALLED something like `install_log` is refused on its name alone."""
     forbidden = ("token", "credential", "key", "secret", "password", "log", "auth")
     record = installation_observation(installation(action=ACTION_INSTALLED))
