@@ -46,6 +46,7 @@ serving. That is the estate's own answer, and it is asked of the estate.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, Protocol
 
@@ -187,6 +188,18 @@ LANDING_POLICY_UNREADABLE: Final = "landing_policy_unreadable"
 # What GitHub says about the pull request itself.
 LANDING_PULL_REQUEST_UNREADABLE: Final = "landing_pull_request_unreadable"
 LANDING_PULL_REQUEST_NOT_OPEN: Final = "landing_pull_request_not_open"
+# A pull request THIS LANE landed that no row records -- the state a landing whose commit failed
+# leaves behind, found by the next attempt. It REPLACES `not open` rather than joining it: both
+# landers test their settled set by intersection, so a joined code would still settle the subject
+# and the act would stay unrecorded. The act path answers it by recording `already_merged`, the
+# status that asserts no authorship; anything it cannot attribute stays `not open`.
+LANDING_ACT_UNRECORDED: Final = "landing_act_unrecorded"
+
+# The trailers the deploying lane writes into its squash body. Defined HERE rather than beside
+# the writer so the admission cascade can read them back without importing the module that acts;
+# `estate_pr_merge` re-exports both, and remains their only writer.
+CHANGE_RECORD_TRAILER: Final = "SDS-Change-Record"
+POLICY_VERSION_TRAILER: Final = "SDS-Policy-Version"
 LANDING_BASE_NOT_DEFAULT_BRANCH: Final = "landing_base_not_default_branch"
 LANDING_AUTHOR_NOT_THE_UPDATE_BOT: Final = "landing_author_not_the_update_bot"
 # The head conflicts with its base. See `MERGEABLE_DIRTY` for why this is not a statement about
@@ -364,6 +377,9 @@ class EstatePullRequest:
     author_login: str
     author_is_bot: bool
     mergeable_state: str
+    # The landing commit. Meaningful ONLY when `landed`: GitHub also populates it on an open pull
+    # request with a throwaway test-merge commit, which is a real, fetchable object.
+    merge_commit_sha: str | None = None
 
 
 class EstateGatewayError(Exception):
@@ -409,6 +425,67 @@ class EstateReadGateway(Protocol):
     def blob_sha(self, *, repository: str, path: str, ref: str) -> str | None: ...
 
     def head_check_runs(self, *, repository: str, head_sha: str) -> tuple[HeadCheckRun, ...]: ...
+
+    def commit_message(self, *, repository: str, sha: str) -> str: ...
+
+
+@dataclass(frozen=True)
+class UnrecordedLanding:
+    """A landing this lane made that no row records, as the act path needs it recorded.
+
+    `policy_version` is the one the landing commit CARRIES, not the one in force now: a row's
+    version is the permission as it was exercised, and the document may have moved since.
+    """
+
+    merge_commit_sha: str
+    policy_version: int | None
+
+
+def attribute_unrecorded_landing(
+    refusals: tuple[str, ...],
+    landed_commit: str | None,
+    repository: str,
+    gateway: EstateReadGateway,
+    is_ours: Callable[[dict[str, str]], bool],
+    version_trailer: str,
+) -> tuple[tuple[str, ...], UnrecordedLanding | None]:
+    """Name a landing this lane made that no row records. Shared by both landing lanes.
+
+    Called only when no row exists. Returns the refusals, with `not open` replaced when the landing
+    commit's trailers say the act was this lane's, and what to record it by. The trailers are
+    the evidence because each lane is their only writer and the other landing path writes neither;
+    a landing nobody can attribute keeps `not open`, which is what it was before.
+
+    A commit that cannot be read replaces `not open` with `unreadable`: whose landing it was is a
+    question that went unanswered, and settling it would decide the answer is "somebody else's".
+    """
+    if landed_commit is None or LANDING_PULL_REQUEST_NOT_OPEN not in refusals:
+        return refusals, None
+    try:
+        message = gateway.commit_message(repository=repository, sha=landed_commit)
+    except EstateGatewayError:
+        return _replaced(refusals, LANDING_PULL_REQUEST_UNREADABLE), None
+    trailers = _trailers_of(message)
+    if not is_ours(trailers):
+        return refusals, None
+    version = trailers.get(version_trailer, "")
+    return _replaced(refusals, LANDING_ACT_UNRECORDED), UnrecordedLanding(
+        landed_commit, int(version) if version.isdigit() else None
+    )
+
+
+def _replaced(refusals: tuple[str, ...], code: str) -> tuple[str, ...]:
+    return tuple(code if r == LANDING_PULL_REQUEST_NOT_OPEN else r for r in refusals)
+
+
+def _trailers_of(message: str) -> dict[str, str]:
+    """`Key: value` lines as a mapping. A later line wins, as git's own trailer reading does."""
+    trailers: dict[str, str] = {}
+    for line in message.splitlines():
+        key, separator, value = line.partition(": ")
+        if separator and key and " " not in key:
+            trailers[key] = value.strip()
+    return trailers
 
 
 @dataclass(frozen=True)
@@ -485,6 +562,9 @@ class EstateLandingAdmission:
     # siblings would never stop. The rule lives outside this module and the route fills this in.
     # No default, so a constructor that forgot it would fail rather than serve a quiet false.
     branch_update_withheld_for_sibling: bool
+    # Pre-work recovery. A pull request this lane landed that no row records, which the act path
+    # records. None whenever `LANDING_ACT_UNRECORDED` is absent.
+    unrecorded_landing: UnrecordedLanding | None
 
 
 def freshness_derived_refusals(
@@ -717,12 +797,22 @@ def estate_landing_admission(
 
     conditions = record.conditions
     remote = _remote_terms(repository, pr_number, conditions, gateway)
+    remote_refusals, unrecorded = remote.term.refusals, None
+    if prior is None and record.record_id is not None:
+        remote_refusals, unrecorded = attribute_unrecorded_landing(
+            remote_refusals,
+            remote.landed_commit,
+            repository,
+            gateway,
+            _names_record(record.record_id),
+            POLICY_VERSION_TRAILER,
+        )
 
     refusals.extend(estate.refusals)
     refusals.extend(record.term.refusals)
     refusals.extend(window.refusals)
     refusals.extend(pace.refusals)
-    refusals.extend(remote.term.refusals)
+    refusals.extend(remote_refusals)
 
     satisfied = (
         enabled
@@ -747,7 +837,13 @@ def estate_landing_admission(
         ),
         rollout_base_matches_pin=remote.rollout_base_matches_pin,
         branch_update_withheld_for_sibling=False,
+        unrecorded_landing=unrecorded,
     )
+
+
+def _names_record(record_id: int) -> Callable[[dict[str, str]], bool]:
+    """This lane's attribution: the change-record trailer names THIS pull request's record."""
+    return lambda trailers: trailers.get(CHANGE_RECORD_TRAILER) == str(record_id)
 
 
 def _estate_term(repository: str, landing_source: EstateLandingSource) -> Term:
@@ -894,6 +990,8 @@ class _RemoteTerms:
     head_sha: str | None
     # Carried up rather than recomputed: the blobs were read once, by the term that owns them.
     rollout_base_matches_pin: bool
+    # The landing commit, when the pull request has landed; None otherwise.
+    landed_commit: str | None = None
 
 
 def _remote_terms(
@@ -930,7 +1028,7 @@ def _remote_terms(
     if conditions is None:
         # Already reported by the record term. Everything below is a condition this process was
         # not told, so it cannot be met and there is nothing further to say about it.
-        return _RemoteTerms(Term(False, tuple(refusals)), pull.head_sha, False)
+        return _RemoteTerms(Term(False, tuple(refusals)), pull.head_sha, False, _landed(pull))
 
     fresh = freshness_term(
         repository,
@@ -956,7 +1054,13 @@ def _remote_terms(
         and kind.met
         and rollout.term.met
     )
-    return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha, rollout.base_matches_pin)
+    return _RemoteTerms(
+        Term(met, tuple(refusals)), pull.head_sha, rollout.base_matches_pin, _landed(pull)
+    )
+
+
+def _landed(pull: EstatePullRequest) -> str | None:
+    return pull.merge_commit_sha if pull.landed else None
 
 
 def checks_term(

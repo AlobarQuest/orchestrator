@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from orchestrator.persistence.models import EstatePrMerge
 from orchestrator.services.change_record import ChangeRecordAnswer, WorkflowPin
 from orchestrator.services.estate_landing_admission import (
+    LANDING_ACT_UNRECORDED,
     LANDING_APP_CREDENTIALS_MISSING,
     LANDING_AUTHOR_NOT_THE_UPDATE_BOT,
     LANDING_BASE_NOT_DEFAULT_BRANCH,
@@ -348,6 +349,72 @@ def test_a_closed_pull_request_refuses(migrated_session: Session) -> None:
     gateway = FakeEstateGateway(pull=pull_request(is_open=False))
 
     assert LANDING_PULL_REQUEST_NOT_OPEN in _ask(migrated_session, gateway=gateway).refusals
+
+
+_LANDED = "cccccccccccccccccccccccccccccccccccccccc"
+
+
+def _landed_gateway(message: str | None, *, landed: bool = True) -> FakeEstateGateway:
+    return FakeEstateGateway(
+        pull=pull_request(
+            is_open=False, landed=landed, merge_commit_sha=_LANDED if landed else None
+        ),
+        commit_messages=None if message is None else {_LANDED: message},
+    )
+
+
+def test_a_landing_this_lane_made_with_no_row_is_named_as_an_unrecorded_act(
+    migrated_session: Session,
+) -> None:
+    """Pre-work recovery. The landing commit carries this lane's own trailer for THIS record and
+    the table holds nothing -- the state a lost commit leaves. It REPLACES `not open` rather than
+    joining it: both landers test their settled set by intersection, so a joined code would still
+    settle the subject and nothing would ever record the act."""
+    gateway = _landed_gateway("bump (#49)\n\nSDS-Change-Record: 52\nSDS-Policy-Version: 2")
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert LANDING_ACT_UNRECORDED in answer.refusals
+    assert LANDING_PULL_REQUEST_NOT_OPEN not in answer.refusals
+    assert answer.unrecorded_landing is not None
+    assert answer.unrecorded_landing.merge_commit_sha == _LANDED
+    assert answer.unrecorded_landing.policy_version == 2
+    assert not answer.satisfied
+
+
+def test_a_landing_somebody_else_made_stays_not_open(migrated_session: Session) -> None:
+    """THE CONTROL: the ordinary case, a person merged it. Settled, exactly as before."""
+    gateway = _landed_gateway("bump alembic (#49)\n\n* bump alembic\n")
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert LANDING_PULL_REQUEST_NOT_OPEN in answer.refusals
+    assert LANDING_ACT_UNRECORDED not in answer.refusals
+    assert answer.unrecorded_landing is None
+
+
+def test_a_closed_unlanded_pull_request_reads_no_commit(migrated_session: Session) -> None:
+    """Closed without landing has no landing commit to attribute, so nothing is asked."""
+    gateway = _landed_gateway(None, landed=False)
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert LANDING_PULL_REQUEST_NOT_OPEN in answer.refusals
+    assert gateway.message_reads == []
+
+
+def test_a_landing_whose_commit_cannot_be_read_is_unreadable_not_settled(
+    migrated_session: Session,
+) -> None:
+    gateway = FakeEstateGateway(
+        pull=pull_request(is_open=False, landed=True, merge_commit_sha=_LANDED),
+        commit_message_error=EstateGatewayError("read_status", 502),
+    )
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert LANDING_PULL_REQUEST_UNREADABLE in answer.refusals
+    assert LANDING_PULL_REQUEST_NOT_OPEN not in answer.refusals
 
 
 def test_a_pull_request_against_another_base_refuses(migrated_session: Session) -> None:

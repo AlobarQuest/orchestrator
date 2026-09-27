@@ -140,6 +140,13 @@ SYSTEM_KEY_ID = "orchestrator-system"
 # nothing about the conditions beside it -- and this lane has no deliberate refusal at all.
 _SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open"})
 
+# The one refusal this pass answers by ACTING though the answer is unsatisfied: the orchestrator
+# landed this pull request and the row recording that was lost. It names that in place of `not
+# open`, so it never meets `_SETTLED`; asking the act route to land it records `already_merged`,
+# after which the subject reads `landing_already_recorded` and settles. Mirrored from the
+# deploying lane's lander, which this program cannot import.
+_UNRECORDED = "landing_act_unrecorded"
+
 # ADR-0045. The key on the orchestrator's answer saying the branch update is withheld because
 # another update-bot pull request this lane already edited is queued to land. Named once, for the
 # reason the base comparison's key is: read by a name the server does not serve, `.get` returns
@@ -230,6 +237,8 @@ _NOT_A_FINDING = frozenset(
     {
         "landed",
         "would-land",
+        "recorded",
+        "would-record",
         "settled",
         "deliberate",
         "exception",
@@ -249,6 +258,8 @@ _NOT_A_FINDING = frozenset(
 _REPORTED = (
     "landed",
     "would-land",
+    "recorded",
+    "would-record",
     "held",
     "deliberate",
     "exception",
@@ -443,6 +454,8 @@ def _consider(client: LandingClient, repository: str, number: int, submit: bool)
         return Outcome(repository, number, "unreadable", str(error))
 
     refusals = [str(r) for r in (answer.get("refusals") or [])]
+    if _UNRECORDED in refusals:
+        return _record_lost_act(client, repository, number, answer, submit)
     if _SETTLED & set(refusals):
         return Outcome(repository, number, "settled", ", ".join(refusals))
     if not answer.get("satisfied"):
@@ -469,6 +482,34 @@ def _consider(client: LandingClient, repository: str, number: int, submit: bool)
     except OrchestratorError as error:
         return Outcome(repository, number, "error", str(error))
     return Outcome(repository, number, "landed", f"status={landed.get('status')}")
+
+
+def _record_lost_act(
+    client: LandingClient,
+    repository: str,
+    number: int,
+    answer: dict[str, Any],
+    submit: bool,
+) -> Outcome:
+    """Ask the act route to record a landing the orchestrator made and did not record.
+
+    Same idempotency key as the landing itself, because it is the same act: the original request's
+    row and event were rolled back with the commit that failed, so the key is unspent.
+    """
+    head = answer.get("head_sha")
+    if not isinstance(head, str) or not head:
+        return Outcome(repository, number, "unreadable", "an unrecorded act that names no head")
+    if not submit:
+        return Outcome(repository, number, "would-record", f"head {head[:12]}")
+    try:
+        recorded = client.land(
+            repository, number, head_sha=head, idempotency_key=_key(repository, number, head)
+        )
+    except LandingRefused as error:
+        return Outcome(repository, number, "held", str(error))
+    except OrchestratorError as error:
+        return Outcome(repository, number, "error", str(error))
+    return Outcome(repository, number, "recorded", f"status={recorded.get('status')}")
 
 
 def _pass(subjects: list[tuple[str, int]], client: LandingClient, submit: bool) -> list[Outcome]:

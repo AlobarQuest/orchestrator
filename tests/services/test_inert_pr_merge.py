@@ -442,3 +442,57 @@ def test_an_update_bot_pull_request_still_asks_for_a_squash(
     _land(migrated_session, gateway=gateway, policy_source=_sync_policy())
 
     assert gateway.merges[0][4] == SQUASH
+
+
+# ---------------------------------------------------------------------------
+# Pre-work recovery: a landing this lane made whose row was lost.
+# ---------------------------------------------------------------------------
+
+# One version behind the document now in force: the row carries the permission as exercised.
+_OUR_MESSAGE = f"bump typer (#3)\n\n{INERT_LANDING_POLICY_TRAILER}: {INERT_POLICY_VERSION - 1}"
+
+
+def _lost_row(message: str) -> ActingInertGateway:
+    """The state a failed commit leaves: the remote says landed, the table holds nothing."""
+    return ActingInertGateway(
+        pull=pull_request(
+            number=PR,
+            head_ref=UV_BRANCH,
+            is_open=False,
+            landed=True,
+            merge_commit_sha=LANDED_COMMIT,
+        ),
+        commit_messages={LANDED_COMMIT: message},
+    )
+
+
+def test_a_landing_this_lane_made_whose_row_was_lost_is_recorded_as_already_merged(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Before, the cascade refused it as not open and the lander settled it, so the act went
+    unrecorded for good. The landing commit carries this lane's own trailer, which only this lane
+    writes -- recorded as `already_merged`, the status that asserts no authorship."""
+    gateway = _lost_row(_OUR_MESSAGE)
+
+    record = _land(migrated_session, gateway=gateway)
+
+    assert record.status == "already_merged"
+    assert record.reason_code == "landing_act_unrecorded"
+    assert record.merge_commit_sha == LANDED_COMMIT
+    assert record.policy_version == INERT_POLICY_VERSION - 1
+    assert gateway.merges == []
+    assert [row.status for row in _rows(migrated_engine)] == ["already_merged"]
+
+
+def test_a_pull_request_somebody_else_landed_is_refused_and_never_recorded(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """THE CONTROL. GitHub's own squash body carries no trailer of this lane's."""
+    gateway = _lost_row("bump typer from 0.20.0 to 0.21.0 (#3)\n\n* bump typer\n")
+
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, gateway=gateway)
+
+    assert "landing_pull_request_not_open" in str(error.value)
+    assert gateway.merges == []
+    assert _rows(migrated_engine) == []

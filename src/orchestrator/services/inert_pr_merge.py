@@ -71,7 +71,7 @@ one on must not turn the other on.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final, Protocol
 
 from sqlalchemy import select, text
@@ -82,6 +82,7 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
 from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.estate_landing_admission import (
+    LANDING_ACT_UNRECORDED,
     EstateGatewayError,
     EstateReadGateway,
     gateway_failure_detail,
@@ -92,6 +93,7 @@ from orchestrator.services.estate_pr_merge import (
     MergeOutcome,
 )
 from orchestrator.services.inert_landing_admission import (
+    INERT_LANDING_POLICY_TRAILER,
     InertLandingAdmission,
     inert_landing_admission,
 )
@@ -110,7 +112,8 @@ from orchestrator.services.lifecycle import ActorContext
 # permitted by a change record AND the policy version that approved it. Here there is no record,
 # so a bare version number would be indistinguishable from the sibling's second trailer; naming
 # the population in the key is what makes the basis readable without a second marker.
-INERT_LANDING_POLICY_TRAILER: Final = "SDS-Inert-Landing-Policy"
+#
+# Defined in the admission module, which reads it back to attribute a landing whose row was lost.
 
 # Refusals that leave NO RECORD, because nothing happened and each can be tried again.
 INERT_MERGE_NOT_ADMISSIBLE: Final = "inert_merge_not_admissible"
@@ -273,6 +276,22 @@ def _land(
         enabled=enabled,
         credentials_configured=credentials_configured,
     )
+    if LANDING_ACT_UNRECORDED in admission.refusals:
+        # THE LOST ROW: this lane landed the pull request and the commit recording it failed.
+        # Recorded as `already_merged`, the status that asserts no authorship -- the same answer,
+        # for the same reason, as the deploying lane gives. No other term is asked: recording an
+        # act that already happened is not landing anything.
+        landed = admission.unrecorded_landing
+        return _record(
+            session,
+            command,
+            # The version the landing commit carries, not the one in force now.
+            replace(admission, policy_version=landed.policy_version if landed else None),
+            admission.head_sha or command.expected_head_sha,
+            status="already_merged",
+            reason_code=LANDING_ACT_UNRECORDED,
+            merge_commit_sha=landed.merge_commit_sha if landed else None,
+        )
     if not admission.satisfied:
         # No record: nothing was acted on, and consuming this pull request's one row here would
         # refuse every later legitimate attempt. The reasons are already served by the read

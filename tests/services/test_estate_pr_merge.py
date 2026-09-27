@@ -398,19 +398,92 @@ def test_an_unreconcilable_refusal_is_recorded_as_ambiguous(
         assert reader.scalar(select(EstatePrMerge)) is not None
 
 
-def test_a_pull_request_found_already_landed_is_recorded_as_somebody_elses_act(
-    migrated_session: Session,
+def _lost_row_gateway(message: str | None) -> ActingGateway:
+    """A pull request this lane landed, as a retry finds it once the row recording that was lost.
+
+    The state a failed commit leaves behind: the remote says landed, the table holds nothing.
+    `message` is the landing commit's message; `None` makes that read fail.
+    """
+    return ActingGateway(
+        pull=pull_request(landed=True, is_open=False, merge_commit_sha=LANDED_COMMIT),
+        commit_messages=None if message is None else {LANDED_COMMIT: message},
+        commit_message_error=(EstateGatewayError("read_status", 502) if message is None else None),
+    )
+
+
+OUR_LANDING = (
+    f"build(deps): bump alembic from 1.18.5 to 1.19.0 (#49)\n\n"
+    # Version 1 while the record now reads 2: the row carries the permission AS IT WAS EXERCISED.
+    f"{CHANGE_RECORD_TRAILER}: 52\n{POLICY_VERSION_TRAILER}: 1"
+)
+
+
+@pytest.mark.parametrize("moment", [IN_WINDOW, OUT_OF_WINDOW])
+def test_a_landing_this_lane_made_whose_row_was_lost_is_recorded_as_already_merged(
+    migrated_session: Session, migrated_engine: Engine, moment: datetime
 ) -> None:
-    """Terminal and true, so it is recorded -- but never as ours. It is also the state a crash
-    between acting and recording leaves behind."""
-    gateway = ActingGateway(pull=pull_request(landed=True, is_open=False))
+    """THE CRASH CASE. The landing happened and its commit failed, so the next attempt finds the
+    pull request closed and no row.
+
+    Before, the cascade refused it as not open and the lander settled it: nothing recorded the
+    act, and the pace rule -- which counts rows -- no longer counted a landing that happened. The
+    landing commit carries this lane's own change-record trailer naming THIS record, which only
+    this lane writes, so it is recorded -- as `already_merged`, the status that asserts no
+    authorship, never as `merged`. Outside the window too: recording a past act is not landing.
+    """
+    gateway = _lost_row_gateway(OUR_LANDING)
+
+    record = _land(migrated_session, gateway, moment=moment)
+
+    assert record.status == "already_merged"
+    assert record.reason_code == "landing_act_unrecorded"
+    assert record.merge_commit_sha == LANDED_COMMIT
+    assert record.change_record_id == 52
+    assert record.policy_version == 1
+    assert gateway.merges == []
+    with Session(migrated_engine) as reader:
+        stored = reader.scalar(select(EstatePrMerge))
+        assert stored is not None and stored.status == "already_merged"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # A person landed it: GitHub's own squash body, no trailer at all.
+        "build(deps): bump alembic from 1.18.5 to 1.19.0 (#49)\n\n* bump alembic\n",
+        # This lane's trailer, naming a DIFFERENT record.
+        f"bump (#49)\n\n{CHANGE_RECORD_TRAILER}: 51\n{POLICY_VERSION_TRAILER}: 2",
+    ],
+)
+def test_a_pull_request_somebody_else_landed_is_refused_and_never_recorded(
+    migrated_session: Session, migrated_engine: Engine, message: str
+) -> None:
+    """THE CONTROL. Recording somebody else's landing would be worse than recording nothing: the
+    row would count against the pace rule for an act this lane never took."""
+    gateway = _lost_row_gateway(message)
+
     with pytest.raises(DomainError) as error:
         _land(migrated_session, gateway)
 
-    # The cascade refuses it before the act, which is the honest answer: a landed pull request is
-    # not one this lane may land, and recording somebody else's act as ours would be worse.
     assert "landing_pull_request_not_open" in str(error.value)
     assert gateway.merges == []
+    with Session(migrated_engine) as reader:
+        assert reader.scalar(select(EstatePrMerge)) is None
+
+
+def test_a_landing_whose_commit_cannot_be_read_is_refused_as_unreadable(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Whose landing it was is a question that was not answered: neither settled nor recorded."""
+    gateway = _lost_row_gateway(None)
+
+    with pytest.raises(DomainError) as error:
+        _land(migrated_session, gateway)
+
+    assert "landing_pull_request_unreadable" in str(error.value)
+    assert "landing_pull_request_not_open" not in str(error.value)
+    with Session(migrated_engine) as reader:
+        assert reader.scalar(select(EstatePrMerge)) is None
 
 
 def test_the_repository_lock_actually_SERIALISES_two_landings(migrated_engine: Engine) -> None:

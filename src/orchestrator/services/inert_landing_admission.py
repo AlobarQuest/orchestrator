@@ -93,6 +93,8 @@ from orchestrator.services.estate_landing_admission import (
     EstatePullRequest,
     EstateReadGateway,
     Term,
+    UnrecordedLanding,
+    attribute_unrecorded_landing,
     checks_term,
     ecosystem_exclusion_term,
     freshness_term,
@@ -113,6 +115,11 @@ from orchestrator.services.inert_landing_policy import (
 # than the sibling's `landing_target_not_routed`, because that name says "nobody routed this
 # change" and here the answer is the opposite fact about the repository.
 INERT_LANDING_TARGET_NOT_INERT: Final = "inert_landing_target_not_inert"
+
+# The trailer this lane writes into the landing commit's body. DEFINED here so the cascade can read
+# it back to attribute a landing whose row was lost; `inert_pr_merge` imports it and remains its
+# only writer. See that module for why the key carries the lane's name.
+INERT_LANDING_POLICY_TRAILER: Final = "SDS-Inert-Landing-Policy"
 
 # Where the policy declaring this population is read from, and what the read said. Three causes,
 # three different people: an environment variable nobody set, a service refusing or unreachable,
@@ -167,6 +174,9 @@ class InertLandingAdmission:
     # already edited is queued to land? ALWAYS FALSE AS COMPOSED HERE: finding out means composing
     # each sibling's own answer, which must never ask the same of its siblings. The route fills it.
     branch_update_withheld_for_sibling: bool
+    # Pre-work recovery. A pull request this lane landed that no row records, which the act path
+    # records. None whenever `landing_act_unrecorded` is absent.
+    unrecorded_landing: UnrecordedLanding | None
 
 
 def inert_landing_admission(
@@ -218,9 +228,20 @@ def inert_landing_admission(
     policy = _policy_term(repository, policy_source)
     remote = _remote_terms(repository, pr_number, policy.rules, gateway)
 
+    remote_refusals, unrecorded = remote.term.refusals, None
+    if prior is None:
+        remote_refusals, unrecorded = attribute_unrecorded_landing(
+            remote_refusals,
+            remote.landed_commit,
+            repository,
+            gateway,
+            _carries_lane_trailer,
+            INERT_LANDING_POLICY_TRAILER,
+        )
+
     refusals.extend(estate.refusals)
     refusals.extend(policy.term.refusals)
-    refusals.extend(remote.term.refusals)
+    refusals.extend(remote_refusals)
 
     satisfied = (
         enabled
@@ -253,7 +274,17 @@ def inert_landing_admission(
         ),
         merge_method=remote.merge_method,
         branch_update_withheld_for_sibling=False,
+        unrecorded_landing=unrecorded,
     )
+
+
+def _carries_lane_trailer(trailers: dict[str, str]) -> bool:
+    """This lane's attribution: its own trailer, naming a policy version.
+
+    Any version rather than the one in force now, because the landing was stamped with whichever
+    was in force when it happened, and the document may have moved since.
+    """
+    return trailers.get(INERT_LANDING_POLICY_TRAILER, "").isdigit()
 
 
 def _inert_estate_term(repository: str, landing_source: EstateLandingSource) -> Term:
@@ -316,6 +347,8 @@ class _RemoteTerms:
     term: Term
     head_sha: str | None
     merge_method: str
+    # The landing commit, when the pull request has landed; None otherwise.
+    landed_commit: str | None = None
 
 
 def _remote_terms(
@@ -354,7 +387,7 @@ def _remote_terms(
         # The method is the ordinary one rather than an absent value: this answer cannot be
         # satisfied, so nothing will act on it, and a field that reads "we were not told" would
         # oblige every later reader to handle a case the act can never see.
-        return _RemoteTerms(Term(False, tuple(refusals)), pull.head_sha, SQUASH)
+        return _RemoteTerms(Term(False, tuple(refusals)), pull.head_sha, SQUASH, _landed(pull))
 
     author = _author_term(pull, rules)
     fresh = freshness_term(repository, pull, gateway, required=rules.require_head_current_with_base)
@@ -406,7 +439,11 @@ def _remote_terms(
         and fresh.met
         and ecosystem.met
     )
-    return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha, merge_method)
+    return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha, merge_method, _landed(pull))
+
+
+def _landed(pull: EstatePullRequest) -> str | None:
+    return pull.merge_commit_sha if pull.landed else None
 
 
 def _author_term(pull: EstatePullRequest, rules: InertLandingRules) -> Term:
