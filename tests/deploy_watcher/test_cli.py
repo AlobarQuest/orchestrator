@@ -583,7 +583,8 @@ def test_the_kind_collector_sees_the_kinds_this_change_added() -> None:
     assert watcher_cli.SETTLED_ROLLOUT_NOT_SUCCESS in kinds
     assert watcher_cli.CHANGE_MANAGER_REFUSED in kinds, "the inline literal must be collected"
     assert units_module.UNIT_CLAIM_UNKNOWN in kinds
-    assert len(kinds) >= 12
+    assert watcher_cli.UNIT_OBSERVATION_WITHHELD in kinds
+    assert len(kinds) >= 13
 
 
 def test_no_reported_kind_is_a_substring_of_another() -> None:
@@ -649,3 +650,82 @@ def test_backfill_reports_a_superseded_rollout_rather_than_dropping_it(
     human = CliRunner().invoke(watcher_cli.app, ["backfill", REPO, "--pages", "1"])
     assert human.exit_code == 0, human.output
     assert f"[exception] {observe_module.SUPERSEDED_ROLLOUT}" in human.output
+
+
+# ---------------------------------------------------------------------------
+# Pre-work recovery: a refused change-manager write withholds the unit observation, SAYING SO.
+# ---------------------------------------------------------------------------
+
+
+def _refusing_changes():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(409, json={"detail": "no merge to observe"})
+        return httpx.Response(200, json=_page())
+
+    return ChangeManagerClient("t", transport=httpx.MockTransport(handler))
+
+
+def _watch_refused(message: str | None) -> tuple[tuple[bool, bool], list[bytes]]:
+    posted: list[bytes] = []
+    with (
+        _github(message) as reader,
+        _refusing_changes() as changes,
+        _orchestrator(_bound_history(), posted) as units,
+    ):
+        answer = watcher_cli._watch_one(
+            reader,
+            changes,
+            units,
+            RECORD,
+            now=NOW,
+            actor="deploy-watcher",
+            settle_seconds=1800,
+            dry_run=False,
+        )
+    return answer, posted
+
+
+def test_a_refused_record_that_a_unit_claims_names_the_withheld_unit_observation(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The unit observation carries change-manager's OWN verdict, so a refused record leaves it
+    nothing to say -- and deriving the verdict here instead would be a second copy of the rule.
+
+    So it is withheld, and the withholding is its own finding naming the unit. Before this, the
+    refusal was reported and the unit silently went unobserved: nothing said a unit had lost its
+    traceability hop, and the refusal line did not mention one.
+    """
+    answer, posted = _watch_refused(f"bump (#46)\n\nSDS-Unit: {UNIT}\n")
+
+    out = capsys.readouterr().out
+    assert answer == (True, False)
+    assert posted == []
+    assert watcher_cli.CHANGE_MANAGER_REFUSED in out
+    assert watcher_cli.UNIT_OBSERVATION_WITHHELD in out
+    assert UNIT in out
+
+
+def test_a_refused_record_no_unit_claims_reports_only_the_refusal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """THE CONTROL, and the ordinary case: an update the bot opened has no unit, so there is no
+    observation to withhold and nothing more to say."""
+    answer, posted = _watch_refused(NO_TRAILER)
+
+    out = capsys.readouterr().out
+    assert answer == (True, False)
+    assert posted == []
+    assert watcher_cli.CHANGE_MANAGER_REFUSED in out
+    assert watcher_cli.UNIT_OBSERVATION_WITHHELD not in out
+
+
+def test_a_refused_record_whose_commit_cannot_be_read_is_incomplete(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Whether a unit claims the landing is a question that was not answered, which is neither
+    "no unit" nor a finding about one."""
+    answer, _ = _watch_refused(None)
+
+    assert answer == (True, True)
+    assert watcher_cli.UNIT_OBSERVATION_WITHHELD not in capsys.readouterr().out

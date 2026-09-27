@@ -93,6 +93,14 @@ SETTLED_SUPERSEDED_ROLLOUT = "closed_record_production_has_moved_past"
 # substring guard over that vocabulary -- a guard that cannot see a member is not a guard.
 CHANGE_MANAGER_REFUSED = "change_manager_refused_the_observation"
 
+# A work unit claims a landing whose change record refused the observation, so the unit-scoped
+# observation was WITHHELD. Withheld rather than written, deliberately: that observation carries
+# change-manager's own verdict and production answer, and a refused record returns neither --
+# deriving them here instead would be a second copy of the reduction rule, which is the drift
+# `_ledger_finding` already declines. Reported on its own because the refusal line names a record,
+# and nothing else would say that a unit's rollout has gone unattributed.
+UNIT_OBSERVATION_WITHHELD = "a_claimed_work_unit_went_unobserved_because_the_record_refused"
+
 # The statuses that mean the record is closed. Mirrored from `app/deploy_settlement._TERMINAL` in
 # change-manager, which is the party that owns them.
 TERMINAL_STATUSES = frozenset({"resolved", "wontfix"})
@@ -268,7 +276,7 @@ def _watch_one(
         # change-manager refusing is a fact about the estate, not a broken tool: the observation
         # named a change it does not belong to, or one that has no merge to observe.
         _say(f"  [found]  {CHANGE_MANAGER_REFUSED}: {where} — {error}")
-        return True, False
+        return True, _withheld_unit(reader, record, outcome.rollout)
     except ChangeManagerError as error:
         _say(f"[incomplete] {where}: {error}")
         return found, True
@@ -297,6 +305,35 @@ def _watch_one(
         _report(finding)
         return True, incomplete
     return found, incomplete
+
+
+def _withheld_unit(reader: GitHubReader, record: ChangeRecord, rollout: Rollout) -> bool:
+    """Report the unit observation a refused record withheld, if a unit claims this landing.
+
+    Returns whether the pass is incomplete. Only the CLAIM is read, never confirmed against the
+    orchestrator: the observation is not being written, so there is no binding to protect -- and
+    the finding says a unit claims the landing, which is exactly what was read.
+    """
+    where = f"item {record.item_id}"
+    commit = rollout.merge.merge_commit_sha
+    if commit is None:  # pragma: no cover - a rollout is only recorded for a merged pull request
+        return False
+    try:
+        claim = claimed_unit(reader.commit_message(record.target_repository, commit))
+    except ReadError as error:
+        _say(f"[incomplete] {where}: {error}")
+        return True
+    if claim is None or not is_work_unit_id(claim):
+        return False
+    _report(
+        Finding(
+            UNIT_OBSERVATION_WITHHELD,
+            where,
+            f"{commit[:12]} names work unit {claim}; its rollout observation needs the record's "
+            f"verdict, and the record refused",
+        )
+    )
+    return False
 
 
 def _report_outcome(outcome: Outcome) -> bool:
