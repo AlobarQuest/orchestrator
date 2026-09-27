@@ -67,6 +67,7 @@ from work_watcher.github import (
     CLOSED,
     GITHUB_TOKEN_ENV,
     MERGED,
+    GitHubCredentialRefused,
     GitHubError,
     PullRequestReader,
 )
@@ -77,7 +78,7 @@ from work_watcher.orchestrator_client import (
     OrchestratorClient,
     OrchestratorError,
 )
-from work_watcher.pipeline import PipelineListing, PipelineRecord
+from work_watcher.pipeline import Pipeline, PipelineListing, PipelineRecord
 from work_watcher.staleness import LIVE, pull_request_of, superseded_by
 
 EXIT_OK = 0
@@ -89,6 +90,11 @@ EXIT_FINDINGS = 3
 # with: the read is authentication-only and needs no role, and a second identity would attribute
 # nothing the change record does not already carry.
 SYSTEM_KEY_ID = "orchestrator-system"
+
+# Unit states in which nothing is running, mirrored from `orchestrator.kernel.states` (this program
+# may not import it; a test pins the two together). "In flight" means any unit OUTSIDE this set, so
+# a superseded record whose units all failed or were cancelled is not told its work is running.
+SETTLED_UNIT_STATES = frozenset({"completed", "failed", "cancelled"})
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -141,7 +147,7 @@ def _retirer(args: argparse.Namespace) -> RetirementClient | None:
 class PipelineSource(WorkRecordSource, Protocol):
     """The carry's listing plus the whole pipeline, which the staleness report reads."""
 
-    def work_pipeline(self) -> tuple[PipelineRecord, ...]: ...
+    def work_pipeline(self) -> Pipeline: ...
 
 
 def _github() -> PullRequestReader | None:
@@ -218,14 +224,22 @@ def _staleness(
         )
     try:
         state = github.state(repository, number)
+    except GitHubCredentialRefused as error:
+        # The CREDENTIAL failed, not this record: the same class as a missing token. Unusable,
+        # so the pass exits 2 and pages, instead of N quiet findings that ping success.
+        return _Stale(note=f"; staleness not assessed: {error}", unusable=True)
     except GitHubError as error:
         return _Stale(finding=f"could not read {repository}#{number}: {error}")
     if state in (CLOSED, MERGED):
         verb = "merged" if state == MERGED else "closed without merging"
+        # NOT "a person retires this record". The update bot can re-open the SAME bump under a new
+        # pull request number on a later run, which mints no new revision, so supersession does not
+        # fire and this record may still be the live one. The person checks before retiring.
         return _Stale(
             finding=(
-                f"STALE: {repository}#{number} was {verb} and the work is not built; "
-                "a person retires this record"
+                f"STALE: {repository}#{number} was {verb} and the work is not built; before "
+                "retiring this record, check whether Dependabot re-opened this bump under a "
+                "new pull request"
             )
         )
     return _Stale(note=f"; {repository}#{number} is open")
@@ -266,7 +280,7 @@ def _consider(
             record.reasoning,
             pipeline,
             github,
-            in_flight=bool(answer.unit_states),
+            in_flight=any(state not in SETTLED_UNIT_STATES for state in answer.unit_states),
         )
         if stale.finding is not None:
             print(f"[FINDING]  {label}: {stale.finding} ({states})", file=out)
@@ -327,13 +341,19 @@ def _read_pipeline(source: PipelineSource, out) -> tuple[tuple[PipelineRecord, .
     the approved listing alone supports: no supersession, no pending records.
     """
     try:
-        return source.work_pipeline(), []
+        pipeline = source.work_pipeline()
     except ListingError as error:
         print(
             f"[FINDING]  staleness not assessed: the work pipeline is unreadable: {error}",
             file=out,
         )
         return (), [str(error)]
+    for reason in pipeline.unreadable:
+        # Named and NOT a finding: the rest of the pipeline is still assessed, and a record this
+        # pass cannot parse is one it has no claim about -- the same standing as a record whose
+        # reasoning names no pull request.
+        print(f"[UNASSESSED] staleness not assessed: {reason}", file=out)
+    return pipeline.records, []
 
 
 def run(
@@ -400,7 +420,11 @@ def run(
         file=out,
     )
     if unusable:
-        print(f"[UNUSABLE] {GITHUB_TOKEN_ENV} is not set; staleness was not assessed", file=out)
+        print(
+            f"[UNUSABLE] GitHub could not be used ({GITHUB_TOKEN_ENV} is unset, or GitHub "
+            "refused it); staleness was not assessed",
+            file=out,
+        )
         return EXIT_UNUSABLE
     return EXIT_FINDINGS if findings else EXIT_OK
 

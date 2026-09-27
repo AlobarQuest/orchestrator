@@ -21,7 +21,7 @@ from work_carrier.change_manager import ChangeManagerError, WorkRecord
 from work_watcher.change_manager import RetirementRefused
 from work_watcher.cli import EXIT_FINDINGS, EXIT_OK, EXIT_TOOL_FAILURE, EXIT_UNUSABLE, run
 from work_watcher.orchestrator_client import OrchestratorError, WorkCompletion
-from work_watcher.pipeline import PipelineRecord
+from work_watcher.pipeline import Pipeline, PipelineRecord
 
 
 def record(**overrides) -> WorkRecord:
@@ -55,7 +55,7 @@ class Source:
             raise self._error
         return self._records
 
-    def work_pipeline(self) -> tuple[PipelineRecord, ...]:
+    def work_pipeline(self) -> Pipeline:
         if self._error is not None:
             raise self._error
         approved = tuple(
@@ -68,7 +68,7 @@ class Source:
             )
             for r in self._records
         )
-        return approved + self._others
+        return Pipeline(approved + self._others, ())
 
 
 class Reader:

@@ -26,9 +26,16 @@ from landing_ledger.model import PendingUpdate
 from landing_ledger.titles import Bump
 from work_carrier.change_manager import ChangeManagerError, WorkRecord
 from work_watcher.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
-from work_watcher.github import CLOSED, MERGED, OPEN, GitHubError, PullRequestReader
+from work_watcher.github import (
+    CLOSED,
+    MERGED,
+    OPEN,
+    GitHubCredentialRefused,
+    GitHubError,
+    PullRequestReader,
+)
 from work_watcher.orchestrator_client import WorkCompletion
-from work_watcher.pipeline import PipelineRecord
+from work_watcher.pipeline import Pipeline, PipelineRecord
 from work_watcher.staleness import pull_request_of, superseded_by
 
 REPO = "AlobarQuest/infraops-mcp-server"
@@ -83,14 +90,20 @@ def row(**overrides) -> PipelineRecord:
 
 
 class Source:
-    def __init__(self, *records: WorkRecord, others: tuple[PipelineRecord, ...] = ()) -> None:
+    def __init__(
+        self,
+        *records: WorkRecord,
+        others: tuple[PipelineRecord, ...] = (),
+        unreadable: tuple[str, ...] = (),
+    ) -> None:
         self._records = records
         self._others = others
+        self._unreadable = unreadable
 
     def approved_work(self) -> tuple[WorkRecord, ...]:
         return self._records
 
-    def work_pipeline(self) -> tuple[PipelineRecord, ...]:
+    def work_pipeline(self) -> Pipeline:
         approved = tuple(
             PipelineRecord(
                 change_record_id=r.change_record_id,
@@ -101,7 +114,7 @@ class Source:
             )
             for r in self._records
         )
-        return approved + self._others
+        return Pipeline(approved + self._others, self._unreadable)
 
 
 class Reader:
@@ -209,6 +222,10 @@ def test_an_approved_record_whose_pull_request_is_gone_is_a_finding(state: str, 
 
     assert code == EXIT_FINDINGS
     assert "[FINDING]" in out and "STALE" in out and verb in out
+    # Review item 2: a closed pull request may have been re-opened for the same bump under a new
+    # number, which mints no revision; the instruction must send a person to check first.
+    assert "re-opened this bump" in out
+    assert "a person retires this record" not in out
     assert "1 findings (1 stale" in out
 
 
@@ -267,6 +284,32 @@ def test_a_superseded_record_whose_work_is_in_flight_says_so_rather_than_can_nev
     assert "can never register" not in out
 
 
+@pytest.mark.parametrize("states", [("failed",), ("cancelled",), ("failed", "cancelled")])
+def test_a_superseded_record_whose_units_all_settled_is_not_called_in_flight(
+    states: tuple[str, ...],
+) -> None:
+    """Review item 3: a unit that failed or was cancelled is not running."""
+    newer = row(change_record_id=80, package_revision=3, reasoning=reasoning(number=90))
+    settled = WorkCompletion(all_units_completed=False, unit_states=states, revision_count=1)
+    code, out = _run(
+        [], Source(record(), others=(newer,)), Reader({61: settled}), GitHub({(REPO, 90): OPEN})
+    )
+    assert code == EXIT_FINDINGS
+    assert "already in flight" not in out
+
+
+def test_the_settled_states_are_orchestrator_states() -> None:
+    """A second copy of a vocabulary across a process boundary, so it is pinned to the source."""
+    from orchestrator.kernel.states import WorkUnitState
+    from work_watcher.cli import SETTLED_UNIT_STATES
+
+    assert SETTLED_UNIT_STATES == {
+        WorkUnitState.COMPLETED.value,
+        WorkUnitState.FAILED.value,
+        WorkUnitState.CANCELLED.value,
+    }
+
+
 def test_a_superseded_record_with_no_work_yet_can_never_be_registered() -> None:
     newer = row(change_record_id=80, package_revision=3, reasoning=reasoning(number=90))
     none_yet = WorkCompletion(all_units_completed=False, unit_states=(), revision_count=0)
@@ -278,7 +321,7 @@ def test_a_superseded_record_with_no_work_yet_can_never_be_registered() -> None:
 
 
 class _BrokenPipeline(Source):
-    def work_pipeline(self) -> tuple[PipelineRecord, ...]:
+    def work_pipeline(self) -> Pipeline:
         raise ChangeManagerError("a resolved record names no package revision")
 
 
@@ -368,6 +411,41 @@ def test_an_unreadable_pull_request_is_a_finding_and_does_not_stop_the_rest() ->
     assert github.asked == [(REPO, 71), (REPO, 72)]
 
 
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_refused_github_credential_makes_the_pass_unusable_not_quietly_findings(
+    status: int,
+) -> None:
+    """Review item 1: a revoked token or a rate limit is the credential failing, the same class as
+    a missing one. Per-record findings ping the dead-man as success and would never page."""
+    refused = GitHubCredentialRefused(f"GitHub answered {status}")
+    code, out = _run(
+        [], Source(record()), Reader({61: incomplete()}), GitHub({(REPO, 71): refused})
+    )
+    assert code == EXIT_UNUSABLE
+    assert "[FINDING]" not in out
+
+
+def test_a_missing_pull_request_is_still_a_finding() -> None:
+    """The control: a deleted pull request or repository genuinely needs a person."""
+    gone = GitHubError("GitHub answered 404")
+    code, out = _run([], Source(record()), Reader({61: incomplete()}), GitHub({(REPO, 71): gone}))
+    assert code == EXIT_FINDINGS
+    assert "could not read" in out
+
+
+def test_a_malformed_pipeline_row_is_named_and_the_rest_are_still_assessed() -> None:
+    """Review item 6: one bad row must not blank the report for every other record."""
+    code, out = _run(
+        [],
+        Source(others=(row(),), unreadable=("change record 99 names no package revision",)),
+        Reader({}),
+        GitHub({(REPO, 71): CLOSED}),
+    )
+    assert code == EXIT_FINDINGS
+    assert "not assessed: change record 99 names no package revision" in out
+    assert "STALE" in out
+
+
 # --- the GitHub reader --------------------------------------------------------------------------
 
 
@@ -395,6 +473,12 @@ def _reader(status: int, body: object) -> PullRequestReader:
 )
 def test_the_reader_tells_merged_from_closed_by_merged_at(body: dict, expected: str) -> None:
     assert _reader(200, body).state(REPO, 71) == expected
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_the_reader_names_a_refused_credential(status: int) -> None:
+    with pytest.raises(GitHubCredentialRefused):
+        _reader(status, {"message": "Bad credentials"}).state(REPO, 71)
 
 
 @pytest.mark.parametrize(
@@ -444,7 +528,17 @@ def test_the_pipeline_listing_names_the_source_and_leaves_status_to_the_caller()
     pipeline = source.work_pipeline()
 
     assert seen == [{"source": "work"}]
-    assert [(r.change_record_id, r.status) for r in pipeline] == [(9, "pending"), (10, "resolved")]
+    assert [(r.change_record_id, r.status) for r in pipeline.records] == [
+        (9, "pending"),
+        (10, "resolved"),
+    ]
+    assert pipeline.unreadable == ()
+
+    rows.append({"id": 12, "source": "work", "status": "pending", "package_id": "p"})
+    isolated = source.work_pipeline()
+    assert [r.change_record_id for r in isolated.records] == [9, 10]
+    assert len(isolated.unreadable) == 1 and "12" in isolated.unreadable[0]
+    rows.pop()
 
     rows.append(
         {

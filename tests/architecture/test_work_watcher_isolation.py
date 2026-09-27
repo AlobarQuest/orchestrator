@@ -200,6 +200,10 @@ def test_the_github_read_surface_is_one_pull_request_and_no_more() -> None:
         "/repos/AlobarQuest/brain/issues/33",
         "/repos/AlobarQuest/brain/contents/factory-target.toml",
         "/repos/AlobarQuest/../brain/pulls/33",
+        "/repos/AlobarQuest/../pulls/33",
+        "/repos/../brain/pulls/33",
+        "/repos/./brain/pulls/33",
+        "/repos/AlobarQuest/./pulls/33",
     ):
         assert not is_allowed_github_read(forbidden), forbidden
 

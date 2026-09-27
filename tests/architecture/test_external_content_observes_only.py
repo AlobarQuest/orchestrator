@@ -280,7 +280,9 @@ CLASSIFICATION: dict[str, Row] = {
     ),
     "work_watcher": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,
-        "ADR-0029: reads what a change record caused and retires the record in change-manager",
+        "ADR-0029: reads what a change record caused and retires the record in change-manager; "
+        "ruling B1 (2026-09-27) added one read-only GitHub pull-request state GET to report "
+        "stale records",
     ),
 }
 

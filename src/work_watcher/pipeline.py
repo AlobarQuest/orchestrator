@@ -27,6 +27,18 @@ from work_carrier.change_manager import (
 _ITEMS = "/api/items"
 
 
+class Pipeline(NamedTuple):
+    """The records this pass could read, and one line naming each row it could not.
+
+    PER-ROW ISOLATION: one malformed record must not blank the staleness report for every other
+    record. A row served for another pipeline is still a refusal of the whole listing, because
+    that means the query itself was not honoured.
+    """
+
+    records: tuple[PipelineRecord, ...]
+    unreadable: tuple[str, ...]
+
+
 class PipelineRecord(NamedTuple):
     change_record_id: int
     status: str
@@ -36,11 +48,25 @@ class PipelineRecord(NamedTuple):
 
 
 class PipelineListing(HttpWorkRecordSource):
-    def work_pipeline(self) -> tuple[PipelineRecord, ...]:
+    def work_pipeline(self) -> Pipeline:
         body = self._get(_ITEMS, {"source": WORK_SOURCE})
         if not isinstance(body, list):
             raise ChangeManagerError("change-manager did not answer the listing with a list")
-        return tuple(_pipeline_record(row) for row in body if isinstance(row, dict))
+        records: list[PipelineRecord] = []
+        unreadable: list[str] = []
+        for row in body:
+            if not isinstance(row, dict):
+                continue
+            if row.get("source") != WORK_SOURCE:
+                raise ChangeManagerError(
+                    f"change-manager served a '{row.get('source')}' record to a query for "
+                    f"'{WORK_SOURCE}'"
+                )
+            try:
+                records.append(_pipeline_record(row))
+            except ChangeManagerError as error:
+                unreadable.append(str(error))
+        return Pipeline(tuple(records), tuple(unreadable))
 
 
 def _pipeline_record(row: dict[str, Any]) -> PipelineRecord:

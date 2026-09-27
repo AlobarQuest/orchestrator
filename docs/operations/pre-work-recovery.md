@@ -49,14 +49,30 @@ shows up as stale.
 
 **The same superseded record may also appear in the bump-proposer pass** as `superseded`, but only on a morning when an open pull request still maps to its package. That is one record reported by two lanes, not two problems.
 
-**What to do.** Retire the record in change-manager: `wontfix` if the change should not happen,
+**It can also be reported twice within ONE pass.** A superseded *approved* record whose work was
+never carried is reported `STALE` by the watcher, and then the carry, running straight after in the
+same pass, refuses it on `revision_mismatch`. Same record, same cause, two lines.
+
+**What to do.** First, for a record whose pull request was **closed**: check whether Dependabot
+re-opened this bump under a new pull request. Doing so mints no new revision, so the watcher cannot
+tell the record is still the live one. If it was re-opened, leave the record alone. Otherwise, retire the record in change-manager: `wontfix` if the change should not happen,
 `resolve` if it already happened some other way. `resolved` is terminal by design; if the
 underlying condition comes back, its producer raises it again. No machine credential can make this
 move. The `work` pipeline's status is human-only (ADR-0028), and ruling B1 deliberately added no
 retirement route for it.
 
 **What it does not cover.** A record whose reasoning names no pull request (a hand-proposed one) is
-printed as `staleness not assessed` and is not a finding. A pass with no GitHub credential
+printed as `staleness not assessed` and is not a finding.
+
+It also cannot see a bump that **Dependabot re-opened under a new pull request number**. The record
+names the old number, which reads as closed, so the watcher reports it as stale while the work may
+still be wanted. That is why the finding tells a person to check before retiring, and why the
+watcher never retires anything itself.
+
+A record whose row cannot be parsed is printed as `[UNASSESSED]` with the reason, and every other
+record is still assessed. If GitHub refuses the credential (401, or 403 for revoked, expired or
+rate-limited), the whole pass exits 2 and pages, exactly as a missing credential does. It does not
+produce one quiet finding per record. A pass with no GitHub credential
 (`WORK_CARRIER_GITHUB_TOKEN`, from `gh auth token`) prints the same note and exits 2.
 
 ### A decomposition proposal that should go no further (`/review`)

@@ -34,11 +34,23 @@ OPEN: Final = "open"
 CLOSED: Final = "closed"
 MERGED: Final = "merged"
 
-_PULL = re.compile(r"^/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pulls/[0-9]{1,9}$")
+# Owner and repository segments may contain dots, but a segment made ONLY of dots (`.`, `..`) is
+# a path traversal, not a name: the lookahead refuses it in either position.
+_SEGMENT = r"(?!\.+/)[A-Za-z0-9_.-]+"
+_PULL = re.compile(rf"^/repos/{_SEGMENT}/{_SEGMENT}/pulls/[0-9]{{1,9}}$")
 
 
 class GitHubError(Exception):
     """GitHub could not be asked, or answered in a way this pass cannot interpret."""
+
+
+class GitHubCredentialRefused(GitHubError):
+    """GitHub refused the CREDENTIAL (401, or 403: revoked, expired, or rate-limited).
+
+    Not a fact about any one pull request, so the caller must not report it per record: the same
+    class of failure as a missing token, and it has to reach the lane's unusable outcome so the
+    dead-man pages, where a per-record finding would ping success every night.
+    """
 
 
 class ForbiddenEndpointError(GitHubError):
@@ -75,7 +87,16 @@ class PullRequestReader:
         request may or may not have merged, and which one happened is exactly what a person
         retiring the record needs to know.
         """
-        path = f"/repos/{repository}/pulls/{number}"
+        payload = self._get(f"/repos/{repository}/pulls/{number}")
+        state = payload.get("state")
+        if state == OPEN:
+            return OPEN
+        if state == CLOSED:
+            return MERGED if payload.get("merged_at") else CLOSED
+        raise GitHubError(f"GitHub reported an unrecognised state for {repository}#{number}")
+
+    def _get(self, path: str) -> dict:
+        """The ONE way anything leaves this process, guard first."""
         if not is_allowed_read(path):
             raise ForbiddenEndpointError(f"this program may not GET {path}")
         try:
@@ -94,6 +115,10 @@ class PullRequestReader:
         finally:
             if self._injected is None:
                 client.close()
+        if response.status_code in (401, 403):
+            raise GitHubCredentialRefused(
+                f"GitHub refused the credential ({response.status_code}) for GET {path}"
+            )
         if not 200 <= response.status_code < 300:
             raise GitHubError(f"GitHub answered {response.status_code} for GET {path}")
         try:
@@ -102,9 +127,4 @@ class PullRequestReader:
             raise GitHubError("the GitHub response was not JSON") from error
         if not isinstance(payload, dict):
             raise GitHubError("the GitHub response was not an object")
-        state = payload.get("state")
-        if state == OPEN:
-            return OPEN
-        if state == CLOSED:
-            return MERGED if payload.get("merged_at") else CLOSED
-        raise GitHubError(f"GitHub reported an unrecognised state for {repository}#{number}")
+        return payload
