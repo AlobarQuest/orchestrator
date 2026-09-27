@@ -197,7 +197,7 @@ def test_brains_derived_criteria_are_the_pair_change_managers_deploy_policy_must
     the two tests were two versions apart and both green. The literal here now names the revision
     change-manager's CURRENT version pins.
 
-    What actually joins the two sides is `scripts/check_deploy_policy_ratification.py`, which
+    What actually joins the two sides is `scripts/check_rollout_policy_ratification.py`, which
     reads change-manager's policy and compares it with this derivation on every pull request.
     This literal is the offline half: a wording change here must be deliberate, and it reds here
     before it reds there. Change it and ratify the new text as a new policy version together.

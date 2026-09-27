@@ -1,6 +1,6 @@
 """The offline half of the gate that holds derived deploy criteria to change-manager's policy.
 
-`scripts/check_deploy_policy_ratification.py` reads change-manager's `app/deploy_policy.py` over
+`scripts/check_rollout_policy_ratification.py` reads change-manager's `app/deploy_policy.py` over
 the network and compares its current version against what this repository derives. Everything the
 script DECIDES with is exercised here against a synthetic policy module of the same shape, built
 from this repository's own derivation so that the agreeing case is agreement by construction and
@@ -13,7 +13,7 @@ import pytest
 
 from change_proposer.criteria import acceptance_criteria, rollback_for
 from deploy_watcher.workflows import attestation_for
-from scripts import check_deploy_policy_ratification as check
+from scripts import check_rollout_policy_ratification as check
 
 BRAIN = "alobarquest/brain"
 CHANGE_MANAGER = "alobarquest/change-manager"
@@ -169,7 +169,23 @@ def test_the_gate_runs_the_script_this_module_tests() -> None:
     workflows = [
         path.name
         for path in Path(".github/workflows").glob("*.yml")
-        if "check_deploy_policy_ratification" in path.read_text(encoding="utf-8")
+        if "check_rollout_policy_ratification" in path.read_text(encoding="utf-8")
     ]
 
     assert workflows == ["quality.yml"]
+
+
+def test_the_token_is_withheld_while_far_code_runs_and_restored_after(monkeypatch) -> None:
+    """The far module executes; it must not see the token, and the caller must not lose it."""
+    import os
+
+    monkeypatch.setenv("GITHUB_TOKEN", "sentinel")
+    probe = _policy_source().replace(
+        "def current() -> DeployPolicy:\n    return V9",
+        "def current() -> DeployPolicy:\n"
+        "    assert 'GITHUB_TOKEN' not in __import__('os').environ\n"
+        "    return V9",
+    )
+
+    assert _run(probe) == 0
+    assert os.environ["GITHUB_TOKEN"] == "sentinel"

@@ -107,7 +107,6 @@ def load_policy_module(source: str) -> types.ModuleType:
             f"only {sorted(ALLOWED_IMPORTS)}. Re-read the trade in this script's docstring before "
             "widening the allowlist."
         )
-    os.environ.pop("GITHUB_TOKEN", None)
     module = types.ModuleType(MODULE_NAME)
     # `@dataclass` resolves its class's module through `sys.modules`, so the namespace must be
     # registered while it executes -- and removed afterwards, so nothing else can import it.
@@ -176,11 +175,20 @@ def judge(policy: Any) -> list[Verdict]:
 
 def main(fetcher=fetch) -> int:
     try:
-        module = load_policy_module(fetcher(CHANGE_MANAGER_REPO, POLICY_PATH, POLICY_REF))
+        source = fetcher(CHANGE_MANAGER_REPO, POLICY_PATH, POLICY_REF)
+        # The token is withheld from the environment for as long as far code can run -- loading
+        # the module and calling `current()` -- and put back afterwards, so a caller importing
+        # this module (the tests) does not lose it as a side effect.
+        token = os.environ.pop("GITHUB_TOKEN", None)
         try:
-            policy = module.current()
-        except Exception as error:  # the far module failing to answer is not a verdict
-            raise Unresolvable(f"{POLICY_PATH} current() raised: {error!r}") from error
+            module = load_policy_module(source)
+            try:
+                policy = module.current()
+            except Exception as error:  # the far module failing to answer is not a verdict
+                raise Unresolvable(f"{POLICY_PATH} current() raised: {error!r}") from error
+        finally:
+            if token is not None:
+                os.environ["GITHUB_TOKEN"] = token
         verdicts = judge(policy)
     except Unresolvable as error:
         print(f"FAIL: {error}", file=sys.stderr)
