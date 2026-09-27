@@ -1,0 +1,95 @@
+{
+  "description": "What a factory-target.toml's own bytes answer: true, false, or null when the file exists and cannot be read as a declaration. Byte-identical in AlobarQuest/orchestrator and AlobarQuest/project-standards; each repository pins it with the same CONTRACT_SHA256 and runs its own parsers over it.",
+  "cases": [
+    {
+      "name": "true with a reason",
+      "text": "factory_target = true\nfactory_target_reason = \"a dispatch target\"\n",
+      "target": true
+    },
+    {
+      "name": "false with a reason",
+      "text": "factory_target = false\nfactory_target_reason = \"maintained by hand\"\n",
+      "target": false
+    },
+    {
+      "name": "reason padded with whitespace",
+      "text": "factory_target = true\nfactory_target_reason = \"  padded  \"\n",
+      "target": true
+    },
+    {
+      "name": "an unknown extra key is ignored",
+      "text": "factory_target = false\nfactory_target_reason = \"not a target\"\nowner = \"devon\"\n",
+      "target": false
+    },
+    {
+      "name": "comments around the keys",
+      "text": "# may the factory send work here?\nfactory_target = true  # yes\nfactory_target_reason = \"onboarded\"\n",
+      "target": true
+    },
+    {
+      "name": "empty reason on true",
+      "text": "factory_target = true\nfactory_target_reason = \"\"\n",
+      "target": null
+    },
+    {
+      "name": "empty reason on false",
+      "text": "factory_target = false\nfactory_target_reason = \"\"\n",
+      "target": null
+    },
+    {
+      "name": "whitespace-only reason",
+      "text": "factory_target = true\nfactory_target_reason = \"   \"\n",
+      "target": null
+    },
+    {
+      "name": "bare true, no reason",
+      "text": "factory_target = true\n",
+      "target": null
+    },
+    {
+      "name": "reason, no answer",
+      "text": "factory_target_reason = \"no answer\"\n",
+      "target": null
+    },
+    {
+      "name": "answer as a string",
+      "text": "factory_target = \"true\"\nfactory_target_reason = \"a string\"\n",
+      "target": null
+    },
+    {
+      "name": "answer as an integer",
+      "text": "factory_target = 1\nfactory_target_reason = \"an integer\"\n",
+      "target": null
+    },
+    {
+      "name": "reason as an integer",
+      "text": "factory_target = true\nfactory_target_reason = 7\n",
+      "target": null
+    },
+    {
+      "name": "keys nested under a table",
+      "text": "[factory]\nfactory_target = true\nfactory_target_reason = \"nested\"\n",
+      "target": null
+    },
+    {
+      "name": "invalid TOML",
+      "text": "factory_target = [\n",
+      "target": null
+    },
+    {
+      "name": "brackets nested past the parser's recursion limit",
+      "text": "factory_target = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[",
+      "target": null
+    },
+    {
+      "name": "an empty file",
+      "text": "",
+      "target": null
+    },
+    {
+      "name": "a comment-only file",
+      "text": "# nothing declared yet\n",
+      "target": null
+    }
+  ]
+}
