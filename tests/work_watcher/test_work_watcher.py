@@ -17,10 +17,11 @@ import io
 
 import pytest
 
-from work_carrier.change_manager import ChangeManagerError, PipelineRecord, WorkRecord
+from work_carrier.change_manager import ChangeManagerError, WorkRecord
 from work_watcher.change_manager import RetirementRefused
 from work_watcher.cli import EXIT_FINDINGS, EXIT_OK, EXIT_TOOL_FAILURE, EXIT_UNUSABLE, run
 from work_watcher.orchestrator_client import OrchestratorError, WorkCompletion
+from work_watcher.pipeline import PipelineRecord
 
 
 def record(**overrides) -> WorkRecord:

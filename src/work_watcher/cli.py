@@ -55,8 +55,6 @@ from work_carrier.change_manager import (
     ChangeManagerError as ListingError,
 )
 from work_carrier.change_manager import (
-    HttpWorkRecordSource,
-    PipelineRecord,
     WorkRecord,
     WorkRecordSource,
 )
@@ -79,6 +77,7 @@ from work_watcher.orchestrator_client import (
     OrchestratorClient,
     OrchestratorError,
 )
+from work_watcher.pipeline import PipelineListing, PipelineRecord
 from work_watcher.staleness import LIVE, pull_request_of, superseded_by
 
 EXIT_OK = 0
@@ -120,7 +119,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _source(args: argparse.Namespace) -> HttpWorkRecordSource | None:
+def _source(args: argparse.Namespace) -> PipelineListing | None:
     """The listing, read with the RETIREMENT bearer rather than the carry's read-only one.
 
     The `propose` scope includes every read route, so one credential serves both halves of this
@@ -129,7 +128,7 @@ def _source(args: argparse.Namespace) -> HttpWorkRecordSource | None:
     token = os.environ.get("WORK_WATCHER_CHANGE_MANAGER_TOKEN", "")
     if not token:
         return None
-    return HttpWorkRecordSource(base_url=args.change_manager_url, token=token)
+    return PipelineListing(base_url=args.change_manager_url, token=token)
 
 
 def _retirer(args: argparse.Namespace) -> RetirementClient | None:

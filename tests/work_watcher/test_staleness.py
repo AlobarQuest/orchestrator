@@ -24,10 +24,11 @@ from bump_proposer.cli import _reasoning
 from bump_proposer.standing import StandingPackage
 from landing_ledger.model import PendingUpdate
 from landing_ledger.titles import Bump
-from work_carrier.change_manager import PipelineRecord, WorkRecord
+from work_carrier.change_manager import WorkRecord
 from work_watcher.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
 from work_watcher.github import CLOSED, MERGED, OPEN, GitHubError, PullRequestReader
 from work_watcher.orchestrator_client import WorkCompletion
+from work_watcher.pipeline import PipelineRecord
 from work_watcher.staleness import pull_request_of, superseded_by
 
 REPO = "AlobarQuest/infraops-mcp-server"
@@ -359,3 +360,81 @@ def test_the_reader_tells_merged_from_closed_by_merged_at(body: dict, expected: 
 def test_the_reader_refuses_what_it_cannot_interpret(status: int, body: object) -> None:
     with pytest.raises(GitHubError):
         _reader(status, body).state(REPO, 71)
+
+
+# --- the pipeline listing ----------------------------------------------------------------------
+
+
+def test_the_pipeline_listing_names_the_source_and_leaves_status_to_the_caller() -> None:
+    """Ruling B1's staleness view. `status` is NOT sent: change-manager applies it as a SQL filter,
+    which makes a pending record indistinguishable from one that does not exist. Every status is
+    projected, and a row from another pipeline is refused as the carry's own parse refuses one."""
+    import httpx
+
+    from work_carrier.change_manager import ChangeManagerError
+    from work_watcher.pipeline import PipelineListing
+
+    seen: list[dict[str, str]] = []
+    rows = [
+        {"id": 9, "source": "work", "status": "pending", "package_id": "p", "package_revision": 1},
+        {
+            "id": 10,
+            "source": "work",
+            "status": "resolved",
+            "package_id": "p",
+            "package_revision": 2,
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.url.params))
+        return httpx.Response(200, json=rows)
+
+    source = PipelineListing(
+        base_url="https://example.invalid",
+        token="t",
+        client=httpx.Client(
+            base_url="https://example.invalid", transport=httpx.MockTransport(handler)
+        ),
+    )
+    pipeline = source.work_pipeline()
+
+    assert seen == [{"source": "work"}]
+    assert [(r.change_record_id, r.status) for r in pipeline] == [(9, "pending"), (10, "resolved")]
+
+    rows.append(
+        {
+            "id": 11,
+            "source": "deploy",
+            "status": "pending",
+            "package_id": "p",
+            "package_revision": 1,
+        }
+    )
+    with pytest.raises(ChangeManagerError):
+        source.work_pipeline()
+
+
+def test_the_pipeline_parse_reads_only_declared_record_fields() -> None:
+    """The cross-repo field check vets `RECORD_FIELDS`; a second parse reading an undeclared key
+    would be a read nothing vets. Same derivation as the check on `_record` above."""
+    import ast
+    import inspect
+
+    from work_carrier import change_manager
+    from work_watcher import pipeline
+
+    tree = ast.parse(inspect.getsource(pipeline._pipeline_record))
+    read = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "row"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+    }
+    assert read, "the scan found no `row.get(...)` calls; it has stopped seeing the parse"
+    assert read <= set(change_manager.RECORD_FIELDS)

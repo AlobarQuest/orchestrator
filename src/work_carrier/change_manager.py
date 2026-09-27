@@ -126,25 +126,6 @@ class WorkRecordSource(Protocol):
     def approved_work(self) -> tuple[WorkRecord, ...]: ...
 
 
-@dataclass(frozen=True)
-class PipelineRecord:
-    """One record on the work pipeline, WHATEVER its status -- the work watcher's staleness view.
-
-    Deliberately a second, narrower projection rather than a loosened `WorkRecord`: the carry's
-    parse refuses any status but `approved` by design, and that refusal is what keeps a pending
-    record from ever being registered. The watcher needs the rest of the pipeline for one question
-    -- is this live record superseded, or has its pull request gone? (ruling B1, 2026-09-27) --
-    and every field it reads here is already one of `RECORD_FIELDS`, so the cross-repo field check
-    vets it without a second declaration.
-    """
-
-    change_record_id: int
-    status: str
-    package_id: str
-    package_revision: int
-    reasoning: str
-
-
 class HttpWorkRecordSource:
     def __init__(
         self,
@@ -164,16 +145,6 @@ class HttpWorkRecordSource:
         if not isinstance(body, list):
             raise ChangeManagerError("change-manager did not answer the listing with a list")
         return tuple(_record(row) for row in body if isinstance(row, dict))
-
-    def work_pipeline(self) -> tuple[PipelineRecord, ...]:
-        """Every record on the work pipeline, any status. The source is named in the query and
-        re-checked on every row, for the same reason `_record` re-checks it; the status is branched
-        on by the caller, never filtered server-side (a server-side status filter makes a record
-        indistinguishable from one that does not exist)."""
-        body = self._get(_ITEMS, {"source": WORK_SOURCE})
-        if not isinstance(body, list):
-            raise ChangeManagerError("change-manager did not answer the listing with a list")
-        return tuple(_pipeline_record(row) for row in body if isinstance(row, dict))
 
     def _get(self, path: str, params: dict[str, str]) -> Any:
         if not is_allowed(path):
@@ -253,31 +224,4 @@ def _record(row: dict[str, Any]) -> WorkRecord:
         reasoning=str(row.get("reasoning") or ""),
         decided_by=row.get("decided_by") if isinstance(row.get("decided_by"), str) else None,
         originating_observation_id=observation,
-    )
-
-
-def _pipeline_record(row: dict[str, Any]) -> PipelineRecord:
-    """One pipeline row, or a refusal. Reads only keys already declared in `RECORD_FIELDS`."""
-    if row.get("source") != WORK_SOURCE:
-        raise ChangeManagerError(
-            f"change-manager served a '{row.get('source')}' record to a query for '{WORK_SOURCE}'"
-        )
-    change_record_id = row.get("id")
-    status = row.get("status")
-    package_id = row.get("package_id")
-    package_revision = row.get("package_revision")
-    if not isinstance(change_record_id, int) or isinstance(change_record_id, bool):
-        raise ChangeManagerError("a change record carries no usable id")
-    if not isinstance(status, str) or not status:
-        raise ChangeManagerError(f"change record {change_record_id} carries no status")
-    if not isinstance(package_id, str) or not package_id:
-        raise ChangeManagerError(f"change record {change_record_id} names no package")
-    if not isinstance(package_revision, int) or isinstance(package_revision, bool):
-        raise ChangeManagerError(f"change record {change_record_id} names no package revision")
-    return PipelineRecord(
-        change_record_id=change_record_id,
-        status=status,
-        package_id=package_id,
-        package_revision=package_revision,
-        reasoning=str(row.get("reasoning") or ""),
     )

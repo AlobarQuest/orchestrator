@@ -34,7 +34,7 @@ from __future__ import annotations
 import re
 from typing import Final
 
-from work_carrier.change_manager import PipelineRecord
+from work_watcher.pipeline import PipelineRecord
 
 LIVE: Final = frozenset({"pending", "approved"})
 
