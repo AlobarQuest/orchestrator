@@ -91,10 +91,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR / CLICOLOR_FORCE
 # make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe, which breaks the
 # parse below -- a portfolio-wide defect fixed locally in three repos and generalised in none.
-_bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE bws secret get "$1" --output json --color no \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
-}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 
@@ -104,9 +102,9 @@ ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 # each reach exactly one route, so the SYSTEM bearer -- which can drive a work unit's lifecycle --
 # is held by the half that can only read a policy.
 ORCHESTRATOR_POLICY_CREDENTIAL_KEY_ID="orchestrator-system"
-ORCHESTRATOR_POLICY_TOKEN="$(_bws_value "$SYSTEM_BEARER_UUID")"
+ORCHESTRATOR_POLICY_TOKEN="$(sds_bws_value "$SYSTEM_BEARER_UUID")"
 ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
-ORCHESTRATOR_API_TOKEN="$(_bws_value "$OBSERVER_BEARER_UUID")"
+ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
 export ORCHESTRATOR_API_URL
 export ORCHESTRATOR_POLICY_CREDENTIAL_KEY_ID ORCHESTRATOR_POLICY_TOKEN
 export ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN

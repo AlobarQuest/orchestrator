@@ -29,11 +29,9 @@ TARGET="$HOME/Library/LaunchAgents/$LABEL.plist"
 # pins the LaunchAgent to a path that gets deleted at teardown -- after which the job dies every
 # morning with nothing reporting it, which is the exact failure class the pin chain exists to catch.
 # Building sessions work in worktrees here by convention, so this is the likely mistake.
-if [ "$(git -C "$REPO_ROOT" rev-parse --git-dir)" != \
-     "$(git -C "$REPO_ROOT" rev-parse --git-common-dir)" ]; then
-  echo "FATAL: $REPO_ROOT is a linked worktree. Install from the main tree." >&2
-  exit 1
-fi
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-install.sh"
+sds_refuse_linked_worktree "$REPO_ROOT"
 
 # A console script does NOT arrive with a `git pull`: `uv sync` installs it, and a fresh worktree
 # may additionally need `uv sync --reinstall-package orchestrator`. Refusing here turns that into

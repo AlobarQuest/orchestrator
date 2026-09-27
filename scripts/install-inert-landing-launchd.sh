@@ -33,11 +33,9 @@ TARGET="$HOME/Library/LaunchAgents/$LABEL.plist"
 # hour with nothing reporting it. Building sessions work in worktrees here by convention, so this
 # is the likely mistake; the two rev-parse answers differ in a linked worktree and are equal in a
 # main tree.
-if [ "$(git -C "$REPO_ROOT" rev-parse --git-dir)" != \
-     "$(git -C "$REPO_ROOT" rev-parse --git-common-dir)" ]; then
-  echo "FATAL: $REPO_ROOT is a linked worktree. Install from the main tree." >&2
-  exit 1
-fi
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-install.sh"
+sds_refuse_linked_worktree "$REPO_ROOT"
 
 # A console script does NOT arrive with a `git pull`: `uv sync` installs it, and a fresh worktree
 # may additionally need `uv sync --reinstall-package orchestrator`. Refusing here turns that into

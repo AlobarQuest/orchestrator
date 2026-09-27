@@ -27,6 +27,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE="$REPO_ROOT/scripts/$LABEL.plist"
 TARGET="$HOME/Library/LaunchAgents/$LABEL.plist"
 
+# Refuses to run from a linked worktree: REPO_ROOT is written into the plist verbatim.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-install.sh"
+sds_refuse_linked_worktree "$REPO_ROOT"
+
 if [ ! -x "$REPO_ROOT/.venv/bin/landing-ledger" ]; then
   echo "FATAL: $REPO_ROOT/.venv/bin/landing-ledger is missing. Run: uv sync --frozen" >&2
   exit 1

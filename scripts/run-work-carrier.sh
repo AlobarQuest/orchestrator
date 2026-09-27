@@ -143,11 +143,8 @@ sds_deadman_arm sds-work-carrier --finding 3 "$@"
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
 # which breaks the parse below.
-_bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE BWS_ACCESS_TOKEN="$2" \
-    bws secret get "$1" --output json --color no \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
-}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 
 BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
   -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
@@ -157,7 +154,7 @@ if [ -z "$BROAD_IDENTITY" ]; then
 fi
 
 if [ -z "${CHANGE_MANAGER_TOKEN:-}" ]; then
-  CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_UUID" "$BROAD_IDENTITY")"
+  CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_UUID" "$BROAD_IDENTITY")"
   export CHANGE_MANAGER_TOKEN
 fi
 
@@ -188,7 +185,7 @@ if [ "$_wants_register" -eq 1 ]; then
     exit 1
   fi
   if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
-    WORK_CARRIER_ORCHESTRATOR_TOKEN="$(_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
+    WORK_CARRIER_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
     export WORK_CARRIER_ORCHESTRATOR_TOKEN
   fi
   if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
@@ -204,7 +201,7 @@ fi
 # because the watcher's write is gated on its own flag and not on which credential is present.
 if [ "$_wants_register" -eq 1 ]; then
   if [ -z "${WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}" ]; then
-    WORK_WATCHER_CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" \
+    WORK_WATCHER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" \
       "$BROAD_IDENTITY")"
     export WORK_WATCHER_CHANGE_MANAGER_TOKEN
   fi
@@ -224,7 +221,7 @@ else
   SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
     -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
   if [ -n "$SDS_IDENTITY" ] && [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
-    WORK_CARRIER_ORCHESTRATOR_TOKEN="$(_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
+    WORK_CARRIER_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
   fi
 fi
 export WORK_WATCHER_ORCHESTRATOR_TOKEN="${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}"

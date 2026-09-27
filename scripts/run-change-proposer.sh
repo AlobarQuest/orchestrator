@@ -104,10 +104,8 @@ fi
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
 # pipe, which breaks the parse below.
-_bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE bws secret get "$1" --output json --color no \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
-}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 
 # ONLY FETCHED FOR A WRITING RUN. A dry run reports what it would propose and sends nothing, so
 # it must not need -- or touch -- the credential that could write. Fetching unconditionally would
@@ -119,7 +117,7 @@ case " $* " in
 esac
 
 if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
-  CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_PROPOSE_UUID")"
+  CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID")"
   export CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN
 fi
 

@@ -68,11 +68,8 @@ sds_deadman_arm sds-revision-watcher --finding 2 "$@"
 # alongside a `${BWS_ACCESS_TOKEN:-…}` default would make one ambient value serve as both, and
 # then NO value of it works -- a failure that appears only in an operator's shell, never under
 # launchd, and that names BWS rather than the cause.
-_bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE BWS_ACCESS_TOKEN="$2" \
-    bws secret get "$1" --output json --color no \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
-}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 
 # SOURCED, not executed. `sds-token.sh` EXPORTS the value and prints nothing, so command-
 # substituting it yields the empty string and every fetch below fails with a message about a
@@ -96,11 +93,11 @@ fi
 
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
-ORCHESTRATOR_API_TOKEN="$(_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
+ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
 export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
 
 REVISION_WATCHER_PLATFORM_URL="${REVISION_WATCHER_PLATFORM_URL:-http://coolify-1.devonwatkins.com}"
-REVISION_WATCHER_PLATFORM_TOKEN="$(_bws_value "$PLATFORM_TOKEN_UUID" "$BROAD_IDENTITY")"
+REVISION_WATCHER_PLATFORM_TOKEN="$(sds_bws_value "$PLATFORM_TOKEN_UUID" "$BROAD_IDENTITY")"
 export REVISION_WATCHER_PLATFORM_URL REVISION_WATCHER_PLATFORM_TOKEN
 
 # WHAT BEING BEHIND MEANS, which is a different question from whether an application IS behind.
@@ -109,7 +106,7 @@ export REVISION_WATCHER_PLATFORM_URL REVISION_WATCHER_PLATFORM_TOKEN
 # separate tracks a gap is the queue. Same broad identity as the platform token — measured
 # 2026-09-08, the narrow `sds-operator` account cannot read this project either.
 REVISION_WATCHER_ESTATE_URL="${REVISION_WATCHER_ESTATE_URL:-https://app-brain.devonwatkins.com}"
-REVISION_WATCHER_ESTATE_KEY="$(_bws_value "$ESTATE_READ_KEY_UUID" "$BROAD_IDENTITY")"
+REVISION_WATCHER_ESTATE_KEY="$(sds_bws_value "$ESTATE_READ_KEY_UUID" "$BROAD_IDENTITY")"
 export REVISION_WATCHER_ESTATE_URL REVISION_WATCHER_ESTATE_KEY
 
 # `set -e` is deliberately not used, so a failed fetch would otherwise leave these EMPTY and fall

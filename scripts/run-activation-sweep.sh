@@ -180,19 +180,17 @@ source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 # make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe, which breaks the
 # parse below -- a portfolio-wide defect fixed locally in three repos and generalised in none. It
 # costs nothing where the behaviour never fires.
-_bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE bws secret get "$1" --output json --color no \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
-}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 
-ACTIVATION_SWEEP_TOKEN="$(_bws_value "$OBSERVER_BEARER_UUID")"
+ACTIVATION_SWEEP_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
 export ACTIVATION_SWEEP_TOKEN
 if [ -z "${ACTIVATION_SWEEP_TOKEN:-}" ]; then
   echo "FATAL: could not read the OBSERVER bearer from BWS." >&2
   exit 1
 fi
 
-ACTIVATION_BIND_TOKEN="$(_bws_value "$SYSTEM_BEARER_UUID")"
+ACTIVATION_BIND_TOKEN="$(sds_bws_value "$SYSTEM_BEARER_UUID")"
 export ACTIVATION_BIND_TOKEN
 if [ -z "${ACTIVATION_BIND_TOKEN:-}" ]; then
   echo "FATAL: could not read the SYSTEM bearer from BWS." >&2

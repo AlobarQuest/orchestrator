@@ -103,18 +103,15 @@ fi
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
 # which breaks the parse below.
-_bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE BWS_ACCESS_TOKEN="$2" \
-    bws secret get "$1" --output json --color no \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
-}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 
 if [ -z "${DEPLOY_WATCHER_CHANGE_MANAGER_TOKEN:-}" ]; then
-  DEPLOY_WATCHER_CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_M2M_UUID" "$BROAD_IDENTITY")"
+  DEPLOY_WATCHER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_M2M_UUID" "$BROAD_IDENTITY")"
   export DEPLOY_WATCHER_CHANGE_MANAGER_TOKEN
 fi
 if [ -z "${DEPLOY_WATCHER_ORCHESTRATOR_TOKEN:-}" ]; then
-  DEPLOY_WATCHER_ORCHESTRATOR_TOKEN="$(_bws_value "$ORCHESTRATOR_OBSERVER_UUID" "$NARROW_IDENTITY")"
+  DEPLOY_WATCHER_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_OBSERVER_UUID" "$NARROW_IDENTITY")"
   export DEPLOY_WATCHER_ORCHESTRATOR_TOKEN
 fi
 

@@ -116,11 +116,8 @@ sds_deadman_arm sds-bump-proposer --finding 3 "$@"
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
 # pipe, which breaks the parse below. The IDENTITY IS THE SECOND ARGUMENT rather than an ambient
 # export -- see the block underneath.
-_bws_value() {
-  env -u FORCE_COLOR -u CLICOLOR_FORCE BWS_ACCESS_TOKEN="$2" \
-    bws secret get "$1" --output json --color no \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])'
-}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
 
 # TWO BWS IDENTITIES SINCE G1+G2, AND NEITHER CAN READ THE OTHER'S SECRET. The change-manager
 # bearers live in a project only the BROAD machine account can read; the orchestrator's observer
@@ -148,7 +145,7 @@ fi
 # a dry run needs it; it is READ-scoped, so needing it surrenders nothing. Fetched BEFORE the
 # propose credential so that a run which can read but not write fails on the write path, where
 # the message names the credential that is actually missing.
-BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN="$(_bws_value "$CHANGE_MANAGER_READ_UUID" "$BROAD_IDENTITY")"
+BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_READ_UUID" "$BROAD_IDENTITY")"
 export BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN
 if [ -z "${BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN:-}" ]; then
   echo "FATAL: could not read the READ-scoped change-manager credential from BWS (broad)" >&2
@@ -165,7 +162,7 @@ case " $* " in
 esac
 
 if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
-  BUMP_PROPOSER_CHANGE_MANAGER_TOKEN="$(_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" "$BROAD_IDENTITY")"
+  BUMP_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" "$BROAD_IDENTITY")"
   export BUMP_PROPOSER_CHANGE_MANAGER_TOKEN
 
   SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
@@ -176,7 +173,7 @@ if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
   fi
   ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
   ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
-  ORCHESTRATOR_API_TOKEN="$(_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
+  ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
   export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
 fi
 
