@@ -1,4 +1,3 @@
-import re
 import secrets
 import uuid
 from dataclasses import asdict, dataclass
@@ -10,12 +9,10 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.leases import hash_lease_token
+from orchestrator.kernel.secret_metadata import secret_metadata_path
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Event, InfraLaneLink, WorkUnit
 from orchestrator.services.lifecycle import ActorContext
-
-BWS_TOKEN_SHAPE = re.compile(r"\b0\.[0-9a-fA-F-]{36}\.[A-Za-z0-9_=-]{8,}")
-SECRET_KEY_PARTS = ("authorization", "password", "secret", "token")
 
 
 @dataclass(frozen=True)
@@ -163,7 +160,7 @@ def _validate_command(command: InfraLaneLinkCommand) -> None:
             "change-manager reference is required",
             None,
         )
-    secret_path = _secret_metadata_path(
+    secret_path = secret_metadata_path(
         {
             "change_manager_ref": command.change_manager_ref,
             "change_manager_url": command.change_manager_url,
@@ -198,29 +195,6 @@ def _claim_owned_by(claim: Claim, command: InfraLaneLinkCommand) -> bool:
         and claim.claimed_by == command.actor.actor_id
         and secrets.compare_digest(claim.lease_token_hash, hash_lease_token(command.lease_token))
     )
-
-
-def _secret_metadata_path(value: object, path: str = "$") -> str | None:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            key_text = str(key)
-            lowered = key_text.lower()
-            child_path = f"{path}.{key_text}"
-            if any(part in lowered for part in SECRET_KEY_PARTS):
-                return child_path
-            found = _secret_metadata_path(child, child_path)
-            if found is not None:
-                return found
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            found = _secret_metadata_path(child, f"{path}[{index}]")
-            if found is not None:
-                return found
-    elif isinstance(value, str):
-        lowered = value.lower()
-        if "authorization: bearer " in lowered or BWS_TOKEN_SHAPE.search(value):
-            return path
-    return None
 
 
 def _command_payload(command: InfraLaneLinkCommand) -> dict[str, object]:

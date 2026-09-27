@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
+from orchestrator.kernel.secret_metadata import secret_metadata_path
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     CONTAINER_IMAGE_OBSERVATION,
@@ -31,20 +32,6 @@ from orchestrator.services.release_artifacts import SHA256_DIGEST
 
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533533
 ENVIRONMENT = re.compile(r"^[a-z][a-z0-9_-]{1,62}$")
-BWS_TOKEN_SHAPE = re.compile(r"\b0\.[0-9a-fA-F-]{36}\.[A-Za-z0-9_=-]{8,}")
-SECRET_KEY_PARTS = (
-    "api_key",
-    "authorization",
-    "bearer",
-    "body",
-    "credential",
-    "instruction",
-    "log",
-    "password",
-    "response",
-    "secret",
-    "token",
-)
 MAX_FACT_STRING = 512
 MAX_FACT_BYTES = 4096
 MAX_PROBES = 10
@@ -506,7 +493,7 @@ def _validate_command_shape(command: DeploymentObservationCommand) -> None:
     _validate_command_envelope(command)
     _validate_required_text_and_urls(command)
     _validate_observed_at_and_digest(command)
-    secret_path = _secret_metadata_path(_command_payload(command))
+    secret_path = secret_metadata_path(_command_payload(command), max_string=MAX_FACT_STRING)
     if secret_path is not None:
         raise DomainError(
             "deployment_observation_secret_rejected",
@@ -859,46 +846,6 @@ def _command_payload(command: DeploymentObservationCommand) -> dict[str, object]
     raw["release_artifact_binding_id"] = str(command.release_artifact_binding_id)
     raw["observed_at"] = command.observed_at.isoformat()
     return raw
-
-
-def _secret_metadata_path(value: object, path: str = "$") -> str | None:
-    if isinstance(value, dict):
-        return _secret_dict_path(value, path)
-    if isinstance(value, list):
-        return _secret_list_path(value, path)
-    if isinstance(value, str):
-        return _secret_string_path(value, path)
-    return None
-
-
-def _secret_dict_path(value: dict[object, object], path: str) -> str | None:
-    for key, child in value.items():
-        key_text = str(key)
-        lowered = key_text.lower()
-        child_path = f"{path}.{key_text}"
-        if any(part in lowered for part in SECRET_KEY_PARTS):
-            return child_path
-        found = _secret_metadata_path(child, child_path)
-        if found is not None:
-            return found
-    return None
-
-
-def _secret_list_path(value: list[object], path: str) -> str | None:
-    for index, child in enumerate(value):
-        found = _secret_metadata_path(child, f"{path}[{index}]")
-        if found is not None:
-            return found
-    return None
-
-
-def _secret_string_path(value: str, path: str) -> str | None:
-    if len(value) > MAX_FACT_STRING:
-        return path
-    lowered = value.lower()
-    if "authorization: bearer " in lowered or BWS_TOKEN_SHAPE.search(value):
-        return path
-    return None
 
 
 def _lock_idempotency_key(session: Session, idempotency_key: str) -> None:

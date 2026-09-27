@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
+from orchestrator.kernel.secret_metadata import secret_metadata_path
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import (
     OBSERVATION_SEVERITIES,
@@ -28,20 +29,7 @@ from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.release_artifacts import SHA256_DIGEST
 
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533631
-BWS_TOKEN_SHAPE = re.compile(r"\b0\.[0-9a-fA-F-]{36}\.[A-Za-z0-9_=-]{8,}")
 ENVIRONMENT = re.compile(r"^[a-z][a-z0-9_-]{1,62}$")
-SECRET_KEY_PARTS = (
-    "api_key",
-    "authorization",
-    "bearer",
-    "body",
-    "credential",
-    "instruction",
-    "log",
-    "password",
-    "secret",
-    "token",
-)
 MAX_FACT_BYTES = 4096
 MAX_FACT_STRING = 512
 MAX_SUMMARY = 512
@@ -279,7 +267,7 @@ def _validate_command(command: ObservationCommand) -> None:
     if command.payload_digest is not None and not SHA256_DIGEST.fullmatch(command.payload_digest):
         raise DomainError("observation_invalid", "payload_digest must be a sha256 digest", None)
     _validate_bounded_facts(command.facts)
-    secret_path = _secret_metadata_path(_command_payload(command, canonical_fact_hash(command)))
+    secret_path = secret_metadata_path(_command_payload(command, canonical_fact_hash(command)))
     if secret_path is not None:
         raise DomainError(
             "observation_secret_rejected",
@@ -391,28 +379,6 @@ def _command_payload(command: ObservationCommand, fact_hash: str) -> dict[str, o
     raw["normalized_fact_hash"] = fact_hash
     raw.pop("expected_version", None)
     return raw
-
-
-def _secret_metadata_path(value: object, path: str = "$") -> str | None:
-    if isinstance(value, dict):
-        for key, child in value.items():
-            key_text = str(key)
-            child_path = f"{path}.{key_text}"
-            if any(part in key_text.lower() for part in SECRET_KEY_PARTS):
-                return child_path
-            found = _secret_metadata_path(child, child_path)
-            if found is not None:
-                return found
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            found = _secret_metadata_path(child, f"{path}[{index}]")
-            if found is not None:
-                return found
-    elif isinstance(value, str):
-        lowered = value.lower()
-        if "authorization: bearer " in lowered or BWS_TOKEN_SHAPE.search(value):
-            return path
-    return None
 
 
 def _validate_idempotent_replay(
