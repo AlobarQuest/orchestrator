@@ -1,8 +1,99 @@
 # Pre-work recovery
 
 Phase-3 exit criterion 4 asks that every pre-work state have a defined recovery. This page covers
-two of them: a revision somebody turned down (C), and a write chain that half-happened (D).
-Everything below was read from the code, and each row names what enforces it.
+all four: an observation whose fact changed or was wrong (A), a proposal nobody reviewed (B), a
+revision somebody turned down (C), and a write chain that half-happened (D). Everything below was
+read from the code, and each row names what enforces it.
+
+---
+
+## A. Changed or withdrawn observations
+
+**Rule (Devon, 2026-09-27, ruling A): an observation is never invalidated, rewritten or deleted.**
+There is no route that does it, and none will be built. The full record is ADR-0026 amendment 2.
+
+What to do depends on what went wrong and how far the work has got:
+
+| situation | what to do | who |
+|---|---|---|
+| The fact changed (it failed yesterday and passes today) | Nothing by hand. The producer posts a new observation under a run-keyed `source_reference` (ADR-0022's `observation_key` shape), and every consumer reads the newest row. If a producer cannot do that, it has a design defect: fix the producer, not the rows. | producer |
+| The signal was wrong, and its change record is still **pending** | Mark the change record **`wontfix`** in change-manager. Leave the observation alone; it is a true record of what the producer said. | a person |
+| The signal was wrong, and the record is **approved** with a unit in flight | Stop the **unit** through its own lifecycle. A person can cancel a claimed or executing unit directly. A submitted one is failed by the verifier (`commands/fail`) first and then cancelled. The observation and the record stay as they are. | a person (and the verifier, for a submitted unit) |
+| The work has already landed | Nothing. The chain records what happened. | — |
+| A producer draws `observation_conflict` | Read the recovery text on the error. Two cases: **(1)** the producer keys a re-runnable subject by a non-run-keyed reference. That is a defect, and the fix is to change the key. **(2)** The producer keys an **immutable** subject, like the landing ledger's commits. Then the refusal is deliberate, because a changed fact about an immutable thing means something upstream is wrong. Find out what, and if a corrected reader re-derives rows that are already stored, exempt those rows from re-writing (`KNOWN_DEFECTIVE_METADATA_LANDINGS` is the worked example). Do not try to correct them. | the producer's owner |
+
+**Why rewriting is never the answer.** An observation is a record of what a producer said, when it
+said it. A later, different fact is a new record, not a correction of the old one. Consumers already
+pick the newest row, so appending is all a change of fact ever needs.
+
+## B. Generated but unreviewed proposals
+
+These are things a machine generated that a person has not yet decided on. **None of them is
+retired by a machine** (Devon, 2026-09-27, ruling B1). A person decides, with controls that already
+exist.
+
+### A stale `work` change record (change-manager)
+
+A `work` record is **stale** when it is pending or approved and either:
+
+- a newer revision's record exists for the same package (the carry can never register the old
+  revision: it refuses on `revision_mismatch`), or
+- the Dependabot pull request its reasoning names was **closed or merged by hand**, and the work it
+  asked for was never built.
+
+**How you find out.** The work watcher reports each one as a `[FINDING] … STALE: …` line in the
+work-carrier pass (`scripts/run-work-carrier.sh`, 07:05 daily). That pass then exits **3**, the
+lane's finding code. The dead-man check stays up; the log line is the signal. A record whose work
+the factory *did* build is retired automatically before it is looked at, so a factory landing never
+shows up as stale.
+
+**The same superseded record may also appear in the bump-proposer pass** as `superseded`, but only on a morning when an open pull request still maps to its package. That is one record reported by two lanes, not two problems.
+
+**It can also be reported twice within ONE pass.** A superseded *approved* record whose work was
+never carried is reported `STALE` by the watcher, and then the carry, running straight after in the
+same pass, refuses it on `revision_mismatch`. Same record, same cause, two lines.
+
+**What to do.** First, for a record whose pull request was **closed**: check whether Dependabot
+re-opened this bump under a new pull request. Doing so mints no new revision, so the watcher cannot
+tell the record is still the live one. If it was re-opened, leave the record alone. Otherwise, retire the record in change-manager: `wontfix` if the change should not happen,
+`resolve` if it already happened some other way. `resolved` is terminal by design; if the
+underlying condition comes back, its producer raises it again. No machine credential can make this
+move. The `work` pipeline's status is human-only (ADR-0028), and ruling B1 deliberately added no
+retirement route for it.
+
+**What it does not cover.** A record whose reasoning names no pull request (a hand-proposed one) is
+printed as `staleness not assessed` and is not a finding.
+
+It also cannot see a bump that **Dependabot re-opened under a new pull request number**. The record
+names the old number, which reads as closed, so the watcher reports it as stale while the work may
+still be wanted. That is why the finding tells a person to check before retiring, and why the
+watcher never retires anything itself.
+
+A record whose row cannot be parsed is printed as `[UNASSESSED]` with the reason, and every other
+record is still assessed. If GitHub refuses the credential (401, or 403 for revoked, expired or
+rate-limited), the whole pass exits 2 and pages, exactly as a missing credential does. It does not
+produce one quiet finding per record. A pass with no GitHub credential
+(`WORK_CARRIER_GITHUB_TOKEN`, from `gh auth token`) prints the same note and exits 2.
+
+### A decomposition proposal that should go no further (`/review`)
+
+Open the proposal (`/review/decomposition-proposals/{id}`) and use its **reject** control, with a
+reason. Rejecting creates no work units.
+
+### A registered package revision that should go no further (`/review`)
+
+**No control retires a revision** (ruling B2, 2026-09-27; fixed in the queue text, not with a new
+verb). The queue item used to say *"or decide it goes no further"*. Nothing does that. The item now
+says what is possible:
+
+- While a breakdown proposal for it is pending, the proposal is the queue item. Reject it as above.
+- Once no proposal is pending and no breakdown is approved, the revision **comes back onto the
+  queue** and stays there. Nothing records "declined" for a revision.
+
+**Known permanent resident: `wsp211-conformance-kit` revision 1.** It is the only live subject of
+the factory-policy grandfathering table. Breaking it down and settling it while that table ships
+would make the policy artifact stop loading (see the grandfathering bullets in `CLAUDE.md`). It
+stays on the queue until the table is removed, in the same change that settles it.
 
 ---
 

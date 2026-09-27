@@ -372,6 +372,11 @@ OUTBOUND_ALLOWLIST = {
     # inside the orchestrator (ADR-0029) and relayed here, so this program composes nothing
     # and writes nothing to the system that owns the work.
     Path("src/work_watcher/orchestrator_client.py"),
+    # Ruling B1 (Devon, 2026-09-27): a third file, one READ. A work record left live after its
+    # Dependabot pull request was closed or merged by hand is REPORTED, never retired by a
+    # machine, and the pull request's state lives only on GitHub. One anchored GET of a single
+    # pull request, with the carry's own `gh auth token`; test_work_watcher_isolation.py pins it.
+    Path("src/work_watcher/github.py"),
     # ADR-0019 Increment 5b. `estate_lander` is a SEPARATE program (ADR-0002's shape), and its
     # egress is not the orchestrator's. It reads which changes the estate routed, asks the
     # orchestrator whether each may be landed, and relays the answer -- composing nothing, because

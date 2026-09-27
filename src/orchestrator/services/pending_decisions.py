@@ -152,7 +152,15 @@ def _package_breakdowns(session: Session) -> list[dict[str, Any]]:
     There is no server-side record of an intake "awaiting registration" -- `emit-intake-payload`
     writes to the operator's terminal, and the first row that exists is the registered revision.
     So the pending decision a registered package can carry is the next one: have it broken into
-    work units, or decide it goes no further.
+    work units.
+
+    **THERE IS NO VERB THAT RETIRES A REVISION, and the queue text says so rather than promising
+    one** (Devon, 2026-09-27, ruling B2 -- fixed in text, not by a new verb). A breakdown proposal
+    that should go no further is rejected with the existing control on its own page; the revision
+    then returns to this queue, because nothing records "declined" for a revision. So a revision a
+    person has chosen not to break down stays here -- `wsp211-conformance-kit` revision 1 is the
+    known permanent resident while the grandfathering table ships. See
+    `docs/operations/pre-work-recovery.md`, section B.
 
     `manual_ws31` (the superseded bootstrap path) and `protocol_fixture` revisions are excluded:
     a fixture can never produce work units at all, so nothing about it is a person's to decide.
@@ -176,8 +184,10 @@ def _package_breakdowns(session: Session) -> list[dict[str, Any]]:
         _entry(
             "package_breakdown",
             f"{revision.work_package.package_id} revision {revision.revision}",
-            "Have this package broken into work units, or decide it goes no further",
-            "It is registered and approved, and no breakdown of it is in progress.",
+            "Have this package broken into work units",
+            "It is registered and approved, and no breakdown of it is in progress. No control "
+            "retires a revision: one that should go no further stays on this queue, and a "
+            "breakdown proposed for it is declined with the reject control on that proposal.",
             f"/review/intakes/{revision.id}",
         )
         for revision in revisions

@@ -175,7 +175,9 @@ def _record_observation(session: Session, command: ObservationCommand) -> Observ
         raise DomainError(
             "observation_conflict",
             "source reference already has different normalized observation facts",
-            "record an explicit supersession model before changing observations",
+            "observations are never invalidated or rewritten (ADR-0026 amendment 2): post the "
+            "changed fact as a new observation under a run-keyed source reference; a producer "
+            "keyed on an immutable subject accepts this refusal as the cost of that key",
         )
 
     now = TransactionClock().now(session)

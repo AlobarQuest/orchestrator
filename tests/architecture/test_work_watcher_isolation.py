@@ -11,7 +11,9 @@ estate will land unattended. Nothing at the service stops this program calling i
 is the allowlist in `work_watcher/change_manager.py`, and these tests are what keep that allowlist
 honest, so they are the control for the widening ADR-0029 records rather than a tidiness check.
 
-**THE SURFACE IS TWO ROUTES ACROSS TWO SERVICES, and each is asserted from a different angle** --
+**THE SURFACE IS THREE ROUTES ACROSS THREE SERVICES** -- the third, since ruling B1 on 2026-09-27,
+is a single GitHub pull-request READ for the staleness report -- **and each is asserted from a
+different angle** --
 the path predicate, the client's public method set, and a transport that proves a refused path
 never becomes a request. A guard is only worth having if it fires before anything leaves.
 """
@@ -28,6 +30,15 @@ from work_watcher.change_manager import (
     ForbiddenEndpointError,
     RetirementClient,
     is_allowed_write,
+)
+from work_watcher.github import (
+    ForbiddenEndpointError as ForbiddenGitHubError,
+)
+from work_watcher.github import (
+    PullRequestReader,
+)
+from work_watcher.github import (
+    is_allowed_read as is_allowed_github_read,
 )
 from work_watcher.orchestrator_client import (
     ForbiddenEndpointError as ForbiddenReadError,
@@ -174,4 +185,47 @@ def test_a_forbidden_read_never_reaches_the_transport() -> None:
     )
     with pytest.raises(ForbiddenReadError):
         client._get("/api/v1/work-units/1/dispatch")
+    assert seen == []
+
+
+def test_the_github_read_surface_is_one_pull_request_and_no_more() -> None:
+    """Ruling B1 gave the watcher a GitHub read to report stale records, and nothing to act on
+    them. One anchored GET; the merge route beside it and every write-shaped path are refused."""
+    assert is_allowed_github_read("/repos/AlobarQuest/brain/pulls/33")
+    for forbidden in (
+        "/repos/AlobarQuest/brain/pulls/33/merge",
+        "/repos/AlobarQuest/brain/pulls/33/update-branch",
+        "/repos/AlobarQuest/brain/pulls",
+        "/repos/AlobarQuest/brain/pulls/33/",
+        "/repos/AlobarQuest/brain/issues/33",
+        "/repos/AlobarQuest/brain/contents/factory-target.toml",
+        "/repos/AlobarQuest/../brain/pulls/33",
+        "/repos/AlobarQuest/../pulls/33",
+        "/repos/../brain/pulls/33",
+        "/repos/./brain/pulls/33",
+        "/repos/AlobarQuest/./pulls/33",
+    ):
+        assert not is_allowed_github_read(forbidden), forbidden
+
+
+def test_the_watcher_can_only_ask_github_for_a_pull_requests_state() -> None:
+    public = {name for name in vars(PullRequestReader) if not name.startswith("_")}
+    assert public == {"state"}
+
+
+def test_a_forbidden_github_read_never_reaches_the_transport() -> None:
+    seen: list[str] = []
+
+    def record(request: httpx.Request) -> httpx.Response:  # pragma: no cover - must not run
+        seen.append(str(request.url))
+        return httpx.Response(200, json={})
+
+    reader = PullRequestReader(
+        "x",
+        client=httpx.Client(
+            base_url="https://api.github.example", transport=httpx.MockTransport(record)
+        ),
+    )
+    with pytest.raises(ForbiddenGitHubError):
+        reader.state("AlobarQuest/../brain", 33)
     assert seen == []

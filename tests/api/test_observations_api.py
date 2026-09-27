@@ -125,6 +125,12 @@ def test_observation_api_rejects_missing_auth_worker_verifier_and_conflict(
     assert first.status_code == 201
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "observation_conflict"
+    # Ruling A (Devon, 2026-09-27): observations are never invalidated. The recovery used to point
+    # at "an explicit supersession model", which was deliberately declined -- so the hint now names
+    # the remedy that exists: a new, run-keyed observation.
+    recovery = conflict.json()["error"]["recovery"]
+    assert "supersession model" not in recovery
+    assert "run-keyed source reference" in recovery
 
 
 def test_observation_route_records_a_reconciliation_condition_after_commit(
