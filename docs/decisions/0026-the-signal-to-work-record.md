@@ -193,3 +193,50 @@ greps `docs/decisions/` for the signal→work contract finds this ADR and must f
 - **Nothing here makes the lane autonomous.** The "What this deliberately does NOT do" section stands
   unchanged, and the contract does not weaken it: a written contract makes the lane conformable, not
   self-driving.
+
+---
+
+## Amendment 2, 2026-09-27 — observations are never invalidated; the recovery table
+
+Phase-3 exit criterion 4 asks that every pre-work state have a defined recovery. Two of those
+states belong to this ADR: an observation whose fact changed or was wrong (A), and a proposal that
+was generated and never reviewed (B). Devon ruled on both on 2026-09-27. Ruling B lives in the
+operations runbook (`docs/operations/pre-work-recovery.md`, section B) because it changes no
+decision here. Ruling A is recorded here, because it settles what decision 4 left open.
+
+**Ruling A: observations are NEVER invalidated.** There is no supersession model for observations,
+and none will be built — that was considered and declined, not deferred. Decision 4 already said
+this in its own words ("observations are append-only, with no supersession model and no delete
+route"). Its table says **"invalidate it"** for a wrong signal whose change record is not yet
+approved. What gets invalidated there is the **change record**, not the observation, and the verb is
+change-manager's existing **`wontfix`**. No new mechanism is involved at any row.
+
+### The recovery table
+
+| what happened | recovery | who acts |
+|---|---|---|
+| **The fact changed** (Monday's backup failed, Tuesday's succeeded) | The producer posts a **new** observation under a **run-keyed `source_reference`** — ADR-0022's `observation_key` pattern: identify the run or attempt and carry the fact digest, so a re-run appends and an unchanged pass replays. Consumers read the newest row (`reconciliation_detection._current_observation` orders by `observed_at`, `received_at`, `id`; `machine_activation` keeps the last row per pull request). Monday's row stays true of Monday. | the **producer**. This is a duty of its design, not something an operator does after the fact. |
+| **The signal was wrong, and its change record is not yet approved** | `wontfix` on the change record. The observation stays; it is a true record of what the producer said. | a person, in change-manager |
+| **The signal was wrong, the record is approved, and a unit is in flight** | The **unit's** lifecycle handles it (fail, then cancel), not the observation's. | verifier, then a person |
+| **The work has landed** | Nothing. The chain records what happened. | — |
+| **A producer keyed on an IMMUTABLE subject re-derives different facts** (the landing ledger: a commit on a branch) | The `observation_conflict` it draws is **accepted deliberately**. A changed fact about an immutable subject means something upstream is wrong, and refusing is the point. Where a fixed reader re-derives rows already stored, the remedy is to stop re-writing those rows, never to correct them — `landing_ledger/record.py::KNOWN_DEFECTIVE_METADATA_LANDINGS` is the worked example. | the producer's owner |
+
+### What changed with this amendment
+
+- **`observation_conflict`'s recovery hint** (`services/observations.py`) used to say *"record an
+  explicit supersession model before changing observations"*. That points at the model this ruling
+  declines. It now names the remedy that exists: post the changed fact as a new observation under a
+  run-keyed source reference, or, for a producer keyed on an immutable subject, accept the refusal as
+  the cost of that key. `deployment_observations` and `release_artifacts` carry a similar hint about
+  their own tables. Those are different records and this ruling does not speak to them, so they are
+  unchanged.
+
+### Consequences
+
+- **A producer that keys a re-runnable subject by a non-run-keyed reference is defective, not
+  unlucky.** Its first changed fact wedges it at `observation_conflict` on every pass, and there is
+  no operator action that clears it. ADR-0022's rollout observation, the activation sweep and the
+  tool installer already key by run or digest. This amendment makes that a requirement, not a
+  convention.
+- **The original decision text is untouched.** Decision 4 was right when written. This amendment
+  says what its word "invalidate" refers to; it does not revise it.
