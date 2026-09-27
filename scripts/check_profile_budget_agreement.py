@@ -25,6 +25,14 @@ TWO SITES, ONE NUMBER, and this check holds both to the profile:
     suite tests against. It exists because this repository cannot import intent-packages, and
     unpinned it would be a second copy going stale exactly as the first one did.
 
+AND THE CAPABILITIES, since 2026-09-27, by the same equality and for the same reason. The
+pattern matches an envelope's capabilities as a SUBSET of its own, so a pattern declaring a
+capability the profile never stamps widens what is recognised, and one declaring fewer recognises
+nothing. Its sites are the pattern's `capabilities` table, `PROFILE_CAPABILITIES` beside
+`PROFILE_BUDGETS`, and the profile's `CAPABILITIES`. Nothing compared them before: `uv_bump()`
+took the specimen's capabilities while its docstring claimed the profile's, and nothing noticed
+only because the two happened to agree. Both surfaces are evaluated and reported on every run.
+
 Deliberately NOT pinned to `tests/fixtures/runner_authority_envelope.json`. That fixture is a
 byte-identical cross-repo SPECIMEN shared with factory-runner, frozen at the 2026-08-01 shape; the
 recognition test used to inherit its budgets, which is precisely why it was green while production
@@ -101,8 +109,8 @@ def fetch(repo: str, path: str, ref: str) -> str:
         ) from error
 
 
-def _budgets_from_assignment(source: str, name: str, where: str) -> dict[str, int]:
-    """The integer budgets of a module-level `name = {...}` literal, parsed rather than executed.
+def _dict_from_assignment(source: str, name: str, where: str) -> dict:
+    """A module-level `name = {...}` literal, parsed rather than executed.
 
     An AST parse, because importing intent-packages here would drag its whole dependency tree into
     this repository's gate to read one dict -- the same trade `check_brief_consumer_compatibility`
@@ -114,7 +122,7 @@ def _budgets_from_assignment(source: str, name: str, where: str) -> dict[str, in
         raise Unresolvable(f"{where} does not parse as Python: {error}") from error
 
     for node in tree.body:
-        # Both spellings, because the two sites differ: intent-packages annotates its constant
+        # Both spellings, because the two sites differ: intent-packages annotates its constants
         # (`BUDGETS: dict[str, int] = {...}`, an AnnAssign) and a bare assignment is an Assign.
         # Narrowed by isinstance rather than by a suppression, so the parser stays honest about
         # which node shapes it actually handles.
@@ -131,19 +139,37 @@ def _budgets_from_assignment(source: str, name: str, where: str) -> dict[str, in
         if not isinstance(value, ast.Dict):
             raise Unresolvable(f"{where}: {name} is not a dict literal")
         try:
-            found = ast.literal_eval(value)
+            return ast.literal_eval(value)
         except ValueError as error:
             raise Unresolvable(f"{where}: {name} is not a literal dict: {error}") from error
-        missing = [k for k in BUDGET_KEYS if not isinstance(found.get(k), int)]
-        if missing:
-            raise Unresolvable(f"{where}: {name} has no integer {', '.join(missing)}")
-        return {k: found[k] for k in BUDGET_KEYS}
 
     raise Unresolvable(f"{where}: no module-level {name} assignment found")
 
 
-def pattern_budgets() -> dict[str, int]:
-    """The known-good pattern's declared ceilings, from the artifact production reads."""
+def _budgets_from_assignment(source: str, name: str, where: str) -> dict[str, int]:
+    """The integer budgets of a module-level dict literal."""
+    found = _dict_from_assignment(source, name, where)
+    missing = [k for k in BUDGET_KEYS if not isinstance(found.get(k), int)]
+    if missing:
+        raise Unresolvable(f"{where}: {name} has no integer {', '.join(missing)}")
+    return {k: found[k] for k in BUDGET_KEYS}
+
+
+def _capabilities_from_assignment(source: str, name: str, where: str) -> dict[str, str]:
+    """A module-level capability-to-level dict literal, every key and value a non-empty string."""
+    return _checked_capabilities(_dict_from_assignment(source, name, where), f"{where}: {name}")
+
+
+def _checked_capabilities(found: object, where: str) -> dict[str, str]:
+    if not isinstance(found, dict) or not found:
+        raise Unresolvable(f"{where} is not a non-empty capability table")
+    if not all(isinstance(k, str) and k and isinstance(v, str) and v for k, v in found.items()):
+        raise Unresolvable(f"{where} maps something other than a capability name to a level")
+    return dict(found)
+
+
+def _pattern_row() -> dict:
+    """The known-good pattern row, from the artifact production reads."""
     try:
         document = tomllib.loads(POLICY_PATH.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as error:
@@ -156,11 +182,21 @@ def pattern_budgets() -> dict[str, int]:
             f"{POLICY_PATH.name} declares {len(matches)} patterns named {PATTERN_NAME!r}; "
             "this check compares exactly one"
         )
-    row = matches[0]
+    return matches[0]
+
+
+def pattern_budgets() -> dict[str, int]:
+    """The known-good pattern's declared ceilings."""
+    row = _pattern_row()
     missing = [k for k in BUDGET_KEYS if not isinstance(row.get(k), int)]
     if missing:
         raise Unresolvable(f"the pattern declares no integer {', '.join(missing)}")
     return {k: row[k] for k in BUDGET_KEYS}
+
+
+def pattern_capabilities() -> dict[str, str]:
+    """The known-good pattern's declared capabilities."""
+    return _checked_capabilities(_pattern_row().get("capabilities"), "the pattern's capabilities")
 
 
 def test_constant_budgets() -> dict[str, int]:
@@ -170,38 +206,85 @@ def test_constant_budgets() -> dict[str, int]:
     )
 
 
+def test_constant_capabilities() -> dict[str, str]:
+    """`PROFILE_CAPABILITIES`, what the local suite tests against."""
+    return _capabilities_from_assignment(
+        TEST_PATH.read_text(encoding="utf-8"), "PROFILE_CAPABILITIES", TEST_PATH.name
+    )
+
+
 def profile_budgets(source: str) -> dict[str, int]:
     """`BUDGETS`, what intent-packages actually stamps into every unit envelope."""
     return _budgets_from_assignment(source, "BUDGETS", PROFILE_PATH)
 
 
+def profile_capabilities(source: str) -> dict[str, str]:
+    """`CAPABILITIES`, what intent-packages actually stamps into every unit envelope."""
+    return _capabilities_from_assignment(source, "CAPABILITIES", PROFILE_PATH)
+
+
+def _compare(label: str, pattern, constant, profile, constant_name: str, profile_name: str) -> bool:
+    print(f"{label}:")
+    print(f"  pattern : factory-policy.toml {PATTERN_NAME!r} -> {pattern}")
+    print(f"  constant: {TEST_PATH.name} {constant_name} -> {constant}")
+    print(f"  profile : {INTENT_PACKAGES_REPO}@{PROFILE_REF} {profile_name} -> {profile}")
+    if pattern == constant == profile:
+        print("  PASS: all three agree.")
+        return True
+    print(
+        f"FAIL: the known-good pattern's {label}, {constant_name} and the profile's "
+        f"{profile_name} must be EQUAL.\n"
+        f"  pattern  {pattern}\n  constant {constant}\n  profile  {profile}\n\n"
+        "Short of the profile, the pattern recognises nothing and every uv pin bump silently takes "
+        "the human gate ADR-0011 lifted -- fail-closed and invisible, which is how the budgets "
+        "went unnoticed for eighteen days. Beyond it, the pattern recognises an envelope no "
+        "profile emits, which widens the recognised shape and is a decision the pattern's own "
+        "rationale says must be a deliberate edit to that file.",
+        file=sys.stderr,
+    )
+    return False
+
+
 def main() -> int:
+    """Both surfaces are evaluated and reported on every run: a budget divergence must not hide a
+    capability one, or the second is only discoverable after the first is fixed."""
     try:
-        pattern = pattern_budgets()
-        constant = test_constant_budgets()
-        profile = profile_budgets(fetch(INTENT_PACKAGES_REPO, PROFILE_PATH, PROFILE_REF))
+        source = fetch(INTENT_PACKAGES_REPO, PROFILE_PATH, PROFILE_REF)
     except Unresolvable as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
 
-    print(f"pattern : factory-policy.toml {PATTERN_NAME!r} -> {pattern}")
-    print(f"constant: {TEST_PATH.name} PROFILE_BUDGETS -> {constant}")
-    print(f"profile : {INTENT_PACKAGES_REPO}@{PROFILE_REF} BUDGETS -> {profile}")
-
-    if pattern == constant == profile:
-        print(f"\nPASS: all three agree on {profile}.")
-        return 0
-
-    print(
-        f"\nFAIL: the known-good pattern, PROFILE_BUDGETS and the profile must be EQUAL.\n"
-        f"  pattern  {pattern}\n  constant {constant}\n  profile  {profile}\n\n"
-        "Below the profile, the pattern recognises nothing and every uv pin bump silently takes "
-        "the human gate ADR-0011 lifted -- fail-closed and invisible, which is how this went "
-        "unnoticed for eighteen days. Above it, the pattern recognises an envelope no profile "
-        "emits, which widens the recognised shape and is a decision the pattern's own rationale "
-        "says must be a deliberate edit to that file.",
-        file=sys.stderr,
+    arms = (
+        (
+            "budgets",
+            pattern_budgets,
+            test_constant_budgets,
+            profile_budgets,
+            "PROFILE_BUDGETS",
+            "BUDGETS",
+        ),
+        (
+            "capabilities",
+            pattern_capabilities,
+            test_constant_capabilities,
+            profile_capabilities,
+            "PROFILE_CAPABILITIES",
+            "CAPABILITIES",
+        ),
     )
+    agreed = True
+    for label, read_pattern, read_constant, read_profile, constant_name, profile_name in arms:
+        try:
+            values = (read_pattern(), read_constant(), read_profile(source))
+        except Unresolvable as error:
+            print(f"FAIL: {label}: {error}", file=sys.stderr)
+            agreed = False
+            continue
+        agreed = _compare(label, *values, constant_name, profile_name) and agreed
+
+    if agreed:
+        print("\nPASS: the pattern, the local constants and the profile agree on both surfaces.")
+        return 0
     return 1
 
 

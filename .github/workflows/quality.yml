@@ -145,7 +145,7 @@ jobs:
       # Reads intent-packages at `main` rather than at a pin: this repository declares no
       # revision of it, and the claim the pattern makes is about the profile as it stands. A pin
       # would be a second thing to keep current, which is the shape of the defect being closed.
-      - name: Check the known-good pattern's budgets against the profile
+      - name: Check the known-good pattern's budgets and capabilities against the profile
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python scripts/check_profile_budget_agreement.py

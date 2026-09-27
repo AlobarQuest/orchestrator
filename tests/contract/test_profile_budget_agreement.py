@@ -20,7 +20,20 @@ import pytest
 
 from scripts import check_profile_budget_agreement as check
 
-PROFILE_SOURCE = 'BUDGETS: dict[str, int] = {"max_attempts": 3, "max_llm_calls": 360}\n'
+CAPABILITIES_SOURCE = (
+    "CAPABILITIES: dict[str, str] = {\n"
+    '    "command.run": "allowed",\n'
+    '    "github.pr.create": "allowed",\n'
+    '    "orchestrator.claim": "allowed",\n'
+    '    "orchestrator.evidence.write": "allowed",\n'
+    '    "repo.edit": "allowed",\n'
+    '    "repo.read": "allowed",\n'
+    "}\n"
+)
+BUDGETS_SOURCE = 'BUDGETS: dict[str, int] = {"max_attempts": 3, "max_llm_calls": 360}\n'
+# Both constants, because the check reads both: a fake profile carrying only one would make every
+# "fires" test pass on the missing constant rather than on the divergence it names.
+PROFILE_SOURCE = CAPABILITIES_SOURCE + BUDGETS_SOURCE
 
 
 def _fetch(profile_source: str):
@@ -40,7 +53,7 @@ def test_the_three_sites_agree_today() -> None:
 
 def test_the_profile_parser_reads_an_annotated_assignment() -> None:
     """intent-packages annotates its constant, so AnnAssign is the shape that actually occurs."""
-    assert check.profile_budgets(PROFILE_SOURCE) == {"max_attempts": 3, "max_llm_calls": 360}
+    assert check.profile_budgets(BUDGETS_SOURCE) == {"max_attempts": 3, "max_llm_calls": 360}
 
 
 def test_the_profile_parser_reads_a_bare_assignment() -> None:
@@ -104,7 +117,10 @@ def test_the_comparison_fires_when_only_the_profile_moves(monkeypatch) -> None:
     monkeypatch.setattr(
         check,
         "fetch",
-        _fetch('BUDGETS: dict[str, int] = {"max_attempts": 3, "max_llm_calls": 720}\n'),
+        _fetch(
+            CAPABILITIES_SOURCE
+            + 'BUDGETS: dict[str, int] = {"max_attempts": 3, "max_llm_calls": 720}\n'
+        ),
     )
 
     assert check.main() == 1
@@ -144,6 +160,83 @@ def test_the_gate_runs_the_script_this_module_tests() -> None:
     ]
 
     assert [path.name for path in workflows] == ["quality.yml"]
+
+
+CAPABILITIES = {
+    "command.run": "allowed",
+    "github.pr.create": "allowed",
+    "orchestrator.claim": "allowed",
+    "orchestrator.evidence.write": "allowed",
+    "repo.edit": "allowed",
+    "repo.read": "allowed",
+}
+
+
+def test_the_capability_sites_agree_today() -> None:
+    assert check.pattern_capabilities() == check.test_constant_capabilities() == CAPABILITIES
+
+
+def test_the_capability_parser_reads_the_profile_constant() -> None:
+    assert check.profile_capabilities(PROFILE_SOURCE) == CAPABILITIES
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        BUDGETS_SOURCE,
+        "CAPABILITIES = {}\n",
+        'CAPABILITIES = {"repo.read": 1}\n',
+        "CAPABILITIES = build()\n",
+    ],
+    ids=["absent", "empty", "not-a-level", "not-a-literal"],
+)
+def test_the_capability_parser_is_loud_rather_than_guessing(source: str) -> None:
+    with pytest.raises(check.Unresolvable):
+        check.profile_capabilities(source)
+
+
+def test_it_fires_when_the_pattern_declares_a_capability_the_profile_does_not(
+    monkeypatch, capsys
+) -> None:
+    """The widening direction: a subset match against a larger pattern recognises more."""
+    monkeypatch.setattr(check, "fetch", _fetch(PROFILE_SOURCE))
+    monkeypatch.setattr(
+        check, "pattern_capabilities", lambda: {**CAPABILITIES, "github.pr.merge": "allowed"}
+    )
+
+    assert check.main() == 1
+    err = capsys.readouterr().err
+    assert "capabilities" in err and "must be EQUAL" in err
+
+
+def test_it_fires_when_only_the_capability_constant_drifts(monkeypatch) -> None:
+    monkeypatch.setattr(check, "fetch", _fetch(PROFILE_SOURCE))
+    monkeypatch.setattr(
+        check, "test_constant_capabilities", lambda: {**CAPABILITIES, "repo.edit": "prohibited"}
+    )
+
+    assert check.main() == 1
+
+
+def test_it_fires_when_only_the_profile_capabilities_move(monkeypatch) -> None:
+    monkeypatch.setattr(
+        check,
+        "fetch",
+        _fetch(PROFILE_SOURCE.replace('"repo.read": "allowed",\n', "")),
+    )
+
+    assert check.main() == 1
+
+
+def test_a_budget_divergence_does_not_hide_a_capability_one(monkeypatch, capsys) -> None:
+    """Both arms run and both report, so the second defect is not found only after the first."""
+    monkeypatch.setattr(check, "fetch", _fetch(PROFILE_SOURCE))
+    monkeypatch.setattr(check, "pattern_budgets", lambda: {"max_attempts": 3, "max_llm_calls": 4})
+    monkeypatch.setattr(check, "pattern_capabilities", lambda: {"repo.read": "allowed"})
+
+    assert check.main() == 1
+    err = capsys.readouterr().err
+    assert "budgets" in err and "capabilities" in err
 
 
 class _Response:
