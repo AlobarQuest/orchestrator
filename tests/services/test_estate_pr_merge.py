@@ -195,6 +195,15 @@ def test_the_squash_body_carries_the_basis_the_ledger_reads(migrated_session: Se
     assert f"{POLICY_VERSION_TRAILER}: {POLICY_VERSION}" in body
 
 
+def test_the_trailers_are_spelled_as_the_ledger_reads_them() -> None:
+    """The ledger freezes what a landing carries, and it reads these two names in ANOTHER program
+    (`landing_ledger/github.py`). The literal is asserted here rather than derived, because the
+    test above asserts through the constants and so could not see a rename; a disagreement is a
+    landing recorded with no basis."""
+    assert CHANGE_RECORD_TRAILER == "SDS-Change-Record"
+    assert POLICY_VERSION_TRAILER == "SDS-Policy-Version"
+
+
 def test_an_event_records_the_act(migrated_session: Session, migrated_engine: Engine) -> None:
     record = _land(migrated_session, ActingGateway())
 
