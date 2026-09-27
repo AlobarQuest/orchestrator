@@ -84,7 +84,6 @@ PORTFOLIO_ENV = "WORK_CARRIER_PORTFOLIO"
 # passing over.
 CAPABILITY_CHECKS = ("runner.caller", "factory.secrets", "factory.landing_known")
 PERMISSION_CHECKS = ("factory.pat_access",)
-SCOPE_CHECK = "factory.pat_scope"
 
 YES = "yes"
 NO = "no"

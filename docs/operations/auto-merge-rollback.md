@@ -1,5 +1,12 @@
 # Rolling back the auto-merge lane
 
+> **HISTORICAL — the lane this rolls back no longer exists.** ADR-0038 (2026-08-31) removed the
+> GitHub-native Dependabot auto-merge cascade (`dependabot-auto-merge.yml`) from every repository
+> that carried it; the orchestrator's inert-landing lane now merges those pull requests under
+> change-manager's deploy policy. Nothing below applies to a live system. It is kept as the
+> record of the 2026-08-08 rehearsal, whose rule-versus-landings distinction still holds for any
+> rollback. See `docs/decisions/0038-the-orchestrator-merges-the-cascades-subjects.md`.
+
 Written from a rehearsal, not from reasoning. Every timing and command below was executed
 against `project-standards` on 2026-08-08; nothing here is theoretical.
 

@@ -75,7 +75,7 @@ jobs:
       - name: Install pinned uv
         uses: astral-sh/setup-uv@v7
         with:
-          version: "0.5.31"
+          version: "0.10.9"
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
@@ -206,7 +206,7 @@ jobs:
       - name: Install pinned uv
         uses: astral-sh/setup-uv@v7
         with:
-          version: "0.5.31"
+          version: "0.10.9"
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
@@ -252,7 +252,7 @@ jobs:
       - name: Install pinned uv
         uses: astral-sh/setup-uv@v7
         with:
-          version: "0.5.31"
+          version: "0.10.9"
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 

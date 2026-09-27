@@ -121,8 +121,19 @@ def test_the_real_reader_agrees_with_the_matrix_it_wraps() -> None:
     project-standards -- and that is where the first implementation's defects all lived. This one
     drives the real thing and asserts it reports exactly what the matrix reports.
     """
-    compliance = pytest.importorskip("portfolio.compliance")
-    manifest = pytest.importorskip("portfolio.manifest")
+    # A DELIBERATE skip in CI, not a silent one. `portfolio` is project-standards, which is not a
+    # dependency of this repository and is never installed by `quality.yml`: it is importable only
+    # when the operator puts project-standards on PYTHONPATH (as `factory decompose` and
+    # `orchestrator conformance-claim` require). Adding it to CI would make this repository's gate
+    # depend on a second repository's tree, so this test runs where project-standards is
+    # importable -- the operator machine -- and says why it did not elsewhere.
+    reason = (
+        "project-standards (`portfolio`) is not installed: it is not a dependency of this "
+        "repository and CI deliberately does not install it; this test runs where the operator has "
+        "put project-standards on PYTHONPATH"
+    )
+    compliance = pytest.importorskip("portfolio.compliance", reason=reason)
+    manifest = pytest.importorskip("portfolio.manifest", reason=reason)
     from datetime import date, datetime
 
     repo = Path(__file__).resolve().parents[2]

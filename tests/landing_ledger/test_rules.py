@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 from landing_ledger.rules import (
-    GATE_PATH,
     REGISTRY,
     SEMVER_MINOR,
     SEMVER_PATCH,
@@ -44,28 +43,6 @@ def test_the_fixtures_and_the_registry_name_the_same_revisions() -> None:
     """Both directions. A fixture nobody transcribed is as useless as a transcription nobody
     pinned -- and the second is the one that would let an entry describe a file that changed."""
     assert {path.stem for path in FIXTURES.glob("*.yml")} == set(REGISTRY)
-
-
-def test_this_repositorys_own_gate_is_transcribed() -> None:
-    """The pairing made mechanical rather than requested.
-
-    Every test above compares a FIXTURE to its own filename, which cannot notice the live gate
-    being edited: nothing in the suite reads `.github/workflows/` at all, so a byte changed there
-    leaves the registry describing a file that no longer exists and says so only in production,
-    as `current_rule_revision_unknown`, per repository, for every open update.
-
-    It became checkable only when the lane was vendored here -- while the gate lived solely in
-    other repositories there was no local file to hash. A repository with no gate is a normal
-    state (two of the eight the ledger covers), so its absence is not a failure.
-    """
-    gate = Path(GATE_PATH)
-    if not gate.exists():
-        pytest.skip(f"{GATE_PATH} is not installed in this repository")
-
-    assert _blob_sha(gate.read_bytes()) in REGISTRY, (
-        f"{GATE_PATH} has been edited without transcribing the new revision in "
-        "src/landing_ledger/rules.py. The audit fails closed on a revision it does not know."
-    )
 
 
 @pytest.mark.parametrize("revision", sorted(REGISTRY))

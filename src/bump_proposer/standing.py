@@ -75,11 +75,6 @@ PUBLISH_COMMAND: Final = "git push origin main"
 # describing the command it guards.
 _PUBLISHED_BRANCH: Final = PUBLISH_COMMAND.split()[-1]
 
-# The placeholder both version fields hold in a standing package nobody has filled in. It is
-# the SAME string in both on purpose: the approval policy refuses a revision whose two versions
-# are equal, so an unfilled shell cannot be approved into a revision describing no work.
-UNASSIGNED: Final = "unassigned"
-
 _FROM_LINE: Final = re.compile(r"^(\s*from_version:).*$", re.MULTILINE)
 _TO_LINE: Final = re.compile(r"^(\s*to_version:).*$", re.MULTILINE)
 

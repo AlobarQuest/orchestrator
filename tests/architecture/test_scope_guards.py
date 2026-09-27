@@ -25,12 +25,17 @@ def test_application_has_no_external_mutation_integrations() -> None:
     assert not any(any(name.startswith(value) for value in forbidden) for name in imports)
 
 
-def test_operations_require_separate_infrastructure_change_package() -> None:
+def test_the_migration_runbook_carries_the_measured_production_order() -> None:
+    """The runbook once required a separate infrastructure-only session and said the image does
+    nothing to the database. The second half was the dangerous one to lose: the image does NOT
+    self-migrate, so a runbook that stops saying so invites a swap onto an old schema."""
     migrations = Path("docs/operations/migrations.md").read_text()
     local = Path("docs/operations/local-development.md").read_text()
 
-    assert "infrastructure-change" in migrations
-    assert "Coolify" in migrations
+    assert "does not migrate itself" in migrations
+    assert "build, then migrate, then swap" in migrations
+    assert "--network coolify" in migrations
+    assert ".venv/bin/alembic current; .venv/bin/alembic heads" in migrations
     assert "alembic upgrade head" in local
 
 
