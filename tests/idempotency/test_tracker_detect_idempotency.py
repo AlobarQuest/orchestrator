@@ -10,12 +10,12 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import ReconciliationCondition
-from orchestrator.services.reconciliation_detection import (
+from orchestrator.services.reconciliation.reconciliation_detection import (
     DetectionCounters,
     ObservedTrackerItem,
     detect_tracker_conditions,
 )
-from orchestrator.services.tracker_bindings import upsert_tracker_binding
+from orchestrator.services.reconciliation.tracker_bindings import upsert_tracker_binding
 from tests.services.test_dependencies import register_unit
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)

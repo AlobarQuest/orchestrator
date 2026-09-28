@@ -18,7 +18,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.deployment_observations import record_deployment_observation
-from orchestrator.services.reconciliation_detection import (
+from orchestrator.services.reconciliation.reconciliation_detection import (
     DetectionCounters,
     detect_reconciliation_conditions,
 )

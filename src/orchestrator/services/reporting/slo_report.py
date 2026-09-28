@@ -21,8 +21,8 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.budget import BREACH_ACTION
-from orchestrator.services.consistency import SATISFIED_ACS
 from orchestrator.services.lifecycle import required_ac_ids
+from orchestrator.services.reconciliation.consistency import SATISFIED_ACS
 
 STATUS_COMPUTED = "computed"
 STATUS_NO_DATA = "no_data"

@@ -467,9 +467,10 @@ def fact_digest(facts: dict[str, Any]) -> str:
 # The earlier split (`github_pr` with a pull request, `inventory` without) was the honest version
 # of a missing vocabulary member, and it was wrong in both directions once one existed. `github_pr`
 # already means "a fact about a pull request bound to a work unit" in the reconciliation lane
-# (`reconciliation_runner/facts.py` writes it, `services/reconciliation_detection.py` reads it to
-# decide which observation is current); those rows are subject_type `work_unit` keyed by unit id
-# and a landing is subject_type `repo` keyed by `owner/name`, so the two never actually collide --
+# (`reconciliation_runner/facts.py` writes it,
+# `services/reconciliation/reconciliation_detection.py` reads it to decide which observation is
+# current); those rows are subject_type `work_unit` keyed by unit id and a landing is
+# subject_type `repo` keyed by `owner/name`, so the two never actually collide --
 # but relying on two namespaces staying disjoint is a coincidence, not a design. `inventory`
 # meanwhile asserted nothing at all.
 #

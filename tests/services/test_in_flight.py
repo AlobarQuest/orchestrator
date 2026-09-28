@@ -9,9 +9,11 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import WorkUnit
 from orchestrator.services.deployment_observations import record_deployment_observation
-from orchestrator.services.in_flight import in_flight_snapshot
 from orchestrator.services.pr_bindings import upsert_pr_binding
-from orchestrator.services.reconciliation_detection import detect_reconciliation_conditions
+from orchestrator.services.reconciliation.in_flight import in_flight_snapshot
+from orchestrator.services.reconciliation.reconciliation_detection import (
+    detect_reconciliation_conditions,
+)
 from tests.services.test_dependencies import register_unit
 from tests.services.test_deployment_observations import (
     activation_command,

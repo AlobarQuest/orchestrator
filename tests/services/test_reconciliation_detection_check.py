@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.services.pr_bindings import record_verification_read_head, upsert_pr_binding
-from orchestrator.services.reconciliation_detection import (
+from orchestrator.services.reconciliation.reconciliation_detection import (
     DetectionCounters,
     detect_observation_conditions,
 )

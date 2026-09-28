@@ -14,14 +14,14 @@ from orchestrator.persistence.models import (
 from orchestrator.services.claims import requeue_unit
 from orchestrator.services.evidence import recover_evidence
 from orchestrator.services.pr_bindings import get_pr_binding, upsert_pr_binding
-from orchestrator.services.reconciliation import (
+from orchestrator.services.reconciliation.reconciliation import (
     ConditionCommand,
     ConditionOutcome,
     ResolutionCommand,
     record_reconciliation_condition,
     record_resolution,
 )
-from orchestrator.services.reconciliation_detection import (
+from orchestrator.services.reconciliation.reconciliation_detection import (
     DetectionCounters,
     detect_reconciliation_conditions,
 )

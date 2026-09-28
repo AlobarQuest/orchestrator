@@ -49,7 +49,7 @@ from orchestrator.services.intake_reads import (
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import record_approval
-from orchestrator.services.reconciliation import (
+from orchestrator.services.reconciliation.reconciliation import (
     ResolutionCommand,
     open_conditions,
     record_resolution,
