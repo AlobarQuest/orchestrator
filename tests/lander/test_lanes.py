@@ -203,3 +203,25 @@ def test_each_client_raises_the_classes_the_shared_body_CATCHES(client_module: A
     assert client_module.LandingRefused is core.LandingRefused
     assert client_module.OrchestratorError is core.OrchestratorError
     assert issubclass(client_module.ForbiddenEndpointError, core.OrchestratorError)
+
+
+# ---- The report's lane-owned lines ------------------------------------------------------------
+
+
+def test_each_lane_prints_its_OWN_preamble_and_deferral_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The wording differs because what was left alone differs: a record of another change class
+    belongs to another LANE, while a pull request by an undeclared author belongs to a PERSON. Only
+    the inert lane prints a policy version, because only its permission comes from one. Pinned as
+    whole lines, since a substring check on either would pass the other lane's wording."""
+    estate.report([], {"factory-delivery": 2})
+    assert capsys.readouterr().out.splitlines()[:1] == [
+        "2 factory-delivery record(s) not considered; they belong to another lane"
+    ]
+
+    inert.report([], {"not-a-declared-author": 1}, 9)
+    assert capsys.readouterr().out.splitlines()[:2] == [
+        "landing policy version 9",
+        "1 open pull request(s) not-a-declared-author; they are not this lane's business",
+    ]
