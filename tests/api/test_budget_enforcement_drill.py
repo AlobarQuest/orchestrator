@@ -23,7 +23,7 @@ where the ceiling trips.
 
 from fastapi.testclient import TestClient
 
-from tests.api.test_infra_links_api import ready_claimed_unit
+from tests.api.test_cost_actuals_route import ready_claimed_unit
 from tests.api.test_lifecycle_api import SYSTEM, WORKER
 from tests.contract.test_cost_actuals_contract import golden_cost_actuals
 

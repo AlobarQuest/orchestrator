@@ -1,4 +1,4 @@
-# ADR 0047 — The reconciliation runner is retired; reconciliation is what gets reported
+# ADR 0048 — The reconciliation runner is retired; reconciliation is what gets reported
 
 **Date:** 2026-09-28
 **Status:** Accepted (Devon, Tier 3 item 22, 2026-09-28)

@@ -234,9 +234,10 @@ def test_the_merge_exemption_names_only_files_that_need_it() -> None:
 # not go and look. That is what makes the observation, release, post-deploy and reconciliation
 # paths auditable -- there is no hidden second source of truth being fetched behind them.
 #
-# Four files legitimately speak HTTP, and each is a deliberate outbound EGRESS, not an ingest:
-# the CLI (an operator's client), dispatch (fires the runner workflow), the GitHub App (mints its
-# own installation token), and knowledge promotion (pushes an approved proposal to a brain).
+# The files below legitimately speak HTTP, and each is a deliberate outbound EGRESS, not an
+# ingest: the CLI (an operator's client), dispatch (fires the runner workflow), the GitHub App
+# (mints its own installation token), and the read-only checks each entry's comment names.
+# (Knowledge promotion, which pushed a proposal to a brain, was deleted by Tier 3 item 24a.)
 # Anything else that imports an HTTP client has invented a fetch path.
 # ---------------------------------------------------------------------------------------------
 
@@ -264,7 +265,6 @@ OUTBOUND_ALLOWLIST = {
     # installation token, and the alternative (an out-of-process poller, ADR-0002's shape) would
     # put the observation outside the transaction that records it.
     Path("src/orchestrator/services/verifier/github_checks.py"),
-    Path("src/orchestrator/services/release/knowledge_promotions.py"),
     # WS-P2.28. Admission asks App Brain one question about the unit's target repository -- does
     # landing on its default branch change something already serving -- and writes nothing. Same
     # justification as github_checks.py above: a declaration is only worth checking if the

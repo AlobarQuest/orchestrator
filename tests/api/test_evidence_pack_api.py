@@ -122,7 +122,6 @@ def test_evidence_pack_route_returns_the_structured_pack(
         a["subject_type"] == "authority" and a["decision"] == "approved" for a in body["approvals"]
     )
     assert body["events"], "the lifecycle transitions must be visible in the pack"
-    assert body["event_publications"] == []
 
 
 def test_the_served_pack_carries_the_deciding_role_and_the_evidence_it_cites(
@@ -179,7 +178,6 @@ def test_the_pack_models_declare_exactly_the_fields_the_route_serves() -> None:
         "adjudications",
         "verifier_decided_completion",
         "approvals",
-        "event_publications",
         "events",
     }
     assert set(EvidencePackAdjudicationResponse.model_fields) == {
@@ -252,7 +250,6 @@ def test_evidence_pack_markdown_route_returns_rendered_markdown(
         "## AC-keyed evidence",
         "## Adjudications and waiver facts",
         "## Approvals",
-        "## Event publications",
         "## Event history",
     ):
         assert header in body

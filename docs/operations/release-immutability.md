@@ -73,7 +73,8 @@ Every accepted binding records:
 - one `release.artifact_bound` evidence row with bounded release facts;
 - one local `release_artifact.bound` event.
 
-The local event can be projected through the existing event-publication layer.
+The event-publication layer that could project the local event was deleted by
+Tier 3 item 24a (2026-09-28); the rest of this paragraph describes what it did.
 The local `system` actor maps to the registered `unknown` external actor during
 publication while preserving the raw actor ID in the mapping evidence record.
 

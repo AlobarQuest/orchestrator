@@ -94,9 +94,8 @@ observation supersession.
 Every accepted observation records one append-only `observations` row and one
 local `observation.recorded` event.
 
-The event-publication mapper projects `observation.recorded` as
-`orchestrator.observation_recorded` in `factory-event/v1`. Publication is an audit
-projection only. Publication failure or retry does not change lifecycle state.
+The event-publication layer that projected `observation.recorded` into
+`factory-event/v1` was deleted by Tier 3 item 24a (2026-09-28).
 
 ## Non-Goals
 

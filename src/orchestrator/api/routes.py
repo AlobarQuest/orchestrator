@@ -3,7 +3,6 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
-from pathlib import Path
 from typing import Annotated, Any, Final
 from uuid import UUID
 
@@ -45,10 +44,6 @@ from orchestrator.api.schemas import (
     EstateLandingAdmissionResponse,
     EstatePrMergeCommandModel,
     EstatePrMergeResponse,
-    EventPublicationExportCommand,
-    EventPublicationQueueCommand,
-    EventPublicationResponse,
-    EventPublicationRetryCommand,
     EventResponse,
     EvidenceCommand,
     EvidenceResponse,
@@ -61,12 +56,6 @@ from orchestrator.api.schemas import (
     InertPrMergeCommandModel,
     InertPrMergeResponse,
     InFlightUnitsResponse,
-    InfraLaneLinkCommandModel,
-    InfraLaneLinkResponse,
-    KnowledgePromotionProposalActionResponse,
-    KnowledgePromotionProposalCommandModel,
-    KnowledgePromotionProposalResponse,
-    KnowledgePromotionSubmitCommandModel,
     LeaseResponse,
     LifecycleCommand,
     MachineActivationCandidateResponse,
@@ -218,11 +207,6 @@ from orchestrator.services.lifecycle.claims import (
 )
 from orchestrator.services.lifecycle.context import PreflightCommand, record_preflight
 from orchestrator.services.lifecycle.cost_actuals import record_cost_actuals
-from orchestrator.services.lifecycle.infra_links import (
-    InfraLaneLinkCommand,
-    list_infra_lane_links,
-    record_infra_lane_link,
-)
 from orchestrator.services.lifecycle.lifecycle import (
     TransitionCommand,
     require_operator_actor,
@@ -248,24 +232,6 @@ from orchestrator.services.release.deployment_observations import (
     DeploymentObservationResponse,
     list_deployment_observations,
     record_deployment_observation,
-)
-from orchestrator.services.release.event_publications import (
-    EventPublicationFilters,
-    export_event_publications,
-    list_event_publications,
-    queue_event_publications,
-    retry_event_publication,
-)
-from orchestrator.services.release.knowledge_promotions import (
-    HttpBrainProposalClient,
-    KnowledgePromotionProposalCommand,
-    KnowledgePromotionProposalFilters,
-    KnowledgePromotionSubmitCommand,
-    create_knowledge_promotion_proposal,
-    list_knowledge_promotion_proposals,
-    proposal_actions,
-    proposal_state,
-    submit_knowledge_promotion_to_brain,
 )
 from orchestrator.services.release.machine_activation import machine_activation_candidates
 from orchestrator.services.release.observations import (
@@ -1149,53 +1115,6 @@ def dispatch_route(
 
 
 @router.post(
-    "/work-units/{unit_id}/infra-lane-links",
-    response_model=InfraLaneLinkResponse,
-    status_code=201,
-)
-def create_infra_lane_link(
-    unit_id: UUID,
-    body: InfraLaneLinkCommandModel,
-    actor: ActorDep,
-    session: SessionDep,
-) -> object:
-    return _raise_error(
-        record_infra_lane_link(
-            session,
-            InfraLaneLinkCommand(
-                work_unit_id=unit_id,
-                attempt=body.attempt,
-                actor=actor,
-                lease_token=body.lease_token,
-                status=body.status,
-                change_manager_ref=body.change_manager_ref,
-                change_manager_url=body.change_manager_url,
-                infraops_ref=body.infraops_ref,
-                approval_ref=body.approval_ref,
-                rollback_ref=body.rollback_ref,
-                verify_ref=body.verify_ref,
-                final_evidence_ref=body.final_evidence_ref,
-                payload=body.payload,
-                idempotency_key=body.idempotency_key,
-                expected_version=body.expected_version,
-            ),
-        )
-    )
-
-
-@router.get(
-    "/work-units/{unit_id}/infra-lane-links",
-    response_model=list[InfraLaneLinkResponse],
-)
-def infra_lane_links(
-    unit_id: UUID,
-    _actor: ActorDep,
-    session: SessionDep,
-) -> object:
-    return _raise_error(list_infra_lane_links(session, unit_id))
-
-
-@router.post(
     "/work-units/{unit_id}/release-artifacts",
     response_model=ReleaseArtifactResponse,
     status_code=201,
@@ -1570,96 +1489,6 @@ def observations(
     )
 
 
-@router.post(
-    "/knowledge-promotion-proposals",
-    response_model=KnowledgePromotionProposalResponse,
-    status_code=201,
-)
-def create_knowledge_promotion(
-    body: KnowledgePromotionProposalCommandModel,
-    actor: ActorDep,
-    session: SessionDep,
-) -> object:
-    result = _raise_error(
-        create_knowledge_promotion_proposal(
-            session,
-            KnowledgePromotionProposalCommand(
-                actor=actor,
-                correlation_identity=body.correlation_identity,
-                source_observation_ids=body.source_observation_ids,
-                release_artifact_binding_id=body.release_artifact_binding_id,
-                deployment_observation_id=body.deployment_observation_id,
-                work_unit_id=body.work_unit_id,
-                package_revision_id=body.package_revision_id,
-                correlation_summary=body.correlation_summary,
-                target_brain=body.target_brain,
-                target_type=body.target_type,
-                authority=body.authority,
-                applicability=body.applicability,
-                proposed_payload=body.proposed_payload,
-                provenance=body.provenance,
-                idempotency_key=body.idempotency_key,
-                expected_version=body.expected_version,
-            ),
-        )
-    )
-    return _knowledge_promotion_response(session, result)
-
-
-@router.get(
-    "/knowledge-promotion-proposals",
-    response_model=list[KnowledgePromotionProposalResponse],
-)
-def knowledge_promotions(
-    _actor: ActorDep,
-    session: SessionDep,
-    target_brain: str | None = None,
-    target_type: str | None = None,
-    state: str | None = None,
-) -> object:
-    return [
-        _knowledge_promotion_response(session, row)
-        for row in list_knowledge_promotion_proposals(
-            session,
-            KnowledgePromotionProposalFilters(
-                target_brain=target_brain,
-                target_type=target_type,
-                state=state,
-            ),
-        )
-    ]
-
-
-@router.post(
-    "/knowledge-promotion-proposals/{proposal_id}/submit-to-brain",
-    response_model=KnowledgePromotionProposalActionResponse,
-)
-def submit_knowledge_promotion(
-    proposal_id: UUID,
-    body: KnowledgePromotionSubmitCommandModel,
-    actor: ActorDep,
-    session: SessionDep,
-    settings: SettingsDep,
-) -> object:
-    client = HttpBrainProposalClient(
-        target_urls=settings.brain_proposal_target_urls,
-        credentials=settings.brain_proposal_credentials,
-        timeout_seconds=settings.brain_proposal_timeout_seconds,
-    )
-    return _raise_error(
-        submit_knowledge_promotion_to_brain(
-            session,
-            KnowledgePromotionSubmitCommand(
-                actor=actor,
-                proposal_id=proposal_id,
-                idempotency_key=body.idempotency_key,
-                expected_version=body.expected_version,
-            ),
-            client,
-        )
-    )
-
-
 @router.get("/in-flight-units", response_model=InFlightUnitsResponse)
 def in_flight_units(
     actor: ActorDep,
@@ -1749,55 +1578,6 @@ def slo_report_route(
     until: datetime | None = None,
 ) -> object:
     return slo_report(session, SloReportFilters(since=since, until=until))
-
-
-@router.get("/event-publications", response_model=list[EventPublicationResponse])
-def event_publications(
-    _actor: ActorDep,
-    session: SessionDep,
-    source_kind: str | None = None,
-    source_id: UUID | None = None,
-    status: str | None = None,
-) -> object:
-    return list_event_publications(
-        session,
-        EventPublicationFilters(source_kind=source_kind, source_id=source_id, status=status),
-    )
-
-
-@router.post("/event-publications/queue", response_model=list[EventPublicationResponse])
-def event_publications_queue(
-    body: EventPublicationQueueCommand,
-    _actor: ActorDep,
-    session: SessionDep,
-) -> object:
-    return queue_event_publications(
-        session,
-        source_kind=body.source_kind,
-        source_id=body.source_id,
-    )
-
-
-@router.post("/event-publications/export", response_model=list[EventPublicationResponse])
-def event_publications_export(
-    body: EventPublicationExportCommand,
-    _actor: ActorDep,
-    session: SessionDep,
-) -> object:
-    return export_event_publications(session, Path(body.output_path))
-
-
-@router.post(
-    "/event-publications/{publication_id}/retry",
-    response_model=EventPublicationResponse,
-)
-def event_publications_retry(
-    publication_id: UUID,
-    _body: EventPublicationRetryCommand,
-    _actor: ActorDep,
-    session: SessionDep,
-) -> object:
-    return retry_event_publication(session, publication_id)
 
 
 @router.post("/work-units/{unit_id}/preflight", response_model=ContextSnapshotResponse)
@@ -2494,36 +2274,6 @@ def _proposal_payloads(
             ],
         }
     return payloads
-
-
-def _knowledge_promotion_response(session: Session, proposal) -> dict[str, object]:
-    return {
-        "id": proposal.id,
-        "correlation_identity": proposal.correlation_identity,
-        "source_observation_ids": proposal.source_observation_ids,
-        "source_observation_hashes": proposal.source_observation_hashes,
-        "release_artifact_binding_id": proposal.release_artifact_binding_id,
-        "deployment_observation_id": proposal.deployment_observation_id,
-        "work_unit_id": proposal.work_unit_id,
-        "package_revision_id": proposal.package_revision_id,
-        "correlation_summary": proposal.correlation_summary,
-        "target_brain": proposal.target_brain,
-        "target_type": proposal.target_type,
-        "authority": proposal.authority,
-        "applicability": proposal.applicability,
-        "proposed_payload": proposal.proposed_payload,
-        "provenance": proposal.provenance,
-        "proposal_hash": proposal.proposal_hash,
-        "proposed_by": proposal.proposed_by,
-        "proposed_at": proposal.proposed_at,
-        "event_id": proposal.event_id,
-        "idempotency_key": proposal.idempotency_key,
-        "state": proposal_state(session, proposal.id),
-        "actions": [
-            KnowledgePromotionProposalActionResponse.model_validate(action).model_dump(mode="json")
-            for action in proposal_actions(session, proposal.id)
-        ],
-    }
 
 
 def _proposed_unit(command: ProposedUnitCommand) -> ProposedUnit:

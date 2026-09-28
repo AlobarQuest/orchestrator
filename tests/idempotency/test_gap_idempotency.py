@@ -1,6 +1,7 @@
 """AC-007: the paths that had NO duplicate-delivery test at all.
 
-The coverage matrix exposed these three. AC-007 requires a regression test on every ingress
+The coverage matrix exposed these. (A third, the knowledge-promotion ingress, was deleted by
+Tier 3 item 24a.) AC-007 requires a regression test on every ingress
 "added where one was missing" -- this is that. Each drives the real API, twice, with the same key.
 """
 
@@ -8,9 +9,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import Dependency, KnowledgePromotionProposal
-from tests.api.test_knowledge_promotions_api import _record_observation, proposal_body
-from tests.api.test_lifecycle_api import HUMAN, SYSTEM
+from orchestrator.persistence.models import Dependency
+from tests.api.test_lifecycle_api import SYSTEM
 from tests.api.test_status_ledger_api import _register_ready_unit
 
 
@@ -71,16 +71,3 @@ def test_a_duplicate_dependency_resolution_replays(
     assert first.status_code == second.status_code == 200, (first.json(), second.json())
     assert first.json() == second.json()
     assert _count(migrated_engine, Dependency) == 1
-
-
-def test_a_duplicate_knowledge_promotion_writes_one_row(
-    db_client: TestClient, migrated_engine: Engine
-) -> None:
-    body = proposal_body(_record_observation(db_client), key="idem-kp-1")
-
-    first = db_client.post("/api/v1/knowledge-promotion-proposals", headers=HUMAN, json=body)
-    second = db_client.post("/api/v1/knowledge-promotion-proposals", headers=HUMAN, json=body)
-
-    assert first.status_code == second.status_code == 201
-    assert first.json() == second.json()
-    assert _count(migrated_engine, KnowledgePromotionProposal) == 1
