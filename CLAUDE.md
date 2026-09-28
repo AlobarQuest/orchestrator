@@ -3851,7 +3851,10 @@ style of that module.
   morning with **nothing reporting it**, which is the silent-quiet twin of a permanently-red
   control. The discriminator is `git rev-parse --git-dir` versus `--git-common-dir`: they differ in
   a linked worktree and are equal in a main tree, measured both ways 2026-08-24.
-  `install-activation-sweep-launchd.sh` enforces it; copy that guard into any future installer.
+  Every installer calls `sds_refuse_linked_worktree` from `scripts/sds-install.sh` before writing
+  anything (#292, 2026-09-27); five of eleven had lacked it, two while carrying a comment claiming
+  it. A future installer sources that file, and `tests/scripts/test_launchd_installers.py` fails
+  for any installer that does not refuse from a linked worktree.
 
 - **FOUR tests for "did this branch land?" all have blind spots in this estate — the GitHub one
   included. Only a NAMED ARTIFACT settles it.** (This bullet said "three" and called the GitHub
@@ -5227,8 +5230,13 @@ style of that module.
   `/opt/homebrew/opt/python@3.12/libexec/bin/python3`, and this repository's `.venv/bin/python`.
   Local git did not, so the clean-tree rule could not be satisfied until the license was accepted.
   **The fix is `sudo xcodebuild -license accept`, and it is Devon's** — `sudo` is on the deny list.
-  Don't work around it by re-pointing the launchers at another interpreter: that is a code change for
-  a one-command problem, and it would hide the next Xcode update behind a different failure.
+  **CORRECTED 2026-09-27 (#292): the launchers no longer parse secrets with bare `python3`.** They
+  source `scripts/sds-bws.sh`, which parses `bws` output with the repository's own
+  `.venv/bin/python` by absolute path. This bullet used to say not to re-point the launchers, on
+  the ground that it would hide the next Xcode lapse behind a different failure. It does not hide
+  it: `/usr/bin/git` is the same kind of shim, so a lane that runs git still stops, and the
+  Healthchecks silence timer still pages. What changed is that the secret read no longer breaks
+  first and blames BWS, and twelve copies of the parse became one.
   Recovery was proven by running each lane once with `launchctl kickstart` and reading its
   Healthchecks check back to `up`, not by the license probe alone.
 
