@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-import orchestrator.services.pr_merge_admission as admission_module
+import orchestrator.services.landing.pr_merge_admission as admission_module
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
@@ -38,13 +38,13 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.reach_vocabulary import LIVE_ESTATE
-from orchestrator.services.packages import record_approval, register_approved_unit
-from orchestrator.services.pr_bindings import record_verification_read_head, upsert_pr_binding
-from orchestrator.services.pr_merge_admission import (
+from orchestrator.services.landing.pr_merge_admission import (
     MERGE_CAPABILITY,
     admission_for,
     pr_merge_admission,
 )
+from orchestrator.services.packages import record_approval, register_approved_unit
+from orchestrator.services.pr_bindings import record_verification_read_head, upsert_pr_binding
 from tests.services.change_record_doubles import (
     RECORD_AMBIGUOUS,
     ChangeRecordAnswer,

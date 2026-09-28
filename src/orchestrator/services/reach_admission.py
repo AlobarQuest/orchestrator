@@ -48,7 +48,7 @@ from orchestrator.factory_policy import FactoryPolicy, load_factory_policy
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
 from orchestrator.reach_vocabulary import LIVE_ESTATE, reach_from_snapshot
-from orchestrator.services.estate_landing import (
+from orchestrator.services.landing.estate_landing import (
     LANDING_INERT,
     LANDING_REDEPLOYS,
     SOURCE_UNCONFIGURED,

@@ -1,7 +1,7 @@
 """The delta parser, held to the one it copies.
 
 `landing_ledger.titles` is a second copy of
-`orchestrator.services.estate_landing_admission.update_type_of`, because the programs that
+`orchestrator.services.landing.estate_landing_admission.update_type_of`, because the programs that
 read it cannot import that module -- they are out-of-process programs and that module reaches
 SQLAlchemy. The copy is therefore PINNED here rather than trusted: a test that imports both,
 and asserts they agree on a corpus, which includes every open Dependabot pull request the
@@ -21,7 +21,7 @@ from __future__ import annotations
 import pytest
 
 from landing_ledger.titles import BUMP_PATTERN, bump_of
-from orchestrator.services.estate_landing_admission import _BUMP, update_type_of
+from orchestrator.services.landing.estate_landing_admission import _BUMP, update_type_of
 
 # The DISTINCT titles of every open Dependabot pull request across the six cascade
 # repositories, measured 2026-08-19: thirteen pull requests, ten distinct titles, because the

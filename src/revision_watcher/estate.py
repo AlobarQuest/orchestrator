@@ -21,7 +21,7 @@ LANDING_ROUTE = "/api/apps/default-branch-landing"
 
 # App Brain's answer vocabulary, mirrored. The source of truth is `LANDING_*` in
 # AlobarQuest/brain `src/brains/app/models.py`; the orchestrator mirrors it too, in
-# `services/estate_landing.py`. This is a THIRD copy and it is pinned rather than trusted --
+# `services/landing/estate_landing.py`. This is a THIRD copy and it is pinned rather than trusted --
 # `tests/revision_watcher/test_landing_vocabulary.py` holds it to the orchestrator's, which is
 # importable from a test even though this package may not import it. Nothing is invented here: a
 # fourth value on this side would be a second copy of a vocabulary that already lives somewhere,

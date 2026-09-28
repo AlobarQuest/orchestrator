@@ -2,7 +2,7 @@
 
 The source of truth is `LANDING_*` in AlobarQuest/brain `src/brains/app/models.py`, served by
 GET /api/apps/default-branch-landing. The orchestrator mirrors it in
-`services/estate_landing.py`, and this lane mirrors it again -- it cannot import the
+`services/landing/estate_landing.py`, and this lane mirrors it again -- it cannot import the
 orchestrator's, by its own isolation test, and rightly so.
 
 A copy nothing checks is how a vocabulary drifts, and this repository has paid for that four times.
@@ -15,7 +15,7 @@ easy to explain away as the estate being behind.
 
 from __future__ import annotations
 
-from orchestrator.services import estate_landing
+from orchestrator.services.landing import estate_landing
 from revision_watcher import estate
 
 

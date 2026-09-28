@@ -2796,7 +2796,7 @@ style of that module.
   encoding of a malformed HOST raises `UnicodeError` — a `ValueError`, neither an `HTTPError` nor
   an `InvalidURL` — at `client.get`, before any body guard. Triggers are ordinary environment-
   variable typos: a **doubled dot** (`https://host..example`), a **DNS label over 63 characters**,
-  a trailing dot. Both `services/change_record.py` and `services/estate_landing.py` promise in
+  a trailing dot. Both `services/landing/change_record.py` and `services/landing/estate_landing.py` promise in
   their own docstrings that nothing raises, and both were wrong until 2026-08-11; the escape
   reaches a **bare HTTP 500** from every caller, because only `DomainError` and
   `APIAuthenticationError` have registered handlers — i.e. an admission gate that has stopped
@@ -3172,7 +3172,7 @@ style of that module.
 
 - **A landing stales every sibling pull request, and `update-branch` clears it synchronously where
   `@dependabot rebase` takes ~14 hours.** `_freshness_term`
-  (`services/estate_landing_admission.py`) calls `commits_behind_base` and refuses on `behind > 0`
+  (`services/landing/estate_landing_admission.py`) calls `commits_behind_base` and refuses on `behind > 0`
   — correct, because checks are deliberately not up-to-date-gated estate-wide, so a squash of a
   behind head produces a tree nothing executed, and on a deploying repository that tree is what
   starts serving. But the lane therefore CREATES the condition it refuses on: `change-manager#51`
@@ -4807,7 +4807,7 @@ style of that module.
 
 - **A NARROWING THAT SEPARATES ONE VALUE'S CAUSES LEAVES EVERY OTHER VALUE COLLAPSED, AND A TEST
   CAN PIN THAT RESIDUAL AS THOUGH IT WERE THE DESIGN.** `checks_term`
-  (`services/estate_landing_admission.py`) took `mergeable_state: blocked` apart into a failing
+  (`services/landing/estate_landing_admission.py`) took `mergeable_state: blocked` apart into a failing
   check, an abandoned one and one still running — the module's own comment records that it "used to
   be raised for every `mergeable_state` that was not `clean`, which collapsed 'a check said no' into
   'a check said nothing yet'". **The fix stopped there**: every OTHER unpermitted value — `dirty`,
@@ -5331,7 +5331,7 @@ style of that module.
 
   **CONSEQUENCE 2: a new client that speaks to change-manager is one line away from a 403 that
   reads like an auth failure.** Every module that reaches it today sets a User-Agent —
-  `services/change_record.py`, `services/inert_landing_policy.py`, and `change_manager.py` in
+  `services/landing/change_record.py`, `services/landing/inert_landing_policy.py`, and `change_manager.py` in
   `deploy_watcher`, `work_carrier` and `bump_proposer`; the two landers reach it only through
   clients that set one, and neither lander package imports an HTTP client of its own. So the hazard
   is covered and stays covered only while that is true. A 403 carrying `error code: 1010` and no

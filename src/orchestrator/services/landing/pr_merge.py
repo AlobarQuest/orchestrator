@@ -8,7 +8,7 @@ credentials resolved once at the route and handed to both the gate and the actor
 never attest to credentials the actor does not use.
 
 **Every term is re-evaluated HERE, over the row this transaction locked.** The reported answer
-(`services/pr_merge_admission.py`) is a report; between reading it and acting, a unit can be
+(`services/landing/pr_merge_admission.py`) is a report; between reading it and acting, a unit can be
 transitioned, an approval can be recorded, a divergence can be detected. Re-asking is what closes
 that window, and it is why the act is an explicit command rather than a side effect of completion:
 a failed landing must never roll back a recorded completion.
@@ -71,10 +71,10 @@ from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event, UnitPrMerge, WorkPackageRevision, WorkUnit
-from orchestrator.services.change_record import ChangeRecordSource
-from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.github_app import GitHubAppTokenError
-from orchestrator.services.pr_merge_admission import MergeAdmission, admission_for
+from orchestrator.services.landing.change_record import ChangeRecordSource
+from orchestrator.services.landing.estate_landing import EstateLandingSource
+from orchestrator.services.landing.pr_merge_admission import MergeAdmission, admission_for
 
 GITHUB_API_URL: Final = "https://api.github.com"
 

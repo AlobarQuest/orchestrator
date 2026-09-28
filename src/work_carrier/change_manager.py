@@ -38,8 +38,8 @@ TIMEOUT_SECONDS: Final = 30.0
 
 # What change-manager calls the pipeline these records arrive on (`app/sources.py::WORK_SOURCE`).
 WORK_SOURCE: Final = "work"
-# The status a human moved them to. Read as a QUERY here rather than filtered from the rows,
-# which is the opposite of what `services/change_record.py` does and correct for the opposite
+# The status a human moved them to. Read as a QUERY here rather than filtered from the rows, which
+# is the opposite of what `services/landing/change_record.py` does and correct for the opposite
 # reason: that module has to tell "pending" from "absent", while this one is a queue drain and a
 # record that is not approved is simply not this program's business yet.
 APPROVED: Final = "approved"

@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.reach_vocabulary import LIVE_ESTATE, REACH_VOCABULARY
 from orchestrator.services.dispatch import dispatch_work_unit
-from orchestrator.services.estate_landing import (
+from orchestrator.services.landing.estate_landing import (
     LANDING_INERT,
     LANDING_REDEPLOYS,
     LANDING_UNKNOWN,

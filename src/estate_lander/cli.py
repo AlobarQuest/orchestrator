@@ -272,11 +272,12 @@ def _freshness_derived(refusals: set[str], *, rollout_base_matches_pin: bool) ->
 
     **THE SECOND COPY OF ONE CRITERION, and it is a copy because this program may not import the
     orchestrator** -- the isolation is the property that makes a scheduled caller acceptable here.
-    The other copy is `orchestrator.services.estate_landing_admission.freshness_derived_refusals`,
-    which reads it to decide whether the lane may ACT; this one reads it to decide whether a line
-    is a FINDING. They are held equal from outside, by a test that may import both, exactly as
-    `_DELIBERATE` is -- because this estate's standing lesson is that wherever two vocabularies
-    must agree they do not, until something checks.
+    The other copy is
+    `orchestrator.services.landing.estate_landing_admission.freshness_derived_refusals`, which reads
+    it to decide whether the lane may ACT; this one reads it to decide whether a line is a FINDING.
+    They are held equal from outside, by a test that may import both, exactly as `_DELIBERATE` is --
+    because this estate's standing lesson is that wherever two vocabularies must agree they do not,
+    until something checks.
 
     Being behind IS the position. A rollout pin that differs is derived only when the BASE carries
     the pinned bytes: then the head merely predates a workflow change, and bringing the base in

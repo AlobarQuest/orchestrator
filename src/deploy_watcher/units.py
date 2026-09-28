@@ -18,10 +18,10 @@ confirms it: same repository, same pull request, same merge commit, and a status
 asserts the orchestrator made this landing.
 
 `already_merged` and `refused` are deliberately NOT accepted. Read the five writers in
-`services/pr_merge.py` before widening: `already_merged` has two, one being a pull request somebody
-else had landed BEFORE the merge call, and `refused` has two, one being the genuinely ambiguous
-outcome. Neither status can assert authorship, and an observation attributing a rollout to a unit
-that may not have caused it is exactly the fiction ADR-0022 refuses.
+`services/landing/pr_merge.py` before widening: `already_merged` has two, one being a pull request
+somebody else had landed BEFORE the merge call, and `refused` has two, one being the genuinely
+ambiguous outcome. Neither status can assert authorship, and an observation attributing a rollout to
+a unit that may not have caused it is exactly the fiction ADR-0022 refuses.
 
 ## An absent claim is the ordinary case, never a finding
 

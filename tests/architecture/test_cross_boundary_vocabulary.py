@@ -133,7 +133,7 @@ VOCABULARY_REGISTRY: dict[str, str] = {
     # that: a set whose members must agree with a system this estate does not run. It is safe to
     # be behind on -- a member the platform adds and this set lacks reads as a verdict the lane
     # may not land on, which refuses rather than admits.
-    "services/estate_landing_admission.py:NO_VERDICT_CONCLUSIONS": (
+    "services/landing/estate_landing_admission.py:NO_VERDICT_CONCLUSIONS": (
         "GitHub REST `GET /repos/{owner}/{repo}/actions/runs` -> workflow_runs[].conclusion"
     ),
 }

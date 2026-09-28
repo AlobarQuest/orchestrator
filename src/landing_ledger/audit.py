@@ -141,11 +141,12 @@ FAILING_CONCLUSIONS = frozenset(
 # already paid for reading them as though they did: the landing lane held three clean bumps for
 # four days on the strength of runs GitHub cancelled when the Actions quota ran out.
 #
-# A DELIBERATE MIRROR of `orchestrator.services.estate_landing_admission.NO_VERDICT_CONCLUSIONS`,
-# which this program may not import -- the isolation test says so -- and pinned to it by a test
-# that imports both, the same arrangement `titles.py` uses. Its polarity is the safety: anything
-# NOT named here is read as a verdict, so a conclusion the platform has not yet invented fails
-# toward refusing rather than toward calling itself absent.
+# A DELIBERATE MIRROR of
+# `orchestrator.services.landing.estate_landing_admission.NO_VERDICT_CONCLUSIONS`, which this
+# program may not import -- the isolation test says so -- and pinned to it by a test that imports
+# both, the same arrangement `titles.py` uses. Its polarity is the safety: anything NOT named here
+# is read as a verdict, so a conclusion the platform has not yet invented fails toward refusing
+# rather than toward calling itself absent.
 NO_VERDICT_CONCLUSIONS = frozenset({"cancelled", "skipped", "stale"})
 
 # The subset of the above that a CONSUMER MAY ACT ON. `FAILING_CONCLUSIONS` is deliberately wider

@@ -13,7 +13,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from orchestrator.services.inert_landing_policy import (
+from orchestrator.services.landing.inert_landing_policy import (
     RULES_UNDECLARED,
     SOURCE_UNCONFIGURED,
     SOURCE_UNREADABLE,

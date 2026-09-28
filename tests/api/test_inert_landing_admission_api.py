@@ -28,8 +28,8 @@ from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.main import create_app
-from orchestrator.services.estate_landing_admission import EstateGatewayError
-from orchestrator.services.inert_pr_branch_update import (
+from orchestrator.services.landing.estate_landing_admission import EstateGatewayError
+from orchestrator.services.landing.inert_pr_branch_update import (
     INERT_BRANCH_UPDATE_SIBLING_HOLDING,
     INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE,
     InertBranchUpdateCommand,
@@ -61,7 +61,7 @@ def _admission(db_client: TestClient) -> dict[str, Any]:
 def test_the_body_carries_every_field_of_the_composed_answer(db_client: TestClient) -> None:
     """SET EQUALITY over the served keys rather than a membership check for one field: the
     silent-drop hole belongs to the model, not to any particular field."""
-    from orchestrator.services.inert_landing_admission import InertLandingAdmission
+    from orchestrator.services.landing.inert_landing_admission import InertLandingAdmission
 
     assert set(_admission(db_client)) == set(InertLandingAdmission.__dataclass_fields__)
 
@@ -124,7 +124,7 @@ def test_the_body_names_how_the_landing_would_be_performed(db_client: TestClient
     pass reads this to say what a live pass would do, and a caller meeting an absent or invented
     value could not report anything. This answer refuses -- no credentials are configured, so the
     pull request is unreadable -- and still names the ordinary method."""
-    from orchestrator.services.estate_pr_merge import SQUASH
+    from orchestrator.services.landing.estate_pr_merge import SQUASH
 
     assert _admission(db_client)["merge_method"] == SQUASH
 
