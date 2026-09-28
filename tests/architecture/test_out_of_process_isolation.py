@@ -468,3 +468,17 @@ def test_control_a_relative_import_is_charged_to_the_package_that_owns_it(tmp_pa
     src = _tree(tmp_path, {**CLEAN, "lane/sub/deep.py": "from ..client import thing\n"})
     records = [r.module for r in package_imports(src, "lane") if r.path.name == "deep.py"]
     assert records == ["lane.client"]
+
+
+@pytest.mark.parametrize("level", [4, 5])
+def test_control_a_relative_import_above_the_top_package_is_refused_not_wrapped(
+    tmp_path: Path, level: int
+) -> None:
+    """Slicing with a negative bound counts from the end, so an over-climb could read as a real
+    name -- at level 4 below as `lane.x`, which the program's own row permits. It must fail."""
+    dots = "." * level
+    body = f"import os\ndef later():\n    from {dots}x import y\n"
+    src = _tree(tmp_path, {**CLEAN, "lane/a/b.py": body})
+    records = [r.module for r in package_imports(src, "lane") if r.path.name == "b.py"]
+    assert records == ["os", f"{dots}x"]
+    assert violations(src, CLEAN_TABLE, "lane") != []

@@ -57,7 +57,15 @@ def file_imports(path: Path, root: Path | None = None) -> list[Import]:
             base: list[str] = []
             if root is not None and node.level:
                 package = _dotted_package(root, path)
-                base = package[: len(package) - (node.level - 1)] if node.level > 1 else package
+                climb = node.level - 1
+                if climb > len(package):
+                    # Above the top package: Python raises at import time, but a deferred import
+                    # never runs. Report it as written -- its top-level name is then empty, which
+                    # no allowlist permits -- rather than let slicing wrap it into a real name.
+                    written = node.module or ",".join(alias.name for alias in node.names)
+                    found.append(Import(path, node.lineno, "." * node.level + written))
+                    continue
+                base = package[: len(package) - climb]
             if node.module:
                 found.append(Import(path, node.lineno, ".".join([*base, node.module])))
             else:
