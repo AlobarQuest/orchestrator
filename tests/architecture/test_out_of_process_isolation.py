@@ -235,8 +235,6 @@ TABLE: dict[str, Row] = {
         no_sibling_lanes=True,
     ),
     # Its window predicate is the orchestrator's, deliberately COPIED -- see `window.py`.
-    # `sys` and `tempfile` are carried over from the module this replaced and are not imported
-    # today: dead grants, left for a decision rather than narrowed silently.
     "tool_installer": _row(
         "__future__",
         "dataclasses",
@@ -249,8 +247,6 @@ TABLE: dict[str, Row] = {
         "re",
         "shutil",
         "subprocess",
-        "sys",
-        "tempfile",
         "typer",
         "typing",
         # `urllib.parse` only, for the base-URL shape check.
