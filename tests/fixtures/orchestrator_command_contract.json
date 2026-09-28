@@ -1,0 +1,45 @@
+{
+  "EvidenceCommand": {
+    "optional": [
+      "context_snapshot_id",
+      "payload",
+      "stable_ref",
+      "supersede"
+    ],
+    "required": [
+      "ac_id",
+      "attempt",
+      "evidence_type",
+      "expected_version",
+      "idempotency_key",
+      "lease_token",
+      "source_revision",
+      "work_package_revision_id"
+    ]
+  },
+  "LifecycleCommand": {
+    "optional": [
+      "attempt",
+      "context_snapshot_id",
+      "lease_token",
+      "reason",
+      "standing_context"
+    ],
+    "required": [
+      "expected_version",
+      "idempotency_key"
+    ]
+  },
+  "PrBindingCommand": {
+    "optional": [
+      "attempt",
+      "lease_token"
+    ],
+    "required": [
+      "expected_version",
+      "head_sha",
+      "idempotency_key",
+      "pr_number"
+    ]
+  }
+}

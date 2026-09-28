@@ -10,6 +10,7 @@ difference between them rather than a constructed one.
 from __future__ import annotations
 
 import json
+import sys
 import uuid
 from copy import deepcopy
 from pathlib import Path
@@ -47,30 +48,47 @@ CONTRACT_ENVELOPE: dict[str, Any] = json.loads(
 # the profile by `scripts/check_profile_budget_agreement.py`; a one-sided edit reds that check.
 PROFILE_BUDGETS: dict[str, int] = {"max_attempts": 3, "max_llm_calls": 360}
 
+# WHAT THE SAME PROFILE STAMPS AS CAPABILITIES -- `build_envelope` emits `dict(CAPABILITIES)`
+# verbatim. Restated for the reason PROFILE_BUDGETS is, and held to intent-packages by the same
+# script. It happens to equal the contract specimen's capabilities today; that coincidence is why
+# `uv_bump` could claim this provenance while taking the specimen's copy and nothing noticed.
+PROFILE_CAPABILITIES: dict[str, str] = {
+    "command.run": "allowed",
+    "github.pr.create": "allowed",
+    "orchestrator.claim": "allowed",
+    "orchestrator.evidence.write": "allowed",
+    "repo.edit": "allowed",
+    "repo.read": "allowed",
+}
+
 
 def uv_bump(unit_id: uuid.UUID = UNIT_ID, **constraints: Any) -> dict[str, Any]:
     """The envelope intent-packages emits for a uv pin bump TODAY.
 
-    Provenance, field by field, from `intent_packages.profiles.dependency_update`: `CAPABILITIES`
-    and `BUDGETS` verbatim — `BUDGETS` via `PROFILE_BUDGETS`, and only since 2026-09-06. This
-    docstring made that claim from the start and the code did not honour it: the function
-    deep-copied the contract SPECIMEN and overwrote only `constraints`, so the budgets under test
-    were the specimen's frozen `4` rather than the profile's. That is what made the recognition
-    test below pass while every real envelope was refused, and it is why a docstring asserting a
-    provenance the code does not have is worse than no docstring: it is what a reader checks
-    instead of the code. `change_class = "dependency-update"`, and
-    `constraints.allowed_commands = [*mutations, verifier]` where the uv mutator is `uv add` and
-    the uv verifier is `uv lock --check`. The pin moved is the real one (`ruff` 0.15.20 to
-    0.15.21, this repository, 2026-08-01).
+    Provenance, field by field, from `intent_packages.profiles.dependency_update`: `BUDGETS` via
+    `PROFILE_BUDGETS` (since 2026-09-06) and `CAPABILITIES` via `PROFILE_CAPABILITIES` (since
+    2026-09-27); both constants are held to the profile by
+    `scripts/check_profile_budget_agreement.py`. This docstring claimed the profile provenance from
+    the start and the code did not honour it: the function deep-copied the contract SPECIMEN and
+    overwrote only `constraints`, so the budgets under test were the specimen's frozen `4` and the
+    capabilities were the specimen's too. That is what made the recognition test below pass while
+    every real envelope was refused, and it is why a docstring asserting a provenance the code does
+    not have is worse than no docstring: it is what a reader checks instead of the code.
+    `change_class = "dependency-update"`, and `constraints.allowed_commands = [*mutations,
+    verifier]` where the uv mutator is `uv add` and the uv verifier is `uv lock --check`. The pin
+    moved is the real one (`ruff` 0.15.20 to 0.15.21, this repository, 2026-08-01).
 
-    It differs from the contract envelope above in exactly one place -- the command list -- because
-    that profile has since forbidden `make check` in an envelope, and `uv sync --locked` left with
-    it. That difference is the whole fires/suppresses pair below.
+    It differs from the contract envelope above in its budgets (the specimen is frozen at the
+    2026-08-01 shape) and in its command list, because that profile has since forbidden
+    `make check` in an envelope and `uv sync --locked` left with it. The command-list difference
+    is the whole fires/suppresses pair below.
     """
     mutation = "uv add --dev 'ruff>=0.15.21'"
     envelope = deepcopy(CONTRACT_ENVELOPE)
     # The budgets the PROFILE stamps, never the specimen's. See PROFILE_BUDGETS.
     envelope["budgets"] = dict(PROFILE_BUDGETS)
+    # And the capabilities the profile stamps, for the same reason. See PROFILE_CAPABILITIES.
+    envelope["capabilities"] = dict(PROFILE_CAPABILITIES)
     envelope["constraints"] = {
         "allowed_commands": [mutation, "uv lock --check"],
         "mutation_commands": [mutation],
@@ -474,3 +492,21 @@ def test_uv_bump_carries_the_profile_budgets_and_not_the_specimen_s() -> None:
         "the specimen and the profile agreeing would make this test vacuous -- if a future change "
         "aligns them, this assertion is the thing to reconsider, not to delete"
     )
+
+
+def test_the_pattern_capabilities_equal_what_the_profile_stamps() -> None:
+    """EQUALITY, the same relation the budgets are held to. `_within` matches capabilities as a
+    subset of the pattern's, so a pattern declaring a capability the profile never stamps would
+    recognise an envelope no profile emits -- widening the recognised shape without an edit that
+    says so. One declaring fewer would recognise nothing, silently, as the budgets once did."""
+    assert dict(_the_uv_pattern().capabilities) == PROFILE_CAPABILITIES
+
+
+def test_uv_bump_takes_its_capabilities_from_the_profile_constant(monkeypatch) -> None:
+    """The provenance claim, pinned by moving the constant. Comparing values cannot discriminate:
+    the specimen and the profile happen to carry the same capabilities today, so deleting
+    `uv_bump`'s capability line would leave every value-based assertion green."""
+    sentinel = {"repo.read": "allowed"}
+    monkeypatch.setattr(sys.modules[__name__], "PROFILE_CAPABILITIES", sentinel)
+
+    assert uv_bump()["capabilities"] == sentinel

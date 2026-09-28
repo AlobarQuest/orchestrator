@@ -145,7 +145,7 @@ jobs:
       # Reads intent-packages at `main` rather than at a pin: this repository declares no
       # revision of it, and the claim the pattern makes is about the profile as it stands. A pin
       # would be a second thing to keep current, which is the shape of the defect being closed.
-      - name: Check the known-good pattern's budgets against the profile
+      - name: Check the known-good pattern's budgets and capabilities against the profile
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python scripts/check_profile_budget_agreement.py
@@ -169,6 +169,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: .venv/bin/python scripts/check_change_record_field_compatibility.py
+
+      # THE SEVENTH SURFACE: what this repository derives for the change record of a repository
+      # whose rollout runs on landing, against the text change-manager's current policy version
+      # ratifies. change-manager compares the two byte for byte, so a one-sided edit leaves every
+      # record for that
+      # repository pending, and a pending record is invisible to the lander. Each side had
+      # pinned its own literal and claimed the other asserted the same one; on 2026-09-27 they
+      # were two policy versions apart. Same job as its siblings, for the reason they give.
+      - name: Check derived rollout criteria against change-manager's ratified policy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .venv/bin/python -m scripts.check_rollout_policy_ratification
 
   # A SIXTH SURFACE, AND THE FIRST THAT IS DELIBERATELY ITS OWN JOB RATHER THAN A STEP ABOVE.
   #
