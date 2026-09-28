@@ -82,8 +82,8 @@ class Settings(BaseSettings):
     # point. A cap of 30 days makes the claim true of the values an operator can actually set --
     # silencing is now impossible rather than merely unfashionable.
     # The cap is the point; the floor is not. A LARGE value silences the report (that is the
-    # failure mode), while 0 merely reports everything -- maximally on, and what drill 5 uses so
-    # it needs no sleep. So: 0 <= x <= 30 days.
+    # failure mode), while 0 merely reports everything -- maximally on, and what the tests use so
+    # they need no sleep. So: 0 <= x <= 30 days.
     dead_letter_stalled_approval_seconds: int = Field(
         default=604_800, ge=0, le=2_592_000
     )  # 7 days; capped at 30

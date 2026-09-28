@@ -65,10 +65,10 @@ class DependencySpec:
 # Who may register a package revision. A SET per entry point rather than one rule, because the
 # two entry points genuinely differ and ADR-0027 narrowed exactly one of them.
 #
-# `POST /api/v1/revisions` -- the WS-3.1 bootstrap lane -- keeps the default and stays
-# human-only, which on the M2M-only router means no principal can reach it at all. That is its
-# state today and this change does not alter it: widening the default here would make a lane
-# that skips every intake validation reachable by a machine, which nobody decided.
+# The WS-3.1 bootstrap lane's route (`POST /api/v1/revisions`) was deleted by ADR-0049; its only
+# remaining caller is the test-only seeding router, which keeps the default and stays human-only.
+# Widening the default here would let a caller that skips every intake validation register as a
+# machine, which nobody decided.
 #
 # The intake path passes the wider set (`package_intake.INTAKE_REGISTRAR_ROLES`) having already
 # applied ADR-0027's stricter asymmetric rule, so the wider set is a consequence of that
@@ -283,9 +283,9 @@ def register_revision(
         #
         # It takes no legacy exemption, and unlike `follow_up` above it cannot rely on reason 2
         # -- a change record id is not inside `canonical_package_hash`, so it cannot
-        # self-differentiate a revision. Reason 1 is what carries it: the only caller that
-        # passes `idempotency_key` here is `POST /api/v1/revisions`, unreachable by any
-        # principal in production. The intake path's own replay comparison is one layer up and
+        # self-differentiate a revision. Reason 1 is what carries it: no production caller passes
+        # `idempotency_key` here since ADR-0049 deleted `POST /api/v1/revisions`; only the
+        # test-only seeding router does. The intake path's own replay comparison is one layer up and
         # DOES carry an exemption, in `package_intake._legacy_identity_matches`.
         "change_record_id": change_record_id,
         # ADR-0026 amendment 1, and it is in `candidate` for the reason above rather than for a
