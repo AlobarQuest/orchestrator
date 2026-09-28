@@ -238,7 +238,7 @@ def test_ws32_merge_exemption_names_only_files_that_exist_and_still_need_it() ->
     outlives the merge code it was granted for goes on excusing merge vocabulary in a file that
     merges nothing -- an exemption nobody needs is an exemption nobody is watching."""
     missing = [str(path) for path in MERGE_EXEMPT_PATHS if not path.exists()]
-    assert not missing, f"the merge exemption names no file inside the tree it scans: {missing}"
+    assert not missing, f"the merge exemption names files that no longer exist: {missing}"
 
     unused = [
         str(path)
