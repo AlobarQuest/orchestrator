@@ -21,15 +21,7 @@ from bump_proposer.landing_policy import InertLanding
 from deploy_watcher.github import ReadError
 from inert_lander.cli import (
     _DEFERRAL_AUTHOR,
-    _NOT_A_FINDING,
-    _REPORTED,
-    _SETTLED,
-    _UPDATE_SELF_CLEARING,
-    EXIT_FINDINGS,
-    EXIT_OK,
-    EXIT_TOOL_FAILURE,
-    EXIT_UNUSABLE,
-    Outcome,
+    LANE,
     _branch_updates,
     _key,
     _pass,
@@ -42,6 +34,16 @@ from inert_lander.orchestrator_client import (
     LandingRefused,
     OrchestratorClient,
     OrchestratorError,
+)
+from lander.core import (
+    EXIT_FINDINGS,
+    EXIT_OK,
+    EXIT_TOOL_FAILURE,
+    EXIT_UNUSABLE,
+    NOT_A_FINDING,
+    REPORTED,
+    SETTLED,
+    Outcome,
 )
 
 REPOSITORY = "alobarquest/intent-packages"
@@ -306,7 +308,7 @@ def test_a_held_pull_request_names_the_condition_it_misses_and_is_a_FINDING() ->
     assert report(outcomes, {}, 6) == EXIT_FINDINGS
 
 
-@pytest.mark.parametrize("refusal", sorted(_SETTLED))
+@pytest.mark.parametrize("refusal", sorted(SETTLED))
 def test_a_SETTLED_subject_is_not_a_finding(refusal: str) -> None:
     """One landing, or one pull request a person merged themselves, must not become a nightly
     page forever. The row this lane writes has no delete path."""
@@ -556,7 +558,7 @@ def test_an_unreadable_answer_updates_nothing() -> None:
     assert client.updated == []
 
 
-@pytest.mark.parametrize("code", sorted(_UPDATE_SELF_CLEARING))
+@pytest.mark.parametrize("code", sorted(LANE.update_self_clearing))
 def test_a_refusal_that_only_says_THE_ANSWER_MOVED_is_not_a_finding(code: str) -> None:
     """The answer and the act are separate transactions by design, so a head the update bot
     rebased in that window is ordinary rather than exotic."""
@@ -618,11 +620,11 @@ def test_the_update_key_is_content_addressed_over_the_head() -> None:
 
 
 def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered(capsys) -> None:
-    outcomes = [Outcome(REPOSITORY, index, status, "") for index, status in enumerate(_REPORTED)]
+    outcomes = [Outcome(REPOSITORY, index, status, "") for index, status in enumerate(REPORTED)]
     report(outcomes, {}, 6)
     printed = capsys.readouterr().out
     assert f"{len(outcomes)} considered" in printed
-    for status in _REPORTED:
+    for status in REPORTED:
         assert f"1 {status}" in printed
 
 
@@ -640,14 +642,14 @@ def test_a_status_nobody_classified_is_a_finding() -> None:
 def test_every_NOT_A_FINDING_status_is_one_the_summary_counts() -> None:
     """A status excluded from findings but absent from the report order would vanish from the
     summary while still being printed as a line."""
-    assert _NOT_A_FINDING <= set(_REPORTED)
+    assert NOT_A_FINDING <= set(REPORTED)
 
 
 def test_the_status_column_is_wide_enough_for_the_widest_status(capsys) -> None:
     """The column is a literal width, so a status longer than it runs into the detail with no
-    separating space and the report stops lining up. Read from `_REPORTED` rather than restated,
+    separating space and the report stops lining up. Read from `REPORTED` rather than restated,
     so a longer status added later reddens this rather than being noticed by eye."""
-    widest = max(_REPORTED, key=len)
+    widest = max(REPORTED, key=len)
     report([Outcome(REPOSITORY, 1, widest, "detail")], {}, 6)
     assert f"{widest} detail" in capsys.readouterr().out
 
@@ -867,7 +869,7 @@ def test_a_sibling_WITHHELD_for_a_holding_branch_reads_waiting_only_on_the_key(
 
 def test_waiting_is_not_a_finding() -> None:
     assert report([Outcome(REPOSITORY, 1, "waiting", "")], {}, 6) == EXIT_OK
-    assert "waiting" in _REPORTED
+    assert "waiting" in REPORTED
 
 
 def test_the_update_pass_SKIPS_a_withheld_sibling_with_no_line() -> None:
@@ -913,5 +915,5 @@ def test_no_reported_status_is_a_substring_of_another() -> None:
     `held` meant `grep held` matched both and an "absent" assertion on `held` failed for a
     status that was not `held` at all. Holds for every pair, including statuses added later.
     """
-    collisions = [(a, b) for a in _REPORTED for b in _REPORTED if a != b and a in b]
+    collisions = [(a, b) for a in REPORTED for b in REPORTED if a != b and a in b]
     assert collisions == []

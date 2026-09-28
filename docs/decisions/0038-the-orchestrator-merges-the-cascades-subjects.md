@@ -297,3 +297,16 @@ rationale already records that both lanes gate on the required checks passing. I
 deploying lane, whose population, criteria, rollback plans and pace are unchanged. And it does not
 retire the six scheduled `main` verification runs, which is a decision to take once the gained CI has
 been observed rather than predicted.
+
+## Amendment 1 (2026-09-28): two programs, one body
+
+Tier 3 item 27 (Devon, 2026-09-28) merged the body `estate_lander` and `inert_lander` shared --
+asking, classifying, acting and reporting -- into `src/lander/core.py`, parameterised by a `Lane`
+descriptor per program. **The programs stay two**, for the reasons this ADR and the inert lander's
+own docstring give: two console scripts, launchers, schedules, dead-man checks, credentials,
+confined clients and enumerations. The objection recorded when the inert lander was built -- that
+sharing the classifier would install suppressions that cannot fire for this lane -- is answered by
+the descriptor rather than overridden: the inert `Lane` carries an empty deliberate set, its own
+exception, its own `inert_*` self-clearing set and `reads_rollout_pin=False`, each pinned by a test
+that reddens if it is collapsed into the estate lane's. No output line, classification or exit code
+changed.

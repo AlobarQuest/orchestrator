@@ -274,6 +274,12 @@ CLASSIFICATION: dict[str, Row] = {
         "ADR-0019 inc 4: proposes deploy change records to change-manager; the orchestrator is "
         "not its client",
     ),
+    "lander": Row(
+        Role.NOT_AN_ORCHESTRATOR_WRITER,
+        "ADR-0038 amendment 1 (Tier 3 item 27): the body the two landing callers share; names no "
+        "orchestrator path and acts only through the confined client a lane passes in, whose "
+        "writes are that lane's row",
+    ),
     "work_watcher": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,
         "ADR-0029: reads what a change record caused and retires the record in change-manager; "

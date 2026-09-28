@@ -368,9 +368,9 @@ def test_the_callers_SELF_CLEARING_set_is_exactly_the_codes_this_act_raises_for_
     EQUALITY, not containment. Containment would pass while the caller excused a code this act
     never raises, and it would pass while the act grew a third that the caller reported forever.
     """
-    from inert_lander.cli import _UPDATE_SELF_CLEARING
+    from inert_lander.cli import LANE
 
-    assert _UPDATE_SELF_CLEARING == {
+    assert LANE.update_self_clearing == {
         INERT_BRANCH_UPDATE_HEAD_MOVED,
         INERT_BRANCH_UPDATE_NOT_QUALIFIED,
         INERT_BRANCH_UPDATE_SIBLING_HOLDING,
@@ -381,28 +381,28 @@ def test_the_remote_REFUSING_is_NOT_one_of_them() -> None:
     """A stated control, because it is the near miss. A remote that declined to bring the branch
     up to date is a condition somebody can act on, and folding it in with the two above would
     make a lane that has stopped working read as a lane that is working."""
-    from inert_lander.cli import _UPDATE_SELF_CLEARING
+    from inert_lander.cli import LANE
 
-    assert INERT_BRANCH_UPDATE_REFUSED_BY_REMOTE not in _UPDATE_SELF_CLEARING
+    assert INERT_BRANCH_UPDATE_REFUSED_BY_REMOTE not in LANE.update_self_clearing
 
 
 def test_an_UNREADABLE_scan_is_NOT_self_clearing() -> None:
     """ADR-0045. A holding sibling clears when the branch ahead lands; a scan that could not read
     is the orchestrator not knowing, which clears on nothing. Folding the second in with the first
     would make a repository whose reads keep failing look like one waiting its turn."""
-    from inert_lander.cli import _UPDATE_SELF_CLEARING
+    from inert_lander.cli import LANE
 
-    assert INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE not in _UPDATE_SELF_CLEARING
+    assert INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE not in LANE.update_self_clearing
 
 
 def test_the_WIRE_KEY_the_caller_reads_the_withheld_fact_from_is_a_field_this_side_SERVES() -> None:
     """ADR-0045. Read by a name the server does not serve, the key reads as absent, the caller
     treats it as false, and every queued sibling is reported as a finding with nothing saying why.
     Pinned against the service dataclass, which is what the route serializes."""
-    from inert_lander.cli import _WITHHELD_FOR_SIBLING
+    from lander.core import WITHHELD_FOR_SIBLING
     from orchestrator.services.landing.inert_landing_admission import InertLandingAdmission
 
-    assert _WITHHELD_FOR_SIBLING in InertLandingAdmission.__dataclass_fields__
+    assert WITHHELD_FOR_SIBLING in InertLandingAdmission.__dataclass_fields__
 
 
 def test_composing_the_answer_alone_observes_no_sibling(migrated_session: Session) -> None:
@@ -428,13 +428,27 @@ def test_the_callers_SETTLED_set_is_exactly_the_refusals_that_mean_there_is_noth
     """The two the caller reports as settled rather than as findings. Read from the admission
     module that raises them, so a rename there reddens this rather than making one landing a
     nightly page forever."""
-    from inert_lander.cli import _SETTLED
+    from lander.core import SETTLED
     from orchestrator.services.landing.interfaces import (
         LANDING_ALREADY_RECORDED,
         LANDING_PULL_REQUEST_NOT_OPEN,
     )
 
-    assert _SETTLED == {LANDING_ALREADY_RECORDED, LANDING_PULL_REQUEST_NOT_OPEN}
+    assert SETTLED == {LANDING_ALREADY_RECORDED, LANDING_PULL_REQUEST_NOT_OPEN}
+
+
+def test_the_callers_EXCEPTION_set_is_exactly_the_refusal_current_policy_never_clears() -> None:
+    """The one exception this lane suppresses, and the condition of its freshness suppression.
+
+    A one-member set is below the AST scanner's two-member threshold, so nothing else held this
+    agreement. Rename the code on this side and the caller stops classifying an excluded ecosystem
+    as an exception AND stops suppressing its freshness refusal -- a permanent nightly finding.
+    Set equality: a member ADDED and pinned to nothing is the same hole one element over.
+    """
+    from inert_lander.cli import LANE
+    from orchestrator.services.landing.interfaces import LANDING_ECOSYSTEM_EXCLUDED
+
+    assert LANE.exception == {LANDING_ECOSYSTEM_EXCLUDED}
 
 
 def test_the_caller_composes_the_key_THIS_TEST_FILE_IS_WRITTEN_AGAINST() -> None:

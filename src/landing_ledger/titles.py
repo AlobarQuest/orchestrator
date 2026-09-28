@@ -12,7 +12,7 @@ rather than trusted.** The authority is
 here cannot import: an out-of-process program in this repository imports nothing from
 ``orchestrator``, and that module reaches SQLAlchemy. The estate's answer to a vocabulary
 that must agree across that boundary is a mirror pinned by a test that imports both -- the
-arrangement ``estate_lander._DELIBERATE`` already uses. Here the pin is stronger than a
+arrangement ``estate_lander.cli.LANE.deliberate`` already uses. Here the pin is stronger than a
 literal comparison: ``tests/landing_ledger/test_titles.py`` asserts that the two agree on the
 classification of every title in a corpus, including every open pull request the estate
 carried when this shipped, so a divergence is a red test rather than a consumer quietly
