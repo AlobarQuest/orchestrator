@@ -264,6 +264,28 @@ _BRAIN_DEPLOYMENT_ID_CHECKED = Attestation(
     trigger_step="Deploy brain apps",
 )
 
+# change-manager#99 and brain#77, 2026-09-28 -- the Python 3.14 move. Each workflow's
+# setup-python steps now read `.python-version`, and change-manager's `build-and-deploy` job gains
+# one so its verify step's `python3` is the pinned interpreter. In both files the production job's
+# trigger step and verify step are byte-identical to the revision they supersede, so what a green
+# run attests has not moved. Separate entries rather than aliases, because the registry keys on
+# BYTES -- the same reason `_CM_UV_TESTS` is not `_CM_ORIGINAL`.
+_CM_PYTHON_314 = Attestation(
+    revision="b92f812ccb036027d4bc8682405ab092ec32eb17",
+    level=_CM_VERIFIES_REVISION.level,
+    attests=_CM_VERIFIES_REVISION.attests,
+    rollout_job=_CM_VERIFIES_REVISION.rollout_job,
+    trigger_step=_CM_VERIFIES_REVISION.trigger_step,
+)
+
+_BRAIN_PYTHON_314 = Attestation(
+    revision="2017c1ed0fcfbb844d2b933c542c9a5f29a1f17a",
+    level=_BRAIN_DEPLOYMENT_ID_CHECKED.level,
+    attests=_BRAIN_DEPLOYMENT_ID_CHECKED.attests,
+    rollout_job=_BRAIN_DEPLOYMENT_ID_CHECKED.rollout_job,
+    trigger_step=_BRAIN_DEPLOYMENT_ID_CHECKED.trigger_step,
+)
+
 REGISTRY: dict[str, Attestation] = {
     attestation.revision: attestation
     for attestation in (
@@ -275,6 +297,8 @@ REGISTRY: dict[str, Attestation] = {
         _BRAIN_FOUR,
         _BRAIN_VERIFIES_REVISION,
         _BRAIN_DEPLOYMENT_ID_CHECKED,
+        _CM_PYTHON_314,
+        _BRAIN_PYTHON_314,
     )
 }
 

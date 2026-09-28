@@ -60,13 +60,16 @@ def test_every_level_is_one_of_the_three() -> None:
     assert {a.level for a in REGISTRY.values()} <= ATTESTATION_LEVELS
 
 
-def test_exactly_three_revisions_confirm_the_deployed_build() -> None:
+def test_exactly_five_revisions_confirm_the_deployed_build() -> None:
     """A literal assertion, not a derived one.
 
     Of both repositories' entire history, three workflow revisions make a green run mean that the
     merged build is the one production is serving: `change-manager`'s `191ec5a` (2026-08-07),
     `brain`'s `1d9e7d3` (2026-08-14), which is the same improvement made a week later, and
-    `brain#62` (2026-09-08), which keeps that poll and adds two refusals around it. Deriving this
+    `brain#62` (2026-09-08), which keeps that poll and adds two refusals around it. The other two
+    are `191ec5a` and `brain#62` again with only their setup steps moved to Python 3.14
+    (change-manager#99, brain#77, 2026-09-28): same production job, same bytes where it counts.
+    Deriving this
     from the registry would let the registry change it silently — and a REVISION level is the
     difference between a record that can be landed unattended and one that cannot.
 
@@ -77,11 +80,13 @@ def test_exactly_three_revisions_confirm_the_deployed_build() -> None:
     """
     confirming = sorted(r for r, a in REGISTRY.items() if a.level == ATTESTS_REVISION)
     assert confirming == [
+        "2017c1ed0fcfbb844d2b933c542c9a5f29a1f17a",
         "7cf6ca2d2a508b1643cdb5ac0d5390357f397d54",
         "a47d4b187c93971a5b5915ce87a963bd4ef35e30",
+        "b92f812ccb036027d4bc8682405ab092ec32eb17",
         "c5c088719cd340f0071b875c6a82439292ed8756",
     ]
-    assert len(REGISTRY) == 8
+    assert len(REGISTRY) == 10
 
 
 def test_an_unclassified_revision_is_unknown_and_never_upgraded() -> None:
