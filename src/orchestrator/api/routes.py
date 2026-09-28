@@ -117,13 +117,7 @@ from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     ContextSnapshot,
     DecompositionProposal,
-    DecompositionProposalAcMapping,
-    DecompositionProposalDependency,
-    DecompositionProposalRetainedAc,
-    DecompositionProposalUnit,
-    Event,
     Observation,
-    PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
 )
@@ -228,6 +222,12 @@ from orchestrator.services.infra_links import (
     InfraLaneLinkCommand,
     list_infra_lane_links,
     record_infra_lane_link,
+)
+from orchestrator.services.intake_reads import (
+    acceptance_criteria_by_id,
+    intake_authority,
+    proposal_children,
+    revision_acceptance_criteria,
 )
 from orchestrator.services.knowledge_promotions import (
     HttpBrainProposalClient,
@@ -2379,23 +2379,7 @@ def _package_intake_payload(
     session: Session,
     revision: WorkPackageRevision,
 ) -> dict[str, object]:
-    acceptance_criteria = tuple(
-        session.scalars(
-            select(PackageAcceptanceCriterion)
-            .where(PackageAcceptanceCriterion.work_package_revision_id == revision.id)
-            .order_by(PackageAcceptanceCriterion.ac_id, PackageAcceptanceCriterion.id)
-        )
-    )
-    intake_event = session.scalar(
-        select(Event)
-        .where(
-            Event.subject_type == "work_package_revision",
-            Event.subject_id == revision.id,
-            Event.action == "package_revision.intake_registered",
-        )
-        .order_by(Event.occurred_at, Event.id)
-    )
-    command = intake_event.payload.get("command", {}) if intake_event is not None else {}
+    acceptance_criteria = revision_acceptance_criteria(session, revision.id)
     return {
         "id": revision.id,
         "package_id": revision.work_package.package_id,
@@ -2415,7 +2399,7 @@ def _package_intake_payload(
         "verification_limitations": revision.verification_limitations,
         "enforcement_snapshot": revision.enforcement_snapshot,
         "authority_fingerprint": revision.authority_fingerprint,
-        "authority": command.get("authority"),
+        "authority": intake_authority(session, revision.id),
         "follow_up": revision.follow_up,
         "change_record_id": revision.change_record_id,
         "originating_observation_id": revision.originating_observation_id,
@@ -2435,69 +2419,32 @@ def _proposal_payloads(
 ) -> dict[UUID, dict[str, object]]:
     if not proposals:
         return {}
-    proposal_ids = tuple(proposal.id for proposal in proposals)
+    children = proposal_children(session, tuple(proposal.id for proposal in proposals))
     units_by_proposal: dict[UUID, list[dict[str, object]]] = defaultdict(list)
-    dependencies_by_proposal: dict[UUID, list[dict[str, object]]] = defaultdict(list)
-    mappings_by_proposal: dict[UUID, list[DecompositionProposalAcMapping]] = defaultdict(list)
-    retained_by_proposal: dict[UUID, list[DecompositionProposalRetainedAc]] = defaultdict(list)
-
-    for unit in session.scalars(
-        select(DecompositionProposalUnit)
-        .where(DecompositionProposalUnit.proposal_id.in_(proposal_ids))
-        .order_by(DecompositionProposalUnit.proposal_id, DecompositionProposalUnit.unit_key)
-    ):
-        payload = DecompositionProposalUnitResponse.model_validate(unit).model_dump(mode="json")
-        payload["authority"] = normalize_authority(unit.authority).normalized()
-        units_by_proposal[unit.proposal_id].append(payload)
-    for dependency in session.scalars(
-        select(DecompositionProposalDependency)
-        .where(DecompositionProposalDependency.proposal_id.in_(proposal_ids))
-        .order_by(
-            DecompositionProposalDependency.proposal_id,
-            DecompositionProposalDependency.source_unit_key,
-            DecompositionProposalDependency.target_unit_key,
-            DecompositionProposalDependency.external_ref,
-        )
-    ):
-        dependencies_by_proposal[dependency.proposal_id].append(
+    for proposal_id, units in children.units.items():
+        for unit in units:
+            payload = DecompositionProposalUnitResponse.model_validate(unit).model_dump(mode="json")
+            payload["authority"] = normalize_authority(unit.authority).normalized()
+            units_by_proposal[proposal_id].append(payload)
+    dependencies_by_proposal = {
+        proposal_id: [
             DecompositionProposalDependencyResponse.model_validate(dependency).model_dump(
                 mode="json"
             )
-        )
-    criterion_ids: set[UUID] = set()
-    for mapping in session.scalars(
-        select(DecompositionProposalAcMapping)
-        .where(DecompositionProposalAcMapping.proposal_id.in_(proposal_ids))
-        .order_by(
-            DecompositionProposalAcMapping.proposal_id,
-            DecompositionProposalAcMapping.unit_key,
-            DecompositionProposalAcMapping.package_acceptance_criterion_id,
-        )
-    ):
-        mappings_by_proposal[mapping.proposal_id].append(mapping)
-        criterion_ids.add(mapping.package_acceptance_criterion_id)
-    for retained in session.scalars(
-        select(DecompositionProposalRetainedAc)
-        .where(DecompositionProposalRetainedAc.proposal_id.in_(proposal_ids))
-        .order_by(
-            DecompositionProposalRetainedAc.proposal_id,
-            DecompositionProposalRetainedAc.package_acceptance_criterion_id,
-        )
-    ):
-        retained_by_proposal[retained.proposal_id].append(retained)
-        criterion_ids.add(retained.package_acceptance_criterion_id)
-
+            for dependency in dependencies
+        ]
+        for proposal_id, dependencies in children.dependencies.items()
+    }
+    mappings_by_proposal = children.mappings
+    retained_by_proposal = children.retained
+    criterion_ids = {
+        row.package_acceptance_criterion_id
+        for rows in (*mappings_by_proposal.values(), *retained_by_proposal.values())
+        for row in rows
+    }
     criteria_by_id = {
-        criterion.id: PackageAcceptanceCriterionResponse.model_validate(criterion)
-        for criterion in (
-            session.scalars(
-                select(PackageAcceptanceCriterion)
-                .where(PackageAcceptanceCriterion.id.in_(criterion_ids))
-                .order_by(PackageAcceptanceCriterion.ac_id, PackageAcceptanceCriterion.id)
-            )
-            if criterion_ids
-            else ()
-        )
+        criterion_id: PackageAcceptanceCriterionResponse.model_validate(criterion)
+        for criterion_id, criterion in acceptance_criteria_by_id(session, criterion_ids).items()
     }
 
     payloads: dict[UUID, dict[str, object]] = {}
