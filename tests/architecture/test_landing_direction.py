@@ -17,7 +17,10 @@ a module belongs to, and which role it plays -- so a module nobody classified fa
 * no admission module imports an act module -- an admission answers, an act does, and a constant
   both need belongs in `interfaces`;
 * `interfaces` imports nothing from the package and no HTTP client, so every party can reach it;
-* `terms` imports only `interfaces` from the package.
+* `terms` imports only `interfaces` from the package;
+* `lane_act`, which holds the steps both lanes' acts share, imports no lane module and names no
+  landing call -- each lane makes its own, in its own module, which is the file the repository's
+  guard against unattended landings lists for that lane's recorded reason.
 
 `estate_landing` is NOT in the estate lane despite its name: it is the client for the estate's own
 answer about what landing on a repository does, which all three lanes read.
@@ -56,6 +59,7 @@ SHARED = frozenset(
         "interfaces",
         "terms",
         "branch_update_serialization",
+        "lane_act",
         "change_record",
         "estate_landing",
         "pr_merge",
@@ -81,6 +85,7 @@ NEITHER = frozenset(
         "interfaces",
         "terms",
         "branch_update_serialization",
+        "lane_act",
         "change_record",
         "estate_landing",
         "inert_landing_policy",
@@ -266,3 +271,14 @@ def test_every_import_of_a_landing_name_names_the_module_that_defines_it() -> No
             ):
                 stale.append(f"{path}:{node.lineno}: {node.attr} through {module}")
     assert not stale, stale
+
+
+def test_the_shared_act_steps_name_no_lane_and_no_landing_call() -> None:
+    """The remote landing call stays in each lane's own module, where the merge guard's exemption
+    for that lane is recorded. A shared module that made it -- under either lane's spelling --
+    would put a landing in a file no exemption names, and one the text scan cannot see, since
+    `submit_merge` contains neither the REST path nor a `.merge(` call."""
+    assert not _landing_modules_imported("lane_act") & (ESTATE_LANE | INERT_LANE)
+    tree = ast.parse((LANDING / "lane_act.py").read_text(), filename="lane_act.py")
+    attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    assert not attributes & {"merge", "submit_merge"}

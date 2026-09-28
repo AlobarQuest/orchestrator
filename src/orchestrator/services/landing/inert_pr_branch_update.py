@@ -63,30 +63,25 @@ already holds. It never reads the served answer's copy of the fact.
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
-from typing import Final, Protocol
+from typing import Final
 
-from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import Clock
-from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorContext, ActorRole
-from orchestrator.persistence.models import Event
+from orchestrator.kernel.states import ActorContext
 from orchestrator.services.landing.branch_update_serialization import (
     INERT_BRANCH_UPDATE_ACTION,
-    SiblingOutcome,
-    branch_update_sibling_outcome,
     inert_sibling_composer,
 )
 from orchestrator.services.landing.estate_landing import EstateLandingSource
 from orchestrator.services.landing.inert_landing_admission import inert_landing_admission
 from orchestrator.services.landing.inert_landing_policy import InertLandingPolicySource
-from orchestrator.services.landing.interfaces import (
-    EstateGatewayError,
-    SiblingReadGateway,
-    gateway_failure_detail,
+from orchestrator.services.landing.lane_act import (
+    BranchUpdateGateway,
+    BranchUpdateLane,
+    BranchUpdateOutcome,
+    update_pull_request_branch,
 )
 
 INERT_BRANCH_UPDATE_SUBJECT: Final = "inert_pull_request"
@@ -112,29 +107,15 @@ INERT_BRANCH_UPDATE_SIBLING_HOLDING: Final = "inert_branch_update_sibling_holdin
 # self-clearing: not knowing clears on nothing.
 INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE: Final = "inert_branch_update_siblings_unreadable"
 
-
-@dataclass(frozen=True)
-class InertBranchUpdateOutcome:
-    """What was done, named so the caller can print it and the response can carry it."""
-
-    repository: str
-    pr_number: int
-    head_sha: str
-    # WAS THIS ANSWERED FROM A SPENT KEY RATHER THAN ACTED ON? Reported because of what a replay
-    # here actually means. The caller's key is content-addressed over the head, and a successful
-    # update CHANGES the head -- so a second request carrying the same key is a request about a
-    # branch that did not move. The platform answers 202 and does the work afterwards, so the one
-    # realistic way to reach this path is that it accepted and did not deliver.
-    #
-    # Left unreported, that failure describes itself as success FOREVER: still behind, still
-    # qualifying, same head, same key, replayed, printed as "updated", and never a finding.
-    replayed: bool
-
-
-class InertBranchUpdateGateway(SiblingReadGateway, Protocol):
-    """Everything the composed answer reads, plus the one call that changes anything."""
-
-    def update_branch(self, *, repository: str, number: int, expected_head_sha: str) -> None: ...
+_LANE: Final = BranchUpdateLane(
+    action=INERT_BRANCH_UPDATE_ACTION,
+    subject_type=INERT_BRANCH_UPDATE_SUBJECT,
+    not_qualified=INERT_BRANCH_UPDATE_NOT_QUALIFIED,
+    head_moved=INERT_BRANCH_UPDATE_HEAD_MOVED,
+    sibling_holding=INERT_BRANCH_UPDATE_SIBLING_HOLDING,
+    siblings_unreadable=INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE,
+    refused_by_remote=INERT_BRANCH_UPDATE_REFUSED_BY_REMOTE,
+)
 
 
 @dataclass(frozen=True)
@@ -152,104 +133,37 @@ class InertBranchUpdateCommand:
 def update_inert_pull_request_branch(
     session: Session,
     command: InertBranchUpdateCommand,
-    gateway: InertBranchUpdateGateway,
+    gateway: BranchUpdateGateway,
     landing_source: EstateLandingSource,
     policy_source: InertLandingPolicySource,
     *,
     enabled: bool,
     credentials_configured: bool,
     clock: Clock | None = None,
-) -> InertBranchUpdateOutcome:
-    """Own the transaction, because it writes the event that records the act.
+) -> BranchUpdateOutcome:
+    """Compose this lane's answer, and act only on what it says. The steps are `lane_act`'s.
 
-    A flush alone returns a correct-looking answer while the row is discarded when the session
-    closes, which would leave an act that really happened with no trace of it.
+    The caller's clock reaches only the sibling rule's ten-minute bound: this lane's answer reads
+    no clock of its own, for this pull request or for a sibling.
     """
-    try:
-        outcome = _update(
+    return update_pull_request_branch(
+        session,
+        command,
+        _LANE,
+        gateway,
+        admit=lambda repository: inert_landing_admission(
             session,
-            command,
-            gateway,
+            repository,
+            command.pr_number,
             landing_source,
             policy_source,
+            gateway,
             enabled=enabled,
             credentials_configured=credentials_configured,
-            clock=clock,
-        )
-        session.commit()
-        return outcome
-    except Exception:
-        session.rollback()
-        raise
-
-
-def _update(
-    session: Session,
-    command: InertBranchUpdateCommand,
-    gateway: InertBranchUpdateGateway,
-    landing_source: EstateLandingSource,
-    policy_source: InertLandingPolicySource,
-    *,
-    enabled: bool,
-    credentials_configured: bool,
-    clock: Clock | None,
-) -> InertBranchUpdateOutcome:
-    _authorize_actor(command.actor)
-    repository = command.repository.lower()
-
-    # BEFORE the spent-key lookup, or the lookup and the write straddle the window two concurrent
-    # requests would both pass through. The subject is a row that may not exist yet, which is
-    # exactly what a row lock cannot hold.
-    session.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-        {"key": f"estate_pr_branch_update:{repository}"},
-    )
-
-    spent = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))
-    if spent is not None:
-        return _replay(command, spent)
-
-    admission = inert_landing_admission(
-        session,
-        repository,
-        command.pr_number,
-        landing_source,
-        policy_source,
-        gateway,
-        enabled=enabled,
-        credentials_configured=credentials_configured,
-    )
-    if not admission.branch_update_qualifies:
-        raise DomainError(
-            INERT_BRANCH_UPDATE_NOT_QUALIFIED,
-            "this pull request's branch may not be brought up to date: "
-            + ", ".join(admission.refusals),
-            "read the landing-admission answer for every term that is unmet",
-        )
-
-    head_sha = admission.head_sha
-    if not head_sha:
-        # Unreachable through the cascade: a pull request that cannot be read refuses with a code
-        # that is not one of the self-clearing ones, so the answer above has already declined.
-        # Stated rather than assumed, because naming the head is the whole of the concurrency
-        # control and a call without one would act on whatever has been pushed since.
-        raise DomainError(INERT_BRANCH_UPDATE_NOT_QUALIFIED, "the head is not identified", None)
-
-    if head_sha != command.expected_head_sha:
-        raise DomainError(
-            INERT_BRANCH_UPDATE_HEAD_MOVED,
-            "the pull request's head is not the one the caller read",
-            "re-read the landing-admission answer and ask again",
-        )
-
-    outcome = branch_update_sibling_outcome(
-        session,
-        repository=admission.repository,
-        target_number=admission.pr_number,
-        gateway=gateway,
-        compose=inert_sibling_composer(
+        ),
+        sibling_composer=lambda repository: inert_sibling_composer(
             session,
-            admission.repository,
+            repository,
             landing_source,
             policy_source,
             gateway,
@@ -258,118 +172,3 @@ def _update(
         ),
         clock=clock,
     )
-    if outcome is SiblingOutcome.WITHHOLD_SIBLING_HOLDING:
-        raise DomainError(
-            INERT_BRANCH_UPDATE_SIBLING_HOLDING,
-            "another Dependabot pull request this lane has already edited is queued to land, "
-            "and this branch is still Dependabot's",
-            "the pull request ahead of it lands first; the next pass asks again",
-        )
-    if outcome is SiblingOutcome.WITHHOLD_SIBLINGS_UNREADABLE:
-        raise DomainError(
-            INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE,
-            "it could not be established that no other edited branch is queued to land",
-            "read the open pull requests and their commits; nothing was changed",
-        )
-
-    try:
-        gateway.update_branch(
-            repository=admission.repository,
-            number=admission.pr_number,
-            expected_head_sha=head_sha,
-        )
-    except EstateGatewayError as error:
-        raise DomainError(
-            INERT_BRANCH_UPDATE_REFUSED_BY_REMOTE,
-            f"the branch was not brought up to date: {gateway_failure_detail(error)}",
-            "nothing was recorded; the next pass composes the answer again and may ask again",
-        ) from error
-    _record(session, command, admission.repository, admission.pr_number, head_sha)
-    return InertBranchUpdateOutcome(
-        repository=admission.repository,
-        pr_number=admission.pr_number,
-        head_sha=head_sha,
-        replayed=False,
-    )
-
-
-def _subject_id(repository: str, pr_number: int) -> uuid.UUID:
-    """The pull request's own identity, since there is no row of ours to point at.
-
-    Derived from its URL rather than allocated, so the same pull request is the same subject on
-    every pass without anything having to store the mapping.
-    """
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"https://github.com/{repository}/pull/{pr_number}")
-
-
-def _replay(command: InertBranchUpdateCommand, spent: Event) -> InertBranchUpdateOutcome:
-    """This exact request, already performed. Answer from the record and touch nothing.
-
-    A KEY SPENT ON A DIFFERENT SUBJECT IS REFUSED rather than replayed, and the ACTION is part of
-    what makes a subject different. The event key space is global and both lanes write into it, so
-    without that clause a key spent by the other lane's branch update -- or by any other act in the
-    system -- would be answered here as though this pull request had been brought up to date.
-    """
-    payload = spent.payload if isinstance(spent.payload, dict) else {}
-    if (
-        spent.action != INERT_BRANCH_UPDATE_ACTION
-        or payload.get("repository") != command.repository.lower()
-        or payload.get("pr_number") != command.pr_number
-    ):
-        raise DomainError(
-            "idempotency_conflict",
-            "this idempotency key belongs to a different act",
-            "use a new idempotency key",
-        )
-    return InertBranchUpdateOutcome(
-        repository=str(payload.get("repository")),
-        pr_number=command.pr_number,
-        head_sha=str(payload.get("head_sha")),
-        replayed=True,
-    )
-
-
-def _record(
-    session: Session,
-    command: InertBranchUpdateCommand,
-    repository: str,
-    pr_number: int,
-    head_sha: str,
-) -> None:
-    """The act, written down. AFTER the call, never before.
-
-    A record written before a call that then fails is a lie, and this one is recoverable in the
-    direction it can fail: an act whose event is lost leaves the branch up to date and the next
-    pass simply finding nothing to do.
-    """
-    session.add(
-        Event(
-            actor_id=command.actor.actor_id,
-            action=INERT_BRANCH_UPDATE_ACTION,
-            subject_type=INERT_BRANCH_UPDATE_SUBJECT,
-            subject_id=_subject_id(repository, pr_number),
-            payload={
-                "repository": repository,
-                "pr_number": pr_number,
-                "head_sha": head_sha,
-            },
-            correlation_id=uuid.uuid4(),
-            idempotency_key=command.idempotency_key,
-        )
-    )
-    session.flush()
-
-
-def _authorize_actor(actor: ActorContext) -> None:
-    """SYSTEM only, for the reason both landing paths give.
-
-    Not the worker, because a runner asking for its own work to be made landable is the runner
-    attesting to its own compliance. And not a human either -- a person can bring a branch up to
-    date themselves, and this exists for the case where nobody had to.
-    """
-    if actor.role is not ActorRole.SYSTEM:
-        raise DomainError(
-            "role_forbidden",
-            "only the orchestrator system actor may bring a pull request's branch up to date",
-            None,
-        )

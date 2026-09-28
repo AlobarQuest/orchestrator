@@ -11,7 +11,7 @@ under the exact defect it would be written to catch.
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -46,6 +46,7 @@ from tests.services.inert_landing_doubles import (
     FakeInertPolicySource,
     rules,
 )
+from tests.services.landing_locks import hold_landing_lock
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 WORKER = ActorContext("claude-code-runner", ActorRole.WORKER)
@@ -147,6 +148,8 @@ def test_the_event_names_this_lane_rather_than_the_one_it_shares_a_table_with(
         event = reader.scalar(select(Event).where(Event.id == record.event_id))
     assert event is not None
     assert event.action == "inert_pr_merge.merged"
+    assert event.subject_type == "estate_pr_merge"
+    assert event.idempotency_key == "inert-1:event"
     assert event.payload["policy_version"] == INERT_POLICY_VERSION
     assert "change_record_id" not in event.payload
 
@@ -161,6 +164,8 @@ def test_only_the_system_actor_may_land(migrated_session: Session, actor: ActorC
         _land(migrated_session, gateway=gateway, command=_command(actor=actor))
 
     assert caught.value.code == "role_forbidden"
+    # The act's own verb, shared with the other lane's landing and not with either branch update.
+    assert caught.value.message == "only the orchestrator system actor may land a pull request"
     assert gateway.merges == []
 
 
@@ -445,3 +450,31 @@ def test_an_update_bot_pull_request_still_asks_for_a_squash(
     _land(migrated_session, gateway=gateway, policy_source=_sync_policy())
 
     assert gateway.merges[0][4] == SQUASH
+
+
+def test_the_ACTING_PATH_takes_the_landing_lock_the_other_lane_takes(
+    migrated_engine: Engine,
+) -> None:
+    """One table sits behind both lanes' landings, so both serialise on ONE key per repository.
+    The key is held here as a literal, so a lane that took a namespace of its own would land
+    straight through it. The CONTROL: the same key on a different repository leaves it alone."""
+    from sqlalchemy.exc import OperationalError
+
+    with Session(migrated_engine) as holder:
+        hold_landing_lock(holder, INERT_REPOSITORY)
+        gateway = ActingInertGateway(pull=pull_request(number=PR, head_ref=UV_BRANCH))
+        with Session(migrated_engine) as blocked:
+            blocked.execute(text("SET LOCAL lock_timeout = '1s'"))
+            with pytest.raises(OperationalError):
+                _land(blocked, gateway=gateway)
+        assert gateway.merges == [], "the landing reached the remote while another held the lock"
+        holder.rollback()
+
+    with Session(migrated_engine) as holder:
+        hold_landing_lock(holder, "alobarquest/brain")
+        control = ActingInertGateway(pull=pull_request(number=PR, head_ref=UV_BRANCH))
+        with Session(migrated_engine) as free:
+            free.execute(text("SET LOCAL lock_timeout = '1s'"))
+            assert _land(free, gateway=control).status == "merged"
+        assert len(control.merges) == 1
+        holder.rollback()

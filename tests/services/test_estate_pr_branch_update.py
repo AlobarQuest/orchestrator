@@ -20,7 +20,7 @@ under the exact defect it would be written to catch.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -79,6 +79,7 @@ from tests.services.estate_landing_doubles import (
     foreign_commit,
     pull_request,
 )
+from tests.services.landing_locks import hold_landing_lock
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 WORKER = ActorContext("claude-code-runner", ActorRole.WORKER)
@@ -633,6 +634,25 @@ def test_a_branch_that_could_not_land_ANYWAY_is_never_touched(
     assert gateway.branch_updates == []
 
 
+@pytest.mark.parametrize(
+    ("moment", "named"), [(IN_WINDOW, False), (OUT_OF_WINDOW, True)], ids=["inside", "outside"]
+)
+def test_the_refusal_names_the_window_as_read_at_the_CALLERS_clock(
+    migrated_session: Session, moment: datetime, named: bool
+) -> None:
+    """The window never decides a branch update -- it is a deliberate refusal, excused -- but the
+    answer this act refuses on is composed at the caller's clock, and its refusals are what the
+    message reports. A PAIR, because an act that read the real clock instead would agree with one
+    of the two for the wrong reason."""
+    gateway = _behind(pull=pull_request(title=RANGE_TITLE))
+
+    with pytest.raises(DomainError) as raised:
+        _update(migrated_session, gateway=gateway, moment=moment)
+
+    assert raised.value.code == BRANCH_UPDATE_NOT_QUALIFIED
+    assert (LANDING_OUTSIDE_CHANGE_WINDOW in raised.value.message) is named
+
+
 def test_a_branch_that_is_ALREADY_CURRENT_is_never_touched(migrated_session: Session) -> None:
     """Nothing to do. A pull request whose head is current is either about to land or is held on
     something a fresher base cannot fix."""
@@ -791,6 +811,10 @@ def test_only_the_system_actor_may_bring_a_branch_up_to_date(
         _update(migrated_session, gateway=gateway, actor=actor)
 
     assert raised.value.code == "role_forbidden"
+    # The act's own verb, shared with the other lane's branch update and not with either landing.
+    assert raised.value.message == (
+        "only the orchestrator system actor may bring a pull request's branch up to date"
+    )
     assert gateway.branch_updates == []
 
 
@@ -825,6 +849,9 @@ def test_the_act_is_recorded_as_an_event_and_is_readable_from_ANOTHER_session(
         event = reader.scalar(select(Event).where(Event.action == BRANCH_UPDATE_ACTION))
         assert event is not None
         assert event.subject_type == BRANCH_UPDATE_SUBJECT
+        assert BRANCH_UPDATE_SUBJECT == "estate_pull_request"
+        # The caller's key itself: this act writes no row, so its event is the one spent key.
+        assert event.idempotency_key == "branch-update-1"
         assert event.actor_id == "orchestrator-system"
         assert event.payload["repository"] == REPOSITORY
         assert event.payload["pr_number"] == PR
@@ -1401,6 +1428,23 @@ def test_the_repository_lock_is_actually_TAKEN_and_actually_WAITS(
         holder.rollback()
 
 
+def test_the_LANDING_lock_does_not_hold_a_branch_update(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """The two acts serialise on two keys, not one. The control for the test above: a branch
+    update is not made to wait on a landing in the same repository, so a lock that collapsed the
+    two namespaces -- and would make every freshening wait out every landing -- fails here."""
+    with Session(migrated_engine) as holder:
+        hold_landing_lock(holder, REPOSITORY)
+        migrated_session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+        gateway = _behind()
+
+        _update(migrated_session, gateway=gateway)
+
+        assert gateway.branch_updates == [(REPOSITORY, PR, HEAD)]
+        holder.rollback()
+
+
 def test_the_self_clearing_codes_are_exactly_the_ones_this_service_raises() -> None:
     """THE SECOND cross-boundary vocabulary this increment created, pinned like the first.
 
@@ -1560,3 +1604,46 @@ def test_an_unreadable_scan_refuses_with_its_own_code_and_touches_nothing(
     assert raised.value.code == BRANCH_UPDATE_SIBLINGS_UNREADABLE
     assert gateway.branch_updates == []
     assert _no_update_event_readable(migrated_engine)
+
+
+def _update_event(session: Session, *, occurred_at: datetime) -> None:
+    """An update this lane recorded against the SIBLING's current head -- the platform has
+    accepted it and not yet delivered, so the sibling's commits are still all the bot's."""
+    session.add(
+        Event(
+            occurred_at=occurred_at,
+            actor_id="orchestrator-system",
+            action=BRANCH_UPDATE_ACTION,
+            subject_type=BRANCH_UPDATE_SUBJECT,
+            subject_id=uuid.uuid4(),
+            payload={"repository": REPOSITORY, "pr_number": SIBLING, "head_sha": SIBLING_HEAD},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=f"earlier-{uuid.uuid4()}",
+        )
+    )
+    session.flush()
+
+
+def test_the_ten_minute_bound_reads_the_injected_clock(migrated_session: Session) -> None:
+    """Eleven minutes: the undelivered update has lapsed, the sibling reads as the bot's, and the
+    target is freshened."""
+    _update_event(migrated_session, occurred_at=IN_WINDOW - timedelta(minutes=11))
+    gateway = _beside_sibling()
+
+    _update(migrated_session, gateway=gateway, record_source=_both_records())
+
+    assert gateway.branch_updates == [(REPOSITORY, PR, HEAD)]
+
+
+def test_inside_the_bound_the_undelivered_update_still_holds(migrated_session: Session) -> None:
+    """The pair: nine minutes, same fixture. Only the injected clock separates the two, so an act
+    that ignored it would read the event's age against the real clock and agree with one of them
+    for the wrong reason."""
+    _update_event(migrated_session, occurred_at=IN_WINDOW - timedelta(minutes=9))
+    gateway = _beside_sibling()
+
+    with pytest.raises(DomainError) as raised:
+        _update(migrated_session, gateway=gateway, record_source=_both_records())
+
+    assert raised.value.code == BRANCH_UPDATE_SIBLING_HOLDING
+    assert gateway.branch_updates == []

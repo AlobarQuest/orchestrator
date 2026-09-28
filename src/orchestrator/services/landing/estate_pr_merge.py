@@ -6,10 +6,10 @@ at the moment it acts, and it is the more consequential of the two** -- the othe
 repositories the estate calls inert, where the landed commit sits until something separately acts
 on it. Here the landing IS the change to a running service.
 
-The shape is copied from that sibling, deliberately and almost exactly: an admission cascade of
-named refusals re-evaluated here, a record row with a unique constraint so a repeat is detectable,
-an injected client so the whole path runs with no network, and credentials resolved once so the
-gate can never attest to credentials the actor does not use.
+The shape is shared with that sibling, and its steps live once in `lane_act`: an admission
+cascade of named refusals re-evaluated here, a record row with a unique constraint so a repeat is
+detectable, an injected client so the whole path runs with no network, and credentials resolved
+once so the gate can never attest to credentials the actor does not use.
 
 ## Why the orchestrator, rather than the platform's own arming
 
@@ -50,19 +50,16 @@ until somebody writes an environment variable.
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 from urllib.parse import quote
 
 import httpx
-from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import Clock
-from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorContext, ActorRole
-from orchestrator.persistence.models import EstatePrMerge, Event
+from orchestrator.kernel.states import ActorContext
+from orchestrator.persistence.models import EstatePrMerge
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.landing.change_record import ChangeRecordSource
 from orchestrator.services.landing.estate_landing import EstateLandingSource
@@ -71,8 +68,6 @@ from orchestrator.services.landing.estate_landing_admission import (
     estate_landing_admission,
 )
 from orchestrator.services.landing.interfaces import (
-    MERGE_REFUSED_BY_REMOTE,
-    NEVER_SENT,
     SQUASH,
     EstateGatewayError,
     EstatePullRequest,
@@ -81,8 +76,8 @@ from orchestrator.services.landing.interfaces import (
     MergeOutcome,
     OpenPullRequest,
     PullRequestCommit,
-    gateway_failure_detail,
 )
+from orchestrator.services.landing.lane_act import LandingLane, land_pull_request
 
 GITHUB_API_URL: Final = "https://api.github.com"
 
@@ -104,6 +99,13 @@ POLICY_VERSION_TRAILER: Final = "SDS-Policy-Version"
 ESTATE_MERGE_NOT_ADMISSIBLE: Final = "estate_merge_not_admissible"
 ESTATE_MERGE_REFUSED_BY_REMOTE: Final = "estate_merge_refused_by_remote"
 ESTATE_MERGE_HEAD_MOVED: Final = "estate_merge_head_moved"
+
+_LANE: Final = LandingLane(
+    event_prefix="estate_pr_merge",
+    not_admissible=ESTATE_MERGE_NOT_ADMISSIBLE,
+    head_moved=ESTATE_MERGE_HEAD_MOVED,
+    refused_by_remote=ESTATE_MERGE_REFUSED_BY_REMOTE,
+)
 
 
 class EstatePullRequestGateway(EstateReadGateway, Protocol):
@@ -145,206 +147,48 @@ def land_estate_pull_request(
     credentials_configured: bool,
     clock: Clock | None = None,
 ) -> EstatePrMerge:
-    """Own the transaction, the way every request entry point in this repository does.
+    """Land the pull request if this lane's answer admits it. The steps are `lane_act`'s.
 
-    A flush alone would return a correct-looking response while the row is discarded when the
-    session closes -- leaving the record of an act that really happened absent, which is the one
-    state the whole idempotency story depends on not reaching.
+    The answer is read with the caller's clock, so the change window is judged on the acting path
+    exactly as on the read surface; the row names the change record the answer was admitted on.
     """
-    try:
-        record = _land(
+    return land_pull_request(
+        session,
+        command,
+        _LANE,
+        gateway,
+        admit=lambda repository: estate_landing_admission(
             session,
-            command,
-            gateway,
+            repository,
+            command.pr_number,
             landing_source,
             record_source,
+            gateway,
             enabled=enabled,
             credentials_configured=credentials_configured,
             clock=clock,
-        )
-        session.commit()
-        return record
-    except Exception:
-        session.rollback()
-        raise
-
-
-def _land(
-    session: Session,
-    command: EstateMergeCommand,
-    gateway: EstatePullRequestGateway,
-    landing_source: EstateLandingSource,
-    record_source: ChangeRecordSource,
-    *,
-    enabled: bool,
-    credentials_configured: bool,
-    clock: Clock | None,
-) -> EstatePrMerge:
-    _authorize_actor(command.actor)
-    repository = command.repository.lower()
-
-    # SERIALISE ON THE REPOSITORY before anything is read. There is no unit row to lock here, and
-    # the two rules that must not be raced -- one row per pull request, one landing per repository
-    # per window -- are both stated over rows that may not exist yet, which `FOR UPDATE` cannot
-    # lock. Two requests would otherwise each read an absence and each act on it.
-    _lock_repository(session, repository)
-
-    existing = session.scalar(
-        select(EstatePrMerge).where(
-            EstatePrMerge.repository == repository,
-            EstatePrMerge.pr_number == command.pr_number,
-        )
-    )
-    if existing is not None:
-        return existing
-
-    # A key already spent on a DIFFERENT subject, refused here rather than at the flush. Both
-    # unique keys are global, so an operator who copies one request and changes only the number
-    # would otherwise reach the remote, LAND THE PULL REQUEST, and lose the whole transaction to
-    # an integrity error with no registered handler -- a bare 500 that reads as "nothing
-    # happened" over a landing that did.
-    spent = session.scalar(
-        select(EstatePrMerge).where(EstatePrMerge.idempotency_key == command.idempotency_key)
-    )
-    if spent is not None:
-        raise DomainError(
-            "idempotency_conflict",
-            "this idempotency key belongs to a different pull request",
-            "use a new idempotency key",
-        )
-
-    admission = estate_landing_admission(
-        session,
-        repository,
-        command.pr_number,
-        landing_source,
-        record_source,
-        gateway,
-        enabled=enabled,
-        credentials_configured=credentials_configured,
-        clock=clock,
-    )
-    if not admission.satisfied:
-        # No record: nothing was acted on, and consuming this pull request's one row here would
-        # refuse every later legitimate attempt. The reasons are already served by the read
-        # surface; they are named in the message rather than in a structured field, because
-        # `DomainError` carries a closed set of attributes.
-        raise DomainError(
-            ESTATE_MERGE_NOT_ADMISSIBLE,
-            "this pull request may not be landed: " + ", ".join(admission.refusals),
-            "read the landing-admission answer for every term that is unmet",
-        )
-    if admission.head_sha != command.expected_head_sha:
-        # The pull request moved between the answer the caller read and this call. Nothing is
-        # recorded, because nothing happened and the caller can simply re-read: the update bot
-        # rebasing its own branch is the ordinary cause, and the freshness term will then pass on
-        # a head somebody has actually evaluated.
-        raise DomainError(
-            ESTATE_MERGE_HEAD_MOVED,
-            "the pull request's head is not the one the caller read",
-            "re-read the landing-admission answer and ask again",
-        )
-    return _act(session, command, gateway, admission)
-
-
-def _lock_repository(session: Session, repository: str) -> None:
-    """Hold every other landing for this repository until this transaction settles.
-
-    An advisory lock rather than a row lock, because the rows this decision is about are the ones
-    that do not exist yet. It is released with the transaction whichever way that ends.
-    """
-    session.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-        {"key": f"estate_pr_merge:{repository}"},
+        ),
+        remote_call=lambda admission, head_sha: _act(gateway, admission, head_sha),
+        change_record_id=lambda admission: admission.change_record_id,
     )
 
 
 def _act(
-    session: Session,
-    command: EstateMergeCommand,
-    gateway: EstatePullRequestGateway,
-    admission: EstateLandingAdmission,
-) -> EstatePrMerge:
-    """The call and the reconciling re-read.
-
-    **A RECORD IS WRITTEN ONLY FOR AN OUTCOME THAT CANNOT BE RETRIED.** The row is unique per pull
-    request with no delete path, so every recorded outcome is permanent -- correct for *it landed*
-    and for *we cannot rule out that it landed*, and badly wrong for *the remote answered 502
-    once*, which would bar the pull request forever on one bad response.
-    """
-    head_sha = admission.head_sha
-    if not head_sha:
-        # Unreachable through the cascade, which refuses an unreadable pull request. Stated rather
-        # than assumed, because this is the last point at which the call could name no head, and
-        # naming the head is what makes the remote refuse a tree the terms were not evaluated on.
-        raise DomainError(ESTATE_MERGE_NOT_ADMISSIBLE, "the head is not identified", None)
-
-    try:
-        outcome = gateway.submit_merge(
-            repository=admission.repository,
-            number=admission.pr_number,
-            head_sha=head_sha,
-            commit_message=_trailers(admission),
-            # STATED, never defaulted. Every subject of this lane is an update bot's branch against
-            # a repository whose commits no other lineage is merged from, so discarding the
-            # branch's own commits costs nothing and is what the estate's history reads as. The
-            # sibling lane decides per pull request because its population is not uniform; this one
-            # is, and saying so here is what makes that a claim rather than an omission.
-            merge_method=SQUASH,
-        )
-    except EstateGatewayError as error:
-        if error.code.startswith(NEVER_SENT):
-            # NOTHING WAS SENT, so nothing can have landed. The reconciling read below would fail
-            # the same way under the same outage and answer "we do not know", which would write a
-            # permanent `refused` row -- silently barring an admissible pull request forever on a
-            # transient credential failure, and reported by the caller as settled rather than as a
-            # finding. The error code already carried the distinction and nothing read it.
-            raise DomainError(
-                ESTATE_MERGE_REFUSED_BY_REMOTE,
-                f"the landing was not attempted: {gateway_failure_detail(error)}",
-                "retry once the credential can be minted",
-            ) from error
-        landed = _landed_after_all(gateway, admission)
-        if landed is True:
-            return _record(
-                session,
-                command,
-                admission,
-                head_sha,
-                status="already_merged",
-                reason_code=None,
-                github_status=error.status_code,
-            )
-        if landed is False:
-            # CONFIRMED not landed, so nothing happened and this is retryable -- a required check
-            # that is red today can be green tomorrow. No record.
-            raise DomainError(
-                ESTATE_MERGE_REFUSED_BY_REMOTE,
-                f"the remote refused to land the pull request: {gateway_failure_detail(error)}",
-                "resolve what the remote objected to, then ask again",
-            ) from error
-        # The reconciling read ITSELF failed, so a landing cannot be ruled out. Terminal and
-        # conservative: a retry would meet the same refusal no better informed, and the ledger
-        # observes the landing independently and can settle it.
-        return _record(
-            session,
-            command,
-            admission,
-            head_sha,
-            status="refused",
-            reason_code=f"{MERGE_REFUSED_BY_REMOTE}:{error.code}",
-            github_status=error.status_code,
-        )
-
-    return _record(
-        session,
-        command,
-        admission,
-        head_sha,
-        status="merged" if outcome.landed else "refused",
-        reason_code=None if outcome.landed else MERGE_REFUSED_BY_REMOTE,
-        merge_commit_sha=outcome.commit_sha,
-        github_status=outcome.status_code,
+    gateway: EstatePullRequestGateway, admission: EstateLandingAdmission, head_sha: str
+) -> MergeOutcome:
+    """The remote call itself. What happens around it -- the reconciling re-read and the record --
+    is `lane_act`'s."""
+    return gateway.submit_merge(
+        repository=admission.repository,
+        number=admission.pr_number,
+        head_sha=head_sha,
+        commit_message=_trailers(admission),
+        # STATED, never defaulted. Every subject of this lane is an update bot's branch against
+        # a repository whose commits no other lineage is merged from, so discarding the
+        # branch's own commits costs nothing and is what the estate's history reads as. The
+        # sibling lane decides per pull request because its population is not uniform; this one
+        # is, and saying so here is what makes that a claim rather than an omission.
+        merge_method=SQUASH,
     )
 
 
@@ -359,89 +203,6 @@ def _trailers(admission: EstateLandingAdmission) -> str:
         f"{CHANGE_RECORD_TRAILER}: {admission.change_record_id}\n"
         f"{POLICY_VERSION_TRAILER}: {admission.policy_version}"
     )
-
-
-def _landed_after_all(
-    gateway: EstatePullRequestGateway, admission: EstateLandingAdmission
-) -> bool | None:
-    """Did the pull request land despite the refusal? `None` means WE DO NOT KNOW.
-
-    Three answers, not two, and the third is the one the caller must treat differently: a second
-    failure to read cannot be collapsed into "it did not land", because that reads a lost success
-    as a clean refusal.
-    """
-    try:
-        return gateway.read_pull_request(
-            repository=admission.repository, number=admission.pr_number
-        ).landed
-    except EstateGatewayError:
-        return None
-
-
-def _authorize_actor(actor: ActorContext) -> None:
-    """SYSTEM only.
-
-    Not the worker, for the reason the sibling path gives: a runner asking for its own work to be
-    landed is the runner attesting to its own compliance. And not a human either -- a person can
-    land a pull request themselves, and this exists for the case where nobody had to.
-    """
-    if actor.role is not ActorRole.SYSTEM:
-        raise DomainError(
-            "role_forbidden",
-            "only the orchestrator system actor may land a pull request",
-            None,
-        )
-
-
-def _record(
-    session: Session,
-    command: EstateMergeCommand,
-    admission: EstateLandingAdmission,
-    head_sha: str,
-    *,
-    status: str,
-    reason_code: str | None,
-    merge_commit_sha: str | None = None,
-    github_status: int | None = None,
-) -> EstatePrMerge:
-    record = EstatePrMerge(
-        repository=admission.repository,
-        pr_number=admission.pr_number,
-        head_sha=head_sha,
-        status=status,
-        reason_code=reason_code,
-        merge_commit_sha=merge_commit_sha,
-        github_status=github_status,
-        change_record_id=admission.change_record_id,
-        policy_version=admission.policy_version,
-        idempotency_key=command.idempotency_key,
-    )
-    session.add(record)
-    session.flush()
-    event = Event(
-        actor_id=command.actor.actor_id,
-        action=f"estate_pr_merge.{status}",
-        subject_type="estate_pr_merge",
-        subject_id=record.id,
-        payload={
-            "estate_pr_merge_record_id": str(record.id),
-            "repository": admission.repository,
-            "pr_number": admission.pr_number,
-            "head_sha": head_sha,
-            "status": status,
-            "reason_code": reason_code,
-            "merge_commit_sha": merge_commit_sha,
-            "change_record_id": admission.change_record_id,
-            "policy_version": admission.policy_version,
-        },
-        correlation_id=uuid.uuid4(),
-        idempotency_key=f"{command.idempotency_key}:event",
-    )
-    session.add(event)
-    session.flush()
-    record.event_id = event.id
-    session.flush()
-    return record
 
 
 class GitHubEstatePullRequests:
