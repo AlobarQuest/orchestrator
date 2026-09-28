@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.persistence.models import Claim, DispatchRecord, WorkUnit
-from orchestrator.services.dispatch import circuit_open
+from orchestrator.services.execution.dispatch import circuit_open
 
 DEAD_LETTER_UNIT_STATES = ("failed", "blocked", "cancelled")
 DEAD_LETTER_DISPATCH_STATUSES = ("failed", "blocked")

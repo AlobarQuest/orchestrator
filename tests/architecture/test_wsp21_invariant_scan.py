@@ -256,7 +256,7 @@ HTTP_CLIENTS = {
 
 OUTBOUND_ALLOWLIST = {
     Path("src/orchestrator/cli.py"),
-    Path("src/orchestrator/services/dispatch.py"),
+    Path("src/orchestrator/services/execution/dispatch.py"),
     Path("src/orchestrator/services/github_app.py"),
     # WS-P2.20. Named-check evidence is only worth anything if the orchestrator saw the result
     # itself, so this file READS one thing from GitHub -- how a named job concluded on a PR head
@@ -277,7 +277,7 @@ OUTBOUND_ALLOWLIST = {
     # than believed. It writes nothing, borrows github_app.py's installation token, and replaced a
     # hand-maintained allowlist; the read belongs inside the transaction that records the decision
     # for the reason the two readers above give.
-    Path("src/orchestrator/services/factory_target.py"),
+    Path("src/orchestrator/services/execution/factory_target.py"),
     # ADR-0019 Increment 3. Admission asks change-manager one question about the pull request it
     # would land -- has this change been routed through the estate's record, and did somebody
     # approve it -- and writes nothing. Same justification as the two above: the answer decides an

@@ -15,7 +15,7 @@ WS42_DISPATCH_PATHS = {
     Path("src/orchestrator/api/schemas.py"),
     Path("src/orchestrator/config.py"),
     Path("src/orchestrator/persistence/models.py"),
-    Path("src/orchestrator/services/dispatch.py"),
+    Path("src/orchestrator/services/execution/dispatch.py"),
     Path("src/orchestrator/services/github_app.py"),
     # The verifier evidence command reads the immutable dispatch identity to bind an externally
     # observed named check to the exact unit attempt. It cannot initiate workflow execution.

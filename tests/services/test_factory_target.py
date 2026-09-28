@@ -11,7 +11,7 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from orchestrator.services.factory_target import (
+from orchestrator.services.execution.factory_target import (
     FILENAME,
     GitHubFactoryTargetSource,
 )

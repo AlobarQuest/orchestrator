@@ -20,8 +20,9 @@ adjacent to it -- and tuning it bounds nothing. That hole is real and it is WS-P
 **An unreadable artifact yields the default rather than a refusal, and that is not a hole.** A
 refusal here would be a refusal to grant a lease to a worker that already holds the unit, which
 restrains the wrong actor at the wrong moment. Whether such a unit should have been sent at all is
-the admission question, and ``services.reach_admission`` answers it there by refusing outright, so
-a policy this process cannot read stops work arriving rather than stops work finishing.
+the admission question, and ``services.execution.reach_admission`` answers it there by refusing
+outright, so a policy this process cannot read stops work arriving rather than stops work
+finishing.
 """
 
 from __future__ import annotations

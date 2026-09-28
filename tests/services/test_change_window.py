@@ -33,9 +33,12 @@ from orchestrator.factory_policy import (
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import WorkPackageRevision
 from orchestrator.services.claims import LeaseGrant, claim_unit
-from orchestrator.services.dispatch import dispatch_work_unit
+from orchestrator.services.execution.dispatch import dispatch_work_unit
+from orchestrator.services.execution.reach_admission import (
+    REACH_POLICY_UNREADABLE,
+    change_window_refusal,
+)
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
-from orchestrator.services.reach_admission import REACH_POLICY_UNREADABLE, change_window_refusal
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import declared_source
 from tests.services.test_dispatch import (
@@ -393,7 +396,7 @@ def test_nothing_that_decides_a_window_reads_a_clock_it_was_not_given() -> None:
     """
     subjects = [
         Path("src/orchestrator/factory_policy.py"),
-        Path("src/orchestrator/services/reach_admission.py"),
+        Path("src/orchestrator/services/execution/reach_admission.py"),
         Path(__file__),
     ]
 
@@ -644,7 +647,9 @@ def test_an_unreadable_artifact_refuses_on_window_grounds_too(
     def unreadable(*_args: object, **_kwargs: object) -> None:
         raise DomainError("factory_policy_invalid", "the policy artifact is invalid", "correct it")
 
-    monkeypatch.setattr("orchestrator.services.reach_admission.load_factory_policy", unreadable)
+    monkeypatch.setattr(
+        "orchestrator.services.execution.reach_admission.load_factory_policy", unreadable
+    )
     stored = migrated_session.get(WorkPackageRevision, revision)
     assert stored is not None
 

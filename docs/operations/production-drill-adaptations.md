@@ -191,8 +191,8 @@ One drill-designated package revision, decomposed once (Devon's decision, 2026-0
   `max_attempts: 3` (drills 1 and 2 each consume a second attempt)
 - `constraints.target_repository`: `AlobarQuest/orchestrator`
 
-Dispatch admission checks `if not settings.enabled` **first** (`services/dispatch.py:270`), so with
-`ORCHESTRATOR_DISPATCH_ENABLED=false` the outcome is `dispatch_disabled` regardless of change class
+Dispatch admission checks `if not settings.enabled` **first** (`services/execution/dispatch.py:270`),
+so with `ORCHESTRATOR_DISPATCH_ENABLED=false` the outcome is `dispatch_disabled` regardless of change class
 or target repository. Drill 1's assertion holds in production unchanged.
 
 ---

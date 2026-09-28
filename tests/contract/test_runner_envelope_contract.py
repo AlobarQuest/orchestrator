@@ -47,7 +47,7 @@ from orchestrator.services.decomposition import (
     approve_decomposition_proposal,
     submit_decomposition_proposal,
 )
-from orchestrator.services.dispatch import (
+from orchestrator.services.execution.dispatch import (
     DispatchCommand,
     DispatchSettings,
     dispatch_work_unit,

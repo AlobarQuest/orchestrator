@@ -37,7 +37,7 @@ from orchestrator.services.claims import (
     reclaim_expired_claim,
     renew_claim,
 )
-from orchestrator.services.dispatch import dispatch_work_unit
+from orchestrator.services.execution.dispatch import dispatch_work_unit
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import declared_source
 from tests.services.test_claims import worker

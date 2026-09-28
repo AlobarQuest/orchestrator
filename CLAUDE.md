@@ -525,8 +525,8 @@ style of that module.
 - **Authority approval does NOT move the unit's state — `DRAFT → READY` is a separate SYSTEM
   step that is easy to forget.** Recording the `subject_type="authority"` approval sets
   `unit.authority_approval_id` (a *dispatch admission* precondition), but the unit stays in
-  `DRAFT`. Dispatch admission requires `unit.state == "ready"` (`services/dispatch.py`), so a
-  dispatch attempt on a still-`DRAFT` unit is `blocked` with reason `work_unit_not_ready` — even
+  `DRAFT`. Dispatch admission requires `unit.state == "ready"` (`services/execution/dispatch.py`),
+  so a dispatch attempt on a still-`DRAFT` unit is `blocked` with reason `work_unit_not_ready` — even
   with the authority approval recorded and `readiness` reporting `status: ready` (that endpoint
   reports *conditions met*, not lifecycle state). `(DRAFT, READY)` is a **SYSTEM** edge
   (`kernel/transitions.py` `SYSTEM_EDGES`) with **no approval guard** (only `AWAITING_APPROVAL →
@@ -1078,7 +1078,7 @@ style of that module.
   before checking whether the page was reloaded. (Verified 2026-07-28, the form's first real use.)
 
 - **A REUSED `runner_attempt` makes dispatch a silent no-op that is indistinguishable from
-  success.** `dispatch_unit` (`services/dispatch.py`) looks up `DispatchRecord` by
+  success.** `dispatch_unit` (`services/execution/dispatch.py`) looks up `DispatchRecord` by
   `(work_unit_id, runner_attempt)` and, if one exists, **returns that existing record** — HTTP 200,
   `status: "dispatched"`, `reason_code: null` — **without triggering any `workflow_dispatch`.** The
   response is byte-shaped like a real dispatch; only the `id` differs, and only if you knew the
@@ -1768,7 +1768,7 @@ style of that module.
 - **`test_ws34_scope_guards` forbids the literal `github.actions`, and the CLAUDE.md list of ws34's
   forbidden strings omits it.** The full set in
   `test_ws34_adds_no_factory_runner_or_workflow_dispatch_code` is `workflow_dispatch`,
-  `factory_runner`, **`github.actions`**, allowlisted only in `services/dispatch.py`
+  `factory_runner`, **`github.actions`**, allowlisted only in `services/execution/dispatch.py`
   (the other three entries were unneeded and came out on 2026-09-28, #301) — a different and
   *smaller* allowlist than ws32's.
   WS-P2.20 reddened it on a constant whose value was `"github.actions.jobs"`; reworded to
@@ -1823,8 +1823,8 @@ style of that module.
   legitimate second copy", which is the predicate being wrong rather than the entry being justified.
 
 - **`_blocked_reason` normalizes the authority envelope exactly once, and a test enforces it.**
-  `services/dispatch.py`. Any new admission term that needs the unit's target repository must be
-  evaluated **inside** `_blocked_reason`, not computed by the caller and passed in — a second
+  `services/execution/dispatch.py`. Any new admission term that needs the unit's target repository
+  must be evaluated **inside** `_blocked_reason`, not computed by the caller and passed in — a second
   normalization is a second reading of the envelope, and the envelope is what a human's authority
   approval attests. WS-P2.28 added the reach term inside it for this reason.
 
@@ -1880,8 +1880,8 @@ style of that module.
   2026-08-03.)
 
 - **The conformance anti-tautology rule is PROSE, not code — and the branch it would guard has
-  never been reached in production.** `services/dispatch.py`'s conformance gate carries a docstring
-  saying `accepted_standards` "must come from a real waiver source … never echoed from
+  never been reached in production.** `services/execution/dispatch.py`'s conformance gate carries a
+  docstring saying `accepted_standards` "must come from a real waiver source … never echoed from
   `standards_touched`, or the subset branch below admits everything." **Nothing enforces it.** The
   gate is `if status == "green": return None` / `if touched and touched <= accepted: return None` /
   `return "conformance_not_green"`. Two consequences. (1) Anyone told "the anti-tautology precedent
@@ -5244,8 +5244,8 @@ style of that module.
 - **DISPATCH ADMISSION READS `factory-target.toml`, AND `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`
   NO LONGER EXISTS** (ADR-0015 amendment 4, Devon, 2026-09-15). Every earlier bullet that names the
   allowlist as an onboarding step or an admission term describes the estate before that date.
-  `services/factory_target.py` reads the file from the target repository's default branch with the
-  dispatch App's installation token, in the slot the allowlist held, and refuses as
+  `services/execution/factory_target.py` reads the file from the target repository's default branch
+  with the dispatch App's installation token, in the slot the allowlist held, and refuses as
   `target_repository_not_declared` (declared `false`, or no file on a repository that answers) or
   `target_repository_declaration_unreadable` (anything else, including a malformed file). **To make a
   repository a factory target, land the declaration there**; it still needs the caller workflow, the

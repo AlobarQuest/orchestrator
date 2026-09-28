@@ -28,7 +28,7 @@ DISPATCH_VOCABULARY = ("workflow_dispatch", "factory_runner", "github.actions")
 # `api/routes.py`, `api/schemas.py` and `config.py` were listed here too until 2026-09-28 and
 # spelled none of this vocabulary; they came out because an unneeded exemption is unwatched.
 DISPATCH_EXEMPT_PATHS = {
-    Path("src/orchestrator/services/dispatch.py"),
+    Path("src/orchestrator/services/execution/dispatch.py"),
 }
 
 

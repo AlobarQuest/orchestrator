@@ -20,7 +20,13 @@ import pytest
 from sqlalchemy.orm import Session
 
 from orchestrator.reach_vocabulary import LIVE_ESTATE, REACH_VOCABULARY
-from orchestrator.services.dispatch import dispatch_work_unit
+from orchestrator.services.execution.dispatch import dispatch_work_unit
+from orchestrator.services.execution.reach_admission import (
+    REACH_CONTRADICTS_ESTATE,
+    REACH_ESTATE_SOURCE_UNCONFIGURED,
+    REACH_ESTATE_SOURCE_UNREADABLE,
+    REACH_ESTATE_UNKNOWN,
+)
 from orchestrator.services.landing.estate_landing import (
     LANDING_INERT,
     LANDING_REDEPLOYS,
@@ -29,12 +35,6 @@ from orchestrator.services.landing.estate_landing import (
     SOURCE_UNREADABLE,
     EstateAnswer,
     HttpEstateLandingSource,
-)
-from orchestrator.services.reach_admission import (
-    REACH_CONTRADICTS_ESTATE,
-    REACH_ESTATE_SOURCE_UNCONFIGURED,
-    REACH_ESTATE_SOURCE_UNREADABLE,
-    REACH_ESTATE_UNKNOWN,
 )
 from tests.services.estate_doubles import FakeEstateLandingSource
 from tests.services.target_doubles import declared_source, undeclared_source
