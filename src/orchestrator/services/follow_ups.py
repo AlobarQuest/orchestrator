@@ -69,10 +69,10 @@ def validate_follow_up(value: object) -> dict[str, Any] | None:
 
 # `FOLLOW_UP_CAPABILITY` and `follow_up_unit_id` are imported from `services.lifecycle` (the single
 # source of truth also consulted by `lifecycle`'s own identity predicate and by
-# `services.verifier_criteria` / `services.evidence`) rather than defined here a second time.
-# Re-exported under these names because external code (tests included) already imports them from
-# `orchestrator.services.follow_ups`. The capability is in NEITHER the runner vocabulary nor
-# ORCHESTRATOR_ONLY_CAPABILITIES: `_mint` constructs its unit directly and never passes through
+# `services.verifier.verifier_criteria` / `services.verifier.evidence`) rather than defined here a
+# second time. Re-exported under these names because external code (tests included) already imports
+# them from `orchestrator.services.follow_ups`. The capability is in NEITHER the runner vocabulary
+# nor ORCHESTRATOR_ONLY_CAPABILITIES: `_mint` constructs its unit directly and never passes through
 # `validate_unit_capabilities`, so ingress has no reason to accept the marker from an author, and
 # the byte-pinned cross-repo envelope fixture stays untouched either way.
 

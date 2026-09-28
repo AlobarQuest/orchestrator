@@ -946,8 +946,8 @@ def _criterion_evidence_type(
     session: Session, revision_id: uuid.UUID, unit_id: uuid.UUID, ac_id: str
 ) -> str | None:
     """The generated follow-up criterion is never persisted as a `PackageAcceptanceCriterion` row
-    (it is constructed transiently by `services.verifier_criteria`), so the DB lookup below always
-    misses for it.
+    (it is constructed transiently by `services.verifier.verifier_criteria`), so the DB lookup below
+    always misses for it.
 
     The fallback below re-runs `_is_generated_follow_up_subject` rather than trusting `ac_id ==
     FOLLOW_UP_AC_ID` alone. `_validated_subject` admits a subject through TWO independent paths --
