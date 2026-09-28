@@ -20,8 +20,6 @@ from tests.idempotency.matrix import COVERAGE_MATRIX
 NON_INGRESS_POST_ROUTES = frozenset(
     {
         # Human decision surfaces -- idempotency belongs to the service they call.
-        "/api/v1/decomposition-proposals/{proposal_id}/approve",
-        "/api/v1/decomposition-proposals/{proposal_id}/reject",
         "/api/v1/decomposition-proposals/{proposal_id}/require-revision",
         "/review/decomposition-proposals/{proposal_id}/approve",
         "/review/decomposition-proposals/{proposal_id}/reject",

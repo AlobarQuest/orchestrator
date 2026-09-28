@@ -7,12 +7,12 @@ from typing import cast
 from fastapi.testclient import TestClient
 
 import orchestrator.services.intake.runner_brief as runner_brief_service
+from tests._support.review_forms import decide_decomposition
 from tests.api.test_decomposition_api import (
     HUMAN as DECOMPOSITION_HUMAN,
 )
 from tests.api.test_decomposition_api import (
     acceptance_criteria_by_key,
-    decision_payload,
     proposal_payload,
     register_intake,
 )
@@ -167,15 +167,14 @@ def test_runner_brief_scopes_ac_mapping_to_active_approved_proposal(
         ),
     )
     assert rejected.status_code == 201
-    rejected_decision = db_client.post(
-        f"/api/v1/decomposition-proposals/{rejected.json()['id']}/reject",
+    rejected_decision = decide_decomposition(
+        db_client,
+        rejected.json()["id"],
+        "reject",
+        "Reject the first mapping.",
         headers=DECOMPOSITION_HUMAN,
-        json=decision_payload(
-            "proposal-runner-brief-rejected-decision",
-            "Reject the first mapping.",
-        ),
     )
-    assert rejected_decision.status_code == 200
+    assert rejected_decision["state"] == "rejected"
 
     approved = db_client.post(
         f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
@@ -212,17 +211,15 @@ def test_runner_brief_scopes_ac_mapping_to_active_approved_proposal(
         ),
     )
     assert approved.status_code == 201
-    approved_decision = db_client.post(
-        f"/api/v1/decomposition-proposals/{approved.json()['id']}/approve",
+    approved_decision = decide_decomposition(
+        db_client,
+        approved.json()["id"],
+        "approve",
+        "Approve the active mapping.",
         headers=DECOMPOSITION_HUMAN,
-        json=decision_payload(
-            "proposal-runner-brief-approved-decision",
-            "Approve the active mapping.",
-        ),
     )
 
-    assert approved_decision.status_code == 200
-    unit_id = approved_decision.json()["created_work_unit_ids"]["unit-1"]
+    unit_id = approved_decision["created_work_unit_ids"]["unit-1"]
 
     response = db_client.get(f"/api/v1/work-units/{unit_id}/runner-brief", headers=WORKER)
 
@@ -295,16 +292,14 @@ def test_runner_brief_returns_no_acceptance_criteria_for_unmapped_unit_in_approv
         ),
     )
     assert approved.status_code == 201
-    approved_decision = db_client.post(
-        f"/api/v1/decomposition-proposals/{approved.json()['id']}/approve",
+    approved_decision = decide_decomposition(
+        db_client,
+        approved.json()["id"],
+        "approve",
+        "Approve the active mapping.",
         headers=DECOMPOSITION_HUMAN,
-        json=decision_payload(
-            "proposal-runner-brief-empty-mapping-decision",
-            "Approve the active mapping.",
-        ),
     )
-    assert approved_decision.status_code == 200
-    unit_id = approved_decision.json()["created_work_unit_ids"]["unit-2"]
+    unit_id = approved_decision["created_work_unit_ids"]["unit-2"]
 
     response = db_client.get(f"/api/v1/work-units/{unit_id}/runner-brief", headers=WORKER)
 
@@ -422,13 +417,14 @@ def _approved_unit_with_enrichment(db_client: TestClient, document: object) -> s
     )
     assert proposal.status_code == 201, proposal.text
     proposal_id = proposal.json()["id"]
-    approved = db_client.post(
-        f"/api/v1/decomposition-proposals/{proposal_id}/approve",
+    approved = decide_decomposition(
+        db_client,
+        proposal_id,
+        "approve",
+        "Approved with its governed material.",
         headers=DECOMPOSITION_HUMAN,
-        json=decision_payload("enriched-approve", "Approved with its governed material."),
     )
-    assert approved.status_code == 200, approved.text
-    return approved.json()["created_work_unit_ids"]["unit-1"]
+    return approved["created_work_unit_ids"]["unit-1"]
 
 
 def test_the_brief_carries_the_enrichment_document_verbatim(db_client: TestClient) -> None:

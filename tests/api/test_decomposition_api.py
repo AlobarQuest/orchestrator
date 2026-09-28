@@ -7,6 +7,7 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import WorkUnit
+from tests._support.review_forms import decide_decomposition
 
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
 WORKER = {"Authorization": "Bearer fixture-token", "X-Credential-Key-Id": "worker-key"}
@@ -424,15 +425,20 @@ def test_decomposition_decision_routes_update_state_and_approval_creates_drafts(
         idempotency_key="proposal-revise",
     )
 
-    approved = db_client.post(
-        f"/api/v1/decomposition-proposals/{approved_proposal['id']}/approve",
+    # Approve and reject are /review-only (Tier 3 item 24b); require-revision keeps its /api route.
+    approved = decide_decomposition(
+        db_client,
+        approved_proposal["id"],
+        "approve",
+        "Approved for draft activation.",
         headers=HUMAN,
-        json=decision_payload("proposal-approve-1", "Approved for draft activation."),
     )
-    rejected = db_client.post(
-        f"/api/v1/decomposition-proposals/{rejected_proposal['id']}/reject",
+    rejected = decide_decomposition(
+        db_client,
+        rejected_proposal["id"],
+        "reject",
+        "Missing split rationale.",
         headers=HUMAN,
-        json=decision_payload("proposal-reject-1", "Missing split rationale."),
     )
     revised = db_client.post(
         f"/api/v1/decomposition-proposals/{revised_proposal['id']}/require-revision",
@@ -443,12 +449,10 @@ def test_decomposition_decision_routes_update_state_and_approval_creates_drafts(
         ),
     )
 
-    assert approved.status_code == 200
-    assert approved.json()["state"] == "approved"
-    assert set(approved.json()["created_work_unit_ids"]) == {"unit-1", "unit-2"}
-    assert rejected.status_code == 200
-    assert rejected.json()["state"] == "rejected"
-    assert rejected.json()["created_work_unit_ids"] is None
+    assert approved["state"] == "approved"
+    assert set(approved["created_work_unit_ids"]) == {"unit-1", "unit-2"}
+    assert rejected["state"] == "rejected"
+    assert rejected["created_work_unit_ids"] is None
     assert revised.status_code == 200
     assert revised.json()["state"] == "revision_required"
     assert revised.json()["created_work_unit_ids"] is None

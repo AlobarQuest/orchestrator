@@ -216,8 +216,12 @@ def _launchers() -> list[Path]:
 
 
 def test_the_launcher_population_is_what_was_consolidated() -> None:
-    """Found by glob, so a new launcher joins every assertion below without editing this file."""
-    assert len(_launchers()) >= 12
+    """Found by glob, so a new launcher joins every assertion below without editing this file.
+
+    The floor guards against the glob matching nothing; it was 12 until Tier 3 item 24b deleted
+    run-follow-up-mint.sh, whose daily pass now lives in infraops-mcp-server's drift-audit.sh.
+    """
+    assert len(_launchers()) >= 11
 
 
 @pytest.mark.parametrize("launcher", _launchers(), ids=lambda p: p.name)

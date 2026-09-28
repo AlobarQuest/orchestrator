@@ -304,34 +304,36 @@ def test_real_http_package_intake_and_decomposition_cli_have_parity(
     assert cli_detail.exit_code == 0
     assert json.loads(cli_detail.stdout) == api_detail.json()
 
+    # Approve and reject are /review-only since Tier 3 item 24b; the one decision the /api still
+    # serves is the revision request, so it is the one whose CLI parity is checked.
     decision_body = {
-        "idempotency_key": "cli-http-approve",
+        "idempotency_key": "cli-http-revise",
         "expected_version": 0,
-        "reason": "Approved for draft activation.",
+        "reason": "Split the dependency chain out.",
     }
-    api_approve = db_client.post(
-        f"/api/v1/decomposition-proposals/{proposal_id}/approve",
+    api_revise = db_client.post(
+        f"/api/v1/decomposition-proposals/{proposal_id}/require-revision",
         headers=HUMAN,
         json=decision_body,
     )
-    assert api_approve.status_code == 200
+    assert api_revise.status_code == 200
 
     monkeypatch.setenv("ORCHESTRATOR_API_TOKEN", "human-token")
     monkeypatch.delenv("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", raising=False)
-    cli_approve = CliRunner().invoke(
+    cli_revise = CliRunner().invoke(
         app,
         [
-            "approve-decomposition",
+            "require-decomposition-revision",
             proposal_id,
             "--idempotency-key",
-            "cli-http-approve",
+            "cli-http-revise",
             "--reason",
-            "Approved for draft activation.",
+            "Split the dependency chain out.",
             "--json",
         ],
     )
-    assert cli_approve.exit_code == 0
-    assert json.loads(cli_approve.stdout) == api_approve.json()
+    assert cli_revise.exit_code == 0
+    assert json.loads(cli_revise.stdout) == api_revise.json()
 
 
 def test_real_http_claim_context_cli_matches_api(

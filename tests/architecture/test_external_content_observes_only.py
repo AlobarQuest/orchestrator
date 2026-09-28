@@ -125,8 +125,8 @@ Named so their absence is not mistaken for coverage:
   charged as an orchestrator write -- that fails closed, and would need the predicate to learn
   hosts.
 * `scripts/` launchers are not in the population. `run-follow-up-mint.sh`, one of the three
-  internal lane actors Devon named on 2026-08-25, invokes the orchestrator CLI from a script, not
-  a `src/` package, and is therefore outside this guard.
+  internal lane actors Devon named on 2026-08-25, invoked the orchestrator CLI from a script, not
+  a `src/` package, and was outside this guard; Tier 3 item 24b deleted it.
 """
 
 from __future__ import annotations

@@ -76,7 +76,6 @@ from orchestrator.api.schemas import (
     ReconciliationDetectCommand,
     ReconciliationDetectResponse,
     RecoverEvidenceCommand,
-    RecoverExpiredClaimCommand,
     ReleaseArtifactCommandModel,
     RenewCommand,
     RequeueCommand,
@@ -129,8 +128,6 @@ from orchestrator.services.intake.decomposition import (
     ProposedDependency,
     ProposedUnit,
     RetainedAc,
-    approve_decomposition_proposal,
-    reject_decomposition_proposal,
     require_decomposition_revision,
     submit_decomposition_proposal,
 )
@@ -201,7 +198,6 @@ from orchestrator.services.lifecycle.claims import (
     authorize_retry,
     claim_unit,
     reclaim_expired_claim,
-    recover_expired_claim,
     renew_claim,
     requeue_unit,
 )
@@ -594,50 +590,6 @@ def decomposition_proposal(
     session: SessionDep,
 ) -> dict[str, object]:
     proposal = _proposal_or_raise(session, proposal_id)
-    return _proposal_payloads(session, (proposal,))[proposal.id]
-
-
-@router.post(
-    "/decomposition-proposals/{proposal_id}/approve",
-    response_model=DecompositionProposalResponse,
-)
-def approve_decomposition(
-    proposal_id: UUID,
-    body: DecompositionDecisionCommand,
-    actor: ActorDep,
-    session: SessionDep,
-) -> dict[str, object]:
-    _require_zero_expected_version(body.expected_version, "decomposition approval")
-    proposal = approve_decomposition_proposal(
-        session,
-        proposal_id,
-        actor=actor,
-        reason=body.reason,
-        idempotency_key=body.idempotency_key,
-    )
-    session.commit()
-    return _proposal_payloads(session, (proposal,))[proposal.id]
-
-
-@router.post(
-    "/decomposition-proposals/{proposal_id}/reject",
-    response_model=DecompositionProposalResponse,
-)
-def reject_decomposition(
-    proposal_id: UUID,
-    body: DecompositionDecisionCommand,
-    actor: ActorDep,
-    session: SessionDep,
-) -> dict[str, object]:
-    _require_zero_expected_version(body.expected_version, "decomposition rejection")
-    proposal = reject_decomposition_proposal(
-        session,
-        proposal_id,
-        actor=actor,
-        reason=body.reason,
-        idempotency_key=body.idempotency_key,
-    )
-    session.commit()
     return _proposal_payloads(session, (proposal,))[proposal.id]
 
 
@@ -1683,27 +1635,6 @@ def reclaim_expired(
             body.idempotency_key,
             expected_version=body.expected_version,
             standing_context=body.standing_context,
-        )
-    )
-
-
-@router.post(
-    "/work-units/{unit_id}/recover-expired-claim",
-    response_model=UnitResponse,
-)
-def recover_expired(
-    unit_id: UUID,
-    body: RecoverExpiredClaimCommand,
-    actor: ActorDep,
-    session: SessionDep,
-) -> object:
-    return _raise_error(
-        recover_expired_claim(
-            session,
-            unit_id,
-            actor,
-            body.idempotency_key,
-            expected_version=body.expected_version,
         )
     )
 

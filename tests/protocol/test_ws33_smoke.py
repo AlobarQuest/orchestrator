@@ -22,6 +22,7 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.main import create_app
 from orchestrator.package_sources import VerifiedApproval, load_package_intake_payload
 from orchestrator.persistence.models import Claim, WorkUnit
+from tests._support.review_forms import decide_decomposition
 
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
 WORKER = {"Authorization": "Bearer fixture-token", "X-Credential-Key-Id": "worker-key"}
@@ -425,17 +426,9 @@ def test_ws33_end_to_end_protocol_smoke_suite(
     assert proposal.status_code == 201, proposal.json()
     proposal_id = proposal.json()["id"]
 
-    approved = _invoke(
-        monkeypatch,
-        "human",
-        [
-            "approve-decomposition",
-            proposal_id,
-            "--idempotency-key",
-            "ws33-smoke-approve-decomposition",
-            "--reason",
-            "Approved for smoke activation.",
-        ],
+    # A breakdown is approved in /review (Tier 3 item 24b deleted the /api route and its CLI).
+    approved = decide_decomposition(
+        db_client, proposal_id, "approve", "Approved for smoke activation.", headers=HUMAN
     )
     unit_id = approved["created_work_unit_ids"]["smoke-unit"]
     with Session(migrated_engine) as session:
@@ -935,16 +928,11 @@ def _approved_decomposition_unit(
         },
     )
     assert proposal.status_code == 201, proposal.json()
-    approved = _invoke(
-        monkeypatch,
-        "human",
-        [
-            "approve-decomposition",
-            proposal.json()["id"],
-            "--idempotency-key",
-            f"ws33-smoke-{suffix}-approve-decomposition",
-            "--reason",
-            "Approved auxiliary smoke activation.",
-        ],
+    approved = decide_decomposition(
+        db_client,
+        proposal.json()["id"],
+        "approve",
+        "Approved auxiliary smoke activation.",
+        headers=HUMAN,
     )
     return str(approved["created_work_unit_ids"][f"ws33-smoke-{suffix}-unit"])

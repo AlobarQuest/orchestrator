@@ -84,34 +84,20 @@ means "due the instant the work settles" — maximally on, not a special case.
 
 ## Running a pass
 
-```bash
-scripts/run-follow-up-mint.sh [--json]
-```
-
-The launcher fetches the `orchestrator-system` SYSTEM bearer from BWS at runtime (never stored in
-the repo), then execs `orchestrator mint-follow-ups`. One pass, then exit.
+The daily pass runs from `AlobarQuest/infraops-mcp-server`'s `scripts/drift-audit.sh` (WS-P2.8
+Task 10, landed), which calls `POST /api/v1/follow-ups/mint` with the `orchestrator-system` SYSTEM
+bearer as a best-effort, non-fatal step. The operator launcher this repository used to carry,
+`scripts/run-follow-up-mint.sh`, was deleted by Tier 3 item 24b (2026-09-28): it had no schedule
+and the daily cadence no longer needs it. An operator can still run one pass by hand with
+`orchestrator mint-follow-ups`, with `ORCHESTRATOR_API_URL`, the SYSTEM bearer and its key id in
+the environment.
 
 **The credential must be `orchestrator-system`, never `orchestrator-drift-reporter`.** The
 drift-reporter identity's registry profile is *observe and propose, never mutate*; minting a work
-unit is canonical mutation, and event attribution (`ActorContext.actor_id`) is permanent. Both
-credentials already exist in production with role `system`; no new credential, env write, or
-restart is needed to run this pass.
+unit is canonical mutation, and event attribution (`ActorContext.actor_id`) is permanent.
 
-**`drift-audit.sh` is intended to gain a daily mint step** — WS-P2.8 Task 10, in
-`AlobarQuest/infraops-mcp-server`, tracked and merged separately from this branch. **Verify it has
-landed before relying on the daily cadence:**
-
-```bash
-grep -n "mint\|follow_up\|follow-up" ~/Projects/infraops-mcp-server/scripts/drift-audit.sh
-```
-
-A hit means the step landed; no hit means it hasn't, and **as of this writing it hasn't** —
-`drift-audit.sh` currently holds only the `orchestrator-drift-reporter` credential and contains no
-reference to minting. Until Task 10 merges, `scripts/run-follow-up-mint.sh`, run manually or from
-cron, is the **only** trigger for a pass. See ADR-0007's "Scheduled trigger" section for the
-decision this wiring implements and why the trigger shipping separately does not contradict the
-"no loop inside the orchestrator" posture — the orchestrator itself has no loop either way; the
-schedule, once it lands, lives entirely in the other repository.
+The orchestrator itself has no loop either way; the schedule lives entirely in the other
+repository (ADR-0007's "Scheduled trigger" section).
 
 ## Reading the counted output
 
