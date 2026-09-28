@@ -1,5 +1,9 @@
 # Infra-Lane Linkage Operations
 
+> **Retired.** The infra-lane-link routes and their service were deleted by Tier 3 item 24a (2026-09-28)
+> (Devon's Tier 3 decisions, `~/docs/software-delivery-system/2026-09-28-tier3-decisions.md`).
+> This page is kept as the record of what the surface did.
+
 WS-4.4 records how an approved orchestrator work unit routes to the existing
 change-manager/infraops lane. The orchestrator remains canonical lifecycle truth
 for SDS work units, but it does not approve, execute, schedule, verify, or roll

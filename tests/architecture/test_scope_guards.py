@@ -80,7 +80,6 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/inert-pr-branch-update",
         "/api/v1/work-units/{unit_id}/verify",
         "/api/v1/work-units/{unit_id}/verifier-evidence/named-check",
-        "/api/v1/work-units/{unit_id}/infra-lane-links",
         "/api/v1/work-units/{unit_id}/release-artifacts",
         "/api/v1/release-artifacts/{binding_id}/deployment-observations",
         "/api/v1/observations",
@@ -104,8 +103,6 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # SYSTEM-only, externally invoked; a database read plus an append-only write, with no
         # outbound call and no loop.
         "/api/v1/follow-ups/mint",
-        "/api/v1/knowledge-promotion-proposals",
-        "/api/v1/knowledge-promotion-proposals/{proposal_id}/submit-to-brain",
         "/api/v1/work-units/{unit_id}/commands/{command}",
         "/api/v1/work-units/{unit_id}/approvals",
         "/api/v1/work-units/{unit_id}/adjudications",
@@ -113,9 +110,6 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/work-units/{unit_id}/dependencies",
         "/api/v1/dependencies/{dependency_id}/resolve",
         "/api/v1/work-units/{unit_id}/evidence",
-        "/api/v1/event-publications/queue",
-        "/api/v1/event-publications/export",
-        "/api/v1/event-publications/{publication_id}/retry",
         # ADR-0006: package intake is a human gate, so its only production-reachable surface is
         # a /review form. The /api route it delegates to is human-only and machine-only-routed.
         "/review/intakes",
@@ -169,9 +163,7 @@ def test_production_get_route_inventory_is_explicit() -> None:
         "/api/v1/dead-letter",
         "/api/v1/in-flight-units",
         "/api/v1/decomposition-proposals/{proposal_id}",
-        "/api/v1/event-publications",
         "/api/v1/factory-policy",
-        "/api/v1/knowledge-promotion-proposals",
         "/api/v1/observations",
         "/api/v1/package-intakes/{revision_id}",
         "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
@@ -197,7 +189,6 @@ def test_production_get_route_inventory_is_explicit() -> None:
         # population reads before it asks for anything. It also carries the branch-update
         # permission, which is what the freshening pass acts on.
         "/api/v1/inert-pr-merge-admission",
-        "/api/v1/work-units/{unit_id}/infra-lane-links",
         "/api/v1/work-units/{unit_id}/readiness",
         "/api/v1/work-units/{unit_id}/release-artifacts",
         # ADR-0030: which completed units a machine-local working copy could bind a release

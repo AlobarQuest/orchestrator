@@ -1,9 +1,9 @@
 """Per-unit evidence-pack projection (WS-P2.5).
 
 Assembles the full evidentiary record for a single work unit -- authority, revision,
-dependencies, claims, evidence, adjudications, approvals, events, and event publications --
-into a single read-only dict. Originally private to the ``/review`` GUI module; moved here so
-other callers can share the identical assembly and query logic.
+dependencies, claims, evidence, adjudications, approvals, and events -- into a single
+read-only dict. Originally private to the ``/review`` GUI module; moved here so other callers
+can share the identical assembly and query logic.
 """
 
 import uuid
@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -23,7 +23,6 @@ from orchestrator.persistence.models import (
     Claim,
     Dependency,
     Event,
-    EventPublication,
     Evidence,
     WorkPackageRevision,
     WorkUnit,
@@ -147,14 +146,6 @@ class EvidencePackApprovalResponse(BaseModel):
     reason: str
 
 
-class EvidencePackEventPublicationResponse(BaseModel):
-    source_ref: str
-    status: str
-    event_id: str
-    export_ref: str | None = None
-    last_error: str | None = None
-
-
 class EvidencePackEventResponse(BaseModel):
     """One event, projected. A key this model does not declare is silently dropped, so a payload
     field a reader needs has to be named here as well as written there."""
@@ -189,7 +180,6 @@ class EvidencePackResponse(BaseModel):
     adjudications: list[EvidencePackAdjudicationResponse]
     verifier_decided_completion: EvidencePackVerifierDecidedResponse
     approvals: list[EvidencePackApprovalResponse]
-    event_publications: list[EvidencePackEventPublicationResponse]
     events: list[EvidencePackEventResponse]
 
 
@@ -258,53 +248,7 @@ def evidence_pack_projection(session: Session, unit_id: uuid.UUID) -> dict[str, 
             )
         ),
         "events": events,
-        "event_publications": _event_publication_projection(
-            session,
-            evidence=evidence,
-            adjudications=adjudications,
-            events=events,
-        ),
     }
-
-
-def _event_publication_projection(
-    session: Session,
-    *,
-    evidence: tuple[Evidence, ...],
-    adjudications: tuple[Adjudication, ...],
-    events: tuple[Event, ...],
-) -> tuple[dict[str, Any], ...]:
-    source_ids: dict[str, set[uuid.UUID]] = {
-        "evidence": {row.id for row in evidence},
-        "adjudication": {row.id for row in adjudications},
-        "event": {row.id for row in events},
-    }
-    clauses = [
-        and_(EventPublication.source_kind == kind, EventPublication.source_id.in_(ids))
-        for kind, ids in source_ids.items()
-        if ids
-    ]
-    if not clauses:
-        return ()
-    rows = tuple(
-        session.scalars(
-            select(EventPublication)
-            .where(or_(*clauses))
-            .order_by(
-                EventPublication.source_kind,
-                EventPublication.source_id,
-                EventPublication.created_at,
-                EventPublication.event_id,
-            )
-        )
-    )
-    return tuple(
-        {
-            "row": row,
-            "source_ref": f"orchestrator:{row.source_kind}:{row.source_id}",
-        }
-        for row in rows
-    )
 
 
 def _verifier_decided_response(
@@ -417,16 +361,6 @@ def evidence_pack_response(projection: dict[str, Any]) -> EvidencePackResponse:
             )
             for row in projection["approvals"]
         ],
-        event_publications=[
-            EvidencePackEventPublicationResponse(
-                source_ref=item["source_ref"],
-                status=item["row"].status,
-                event_id=item["row"].event_id,
-                export_ref=item["row"].export_ref,
-                last_error=item["row"].last_error,
-            )
-            for item in projection["event_publications"]
-        ],
         events=[
             EvidencePackEventResponse(
                 occurred_at=row.occurred_at,
@@ -486,7 +420,6 @@ def render_evidence_pack_markdown(pack: EvidencePackResponse) -> str:
         *_render_evidence_section(pack),
         *_render_adjudications_section(pack),
         *_render_approvals_section(pack),
-        *_render_event_publications_section(pack),
         *_render_event_history_section(pack),
     ]
     return "\n".join(lines) + "\n"
@@ -624,25 +557,6 @@ def _render_approvals_section(pack: EvidencePackResponse) -> list[str]:
             lines.append(f"- {row.subject_type} {row.decision}")
     else:
         lines.append("- No approvals recorded.")
-    lines.append("")
-    return lines
-
-
-def _render_event_publications_section(pack: EvidencePackResponse) -> list[str]:
-    lines = [
-        "## Event publications",
-        "| Source | Status | Event ID | Export | Last error |",
-        "| --- | --- | --- | --- | --- |",
-    ]
-    if pack.event_publications:
-        for row in pack.event_publications:
-            lines.append(
-                f"| {_md_cell(row.source_ref)} | {_md_cell(row.status)} | "
-                f"{_md_cell(row.event_id)} | {_md_cell(row.export_ref) or 'Not exported'} | "
-                f"{_md_cell(row.last_error) or 'None'} |"
-            )
-    else:
-        lines.append("| -- | -- | -- | No event publications recorded. | -- |")
     lines.append("")
     return lines
 

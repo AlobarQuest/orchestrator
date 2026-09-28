@@ -139,5 +139,6 @@ No dispatcher or runner path may merge PRs.
 
 Do not use the dispatch adapter for work units whose authority envelope covers
 production infrastructure mutation. Those units route to the existing
-change-manager/infraops lane and are linked back to the work unit as evidence;
-see `docs/operations/infra-lane-linkage.md`.
+change-manager/infraops lane. The WS-4.4 route that linked them back to the work unit
+was deleted by Tier 3 item 24a (2026-09-28); `docs/operations/infra-lane-linkage.md` is kept as the
+record of what it did.

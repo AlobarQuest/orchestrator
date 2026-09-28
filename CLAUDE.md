@@ -1951,7 +1951,7 @@ style of that module.
 - **But the revision-anchored and unit-anchored traceability answers are DIFFERENT query paths and
   can disagree — so "no second surface" is not "no second reading".** `resolve_anchors` branches,
   and conditions arrive whenever a producer reports (the reconciliation runner that was meant
-  to write them on a schedule never ran and was retired by ADR-0047), so asking the unit-anchored query about the
+  to write them on a schedule never ran and was retired by ADR-0048), so asking the unit-anchored query about the
   same units is a genuine second reading rather than a restatement. **Concluding that production
   serves no corroborating surface, and stopping there, is what shipped WS-P2.41's severe defect** —
   a carrier scan that failed to exclude the release's own units, so a release whose unit carried a
@@ -2492,7 +2492,8 @@ style of that module.
   `services/lifecycle/context.py` and `services/release/event_publications.py` contain **zero**
   `ActorRole` references between them. "The service layer gates writes" is not a property the
   service layer provides. Those four are a live defect for every other role (backlogged); OBSERVER
-  is simply not exposed to them. **Proven against production 2026-08-07, not just in tests:**
+  is simply not exposed to them. (The three event-publication routes were deleted on 2026-09-28,
+  Tier 3 item 24a; `preflight` is the one left.) **Proven against production 2026-08-07, not just in tests:**
   `commands/ready`, `dispatch`, `verify`, `preflight`, `event-publications/queue` and `/export` all
   **403**; `POST /observations` reaches request validation and a valid post returns **201**
   attributed to `drift-reconciler`; `GET /observations` returns 200. Note approval-shaped routes

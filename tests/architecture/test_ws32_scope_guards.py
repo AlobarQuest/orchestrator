@@ -38,7 +38,6 @@ WS53_POST_DEPLOY_PATHS = {
     # post-deploy verification unit -- has_post_deploy_unit=False IS the deploy-nobody-reported
     # signal. It reads that state; it never dispatches, deploys, or merges.
     Path("src/orchestrator/services/reconciliation/in_flight.py"),
-    Path("src/orchestrator/services/release/event_publications.py"),
     Path("src/orchestrator/services/verifier/evidence.py"),
     Path("src/orchestrator/services/lifecycle/lifecycle.py"),
     Path("src/orchestrator/services/verifier/verifier_criteria.py"),

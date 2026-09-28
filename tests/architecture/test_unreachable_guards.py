@@ -51,7 +51,7 @@ SRC = Path("src")
 # The surfaces the outside world can actually enter through. Everything defined in them is a
 # root. `web.py` is the human /review lane; `cli.py` an operator's client; `main.py` the app
 # factory. ENTRY_PACKAGES names a separate program under `src/` whose own CLI makes it a root
-# set; the one it named, `reconciliation_runner`, was retired by ADR-0047, so it is empty.
+# set; the one it named, `reconciliation_runner`, was retired by ADR-0048, so it is empty.
 ENTRY_MODULES = {
     "orchestrator/api/routes.py",
     "orchestrator/api/health.py",

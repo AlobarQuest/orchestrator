@@ -128,8 +128,8 @@ Accepted observations record:
 - one `deployment.observed` local event;
 - one `post_deploy_verification.created` local event.
 
-These events can be projected through the event-publication layer as bounded
-factory events. The projection includes local mapping facts only; it does not
+The event-publication layer that could project these as bounded factory events was
+deleted by Tier 3 item 24a (2026-09-28). The projection includes local mapping facts only; it does not
 include raw production output, response bodies, logs, tracker text, PR text, or
 external instruction text.
 

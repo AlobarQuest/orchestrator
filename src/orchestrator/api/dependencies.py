@@ -18,10 +18,10 @@ from orchestrator.kernel.states import ActorContext, ActorRole
 # WS-P3.6 / ADR-0017: OBSERVER's entire write surface, stated ONCE and POSITIVELY.
 #
 # Every other role is confined by roughly twenty service-level allowlists that happen to agree
-# with each other. That is not a property the service layer actually provides: four POST routes
-# carry no role check at all today (preflight, and the three event-publication routes), so a role
-# confined only by service guards would reach them. An observe-and-report identity must not be
-# confined by twenty places all remembering it.
+# with each other. That is not a property the service layer actually provides: POST routes have
+# carried no role check at all (preflight, and until Tier 3 item 24a deleted them, three
+# event-publication routes), so a role confined only by service guards would reach them. An
+# observe-and-report identity must not be confined by twenty places all remembering it.
 #
 # So OBSERVER is confined here, at the one dependency through which BOTH routers obtain their
 # actor. It may POST to the routes named below and to nothing else, and a route added tomorrow is

@@ -51,15 +51,6 @@ EVENT_PUBLICATION_STATUSES = (
     "failed",
 )
 DISPATCH_RECORD_STATUSES = ("dispatched", "skipped", "blocked", "failed")
-INFRA_LANE_LINK_STATUSES = (
-    "requested",
-    "approved",
-    "executing",
-    "verification_pending",
-    "completed",
-    "failed",
-    "cancelled",
-)
 OBSERVATION_SOURCE_SYSTEMS = (
     "deployment_observation",
     "watchtower",
@@ -147,7 +138,7 @@ OBSERVATION_TYPES = (
     # -- auto-merged, merged by a person, pushed at the branch -- is `permitted_by` on the
     # facts, not a second observation type. Deliberately not `github_pr`, which already means
     # "a fact about a pull request bound to a work unit" in the reconciliation lane
-    # (written by the retired `reconciliation_runner`, ADR-0047;
+    # (written by the retired `reconciliation_runner`, ADR-0048;
     # `services/reconciliation/reconciliation_detection.py`); the two never collide today only
     # because their subject_reference namespaces are disjoint, which
     # is a coincidence to rely on rather than a design.
@@ -194,7 +185,7 @@ OBSERVATION_TYPES = (
     # under a fact that does not. Keeping them out is what lets the row stay frozen while the
     # judgment is re-taken every pass. `github_pr` is the near miss and is wrong -- it already
     # means "a fact about a pull request bound to a work unit" in the reconciliation lane
-    # (the retired `reconciliation_runner`, ADR-0047), whose rows are subject_type
+    # (the retired `reconciliation_runner`, ADR-0048), whose rows are subject_type
     # `work_unit`; this one is `repo`, and relying on two namespaces staying disjoint is a
     # coincidence rather than a design. `drift` belongs to the infrastructure drift digest, and
     # `inventory` asserts only that something was enumerated, where this states two specific
@@ -694,47 +685,6 @@ class DispatchRecord(UUIDPrimaryKey, Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class InfraLaneLink(UUIDPrimaryKey, Base):
-    __tablename__ = "infra_lane_links"
-    __table_args__ = (
-        UniqueConstraint("idempotency_key"),
-        CheckConstraint("attempt > 0", name="ck_infra_lane_links_positive_attempt"),
-        CheckConstraint(
-            f"status IN {INFRA_LANE_LINK_STATUSES!r}",
-            name="ck_infra_lane_links_status",
-        ),
-        CheckConstraint(
-            "change_manager_ref <> ''",
-            name="ck_infra_lane_links_change_manager_ref_required",
-        ),
-    )
-
-    work_unit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("work_units.id"))
-    work_package_revision_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("work_package_revisions.id")
-    )
-    attempt: Mapped[int] = mapped_column(Integer)
-    status: Mapped[str] = mapped_column(String)
-    change_manager_ref: Mapped[str] = mapped_column(String)
-    change_manager_url: Mapped[str | None] = mapped_column(Text)
-    infraops_ref: Mapped[str | None] = mapped_column(String)
-    approval_ref: Mapped[str | None] = mapped_column(Text)
-    rollback_ref: Mapped[str | None] = mapped_column(Text)
-    verify_ref: Mapped[str | None] = mapped_column(Text)
-    final_evidence_ref: Mapped[str | None] = mapped_column(Text)
-    payload: Mapped[dict[str, Any]] = mapped_column(
-        JSONB,
-        default=dict,
-        server_default=text("'{}'::jsonb"),
-    )
-    recorded_by: Mapped[str] = mapped_column(String)
-    recorded_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"))
-    idempotency_key: Mapped[str] = mapped_column(String)
-
-
 # What KIND of thing a release artifact binding names, and it is the one field a reader consults
 # to tell the estate's two activation models apart (ADR-0030).
 #
@@ -1049,6 +999,9 @@ class Observation(UUIDPrimaryKey, Base):
     idempotency_key: Mapped[str] = mapped_column(String)
 
 
+# Tier 3 item 24a (2026-09-28) deleted every reader and writer of this table; the table and
+# this mapping stay because its production rows are cited by UUID as Phase-6 exit evidence
+# (~/docs/software-delivery-system/2026-07-09-ws63-governed-promotion-closeout-evidence.md).
 class EventPublication(UUIDPrimaryKey, Base):
     __tablename__ = "event_publications"
     __table_args__ = (
@@ -1091,6 +1044,9 @@ class EventPublication(UUIDPrimaryKey, Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+# Tier 3 item 24a (2026-09-28) deleted every reader and writer of this table; the table and
+# this mapping stay because its production rows are cited by UUID as Phase-6 exit evidence
+# (~/docs/software-delivery-system/2026-07-09-ws63-governed-promotion-closeout-evidence.md).
 class KnowledgePromotionProposal(UUIDPrimaryKey, Base):
     __tablename__ = "knowledge_promotion_proposals"
     __table_args__ = (

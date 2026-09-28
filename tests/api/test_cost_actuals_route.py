@@ -1,18 +1,39 @@
 """POST /work-units/{unit_id}/cost-actuals (WS-P2.4 Increment 1).
 
 Wires CostActualsCommand/CostActualsResponse (Task 2) to record_cost_actuals (Task 3).
-Uses the same claim-gated route-test harness as infra-lane-links: a DB-backed
-`db_client`, worker M2M headers, and `ready_claimed_unit` to get a unit through
-revision -> unit -> authority-approval -> ready -> claim before exercising the route.
+Uses a claim-gated route-test harness: a DB-backed `db_client`, worker M2M headers, and
+`ready_claimed_unit` (defined here, shared with the budget and cost-actuals drills) to get a unit
+through revision -> unit -> authority-approval -> ready -> claim before exercising the route.
 """
 
 import uuid
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
-from tests.api.test_infra_links_api import ready_claimed_unit
-from tests.api.test_lifecycle_api import WORKER
+from tests._support.seeding import register_ready_unit
+from tests.api.test_lifecycle_api import AUTHORITY, WORKER
 from tests.contract.test_cost_actuals_contract import golden_cost_actuals
+
+
+def ready_claimed_unit(db_client: TestClient, *, key: str = "claimed-unit-api"):
+    unit_id = register_ready_unit(
+        db_client,
+        key,
+        authority=AUTHORITY,
+        unit_key=key,
+        title="Claimed unit API",
+        outcome="A claimed unit exists for a route test",
+        source_repository="AlobarQuest/orchestrator",
+        approved_at=datetime(2026, 7, 8, tzinfo=UTC),
+    )
+    claim = db_client.post(
+        f"/api/v1/work-units/{unit_id}/claim",
+        headers=WORKER,
+        json={"idempotency_key": f"{key}-claim", "expected_version": 2},
+    )
+    assert claim.status_code == 200
+    return unit_id, claim.json()
 
 
 def test_post_cost_actuals_persists_event(db_client: TestClient) -> None:

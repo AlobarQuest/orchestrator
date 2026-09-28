@@ -38,11 +38,6 @@ NON_INGRESS_POST_ROUTES = frozenset(
         # instead of registering twice -- asserted in tests/web/test_intake_form.py by
         # test_the_forms_idempotency_key_wins_over_the_pasted_payload.
         "/review/intakes",
-        # Read-model / export plumbing over already-persisted events.
-        "/api/v1/event-publications/queue",
-        "/api/v1/event-publications/export",
-        "/api/v1/event-publications/{publication_id}/retry",
-        "/api/v1/knowledge-promotion-proposals/{proposal_id}/submit-to-brain",
         # Derives a context snapshot; carries no independent ingress key.
         "/api/v1/work-units/{unit_id}/preflight",
     }

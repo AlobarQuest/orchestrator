@@ -214,18 +214,6 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_release_artifacts.py::test_release_artifact_replay_is_idempotent_and_conflict_rejects_digest_change",
     ),
     MatrixRow(
-        "infra-lane link",
-        "/api/v1/work-units/{unit_id}/infra-lane-links",
-        ADVISORY_LOCK,
-        "tests/services/test_infra_links.py::test_infra_lane_link_replay_and_conflict",
-    ),
-    MatrixRow(
-        "knowledge promotion proposal",
-        "/api/v1/knowledge-promotion-proposals",
-        ADVISORY_LOCK,
-        "tests/idempotency/test_gap_idempotency.py::test_a_duplicate_knowledge_promotion_writes_one_row",
-    ),
-    MatrixRow(
         "approval",
         "/api/v1/work-units/{unit_id}/approvals",
         ROW_LOCK,

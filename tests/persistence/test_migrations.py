@@ -293,9 +293,15 @@ def test_ws42_dispatch_records_table_exists(migrated_engine) -> None:
     assert ("work_unit_id", "runner_attempt") in unique_constraints
 
 
-def test_ws44_infra_lane_links_table_exists(migrated_engine) -> None:
-    inspector = inspect(migrated_engine)
+def test_0038_drops_infra_lane_links_and_its_downgrade_restores_the_ws44_table(
+    migrated_engine,
+) -> None:
+    """Tier 3 item 24a deleted the ingress, and 0038 drops its table; the downgrade is real."""
+    config = alembic_config()
+    assert "infra_lane_links" not in inspect(migrated_engine).get_table_names()
 
+    command.downgrade(config, "0037_events_indexes")
+    inspector = inspect(migrated_engine)
     assert "infra_lane_links" in inspector.get_table_names()
     columns = {column["name"] for column in inspector.get_columns("infra_lane_links")}
     assert {
@@ -317,12 +323,14 @@ def test_ws44_infra_lane_links_table_exists(migrated_engine) -> None:
         "event_id",
         "idempotency_key",
     } <= columns
-
     unique_constraints = {
         tuple(constraint["column_names"])
         for constraint in inspector.get_unique_constraints("infra_lane_links")
     }
     assert ("idempotency_key",) in unique_constraints
+
+    command.upgrade(config, "head")
+    assert "infra_lane_links" not in inspect(migrated_engine).get_table_names()
 
 
 def test_ws52_release_artifact_bindings_table_exists(migrated_engine) -> None:

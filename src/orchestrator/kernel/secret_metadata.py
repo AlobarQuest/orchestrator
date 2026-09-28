@@ -1,10 +1,11 @@
 """The single detector for secret-shaped content in metadata an ingress is about to store.
 
-Four ingresses store caller-supplied metadata -- release artifacts, infra-lane links, observations
-and rollout observations -- and each used to carry its own copy of this walk with its own key
-list: four parts in two of them, ten in a third, eleven in the fourth. A key refused at one door
-was accepted at the next. There is now one list, the union of the four, so tightening happened
-only at the two narrow ingresses and nothing any of them refused before is accepted now.
+Four ingresses stored caller-supplied metadata -- release artifacts, infra-lane links (deleted by
+Tier 3 item 24a), observations and rollout observations -- and each used to carry its own copy
+of this walk with its own key list: four parts in two of them, ten in a third, eleven in the
+fourth. A key refused at one door was accepted at the next. There is now one list, the union of
+the four, so tightening happened only at the two narrow ingresses and nothing any of them refused
+before is accepted now.
 
 Keys are matched by SUBSTRING, case-insensitively, because the thing being refused is a field
 that names a credential or a raw transcript, and `api_token`, `AuthToken` and `token_hint` all

@@ -8,7 +8,6 @@ from orchestrator.persistence.models import (
     Adjudication,
     Approval,
     Event,
-    EventPublication,
     Evidence,
 )
 from orchestrator.services.lifecycle.budget import BREACH_ACTION
@@ -53,7 +52,6 @@ def test_projection_assembles_core_facts(migrated_session: Session) -> None:
         "verifier_decided_completion",
         "approvals",
         "events",
-        "event_publications",
     }
     assert pack["unit"].id == unit.id
     assert [row.id for row in pack["evidence"]] == [evidence.id]
@@ -107,7 +105,6 @@ def test_render_markdown_includes_every_section_and_key_facts(migrated_session: 
         "## AC-keyed evidence",
         "## Adjudications and waiver facts",
         "## Approvals",
-        "## Event publications",
         "## Event history",
     ):
         assert header in markdown
@@ -311,7 +308,7 @@ def _table_data_rows(markdown: str, section_header: str, row_marker: str) -> lis
 def test_render_markdown_escapes_pipe_and_newline_in_table_cells(
     migrated_session: Session,
 ) -> None:
-    """A literal `|` or newline in evidence/last-error free text must not shift table columns
+    """A literal `|` or newline in evidence free text must not shift table columns
     or break out of the row -- this is the WS-P2.5 review defect: this markdown is posted
     verbatim as a PR comment, and unescaped values corrupt the rendered table."""
     _revision, unit = _build_unit(migrated_session, "evidence-pack-escaping")
@@ -343,18 +340,6 @@ def test_render_markdown_escapes_pipe_and_newline_in_table_cells(
         idempotency_key="evidence-pack-escaping-payload",
     )
     migrated_session.add_all([ref_evidence, payload_evidence])
-    migrated_session.flush()
-    migrated_session.add(
-        EventPublication(
-            source_kind="evidence",
-            source_id=ref_evidence.id,
-            source_action="evidence.recorded",
-            event_id="evt-" + "b" * 64,
-            mapping_version="ws34.v1",
-            status="failed",
-            last_error="boom: pipe|delimited\nmulti-line traceback",
-        )
-    )
     migrated_session.commit()
 
     pack = evidence_pack_response(evidence_pack_projection(migrated_session, unit.id))
@@ -365,15 +350,12 @@ def test_render_markdown_escapes_pipe_and_newline_in_table_cells(
     assert "artifact://a\\|b c" in markdown
     assert "artifact://a|b\nc" not in markdown
     assert "line1\\|line2" in markdown
-    assert "boom: pipe\\|delimited multi-line traceback" in markdown
-    assert "boom: pipe|delimited\nmulti-line traceback" not in markdown
 
-    # Both tables' data rows keep exactly 5 columns (6 unescaped pipes) -- proving the
+    # The evidence table's data rows keep exactly 5 columns (6 unescaped pipes) -- proving the
     # offending cell's `|`/newline did not shift or split the row.
     for section_header, row_marker in (
         ("## AC-keyed evidence, including supersession", "artifact://a"),
         ("## AC-keyed evidence, including supersession", "line1"),
-        ("## Event publications", "boom: pipe"),
     ):
         data_rows = _table_data_rows(markdown, section_header, row_marker)
         assert data_rows, f"expected a data row containing {row_marker!r}"

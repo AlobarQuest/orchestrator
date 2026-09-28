@@ -99,9 +99,6 @@ class Settings(BaseSettings):
     dead_letter_stalled_verification_seconds: int = Field(
         default=86_400, ge=0, le=2_592_000
     )  # 1 day; capped at 30
-    brain_proposal_target_urls: dict[str, str] = Field(default_factory=dict)
-    brain_proposal_credentials: dict[str, str] = Field(default_factory=dict)
-    brain_proposal_timeout_seconds: float = 10.0
     # How long a post-deploy verification unit may sit in SUBMITTED before the reconciliation
     # detect-pass calls it a deploy_split_brain. AC-003 is time-elapsed by nature -- the unit is
     # minted SUBMITTED inside the deployment-ingest transaction, so "verification stalled" cannot
