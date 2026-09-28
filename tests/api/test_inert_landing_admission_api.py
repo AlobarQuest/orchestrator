@@ -14,9 +14,10 @@ fields must be served on a REFUSING answer as much as on a permitting one.
 """
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import Engine
@@ -88,12 +89,24 @@ def test_an_unconfigured_deployment_refuses_by_name_rather_than_erroring(
     body = _admission(db_client)
 
     assert body["satisfied"] is False
-    assert "landing_not_enabled" in body["refusals"]
     assert "landing_app_credentials_missing" in body["refusals"]
     # The policy and the estate are both unconfigured in this client, and each says so in its own
     # words -- three causes, three different people.
     assert "inert_landing_policy_source_unconfigured" in body["refusals"]
     assert "landing_estate_source_unconfigured" in body["refusals"]
+
+
+def test_a_switched_off_deployment_refuses_by_name(db_client: TestClient) -> None:
+    """ADR-0046: the lane defaults ON, and `ORCHESTRATOR_INERT_LANDING_ENABLED=false` is the off
+    switch. Switched off, the served answer names that refusal; left alone, it does not."""
+    assert "landing_not_enabled" not in _admission(db_client)["refusals"]
+
+    switched_off = Settings.model_validate({"inert_landing_enabled": False})
+    cast(FastAPI, db_client.app).dependency_overrides[get_settings] = lambda: switched_off
+    body = _admission(db_client)
+
+    assert body["satisfied"] is False
+    assert "landing_not_enabled" in body["refusals"]
 
 
 def test_the_route_reports_the_repository_it_was_asked_about_folded(

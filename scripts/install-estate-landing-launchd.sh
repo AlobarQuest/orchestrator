@@ -5,10 +5,9 @@
 # schedule whose pass can end in something changing a running service, so installing it is not
 # something a build session does on its own.
 #
-# INSTALLING IT IS NOT ENOUGH, and that is deliberate. The orchestrator refuses every landing
-# until `ORCHESTRATOR_ESTATE_LANDING_ENABLED` is true in its environment, so this schedule is
-# inert on its own: the job runs, asks, is refused with `landing_not_enabled`, and reports. Two
-# separate acts, in two separate systems, and either one alone changes nothing.
+# THE ORCHESTRATOR BOUNDS EVERY PASS, not this schedule. Every term is composed there, and
+# `ORCHESTRATOR_ESTATE_LANDING_ENABLED=false` in its environment refuses every landing with
+# `landing_not_enabled` (the lane defaults ON since ADR-0046; the variable is the off switch).
 #
 # Usage: scripts/install-estate-landing-launchd.sh
 set -euo pipefail
@@ -36,6 +35,6 @@ launchctl bootstrap "gui/$(id -u)" "$TARGET"
 
 echo "installed $TARGET"
 echo "  runs at 02:15, 03:15, 04:15 and 05:15 local; log: $HOME/Library/Logs/estate-landing.log"
-echo "  it lands NOTHING until ORCHESTRATOR_ESTATE_LANDING_ENABLED is true in production"
+echo "  ORCHESTRATOR_ESTATE_LANDING_ENABLED=false in production stops every landing"
 echo "  report now, without asking for anything: $REPO_ROOT/scripts/run-estate-landing.sh"
 echo "  (bare reports; add --submit to ask for the landings)"

@@ -126,6 +126,12 @@ JSON
     export ORCHESTRATOR_TRUSTED_PROXY_IPS='["127.0.0.1"]'
     export ORCHESTRATOR_PROXY_MARKER="drill-marker"
     export ORCHESTRATOR_CSRF_SECRET="drill-only-csrf-secret-with-at-least-32-bytes"
+    # The lane switches default ON (ADR-0046), so a drill switches every one OFF by name: a drill
+    # must never fire a workflow or land a pull request, and it must not depend on a default to
+    # guarantee that.
+    export ORCHESTRATOR_DISPATCH_ENABLED=false
+    export ORCHESTRATOR_ESTATE_LANDING_ENABLED=false
+    export ORCHESTRATOR_INERT_LANDING_ENABLED=false
 }
 
 migrate_scratch() {

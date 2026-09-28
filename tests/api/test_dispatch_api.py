@@ -1,7 +1,9 @@
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import Engine
@@ -123,7 +125,11 @@ def test_dispatch_api_declares_route(client: TestClient) -> None:
     assert "DispatchResponse" in document["components"]["schemas"]
 
 
-def test_dispatch_api_fails_closed_by_default(db_client: TestClient) -> None:
+def test_dispatch_api_fails_closed_when_switched_off(db_client: TestClient) -> None:
+    """ADR-0046: dispatch defaults ON, and `ORCHESTRATOR_DISPATCH_ENABLED=false` is the off
+    switch. Switched off, the route refuses by name before anything else is consulted."""
+    switched_off = Settings.model_validate({"dispatch_enabled": False})
+    cast(FastAPI, db_client.app).dependency_overrides[get_settings] = lambda: switched_off
     unit_id = register_ready_unit(db_client, key="dispatch-api-disabled")
 
     response = db_client.post(

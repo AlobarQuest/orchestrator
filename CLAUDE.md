@@ -1100,8 +1100,9 @@ style of that module.
   GAP-4 attempt 3 — the prior two dispatches were ordinals 1 and 2.)
 
 - **THE BOUNDED DISPATCH WINDOW NO LONGER EXISTS. `ORCHESTRATOR_DISPATCH_ENABLED` is `true`
-  PERMANENTLY** (Devon's standing decision, 2026-08-04, container-verified). **Do not open or close
-  a window; there is nothing to close.** Every "open the window / close it after terminal" recipe
+  PERMANENTLY** (Devon's standing decision, 2026-08-04, container-verified). **Since 2026-09-28
+  (ADR-0046) it and both landing switches also DEFAULT true; the variable is only an off switch.**
+  **Do not open or close a window; there is nothing to close.** Every "open the window / close it after terminal" recipe
   elsewhere in this file is obsolete, and the restart hazard below is now a historical record of
   why the practice was retired rather than an instruction.
   The reasoning, because it reverses a long-standing ceremony. The flag is the **outermost of eight

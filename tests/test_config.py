@@ -33,3 +33,25 @@ def test_follow_up_due_after_days_cannot_be_set_high_enough_to_silence_it(monkey
     monkeypatch.setenv("ORCHESTRATOR_FOLLOW_UP_DUE_AFTER_DAYS", "100000")
     with pytest.raises(ValidationError):
         Settings(database_url=DB_URL)
+
+
+LANE_SWITCHES = {
+    "dispatch_enabled": "ORCHESTRATOR_DISPATCH_ENABLED",
+    "estate_landing_enabled": "ORCHESTRATOR_ESTATE_LANDING_ENABLED",
+    "inert_landing_enabled": "ORCHESTRATOR_INERT_LANDING_ENABLED",
+}
+
+
+@pytest.mark.parametrize(("field", "variable"), sorted(LANE_SWITCHES.items()))
+def test_a_lane_switch_is_on_when_its_variable_is_absent(monkeypatch, field, variable) -> None:
+    """ADR-0046. Absence means ON: a deployment that loses the variable must not silently halt a
+    lane its standing decision says is running."""
+    monkeypatch.delenv(variable, raising=False)
+    assert getattr(Settings(database_url=DB_URL), field) is True
+
+
+@pytest.mark.parametrize(("field", "variable"), sorted(LANE_SWITCHES.items()))
+def test_a_lane_switch_is_off_when_its_variable_says_false(monkeypatch, field, variable) -> None:
+    """The variable survives as the off switch, and it is the only way to stop a lane."""
+    monkeypatch.setenv(variable, "false")
+    assert getattr(Settings(database_url=DB_URL), field) is False
