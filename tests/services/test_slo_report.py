@@ -9,7 +9,7 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Adjudication, Claim, Event, Evidence, WorkUnit
 from orchestrator.services.budget import BREACH_ACTION
 from orchestrator.services.packages import register_approved_unit, register_revision
-from orchestrator.services.slo_report import (
+from orchestrator.services.reporting.slo_report import (
     STATUS_COMPUTED,
     STATUS_NO_DATA,
     STATUS_PARTIAL,

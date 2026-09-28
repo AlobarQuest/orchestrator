@@ -14,7 +14,7 @@ from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.main import create_app
 from orchestrator.persistence.models import Approval, Event, WorkUnit
-from orchestrator.services.pending_decisions import SETTLED_STATES
+from orchestrator.services.reporting.pending_decisions import SETTLED_STATES
 from tests.api.test_lifecycle_api import HUMAN, WORKER
 
 _ALLOWED_COMMANDS = (

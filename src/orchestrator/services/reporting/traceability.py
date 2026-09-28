@@ -27,10 +27,10 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.deployment_observations import list_deployment_observations
-from orchestrator.services.evidence_pack import evidence_pack_projection
 from orchestrator.services.observations import ObservationFilters, list_observations
 from orchestrator.services.pr_bindings import get_pr_binding
 from orchestrator.services.release_artifacts import list_release_artifacts
+from orchestrator.services.reporting.evidence_pack import evidence_pack_projection
 
 
 class TraceabilityAnchorResponse(BaseModel):
