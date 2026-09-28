@@ -81,6 +81,11 @@ def migrated_engine(request: pytest.FixtureRequest, _schema: _Schema) -> Iterato
         try:
             if not rebuild:
                 reset_data(engine, _schema.tables)
+        except Exception:
+            # The reset failed (a leaked transaction held a lock), so this test's rows are still
+            # there. Rebuild before the next test rather than hand it someone else's data.
+            _schema.dirty = True
+            raise
         finally:
             engine.dispose()
 

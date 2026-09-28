@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import Event
 from tests._support import database
-from tests._support.database import assert_unseeded, data_tables, reset_data
+from tests._support.database import assert_unseeded, data_tables, rebuild_schema, reset_data
 
 SENTINEL_KEY = "database-reset-control:survivor"
 
@@ -81,5 +81,20 @@ def test_a_leaked_open_transaction_fails_the_reset_rather_than_hanging(
         leaked.execute(select(func.count()).select_from(Event))  # holds ACCESS SHARE on events
         with pytest.raises(OperationalError, match="lock timeout"):
             reset_data(migrated_engine, tables)
+    finally:
+        leaked.close()
+
+
+@pytest.mark.schema_rebuild
+def test_a_leaked_open_transaction_fails_a_rebuild_rather_than_hanging(
+    migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(database, "RESET_LOCK_TIMEOUT", "200ms")
+    leaked = migrated_engine.connect()
+    try:
+        leaked.begin()
+        leaked.execute(select(func.count()).select_from(Event))  # holds ACCESS SHARE on events
+        with pytest.raises(OperationalError, match="lock timeout"):
+            rebuild_schema(migrated_engine)
     finally:
         leaked.close()

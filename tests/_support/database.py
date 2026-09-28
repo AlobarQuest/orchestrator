@@ -89,6 +89,7 @@ def _admin_engine() -> Engine:
 def rebuild_schema(engine: Engine) -> tuple[str, ...]:
     """Drop and re-migrate the schema; return the tables a reset must empty."""
     with engine.begin() as connection:
+        connection.execute(text(f"SET LOCAL lock_timeout = '{RESET_LOCK_TIMEOUT}'"))
         connection.execute(text("DROP SCHEMA public CASCADE"))
         connection.execute(text("CREATE SCHEMA public"))
     command.upgrade(alembic_config(), "head")
