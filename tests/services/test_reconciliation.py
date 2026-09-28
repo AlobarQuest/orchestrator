@@ -13,7 +13,7 @@ from orchestrator.persistence.models import (
     ReconciliationResolution,
     WorkUnit,
 )
-from orchestrator.services.reconciliation import (
+from orchestrator.services.reconciliation.reconciliation import (
     ConditionCommand,
     ConditionOutcome,
     ResolutionCommand,

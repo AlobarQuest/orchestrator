@@ -112,7 +112,7 @@ VOCABULARY_REGISTRY: dict[str, str] = {
     # The outbound-projection "card-closed" states the inbound reconciliation detector mirrors.
     # Source of truth is the tracker adapter's TERMINAL_STATES; coupled by
     # tests/architecture/test_tracker_closed_states_sync.py (WS-P2.7 Inc-2).
-    "services/reconciliation_detection.py:TRACKER_CLOSED_STATES": (
+    "services/reconciliation/reconciliation_detection.py:TRACKER_CLOSED_STATES": (
         "tracker adapter TERMINAL_STATES (outbound card-closed states); "
         "sync-guarded by test_tracker_closed_states_sync.py"
     ),

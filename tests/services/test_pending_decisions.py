@@ -18,7 +18,7 @@ from orchestrator.services.decomposition import (
     submit_decomposition_proposal,
 )
 from orchestrator.services.package_intake import register_package_intake
-from orchestrator.services.reconciliation import (
+from orchestrator.services.reconciliation.reconciliation import (
     ConditionCommand,
     ConditionOutcome,
     record_reconciliation_condition,

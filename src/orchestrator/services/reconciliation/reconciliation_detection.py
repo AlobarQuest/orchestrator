@@ -29,7 +29,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.pr_bindings import get_pr_binding
-from orchestrator.services.reconciliation import (
+from orchestrator.services.reconciliation.reconciliation import (
     ConditionCommand,
     ConditionOutcome,
     record_reconciliation_condition,

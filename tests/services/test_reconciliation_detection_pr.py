@@ -11,7 +11,7 @@ from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Observation, ReconciliationCondition, WorkUnit
 from orchestrator.services.observations import ObservationCommand, record_observation
 from orchestrator.services.pr_bindings import record_verification_read_head, upsert_pr_binding
-from orchestrator.services.reconciliation_detection import (
+from orchestrator.services.reconciliation.reconciliation_detection import (
     DetectionCounters,
     detect_observation_conditions,
 )

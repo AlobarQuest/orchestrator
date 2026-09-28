@@ -12,7 +12,7 @@ from orchestrator.services.deployment_observations import record_deployment_obse
 from orchestrator.services.observations import ObservationCommand, record_observation
 from orchestrator.services.packages import record_approval, register_approved_unit
 from orchestrator.services.pr_bindings import upsert_pr_binding
-from orchestrator.services.reconciliation import (
+from orchestrator.services.reconciliation.reconciliation import (
     ConditionCommand,
     ConditionOutcome,
     record_reconciliation_condition,

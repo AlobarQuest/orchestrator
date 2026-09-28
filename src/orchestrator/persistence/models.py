@@ -147,8 +147,9 @@ OBSERVATION_TYPES = (
     # -- auto-merged, merged by a person, pushed at the branch -- is `permitted_by` on the
     # facts, not a second observation type. Deliberately not `github_pr`, which already means
     # "a fact about a pull request bound to a work unit" in the reconciliation lane
-    # (`reconciliation_runner/facts.py`, `services/reconciliation_detection.py`); the two
-    # never collide today only because their subject_reference namespaces are disjoint, which
+    # (`reconciliation_runner/facts.py`,
+    # `services/reconciliation/reconciliation_detection.py`); the two never collide today only
+    # because their subject_reference namespaces are disjoint, which
     # is a coincidence to rely on rather than a design.
     "landing",
     # One repository's answer from one pass of the landing audit (WS-P3.6 Increment 3): were the

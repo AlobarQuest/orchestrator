@@ -1,6 +1,6 @@
 """WS-P2.7 Increment 2 Task 2: inbound/outbound closed-state vocabulary coupling guard."""
 
-from orchestrator.services.reconciliation_detection import TRACKER_CLOSED_STATES
+from orchestrator.services.reconciliation.reconciliation_detection import TRACKER_CLOSED_STATES
 from tracker_projection_adapter.projection import TERMINAL_STATES
 
 

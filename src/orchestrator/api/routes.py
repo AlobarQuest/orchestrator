@@ -130,7 +130,6 @@ from orchestrator.services.claims import (
     renew_claim,
     requeue_unit,
 )
-from orchestrator.services.consistency import check_consistency
 from orchestrator.services.context import PreflightCommand, record_preflight
 from orchestrator.services.cost_actuals import record_cost_actuals
 from orchestrator.services.decomposition import (
@@ -178,7 +177,6 @@ from orchestrator.services.github_app import (
     token_provider_for,
 )
 from orchestrator.services.github_checks import CheckObserver, GitHubActionsCheckObserver
-from orchestrator.services.in_flight import in_flight_snapshot
 from orchestrator.services.infra_links import (
     InfraLaneLinkCommand,
     list_infra_lane_links,
@@ -270,12 +268,18 @@ from orchestrator.services.packages import (
     resolve_dependency_command,
 )
 from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
-from orchestrator.services.reconciliation_detection import (
+from orchestrator.services.reconciliation.consistency import check_consistency
+from orchestrator.services.reconciliation.in_flight import in_flight_snapshot
+from orchestrator.services.reconciliation.reconciliation_detection import (
     ObservedTrackerItem,
     detect_observation_conditions,
     detect_reconciliation_conditions,
     detect_tracker_conditions,
     record_digest_divergence,
+)
+from orchestrator.services.reconciliation.tracker_bindings import (
+    list_tracker_bindings,
+    upsert_tracker_binding,
 )
 from orchestrator.services.release_artifacts import (
     ReleaseArtifactCommand,
@@ -302,7 +306,6 @@ from orchestrator.services.reporting.traceability import (
     traceability_response,
 )
 from orchestrator.services.runner_brief import runner_brief
-from orchestrator.services.tracker_bindings import list_tracker_bindings, upsert_tracker_binding
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from orchestrator.services.verifier_evidence import (
     NamedCheckEvidenceCommand,

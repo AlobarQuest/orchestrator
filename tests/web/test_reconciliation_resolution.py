@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import ReconciliationCondition, WorkUnit
-from orchestrator.services.reconciliation import (
+from orchestrator.services.reconciliation.reconciliation import (
     ConditionCommand,
     ConditionOutcome,
     open_conditions,
