@@ -80,8 +80,6 @@ from orchestrator.api.schemas import (
     RenewCommand,
     RequeueCommand,
     RetryCommand,
-    RevisionRegistration,
-    RevisionResponse,
     RunnerBriefResponse,
     SloReportResponse,
     StatusLedgerRowResponse,
@@ -89,7 +87,6 @@ from orchestrator.api.schemas import (
     TrackerBindingResponse,
     TrackerReconciliationDetectCommand,
     TransitionResponse,
-    UnitRegistration,
     UnitResponse,
     VerifierNamedCheckEvidenceCommandModel,
     VerifyCommandModel,
@@ -147,9 +144,7 @@ from orchestrator.services.intake.packages import (
     DependencySpec,
     evaluate_readiness,
     record_approval,
-    register_approved_unit,
     register_dependency_command,
-    register_revision,
     resolve_dependency_command,
 )
 from orchestrator.services.intake.runner_brief import runner_brief
@@ -426,23 +421,6 @@ def _parse_datetime_filter(value: str | None, field: str) -> datetime | None:
         raise DomainError("observation_invalid", f"{field} is invalid", None) from error
 
 
-@router.post("/revisions", response_model=RevisionResponse, status_code=201)
-def create_revision(
-    body: RevisionRegistration,
-    actor: ActorDep,
-    session: SessionDep,
-) -> dict[str, object]:
-    revision = register_revision(
-        session,
-        **body.model_dump(exclude={"authority"}),
-        authority=normalize_authority(body.authority),
-        actor_id=actor.actor_id,
-        actor_role=actor.role,
-    )
-    session.commit()
-    return {"id": revision.id, "revision": revision.revision}
-
-
 def package_intake_command(body: PackageIntakeRegistration) -> PackageIntakeCommand:
     """Project a validated intake registration onto the service command.
 
@@ -502,30 +480,6 @@ def package_intake(
 ) -> dict[str, object]:
     revision = _package_intake_revision_or_raise(session, revision_id)
     return _package_intake_payload(session, revision)
-
-
-@router.post(
-    "/revisions/{revision_id}/work-units",
-    response_model=UnitResponse,
-    status_code=201,
-)
-def create_unit(
-    revision_id: UUID,
-    body: UnitRegistration,
-    actor: ActorDep,
-    session: SessionDep,
-) -> dict[str, object]:
-    unit = register_approved_unit(
-        session,
-        revision_id=revision_id,
-        **body.model_dump(exclude={"authority"}),
-        authority=normalize_authority(body.authority),
-        authority_payload=body.authority,
-        actor_id=actor.actor_id,
-        actor_role=actor.role,
-    )
-    session.commit()
-    return {"id": unit.id, "state": unit.state, "version": unit.version}
 
 
 @router.post(

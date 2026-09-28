@@ -237,18 +237,6 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         ROW_LOCK,
         "tests/services/test_decomposition.py::test_proposal_idempotency_replays_exact_command",
     ),
-    MatrixRow(
-        "revision registration",
-        "/api/v1/revisions",
-        ROW_LOCK,
-        "tests/services/test_package_registration.py::test_revision_registration_is_idempotent_and_normalized",
-    ),
-    MatrixRow(
-        "work-unit registration",
-        "/api/v1/revisions/{revision_id}/work-units",
-        ROW_LOCK,
-        "tests/services/test_package_registration.py::test_concurrent_identical_first_registration_converges",
-    ),
     # --- WS-P2.1 ingress, idempotent from birth -------------------------------------------
     MatrixRow(
         "reconciliation condition (on-ingest)",

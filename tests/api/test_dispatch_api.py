@@ -14,6 +14,7 @@ from orchestrator.api.dependencies import AuthConfig, get_session
 from orchestrator.config import Settings, get_settings
 from orchestrator.main import create_app
 from orchestrator.services.github_app import GitHubAppTokenError, reset_token_providers
+from tests._support.seeding import mount_seeding_routes
 from tests._support.seeding import register_ready_unit as seed_ready_unit
 from tests.api.test_lifecycle_api import AUTHORITY as BASE_AUTHORITY
 from tests.api.test_lifecycle_api import SYSTEM
@@ -77,6 +78,7 @@ def dispatch_client(
     # ADR-0015: admission reads the target repository's own declaration from GitHub.
     monkeypatch.setattr(routes, "GitHubFactoryTargetSource", FakeFactoryTargetSourceFactory)
     app = create_app(auth_config)
+    mount_seeding_routes(app)
 
     def database_session() -> Iterator[Session]:
         with Session(migrated_engine) as session:

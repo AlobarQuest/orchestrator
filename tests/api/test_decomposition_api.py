@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import WorkUnit
 from tests._support.review_forms import decide_decomposition
+from tests._support.seeding import SEED_REVISIONS
 
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
 WORKER = {"Authorization": "Bearer fixture-token", "X-Credential-Key-Id": "worker-key"}
@@ -299,7 +300,7 @@ def test_decomposition_proposal_list_and_get_expose_review_projection(
 def test_decomposition_proposal_list_rejects_non_intaken_revision(
     db_client: TestClient,
 ) -> None:
-    created = db_client.post("/api/v1/revisions", headers=HUMAN, json=revision_payload())
+    created = db_client.post(SEED_REVISIONS, headers=HUMAN, json=revision_payload())
     revision_id = created.json()["id"]
 
     listed = db_client.get(

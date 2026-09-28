@@ -1,5 +1,11 @@
 # Recovery drills
 
+> **Retired.** The five local drills, `drill_common.sh`, `run-drills.sh` and the seeding routes they
+> used were deleted by ADR-0049 (2026-09-28). This page is kept as the record of what they covered.
+> Exit criterion 5 was met by their 2026-07-27 production run
+> (`~/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md`); a replacement
+> suite that drives state only through the public API is backlogged (P2, `d5e596e35e0a`).
+
 Five scripted drills that put the orchestrator through the failures it is built to survive, and
 check that it actually survives them. They exist because recovery controls that have never been
 exercised are a claim, not a capability.

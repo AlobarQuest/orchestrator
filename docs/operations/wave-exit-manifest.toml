@@ -79,12 +79,7 @@ body_sha256 = "23db51c6be63d2d8ba9d4dacfc0d4285dc8380e825c847296641a013f5bfa6cd"
 number = 1
 text = "crash/retry/reconciliation drills pass and are scripted"
 annotation = " **(✅ 5 drills)**"
-[[bar.clause.check]]
-kind = "command"
-basis = "live"
-argv = ["python3", "scripts/exit_probe.py", "drills-are-scripted"]
-unavailable_exit_codes = [7]
-proves = "five drill scripts exist and run-drills.sh's own glob reaches every one"
+note = """RE-MEASUREMENT RETIRED BY ADR-0049 (Devon, 2026-09-28); THE BAR IS NOT REWRITTEN. This clause was met on 2026-07-27, when the five drills ran against production 5/5 PASS under ADR-0005 disposition A, and the retained run record below is that evidence, pinned by digest. A live `drills-are-scripted` check used to re-measure that the drill scripts still existed in this repository; ADR-0049 deleted the local drill harness and that check with it, so the clause is attested by its retained evidence alone. Do not read the missing live check as an unmet criterion, and do not restore it without a drill suite to point it at."""
 [[bar.clause.check]]
 kind = "retained_evidence"
 basis = "retained"

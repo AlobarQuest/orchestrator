@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import WorkUnit
+from tests._support.seeding import SEED_REVISIONS, seed_units_path
 from tests.api.test_lifecycle_api import AUTHORITY, HUMAN, SYSTEM, WORKER
 
 DIGEST = "sha256:" + "a" * 64
@@ -18,7 +19,7 @@ PACKAGE_HASH = "sha256:release-api"
 
 def completed_unit(db_client: TestClient, migrated_engine: Engine, *, key: str = "release-api"):
     revision = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=HUMAN,
         json={
             "idempotency_key": f"{key}-revision",
@@ -39,7 +40,7 @@ def completed_unit(db_client: TestClient, migrated_engine: Engine, *, key: str =
     )
     assert revision.status_code == 201
     unit = db_client.post(
-        f"/api/v1/revisions/{revision.json()['id']}/work-units",
+        seed_units_path(revision.json()["id"]),
         headers=HUMAN,
         json={
             "idempotency_key": f"{key}-unit",

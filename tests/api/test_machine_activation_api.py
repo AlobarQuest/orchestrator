@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import UnitPrBinding, WorkUnit
+from tests._support.seeding import SEED_REVISIONS, seed_units_path
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM
 
 OBSERVER = {"Authorization": "Bearer observer-token", "X-Credential-Key-Id": "observer-key"}
@@ -34,7 +35,7 @@ AUTHORITY = {
 
 def completed_unit(db_client: TestClient, migrated_engine: Engine, *, key: str = "activation-api"):
     revision = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=HUMAN,
         json={
             "idempotency_key": f"{key}-revision",
@@ -55,7 +56,7 @@ def completed_unit(db_client: TestClient, migrated_engine: Engine, *, key: str =
     )
     assert revision.status_code == 201
     unit = db_client.post(
-        f"/api/v1/revisions/{revision.json()['id']}/work-units",
+        seed_units_path(revision.json()["id"]),
         headers=HUMAN,
         json={
             "idempotency_key": f"{key}-unit",

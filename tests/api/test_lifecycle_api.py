@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.main import app
 from orchestrator.persistence.models import WorkUnit
+from tests._support.seeding import SEED_REVISIONS, seed_units_path
 
 
 def test_api_is_versioned() -> None:
@@ -20,8 +21,10 @@ def test_creation_routes_declare_201_and_response_schemas() -> None:
     document = TestClient(app).get("/openapi.json").json()
     paths = document["paths"]
 
-    revision = paths["/api/v1/revisions"]["post"]
-    unit = paths["/api/v1/revisions/{revision_id}/work-units"]["post"]
+    # The WS-3.1 revision and unit creation routes were deleted by ADR-0049; the creation routes
+    # production serves are intake and the breakdown proposal.
+    revision = paths["/api/v1/package-intakes"]["post"]
+    unit = paths["/api/v1/package-intakes/{revision_id}/decomposition-proposals"]["post"]
 
     assert set(revision["responses"]) >= {"201", "401", "403"}
     assert set(unit["responses"]) >= {"201", "401", "403"}
@@ -158,12 +161,12 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
             }
         ],
     }
-    first_revision = db_client.post("/api/v1/revisions", headers=HUMAN, json=revision_body)
-    replay_revision = db_client.post("/api/v1/revisions", headers=HUMAN, json=revision_body)
+    first_revision = db_client.post(SEED_REVISIONS, headers=HUMAN, json=revision_body)
+    replay_revision = db_client.post(SEED_REVISIONS, headers=HUMAN, json=revision_body)
     assert first_revision.status_code == replay_revision.status_code == 201
     assert first_revision.json() == replay_revision.json()
     conflicting_revision = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=HUMAN,
         json={**revision_body, "content_hash": "sha256:different"},
     )
@@ -183,16 +186,12 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
         "approved_by": "devon",
         "approved_at": datetime(2026, 7, 5, tzinfo=UTC).isoformat(),
     }
-    first_unit = db_client.post(
-        f"/api/v1/revisions/{revision_id}/work-units", headers=HUMAN, json=unit_body
-    )
-    replay_unit = db_client.post(
-        f"/api/v1/revisions/{revision_id}/work-units", headers=HUMAN, json=unit_body
-    )
+    first_unit = db_client.post(seed_units_path(revision_id), headers=HUMAN, json=unit_body)
+    replay_unit = db_client.post(seed_units_path(revision_id), headers=HUMAN, json=unit_body)
     assert first_unit.status_code == replay_unit.status_code == 201
     assert first_unit.json() == replay_unit.json()
     conflicting_unit = db_client.post(
-        f"/api/v1/revisions/{revision_id}/work-units",
+        seed_units_path(revision_id),
         headers=HUMAN,
         json={**unit_body, "title": "Different title"},
     )
@@ -435,7 +434,7 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
         "max_attempts": 1,
     }
     recovery = db_client.post(
-        f"/api/v1/revisions/{revision_id}/work-units", headers=HUMAN, json=recovery_body
+        seed_units_path(revision_id), headers=HUMAN, json=recovery_body
     ).json()
     recovery_id = recovery["id"]
     assert (
@@ -522,7 +521,7 @@ def test_work_unit_registration_idempotency_conflicts_on_raw_authority_change(
     db_client: TestClient,
 ) -> None:
     revision = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=HUMAN,
         json={
             "idempotency_key": "revision-raw-authority",
@@ -574,12 +573,12 @@ def test_work_unit_registration_idempotency_conflicts_on_raw_authority_change(
     }
 
     first = db_client.post(
-        f"/api/v1/revisions/{revision_id}/work-units",
+        seed_units_path(revision_id),
         headers=HUMAN,
         json=unit_body,
     )
     replay = db_client.post(
-        f"/api/v1/revisions/{revision_id}/work-units",
+        seed_units_path(revision_id),
         headers=HUMAN,
         json=unit_body,
     )
@@ -587,7 +586,7 @@ def test_work_unit_registration_idempotency_conflicts_on_raw_authority_change(
     assert first.json() == replay.json()
 
     conflicting = db_client.post(
-        f"/api/v1/revisions/{revision_id}/work-units",
+        seed_units_path(revision_id),
         headers=HUMAN,
         json={**unit_body, "authority": conflicting_raw_authority},
     )

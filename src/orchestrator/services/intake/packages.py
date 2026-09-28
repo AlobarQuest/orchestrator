@@ -263,20 +263,17 @@ def register_revision(
         #    The intake path (`package_intake.register_package_intake` -> this function) never
         #    passes one -- its idempotency is enforced one layer up, by `_intake_replay`'s
         #    command-identity comparison, which DOES carry the exemption. The only caller that
-        #    ever passes `idempotency_key` here is `POST /api/v1/revisions` (`create_revision`),
-        #    which is `_require_human`-gated on the M2M-only `orchestrator-api` router --
-        #    unreachable by any principal in production (a browser session gets 401 stripped by
-        #    the proxy; no M2M credential satisfies `_require_human`).
+        #    ever passed `idempotency_key` here was `POST /api/v1/revisions`, which was unreachable
+        #    in production and was deleted by ADR-0049; only the test-only seeding router in
+        #    `tests/_support/seeding.py` passes one now.
         # 2. Even if that route were reachable, it is inert for an approved package for an
         #    independent reason: intent-packages' `canonical.py::intent_core()` pops only
         #    "status" before hashing, so `follow_up` IS inside `canonical_package_hash`. Changing
         #    a package's declared follow_up changes its content_hash, which makes it a different
         #    revision before this comparison is ever reached.
-        # This DOES still matter locally: the `orchestrator register-revision` CLI command and
-        # drill replays that pass a real idempotency_key against a pre-existing event will
-        # conflict on `follow_up` the same way this task exists to prevent on the intake path. If
-        # that path is ever wired to reachable production traffic, it needs the same exemption
-        # treatment `_legacy_identity_matches` gives the intake path.
+        # If a caller that passes `idempotency_key` is ever wired to reachable production
+        # traffic, it needs the same exemption treatment `_legacy_identity_matches` gives the
+        # intake path, or its replays will conflict on `follow_up`.
         "follow_up": _normalize_json(follow_up),
         # ADR-0026. In `candidate`, so it joins both the stored row and the
         # `revision.registered` event identity. That means a re-registration of one revision

@@ -1,20 +1,120 @@
-"""Seeding a work unit through the public API, shared by the API tests that each used to copy it.
+"""Seeding a work unit for the API tests, shared by the tests that each used to copy it.
 
-The route sequence is the production one for a hand-registered unit: register the revision,
-register the unit, record the human authority approval, and drive the SYSTEM ``ready`` edge.
-Each caller keeps the values its own assertions depend on (repository, snapshot, titles) and
-leaves the rest at these defaults.
+Production units are born through intake, breakdown and the /review approval. Tests need a unit
+without an approved intent package behind it, which is what the WS-3.1 bootstrap routes
+(`POST /api/v1/revisions`, `POST /api/v1/revisions/{id}/work-units`) gave them. Those routes were
+unreachable in production and ADR-0049 deleted them; their two service functions --
+`register_revision` and `register_approved_unit` -- are still production code, reached by intake
+and breakdown approval. So the two routes live on here as a TEST-ONLY router, mounted by the test
+clients and never by `create_app()`: same request models, same service calls, same error
+envelopes, and nothing production serves.
+
+`register_ready_unit` drives the rest of a hand-registered unit's sequence through real routes:
+record the human authority approval and the SYSTEM ``ready`` edge.
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
-from tests.api.test_lifecycle_api import HUMAN, SYSTEM
+from orchestrator.api.dependencies import get_actor, get_session
+from orchestrator.api.schemas import CommandBase
+from orchestrator.kernel.authority import normalize_authority
+from orchestrator.kernel.states import ActorContext
+from orchestrator.services.intake.packages import register_approved_unit, register_revision
+
+SEED_REVISIONS = "/test-support/revisions"
+
+
+def seed_units_path(revision_id: object) -> str:
+    return f"{SEED_REVISIONS}/{revision_id}/work-units"
+
+
+class AcceptanceCriterionDeclaration(BaseModel):
+    """What one of the revision's required acceptance criteria actually IS (WS-P2.32)."""
+
+    ac_id: str = Field(min_length=1)
+    condition: str = Field(min_length=1)
+    evidence_type: str = Field(min_length=1)
+    evidence: str = Field(min_length=1)
+    approver: str = Field(min_length=1)
+
+
+class RevisionRegistration(CommandBase):
+    package_id: str
+    source_repository: str
+    revision: int = Field(gt=0)
+    content_hash: str
+    source_path: str
+    source_commit: str
+    approved_by: str
+    approved_at: datetime
+    approval_event_id: str = Field(min_length=1)
+    enforcement_snapshot: dict[str, Any]
+    authority: dict[str, Any]
+    registry_version: int = Field(ge=0)
+    acceptance_criteria: list[AcceptanceCriterionDeclaration] | None = None
+
+
+class UnitRegistration(CommandBase):
+    unit_key: str
+    title: str
+    outcome: str
+    required_capability: str
+    authority: dict[str, Any]
+    max_attempts: int = Field(ge=0, default=3)
+    approved_by: str
+    approved_at: datetime
+
+
+_SessionDep = Annotated[Session, Depends(get_session)]
+_ActorDep = Annotated[ActorContext, Depends(get_actor)]
+
+seeding_router = APIRouter(prefix=SEED_REVISIONS, include_in_schema=False)
+
+
+@seeding_router.post("", status_code=201)
+def _seed_revision(
+    body: RevisionRegistration, actor: _ActorDep, session: _SessionDep
+) -> dict[str, object]:
+    revision = register_revision(
+        session,
+        **body.model_dump(exclude={"authority"}),
+        authority=normalize_authority(body.authority),
+        actor_id=actor.actor_id,
+        actor_role=actor.role,
+    )
+    session.commit()
+    return {"id": str(revision.id), "revision": revision.revision}
+
+
+@seeding_router.post("/{revision_id}/work-units", status_code=201)
+def _seed_unit(
+    revision_id: uuid.UUID, body: UnitRegistration, actor: _ActorDep, session: _SessionDep
+) -> dict[str, object]:
+    unit = register_approved_unit(
+        session,
+        revision_id=revision_id,
+        **body.model_dump(exclude={"authority"}),
+        authority=normalize_authority(body.authority),
+        authority_payload=body.authority,
+        actor_id=actor.actor_id,
+        actor_role=actor.role,
+    )
+    session.commit()
+    return {"id": str(unit.id), "state": unit.state, "version": unit.version}
+
+
+def mount_seeding_routes(app: FastAPI) -> None:
+    """Give a test application the two seeding routes production no longer serves."""
+    app.include_router(seeding_router)
 
 
 def register_ready_unit(
@@ -30,11 +130,15 @@ def register_ready_unit(
     approved_at: datetime = datetime(2026, 7, 5, tzinfo=UTC),
 ) -> str:
     """Register a revision and one unit under ``key``, approve its authority, and make it ready."""
+    # Imported here, not at the top: test_lifecycle_api imports this module for SEED_REVISIONS,
+    # so a module-level import back into it would be circular.
+    from tests.api.test_lifecycle_api import HUMAN, SYSTEM
+
     snapshot = enforcement_snapshot
     if snapshot is None:
         snapshot = {"acceptance_criteria": ["ac-1"]}
     revision = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=HUMAN,
         json={
             "idempotency_key": f"{key}-revision",
@@ -55,7 +159,7 @@ def register_ready_unit(
     )
     assert revision.status_code == 201, revision.text
     unit = db_client.post(
-        f"/api/v1/revisions/{revision.json()['id']}/work-units",
+        seed_units_path(revision.json()["id"]),
         headers=HUMAN,
         json={
             "idempotency_key": f"{key}-unit",

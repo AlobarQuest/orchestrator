@@ -14,6 +14,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import Adjudication, Evidence, WorkUnit
+from tests._support.seeding import seed_units_path
 from tests.api.test_deployment_observations_api import observation_body
 from tests.api.test_lifecycle_api import AUTHORITY, HUMAN, SYSTEM, WORKER
 from tests.api.test_release_artifacts_api import completed_unit, release_body
@@ -31,7 +32,7 @@ def _release_with_units_artifact_and_deployment(
     revision_id, impl_unit_id = completed_unit(db_client, migrated_engine, key="release-pack")
 
     second = db_client.post(
-        f"/api/v1/revisions/{revision_id}/work-units",
+        seed_units_path(revision_id),
         headers=HUMAN,
         json={
             "idempotency_key": "release-pack-unit-2",

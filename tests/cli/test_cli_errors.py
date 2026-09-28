@@ -85,7 +85,7 @@ def test_cli_rejects_invalid_data_before_http(monkeypatch) -> None:
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("HTTP called")),
     )
 
-    result = CliRunner().invoke(app, ["register-revision", "--data", "not-json"])
+    result = CliRunner().invoke(app, ["renew", "unit-1", "--data", "not-json"])
 
     assert result.exit_code == 2
     assert "data must be a JSON object" in result.stderr

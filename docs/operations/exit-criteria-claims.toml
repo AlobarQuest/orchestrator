@@ -14,6 +14,8 @@ description = "Recovery drills exercised against production (2026-07-27, 5/5 PAS
 # per drill, plus the read surfaces the run substituted for the local harness's direct SQL.
 # Evidence: ~/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md;
 # per-drill production variants: docs/operations/production-drill-adaptations.md.
+# The local drill scripts were retired by ADR-0049 (2026-09-28); this claim rests on the 2026-07-27
+# production run and the routes below, none of which that retirement removed.
 routes = [
     # drill 1 -- orchestrator SIGKILLed after a lease was held
     "/api/v1/work-units/{unit_id}/reclaim-expired-claim",

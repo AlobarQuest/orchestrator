@@ -19,6 +19,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from tests._support.seeding import SEED_REVISIONS
 from tests.api.test_package_intake_api import HUMAN, intake_payload
 
 SYSTEM = {"Authorization": "Bearer system-token", "X-Credential-Key-Id": "system-key"}
@@ -105,10 +106,11 @@ def test_an_observer_credential_is_refused_before_the_service(db_client: TestCli
 def test_the_bootstrap_revision_lane_still_refuses_the_system_actor(
     db_client: TestClient,
 ) -> None:
-    """`POST /api/v1/revisions` is unchanged: human-only on a machine-only router, so no
-    principal reaches it. ADR-0027 admitted a machine to intake, not to the WS-3.1 lane."""
+    """`register_revision` stays human-only: ADR-0027 admitted a machine to intake, not to the
+    WS-3.1 lane. ADR-0049 deleted that lane's route, so the service is driven through the
+    test-only seeding router, which calls it exactly as the route did."""
     response = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=SYSTEM,
         json={
             "package_id": "pkg-ws32",

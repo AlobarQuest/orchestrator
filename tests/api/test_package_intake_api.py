@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
+from tests._support.seeding import SEED_REVISIONS, seed_units_path
+
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
 AUTHORITY = {
     "capabilities": {"repo.edit": "allowed"},
@@ -171,7 +173,7 @@ def test_a_payload_without_a_follow_up_declaration_is_still_accepted(
 
 
 def test_package_intake_get_rejects_non_intaken_revision(db_client: TestClient) -> None:
-    created = db_client.post("/api/v1/revisions", headers=HUMAN, json=revision_payload())
+    created = db_client.post(SEED_REVISIONS, headers=HUMAN, json=revision_payload())
     revision_id = created.json()["id"]
 
     fetched = db_client.get(f"/api/v1/package-intakes/{revision_id}", headers=HUMAN)
@@ -187,7 +189,7 @@ def test_direct_unit_registration_rejects_package_cli_revision_without_decomposi
     revision_id = created.json()["id"]
 
     response = db_client.post(
-        f"/api/v1/revisions/{revision_id}/work-units",
+        seed_units_path(revision_id),
         headers=HUMAN,
         json=unit_payload(),
     )
