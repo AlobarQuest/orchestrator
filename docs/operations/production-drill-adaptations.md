@@ -1,5 +1,10 @@
 # Production drill adaptations (ADR-0005 prerequisite 3)
 
+> **Retired with the local drills (ADR-0049, 2026-09-28).** This document is the record of how the
+> five drills were adapted for the 2026-07-27 production run that met exit criterion 5, and it is
+> kept as that run's evidence. The scripts it refers to no longer exist; a replacement suite is
+> backlogged (P2, `d5e596e35e0a`).
+
 The five recovery drills in `docs/operations/recovery-drills.md` run against a throwaway Postgres,
 a throwaway uvicorn, and credentials minted per run. ADR-0005 (disposition A) requires them to run
 against `sds.alobar.net`. This document is the per-drill production variant, written for Devon's

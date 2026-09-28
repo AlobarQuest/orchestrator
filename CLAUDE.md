@@ -967,7 +967,9 @@ style of that module.
   points at the prior head's real (already-valid) id, so only a NEW revision id can trip this.
   (Verified 2026-07-27, WS-P2.7 Inc 2 migration 0019.)
 
-- **Four things the LOCAL recovery drills structurally cannot exercise, all found by running them
+- **[The local drills and the seeding routes named below were deleted by ADR-0049 on 2026-09-28;
+  the four findings stand as constraints on any replacement suite.]**
+  **Four things the LOCAL recovery drills structurally cannot exercise, all found by running them
   against production on 2026-07-27 (ADR-0005 disposition A, 5/5 PASS).** The local harness seeds
   and asserts in ways production does not permit, so a green local suite is silent on all of these.
   (1) **`seed_unit`'s seeding ROUTES are UNREACHABLE in production — but the functions behind them
@@ -2099,7 +2101,9 @@ style of that module.
   reported success having demonstrated nothing, and a clause could be excused while its checks ran
   and their failure was discarded.
 
-- **The architecture-guard family has a SEVENTH member: `tests/architecture/test_drill_scripts.py`,
+- **[RETIRED 2026-09-28 by ADR-0049 with the drill scripts it guarded; kept as the rule a
+  replacement drill suite should carry.]**
+  **The architecture-guard family has a SEVENTH member: `tests/architecture/test_drill_scripts.py`,
   and it is the one that catches drill dishonesty.**
   `test_a_drill_changes_state_only_through_the_public_api` forbids `INSERT|UPDATE|DELETE|TRUNCATE|
   ALTER|DROP` via `scratch_sql`/`docker exec` in any `scripts/drill-*.sh`, and its sibling

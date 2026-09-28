@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 import orchestrator.package_sources as package_sources
 from orchestrator.cli import app
 from orchestrator.package_sources import VerifiedApproval, load_package_intake_payload
+from tests._support.seeding import SEED_REVISIONS, seed_units_path
 from tests.api.test_context_api import standing_context
 
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
@@ -105,7 +106,7 @@ def test_real_http_api_and_cli_have_success_and_error_parity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     revision = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=HUMAN,
         json={
             "idempotency_key": "cli-http-revision",
@@ -126,7 +127,7 @@ def test_real_http_api_and_cli_have_success_and_error_parity(
     )
     assert revision.status_code == 201
     unit = db_client.post(
-        f"/api/v1/revisions/{revision.json()['id']}/work-units",
+        seed_units_path(revision.json()["id"]),
         headers=HUMAN,
         json={
             "idempotency_key": "cli-http-unit",
@@ -361,10 +362,10 @@ def test_real_http_claim_context_cli_matches_api(
         "authority": AUTHORITY,
         "registry_version": 1,
     }
-    revision = db_client.post("/api/v1/revisions", headers=HUMAN, json=revision_body)
+    revision = db_client.post(SEED_REVISIONS, headers=HUMAN, json=revision_body)
     assert revision.status_code == 201
     unit = db_client.post(
-        f"/api/v1/revisions/{revision.json()['id']}/work-units",
+        seed_units_path(revision.json()["id"]),
         headers=HUMAN,
         json={
             "idempotency_key": "cli-http-context-unit",

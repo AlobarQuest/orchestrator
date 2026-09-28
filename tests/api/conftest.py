@@ -12,6 +12,7 @@ from orchestrator.identity.auth import M2MCredential
 from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.kernel.states import ActorRole
 from orchestrator.main import create_app
+from tests._support.seeding import mount_seeding_routes
 
 REVISION = "0123456789abcdef0123456789abcdef01234567"
 
@@ -117,6 +118,7 @@ def client(auth_config: AuthConfig) -> Iterator[TestClient]:
 @pytest.fixture
 def db_client(auth_config: AuthConfig, migrated_engine: Engine) -> Iterator[TestClient]:
     app = create_app(auth_config)
+    mount_seeding_routes(app)
 
     def database_session() -> Iterator[Session]:
         with Session(migrated_engine) as session:

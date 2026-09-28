@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from orchestrator.api.routes import get_check_observer
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import PackageAcceptanceCriterion, WorkUnit
+from tests._support.seeding import SEED_REVISIONS, seed_units_path
 from tests.api.test_lifecycle_api import AUTHORITY, HUMAN, VERIFIER, WORKER
 from tests.fixtures.named_check import (
     AUTOMATED_CHECK_AUTHORITY,
@@ -186,7 +187,7 @@ def test_verifier_named_check_api_fails_closed_with_no_app_credentials(
 
 def test_worker_cannot_call_verify_api(db_client: TestClient) -> None:
     revision = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=HUMAN,
         json={
             "idempotency_key": "verify-api-revision",
@@ -207,7 +208,7 @@ def test_worker_cannot_call_verify_api(db_client: TestClient) -> None:
     )
     assert revision.status_code == 201
     unit = db_client.post(
-        f"/api/v1/revisions/{revision.json()['id']}/work-units",
+        seed_units_path(revision.json()["id"]),
         headers=HUMAN,
         json={
             "idempotency_key": "verify-api-unit",
@@ -236,7 +237,7 @@ def test_worker_cannot_call_verify_api(db_client: TestClient) -> None:
 
 def test_verifier_can_call_verify_api(db_client: TestClient, migrated_engine: Engine) -> None:
     revision = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=HUMAN,
         json={
             "idempotency_key": "verify-api-judgment-revision",
@@ -257,7 +258,7 @@ def test_verifier_can_call_verify_api(db_client: TestClient, migrated_engine: En
     )
     assert revision.status_code == 201
     unit = db_client.post(
-        f"/api/v1/revisions/{revision.json()['id']}/work-units",
+        seed_units_path(revision.json()["id"]),
         headers=HUMAN,
         json={
             "idempotency_key": "verify-api-judgment-unit",

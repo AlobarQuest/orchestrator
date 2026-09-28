@@ -235,16 +235,6 @@ def _decomposition_decision(
     )
 
 
-@app.command("register-revision")
-def register_revision(data: DataOption, json_output: JsonOption = False) -> None:
-    _post_data("/api/v1/revisions", data, json_output)
-
-
-@app.command("register-unit")
-def register_unit(revision_id: str, data: DataOption, json_output: JsonOption = False) -> None:
-    _post_data(f"/api/v1/revisions/{revision_id}/work-units", data, json_output)
-
-
 @app.command(
     "intake-package",
     help=(

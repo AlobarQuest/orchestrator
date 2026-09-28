@@ -118,8 +118,6 @@ def test_human_transition_output_contains_contract_identity(
 @pytest.mark.parametrize(
     ("arguments", "method", "path"),
     [
-        (["register-revision"], "POST", "/api/v1/revisions"),
-        (["register-unit", "revision-1"], "POST", "/api/v1/revisions/revision-1/work-units"),
         (
             ["propose-decomposition", "revision-1"],
             "POST",

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 import urllib.error
@@ -150,35 +149,6 @@ def _slo_metrics(payload: dict) -> dict[str, dict]:
 # --------------------------------------------------------------------------------------------
 # Wave 1
 # --------------------------------------------------------------------------------------------
-
-
-def drills_are_scripted() -> int:
-    """Wave 1 clause 1: the drills exist as re-runnable scripts and the runner reaches every one.
-
-    `run-drills.sh` selects drills by glob rather than by an enumerated list, so reachability is
-    established by expanding *its own* pattern and comparing the expansion with the drills on
-    disk. Checking for filenames in the runner's text instead would report a false miss on a
-    correctly-wired harness -- it did, on the first run of this probe.
-    """
-    drills = sorted(path.name for path in REPO_ROOT.glob("scripts/drill-*.sh"))
-    runner = REPO_ROOT / "scripts/run-drills.sh"
-    if not runner.exists():
-        return report(False, "FAIL scripts/run-drills.sh is absent", drills=drills)
-
-    patterns = re.findall(r"for\s+\w+\s+in\s+(\S+\.sh)\b", runner.read_text(encoding="utf-8"))
-    if not patterns:
-        return report(False, "FAIL run-drills.sh iterates no drill pattern", drills=drills)
-    reached = sorted({path.name for pattern in patterns for path in REPO_ROOT.glob(pattern)})
-    unreached = [name for name in drills if name not in reached]
-    ok = len(drills) == 5 and not unreached
-    return report(
-        ok,
-        f"{'PASS' if ok else 'FAIL'} {len(drills)} drill scripts, {len(reached)} reached by "
-        f"run-drills.sh's own pattern {patterns}",
-        drills=drills,
-        reached=reached,
-        unreached=unreached,
-    )
 
 
 def slo_report_runs() -> int:
@@ -1015,7 +985,6 @@ def workflows_were_consecutive(first: str, second: str) -> int:
 #: `main` so a test can assert the manifest invokes nothing that is not here: a manifest naming a
 #: probe that does not exist reports `unavailable` for ever, and silently.
 PROBES: dict[str, Callable[..., int]] = {
-    "drills-are-scripted": drills_are_scripted,
     "slo-report-runs": slo_report_runs,
     "completed-units-carry-adjudications": completed_units_carry_adjudications,
     "required-criteria-are-readable": required_criteria_are_readable,

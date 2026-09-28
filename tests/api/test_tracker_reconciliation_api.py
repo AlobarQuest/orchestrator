@@ -9,12 +9,13 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
+from tests._support.seeding import SEED_REVISIONS, seed_units_path
 from tests.api.test_lifecycle_api import AUTHORITY, HUMAN, SYSTEM, WORKER
 
 
 def _make_bound_unit(db_client: TestClient, suffix: str) -> str:
     revision = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=HUMAN,
         json={
             "idempotency_key": f"tracker-detect-revision-{suffix}",
@@ -35,7 +36,7 @@ def _make_bound_unit(db_client: TestClient, suffix: str) -> str:
     )
     assert revision.status_code == 201
     unit = db_client.post(
-        f"/api/v1/revisions/{revision.json()['id']}/work-units",
+        seed_units_path(revision.json()["id"]),
         headers=HUMAN,
         json={
             "idempotency_key": f"tracker-detect-unit-{suffix}",

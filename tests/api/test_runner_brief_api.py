@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import orchestrator.services.intake.runner_brief as runner_brief_service
 from tests._support.review_forms import decide_decomposition
+from tests._support.seeding import SEED_REVISIONS, seed_units_path
 from tests.api.test_decomposition_api import (
     HUMAN as DECOMPOSITION_HUMAN,
 )
@@ -44,7 +45,7 @@ def test_runner_brief_requires_m2m_or_human_auth(db_client: TestClient) -> None:
 
 def test_runner_brief_returns_canonical_unit_facts(db_client: TestClient) -> None:
     revision = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=HUMAN,
         json={
             "idempotency_key": "runner-brief-revision",
@@ -67,7 +68,7 @@ def test_runner_brief_returns_canonical_unit_facts(db_client: TestClient) -> Non
     revision_id = revision.json()["id"]
 
     unit = db_client.post(
-        f"/api/v1/revisions/{revision_id}/work-units",
+        seed_units_path(revision_id),
         headers=HUMAN,
         json={
             "idempotency_key": "runner-brief-unit",
@@ -312,7 +313,7 @@ def test_runner_brief_uses_read_only_readiness_evaluation(
     monkeypatch,
 ) -> None:
     revision = db_client.post(
-        "/api/v1/revisions",
+        SEED_REVISIONS,
         headers=HUMAN,
         json={
             "idempotency_key": "runner-brief-readonly-revision",
@@ -335,7 +336,7 @@ def test_runner_brief_uses_read_only_readiness_evaluation(
     revision_id = revision.json()["id"]
 
     unit = db_client.post(
-        f"/api/v1/revisions/{revision_id}/work-units",
+        seed_units_path(revision_id),
         headers=HUMAN,
         json={
             "idempotency_key": "runner-brief-readonly-unit",

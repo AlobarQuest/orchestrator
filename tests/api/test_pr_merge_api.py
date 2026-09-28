@@ -27,6 +27,7 @@ from orchestrator.config import Settings, get_settings
 from orchestrator.main import create_app
 from orchestrator.persistence.models import UnitPrMerge
 from orchestrator.services.landing.pr_merge import MergeOutcome, PullRequestState
+from tests._support.seeding import mount_seeding_routes
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM, WORKER
 from tests.api.test_pr_merge_admission_api import TARGET_REPOSITORY, _register_ready_unit
 from tests.services.estate_doubles import FakeEstateLandingSource, inert_source
@@ -62,6 +63,7 @@ def merge_client(
     monkeypatch.setattr(routes, "GitHubPullRequests", FakeGateway)
     monkeypatch.setattr(routes, "HttpEstateLandingSource", _fake_landing_source)
     app = create_app(auth_config)
+    mount_seeding_routes(app)
 
     def database_session() -> Iterator[Session]:
         with Session(migrated_engine) as session:
