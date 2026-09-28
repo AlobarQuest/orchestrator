@@ -27,12 +27,13 @@ directory over.
 already been carried. That is a second route and a second allowlist, pinned here the same way:
 two predicates, neither of which can satisfy the other, so a read allowlist that admitted the
 write route -- or the reverse -- reddens rather than quietly opening a surface nobody decided on.
+
+The import confinement this module used to assert -- nothing from the orchestrator, the
+orchestrator nothing from here, and the dependency allowlist -- is now a row of
+`tests/architecture/test_out_of_process_isolation.py`.
 """
 
 from __future__ import annotations
-
-import ast
-from pathlib import Path
 
 import pytest
 
@@ -45,60 +46,6 @@ from work_carrier.orchestrator_client import (
     is_allowed_read,
     is_allowed_write,
 )
-
-CARRIER = Path("src/work_carrier")
-ORCHESTRATOR = Path("src/orchestrator")
-
-ALLOWED_TOP_LEVEL = {
-    "__future__",
-    "argparse",
-    "dataclasses",
-    "httpx",
-    "json",
-    "os",
-    "pathlib",
-    # For the read allowlist's anchored path template, the same shape the watcher's uses. A
-    # membership test would need no regex, but the path carries an id, so what has to be
-    # asserted is a TEMPLATE -- and a hand-rolled split-and-check is a parser nobody reviews.
-    "re",
-    "subprocess",
-    "sys",
-    # The declaration reader's own age report and the TOML the repository declares it in.
-    "time",
-    "tomllib",
-    "typing",
-    "work_carrier",
-}
-
-
-def _imports(root: Path) -> set[str]:
-    names: set[str] = set()
-    for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                names.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-                names.add(node.module)
-    return names
-
-
-def test_the_carrier_imports_nothing_from_the_orchestrator() -> None:
-    offenders = {name for name in _imports(CARRIER) if name.split(".")[0] == "orchestrator"}
-    assert offenders == set(), (
-        "the carry builds its payload by running `orchestrator emit-intake-payload`, not by "
-        "importing the function that backs it"
-    )
-
-
-def test_the_orchestrator_imports_nothing_from_the_carrier() -> None:
-    offenders = {name for name in _imports(ORCHESTRATOR) if name.split(".")[0] == "work_carrier"}
-    assert offenders == set()
-
-
-def test_the_carriers_third_party_deps_are_confined() -> None:
-    offenders = {name.split(".")[0] for name in _imports(CARRIER)} - ALLOWED_TOP_LEVEL
-    assert offenders == set()
 
 
 def test_the_read_surface_is_one_route_and_no_more() -> None:

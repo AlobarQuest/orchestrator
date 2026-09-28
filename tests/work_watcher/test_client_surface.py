@@ -16,12 +16,13 @@ is a single GitHub pull-request READ for the staleness report -- **and each is a
 different angle** --
 the path predicate, the client's public method set, and a transport that proves a refused path
 never becomes a request. A guard is only worth having if it fires before anything leaves.
+
+The import confinement this module used to assert -- nothing from the orchestrator, the
+orchestrator nothing from here, and the dependency allowlist -- is now a row of
+`tests/architecture/test_out_of_process_isolation.py`.
 """
 
 from __future__ import annotations
-
-import ast
-from pathlib import Path
 
 import httpx
 import pytest
@@ -47,53 +48,6 @@ from work_watcher.orchestrator_client import (
     OrchestratorClient,
     is_allowed_read,
 )
-
-WATCHER = Path("src/work_watcher")
-ORCHESTRATOR = Path("src/orchestrator")
-
-ALLOWED_TOP_LEVEL = {
-    "__future__",
-    "argparse",
-    "httpx",
-    "os",
-    "re",
-    "sys",
-    "typing",
-    # The listing is the carry's, deliberately: one question, one parse, and one place where the
-    # pipeline is named in the query. See `work_watcher/change_manager.py`.
-    "work_carrier",
-    "work_watcher",
-}
-
-
-def _imports(root: Path) -> set[str]:
-    names: set[str] = set()
-    for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                names.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-                names.add(node.module)
-    return names
-
-
-def test_the_watcher_imports_nothing_from_the_orchestrator() -> None:
-    offenders = {name for name in _imports(WATCHER) if name.split(".")[0] == "orchestrator"}
-    assert offenders == set(), (
-        "the watcher asks the orchestrator over HTTP for the completion verdict; importing the "
-        "function that derives it would make this program a second implementation of the rule"
-    )
-
-
-def test_the_orchestrator_imports_nothing_from_the_watcher() -> None:
-    offenders = {name for name in _imports(ORCHESTRATOR) if name.split(".")[0] == "work_watcher"}
-    assert offenders == set()
-
-
-def test_the_watchers_third_party_deps_are_confined() -> None:
-    offenders = {name.split(".")[0] for name in _imports(WATCHER)} - ALLOWED_TOP_LEVEL
-    assert offenders == set()
 
 
 def test_the_change_manager_write_surface_is_one_route_and_no_more() -> None:

@@ -152,6 +152,7 @@ from orchestrator.persistence.models import (
     MACHINE_LOCAL_KIND,
     MACHINE_LOCAL_OBSERVATION,
 )
+from tests.architecture.import_scan import out_of_process_packages
 
 REPO = Path(__file__).resolve().parents[2]
 SRC = REPO / "src"
@@ -309,18 +310,6 @@ def write_templates(table: Mapping[str, frozenset[str]]) -> frozenset[str]:
 # ------------------------------------------------------------------------------------------------
 # Population and closure
 # ------------------------------------------------------------------------------------------------
-
-
-def out_of_process_packages(src: Path) -> list[str]:
-    """Every top-level directory under `src/` holding Python, other than the orchestrator."""
-    return sorted(
-        child.name
-        for child in src.iterdir()
-        if child.is_dir()
-        and child.name != "orchestrator"
-        and not child.name.startswith((".", "__"))
-        and any(child.rglob("*.py"))
-    )
 
 
 @cache  # load-bearing: docstrings are excluded by id(), so every reader must share one tree

@@ -1,12 +1,17 @@
-"""The installer shares no import path with the orchestrator; each client reaches one route."""
+"""The installer shares no import path with the orchestrator; each client reaches one route.
 
-import ast
+The import confinement this module used to assert -- nothing from the orchestrator, the
+orchestrator nothing from here, and the dependency allowlist -- is now a row of
+`tests/architecture/test_out_of_process_isolation.py`.
+"""
+
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
+from tests.architecture.import_scan import file_import_names
 from tool_installer.github import ForbiddenMethodError, GitHubReader, GitHubReadError
 from tool_installer.orchestrator_client import (
     ForbiddenEndpointError,
@@ -26,29 +31,6 @@ from tool_installer.policy_client import (
 from tool_installer.policy_client import UnusableEndpointError as PolicyUrlError
 
 INSTALLER = Path("src/tool_installer")
-ORCHESTRATOR = Path("src/orchestrator")
-ALLOWED_TOP_LEVEL = {
-    "httpx",
-    "typer",
-    "tool_installer",
-    "dataclasses",
-    "datetime",
-    "hashlib",
-    "json",
-    "os",
-    "re",
-    "shutil",
-    "subprocess",
-    "sys",
-    "tempfile",
-    "pathlib",
-    "typing",
-    "zoneinfo",
-    # `urllib.parse` only, for the base-URL shape check. `urllib.request` is an HTTP client and is
-    # in the invariant scan's own `HTTP_CLIENTS` set, so it could never arrive here unnoticed.
-    "urllib",
-    "__future__",
-}
 
 
 def _observer(handler: Any) -> OrchestratorClient:
@@ -69,59 +51,6 @@ def _system(handler: Any) -> PolicyClient:
     )
 
 
-def _file_imports(path: Path) -> set[str]:
-    names: set[str] = set()
-    for node in ast.walk(ast.parse(path.read_text())):
-        if isinstance(node, ast.Import):
-            names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            names.add(node.module)
-    return names
-
-
-def _imports(root: Path) -> set[str]:
-    names: set[str] = set()
-    for path in root.rglob("*.py"):
-        names |= _file_imports(path)
-    return names
-
-
-def test_the_installer_imports_nothing_from_the_orchestrator() -> None:
-    assert {name for name in _imports(INSTALLER) if name.split(".")[0] == "orchestrator"} == set()
-
-
-def test_the_orchestrator_imports_nothing_from_the_installer() -> None:
-    found = {name for name in _imports(ORCHESTRATOR) if name.split(".")[0] == "tool_installer"}
-    assert found == set()
-
-
-def test_the_installer_imports_no_sibling_lane() -> None:
-    """Lanes share DOMAIN knowledge; this one has none to borrow.
-
-    Its window predicate is the orchestrator's, deliberately COPIED -- see `window.py`. A lane
-    that reached into a sibling for plumbing would let an unrelated refactor break its schedule.
-    """
-    siblings = {
-        "activation_sweep",
-        "bump_proposer",
-        "change_proposer",
-        "deploy_watcher",
-        "estate_lander",
-        "inert_lander",
-        "landing_ledger",
-        "pin_watcher",
-        "reconciliation_runner",
-        "tracker_projection_adapter",
-        "work_carrier",
-        "work_watcher",
-    }
-    assert {name.split(".")[0] for name in _imports(INSTALLER)} & siblings == set()
-
-
-def test_the_installers_third_party_deps_are_confined() -> None:
-    assert {name.split(".")[0] for name in _imports(INSTALLER)} - ALLOWED_TOP_LEVEL == set()
-
-
 def test_only_the_three_client_modules_can_speak_http() -> None:
     """The lane's whole entry in the repository's outbound allowlist is three files.
 
@@ -134,7 +63,8 @@ def test_only_the_three_client_modules_can_speak_http() -> None:
     speaks = {
         str(path.relative_to(INSTALLER))
         for path in INSTALLER.rglob("*.py")
-        if {"httpx", "requests", "urllib.request", "http.client", "aiohttp"} & _file_imports(path)
+        if {"httpx", "requests", "urllib.request", "http.client", "aiohttp"}
+        & file_import_names(path)
     }
     assert speaks == {"github.py", "policy_client.py", "orchestrator_client.py"}
 

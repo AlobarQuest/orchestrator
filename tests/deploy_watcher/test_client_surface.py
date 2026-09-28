@@ -1,6 +1,6 @@
 """`deploy_watcher` is a separate program that happens to live in this repository.
 
-Same shape as `test_landing_ledger_isolation.py`, and for the same reason: hosting an
+Same shape as the landing ledger's surface tests, and for the same reason: hosting an
 out-of-process program here is a packaging choice, and the moment it can import the orchestrator
 it stops being one.
 
@@ -10,12 +10,13 @@ rollout the watcher observes may belong to a work unit, and the traceability cha
 hop is unit-scoped. What has NOT changed is the property this module exists for — the watcher
 still imports nothing from `orchestrator.*`, still speaks HTTP from outside the process, and its
 orchestrator surface is one write and one read, both bounded here.
+
+The import confinement this module used to assert -- nothing from the orchestrator, the
+orchestrator nothing from here, and the dependency allowlist -- is now a row of
+`tests/architecture/test_out_of_process_isolation.py`.
 """
 
 from __future__ import annotations
-
-import ast
-from pathlib import Path
 
 import httpx
 import pytest
@@ -38,56 +39,6 @@ from deploy_watcher.orchestrator import (
 from deploy_watcher.orchestrator import (
     is_allowed_write as orchestrator_write,
 )
-
-WATCHER = Path("src/deploy_watcher")
-ORCHESTRATOR = Path("src/orchestrator")
-
-# Everything the program may import at the top level. `httpx` and `typer` and the standard
-# library, exactly as the landing ledger is confined -- and the reason it reads GitHub with a
-# plain token rather than as the App: the App's JWT assertion needs `pyjwt`, which is not here.
-ALLOWED_TOP_LEVEL = {
-    "__future__",
-    # `collections.abc`, for the injected-reader signature in `transcription_currency`. Stdlib,
-    # and `typing.Callable` is not the alternative: ruff's UP rules forbid it.
-    "collections",
-    "dataclasses",
-    "datetime",
-    "deploy_watcher",
-    "hashlib",
-    "httpx",
-    "json",
-    "os",
-    "re",
-    "typer",
-    "typing",
-}
-
-
-def _imports(root: Path) -> set[str]:
-    names: set[str] = set()
-    for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                names.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-                names.add(node.module)
-    return names
-
-
-def test_the_watcher_imports_nothing_from_the_orchestrator() -> None:
-    offenders = {name for name in _imports(WATCHER) if name.split(".")[0] == "orchestrator"}
-    assert offenders == set()
-
-
-def test_the_orchestrator_imports_nothing_from_the_watcher() -> None:
-    offenders = {name for name in _imports(ORCHESTRATOR) if name.split(".")[0] == "deploy_watcher"}
-    assert offenders == set()
-
-
-def test_the_watchers_third_party_deps_are_confined() -> None:
-    offenders = {name.split(".")[0] for name in _imports(WATCHER)} - ALLOWED_TOP_LEVEL
-    assert offenders == set()
 
 
 def test_the_write_surface_is_one_route_and_no_more() -> None:

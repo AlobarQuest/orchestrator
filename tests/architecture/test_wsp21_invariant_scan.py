@@ -342,7 +342,8 @@ OUTBOUND_ALLOWLIST = {
     Path("src/bump_proposer/orchestrator_client.py"),
     # ADR-0027. The other half of the same program: the intake registration that completes the
     # carry. ONE write, `POST /api/v1/package-intakes`, enforced in code by `is_allowed_write`
-    # and in tests by test_work_carrier_isolation.py. It composes no decision -- every rule about
+    # and in tests by tests/work_carrier/test_client_surface.py. It composes no decision -- every
+    # rule about
     # what may be registered is evaluated inside the orchestrator, in the transaction that
     # records it -- and the payload it sends is the emitter's own bytes, unedited.
     Path("src/work_carrier/orchestrator_client.py"),
@@ -366,7 +367,7 @@ OUTBOUND_ALLOWLIST = {
     # by construction: its single route can reach `resolved` and no other status, so a bug
     # here stops work a person approved and cannot cause any. Its scope permits more than its
     # allowlist does -- `POST /api/deploy-changes` among it -- and
-    # test_work_watcher_isolation.py is the control for that gap.
+    # tests/work_watcher/test_client_surface.py is the control for that gap.
     Path("src/work_watcher/change_manager.py"),
     # The other half: the read that establishes the fact. The completion rule is derived
     # inside the orchestrator (ADR-0029) and relayed here, so this program composes nothing
@@ -375,26 +376,29 @@ OUTBOUND_ALLOWLIST = {
     # Ruling B1 (Devon, 2026-09-27): a third file, one READ. A work record left live after its
     # Dependabot pull request was closed or merged by hand is REPORTED, never retired by a
     # machine, and the pull request's state lives only on GitHub. One anchored GET of a single
-    # pull request, with the carry's own `gh auth token`; test_work_watcher_isolation.py pins it.
+    # pull request, with the carry's own `gh auth token`; tests/work_watcher/test_client_surface.py
+    # pins it.
     Path("src/work_watcher/github.py"),
     # ADR-0019 Increment 5b. `estate_lander` is a SEPARATE program (ADR-0002's shape), and its
     # egress is not the orchestrator's. It reads which changes the estate routed, asks the
     # orchestrator whether each may be landed, and relays the answer -- composing nothing, because
     # every term is evaluated inside the orchestrator in the transaction that records the act.
     # Its whole surface is two routes, enforced in code by `is_allowed_read`/`is_allowed_write`
-    # and in tests by test_estate_lander_isolation.py.
+    # and in tests by tests/estate_lander/test_client_surface.py.
     Path("src/estate_lander/orchestrator_client.py"),
     # ADR-0038 part 2a. `inert_lander` is the SIBLING separate program, and its egress is not
     # the orchestrator's either. It reads which repositories a person declared ones where landing
     # on the default branch changes nothing already serving, asks the orchestrator whether each
     # open update-bot pull request may be landed, and relays the answer -- composing nothing.
     # Its whole surface is three routes, enforced in code by `is_allowed_read`/`is_allowed_write`
-    # and in tests by test_inert_lander_isolation.py, and it deliberately cannot reach the
+    # and in tests by tests/inert_lander/test_client_surface.py, and it deliberately cannot reach
+    # the
     # estate lane's, whose population lands into something already serving.
     Path("src/inert_lander/orchestrator_client.py"),
     # The reconciliation runner is a SEPARATE program (ADR-0002). Polling GitHub is its entire
     # job, and it may only push what it finds back through two endpoints -- enforced in code by
-    # ALLOWED_WRITE_ENDPOINTS and in tests by test_reconciliation_runner_isolation.py. It is not
+    # ALLOWED_WRITE_ENDPOINTS and in tests by tests/reconciliation_runner/test_client_surface.py.
+    # It is not
     # the orchestrator, and its egress is not the orchestrator's.
     Path("src/reconciliation_runner/client.py"),
     # The WS-P2.7 tracker projection adapter is a SEPARATE program (ADR-0003), the same
@@ -402,7 +406,7 @@ OUTBOUND_ALLOWLIST = {
     # projecting is its entire job. It shares no import path with src/orchestrator/, and its write
     # surface is the two-endpoint, both-report-only allowlist enforced in code by
     # _is_allowed_write in orchestrator_client.py and in tests by
-    # test_tracker_projection_adapter_isolation.py. Its egress is not the orchestrator's.
+    # tests/tracker_projection_adapter/test_client_surface.py. Its egress is not the orchestrator's.
     Path("src/tracker_projection_adapter/orchestrator_client.py"),
     Path("src/tracker_projection_adapter/tracker.py"),
     # WS-P3.6 Increment 2. The landing ledger is a SEPARATE program, the same report-only shape as
@@ -410,7 +414,7 @@ OUTBOUND_ALLOWLIST = {
     # about how each got there -- and records one observation per landing. Its GitHub half refuses
     # any method but GET, and its orchestrator half may write to exactly one endpoint, the OBSERVER
     # role's whole write surface; both are enforced in code and pinned by
-    # test_landing_ledger_isolation.py. Its egress is not the orchestrator's.
+    # tests/landing_ledger/test_client_surface.py. Its egress is not the orchestrator's.
     Path("src/landing_ledger/github.py"),
     Path("src/landing_ledger/orchestrator_client.py"),
     # ADR-0019 increment 2. The rollout watcher is a SEPARATE program, the same report-only shape
@@ -424,7 +428,8 @@ OUTBOUND_ALLOWLIST = {
     # producer positioned to fill it. That half writes to exactly one endpoint (the OBSERVER role's
     # whole write surface) and reads exactly one path (the unit history that CONFIRMS the claim a
     # commit trailer makes). All three are enforced in code and pinned by
-    # test_deploy_watcher_isolation.py. Its egress is not the orchestrator's -- it is a client of
+    # tests/deploy_watcher/test_client_surface.py. Its egress is not the orchestrator's -- it is a
+    # client of
     # it, from outside the process, holding a credential that can do nothing else.
     Path("src/deploy_watcher/change_manager.py"),
     Path("src/deploy_watcher/github.py"),
@@ -441,7 +446,8 @@ OUTBOUND_ALLOWLIST = {
     # through a subcommand allowlist that makes `pull` unreachable rather than merely unused --
     # so the ONLY thing it speaks HTTP to is the orchestrator, and only to file what it found.
     # One endpoint, the OBSERVER role's whole write surface, and no read surface at all;
-    # enforced in code by `is_allowed_write` and pinned by test_activation_sweep_isolation.py.
+    # enforced in code by `is_allowed_write` and pinned by
+    # tests/activation_sweep/test_client_surface.py.
     # Its egress is not the orchestrator's.
     Path("src/activation_sweep/orchestrator_client.py"),
     # ADR-0030's OTHER lane, in the same program and deliberately not in the same module. Binding
@@ -460,7 +466,8 @@ OUTBOUND_ALLOWLIST = {
     # The pin watcher's write half, and the activation sweep's client deliberately copied rather
     # than imported: lanes share DOMAIN knowledge, never plumbing, so a sibling's refactor cannot
     # break this lane's schedule. One endpoint, the OBSERVER role's whole write surface, no read
-    # surface at all; enforced by `is_allowed_write` and pinned by test_pin_watcher_isolation.py.
+    # surface at all; enforced by `is_allowed_write` and pinned by
+    # tests/pin_watcher/test_client_surface.py.
     # Its egress is not the orchestrator's.
     Path("src/pin_watcher/orchestrator_client.py"),
     # ADR-0042. The tool installer is a SEPARATE program (ADR-0002's shape), out of process and
@@ -474,7 +481,7 @@ OUTBOUND_ALLOWLIST = {
     # lifecycle inside the half that can only read a policy. `orchestrator_client.py` WRITES with
     # the OBSERVER bearer to one endpoint, that role's whole write surface. All three are enforced
     # in code by `is_allowed_read` / `is_allowed_write` / a GET-only entry point, and pinned by
-    # test_tool_installer_isolation.py. Its egress is not the orchestrator's.
+    # tests/tool_installer/test_client_surface.py. Its egress is not the orchestrator's.
     # The revision watcher. Three readers and one writer, all out of process (ADR-0002's shape),
     # because the question is about applications this repository does not run and the answer is
     # filed rather than acted on. `estate.py` performs one GET per declared application against

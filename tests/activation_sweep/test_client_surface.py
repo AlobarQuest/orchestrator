@@ -1,6 +1,10 @@
-"""The sweep shares no import path with the orchestrator, writes to one endpoint, never pulls."""
+"""The sweep shares no import path with the orchestrator, writes to one endpoint, never pulls.
 
-import ast
+The import confinement this module used to assert -- nothing from the orchestrator, the
+orchestrator nothing from here, and the dependency allowlist -- is now a row of
+`tests/architecture/test_out_of_process_isolation.py`.
+"""
+
 from pathlib import Path
 from typing import Any
 
@@ -22,35 +26,9 @@ from activation_sweep.orchestrator_client import (
     is_allowed_write,
     open_client,
 )
+from tests.architecture.import_scan import file_import_names
 
 SWEEP = Path("src/activation_sweep")
-ORCHESTRATOR = Path("src/orchestrator")
-ALLOWED_TOP_LEVEL = {
-    "httpx",
-    "typer",
-    "activation_sweep",
-    "dataclasses",
-    "datetime",
-    "hashlib",
-    "json",
-    "os",
-    "pathlib",
-    "re",
-    # `shutil.which` alone, to find `uv` on PATH before the activation check runs it. The
-    # fallback to its standard install location is what keeps a scheduled pass measuring when
-    # the plist's PATH does not carry it.
-    "shutil",
-    "subprocess",
-    # `tomllib` reads `[project.scripts]` from a working copy's own manifest, which is what the
-    # console-entry-point fact is measured against. Standard library since 3.11; it is here
-    # because this guard confines THIRD-PARTY dependencies and lists every top-level name.
-    "tomllib",
-    "typing",
-    # `urllib.parse` only, for the base-URL shape check. `urllib.request` is an HTTP client and
-    # is in the scan's own `HTTP_CLIENTS` set, so it could never arrive here unnoticed.
-    "urllib",
-    "__future__",
-}
 
 # The subcommands that would make this program act on the machine rather than read it. Named HERE
 # rather than in the source, because a second copy of the allowlist beside the allowlist is a
@@ -66,37 +44,6 @@ def _client(handler: Any) -> OrchestratorClient:
         token="t",
         transport=httpx.MockTransport(handler),
     )
-
-
-def _file_imports(path: Path) -> set[str]:
-    names: set[str] = set()
-    for node in ast.walk(ast.parse(path.read_text())):
-        if isinstance(node, ast.Import):
-            names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            names.add(node.module)
-    return names
-
-
-def _imports(root: Path) -> set[str]:
-    names: set[str] = set()
-    for path in root.rglob("*.py"):
-        names |= _file_imports(path)
-    return names
-
-
-def test_the_sweep_imports_nothing_from_the_orchestrator() -> None:
-    assert {name for name in _imports(SWEEP) if name.split(".")[0] == "orchestrator"} == set()
-
-
-def test_the_orchestrator_imports_nothing_from_the_sweep() -> None:
-    assert {
-        name for name in _imports(ORCHESTRATOR) if name.split(".")[0] == "activation_sweep"
-    } == set()
-
-
-def test_the_sweeps_third_party_deps_are_confined() -> None:
-    assert {name.split(".")[0] for name in _imports(SWEEP)} - ALLOWED_TOP_LEVEL == set()
 
 
 def test_the_write_surface_is_the_observer_roles_whole_write_surface_and_no_more() -> None:
@@ -119,7 +66,8 @@ def test_only_the_client_module_can_speak_http() -> None:
     speaks = {
         str(path.relative_to(SWEEP))
         for path in SWEEP.rglob("*.py")
-        if {"httpx", "requests", "urllib.request", "http.client", "aiohttp"} & _file_imports(path)
+        if {"httpx", "requests", "urllib.request", "http.client", "aiohttp"}
+        & file_import_names(path)
     }
 
     # TWO modules, one per lane, and the split is the property rather than an exception to it.
