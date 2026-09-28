@@ -203,7 +203,11 @@ from orchestrator.services.evidence_pack import (
 )
 from orchestrator.services.factory_target import GitHubFactoryTargetSource
 from orchestrator.services.follow_ups import mint_due_follow_ups
-from orchestrator.services.github_app import github_app_credentials, token_provider_for
+from orchestrator.services.github_app import (
+    GitHubAppCredentials,
+    github_app_credentials,
+    token_provider_for,
+)
 from orchestrator.services.github_checks import CheckObserver, GitHubActionsCheckObserver
 from orchestrator.services.in_flight import in_flight_snapshot
 from orchestrator.services.inert_landing_admission import inert_landing_admission
@@ -307,6 +311,14 @@ ActorDep = Annotated[ActorContext, Depends(get_actor)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
+def _github_app_credentials(settings: Settings) -> GitHubAppCredentials | None:
+    return github_app_credentials(
+        app_id=settings.github_app_id,
+        installation_id=settings.github_app_installation_id,
+        private_key_b64=settings.github_app_private_key_b64,
+    )
+
+
 def get_check_observer(settings: SettingsDep) -> CheckObserver:
     """Build the thing that asks GitHub how a named check concluded.
 
@@ -315,7 +327,7 @@ def get_check_observer(settings: SettingsDep) -> CheckObserver:
     same App installation serves both, resolved through the one definition of "App credentials
     are configured".
     """
-    return GitHubActionsCheckObserver(token_provider_for(github_app_credentials(settings)))
+    return GitHubActionsCheckObserver(token_provider_for(_github_app_credentials(settings)))
 
 
 CheckObserverDep = Annotated[CheckObserver, Depends(get_check_observer)]
@@ -800,7 +812,7 @@ def estate_landing_admission_route(
     The credentials are resolved once and fed to both this answer and the act, so the gate can
     never attest to credentials the actor does not hold.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubEstatePullRequests(token_provider_for(credentials))
     enabled = settings.estate_landing_enabled
     credentials_configured = credentials is not None
@@ -851,7 +863,7 @@ def estate_pr_merge_route(
     Its caller is a scheduled one, which is why this path has an off-switch where its unit-bound
     sibling deliberately has none. Unconfigured refuses.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubEstatePullRequests(token_provider_for(credentials))
     record = land_estate_pull_request(
         session,
@@ -886,7 +898,7 @@ def estate_pr_branch_update_route(
     off the same composed answer -- so a deployment that may not land may not touch a branch
     either, by the term that already says so rather than by a second one.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubEstatePullRequests(token_provider_for(credentials))
     return update_estate_pull_request_branch(
         session,
@@ -925,7 +937,7 @@ def inert_landing_admission_route(
     The credentials are resolved once and fed to both this answer and the act, so the gate can
     never attest to credentials the actor does not hold.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubInertPullRequests(token_provider_for(credentials))
     enabled = settings.inert_landing_enabled
     credentials_configured = credentials is not None
@@ -976,7 +988,7 @@ def inert_pr_merge_route(
     and the switch is its own rather than the deploying lane's: the two were activated by different
     decisions and neither implies the other.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubInertPullRequests(token_provider_for(credentials))
     return land_inert_pull_request(
         session,
@@ -1010,7 +1022,7 @@ def inert_pr_branch_update_route(
     the same composed answer -- so a deployment that may not land may not touch a branch either, by
     the term that already says so rather than by a second one.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubInertPullRequests(token_provider_for(credentials))
     return update_inert_pull_request_branch(
         session,
@@ -1072,7 +1084,7 @@ def pr_merge_route(
     """
     # One resolution feeds both the gate and the actor, so the gate can never attest to
     # credentials the gateway does not actually hold — the rule the workflow trigger states.
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     return land_unit_pull_request(
         session,
         MergeCommand(
@@ -1100,7 +1112,7 @@ def dispatch_route(
 ) -> object:
     # One resolution feeds both the admission gate and the minter, so the gate can never
     # attest to credentials the dispatcher does not actually use.
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     dispatch_settings = DispatchSettings(
         enabled=settings.dispatch_enabled,
         allowed_change_classes=settings.dispatch_allowed_change_classes,
