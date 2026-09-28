@@ -25,8 +25,9 @@ FORBIDDEN = (
 # `factory-runner-pilot.yml` was a fourth until 2026-09-11. ADR-0015's amendment declared this
 # repository `factory_target = false` and deleted the caller, so the exemption named a file
 # that no longer exists. It came out in the same commit rather than being left to rot: this
-# allowlist is a `continue`, so a stale entry is SILENT — it would never have reddened, and a
-# later reader would have taken it as evidence the repository is still dispatchable.
+# allowlist is a `continue`, so a stale entry is SILENT by itself — a later reader would have
+# taken it as evidence the repository is still dispatchable.
+# `test_the_exemptions_name_only_workflows_that_exist_and_still_need_them` now reddens one.
 MANUAL_DISPATCH_WORKFLOWS = {
     "attest-exit-criteria.yml",
     "attest-wave-exit.yml",
@@ -60,3 +61,19 @@ def test_workflows_never_merge_deploy_or_push_main() -> None:
             f"{path.name} carries a forbidden string. If it is a deliberate exception, "
             "name it here with a reason -- openly, never by rewording."
         )
+
+
+def test_the_exemptions_name_only_workflows_that_exist_and_still_need_them() -> None:
+    """Each exempt workflow must exist and still carry a forbidden string. Otherwise the entry
+    excuses nothing today and silently excuses whatever a later edit adds to that file."""
+    missing = sorted(
+        name for name in MANUAL_DISPATCH_WORKFLOWS if not (WORKFLOW_ROOT / name).is_file()
+    )
+    assert not missing, f"MANUAL_DISPATCH_WORKFLOWS names workflows that no longer exist: {missing}"
+
+    unused = sorted(
+        name for name in MANUAL_DISPATCH_WORKFLOWS if not _violations(WORKFLOW_ROOT / name)
+    )
+    assert not unused, (
+        f"these workflows are exempt but no longer carry a forbidden string: {unused}. Remove them."
+    )

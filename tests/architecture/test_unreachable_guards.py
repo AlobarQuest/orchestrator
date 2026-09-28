@@ -221,6 +221,20 @@ def test_every_allowlist_entry_is_still_unreachable(graph: CallGraph) -> None:
     )
 
 
+def test_every_entry_point_names_a_module_that_exists() -> None:
+    """`roots()` matches ENTRY_MODULES by membership, so an entry whose module has moved simply
+    stops being a root. That is loud for a module that reaches services and SILENT for one that
+    reaches none (`cli.py` imports no service), so the list is checked against the tree. SCOPE is
+    checked the same way and matters more: a prefix that matches no source leaves the guard with
+    no subjects, and a guard with no subjects is green forever. A package or prefix must hold a
+    `.py` file, not merely a directory -- a moved package leaves `__pycache__` behind."""
+    missing = sorted(entry for entry in ENTRY_MODULES if not (SRC / entry).is_file())
+    missing += sorted(
+        prefix for prefix in (*ENTRY_PACKAGES, *SCOPE) if not any((SRC / prefix).rglob("*.py"))
+    )
+    assert not missing, f"entry points or scope prefixes that name no source on disk: {missing}"
+
+
 def test_every_allowlist_entry_carries_a_justification() -> None:
     empty = [
         f"{module}.{name}" for (module, name), why in ALLOWLIST.items() if len(why.strip()) < 40

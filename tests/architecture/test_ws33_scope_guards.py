@@ -150,49 +150,76 @@ def _verified_approval() -> VerifiedApproval:
     )
 
 
+DISPATCH_VOCABULARY = ("workflow_dispatch", "factory-runner", "factory_runner")
+# release-image.yml is a workflow_dispatch trigger for a manual image build+push, with no
+# factory runner involvement — a deliberate human-triggered exception to this guard.
+# attest-exit-criteria.yml is a second and weaker exception: read-only (one unauthenticated
+# GET of production's public OpenAPI document), carrying workflow_dispatch only so the
+# scorecard guard can be re-run on demand after a production image swap. attest-wave-exit.yml
+# (WS-P2.39) is a third of exactly that kind: same read, same reason, for the wave exit bars.
+#
+# `factory-runner-pilot.yml` was the fourth until 2026-09-11, when ADR-0015's amendment
+# declared this repository `factory_target = false` and deleted the caller. Its entry came
+# out in the same commit: this allowlist filters by name, so a stale entry never reddens by
+# itself -- `test_dispatch_exemptions_name_only_files_that_exist_and_still_need_them` is what
+# reddens it now. Note the twin allowlist in tests/architecture/test_no_automatic_merge.py,
+# which scans the same directory with a different vocabulary — an edit to one that misses the
+# other leaves that one wrong.
+MANUAL_DISPATCH_WORKFLOWS = {
+    "attest-exit-criteria.yml",
+    "attest-wave-exit.yml",
+    "release-image.yml",
+}
+# The runtime modules that may spell this vocabulary. `api/routes.py` was listed until 2026-09-28
+# and spelled none of it; an exemption nobody needs is one nobody is watching, so it came out.
+DISPATCH_EXEMPT_PATHS = {
+    Path("src/orchestrator/services/dispatch.py"),
+    Path("src/orchestrator/api/schemas.py"),
+    Path("src/orchestrator/config.py"),
+}
+
+
 def test_no_workflow_dispatch_or_factory_runner_dispatch_code_exists() -> None:
-    forbidden = ("workflow_dispatch", "factory-runner", "factory_runner")
-    # release-image.yml is a workflow_dispatch trigger for a manual image build+push, with no
-    # factory runner involvement — a deliberate human-triggered exception to this guard.
-    # attest-exit-criteria.yml is a second and weaker exception: read-only (one unauthenticated
-    # GET of production's public OpenAPI document), carrying workflow_dispatch only so the
-    # scorecard guard can be re-run on demand after a production image swap. attest-wave-exit.yml
-    # (WS-P2.39) is a third of exactly that kind: same read, same reason, for the wave exit bars.
-    #
-    # `factory-runner-pilot.yml` was the fourth until 2026-09-11, when ADR-0015's amendment
-    # declared this repository `factory_target = false` and deleted the caller. Its entry came
-    # out in the same commit: this allowlist filters by name, so a stale entry never reddens and
-    # would read as though the repository were still dispatchable. Note the twin allowlist in
-    # tests/architecture/test_no_automatic_merge.py, which scans the same directory with a
-    # different vocabulary — an edit to one that misses the other leaves that one wrong.
-    manual_dispatch_workflows = {
-        "attest-exit-criteria.yml",
-        "attest-wave-exit.yml",
-        "release-image.yml",
-    }
     workflow_paths = [
-        path for path in _workflow_sources() if path.name not in manual_dispatch_workflows
+        path for path in _workflow_sources() if path.name not in MANUAL_DISPATCH_WORKFLOWS
     ]
-    python_paths = [
-        path
-        for path in _python_sources()
-        if path
-        not in {
-            Path("src/orchestrator/services/dispatch.py"),
-            Path("src/orchestrator/api/routes.py"),
-            Path("src/orchestrator/api/schemas.py"),
-            Path("src/orchestrator/config.py"),
-        }
-    ]
+    python_paths = [path for path in _python_sources() if path not in DISPATCH_EXEMPT_PATHS]
     matches = [
         SourceMatch(path, value)
         for path in [*python_paths, *workflow_paths]
-        for value in forbidden
+        for value in DISPATCH_VOCABULARY
         if value in _read_lower(path)
     ]
 
     assert not matches, "Forbidden dispatch code found:\n" + "\n".join(
         f"- {match.path}: {match.value}" for match in matches
+    )
+
+
+def test_dispatch_exemptions_name_only_files_that_exist_and_still_need_them() -> None:
+    """Both allowlists above are filters: a stale entry excuses nothing and reddens nothing, so a
+    moved or deleted file leaves an exemption that reads as though it still meant something. Each
+    entry must name a file that exists and still spells the vocabulary it is excused from."""
+    exempt = [
+        *(WORKFLOW_ROOT / name for name in sorted(MANUAL_DISPATCH_WORKFLOWS)),
+        *sorted(DISPATCH_EXEMPT_PATHS),
+    ]
+    missing = [
+        str(path)
+        for path in exempt
+        if not path.is_file()
+        or not path.is_relative_to(WORKFLOW_ROOT if path.suffix == ".yml" else RUNTIME_ROOT)
+    ]
+    assert not missing, f"the dispatch exemptions name no file inside the tree they scan: {missing}"
+
+    unused = [
+        str(path)
+        for path in exempt
+        if not any(value in _read_lower(path) for value in DISPATCH_VOCABULARY)
+    ]
+    assert not unused, (
+        f"these files are exempt from the dispatch vocabulary but no longer spell any of it: "
+        f"{unused}. Remove them."
     )
 
 
