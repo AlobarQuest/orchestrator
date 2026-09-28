@@ -244,6 +244,7 @@ def test_the_switch_refuses_before_the_remote_is_touched(migrated_session: Sessi
     with pytest.raises(DomainError) as error:
         _land(migrated_session, gateway, enabled=False)
 
+    assert error.value.code == "estate_merge_not_admissible"
     assert "landing_not_enabled" in str(error.value)
     assert gateway.merges == []
 
