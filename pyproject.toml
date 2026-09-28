@@ -87,6 +87,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "schema_rebuild: drop and re-migrate the test schema before this test instead of sharing the session's migrated schema (for tests of the migrations themselves).",
+]
 
 [tool.ruff]
 line-length = 100

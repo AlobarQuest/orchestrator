@@ -81,3 +81,10 @@ fix:
 	@if [ -f pyproject.toml ]; then $(call need,ruff,install it with: uv sync); ruff format .; fi
 	@if [ -f .prettierrc ]; then $(call need,prettier,install it with: npm ci); prettier --write .; fi
 # code-standards:managed:end — content OUTSIDE these markers is yours and is preserved. Delete both markers to own the whole file: sync then writes nothing here and says so every run.
+
+# Run the suite in parallel. Outside the managed block so `code-standards sync` preserves it;
+# `check`'s bare `pytest` reads PYTEST_ADDOPTS, and CI runs `make check`, so both get it. Each
+# xdist worker migrates its own database derived from TEST_DATABASE_URL (tests/_support/database.py).
+# `loadgroup` keeps tests marked with the same `xdist_group` on one worker, in order. Set
+# PYTEST_ADDOPTS yourself (even to empty) to override; a bare `pytest` stays serial.
+export PYTEST_ADDOPTS ?= -n auto --dist loadgroup

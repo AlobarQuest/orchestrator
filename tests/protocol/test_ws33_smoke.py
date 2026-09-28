@@ -7,10 +7,8 @@ from typing import Any
 
 import httpx
 import pytest
-from alembic import command
-from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine, select, text
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 from typer.testing import CliRunner
 
@@ -24,7 +22,6 @@ from orchestrator.kernel.states import ActorRole
 from orchestrator.main import create_app
 from orchestrator.package_sources import VerifiedApproval, load_package_intake_payload
 from orchestrator.persistence.models import Claim, WorkUnit
-from tests.conftest import TEST_DATABASE_URL
 
 HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
 WORKER = {"Authorization": "Bearer fixture-token", "X-Credential-Key-Id": "worker-key"}
@@ -35,19 +32,6 @@ AUTHORITY = {
     "capabilities": {"repo.edit": "allowed"},
     "budgets": {"max_attempts": 3, "max_llm_calls": 4},
 }
-
-
-@pytest.fixture
-def migrated_engine() -> Iterator[Engine]:
-    engine = create_engine(TEST_DATABASE_URL)
-    with engine.begin() as connection:
-        connection.execute(text("DROP SCHEMA public CASCADE"))
-        connection.execute(text("CREATE SCHEMA public"))
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", TEST_DATABASE_URL)
-    command.upgrade(config, "head")
-    yield engine
-    engine.dispose()
 
 
 @pytest.fixture
