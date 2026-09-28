@@ -3080,8 +3080,8 @@ style of that module.
   rather than the *marking* true, and it is the one that touches `FACTORY_PR_TOKEN`.
 
 - **The estate-landing agent's exit 3 does NOT mean a record went unsettled — a closed pull request
-  is classified `settled` and contributes no finding.** `_SETTLED`
-  (`src/estate_lander/cli.py`) is `{landing_already_recorded, landing_pull_request_not_open}`, and
+  is classified `settled` and contributes no finding.** `SETTLED`
+  (`src/lander/core.py`, shared by both landers since Tier 3 item 27) is `{landing_already_recorded, landing_pull_request_not_open}`, and
   the classifier tests it BEFORE `satisfied`, so a record whose pull request is gone exits the
   report rather than becoming an unknown. Measured 2026-08-13 from the agent's own first launchd
   run: *4 considered, 0 landed, 3 held, 1 settled* — the settled one was record 52, and the exit 3

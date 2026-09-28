@@ -149,19 +149,24 @@ TABLE: dict[str, Row] = {
     # The producer's already-confined change-manager client is reused rather than re-implemented,
     # because a second read-only client for one listing would be a second place for the
     # withheld-source trap to be forgotten.
+    #
+    # `lander` is the shared body of the two landing callers (Tier 3 item 27): each lane imports
+    # it, and neither lane imports the other.
     "estate_lander": _row(
         "__future__",
         "argparse",
         "change_proposer",
         "dataclasses",
         "httpx",
+        "lander",
         "os",
         "sys",
         "typing",
     ),
     # Two already-confined readers reused rather than re-implemented: the producer's
     # landing-policy client (one path, a READ-scoped credential) and the deploy watcher's
-    # read-only GitHub reader (every verb a GET, enforced before the transport).
+    # read-only GitHub reader (every verb a GET, enforced before the transport). `lander` is the
+    # shared body, as above.
     "inert_lander": _row(
         "__future__",
         "argparse",
@@ -169,9 +174,20 @@ TABLE: dict[str, Row] = {
         "dataclasses",
         "deploy_watcher",
         "httpx",
+        "lander",
         "os",
         "sys",
         "typing",
+    ),
+    # The ONE body both landing callers share (Tier 3 item 27). It borrows from no program and
+    # imports no HTTP client: it reaches the orchestrator only through the confined client a lane
+    # passes in, whose surface is that lane's own literal paths. Were it to import a lane, the two
+    # programs ADR-0038 keeps separate would be one again by the back door.
+    "lander": _row(
+        "__future__",
+        "dataclasses",
+        "typing",
+        no_sibling_lanes=True,
     ),
     "landing_ledger": _row(
         "__future__",

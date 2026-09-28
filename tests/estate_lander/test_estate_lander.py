@@ -15,19 +15,11 @@ import pytest
 from change_proposer.change_manager import ChangeManagerError
 from change_proposer.cli import BOT_CHANGE_CLASS, FACTORY_CHANGE_CLASS
 from estate_lander.cli import (
-    _NOT_A_FINDING,
-    _REPORTED,
-    _UPDATE_SELF_CLEARING,
-    EXIT_FINDINGS,
-    EXIT_OK,
-    EXIT_TOOL_FAILURE,
-    Outcome,
+    LANE,
     _branch_updates,
     _deferral_reason,
-    _key,
     _pass,
     _subjects,
-    _update_key,
     report,
     run,
 )
@@ -35,6 +27,16 @@ from estate_lander.orchestrator_client import (
     LandingRefused,
     OrchestratorClient,
     OrchestratorError,
+)
+from lander.core import (
+    EXIT_FINDINGS,
+    EXIT_OK,
+    EXIT_TOOL_FAILURE,
+    NOT_A_FINDING,
+    REPORTED,
+    Outcome,
+    landing_key,
+    update_key,
 )
 
 REPOSITORY = "alobarquest/change-manager"
@@ -242,9 +244,9 @@ def test_an_admissible_answer_with_no_head_lands_nothing() -> None:
 def test_the_idempotency_key_is_content_addressed_so_a_replay_is_a_replay() -> None:
     """A random key would make every pass a new request for the same act, which the orchestrator
     refuses as a key belonging to a different subject -- turning a re-run into a finding."""
-    assert _key(REPOSITORY, 49, HEAD) == _key(REPOSITORY, 49, HEAD)
-    assert _key(REPOSITORY, 49, HEAD) != _key(REPOSITORY, 50, HEAD)
-    assert _key(REPOSITORY, 49, HEAD) != _key(REPOSITORY, 49, "b" * 40)
+    assert landing_key(LANE, REPOSITORY, 49, HEAD) == landing_key(LANE, REPOSITORY, 49, HEAD)
+    assert landing_key(LANE, REPOSITORY, 49, HEAD) != landing_key(LANE, REPOSITORY, 50, HEAD)
+    assert landing_key(LANE, REPOSITORY, 49, HEAD) != landing_key(LANE, REPOSITORY, 49, "b" * 40)
 
 
 def test_the_pass_is_ordered_so_which_one_lands_is_reproducible() -> None:
@@ -327,7 +329,7 @@ def test_SETTLED_is_read_with_INTERSECTION_and_ahead_of_every_other_classificati
 
     Two properties in one row, neither of which the pair above can see because both of their
     fixtures happen to be entirely settled refusals. The subset rule the deliberate categories use
-    would call this `held` on `mergeability_unknown`; a classification tested before `_SETTLED`
+    would call this `held` on `mergeability_unknown`; a classification tested before `SETTLED`
     would too. The pull request is gone, so none of those three says anything.
     """
     client = FakeOrchestrator(
@@ -701,17 +703,17 @@ def test_an_unsatisfied_answer_that_names_NO_refusal_is_a_finding() -> None:
 
 
 def test_a_status_nobody_classified_is_a_finding() -> None:
-    """The polarity of `_NOT_A_FINDING`, one column over from the refusal codes. It is stated as
+    """The polarity of `NOT_A_FINDING`, one column over from the refusal codes. It is stated as
     the set to EXCLUDE, so a status a later increment adds and forgets to classify is reported
     rather than silently dropped from the exit code."""
     assert report([Outcome(REPOSITORY, 49, "invented", "")]) == EXIT_FINDINGS
 
 
 def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered() -> None:
-    """A literal pin, not one derived from `_REPORTED` -- a fixture built by iterating it would
+    """A literal pin, not one derived from `REPORTED` -- a fixture built by iterating it would
     shrink with it and assert nothing. Three of these (`would-land`, `unreadable`, `error`) were
     absent from the summary before, so a dry run reported "1 considered" and then four zeros."""
-    assert set(_REPORTED) == {
+    assert set(REPORTED) == {
         "landed",
         "would-land",
         "held",
@@ -729,8 +731,8 @@ def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered
         # a clock.
         "waiting",
     }
-    assert _NOT_A_FINDING < set(_REPORTED)
-    assert "waiting" in _NOT_A_FINDING
+    assert NOT_A_FINDING < set(REPORTED)
+    assert "waiting" in NOT_A_FINDING
 
 
 # ------------------------------------------------------------------------------------------------
@@ -782,7 +784,7 @@ def test_a_branch_the_orchestrator_says_qualifies_is_brought_up_to_date() -> Non
     outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["updated"]
-    assert client.updated == [(REPOSITORY, 49, HEAD, _update_key(REPOSITORY, 49, HEAD))]
+    assert client.updated == [(REPOSITORY, 49, HEAD, update_key(LANE, REPOSITORY, 49, HEAD))]
 
 
 def test_a_branch_that_does_not_qualify_is_NOT_ASKED_ABOUT_and_gets_no_line() -> None:
@@ -814,9 +816,9 @@ def test_the_MATCHED_PAIR_is_separated_in_ONE_pass() -> None:
 def test_the_key_is_content_addressed_over_the_head_so_a_rerun_is_a_replay() -> None:
     """And so a LATER update, after the base moves again, is a genuinely different key -- which is
     what stops one night's landing barring this branch forever."""
-    assert _update_key(REPOSITORY, 49, HEAD) == _update_key(REPOSITORY, 49, HEAD)
-    assert _update_key(REPOSITORY, 49, HEAD) != _update_key(REPOSITORY, 49, "d" * 40)
-    assert _update_key(REPOSITORY, 49, HEAD) != _key(REPOSITORY, 49, HEAD)
+    assert update_key(LANE, REPOSITORY, 49, HEAD) == update_key(LANE, REPOSITORY, 49, HEAD)
+    assert update_key(LANE, REPOSITORY, 49, HEAD) != update_key(LANE, REPOSITORY, 49, "d" * 40)
+    assert update_key(LANE, REPOSITORY, 49, HEAD) != landing_key(LANE, REPOSITORY, 49, HEAD)
 
 
 def test_an_orchestrator_refusal_is_reported_rather_than_retried() -> None:
@@ -938,7 +940,7 @@ def test_the_landing_pass_runs_BEFORE_the_branch_update_pass(monkeypatch) -> Non
 # ------------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("code", sorted(_UPDATE_SELF_CLEARING))
+@pytest.mark.parametrize("code", sorted(LANE.update_self_clearing))
 def test_a_refusal_that_only_says_THE_ANSWER_MOVED_is_not_a_finding(code: str) -> None:
     """The update bot rebasing in the window between the read and the request, or a mergeability
     the platform had not finished computing, are not things anybody can act on -- and the second is
@@ -1144,7 +1146,7 @@ def test_a_deferred_record_is_counted_rather_than_silently_dropped() -> None:
 def test_the_deferral_is_reported_and_is_not_a_finding(capsys) -> None:
     """Deferring is this program working, not a condition anybody must act on -- so it prints and
     the exit code stays clean. A deferred record was never CONSIDERED, so it is deliberately not
-    added to that total: `_REPORTED` exists so the summary's parts add up to what was."""
+    added to that total: `REPORTED` exists so the summary's parts add up to what was."""
     code = report([], {FACTORY_CHANGE_CLASS: 2})
 
     out = capsys.readouterr().out
@@ -1374,5 +1376,5 @@ def test_no_reported_status_is_a_substring_of_another() -> None:
     `held` meant `grep held` matched both and an "absent" assertion on `held` failed for a
     status that was not `held` at all. Holds for every pair, including statuses added later.
     """
-    collisions = [(a, b) for a in _REPORTED for b in _REPORTED if a != b and a in b]
+    collisions = [(a, b) for a in REPORTED for b in REPORTED if a != b and a in b]
     assert collisions == []

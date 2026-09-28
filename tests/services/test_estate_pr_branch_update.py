@@ -426,9 +426,9 @@ def test_the_deliberate_refusals_are_exactly_the_landers_own() -> None:
     estate's standing lesson is that wherever two vocabularies must agree they do not, until
     something checks. A test may import both; the program may not.
     """
-    from estate_lander.cli import _DELIBERATE
+    from estate_lander.cli import LANE
 
-    assert DELIBERATE_REFUSALS == _DELIBERATE
+    assert DELIBERATE_REFUSALS == LANE.deliberate
 
 
 def test_the_freshness_refusal_the_lander_classifies_on_is_exactly_the_one_composed_here() -> None:
@@ -441,16 +441,16 @@ def test_the_freshness_refusal_the_lander_classifies_on_is_exactly_the_one_compo
     recognising the condition it exists to classify -- reporting `#48` as a finding forever, which
     is the state this increment was written to end.
     """
-    from estate_lander.cli import _FRESHNESS
+    from lander.core import FRESHNESS
 
-    assert LANDING_HEAD_NOT_CURRENT_WITH_BASE == _FRESHNESS
+    assert LANDING_HEAD_NOT_CURRENT_WITH_BASE == FRESHNESS
 
 
 def test_the_rollout_refusal_the_lander_classifies_on_is_exactly_the_one_composed_here() -> None:
     """The second lone string, added by ADR-0024 and pinned for the reason above."""
-    from estate_lander.cli import _ROLLOUT_MOVED
+    from lander.core import ROLLOUT_MOVED
 
-    assert LANDING_ROLLOUT_MOVED == _ROLLOUT_MOVED
+    assert LANDING_ROLLOUT_MOVED == ROLLOUT_MOVED
 
 
 def test_the_WIRE_KEY_the_lander_reads_the_base_comparison_from_is_a_field_this_side_SERVES() -> (
@@ -470,18 +470,18 @@ def test_the_WIRE_KEY_the_lander_reads_the_base_comparison_from_is_a_field_this_
     the dataclass one test over, so this is the shorter chain, and it is the dataclass the route
     serializes.
     """
-    from estate_lander.cli import _BASE_MATCHES_PIN
+    from lander.core import BASE_MATCHES_PIN
 
-    assert _BASE_MATCHES_PIN in EstateLandingAdmission.__dataclass_fields__
+    assert BASE_MATCHES_PIN in EstateLandingAdmission.__dataclass_fields__
 
 
 def test_the_WIRE_KEY_the_lander_reads_the_withheld_fact_from_is_a_field_this_side_SERVES() -> None:
     """ADR-0045. Same hazard as the base comparison above: a lander reading the withheld fact by
     a name the server does not serve gets `None`, treats it as false, and reports every queued
     sibling as a finding with nothing saying why."""
-    from estate_lander.cli import _WITHHELD_FOR_SIBLING
+    from lander.core import WITHHELD_FOR_SIBLING
 
-    assert _WITHHELD_FOR_SIBLING in EstateLandingAdmission.__dataclass_fields__
+    assert WITHHELD_FOR_SIBLING in EstateLandingAdmission.__dataclass_fields__
 
 
 def test_composing_the_answer_alone_observes_no_sibling(migrated_session: Session) -> None:
@@ -518,9 +518,9 @@ def test_the_exception_the_lander_suppresses_beside_is_exactly_the_one_composed_
     which is precisely the state this increment exists to end. Set equality rather than membership:
     a member ADDED to `_EXCEPTION` and pinned to nothing is the same hole one element over.
     """
-    from estate_lander.cli import _EXCEPTION
+    from estate_lander.cli import LANE
 
-    assert _EXCEPTION == frozenset({LANDING_UPDATE_TYPE_UNPARSEABLE})
+    assert LANE.exception == frozenset({LANDING_UPDATE_TYPE_UNPARSEABLE})
 
 
 def test_the_two_copies_of_the_freshness_criterion_AGREE_POINTWISE() -> None:
@@ -536,7 +536,7 @@ def test_the_two_copies_of_the_freshness_criterion_AGREE_POINTWISE() -> None:
     """
     from itertools import combinations
 
-    from estate_lander.cli import _freshness_derived
+    from lander.core import freshness_derived
 
     vocabulary = (
         LANDING_HEAD_NOT_CURRENT_WITH_BASE,
@@ -555,7 +555,7 @@ def test_the_two_copies_of_the_freshness_criterion_AGREE_POINTWISE() -> None:
         for base_matches in (False, True):
             assert freshness_derived_refusals(
                 subset, rollout_base_matches_pin=base_matches
-            ) == _freshness_derived(set(subset), rollout_base_matches_pin=base_matches), (
+            ) == freshness_derived(set(subset), rollout_base_matches_pin=base_matches), (
                 subset,
                 base_matches,
             )
@@ -1457,14 +1457,14 @@ def test_the_self_clearing_codes_are_exactly_the_ones_this_service_raises() -> N
     `estate_branch_update_refused_by_remote` is deliberately NOT a member: the platform declining
     can mean a real merge conflict, which no later pass clears on its own.
     """
-    from estate_lander.cli import _UPDATE_SELF_CLEARING
+    from estate_lander.cli import LANE
 
-    assert _UPDATE_SELF_CLEARING == {
+    assert LANE.update_self_clearing == {
         BRANCH_UPDATE_HEAD_MOVED,
         BRANCH_UPDATE_NOT_QUALIFIED,
         BRANCH_UPDATE_SIBLING_HOLDING,
     }
-    assert BRANCH_UPDATE_REFUSED_BY_REMOTE not in _UPDATE_SELF_CLEARING
+    assert BRANCH_UPDATE_REFUSED_BY_REMOTE not in LANE.update_self_clearing
 
 
 def test_an_UNREADABLE_scan_is_NOT_self_clearing() -> None:
@@ -1474,9 +1474,9 @@ def test_an_UNREADABLE_scan_is_NOT_self_clearing() -> None:
     could not read is the orchestrator not knowing, and nothing about not knowing clears on its
     own -- so an act refused for it must stay a finding every pass until the reads succeed.
     """
-    from estate_lander.cli import _UPDATE_SELF_CLEARING
+    from estate_lander.cli import LANE
 
-    assert BRANCH_UPDATE_SIBLINGS_UNREADABLE not in _UPDATE_SELF_CLEARING
+    assert BRANCH_UPDATE_SIBLINGS_UNREADABLE not in LANE.update_self_clearing
 
 
 def test_neither_new_code_contains_the_other() -> None:

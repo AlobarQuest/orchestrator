@@ -206,10 +206,10 @@ STALL_RULE_UNKNOWN = "current_rule_revision_unknown"
 # already says in as many words that a caveat is where a doubt goes to be ignored.
 #
 # THE LANDING LANE ALREADY CLASSIFIES THESE SUBJECTS THIS WAY, and this is the same ruling reaching
-# the second control that looks at them: `estate_lander._EXCEPTION` holds the lander's refusal code
-# for the identical condition. The two vocabularies are NOT pinned to each other and must not be --
-# neither program reads the other's codes, and the thing they genuinely share is the classifier
-# (`titles.bump_of`), which IS pinned. What agrees is the answer, not the spelling.
+# the second control that looks at them: `estate_lander.cli.LANE.exception` holds the lander's
+# refusal code for the identical condition. The two vocabularies are NOT pinned to each other and
+# must not be -- neither program reads the other's codes, and the thing they genuinely share is the
+# classifier (`titles.bump_of`), which IS pinned. What agrees is the answer, not the spelling.
 EXCEPTION_UPDATE_TYPE_UNPARSEABLE = "update_type_unparseable"
 
 # Detector A's exception, and the only one it has. A landing recorded during the window in which

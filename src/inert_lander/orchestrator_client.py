@@ -26,6 +26,10 @@ from typing import Any
 
 import httpx
 
+# The two refusal classes live in the leaf `lander.errors`, because `lander.core` catches them;
+# imported so this client raises exactly the classes that body can see, and re-exported.
+from lander.errors import LandingRefused, OrchestratorError
+
 DEFAULT_BASE_URL = "https://sds.alobar.net"
 USER_AGENT = "inert-lander/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS = 60.0
@@ -41,27 +45,8 @@ _LAND = "/api/v1/inert-pr-merge"
 _BRANCH_UPDATE = "/api/v1/inert-pr-branch-update"
 
 
-class OrchestratorError(Exception):
-    """The orchestrator could not be asked, or refused in a way this pass cannot interpret."""
-
-
 class ForbiddenEndpointError(OrchestratorError):
     """This program tried to reach a path it is not allowed to reach."""
-
-
-class LandingRefused(OrchestratorError):
-    """The orchestrator refused. A fact about the subject, not a broken tool.
-
-    It CARRIES THE REFUSAL CODE as well as the message, because not every refusal means the same
-    thing to a reader. The branch-update act raises two that say only *the answer moved between
-    the read and the request*, which the next pass re-decides on its own. Classifying those apart
-    needs the code -- a `DomainError` reaches the wire nested under `error`, and the message is
-    prose that will be reworded.
-    """
-
-    def __init__(self, message: str, code: str = "") -> None:
-        super().__init__(message)
-        self.code = code
 
 
 def is_allowed_read(path: str) -> bool:

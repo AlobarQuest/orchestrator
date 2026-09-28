@@ -29,28 +29,24 @@ repositories and permitted authors a person pinned. So this program reads a huma
 declaration and enumerates within it. It decides nothing about which repositories belong; it is
 told, by the same holder its sibling is told by, through a different projection of one document.
 
-## WHY IT IS A SEPARATE PROGRAM FROM ITS SIBLING, WHICH WAS THE OPEN QUESTION
+## A SEPARATE PROGRAM FROM ITS SIBLING, SHARING ONE BODY WITH IT
 
-Measured against `estate_lander` before this was written, and recorded because "one lane, two
-passes" was the cheaper-looking answer:
+Two programs (ADR-0038), one body (Tier 3 item 27, Devon 2026-09-28). Asking, classifying,
+acting and reporting live in `lander.core`, parameterised by `LANE` below; what stays here is this
+lane's alone -- the declaration it reads, its GitHub enumeration, its three credentials, its
+confined client, and the refusal sets `LANE` names.
 
-- FOUR of that program's five classification constructs are UNREACHABLE on an answer from this
-  lane. `_DELIBERATE` names the pace and the change window, and this lane has neither. `_EXCEPTION`
-  names an unparseable update type, which this lane never asks about. `_ROLLOUT_MOVED` and
-  `_BASE_MATCHES_PIN` name a rollout pin this lane does not evaluate, and whose key the admission
-  response deliberately does not carry. Sharing that classifier would install four suppressions
-  that cannot fire -- and that file's own `_held_status` argues, about a fifth, that "an inert
-  suppression is worse than none, because a later change to the freshness rule would switch it on
-  with nobody re-deciding it."
-- The one construct that IS reachable could not have been shared anyway: the branch update's
-  self-clearing refusals are spelled `inert_*` here and `estate_*` there, so a second set was
-  needed either way and the saving does not exist.
-- The schedule's stated reason inverts. That lane runs in the change window because "this pass
-  ends in something changing a running service, and policy declares the hours in which something
-  already serving may change." The defining property of this lane's population is that landing
-  changes nothing already serving.
-- One dead-man check per lane. Folding both into one exit code lets a standing finding in one hide
-  a new finding in the other from whoever reads it.
+Before the merge this section argued against sharing, measured against `estate_lander`: four of
+that program's classification constructs are unreachable on an answer from this lane, and sharing
+the classifier would install suppressions that cannot fire. **That objection is answered by the
+descriptor, not overridden.** `LANE` carries an EMPTY deliberate set, this lane's own exception,
+its own `inert_*` self-clearing set, and `reads_rollout_pin=False` -- so the shared body installs
+nothing for this lane that this lane did not already have, and each of those four fields is pinned
+by a test that reddens if it is collapsed into the sibling's. The two remaining reasons still hold
+and are why the PROGRAMS stay two: the schedule's reason inverts (that lane runs in the change
+window because landing changes something serving; this lane's population is defined by changing
+nothing), and one dead-man check per lane keeps a standing finding in one from hiding a new finding
+in the other.
 
 ## THERE IS NO DELIBERATE REFUSAL HERE, AND THAT IS DERIVED RATHER THAN OMITTED
 
@@ -115,99 +111,57 @@ from bump_proposer.landing_policy import (
 from deploy_watcher.github import GitHubReader, ReadError
 from inert_lander.orchestrator_client import (
     DEFAULT_BASE_URL,
-    LandingRefused,
     OrchestratorClient,
     OrchestratorError,
 )
-
-EXIT_OK = 0
-EXIT_TOOL_FAILURE = 1
-EXIT_UNUSABLE = 2
-EXIT_FINDINGS = 3
+from lander import core
+from lander.core import EXIT_TOOL_FAILURE, EXIT_UNUSABLE, LandingClient, Lane, Outcome
 
 # The credential key id the orchestrator resolves the bearer against. A constant rather than a
 # setting: an operator who could change it could only ever make the call unauthenticated.
 SYSTEM_KEY_ID = "orchestrator-system"
 
-# Refusals that mean the SUBJECT IS SETTLED rather than that a condition is unmet -- the pull
-# request is gone, or this lane has already acted on it and the row it wrote has no delete path.
-# Neither is something a person can act on, and reporting them as findings would make one landing
-# a nightly page forever. The line is still printed; it just is not a finding.
-#
-# TESTED WITH INTERSECTION, deliberately, and this is the one place that polarity is right: a
-# settled subject's other refusals are meaningless because there is nothing left to land. Its
-# sibling's `_held_status` argues the opposite polarity for a DELIBERATE refusal, which says
-# nothing about the conditions beside it -- and this lane has no deliberate refusal at all.
-_SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open"})
-
-# ADR-0045. The key on the orchestrator's answer saying the branch update is withheld because
-# another update-bot pull request this lane already edited is queued to land. Named once, for the
-# reason the base comparison's key is: read by a name the server does not serve, `.get` returns
-# `None`, which reads as false, and every queued sibling becomes a finding with nothing saying why.
-_WITHHELD_FOR_SIBLING = "branch_update_withheld_for_sibling"
-
-# Refusals the BRANCH-UPDATE act raises that say only *the answer moved between the read and the
-# request*, which the next pass re-decides on its own.
-#
-# The answer and the act are separate transactions by design: the orchestrator recomposes every
-# term inside the one that acts, and it reads the platform again while doing so. So a head the
-# update bot rebased in that window, and an answer that no longer qualifies, both arrive here --
-# and neither is a condition anybody can act on. Every OTHER refusal stays a finding, including
-# one this program cannot parse a code from.
-#
-# SPELLED `inert_*`, WHICH IS WHY IT COULD NOT HAVE BEEN SHARED with the sibling lane's set even
-# had everything else been shareable.
-#
-# ADR-0045 adds the third: a sibling this lane has already edited is queued to land, so this branch
-# was left Dependabot's on purpose. It clears when the branch ahead lands. Its twin
-# `inert_branch_update_siblings_unreadable` is DELIBERATELY absent -- that one says the
-# orchestrator could not read, and not knowing clears on nothing, so it stays a finding.
-_UPDATE_SELF_CLEARING = frozenset(
-    {
-        "inert_branch_update_head_moved",
-        "inert_branch_update_not_qualified",
-        "inert_branch_update_sibling_holding",
-    }
+# What THIS lane does differently inside the shared body. Each field is pinned by a test that
+# reddens if it is collapsed into the estate lane's.
+LANE = Lane(
+    name="inert",
+    # NONE, and that is derived rather than omitted -- see the module docstring. This lane has no
+    # clock, so no refusal it raises clears on one.
+    deliberate=frozenset(),
+    # Refusals that CURRENT POLICY can never clear. The deploy policy names the ecosystems whose
+    # changes the required checks on a pull request do not exercise, and a pull request in one of
+    # them waits on a person forever -- no pass of this program will ever change that. Devon's
+    # ruling, 2026-08-13, made for the sibling lane: a record that cannot land under current policy
+    # is an EXCEPTION, not a finding.
+    #
+    # THIS SET IS NOT `deliberate` UNDER ANOTHER NAME, and the module docstring's claim that this
+    # lane has no deliberate refusal still stands. A deliberate refusal clears on a CLOCK and this
+    # lane has no clock; an exception clears on nothing at all. Increment 2b surveyed the sibling's
+    # exception set, found it holding `landing_update_type_unparseable` -- which this lane never
+    # asks about -- and concluded the construct was unreachable here. `landing_ecosystem_excluded`
+    # is a second member of the same class and the census missed it, by searching for the shape of
+    # the answer rather than for the class.
+    #
+    # WHAT AN EXCEPTION DOES NOT DO IS RETIRE THE QUESTION. `orchestrator#3`, the live specimen, is
+    # a language-version replacement the estate has to decide about; the exclusion says the FACTORY
+    # must not land it, never that nobody should. Suppressing the line without recording that
+    # decision elsewhere converts a deferred decision into silence, which is the failure this
+    # category exists to prevent wearing the category's own clothes.
+    exception=frozenset({"landing_ecosystem_excluded"}),
+    # The branch-update act's refusals that say only *the answer moved between the read and the
+    # request*. SPELLED `inert_*`, which is why it could never have been one set with the sibling's.
+    update_self_clearing=frozenset(
+        {
+            "inert_branch_update_head_moved",
+            "inert_branch_update_not_qualified",
+            "inert_branch_update_sibling_holding",
+        }
+    ),
+    # NO ROLLOUT PIN ENTERS THIS LANE. It does not evaluate one and the admission response
+    # deliberately does not carry the key, so being behind is the whole of what a position can
+    # cause here. If that ever stops being true, flipping this is a decision, not a default.
+    reads_rollout_pin=False,
 )
-
-# Refusals that CURRENT POLICY can never clear. The deploy policy names the ecosystems whose
-# changes the required checks on a pull request do not exercise, and a pull request in one of them
-# waits on a person forever -- no pass of this program will ever change that. Devon's ruling,
-# 2026-08-13, made for the sibling lane: a record that cannot land under current policy is an
-# EXCEPTION, not a finding.
-#
-# THIS SET IS NOT `_DELIBERATE` UNDER ANOTHER NAME, and the module docstring's claim that this lane
-# has no deliberate refusal still stands. A deliberate refusal clears on a CLOCK and this lane has
-# no clock; an exception clears on nothing at all. Increment 2b surveyed the sibling's `_EXCEPTION`,
-# found it holding `landing_update_type_unparseable` -- which this lane never asks about -- and
-# concluded the construct was unreachable here. `landing_ecosystem_excluded` is a second member of
-# the same class and the census missed it, by searching for the shape of the answer rather than for
-# the class.
-#
-# WHAT AN EXCEPTION DOES NOT DO IS RETIRE THE QUESTION. `orchestrator#3`, the live specimen, is a
-# language-version replacement the estate has to decide about; the exclusion says the FACTORY must
-# not land it, never that nobody should. Suppressing the line without recording that decision
-# elsewhere converts a deferred decision into silence, which is the failure this category exists to
-# prevent wearing the category's own clothes.
-_EXCEPTION = frozenset({"landing_ecosystem_excluded"})
-
-# The refusal that says only THIS BRANCH IS BEHIND ITS BASE. It belongs to no set: alone it is a
-# FINDING -- transient, and a later branch-update pass clears it -- while beside an exception it is
-# not, because such a branch is behind precisely because this lane has decided, permanently, not to
-# touch it. Membership is a property of a code; this is a property of the company it keeps.
-#
-# KEYED ON THE EXCEPTION BEING PRESENT, NEVER ON THIS LANE HAVING DECLINED TO FRESHEN. Those read
-# as one rule and are two: the lane declines to freshen anything it cannot clear, INCLUDING a
-# failing check, so keying on the declining would silence a red build. The discriminator is
-# DURABILITY -- red checks can go green, an exception never clears. (Devon's third refusal ruling,
-# 2026-08-14, transcribed here rather than imported: the sibling's module cannot be imported by
-# this one, which is isolated from it on purpose.)
-#
-# NO ROLLOUT PIN ENTERS THIS. The sibling subtracts a criterion rather than a member because a
-# stale head can also produce a rollout-pin refusal; this lane does not evaluate a rollout pin at
-# all and the admission response deliberately does not carry its key, so being behind is the whole
-# of what a position can cause here. If that ever stops being true, this becomes a criterion.
-_FRESHNESS = "landing_head_not_current_with_base"
 
 # What a pull request outside the declared authors is called in the report. ONE bucket, not one
 # per author, because there is one fact and it is the same fact each time: this lane is for the
@@ -215,50 +169,6 @@ _FRESHNESS = "landing_head_not_current_with_base"
 # keys its deferrals by change class because there two different next steps hide behind one
 # count; here there is only one.
 _DEFERRAL_AUTHOR = "not-a-declared-author"
-
-# Statuses that are not findings, stated as the set to EXCLUDE so a status nobody has thought of
-# fails toward being reported.
-#
-# A branch brought up to date is the lane clearing a condition the lane itself caused, which is
-# the system working. `would-update` likewise: it is what a dry run has to say in order to be
-# worth running.
-#
-# `waiting` (ADR-0045): a sibling left alone while an update-bot branch this lane already edited is
-# queued to land ahead of it. Its own category, because it clears when that branch lands -- neither
-# on a clock like a deliberate refusal nor never like an exception.
-_NOT_A_FINDING = frozenset(
-    {
-        "landed",
-        "would-land",
-        "settled",
-        "deliberate",
-        "exception",
-        "waiting",
-        "updated",
-        "would-update",
-    }
-)
-
-# Named `waiting`, never `withheld`: a status that contains another as a substring (`held`) makes
-# every substring reader of the report -- an operator's `grep held`, a test asserting a status is
-# absent -- match both. `test_no_reported_status_is_a_substring_of_another` holds it.
-#
-# Every status a pass can produce, in report order, so the summary's counts sum to what was
-# considered. A summary whose parts do not add up leaves the reader to infer the remainder, and
-# the remainder is where the findings are.
-_REPORTED = (
-    "landed",
-    "would-land",
-    "held",
-    "deliberate",
-    "exception",
-    "waiting",
-    "settled",
-    "unreadable",
-    "error",
-    "updated",
-    "would-update",
-)
 
 
 class PullRequestSource(Protocol):
@@ -272,33 +182,6 @@ class PullRequestSource(Protocol):
     """
 
     def open_pull_requests(self, repository: str) -> list[dict[str, Any]]: ...
-
-
-class LandingClient(Protocol):
-    """The whole orchestrator surface these passes use: one question and two acts.
-
-    Named here so the surface is a statement rather than whatever the concrete client happens to
-    expose. The client that satisfies it enforces the three paths before the transport, which is
-    the control; this is the declaration of intent above it.
-    """
-
-    def admission(self, repository: str, pr_number: int) -> dict[str, Any]: ...
-
-    def land(
-        self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
-    ) -> dict[str, Any]: ...
-
-    def update_branch(
-        self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
-    ) -> dict[str, Any]: ...
-
-
-@dataclass(frozen=True)
-class Outcome:
-    repository: str
-    number: int
-    status: str
-    detail: str
 
 
 @dataclass(frozen=True)
@@ -318,31 +201,6 @@ class Selection:
     subjects: list[tuple[str, int]]
     deferred: dict[str, int]
     unreadable: list[Outcome]
-
-
-def _key(repository: str, number: int, head_sha: str) -> str:
-    """CONTENT-ADDRESSED over the subject and the head, so a replay is a replay.
-
-    A random key would make every pass a new request for the same act, which the orchestrator
-    would refuse as a spent key belonging to a different subject -- turning an ordinary re-run
-    into a finding. Naming the head as well as the pull request means a genuinely new attempt
-    after a rebase is a genuinely new key.
-
-    THE PREFIX IS THIS LANE'S OWN. The two lanes cannot have the same subject -- each requires
-    the opposite answer from the estate about a repository -- but a shared prefix would make that
-    a fact a reader has to know rather than one the key states.
-    """
-    return f"inert-landing:{repository}:{number}:{head_sha[:12]}"
-
-
-def _update_key(repository: str, number: int, head_sha: str) -> str:
-    """Content-addressed over the head, for the reason above and one more that is specific here.
-
-    A successful update CHANGES the head, so the next legitimate update -- after the base moves
-    again -- necessarily carries a different key and can never be barred by this one. That is what
-    makes an idempotency key safe on an act whose whole nature is that repeating it is right.
-    """
-    return f"inert-branch-update:{repository}:{number}:{head_sha[:12]}"
 
 
 def _subjects(reader: PullRequestSource, rule: InertLanding) -> Selection:
@@ -395,169 +253,16 @@ def _subjects(reader: PullRequestSource, rule: InertLanding) -> Selection:
     return Selection(subjects=subjects, deferred=deferred, unreadable=unreadable)
 
 
-def _unsatisfied_status(refusals: list[str], *, withheld_for_sibling: bool = False) -> str:
-    """`held`, `exception` or `waiting`, for an answer that is unsatisfied and not settled.
-
-    NO REFUSALS AT ALL IS HELD, never a vacuous pass. An answer unsatisfied while naming nothing is
-    the orchestrator failing to say why, which is exactly the thing worth reporting -- and a bare
-    subset test would call it an exception.
-
-    A FRESHNESS REFUSAL IS SUPPRESSED WHEN, AND ONLY WHEN, AN EXCEPTION IS PRESENT. Conditional,
-    never unconditional: unconditionally, a branch that is merely behind would read as quiet, and
-    `{behind, checks_not_clean}` would go quiet with it. Both are the over-general version of this
-    rule, which is the shape every fix in this family has taken.
-
-    EVERY OTHER CODE STAYS A FINDING, including one this program does not enumerate, so a refusal
-    nobody has thought of fails toward being reported.
-
-    `waiting` (ADR-0045) is the same conditional suppression keyed on a different observed fact:
-    the orchestrator serves that an edited update-bot sibling is queued ahead of this branch, so it
-    was left behind on purpose. An exception still outranks it, and a key with no freshness refusal
-    to subtract changes nothing. The default is False, so a caller that forgets it gets `held`.
-    """
-    present = set(refusals)
-    unexplained = present - _EXCEPTION
-    if _EXCEPTION & present or withheld_for_sibling:
-        unexplained.discard(_FRESHNESS)
-    if unexplained or not refusals:
-        return "held"
-    if _EXCEPTION & present:
-        return "exception"
-    # Only one input survives to here: no exception, so `unexplained` emptied only because the
-    # sibling key subtracted the freshness refusal, and a non-empty `refusals` whose every member
-    # was that one refusal. A trailing `held` after a re-test of those two facts could never be
-    # returned, and a clause no input can falsify is one no mutation can kill.
-    return "waiting"
-
-
-def _consider(client: LandingClient, repository: str, number: int, submit: bool) -> Outcome:
-    """Ask about one pull request, and act when told the answer is yes.
-
-    AN UNSATISFIED ANSWER THAT IS NOT SETTLED IS HELD OR AN EXCEPTION -- see `_unsatisfied_status`,
-    and `_EXCEPTION` for why this lane grew that one suppression while still having no deliberate
-    refusal to suppress.
-    """
-    try:
-        answer = client.admission(repository, number)
-    except OrchestratorError as error:
-        return Outcome(repository, number, "unreadable", str(error))
-
-    refusals = [str(r) for r in (answer.get("refusals") or [])]
-    if _SETTLED & set(refusals):
-        return Outcome(repository, number, "settled", ", ".join(refusals))
-    if not answer.get("satisfied"):
-        status = _unsatisfied_status(
-            refusals, withheld_for_sibling=answer.get(_WITHHELD_FOR_SIBLING) is True
-        )
-        return Outcome(repository, number, status, ", ".join(refusals))
-
-    head = answer.get("head_sha")
-    if not isinstance(head, str) or not head:
-        # Admissible with no head is unreachable through the orchestrator's own cascade, which
-        # refuses an unreadable pull request. Stated rather than assumed, because acting without
-        # a head would be asking for whatever has been pushed since.
-        return Outcome(repository, number, "unreadable", "admissible but names no head")
-    if not submit:
-        return Outcome(repository, number, "would-land", f"head {head[:12]}")
-
-    try:
-        landed = client.land(
-            repository, number, head_sha=head, idempotency_key=_key(repository, number, head)
-        )
-    except LandingRefused as error:
-        return Outcome(repository, number, "held", str(error))
-    except OrchestratorError as error:
-        return Outcome(repository, number, "error", str(error))
-    return Outcome(repository, number, "landed", f"status={landed.get('status')}")
-
-
 def _pass(subjects: list[tuple[str, int]], client: LandingClient, submit: bool) -> list[Outcome]:
     """Ask about every pull request in scope."""
-    return [_consider(client, repository, number, submit) for repository, number in subjects]
-
-
-def _wants_update(answer: dict[str, Any]) -> bool:
-    """Does the answer say this branch should be brought up to date now?
-
-    Only when it qualifies AND is not withheld for a sibling (ADR-0045). A missing withheld key
-    reads as not withheld, which is what an orchestrator older than this program serves -- and
-    that orchestrator freshens exactly as it always did.
-    """
-    return bool(answer.get("branch_update_qualifies")) and (
-        answer.get(_WITHHELD_FOR_SIBLING) is not True
-    )
+    return core.landing_pass(LANE, subjects, client, submit)
 
 
 def _branch_updates(
     subjects: list[tuple[str, int]], client: LandingClient, submit: bool
 ) -> list[Outcome]:
-    """Bring up to date the branches whose only remaining obstacle is that they are behind.
-
-    **AFTER the landing pass, and that ordering is load-bearing.** A landing moves the base, so it
-    is the act that puts every sibling behind; going first would bring a branch up to date and
-    then immediately stale it again by landing something else, spending a real build on a tree
-    that is out of date before it finishes.
-
-    IT RUNS ON EVERY PASS, not only on one that landed something. A pull request a person merged
-    themselves stales its siblings exactly as ours does, and one staled that way is invisible to
-    anything that only reacts to this program's own acts.
-
-    The answer is READ AGAIN rather than carried over from the landing pass, because the landing
-    pass may have changed it -- which is the whole reason this runs second.
-
-    WHICH ONES QUALIFY IS NOT DECIDED HERE. The orchestrator says so on the answer, and it says so
-    again inside the transaction that acts; this program relays it. A `branch_update_qualifies`
-    key the deployed image does not serve reads as False, which withholds the act -- the direction
-    to fail in, and not hypothetical: its sibling read a key that was not there for two days and
-    freshened nothing while reporting zero. A subject the answer says is withheld for a sibling
-    (ADR-0045) gets no line either, because the landing pass has already printed why.
-    """
-    outcomes: list[Outcome] = []
-    for repository, number in subjects:
-        try:
-            answer = client.admission(repository, number)
-        except OrchestratorError as error:
-            outcomes.append(Outcome(repository, number, "unreadable", str(error)))
-            continue
-        if not _wants_update(answer):
-            continue
-        head = answer.get("head_sha")
-        if not isinstance(head, str) or not head:
-            outcomes.append(
-                Outcome(repository, number, "unreadable", "qualifies but names no head")
-            )
-            continue
-        if not submit:
-            outcomes.append(Outcome(repository, number, "would-update", f"head {head[:12]}"))
-            continue
-        try:
-            answered = client.update_branch(
-                repository,
-                number,
-                head_sha=head,
-                idempotency_key=_update_key(repository, number, head),
-            )
-        except LandingRefused as error:
-            status = "deliberate" if error.code in _UPDATE_SELF_CLEARING else "held"
-            outcomes.append(Outcome(repository, number, status, str(error)))
-        except OrchestratorError as error:
-            outcomes.append(Outcome(repository, number, "error", str(error)))
-        else:
-            if answered.get("replayed"):
-                # ASKED BEFORE, AT THIS SAME HEAD, AND THE BRANCH HAS NOT MOVED. The key is
-                # content-addressed over the head and a success moves it, so this is the platform
-                # having accepted the work and not delivered it. Reporting it as an update would
-                # describe that as success on every pass, forever.
-                outcomes.append(
-                    Outcome(
-                        repository, number, "held", f"asked before at {head[:12]}, still behind"
-                    )
-                )
-            else:
-                outcomes.append(
-                    Outcome(repository, number, "updated", f"was behind at {head[:12]}")
-                )
-    return outcomes
+    """Bring up to date the branches whose only obstacle is being behind; see `core`."""
+    return core.branch_updates(LANE, subjects, client, submit)
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -612,33 +317,21 @@ def run(argv: list[str] | None = None) -> int:
 
 
 def report(outcomes: list[Outcome], deferred: dict[str, int], policy_version: int) -> int:
-    """Print every act considered, then what was left to a person, then the summary.
+    """Print the policy version, every act considered, what was left to a person, the summary.
 
     THE POLICY VERSION IS PRINTED FIRST, because it is the whole of the permission this pass
     exercised and one number covers both of the document's populations -- so a reader comparing
     two nights needs to know whether the declaration moved under them.
 
-    THE DEFERRAL LINE IS SEPARATE FROM THE SUMMARY, NOT FOLDED INTO IT. `_REPORTED` exists so the
-    summary's parts add up to what was considered, and a deferred pull request was never
-    considered. It is printed only when there is something to say, because a standing "0 deferred"
-    is noise on a lane that will usually have none.
-
-    IT DOES NOT AFFECT THE EXIT CODE. Deferring is this program working: a person's own pull
-    request is not this lane's business, and nothing here is unmet.
+    A DEFERRED PULL REQUEST DOES NOT AFFECT THE EXIT CODE. Deferring is this program working: a
+    person's own pull request is not this lane's business, and nothing here is unmet. It is printed
+    only when there is something to say, because a standing "0 deferred" is noise.
     """
-    print(f"landing policy version {policy_version}")
-    for outcome in outcomes:
-        subject = f"{outcome.repository}#{outcome.number}"
-        print(f"{subject}  {outcome.status:<12} {outcome.detail}")
-    for reason, count in sorted(deferred.items()):
-        print(f"{count} open pull request(s) {reason}; they are not this lane's business")
-    counted = {status: sum(o.status == status for o in outcomes) for status in _REPORTED}
-    findings = [o for o in outcomes if o.status not in _NOT_A_FINDING]
-    print(
-        f"\n{len(outcomes)} considered, "
-        + ", ".join(f"{counted[status]} {status}" for status in _REPORTED)
-    )
-    return EXIT_FINDINGS if findings else EXIT_OK
+    deferral_lines = [
+        f"{count} open pull request(s) {reason}; they are not this lane's business"
+        for reason, count in sorted(deferred.items())
+    ]
+    return core.report(outcomes, [f"landing policy version {policy_version}"], deferral_lines)
 
 
 def main() -> None:

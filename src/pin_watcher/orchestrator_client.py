@@ -9,7 +9,9 @@ THIS IS THE ACTIVATION SWEEP'S CLIENT, DELIBERATELY COPIED RATHER THAN IMPORTED.
 from `landing_ledger`, `inert_lander` reads policy from `bump_proposer`. None imports another
 lane's plumbing, and each ships its own isolation test asserting what it may depend on. A lane
 that reached into a sibling for an HTTP client would make an unrelated lane's refactor able to
-break this one's schedule.
+break this one's schedule. The one exception is chosen and named: the two landers share their
+whole body in `lander` (Tier 3 item 27), so a change there can break both landing schedules at
+once -- a trade taken for two lanes doing one job, not a pattern for this one.
 
 What is copied is proven and its guards are measured rather than defensive: the DNS-label check
 exists because `https://host..example` and an over-long label both CONSTRUCT cleanly in `httpx`
