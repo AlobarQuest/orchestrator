@@ -122,10 +122,10 @@ def worst(codes: list[int]) -> int:
     """The dominant outcome of a pass, by the launcher's ranking rather than by number.
 
     `list[int]` rather than an `Iterable`, and that is not fussiness: importing
-    `collections.abc` puts `collections` into this package's import set, which
-    `tests/architecture/test_work_carrier_isolation.py` asserts is confined. The carrier is
-    an out-of-process program whose whole dependency surface is declared; widening it to
-    spell one annotation would be the tail wagging the dog.
+    `collections.abc` puts `collections` into this package's import set, which the
+    `work_carrier` row of `tests/architecture/test_out_of_process_isolation.py` confines. The
+    carrier is an out-of-process program whose whole dependency surface is declared; widening
+    it to spell one annotation would be the tail wagging the dog.
 
     AN UNRECOGNISED CODE DOMINATES, mirroring the shell's `*) echo 4` arm rather than
     raising. `run-work-carrier.sh` chose ranking over the `for rc in 1 3 2` fold precisely

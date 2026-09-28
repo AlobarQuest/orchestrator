@@ -1,6 +1,10 @@
-"""The watcher shares no import path with the orchestrator, writes to one endpoint, only reads."""
+"""The watcher shares no import path with the orchestrator, writes to one endpoint, only reads.
 
-import ast
+The import confinement this module used to assert -- nothing from the orchestrator, the
+orchestrator nothing from here, and the dependency allowlist -- is now a row of
+`tests/architecture/test_out_of_process_isolation.py`.
+"""
+
 from pathlib import Path
 from typing import Any
 
@@ -17,25 +21,9 @@ from pin_watcher.orchestrator_client import (
     is_allowed_write,
     open_client,
 )
+from tests.architecture.import_scan import file_import_names
 
 WATCHER = Path("src/pin_watcher")
-ORCHESTRATOR = Path("src/orchestrator")
-ALLOWED_TOP_LEVEL = {
-    "httpx",
-    "typer",
-    "pin_watcher",
-    "base64",
-    "dataclasses",
-    "hashlib",
-    "json",
-    "os",
-    "re",
-    "typing",
-    # `urllib.parse` only, for the base-URL shape check. `urllib.request` is an HTTP client and
-    # is in the invariant scan's own `HTTP_CLIENTS` set, so it could never arrive here unnoticed.
-    "urllib",
-    "__future__",
-}
 
 
 def _client(handler: Any) -> OrchestratorClient:
@@ -45,57 +33,6 @@ def _client(handler: Any) -> OrchestratorClient:
         token="t",
         transport=httpx.MockTransport(handler),
     )
-
-
-def _file_imports(path: Path) -> set[str]:
-    names: set[str] = set()
-    for node in ast.walk(ast.parse(path.read_text())):
-        if isinstance(node, ast.Import):
-            names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            names.add(node.module)
-    return names
-
-
-def _imports(root: Path) -> set[str]:
-    names: set[str] = set()
-    for path in root.rglob("*.py"):
-        names |= _file_imports(path)
-    return names
-
-
-def test_the_watcher_imports_nothing_from_the_orchestrator() -> None:
-    assert {name for name in _imports(WATCHER) if name.split(".")[0] == "orchestrator"} == set()
-
-
-def test_the_orchestrator_imports_nothing_from_the_watcher() -> None:
-    assert {name for name in _imports(ORCHESTRATOR) if name.split(".")[0] == "pin_watcher"} == set()
-
-
-def test_the_watcher_imports_no_sibling_lane() -> None:
-    """Lanes share DOMAIN knowledge; this one has none to borrow.
-
-    Its client is the activation sweep's, deliberately COPIED -- a lane that reached into a
-    sibling for plumbing would let an unrelated refactor break this lane's schedule.
-    """
-    siblings = {
-        "activation_sweep",
-        "bump_proposer",
-        "change_proposer",
-        "deploy_watcher",
-        "estate_lander",
-        "inert_lander",
-        "landing_ledger",
-        "reconciliation_runner",
-        "tracker_projection_adapter",
-        "work_carrier",
-        "work_watcher",
-    }
-    assert {name.split(".")[0] for name in _imports(WATCHER)} & siblings == set()
-
-
-def test_the_watchers_third_party_deps_are_confined() -> None:
-    assert {name.split(".")[0] for name in _imports(WATCHER)} - ALLOWED_TOP_LEVEL == set()
 
 
 def test_the_write_surface_is_the_observer_roles_whole_write_surface_and_no_more() -> None:
@@ -118,7 +55,8 @@ def test_only_the_two_client_modules_can_speak_http() -> None:
     speaks = {
         str(path.relative_to(WATCHER))
         for path in WATCHER.rglob("*.py")
-        if {"httpx", "requests", "urllib.request", "http.client", "aiohttp"} & _file_imports(path)
+        if {"httpx", "requests", "urllib.request", "http.client", "aiohttp"}
+        & file_import_names(path)
     }
     assert speaks == {"github.py", "orchestrator_client.py"}
 
