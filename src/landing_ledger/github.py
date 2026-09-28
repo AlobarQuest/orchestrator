@@ -538,8 +538,8 @@ def workflow_runs_at(reader: GitHubReader, repository: str, commit: str) -> tupl
     """Every workflow run at one commit, verbatim. Judging them is `audit.branch_status`'s job.
 
     NOT THE CHECKS API. `GET /commits/{sha}/check-runs` answers 403 to this estate's GitHub App,
-    which holds no `checks` permission -- `services/github_checks.py` reads Actions runs for
-    exactly that reason and documents it. This reads the same surface.
+    which holds no `checks` permission -- `services/verifier/github_checks.py` reads Actions runs
+    for exactly that reason and documents it. This reads the same surface.
 
     `pull_request` runs are excluded on the same reasoning `_concluded_checks` gives for excluding
     them: a pull-request run is a verdict about a PROPOSAL, not about the branch. In practice none

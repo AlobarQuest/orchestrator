@@ -263,7 +263,7 @@ OUTBOUND_ALLOWLIST = {
     # -- and writes nothing. It is not a new outbound capability: it borrows github_app.py's
     # installation token, and the alternative (an out-of-process poller, ADR-0002's shape) would
     # put the observation outside the transaction that records it.
-    Path("src/orchestrator/services/github_checks.py"),
+    Path("src/orchestrator/services/verifier/github_checks.py"),
     Path("src/orchestrator/services/release/knowledge_promotions.py"),
     # WS-P2.28. Admission asks App Brain one question about the unit's target repository -- does
     # landing on its default branch change something already serving -- and writes nothing. Same

@@ -20,7 +20,7 @@ from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.reach_vocabulary import carry_reach, validate_reach
 from orchestrator.services.follow_ups import validate_follow_up
 from orchestrator.services.packages import register_revision
-from orchestrator.services.verifier_evaluators import SUPPORTED_CRITERION_EVIDENCE_TYPES
+from orchestrator.services.verifier.verifier_evaluators import SUPPORTED_CRITERION_EVIDENCE_TYPES
 
 _INTAKE_ACTION = "package_revision.intake_registered"
 _INTAKE_SOURCE = "package_cli"

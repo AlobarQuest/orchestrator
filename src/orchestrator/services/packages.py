@@ -43,7 +43,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.services.authority_gate import human_authority_gate
-from orchestrator.services.verifier_evaluators import SUPPORTED_CRITERION_EVIDENCE_TYPES
+from orchestrator.services.verifier.verifier_evaluators import SUPPORTED_CRITERION_EVIDENCE_TYPES
 
 
 @dataclass(frozen=True)

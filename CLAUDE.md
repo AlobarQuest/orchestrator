@@ -300,11 +300,11 @@ style of that module.
 
 - **`work_units.version` has exactly THREE writers, and recording an adjudication is not one of
   them.** They are `services/lifecycle.py::_perform_transition`, `services/claims.py::_transition`
-  and `services/evidence.py::_system_fail_without_new_attempt` — every one a state transition.
-  Consequently a submission's single `expected_version`, checked once against the locked unit row,
-  stays valid for every criterion in it: it guards against another actor **transitioning the unit**
-  between render and submit, not against a sibling criterion. Any note claiming that the old
-  per-criterion adjudication forms staleness-broke each other is **wrong**; the real WS-P2.13
+  and `services/verifier/evidence.py::_system_fail_without_new_attempt` — every one a state
+  transition. Consequently a submission's single `expected_version`, checked once against the locked
+  unit row, stays valid for every criterion in it: it guards against another actor **transitioning
+  the unit** between render and submit, not against a sibling criterion. Any note claiming that the
+  old per-criterion adjudication forms staleness-broke each other is **wrong**; the real WS-P2.13
   AC-002 defects were the missing atomicity (a refusal on the third criterion left the first two
   committed — fixed in WS-P2.17 Increment 3) and a `<select>` whose first option defaulted to
   `passed`. Note the Increment 3 docstring on `record_adjudications` says "the only two writers",
@@ -351,7 +351,7 @@ style of that module.
      `DETERMINISTIC_TYPES` is `{test, tests, pytest, runner.verification, gate.summary,
      security.scan, github.checks, health.probe, automated_check, …}` and `JUDGMENT_TYPES` is
      `{human.review, code_review, judgment, manual, automated_test, human_review,
-     external_attestation, observation}` (`services/verifier_evaluators.py`). **MECHANISM
+     external_attestation, observation}` (`services/verifier/verifier_evaluators.py`). **MECHANISM
      CORRECTED 2026-07-28:** this bullet used to say `automated_test` was in *neither* set and
      fell off the end of `DETERMINISTIC_TYPES`. That was true when written; **WS-P2.16 U4 moved it
      INTO `JUDGMENT_TYPES`**, so it is now a *named* judgment type — the same outcome by a
@@ -371,23 +371,23 @@ style of that module.
      and is deliberately still **not** in `DETERMINISTIC_TYPES` — adding it there halts the factory
      (four adversarial reviews), which is why the floor is a separate concept layered over the
      intake vocabulary rather than a rewrite of it. `HUMAN_FLOOR_TYPES` /
-     `DETERMINISTIC_PERMITTED_TYPES` / `floor_for()` live in `services/verifier_evaluators.py`; an
-     unknown or absent criterion type floors to human, fail-closed.
-     **`JUDGMENT_TYPES` had THREE consumers and Inc 1 moved only one — evaluation — which opened a
-     fail-open that reached `main`: a human could record `passed` on an `automated_test` criterion
-     the verifier would now resolve.** WS-P2.17 Inc 2 closed it. All three now route through
-     `human_may_adjudicate(declared_type, evidence, unit_state)`
-     (`services/verifier_evaluators.py`): evaluation, authorization (`evidence._authorize_outcome`),
-     and the `/review` form's per-criterion flag (`web.py`, renamed `is_judgment` →
-     `human_may_decide`), the last pinned to the first by set-equality test. A human may decide when
-     **(a)** the floor is `human`, **or (b)** the floor is deterministic-permitted, the current
-     evaluation is `judgment_required`, **and the unit is in `awaiting_review`**. Clause (b) is
-     load-bearing, not a convenience: Inc 1 made deterministic-floored-but-asking a common state,
-     and without it those criteria are adjudicable by **no actor at all** — the unit can neither
-     complete nor be failed. It also replaces the old `# A-static:` comment's protection, guarding
-     the `automated_check`-before-CI window **by timing** rather than by declared type, which was
-     only ever a proxy for it. A HUMAN may now also record `failed` (it was VERIFIER-only, and the
-     verifier records nothing on a criterion it deferred, so nobody could fail a judgment
+     `DETERMINISTIC_PERMITTED_TYPES` / `floor_for()` live in
+     `services/verifier/verifier_evaluators.py`; an unknown or absent criterion type floors to
+     human, fail-closed. **`JUDGMENT_TYPES` had THREE consumers and Inc 1 moved only one —
+     evaluation — which opened a fail-open that reached `main`: a human could record `passed` on an
+     `automated_test` criterion the verifier would now resolve.** WS-P2.17 Inc 2 closed it. All
+     three now route through `human_may_adjudicate(declared_type, evidence, unit_state)`
+     (`services/verifier/verifier_evaluators.py`): evaluation, authorization
+     (`evidence._authorize_outcome`), and the `/review` form's per-criterion flag (`web.py`, renamed
+     `is_judgment` → `human_may_decide`), the last pinned to the first by set-equality test. A human
+     may decide when **(a)** the floor is `human`, **or (b)** the floor is deterministic-permitted,
+     the current evaluation is `judgment_required`, **and the unit is in `awaiting_review`**. Clause
+     (b) is load-bearing, not a convenience: Inc 1 made deterministic-floored-but-asking a common
+     state, and without it those criteria are adjudicable by **no actor at all** — the unit can
+     neither complete nor be failed. It also replaces the old `# A-static:` comment's protection,
+     guarding the `automated_check`-before-CI window **by timing** rather than by declared type,
+     which was only ever a proxy for it. A HUMAN may now also record `failed` (it was VERIFIER-only,
+     and the verifier records nothing on a criterion it deferred, so nobody could fail a judgment
      criterion); it flows through the same predicate, so it is not a wider door. This was the real
      root of the known "judgment_required ACs must be passed out-of-band via the verifier M2M
      credential / no adjudication form in `/review`" gap. **It was a vocabulary gap, not a UI gap** —
@@ -445,8 +445,8 @@ style of that module.
   deterministically against."* `maintenance_remediation.py` matches it. **`software_delivery.py`
   maps EVERY automated tag — `ci:`, `gate:`, `scan:`, `health:`, and even `review:` — to
   `automated_test`**, and the orchestrator's named-check ingestion refuses anything but
-  `automated_check` **server-side** (`services/verifier_evidence.py:271`, not merely in a CLI
-  verb — a reviewer placed it in the CLI and was wrong). Consequence, measured by the WS-P2.35
+  `automated_check` **server-side** (`services/verifier/verifier_evidence.py:271`, not merely in a
+  CLI verb — a reviewer placed it in the CLI and was wrong). Consequence, measured by the WS-P2.35
   pilot: **no software-delivery package could reach the observed-check verifier lane at all**; its
   AC-001 completed on human adjudication instead. The two profiles that had actually been
   dispatched were correct; the one that had not was not — so *being exercised* is what fixed the
@@ -1748,13 +1748,13 @@ style of that module.
   `{'actions': 'write', 'metadata': 'read'}`, so
   `GET /repos/{repo}/commits/{sha}/check-runs` answers **403 Resource not accessible by
   integration** while `GET /repos/{repo}/actions/runs?head_sha=` and `/actions/runs/{id}/jobs`
-  answer 200. WS-P2.20's observer (`services/github_checks.py`) therefore reads Actions jobs, which
-  is every check this estate produces — a check run published by any OTHER application is invisible
-  to it and refuses rather than guesses. **Two consequences.** (1) `check_name` must be the **job**
-  name, not the workflow name: in this repo both are `Quality`, but in `change-manager` the workflow
-  is `Quality` and the job is `Lint, type-check, and test`, and naming the workflow yields
-  `named_check_not_found`. (2) An App's *token-mint response* reports its own `permissions`, so
-  asking what a credential may do costs one call and never needs the private key locally:
+  answer 200. WS-P2.20's observer (`services/verifier/github_checks.py`) therefore reads Actions
+  jobs, which is every check this estate produces — a check run published by any OTHER application
+  is invisible to it and refuses rather than guesses. **Two consequences.** (1) `check_name` must be
+  the **job** name, not the workflow name: in this repo both are `Quality`, but in `change-manager`
+  the workflow is `Quality` and the job is `Lint, type-check, and test`, and naming the workflow
+  yields `named_check_not_found`. (2) An App's *token-mint response* reports its own `permissions`,
+  so asking what a credential may do costs one call and never needs the private key locally:
   `POST /app/installations/{id}/access_tokens` → `permissions`. Do not infer an App's reach from
   what it is already used for — triggering a run (`actions`) and reading a check (`checks`) are
   different permissions. (3) **ADDED 2026-08-08: the APP and the INSTALLATION carry separate
@@ -1836,21 +1836,21 @@ style of that module.
   guard reads adjudications and structurally cannot read evidence.** `_completion_satisfied`
   (`services/lifecycle.py:473`) takes `(required_ac_ids, adjudications, occurred_at)`: there is no
   evidence parameter, so completion is decided on adjudication rows alone. `_authorize_outcome`'s
-  VERIFIER branch (`services/evidence.py:966`) is `allowed = outcome in NON_WAIVER_OUTCOMES` with
-  no evidence requirement, and `_validate_adjudication_fields` demands evidence only for `waived`
-  (a `failed_evidence_id`) — `passed` needs a rationale string, and `evidence_id` is validated only
-  when non-null. `(SUBMITTED→COMPLETED)` is a verifier-held edge. So POSTing `passed` with prose on
-  each required AC completes the unit, and **everything WS-P2.20 built — the App-token observation
-  of the named check, unanimity, `failed_closed` on divergence — is bypassed by one POST.** The
-  `orchestrator-verifier` credential is standing in production. This may well be intentional (the
-  verifier as an out-of-band trusted actor) but nothing in the code says so, and it makes every
-  WS-P2.20 guarantee conditional on a credential that also holds the bypass. The second half of the
-  same hole: **the reconciliation lane detects reality CHANGING, never reality having been
-  MISREPORTED** — `_detect_check` (`reconciliation_detection.py:321-342`) needs a prior *observed*
-  success at the armed head before it will report a failure as a flip, and a claim that was never
-  observed leaves no such prior, so the predicate is False and the detector returns silently
-  without even incrementing `skipped_correlations`. There is no downstream net under this.
-  (Found by WS-P2.31 2026-08-03, independently re-verified by HQ the same day.)
+  VERIFIER branch (`services/verifier/evidence.py:966`) is `allowed = outcome in
+  NON_WAIVER_OUTCOMES` with no evidence requirement, and `_validate_adjudication_fields` demands
+  evidence only for `waived` (a `failed_evidence_id`) — `passed` needs a rationale string, and
+  `evidence_id` is validated only when non-null. `(SUBMITTED→COMPLETED)` is a verifier-held edge. So
+  POSTing `passed` with prose on each required AC completes the unit, and **everything WS-P2.20
+  built — the App-token observation of the named check, unanimity, `failed_closed` on divergence —
+  is bypassed by one POST.** The `orchestrator-verifier` credential is standing in production. This
+  may well be intentional (the verifier as an out-of-band trusted actor) but nothing in the code
+  says so, and it makes every WS-P2.20 guarantee conditional on a credential that also holds the
+  bypass. The second half of the same hole: **the reconciliation lane detects reality CHANGING,
+  never reality having been MISREPORTED** — `_detect_check` (`reconciliation_detection.py:321-342`)
+  needs a prior *observed* success at the armed head before it will report a failure as a flip, and
+  a claim that was never observed leaves no such prior, so the predicate is False and the detector
+  returns silently without even incrementing `skipped_correlations`. There is no downstream net
+  under this. (Found by WS-P2.31 2026-08-03, independently re-verified by HQ the same day.)
   **CLOSING NOTE, WS-P2.32 (`52d7d7e`).** The bypass is shut: **a verifier adjudication may only
   arise from `verify_work_unit`**, and a direct POST is refused as a named
   `verifier_evaluation_required` — *"the role is not the problem, the route to it is."* Two things
@@ -1888,10 +1888,10 @@ style of that module.
   gate is `if status == "green": return None` / `if touched and touched <= accepted: return None` /
   `return "conformance_not_green"`. Two consequences. (1) Anyone told "the anti-tautology precedent
   already exists in this repo" will go looking for a check that is not there — there is **one**
-  exemplar of the observed-not-attested move (`services/github_checks.py`, WS-P2.20), not two.
-  (2) **Do NOT close it by deleting the green short-circuit.** Green claims then fall through to the
-  subset test, which is False whenever `accepted` does not cover `touched`; WS-P2.31 measured 28 of
-  28 production conformance blocks as `status: "green"` with **0 echoes**, and the canonical
+  exemplar of the observed-not-attested move (`services/verifier/github_checks.py`, WS-P2.20), not
+  two. (2) **Do NOT close it by deleting the green short-circuit.** Green claims then fall through
+  to the subset test, which is False whenever `accepted` does not cover `touched`; WS-P2.31 measured
+  28 of 28 production conformance blocks as `status: "green"` with **0 echoes**, and the canonical
   cross-repo fixture `tests/fixtures/runner_authority_envelope.json` is
   `green / touched=['project'] / accepted=[]` — so the pinned envelope shape **both repos agree on**
   would be refused and every dispatch would stop. HQ proposed exactly that removal on 2026-08-03
@@ -2708,8 +2708,8 @@ style of that module.
 
 - **The named-check evidence lane is closed to any criterion not declared `automated_check` — at
   INGESTION, not only in intent-packages' `factory verify` pre-check.** `record_named_check_evidence`
-  (`services/verifier_evidence.py`) raises `evidence_subject_invalid: acceptance criterion is not a
-  mapped automated check` unless the criterion's declared `evidence_type` is exactly
+  (`services/verifier/verifier_evidence.py`) raises `evidence_subject_invalid: acceptance criterion
+  is not a mapped automated check` unless the criterion's declared `evidence_type` is exactly
   `automated_check`. The deterministic-permitted floor of `automated_test` (WS-P2.17) does NOT make
   the observed-check lane reachable for it: the floor governs how EVALUATION may resolve, the
   ingestion gate governs which evidence can ARRIVE, and they key on different things. Measured live
@@ -2749,7 +2749,7 @@ style of that module.
   `steps[].conclusion`) — the attempt, not the run, because a re-run supersedes its predecessor
   and `/runs/{id}/jobs` answers about a different attempt than the row you are writing. Note the
   App has no `checks` permission so the Checks API 403s; this is the Actions API and needs only a
-  plain token. `services/github_checks.py` already reads jobs and documents why.
+  plain token. `services/verifier/github_checks.py` already reads jobs and documents why.
 
 - **GitHub populates `merge_commit_sha` on OPEN pull requests with a throwaway test-merge commit
   — a real, fetchable object that passes every shape check there is.** `change-manager` PR #42

@@ -4,7 +4,7 @@ The Checks API is deliberately not used. The `Alobar SDS Dispatch` App carries n
 permission, so `/commits/{sha}/check-runs` answers 403 -- but that is not the reason here: this
 program's third-party dependencies are confined to `httpx` and `typer` (pinned by its isolation
 test), which rules out the JWT assertion an App token needs. It authenticates with a plain token
-and reads workflow RUNS, which is the same surface `services/github_checks.py` settled on.
+and reads workflow RUNS, which is the same surface `services/verifier/github_checks.py` settled on.
 """
 
 from __future__ import annotations

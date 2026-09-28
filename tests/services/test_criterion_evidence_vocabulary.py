@@ -16,7 +16,7 @@ from orchestrator.errors import DomainError
 from orchestrator.persistence.models import Evidence, PackageAcceptanceCriterion
 from orchestrator.services.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.package_intake import register_package_intake
-from orchestrator.services.verifier_evaluators import (
+from orchestrator.services.verifier.verifier_evaluators import (
     DETERMINISTIC_PERMITTED_TYPES,
     DETERMINISTIC_TYPES,
     EVALUATORS,
@@ -77,7 +77,7 @@ def test_human_floored_criterion_is_judgment_even_with_deterministic_evidence() 
 # The five generated post-deploy criteria are the blast radius of keying evaluation on the
 # ARRIVING evidence type: they are the only criteria in the system whose evidence rows are minted
 # by the orchestrator itself. Left column: the `evidence_type` each generated criterion DECLARES
-# (`services/verifier_criteria.py::_generated_post_deploy_criteria`). Right column: the
+# (`services/verifier/verifier_criteria.py::_generated_post_deploy_criteria`). Right column: the
 # `evidence_type` written on the paired evidence row
 # (`services/release/deployment_observations.py::_deployment_evidence`). They are equal per ac_id,
 # which is what makes this change transparent for post-deploy units -- this pin is what notices if

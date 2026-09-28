@@ -37,8 +37,8 @@ from orchestrator.persistence.models import (
 from orchestrator.services.claim_release import release_claim
 
 # The single source of truth for the generated post-deploy AC ids: this module PRODUCES them
-# (required_ac_ids for a generated post-deploy unit); `services.evidence` imports this same tuple
-# to gate public adjudication. Do not keep a second copy -- a divergence would let a newly
+# (required_ac_ids for a generated post-deploy unit); `services.verifier.evidence` imports this same
+# tuple to gate public adjudication. Do not keep a second copy -- a divergence would let a newly
 # generated post-deploy AC be publicly adjudicated.
 POST_DEPLOY_AC_IDS = (
     "post-deploy-artifact",
@@ -74,19 +74,19 @@ SATISFYING_OUTCOMES = frozenset({"passed", "not_applicable"})
 
 # The single source of truth for the generated follow-up review AC id. Same producer/consumer
 # split as the tuple above: this module PRODUCES it (required_ac_ids for a review unit) and
-# `services.evidence` imports it to decide subject validity. One copy only.
+# `services.verifier.evidence` imports it to decide subject validity. One copy only.
 #
 # It is deliberately NOT gated the way the ids above are. Those are verifier-owned and public
 # adjudication must refuse them; this one is human-owned by design and public adjudication must
 # ACCEPT it. Two rules pointing opposite ways, asserted in both directions in the tests.
 FOLLOW_UP_AC_ID = "follow-up-review"
 
-# The generated follow-up criterion's evidence type. `services.verifier_criteria` stamps this onto
-# the transient criterion it constructs; `services.evidence` needs the identical value as the
-# fallback for `_criterion_evidence_type` (the generated criterion is never persisted as a
-# `PackageAcceptanceCriterion` row, so the normal DB lookup finds nothing). Naming it once here,
-# rather than repeating the literal in both call sites, is the same discipline as the two tuples
-# above -- `observation` is not new vocabulary (it is already in JUDGMENT_TYPES), only its
+# The generated follow-up criterion's evidence type. `services.verifier.verifier_criteria` stamps
+# this onto the transient criterion it constructs; `services.verifier.evidence` needs the identical
+# value as the fallback for `_criterion_evidence_type` (the generated criterion is never persisted
+# as a `PackageAcceptanceCriterion` row, so the normal DB lookup finds nothing). Naming it once
+# here, rather than repeating the literal in both call sites, is the same discipline as the two
+# tuples above -- `observation` is not new vocabulary (it is already in JUDGMENT_TYPES), only its
 # ownership by this one AC id is.
 FOLLOW_UP_EVIDENCE_TYPE = "observation"
 

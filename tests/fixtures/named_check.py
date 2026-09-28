@@ -17,16 +17,16 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.claims import LeaseGrant, claim_unit
-from orchestrator.services.evidence import append_evidence
-from orchestrator.services.github_checks import (
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.packages import register_approved_unit, register_revision
+from orchestrator.services.verifier.evidence import append_evidence
+from orchestrator.services.verifier.github_checks import (
     CheckObservation,
     CheckObservationError,
     CheckObserver,
     ObservedJob,
 )
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
-from orchestrator.services.packages import register_approved_unit, register_revision
-from orchestrator.services.verifier_evidence import (
+from orchestrator.services.verifier.verifier_evidence import (
     NamedCheckEvidenceCommand,
     record_named_check_evidence,
 )

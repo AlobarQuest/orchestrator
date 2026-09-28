@@ -19,7 +19,7 @@ FLAG = "from_verifier_evaluation"
 
 #: The one site that may assert it, and why. A new entry here means a new path by which a verifier
 #: adjudication can exist without an evaluation behind it -- which is the defect, not the fix.
-AUTHORIZED_SETTERS = {"services/verifier.py"}
+AUTHORIZED_SETTERS = {"services/verifier/verifier.py"}
 
 
 def _setters() -> dict[str, int]:
@@ -39,12 +39,12 @@ def test_only_the_verify_command_may_assert_its_own_evaluation() -> None:
         "outcome came from the verifier's own evaluation of evidence; every other setter is a "
         "route by which a verifier adjudication can exist without one."
     )
-    assert setters["services/verifier.py"] == 1, setters
+    assert setters["services/verifier/verifier.py"] == 1, setters
 
 
 def test_the_flag_is_still_the_thing_the_guard_reads() -> None:
     """A rename that missed this file would leave both assertions above vacuously true."""
-    evidence = (SOURCE_ROOT / "services" / "evidence.py").read_text()
+    evidence = (SOURCE_ROOT / "services" / "verifier" / "evidence.py").read_text()
 
     assert f"{FLAG}: bool" in evidence, f"{FLAG} is no longer a parameter of the adjudication path"
     assert "verifier_evaluation_required" in evidence, "the named refusal is gone"

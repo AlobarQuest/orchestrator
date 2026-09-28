@@ -19,10 +19,10 @@ WS42_DISPATCH_PATHS = {
     Path("src/orchestrator/services/github_app.py"),
     # The verifier evidence command reads the immutable dispatch identity to bind an externally
     # observed named check to the exact unit attempt. It cannot initiate workflow execution.
-    Path("src/orchestrator/services/verifier_evidence.py"),
+    Path("src/orchestrator/services/verifier/verifier_evidence.py"),
     # Verification re-reads that dispatch identity before trusting stored named-check evidence.
     # The helper is read-only apart from locking the canonical PR binding through transition.
-    Path("src/orchestrator/services/verifier_named_check.py"),
+    Path("src/orchestrator/services/verifier/verifier_named_check.py"),
 }
 WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/release/deployment_observations.py"),
@@ -39,10 +39,10 @@ WS53_POST_DEPLOY_PATHS = {
     # signal. It reads that state; it never dispatches, deploys, or merges.
     Path("src/orchestrator/services/reconciliation/in_flight.py"),
     Path("src/orchestrator/services/release/event_publications.py"),
-    Path("src/orchestrator/services/evidence.py"),
+    Path("src/orchestrator/services/verifier/evidence.py"),
     Path("src/orchestrator/services/lifecycle.py"),
-    Path("src/orchestrator/services/verifier_criteria.py"),
-    Path("src/orchestrator/services/verifier_evaluators.py"),
+    Path("src/orchestrator/services/verifier/verifier_criteria.py"),
+    Path("src/orchestrator/services/verifier/verifier_evaluators.py"),
 }
 # ADR-0020's named exception, in this guard. The two allowlists above are FILE-scoped: a path in
 # them is excused from every forbidden sequence at once, including `deploy` and `coolify`. That is
@@ -296,8 +296,8 @@ def test_ws32_string_scanner_covers_spaced_forbidden_phrases() -> None:
 
 def test_verifier_named_check_dispatch_access_is_read_only() -> None:
     for path in (
-        Path("src/orchestrator/services/verifier_evidence.py"),
-        Path("src/orchestrator/services/verifier_named_check.py"),
+        Path("src/orchestrator/services/verifier/verifier_evidence.py"),
+        Path("src/orchestrator/services/verifier/verifier_named_check.py"),
     ):
         source = path.read_text(encoding="utf-8")
         for forbidden_reference in (

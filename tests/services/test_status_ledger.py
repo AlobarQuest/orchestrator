@@ -4,10 +4,10 @@ from sqlalchemy.orm import Session
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Dependency, Event
 from orchestrator.services.claims import LeaseGrant, claim_unit
-from orchestrator.services.evidence import append_evidence, record_adjudication
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.packages import DependencySpec
 from orchestrator.services.reporting.status_ledger import StatusLedgerFilters, status_ledger
+from orchestrator.services.verifier.evidence import append_evidence, record_adjudication
 from tests.services.test_context_preflight import register_context_unit, valid_context
 from tests.services.test_dependencies import register_unit
 from tests.services.test_reclaim import authorize_readiness, expire

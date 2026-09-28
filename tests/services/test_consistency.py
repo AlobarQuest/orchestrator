@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import EVIDENCE_HEAD_BOOKKEEPING_AC_ID, Evidence, WorkUnit
-from orchestrator.services.evidence import current_evidence
 from orchestrator.services.reconciliation.consistency import check_consistency
+from orchestrator.services.verifier.evidence import current_evidence
 from tests.services.test_dependencies import register_unit
 from tests.services.test_lifecycle_guards import add_adjudication, submitted_unit
 

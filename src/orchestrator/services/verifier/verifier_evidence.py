@@ -26,16 +26,16 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.evidence import (
+from orchestrator.services.verifier.evidence import (
     append_verifier_evidence,
     lock_evidence_idempotency_key,
 )
-from orchestrator.services.github_checks import (
+from orchestrator.services.verifier.github_checks import (
     CheckObservation,
     CheckObservationError,
     CheckObserver,
 )
-from orchestrator.services.verifier_criteria import load_required_criteria
+from orchestrator.services.verifier.verifier_criteria import load_required_criteria
 
 SUPPORTED_CONCLUSIONS = frozenset(
     {

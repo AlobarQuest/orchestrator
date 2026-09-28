@@ -39,7 +39,7 @@ from orchestrator.services.lifecycle import (
     POST_DEPLOY_AC_IDS,
     is_generated_follow_up_unit,
 )
-from orchestrator.services.verifier_evaluators import human_may_adjudicate
+from orchestrator.services.verifier.verifier_evaluators import human_may_adjudicate
 
 # not-a-vocabulary: internal policy subset of adjudication outcomes (which outcomes are not
 # waivers), not a value shared across a repo or subsystem boundary.
@@ -228,11 +228,12 @@ def record_adjudication(
 ) -> Adjudication | DomainError:
     """Record one criterion's decision.
 
-    `from_verifier_evaluation` is not a caller's choice. `services/verifier.py` sets it because the
-    outcome it is recording was derived by `evaluate_criterion` from the evidence chain; no request
-    schema exposes it, so an actor reaching this through the public route cannot assert it. It is
-    deliberately absent from `_adjudication_command`: the replay record is what a CALLER asked for,
-    and a call-site fact that cannot differ between two callers of one key adds nothing to it.
+    `from_verifier_evaluation` is not a caller's choice. `services/verifier/verifier.py` sets it
+    because the outcome it is recording was derived by `evaluate_criterion` from the evidence chain;
+    no request schema exposes it, so an actor reaching this through the public route cannot assert
+    it. It is deliberately absent from `_adjudication_command`: the replay record is what a CALLER
+    asked for, and a call-site fact that cannot differ between two callers of one key adds nothing
+    to it.
     """
     command = _adjudication_command(
         work_package_revision_id=work_package_revision_id,
@@ -945,8 +946,8 @@ def _criterion_evidence_type(
     session: Session, revision_id: uuid.UUID, unit_id: uuid.UUID, ac_id: str
 ) -> str | None:
     """The generated follow-up criterion is never persisted as a `PackageAcceptanceCriterion` row
-    (it is constructed transiently by `services.verifier_criteria`), so the DB lookup below always
-    misses for it.
+    (it is constructed transiently by `services.verifier.verifier_criteria`), so the DB lookup below
+    always misses for it.
 
     The fallback below re-runs `_is_generated_follow_up_subject` rather than trusting `ac_id ==
     FOLLOW_UP_AC_ID` alone. `_validated_subject` admits a subject through TWO independent paths --

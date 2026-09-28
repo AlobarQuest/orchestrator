@@ -12,23 +12,23 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.evidence import (
+from orchestrator.services.lifecycle import (
+    TransitionCommand,
+    transition_unit,
+)
+from orchestrator.services.verifier.evidence import (
     append_verifier_evidence,
     current_adjudication,
     current_evidence,
     record_adjudication,
 )
-from orchestrator.services.lifecycle import (
-    TransitionCommand,
-    transition_unit,
-)
-from orchestrator.services.verifier_criteria import load_required_criteria
-from orchestrator.services.verifier_evaluators import EvaluationStatus, evaluate_criterion
-from orchestrator.services.verifier_named_check import (
+from orchestrator.services.verifier.verifier_criteria import load_required_criteria
+from orchestrator.services.verifier.verifier_evaluators import EvaluationStatus, evaluate_criterion
+from orchestrator.services.verifier.verifier_named_check import (
     lock_named_check_subject,
     validate_named_check_bindings,
 )
-from orchestrator.services.verifier_types import (
+from orchestrator.services.verifier.verifier_types import (
     VerificationResult,
     VerifierEvaluation,
     VerifierResult,
