@@ -11,7 +11,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, Evidence, ReleaseArtifactBinding, WorkUnit
 from orchestrator.services.packages import register_approved_unit, register_revision
-from orchestrator.services.release_artifacts import (
+from orchestrator.services.release.release_artifacts import (
     ReleaseArtifactCommand,
     _stored_command,
     list_release_artifacts,

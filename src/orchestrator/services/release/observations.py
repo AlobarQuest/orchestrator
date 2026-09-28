@@ -25,7 +25,7 @@ from orchestrator.persistence.models import (
     Event,
     Observation,
 )
-from orchestrator.services.release_artifacts import SHA256_DIGEST
+from orchestrator.services.release.release_artifacts import SHA256_DIGEST
 
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533631
 ENVIRONMENT = re.compile(r"^[a-z][a-z0-9_-]{1,62}$")

@@ -8,8 +8,6 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Observation, ReconciliationCondition, WorkUnit
-from orchestrator.services.deployment_observations import record_deployment_observation
-from orchestrator.services.observations import ObservationCommand, record_observation
 from orchestrator.services.packages import record_approval, register_approved_unit
 from orchestrator.services.pr_bindings import upsert_pr_binding
 from orchestrator.services.reconciliation.reconciliation import (
@@ -17,7 +15,9 @@ from orchestrator.services.reconciliation.reconciliation import (
     ConditionOutcome,
     record_reconciliation_condition,
 )
-from orchestrator.services.release_artifacts import record_release_artifact
+from orchestrator.services.release.deployment_observations import record_deployment_observation
+from orchestrator.services.release.observations import ObservationCommand, record_observation
+from orchestrator.services.release.release_artifacts import record_release_artifact
 from orchestrator.services.reporting.traceability import (
     TraceabilityAnchor,
     build_chain,

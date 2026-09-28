@@ -21,10 +21,10 @@ from orchestrator.persistence.models import (
     UnitPrBinding,
     WorkUnit,
 )
-from orchestrator.services.machine_activation import machine_activation_candidates
-from orchestrator.services.observations import ObservationCommand, record_observation
 from orchestrator.services.packages import register_approved_unit, register_revision
-from orchestrator.services.release_artifacts import (
+from orchestrator.services.release.machine_activation import machine_activation_candidates
+from orchestrator.services.release.observations import ObservationCommand, record_observation
+from orchestrator.services.release.release_artifacts import (
     ReleaseArtifactCommand,
     record_release_artifact,
 )

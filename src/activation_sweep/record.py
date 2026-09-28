@@ -8,12 +8,12 @@ the claim, not a limitation to be worked around.
 
 **Re-running over unchanged reality must change nothing.** That is why `observed_at` is HEAD's
 COMMITTER DATE and not the moment the sweep ran. The orchestrator's replay check hashes the whole
-command, `observed_at` included (`services/observations.py::_fact_identity`), so a wall clock
-would give unchanged reality a new fact hash on every pass -- and because the source reference is
-the same, that reaches the same-source/different-facts branch and raises `observation_conflict`,
-permanently, from the second sweep onward. A clock that is a function of the facts is the only
-one that replays. When the sweep ran is recorded anyway: the orchestrator stamps `received_at`
-itself, which is a better answer than anything this program could assert about its own clock.
+command, `observed_at` included (`services/release/observations.py::_fact_identity`), so a wall
+clock would give unchanged reality a new fact hash on every pass -- and because the source reference
+is the same, that reaches the same-source/different-facts branch and raises `observation_conflict`,
+permanently, from the second sweep onward. A clock that is a function of the facts is the only one
+that replays. When the sweep ran is recorded anyway: the orchestrator stamps `received_at` itself,
+which is a better answer than anything this program could assert about its own clock.
 
 **The reference carries a DIGEST, and that is the decision the landing ledger's shape would have
 got wrong here.** A landing is immutable, so the ledger keys on the landing's own identity and
@@ -29,13 +29,13 @@ the reference" and is a strict subset of what the orchestrator compares. Because
 also the idempotency key, the server's FIRST lookup is by that key, and on a hit it compares the
 entire stored command -- `summary`, `status`, `severity`, `source_url`, `trust_classification`,
 `subject_type`, `observation_type`, every one of them producer-derived and none of them in `facts`
-(`services/observations.py::_validate_idempotent_replay`, `::_command_payload`). So rewording one
-clause of `summary_of` would have made the next sweep an `idempotency_conflict` for every checkout
-whose git state had not moved since its last row -- the section 5.2 defect exactly, one field over,
-self-healing only when that repository's HEAD or tree next moves, which for a quiet checkout
-like `security-standards` or `infraops-mcp-server` can be weeks. Two independent adversarial
-reviews found it; no test could, because
-every test generates both sides from one version of the producer.
+(`services/release/observations.py::_validate_idempotent_replay`, `::_command_payload`). So
+rewording one clause of `summary_of` would have made the next sweep an `idempotency_conflict` for
+every checkout whose git state had not moved since its last row -- the section 5.2 defect exactly,
+one field over, self-healing only when that repository's HEAD or tree next moves, which for a quiet
+checkout like `security-standards` or `infraops-mcp-server` can be weeks. Two independent
+adversarial reviews found it; no test could, because every test generates both sides from one
+version of the producer.
 
 Digesting the whole body makes any producer change APPEND, which is always safe. **The residual is
 named rather than implied: `actor_id` and `actor_role` are in the compared payload and are derived
@@ -82,7 +82,7 @@ SEVERITY_CURRENT = "info"
 SEVERITY_CONDITION = "warning"
 
 MAX_SUMMARY = 512
-# The orchestrator's own bound on the encoded facts (`services/observations.py`).
+# The orchestrator's own bound on the encoded facts (`services/release/observations.py`).
 MAX_FACT_BYTES = 4096
 
 

@@ -19,7 +19,7 @@ from activation_sweep.record import activation_observation
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Observation
-from orchestrator.services.observations import ObservationCommand, record_observation
+from orchestrator.services.release.observations import ObservationCommand, record_observation
 from tests.activation_sweep.conftest import Estate
 
 # The standing identity for every observe-and-report producer (ADR-0017, WS-P3.6 Increment 1).

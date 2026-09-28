@@ -2,8 +2,9 @@
 
 ADR-0022. This file exists because the defect it pins was found against a migrated database and
 was invisible to every test that stopped at the request body. `deploy_watcher` builds a payload;
-`services/observations.py` decides what happens to it, and the two disagreed about what a rollout
-IS. A body-shape assertion cannot see that, which is the `response_model` lesson one layer out.
+`services/release/observations.py` decides what happens to it, and the two disagreed about what a
+rollout IS. A body-shape assertion cannot see that, which is the `response_model` lesson one layer
+out.
 
 **The refusal being avoided is unrecoverable.** `record_observation` raises
 `observation_conflict` for a second row at the same `(source_system, source_reference)` with
@@ -24,7 +25,7 @@ from deploy_watcher.units import UnitLanding, unit_observation
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Observation
-from orchestrator.services.observations import ObservationCommand, record_observation
+from orchestrator.services.release.observations import ObservationCommand, record_observation
 
 OBSERVER = ActorContext("orchestrator-observer", ActorRole.OBSERVER)
 UNIT = "1c2d3e4f-5a6b-7c8d-9e0f-1a2b3c4d5e6f"

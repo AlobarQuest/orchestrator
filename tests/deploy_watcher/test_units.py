@@ -303,9 +303,9 @@ def test_the_reference_folds_case_so_one_attempt_is_one_row() -> None:
 
 
 def test_the_reference_stays_inside_the_orchestrators_bound() -> None:
-    """512 characters (`services/observations.py::MAX_REF`), and a reference that overran it would
-    be a `observation_invalid` on every pass rather than on none."""
-    from orchestrator.services.observations import MAX_REF
+    """512 characters (`services/release/observations.py::MAX_REF`), and a reference that overran it
+    would be a `observation_invalid` on every pass rather than on none."""
+    from orchestrator.services.release.observations import MAX_REF
 
     body = unit_observation(_landing(), _rollout(), verdict="success", production_reached="yes")
     assert 0 < len(body["source_reference"]) <= MAX_REF

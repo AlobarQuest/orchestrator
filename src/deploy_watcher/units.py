@@ -149,7 +149,7 @@ def unit_observation(
 
     The orchestrator refuses a second observation with the same `(source_system, source_reference)`
     and different facts — `observation_conflict`, no supersession, no delete
-    (`services/observations.py`). The landing ledger's reference is deliberately NOT
+    (`services/release/observations.py`). The landing ledger's reference is deliberately NOT
     content-addressed and that is right THERE, because its subject is a commit on a branch, which
     is immutable: a changed fact means something is wrong, and raising is the point.
 

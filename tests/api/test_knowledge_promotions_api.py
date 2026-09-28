@@ -6,7 +6,7 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import Session
 
-from orchestrator.services.knowledge_promotions import BrainProposalResult
+from orchestrator.services.release.knowledge_promotions import BrainProposalResult
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM, WORKER
 
 OBSERVED_AT = datetime(2026, 7, 9, 14, 0, tzinfo=UTC).isoformat()

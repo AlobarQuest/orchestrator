@@ -31,7 +31,7 @@ class ActorRole(StrEnum):
     # none of the four edge sets, so `authorize_transition` refuses it on every legal edge, which
     # is every lifecycle command in the system.
     #
-    # The one gate that names it is `services/observations.py::_authorize_actor`. If you are
+    # The one gate that names it is `services/release/observations.py::_authorize_actor`. If you are
     # adding a second, you are widening what an observation producer may do to this estate --
     # which is the thing this role exists to prevent. See ADR-0017.
     OBSERVER = "observer"

@@ -10,13 +10,13 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import DeploymentObservation, Event, Evidence, WorkUnit
-from orchestrator.services.deployment_observations import (
+from orchestrator.services.evidence import record_adjudication
+from orchestrator.services.release.deployment_observations import (
     DeploymentObservationCommand,
     list_deployment_observations,
     record_deployment_observation,
 )
-from orchestrator.services.evidence import record_adjudication
-from orchestrator.services.release_artifacts import record_release_artifact
+from orchestrator.services.release.release_artifacts import record_release_artifact
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from tests.services.test_release_artifacts import (
     DIGEST,

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
-from orchestrator.services.observations import ObservationCommand, record_observation
+from orchestrator.services.release.observations import ObservationCommand, record_observation
 from orchestrator.services.reporting.traceability import (
     TraceabilityAnchorResponse,
     TraceabilityChainResponse,

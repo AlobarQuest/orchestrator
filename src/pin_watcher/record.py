@@ -9,9 +9,9 @@ caller, never as a run that went wrong.
 
 **Re-running over unchanged reality must change nothing.** `observed_at` is therefore the committer
 date of the PINNED revision, never the moment the pass ran. The orchestrator's replay check hashes
-the whole command, `observed_at` included (`services/observations.py::_fact_identity`), so a wall
-clock would give unchanged reality a new fact hash every pass -- and because the source reference
-would be the same, that reaches the same-source/different-facts branch and raises
+the whole command, `observed_at` included (`services/release/observations.py::_fact_identity`), so a
+wall clock would give unchanged reality a new fact hash every pass -- and because the source
+reference would be the same, that reaches the same-source/different-facts branch and raises
 `observation_conflict` permanently, from the second pass onward. A clock that is a function of the
 facts is the only one that replays. When the pass ran is recorded anyway: the orchestrator stamps
 `received_at`, which is a better answer than anything this program could assert about its own clock.

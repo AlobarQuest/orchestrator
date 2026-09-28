@@ -1,7 +1,7 @@
 """The landing ledger's fact vocabulary, pinned to the orchestrator's transcription of it.
 
-`services/machine_activation.py` reads a landing commit out of `facts.what_changed`, which is
-written by `landing_ledger/record.py::what_changed`. The two live in DIFFERENT PROGRAMS on
+`services/release/machine_activation.py` reads a landing commit out of `facts.what_changed`, which
+is written by `landing_ledger/record.py::what_changed`. The two live in DIFFERENT PROGRAMS on
 purpose -- `src/orchestrator` imports nothing from `src/landing_ledger` and an architecture test
 enforces that -- so nothing in either module can notice if one side renames a key.
 
@@ -22,7 +22,7 @@ from landing_ledger.record import (
     SUBJECT_TYPE,
     what_changed,
 )
-from orchestrator.services import machine_activation
+from orchestrator.services.release import machine_activation
 
 LANDING = Landing(
     repository="AlobarQuest/infraops-mcp-server",

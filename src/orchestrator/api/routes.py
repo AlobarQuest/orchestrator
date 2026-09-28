@@ -143,19 +143,6 @@ from orchestrator.services.decomposition import (
     require_decomposition_revision,
     submit_decomposition_proposal,
 )
-from orchestrator.services.deployment_observations import (
-    DeploymentObservationCommand,
-    DeploymentObservationResponse,
-    list_deployment_observations,
-    record_deployment_observation,
-)
-from orchestrator.services.event_publications import (
-    EventPublicationFilters,
-    export_event_publications,
-    list_event_publications,
-    queue_event_publications,
-    retry_event_publication,
-)
 from orchestrator.services.evidence import (
     append_evidence,
     list_evidence,
@@ -187,17 +174,6 @@ from orchestrator.services.intake_reads import (
     intake_authority,
     proposal_children,
     revision_acceptance_criteria,
-)
-from orchestrator.services.knowledge_promotions import (
-    HttpBrainProposalClient,
-    KnowledgePromotionProposalCommand,
-    KnowledgePromotionProposalFilters,
-    KnowledgePromotionSubmitCommand,
-    create_knowledge_promotion_proposal,
-    list_knowledge_promotion_proposals,
-    proposal_actions,
-    proposal_state,
-    submit_knowledge_promotion_to_brain,
 )
 from orchestrator.services.landing.branch_update_serialization import (
     branch_update_sibling_outcome,
@@ -246,13 +222,6 @@ from orchestrator.services.lifecycle import (
     transition_unit,
     unit_history,
 )
-from orchestrator.services.machine_activation import machine_activation_candidates
-from orchestrator.services.observations import (
-    ObservationCommand,
-    ObservationFilters,
-    list_observations,
-    record_observation,
-)
 from orchestrator.services.package_intake import (
     AcceptanceCriterionProjection,
     PackageIntakeCommand,
@@ -281,13 +250,44 @@ from orchestrator.services.reconciliation.tracker_bindings import (
     list_tracker_bindings,
     upsert_tracker_binding,
 )
-from orchestrator.services.release_artifacts import (
+from orchestrator.services.release.deployment_observations import (
+    DeploymentObservationCommand,
+    DeploymentObservationResponse,
+    list_deployment_observations,
+    record_deployment_observation,
+)
+from orchestrator.services.release.event_publications import (
+    EventPublicationFilters,
+    export_event_publications,
+    list_event_publications,
+    queue_event_publications,
+    retry_event_publication,
+)
+from orchestrator.services.release.knowledge_promotions import (
+    HttpBrainProposalClient,
+    KnowledgePromotionProposalCommand,
+    KnowledgePromotionProposalFilters,
+    KnowledgePromotionSubmitCommand,
+    create_knowledge_promotion_proposal,
+    list_knowledge_promotion_proposals,
+    proposal_actions,
+    proposal_state,
+    submit_knowledge_promotion_to_brain,
+)
+from orchestrator.services.release.machine_activation import machine_activation_candidates
+from orchestrator.services.release.observations import (
+    ObservationCommand,
+    ObservationFilters,
+    list_observations,
+    record_observation,
+)
+from orchestrator.services.release.release_artifacts import (
     ReleaseArtifactCommand,
     ReleaseArtifactResponse,
     list_release_artifacts,
     record_release_artifact,
 )
-from orchestrator.services.release_evidence_pack import (
+from orchestrator.services.release.release_evidence_pack import (
     ReleaseEvidencePackResponse,
     release_evidence_pack_response,
 )

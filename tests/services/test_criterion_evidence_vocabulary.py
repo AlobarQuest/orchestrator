@@ -79,9 +79,10 @@ def test_human_floored_criterion_is_judgment_even_with_deterministic_evidence() 
 # by the orchestrator itself. Left column: the `evidence_type` each generated criterion DECLARES
 # (`services/verifier_criteria.py::_generated_post_deploy_criteria`). Right column: the
 # `evidence_type` written on the paired evidence row
-# (`services/deployment_observations.py::_deployment_evidence`). They are equal per ac_id, which is
-# what makes this change transparent for post-deploy units -- this pin is what notices if they ever
-# diverge, since both spec tuples are function-local and cannot be imported and compared directly.
+# (`services/release/deployment_observations.py::_deployment_evidence`). They are equal per ac_id,
+# which is what makes this change transparent for post-deploy units -- this pin is what notices if
+# they ever diverge, since both spec tuples are function-local and cannot be imported and compared
+# directly.
 POST_DEPLOY_PAIRS = (
     (
         "post-deploy-artifact",

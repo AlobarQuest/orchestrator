@@ -169,7 +169,7 @@ WORK_UNIT_CONSTRUCTORS = frozenset(
     {
         "services/packages.py",
         "services/follow_ups.py",
-        "services/deployment_observations.py",
+        "services/release/deployment_observations.py",
     }
 )
 
@@ -1037,7 +1037,7 @@ def test_omitting_kind_means_container_image_on_both_wire_models() -> None:
 def test_only_a_machine_local_observation_skips_the_minted_unit() -> None:
     """`record_deployment_observation` mints the post-deploy unit on every kind but machine_local;
     if that branch is ever re-keyed, the kind rule above is guarding the wrong value."""
-    source = (ORCHESTRATOR / "services" / "deployment_observations.py").read_text()
+    source = (ORCHESTRATOR / "services" / "release" / "deployment_observations.py").read_text()
     assert re.search(
         r"if command\.kind == MACHINE_LOCAL_OBSERVATION\s+else _post_deploy_work_unit\(",
         source,
@@ -1059,7 +1059,7 @@ def test_exactly_three_modules_construct_a_work_unit() -> None:
 
 
 def test_the_observations_service_reaches_no_work_unit_constructor() -> None:
-    tree = _parse(ORCHESTRATOR / "services" / "observations.py")
+    tree = _parse(ORCHESTRATOR / "services" / "release" / "observations.py")
     names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
     names |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
     names |= {

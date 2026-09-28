@@ -17,11 +17,11 @@ from orchestrator.persistence.models import (
     ReconciliationCondition,
     WorkUnit,
 )
-from orchestrator.services.deployment_observations import record_deployment_observation
 from orchestrator.services.reconciliation.reconciliation_detection import (
     DetectionCounters,
     detect_reconciliation_conditions,
 )
+from orchestrator.services.release.deployment_observations import record_deployment_observation
 from tests.services.test_deployment_observations import (
     observation_command,
     release_binding,

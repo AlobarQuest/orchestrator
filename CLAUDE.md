@@ -1033,16 +1033,17 @@ style of that module.
 
 - **A package that describes its own release recording cannot evidence that recording at
   adjudication time.** `record_release_artifact` raises `work_unit_not_completed` unless the
-  implementation unit is already `COMPLETED` (`services/release_artifacts.py`), and follow-up
-  minting additionally requires every unit of the revision to be settled — so the binding, the
-  deployment observation, the traceability answer and the mint all necessarily happen *after* the
-  unit whose ACs assert them has completed. There is no ordering that avoids this. Either put the
-  recording ACs in a **separate, later package**, or accept the delegation deliberately: adjudicate
-  on the ordering, say so in each rationale, and discharge the confirmation in the follow-up review
-  unit the revision mints. **Do not reach for `waived` to express the caveat** — `waiver_invalid`
-  requires *failed* evidence plus a risk class, follow-up and future expiry, so a waiver is not a
-  general "accepted with reservations"; for judgment evidence the only honest outcomes are `passed`
-  and `not_applicable`, with the caveat in the rationale. (Verified 2026-07-28, WS-P2.8 deploy.)
+  implementation unit is already `COMPLETED` (`services/release/release_artifacts.py`), and
+  follow-up minting additionally requires every unit of the revision to be settled — so the binding,
+  the deployment observation, the traceability answer and the mint all necessarily happen *after*
+  the unit whose ACs assert them has completed. There is no ordering that avoids this. Either put
+  the recording ACs in a **separate, later package**, or accept the delegation deliberately:
+  adjudicate on the ordering, say so in each rationale, and discharge the confirmation in the
+  follow-up review unit the revision mints. **Do not reach for `waived` to express the caveat** —
+  `waiver_invalid` requires *failed* evidence plus a risk class, follow-up and future expiry, so a
+  waiver is not a general "accepted with reservations"; for judgment evidence the only honest
+  outcomes are `passed` and `not_applicable`, with the caveat in the rationale. (Verified
+  2026-07-28, WS-P2.8 deploy.)
 
 - **`deployment_observation` summaries are EXACT-key-set bounded, and the secret detector matches
   key NAMES, not just values.** `_require_keys` uses `set(payload).issubset(allowed)`, so any extra
@@ -2479,16 +2480,16 @@ style of that module.
   case refuses. Reads are deliberately unconfined. **Confining it by the ~20 service-level
   allowlists instead would have failed**, because four POST routes carry no role check at all —
   `work-units/{id}/preflight` and the three `/event-publications/*` — and `services/context.py`
-  and `services/event_publications.py` contain **zero** `ActorRole` references between them. "The
-  service layer gates writes" is not a property the service layer provides. Those four are a live
-  defect for every other role (backlogged); OBSERVER is simply not exposed to them.
-  **Proven against production 2026-08-07, not just in tests:** `commands/ready`, `dispatch`,
-  `verify`, `preflight`, `event-publications/queue` and `/export` all **403**; `POST
-  /observations` reaches request validation and a valid post returns **201** attributed to
-  `drift-reconciler`; `GET /observations` returns 200. Note approval-shaped routes answer **302**
-  from outside — they sit behind the human forward-auth chain at the proxy, so the request never
-  reaches the app; that surface is covered by the in-process architecture test over all 49
-  confined routes, not by an external probe.
+  and `services/release/event_publications.py` contain **zero** `ActorRole` references between them.
+  "The service layer gates writes" is not a property the service layer provides. Those four are a
+  live defect for every other role (backlogged); OBSERVER is simply not exposed to them. **Proven
+  against production 2026-08-07, not just in tests:** `commands/ready`, `dispatch`, `verify`,
+  `preflight`, `event-publications/queue` and `/export` all **403**; `POST /observations` reaches
+  request validation and a valid post returns **201** attributed to `drift-reconciler`; `GET
+  /observations` returns 200. Note approval-shaped routes answer **302** from outside — they sit
+  behind the human forward-auth chain at the proxy, so the request never reaches the app; that
+  surface is covered by the in-process architecture test over all 49 confined routes, not by an
+  external probe.
 
 - **A build-session worktree gets a DIFFERENT Python than CI unless you pin it, and the digest in
   a handoff is stale the moment anything merges.** Two release-time traps, both hit on 2026-08-07.
@@ -2945,8 +2946,8 @@ style of that module.
   and write the control to span both, since which shape raises where is not guessable.
 
 - **A `source_reference` that is NOT content-addressed is right for an IMMUTABLE subject and wedges
-  a producer permanently for a re-runnable one.** `services/observations.py` refuses a second
-  observation at the same `(source_system, source_reference)` with different facts —
+  a producer permanently for a re-runnable one.** `services/release/observations.py` refuses a
+  second observation at the same `(source_system, source_reference)` with different facts —
   `observation_conflict`, no supersession model, no delete route — so the producer's every
   subsequent pass fails. The landing ledger deliberately does not content-address its reference and
   is correct: a commit on a branch is immutable, so a changed fact means something is wrong and
@@ -2959,8 +2960,8 @@ style of that module.
   ATTEMPT and carry the fact digest, so a re-run appends and an unchanged pass replays. This is the
   estate's *copying a derivation pin transfers the MECHANISM, not the PROPERTY* rule in a third
   artifact — **ask what the reference must make unique, not what the exemplar hashed** — and it was
-  found by two reviewers, one of whom measured it against a migrated database rather than reading it.
-  Two smaller facts from the same surface: `record_observation` **RETURNS** its `DomainError`s
+  found by two reviewers, one of whom measured it against a migrated database rather than reading
+  it. Two smaller facts from the same surface: `record_observation` **RETURNS** its `DomainError`s
   rather than raising them, so a test reaching for `.id` fails with an `AttributeError` naming an
   attribute instead of naming the conflict (narrow with `isinstance` first); and `_fact_identity`
   covers `status`, `severity`, `observed_at`, `summary` and `facts`, so all five are part of what

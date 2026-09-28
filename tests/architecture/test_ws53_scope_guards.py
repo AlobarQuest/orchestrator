@@ -5,7 +5,7 @@ from fastapi.routing import APIRoute
 
 from orchestrator.api.routes import router as api_router
 
-OBSERVATION_SERVICE = Path("src/orchestrator/services/deployment_observations.py")
+OBSERVATION_SERVICE = Path("src/orchestrator/services/release/deployment_observations.py")
 ROUTES = Path("src/orchestrator/api/routes.py")
 
 
