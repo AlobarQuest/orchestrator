@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 import orchestrator.package_sources as package_sources
-import orchestrator.services.package_intake as package_intake
+import orchestrator.services.intake.package_intake as package_intake
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.package_sources import (
@@ -17,13 +17,16 @@ from orchestrator.package_sources import (
     load_protocol_fixture_intake_payload,
 )
 from orchestrator.persistence.models import Event
-from orchestrator.services.decomposition import (
+from orchestrator.services.intake.decomposition import (
     DecompositionProposalCommand,
     ProposedUnit,
     submit_decomposition_proposal,
 )
-from orchestrator.services.package_intake import PackageIntakeCommand, register_package_intake
-from orchestrator.services.packages import register_approved_unit, register_revision
+from orchestrator.services.intake.package_intake import (
+    PackageIntakeCommand,
+    register_package_intake,
+)
+from orchestrator.services.intake.packages import register_approved_unit, register_revision
 from tests.services.test_package_intake import AUTHORITY, acceptance_criterion, human_actor
 
 

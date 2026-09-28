@@ -12,12 +12,12 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.claims import authorize_retry
-from orchestrator.services.decomposition import (
+from orchestrator.services.intake.decomposition import (
     approve_decomposition_proposal,
     reject_decomposition_proposal,
     submit_decomposition_proposal,
 )
-from orchestrator.services.package_intake import register_package_intake
+from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.services.reconciliation.reconciliation import (
     ConditionCommand,
     ConditionOutcome,

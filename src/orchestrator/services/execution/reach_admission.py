@@ -14,7 +14,7 @@ exemption however little it declares -- and the list is required to still have a
 deletes itself rather than becoming permanent.
 
 **This is a different question from whether a human must read the envelope**, which
-``services.authority_gate`` answers and which grandfathering does not touch. A grandfathered
+``services.intake.authority_gate`` answers and which grandfathering does not touch. A grandfathered
 revision's units are admissible and still need that approval. Separating them is what keeps the
 exemption from widening into one: reach is missing on those units, so no known-good pattern can
 recognise them, so the person still reads it.

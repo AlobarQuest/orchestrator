@@ -52,11 +52,11 @@ SRC = Path("src")
 # this guard listed eight "assignment sites" because it grepped for `authority=` without ever
 # checking the receiver's type. The conclusion survived; the evidence did not.
 CONSTRUCTION_SITES = {
-    "orchestrator/services/packages.py",
+    "orchestrator/services/intake/packages.py",
     "orchestrator/services/release/deployment_observations.py",
     # WS-P2.8: the package-declared follow-up review unit. Same shape as the release-observation
     # site above -- a frozen envelope built inline, assigned once at construction, never mutated.
-    "orchestrator/services/follow_ups.py",
+    "orchestrator/services/intake/follow_ups.py",
 }
 
 AUTHORITY = "authority"

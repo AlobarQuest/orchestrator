@@ -402,10 +402,11 @@ style of that module.
      verifier evidence.
      **This does not fix or alias `automated_test`.**
   2. **`ac_id` means two different things.** `ac_mappings[].ac_id` / `retained_acs[].ac_id` on a
-     decomposition proposal want the criterion's **database UUID** (`services/decomposition.py`
-     builds its lookup on `str(criterion.id)`), while **evidence and adjudication want the human
-     string** `"AC-001"` (`criterion.ac_id`). Same field name, opposite meanings, and the failure
-     is a bare `package_acceptance_criterion_not_found` with no hint.
+     decomposition proposal want the criterion's **database UUID**
+     (`services/intake/decomposition.py` builds its lookup on `str(criterion.id)`), while **evidence
+     and adjudication want the human string** `"AC-001"` (`criterion.ac_id`). Same field name,
+     opposite meanings, and the failure is a bare `package_acceptance_criterion_not_found` with no
+     hint.
   3. **`github.pr.create` is validated as a NAME and ignored as a PERMISSION — and the orchestrator
      does neither.** Be precise here, because a first draft of this entry was wrong:
      - **orchestrator: STALE as of WS-P2.16 — corrected 2026-07-31.** This used to read
@@ -416,9 +417,9 @@ style of that module.
        (`capability_vocabulary.py`) and IS read as a permission —
        `services/lifecycle.py` gates PR-opening on `envelope.level_for("github.pr.create") ==
        "allowed"`. Names ARE validated at ingress: `validate_unit_capabilities`
-       (`capability_vocabulary.py`) is called from both `services/packages.py` and
-       `services/decomposition.py`, so an unknown capability string is a named error at the gate.
-       ADR-0001 still defers the package-authority → unit-capability projection (`pr_open` →
+       (`capability_vocabulary.py`) is called from both `services/intake/packages.py` and
+       `services/intake/decomposition.py`, so an unknown capability string is a named error at the
+       gate. ADR-0001 still defers the package-authority → unit-capability projection (`pr_open` →
        `github.pr.create`) to the decomposition author — that part stands.
      - **factory-runner:** *does* validate names — `SUPPORTED_CAPABILITIES` +
        `_validate_capabilities` raise `AuthorityError` on an unknown key. But it then computes
@@ -681,8 +682,8 @@ style of that module.
 - **A FastAPI `response_model` silently DROPS every key the service returns but the model does
   not declare — so "the service returns it" is never evidence "the worker receives it".**
   `runner_brief_route` declares `response_model=RunnerBriefResponse`. WS-P2.12 added an
-  `enrichment` key to `services/runner_brief.py`, every service-level assertion passed, and the
-  HTTP body carried nothing, because the response model had not been extended. This is the
+  `enrichment` key to `services/intake/runner_brief.py`, every service-level assertion passed, and
+  the HTTP body carried nothing, because the response model had not been extended. This is the
   WS-P2.1 shape (service correct, wire empty) in a new place, and it is invisible to exactly the
   test you would reach for: a cross-repo contract test that asserts on the **service dict**
   rather than the **served body** has its blind spot precisely where the consumer reads.
@@ -969,18 +970,18 @@ style of that module.
   and asserts in ways production does not permit, so a green local suite is silent on all of these.
   (1) **`seed_unit`'s seeding ROUTES are UNREACHABLE in production — but the functions behind them
   are not dead, so be precise about which is which.** `POST /api/v1/revisions` and
-  `/revisions/{id}/work-units` both call `_require_human` (`services/packages.py`) but sit on the
-  M2M-only `orchestrator-api` Traefik router — so a browser gets 401 (identity stripped) and a
+  `/revisions/{id}/work-units` both call `_require_human` (`services/intake/packages.py`) but sit on
+  the M2M-only `orchestrator-api` Traefik router — so a browser gets 401 (identity stripped) and a
   SYSTEM bearer is rejected as non-human. **No actor can reach those two routes.** Their only
   callers are the `orchestrator register-revision` / `register-unit` CLI commands and
   `scripts/drill_common.sh`; the defaults `intake_source="manual_ws31"` /
   `activation_source="legacy_manual"` mark them as the WS-3.1 manual bootstrap path, superseded by
   intake → decomposition in WS-3.2. The *service functions* `register_revision` and
   `register_approved_unit` remain load-bearing — reached constantly via
-  `services/package_intake.py` (POST `/package-intakes`) and `services/decomposition.py`
-  (decomposition approval). So production units must be born through intake → decomposition →
-  `/review` approval, and the two shipped CLI commands above cannot work against production at all.
-  Corollary: an intake needs a genuinely
+  `services/intake/package_intake.py` (POST `/package-intakes`) and
+  `services/intake/decomposition.py` (decomposition approval). So production units must be born
+  through intake → decomposition → `/review` approval, and the two shipped CLI commands above cannot
+  work against production at all. Corollary: an intake needs a genuinely
   approved intent package — `package.yaml` + `lineage.yaml`, `status == current_state == approved`,
   exactly one lineage approval whose hash equals `canonical_package_hash(package)`, plus a real git
   HEAD commit. It cannot be synthesized. The lighter `intake_purpose="protocol_fixture"` lane does
@@ -1255,18 +1256,18 @@ style of that module.
 
 - **`record_approval` enforces NO lifecycle state, for either subject type — an approval's reach is
   bounded by what CONSUMES it, not by what the service refuses.** Verified 2026-07-31 against
-  `services/packages.py`: its entire guard set is `_require_human`, `subject_type ∈ {authority,
-  action}`, unit exists, the `dependency_update_authority_violation` check (authority only),
-  idempotency replay, and `expected_version`. **A human can record either approval on a `cancelled`
-  or `completed` unit and a row is written.** Nothing about the unit's state stops it. What bounds
-  the approval is downstream: an `action` approval is fingerprinted to `unit.version` and satisfies
-  exactly one guard on exactly one edge (`AWAITING_APPROVAL → READY`), and an `authority` approval is
-  consumed only when a unit is admitted for work. So on a settled unit both are inert rather than
-  refused. **Reading the route alone gives you the opposite impression** — HQ asserted in a WS-P2.17
-  Inc 7 handoff that a cancelled unit's five action forms were "every one of which the service would
-  refuse", and that was false for two of them. The `/review` page hides those two anyway, which is
-  the one place it is deliberately narrower than the service; the justification is inertness, not
-  refusal, and it is the increment's single judgment call.
+  `services/intake/packages.py`: its entire guard set is `_require_human`, `subject_type ∈
+  {authority, action}`, unit exists, the `dependency_update_authority_violation` check (authority
+  only), idempotency replay, and `expected_version`. **A human can record either approval on a
+  `cancelled` or `completed` unit and a row is written.** Nothing about the unit's state stops it.
+  What bounds the approval is downstream: an `action` approval is fingerprinted to `unit.version`
+  and satisfies exactly one guard on exactly one edge (`AWAITING_APPROVAL → READY`), and an
+  `authority` approval is consumed only when a unit is admitted for work. So on a settled unit both
+  are inert rather than refused. **Reading the route alone gives you the opposite impression** — HQ
+  asserted in a WS-P2.17 Inc 7 handoff that a cancelled unit's five action forms were "every one of
+  which the service would refuse", and that was false for two of them. The `/review` page hides
+  those two anyway, which is the one place it is deliberately narrower than the service; the
+  justification is inertness, not refusal, and it is the increment's single judgment call.
 
 - **`code-standards sync` is SAFE in this repo as of 2026-08-01 (WS-P2.25) — the prohibition below
   is lifted, and what made it necessary is worth keeping.** Ownership is now block-level
@@ -1873,13 +1874,13 @@ style of that module.
   the authority fingerprint the human approves, and **has no enforcement reader**: the only
   `.budgets.` access in `services/budget.py` is `max_llm_calls`. What actually bounds attempts is
   the `work_units.max_attempts` column (`persistence/models.py:235`, defaulted from
-  `DEFAULT_MAX_ATTEMPTS` via `services/packages.py`), checked at `claims.py:79`, `:552` and `:590`,
-  and raised by `authorize_retry` with no reference to the envelope at all. Nothing ever compares
-  the two. **CORRECTS an earlier claim of HQ's** — a WS-P2.31 handoff asserted "`max_attempts` IS
-  enforced, so one of the two budget fields is decoration", offered as the contrast that made
-  `max_llm_calls` look like the outlier. Both halves were wrong: both envelope budget fields are
-  decoration, and this is the worse of the two because the name collision hides it. (Verified
-  2026-08-03.)
+  `DEFAULT_MAX_ATTEMPTS` via `services/intake/packages.py`), checked at `claims.py:79`, `:552` and
+  `:590`, and raised by `authorize_retry` with no reference to the envelope at all. Nothing ever
+  compares the two. **CORRECTS an earlier claim of HQ's** — a WS-P2.31 handoff asserted
+  "`max_attempts` IS enforced, so one of the two budget fields is decoration", offered as the
+  contrast that made `max_llm_calls` look like the outlier. Both halves were wrong: both envelope
+  budget fields are decoration, and this is the worse of the two because the name collision hides
+  it. (Verified 2026-08-03.)
 
 - **The conformance anti-tautology rule is PROSE, not code — and the branch it would guard has
   never been reached in production.** `services/execution/dispatch.py`'s conformance gate carries a

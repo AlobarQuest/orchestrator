@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event, WorkUnit
-from orchestrator.services.decomposition import (
+from orchestrator.services.intake.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
     ProposedDependency,
@@ -18,8 +18,8 @@ from orchestrator.services.decomposition import (
     approve_decomposition_proposal,
     submit_decomposition_proposal,
 )
-from orchestrator.services.package_intake import register_package_intake
-from orchestrator.services.packages import register_approved_unit, register_revision
+from orchestrator.services.intake.package_intake import register_package_intake
+from orchestrator.services.intake.packages import register_approved_unit, register_revision
 from tests._support.database import TEST_DATABASE_URL, alembic_config
 from tests.services.test_package_intake import acceptance_criterion, intake_command
 from tests.services.test_package_registration import AUTHORITY, NOW, register_test_revision

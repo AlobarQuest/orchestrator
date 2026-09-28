@@ -121,7 +121,6 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.change_record_work import work_for_change_record
 from orchestrator.services.claims import (
     authorize_retry,
     claim_unit,
@@ -132,17 +131,6 @@ from orchestrator.services.claims import (
 )
 from orchestrator.services.context import PreflightCommand, record_preflight
 from orchestrator.services.cost_actuals import record_cost_actuals
-from orchestrator.services.decomposition import (
-    AcMapping,
-    DecompositionProposalCommand,
-    ProposedDependency,
-    ProposedUnit,
-    RetainedAc,
-    approve_decomposition_proposal,
-    reject_decomposition_proposal,
-    require_decomposition_revision,
-    submit_decomposition_proposal,
-)
 from orchestrator.services.execution.dispatch import (
     DispatchCommand,
     DispatchSettings,
@@ -150,7 +138,6 @@ from orchestrator.services.execution.dispatch import (
     dispatch_work_unit,
 )
 from orchestrator.services.execution.factory_target import GitHubFactoryTargetSource
-from orchestrator.services.follow_ups import mint_due_follow_ups
 from orchestrator.services.github_app import (
     GitHubAppCredentials,
     github_app_credentials,
@@ -161,12 +148,40 @@ from orchestrator.services.infra_links import (
     list_infra_lane_links,
     record_infra_lane_link,
 )
-from orchestrator.services.intake_reads import (
+from orchestrator.services.intake.change_record_work import work_for_change_record
+from orchestrator.services.intake.decomposition import (
+    AcMapping,
+    DecompositionProposalCommand,
+    ProposedDependency,
+    ProposedUnit,
+    RetainedAc,
+    approve_decomposition_proposal,
+    reject_decomposition_proposal,
+    require_decomposition_revision,
+    submit_decomposition_proposal,
+)
+from orchestrator.services.intake.follow_ups import mint_due_follow_ups
+from orchestrator.services.intake.intake_reads import (
     acceptance_criteria_by_id,
     intake_authority,
     proposal_children,
     revision_acceptance_criteria,
 )
+from orchestrator.services.intake.package_intake import (
+    AcceptanceCriterionProjection,
+    PackageIntakeCommand,
+    register_package_intake,
+)
+from orchestrator.services.intake.packages import (
+    DependencySpec,
+    evaluate_readiness,
+    record_approval,
+    register_approved_unit,
+    register_dependency_command,
+    register_revision,
+    resolve_dependency_command,
+)
+from orchestrator.services.intake.runner_brief import runner_brief
 from orchestrator.services.landing.branch_update_serialization import (
     branch_update_sibling_outcome,
     estate_sibling_composer,
@@ -213,20 +228,6 @@ from orchestrator.services.lifecycle import (
     require_operator_actor,
     transition_unit,
     unit_history,
-)
-from orchestrator.services.package_intake import (
-    AcceptanceCriterionProjection,
-    PackageIntakeCommand,
-    register_package_intake,
-)
-from orchestrator.services.packages import (
-    DependencySpec,
-    evaluate_readiness,
-    record_approval,
-    register_approved_unit,
-    register_dependency_command,
-    register_revision,
-    resolve_dependency_command,
 )
 from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
 from orchestrator.services.reconciliation.consistency import check_consistency
@@ -297,7 +298,6 @@ from orchestrator.services.reporting.traceability import (
     TraceabilityResponse,
     traceability_response,
 )
-from orchestrator.services.runner_brief import runner_brief
 from orchestrator.services.verifier.evidence import (
     append_evidence,
     list_evidence,

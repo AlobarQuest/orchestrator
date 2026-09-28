@@ -38,12 +38,12 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.reach_vocabulary import LIVE_ESTATE
+from orchestrator.services.intake.packages import record_approval, register_approved_unit
 from orchestrator.services.landing.pr_merge_admission import (
     MERGE_CAPABILITY,
     admission_for,
     pr_merge_admission,
 )
-from orchestrator.services.packages import record_approval, register_approved_unit
 from orchestrator.services.pr_bindings import record_verification_read_head, upsert_pr_binding
 from tests.services.change_record_doubles import (
     RECORD_AMBIGUOUS,

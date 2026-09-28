@@ -19,14 +19,14 @@ from orchestrator.capability_vocabulary import ORCHESTRATOR_CAPABILITIES, RUNNER
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.states import ActorRole
-from orchestrator.services.decomposition import ProposedUnit, _validate_unit_constraints
+from orchestrator.services.intake.decomposition import ProposedUnit, _validate_unit_constraints
 from tests.services.test_package_registration import NOW, register_test_revision
 
 _BUDGETS = AuthorityBudgets(max_attempts=3, max_llm_calls=4)
 
 
 def _register_unit(session: Session, *, required_capability: str, capabilities: dict[str, str]):
-    from orchestrator.services.packages import register_approved_unit
+    from orchestrator.services.intake.packages import register_approved_unit
 
     revision = register_test_revision(session)
     return register_approved_unit(

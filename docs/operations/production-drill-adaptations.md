@@ -21,9 +21,9 @@ Each needs a substitute, and the substitutes are the same for all five drills.
 ### 1.1 Seeding — `seed_unit` is unreachable in production
 
 `seed_unit` registers a revision and a unit through `POST /api/v1/revisions` and
-`POST /api/v1/revisions/{id}/work-units`. Both call `_require_human` (`services/packages.py:184`,
-`:282`), and **neither has a forward-auth router**: the Traefik config gives dedicated
-human routers only to `/api/v1/package-intakes` (exact path, POST),
+`POST /api/v1/revisions/{id}/work-units`. Both call `_require_human`
+(`services/intake/packages.py:184`, `:282`), and **neither has a forward-auth router**: the Traefik
+config gives dedicated human routers only to `/api/v1/package-intakes` (exact path, POST),
 `^/api/v1/work-units/{uuid}/approvals$`, `^/api/v1/work-units/{uuid}/retry-authorization$`, the
 knowledge-promotion POSTs, and `/review`. Everything else under `/api` is the M2M-only
 `orchestrator-api` router, which strips `X-authentik-*`.

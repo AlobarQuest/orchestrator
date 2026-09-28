@@ -20,7 +20,7 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
     WorkUnit,
 )
-from orchestrator.services.decomposition import (
+from orchestrator.services.intake.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
     ProposedDependency,
@@ -31,10 +31,10 @@ from orchestrator.services.decomposition import (
     require_decomposition_revision,
     submit_decomposition_proposal,
 )
-from orchestrator.services.package_intake import (
+from orchestrator.services.intake.package_intake import (
     register_package_intake,
 )
-from orchestrator.services.packages import register_approved_unit
+from orchestrator.services.intake.packages import register_approved_unit
 from tests.services.test_package_intake import (
     AUTHORITY,
     NOW,

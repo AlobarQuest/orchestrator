@@ -49,7 +49,7 @@ POST_DEPLOY_AC_IDS = (
 )
 
 # The capability a generated follow-up review unit carries -- the same string
-# `services.follow_ups` mints units with and `is_generated_follow_up_unit` /
+# `services.intake.follow_ups` mints units with and `is_generated_follow_up_unit` /
 # `_is_generated_follow_up_subject` check alongside the derived unit id. Defined here rather than in
 # `follow_ups` (which is where it originally lived) because `follow_ups` already imports one-way
 # FROM this module (`ActorContext`); putting the constant in the module the others already depend
@@ -92,7 +92,7 @@ FOLLOW_UP_EVIDENCE_TYPE = "observation"
 
 
 def follow_up_unit_id(revision_id: uuid.UUID) -> uuid.UUID:
-    """The id under which `services.follow_ups` mints a revision's follow-up review unit.
+    """The id under which `services.intake.follow_ups` mints a revision's follow-up review unit.
 
     Content-addressed, so a second minting pass cannot create a second row. This is the structural
     half of the idempotency story; the already-minted skip is the reporting half, and the unique

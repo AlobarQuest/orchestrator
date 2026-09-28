@@ -22,7 +22,7 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
     WorkPackageRevision,
 )
-from orchestrator.services.packages import (
+from orchestrator.services.intake.packages import (
     record_approval,
     register_approved_unit,
     register_revision,

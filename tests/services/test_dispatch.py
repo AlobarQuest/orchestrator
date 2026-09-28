@@ -21,7 +21,6 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.authority_gate import human_authority_gate
 from orchestrator.services.execution.dispatch import (
     DispatchCommand,
     DispatchSettings,
@@ -34,12 +33,13 @@ from orchestrator.services.execution.dispatch import (
 )
 from orchestrator.services.execution.factory_target import GitHubFactoryTargetSource
 from orchestrator.services.github_app import GitHubAppTokenError
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
-from orchestrator.services.packages import (
+from orchestrator.services.intake.authority_gate import human_authority_gate
+from orchestrator.services.intake.packages import (
     record_approval,
     register_approved_unit,
     register_revision,
 )
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import (
     declared_source,

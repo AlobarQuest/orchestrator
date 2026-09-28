@@ -6,7 +6,7 @@ from typing import cast
 
 from fastapi.testclient import TestClient
 
-import orchestrator.services.runner_brief as runner_brief_service
+import orchestrator.services.intake.runner_brief as runner_brief_service
 from tests.api.test_decomposition_api import (
     HUMAN as DECOMPOSITION_HUMAN,
 )

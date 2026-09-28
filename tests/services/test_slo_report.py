@@ -8,7 +8,7 @@ from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Adjudication, Claim, Event, Evidence, WorkUnit
 from orchestrator.services.budget import BREACH_ACTION
-from orchestrator.services.packages import register_approved_unit, register_revision
+from orchestrator.services.intake.packages import register_approved_unit, register_revision
 from orchestrator.services.reporting.slo_report import (
     STATUS_COMPUTED,
     STATUS_NO_DATA,

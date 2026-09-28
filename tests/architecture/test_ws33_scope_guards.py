@@ -18,7 +18,7 @@ from orchestrator.package_sources import (
     load_protocol_fixture_intake_payload,
 )
 from orchestrator.persistence.models import INTAKE_SOURCES
-from orchestrator.services import package_intake
+from orchestrator.services.intake import package_intake
 
 RUNTIME_ROOT = Path("src/orchestrator")
 WORKFLOW_ROOT = Path(".github/workflows")
