@@ -20,13 +20,12 @@ from orchestrator.errors import DomainError
 from orchestrator.factory_policy import OUTSIDE_CHANGE_WINDOW
 from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.runner_authority import runner_authority_violation
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
 from orchestrator.services.authority_gate import AuthorityGate, human_authority_gate
 from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.factory_target import FactoryTargetSource
 from orchestrator.services.github_app import GitHubAppTokenError
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.reach_admission import (
     change_window_refusal,
     estate_refusal,

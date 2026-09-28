@@ -6,10 +6,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Event
 from orchestrator.services.claims import LeaseGrant, claim_unit
-from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 
 
 def command_for(unit, *, idempotency_key: str = "claim-1") -> TransitionCommand:

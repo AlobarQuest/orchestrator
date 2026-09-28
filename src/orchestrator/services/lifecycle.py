@@ -14,7 +14,7 @@ from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.context import context_fingerprint
 from orchestrator.kernel.evidence_types import OBSERVED_EVIDENCE_TYPES
 from orchestrator.kernel.leases import hash_lease_token
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import (
     DESIGNED_HUMAN_GATES,
     TransitionGuards,
@@ -104,12 +104,6 @@ def follow_up_unit_id(revision_id: uuid.UUID) -> uuid.UUID:
     definition to share without a cycle.
     """
     return uuid.uuid5(uuid.NAMESPACE_URL, f"sds:follow-up:{revision_id}")
-
-
-@dataclass(frozen=True)
-class ActorContext:
-    actor_id: str
-    role: ActorRole
 
 
 @dataclass(frozen=True)

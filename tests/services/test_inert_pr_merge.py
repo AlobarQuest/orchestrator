@@ -15,7 +15,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
 from orchestrator.services.estate_landing import EstateAnswer
 from orchestrator.services.estate_landing_admission import EstateGatewayError
@@ -29,7 +29,6 @@ from orchestrator.services.inert_pr_merge import (
     InertMergeCommand,
     land_inert_pull_request,
 )
-from orchestrator.services.lifecycle import ActorContext
 from tests.services.estate_doubles import LANDING_REDEPLOYS, FakeEstateLandingSource
 from tests.services.estate_landing_doubles import HEAD, pull_request
 from tests.services.inert_landing_doubles import (

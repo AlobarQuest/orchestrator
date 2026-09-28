@@ -15,11 +15,10 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event, WorkUnit
 from orchestrator.services.budget import BREACH_ACTION, cumulative_llm_calls, declared_ceiling
 from orchestrator.services.claims import validate_active_claim
-from orchestrator.services.lifecycle import ActorContext
 
 ACTION = "attempt.cost_recorded"
 

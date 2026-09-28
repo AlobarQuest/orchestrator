@@ -12,9 +12,9 @@ from typing import Any, cast
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.services.claims import claim_unit
-from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.packages import record_approval
 from orchestrator.services.runner_brief import runner_brief
 from tests.services.test_dispatch import ready_unit

@@ -37,7 +37,7 @@ from orchestrator.kernel.runner_authority import (
     RUNNER_ENVELOPE_FIELDS,
     runner_command_authority_violation,
 )
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.services.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
@@ -52,7 +52,7 @@ from orchestrator.services.dispatch import (
     DispatchSettings,
     dispatch_work_unit,
 )
-from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import record_approval
 from orchestrator.services.runner_brief import runner_brief

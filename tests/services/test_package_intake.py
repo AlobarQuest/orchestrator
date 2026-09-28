@@ -10,9 +10,8 @@ from sqlalchemy.orm import Session
 import orchestrator.services.package_intake as package_intake
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event, PackageAcceptanceCriterion, WorkPackageRevision
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.package_intake import (
     AcceptanceCriterionProjection,
     PackageIntakeCommand,

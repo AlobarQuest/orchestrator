@@ -23,7 +23,7 @@ from orchestrator.api.schemas import PackageIntakeRegistration
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.runner_authority import runner_authority_violation
-from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorRole, WorkUnitState
+from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorContext, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
     DecompositionProposal,
@@ -53,11 +53,7 @@ from orchestrator.services.evidence import (
 )
 from orchestrator.services.evidence_pack import evidence_pack_projection
 from orchestrator.services.graduation_ledger import graduation_ledger
-from orchestrator.services.lifecycle import (
-    ActorContext,
-    TransitionCommand,
-    transition_unit,
-)
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import record_approval
 from orchestrator.services.pending_decisions import (

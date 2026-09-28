@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, InfraLaneLink
 from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.infra_links import (
@@ -13,7 +13,7 @@ from orchestrator.services.infra_links import (
     list_infra_lane_links,
     record_infra_lane_link,
 )
-from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 
 
 def worker() -> ActorContext:

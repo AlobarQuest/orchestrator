@@ -21,14 +21,10 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
 from orchestrator.reach_vocabulary import reach_from_snapshot
-from orchestrator.services.lifecycle import (
-    FOLLOW_UP_CAPABILITY,
-    ActorContext,
-    follow_up_unit_id,
-)
+from orchestrator.services.lifecycle import FOLLOW_UP_CAPABILITY, follow_up_unit_id
 
 # The intent-packages `follow_up` block, mirrored field for field. Every key is mandatory-present;
 # `revisit_when` and `owner` may be null. Registered in the cross-boundary vocabulary registry.

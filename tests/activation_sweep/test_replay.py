@@ -17,9 +17,8 @@ from sqlalchemy.orm import Session
 from activation_sweep.checkout import read_checkout
 from activation_sweep.record import activation_observation
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Observation
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.observations import ObservationCommand, record_observation
 from tests.activation_sweep.conftest import Estate
 

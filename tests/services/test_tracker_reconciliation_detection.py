@@ -6,9 +6,8 @@ correlation is skipped and counted, never raised.
 
 from sqlalchemy.orm import Session
 
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import WorkUnit
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.reconciliation import open_conditions
 from orchestrator.services.reconciliation_detection import (
     ObservedTrackerItem,

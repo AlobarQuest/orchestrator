@@ -61,7 +61,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
 from orchestrator.services.change_record import ChangeRecordSource
 from orchestrator.services.estate_landing import EstateLandingSource
@@ -77,7 +77,6 @@ from orchestrator.services.estate_landing_admission import (
     gateway_failure_detail,
 )
 from orchestrator.services.github_app import GitHubAppTokenError
-from orchestrator.services.lifecycle import ActorContext
 
 GITHUB_API_URL: Final = "https://api.github.com"
 

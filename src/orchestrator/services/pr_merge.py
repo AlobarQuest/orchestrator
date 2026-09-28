@@ -69,12 +69,11 @@ from sqlalchemy.orm import Session
 from orchestrator.change_window_override import ChangeWindowOverride, override_record
 from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event, UnitPrMerge, WorkPackageRevision, WorkUnit
 from orchestrator.services.change_record import ChangeRecordSource
 from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.github_app import GitHubAppTokenError
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.pr_merge_admission import MergeAdmission, admission_for
 
 GITHUB_API_URL: Final = "https://api.github.com"

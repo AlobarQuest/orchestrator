@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event
 from orchestrator.services import estate_landing_admission, inert_landing_admission
 from orchestrator.services.branch_update_serialization import (
@@ -54,7 +54,6 @@ from orchestrator.services.estate_pr_branch_update import (
     EstateBranchUpdateCommand,
     update_estate_pull_request_branch,
 )
-from orchestrator.services.lifecycle import ActorContext
 from tests.services.change_record_doubles import FakeChangeRecordSource
 from tests.services.estate_doubles import redeploying_source
 from tests.services.estate_landing_doubles import (

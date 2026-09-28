@@ -30,11 +30,11 @@ from orchestrator.factory_policy import (
     FactoryPolicy,
     load_factory_policy,
 )
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import WorkPackageRevision
 from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.dispatch import dispatch_work_unit
-from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.reach_admission import REACH_POLICY_UNREADABLE, change_window_refusal
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import declared_source

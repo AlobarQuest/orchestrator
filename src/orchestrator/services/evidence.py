@@ -11,7 +11,14 @@ from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.evidence_types import VERIFIER_EVIDENCE_PREFIX
 from orchestrator.kernel.leases import hash_lease_token
-from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorRole, WorkUnitState
+
+# POST_DEPLOY_AC_IDS is the SINGLE source of truth in `lifecycle` (the producer that generates
+# these ACs). This module is the consumer that gates public adjudication against them, so it
+# imports rather than keeping a second copy -- a divergence between generator and gate would let a
+# newly-generated post-deploy AC be publicly adjudicated (the invariant this guards).
+# FOLLOW_UP_AC_ID is the same producer/consumer split, pointing the opposite way: it must be
+# ACCEPTED, not refused.
+from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorContext, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
     Adjudication,
@@ -26,18 +33,10 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.claim_release import release_claim
 from orchestrator.services.claims import validate_active_claim
-
-# POST_DEPLOY_AC_IDS is the SINGLE source of truth in `lifecycle` (the producer that generates
-# these ACs). This module is the consumer that gates public adjudication against them, so it
-# imports rather than keeping a second copy -- a divergence between generator and gate would let a
-# newly-generated post-deploy AC be publicly adjudicated (the invariant this guards).
-# FOLLOW_UP_AC_ID is the same producer/consumer split, pointing the opposite way: it must be
-# ACCEPTED, not refused.
 from orchestrator.services.lifecycle import (
     FOLLOW_UP_AC_ID,
     FOLLOW_UP_EVIDENCE_TYPE,
     POST_DEPLOY_AC_IDS,
-    ActorContext,
     is_generated_follow_up_unit,
 )
 from orchestrator.services.verifier_evaluators import human_may_adjudicate

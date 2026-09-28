@@ -4,7 +4,7 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
     Approval,
@@ -17,7 +17,6 @@ from orchestrator.services.decomposition import (
     reject_decomposition_proposal,
     submit_decomposition_proposal,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.pending_decisions import pending_decisions
 from orchestrator.services.reconciliation import (

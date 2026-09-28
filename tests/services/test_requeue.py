@@ -10,11 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkUnit
 from orchestrator.services.claims import claim_unit, requeue_unit
 from orchestrator.services.dead_letter import dead_letter
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import DependencySpec
 from tests.services.test_claims import worker
 from tests.services.test_dependencies import register_unit

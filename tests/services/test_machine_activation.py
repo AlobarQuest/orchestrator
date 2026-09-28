@@ -15,13 +15,12 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     ReleaseArtifactBinding,
     UnitPrBinding,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.machine_activation import machine_activation_candidates
 from orchestrator.services.observations import ObservationCommand, record_observation
 from orchestrator.services.packages import register_approved_unit, register_revision

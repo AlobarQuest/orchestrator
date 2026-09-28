@@ -78,7 +78,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
 from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.estate_landing_admission import (
@@ -96,7 +96,6 @@ from orchestrator.services.inert_landing_admission import (
     inert_landing_admission,
 )
 from orchestrator.services.inert_landing_policy import InertLandingPolicySource
-from orchestrator.services.lifecycle import ActorContext
 
 # The trailer the landing writes into the landing commit's body, and the estate's ledger reads back
 # out of it. It reaches the artifact under either landing method, measured rather than assumed --

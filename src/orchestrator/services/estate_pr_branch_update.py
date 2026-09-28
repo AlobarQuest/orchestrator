@@ -84,7 +84,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event
 from orchestrator.services.branch_update_serialization import (
     BRANCH_UPDATE_ACTION,
@@ -100,7 +100,6 @@ from orchestrator.services.estate_landing_admission import (
     estate_landing_admission,
     gateway_failure_detail,
 )
-from orchestrator.services.lifecycle import ActorContext
 
 BRANCH_UPDATE_SUBJECT: Final = "estate_pull_request"
 

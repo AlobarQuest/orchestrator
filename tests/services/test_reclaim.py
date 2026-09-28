@@ -4,7 +4,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Approval, Claim, Event, WorkUnit
 from orchestrator.services.claims import (
     LeaseGrant,
@@ -13,7 +13,6 @@ from orchestrator.services.claims import (
     reclaim_expired_claim,
     renew_claim,
 )
-from orchestrator.services.lifecycle import ActorContext
 from tests.services.test_budget import READY_UNIT_MAX_LLM_CALLS, _cost_event
 from tests.services.test_claims import worker
 from tests.services.test_context_preflight import register_context_unit, valid_context

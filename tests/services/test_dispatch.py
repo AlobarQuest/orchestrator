@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 import orchestrator.services.dispatch as dispatch_module
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope, normalize_authority
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
     DispatchRecord,
@@ -34,7 +34,7 @@ from orchestrator.services.dispatch import (
 )
 from orchestrator.services.factory_target import GitHubFactoryTargetSource
 from orchestrator.services.github_app import GitHubAppTokenError
-from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.packages import (
     record_approval,
     register_approved_unit,

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.evidence_types import VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
     Evidence,
@@ -30,7 +30,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.evidence import record_adjudication
-from orchestrator.services.lifecycle import ActorContext, verifier_decided_completion
+from orchestrator.services.lifecycle import verifier_decided_completion
 from tests.services.test_adjudications import FROM_EVALUATION, add_criterion, add_evidence
 from tests.services.test_dependencies import register_unit
 

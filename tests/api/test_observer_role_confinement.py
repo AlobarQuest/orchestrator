@@ -32,10 +32,9 @@ from fastapi.testclient import TestClient
 from orchestrator.api.dependencies import OBSERVER_WRITE_ROUTES, _confine_observer
 from orchestrator.api.routes import router as api_router
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.kernel.transitions import EDGE_ROLES, TransitionGuards, authorize_transition
 from orchestrator.services.decomposition import _require_submission_actor
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.observations import _authorize_actor
 from orchestrator.web import _human
 from orchestrator.web import router as web_router

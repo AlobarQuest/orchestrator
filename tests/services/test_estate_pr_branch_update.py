@@ -30,7 +30,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event
 from orchestrator.services import estate_pr_merge
 from orchestrator.services.estate_landing_admission import (
@@ -63,7 +63,6 @@ from orchestrator.services.estate_pr_branch_update import (
     update_estate_pull_request_branch,
 )
 from orchestrator.services.estate_pr_merge import GitHubEstatePullRequests
-from orchestrator.services.lifecycle import ActorContext
 from tests.services.change_record_doubles import FakeChangeRecordSource
 from tests.services.estate_doubles import inert_source, redeploying_source
 from tests.services.estate_landing_doubles import (

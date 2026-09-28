@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import (
     RECONCILIATION_CONDITION_TYPES,
     RECONCILIATION_DECISIONS,
@@ -40,7 +40,6 @@ from orchestrator.persistence.models import (
     ReconciliationResolution,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import ActorContext
 
 # Distinct from evidence (0x57503338), observations (0x57533631) and the evidence-head recovery
 # lock (0x57503232), so a lock taken here can never serialize against an unrelated ingress.

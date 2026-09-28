@@ -8,9 +8,8 @@ suppressed_duplicates count, never a second row.
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import ReconciliationCondition
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.reconciliation_detection import (
     DetectionCounters,
     ObservedTrackerItem,

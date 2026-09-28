@@ -8,9 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, Evidence, ReleaseArtifactBinding, WorkUnit
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import register_approved_unit, register_revision
 from orchestrator.services.release_artifacts import (
     ReleaseArtifactCommand,

@@ -14,10 +14,9 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import WorkPackageRevision
 from orchestrator.services.decomposition import approve_decomposition_proposal
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import record_approval, register_revision
 from tests.services.test_package_intake import human_actor, intake_command

@@ -10,9 +10,8 @@ from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.leases import hash_lease_token
 from orchestrator.kernel.secret_metadata import secret_metadata_path
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Event, InfraLaneLink, WorkUnit
-from orchestrator.services.lifecycle import ActorContext
 
 
 @dataclass(frozen=True)

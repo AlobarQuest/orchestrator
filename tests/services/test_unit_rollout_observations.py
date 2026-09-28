@@ -22,9 +22,8 @@ from sqlalchemy.orm import Session
 from deploy_watcher.model import Merge, Rollout, Run
 from deploy_watcher.units import UnitLanding, unit_observation
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Observation
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.observations import ObservationCommand, record_observation
 
 OBSERVER = ActorContext("orchestrator-observer", ActorRole.OBSERVER)

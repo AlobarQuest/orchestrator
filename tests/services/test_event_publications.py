@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import (
     Adjudication,
     ContextSnapshot,
@@ -29,7 +29,6 @@ from orchestrator.services.event_publications import (
     retry_event_publication,
 )
 from orchestrator.services.evidence import append_evidence
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.observations import record_observation
 from orchestrator.services.release_artifacts import record_release_artifact
 from tests.services.test_deployment_observations import observation_command

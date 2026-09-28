@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import (
     KNOWLEDGE_PROMOTION_AUTHORITIES,
     KNOWLEDGE_PROMOTION_TARGET_BRAINS,
@@ -23,7 +23,6 @@ from orchestrator.persistence.models import (
     KnowledgePromotionProposalAction,
     Observation,
 )
-from orchestrator.services.lifecycle import ActorContext
 
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533632
 MAX_TEXT = 4000

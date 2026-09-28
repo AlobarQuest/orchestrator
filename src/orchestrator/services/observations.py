@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.secret_metadata import secret_metadata_path
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import (
     OBSERVATION_SEVERITIES,
     OBSERVATION_SOURCE_SYSTEMS,
@@ -25,7 +25,6 @@ from orchestrator.persistence.models import (
     Event,
     Observation,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.release_artifacts import SHA256_DIGEST
 
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533631

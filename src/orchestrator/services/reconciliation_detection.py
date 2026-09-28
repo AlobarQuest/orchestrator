@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import WorkUnitState
+from orchestrator.kernel.states import ActorContext, WorkUnitState
 from orchestrator.persistence.models import (
     DeploymentObservation,
     Observation,
@@ -28,7 +28,6 @@ from orchestrator.persistence.models import (
     UnitTrackerBinding,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.pr_bindings import get_pr_binding
 from orchestrator.services.reconciliation import (
     ConditionCommand,

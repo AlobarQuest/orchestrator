@@ -13,8 +13,7 @@ from orchestrator.identity.auth import (
     authenticate_m2m,
 )
 from orchestrator.identity.registry import RegistryAdapter
-from orchestrator.kernel.states import ActorRole
-from orchestrator.services.lifecycle import ActorContext
+from orchestrator.kernel.states import ActorContext, ActorRole
 
 # WS-P3.6 / ADR-0017: OBSERVER's entire write surface, stated ONCE and POSITIVELY.
 #

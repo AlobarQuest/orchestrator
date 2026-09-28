@@ -10,9 +10,8 @@ from typer.testing import CliRunner
 from orchestrator.api.dependencies import get_actor, get_session
 from orchestrator.cli import CliError, app, request
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.main import create_app
-from orchestrator.services.lifecycle import ActorContext
 
 LIFECYCLE_COMMANDS = (
     "ready",

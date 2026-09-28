@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.evidence_types import VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import (
     DispatchRecord,
     Evidence,
@@ -20,7 +20,6 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.evidence import append_evidence, append_verifier_evidence
 from orchestrator.services.github_checks import CheckObservationError
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from orchestrator.services.verifier_evaluators import evaluate_criterion
 from orchestrator.services.verifier_evidence import NamedCheckEvidenceCommand

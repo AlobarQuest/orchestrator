@@ -14,8 +14,7 @@ from orchestrator.api.schemas import (
     TraceabilityUnitHop,
 )
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
-from orchestrator.services.lifecycle import ActorContext
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.services.observations import ObservationCommand, record_observation
 from tests.api.test_lifecycle_api import SYSTEM, WORKER
 from tests.api.test_release_artifacts_api import DIGEST, completed_unit, release_body

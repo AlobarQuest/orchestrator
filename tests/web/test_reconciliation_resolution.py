@@ -16,9 +16,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import ReconciliationCondition, WorkUnit
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.reconciliation import (
     ConditionCommand,
     ConditionOutcome,

@@ -37,7 +37,7 @@ AUTH_VARIABLES = (
     "ORCHESTRATOR_CSRF_SECRET",
 )
 
-VALID: dict[str, str] = {
+VALID: dict[str, str | None] = {
     "ORCHESTRATOR_REGISTRY_BUNDLE": BUNDLE,
     "ORCHESTRATOR_M2M_CREDENTIALS": json.dumps(
         {"worker-key": {"agent_id": "worker", "token_hash": "a" * 64}}

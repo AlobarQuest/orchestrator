@@ -16,7 +16,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event
 from orchestrator.services.estate_landing import EstateAnswer
 from orchestrator.services.estate_landing_admission import EstateGatewayError
@@ -31,7 +31,6 @@ from orchestrator.services.inert_pr_branch_update import (
     InertBranchUpdateCommand,
     update_inert_pull_request_branch,
 )
-from orchestrator.services.lifecycle import ActorContext
 from tests.services.estate_doubles import LANDING_REDEPLOYS, FakeEstateLandingSource
 from tests.services.estate_landing_doubles import (
     HEAD,

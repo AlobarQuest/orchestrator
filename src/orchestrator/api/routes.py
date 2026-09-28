@@ -118,7 +118,7 @@ from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import normalize_authority
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     ContextSnapshot,
     DecompositionProposal,
@@ -240,7 +240,6 @@ from orchestrator.services.knowledge_promotions import (
     submit_knowledge_promotion_to_brain,
 )
 from orchestrator.services.lifecycle import (
-    ActorContext,
     TransitionCommand,
     require_operator_actor,
     transition_unit,
