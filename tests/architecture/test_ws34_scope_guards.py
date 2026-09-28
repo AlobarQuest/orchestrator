@@ -52,7 +52,7 @@ def test_ws34_dispatch_exemptions_name_only_files_that_exist_and_still_need_them
         for path in DISPATCH_EXEMPT_PATHS
         if not path.is_file() or not path.is_relative_to(SOURCE_ROOT)
     )
-    assert not missing, f"the dispatch exemptions name files that no longer exist: {missing}"
+    assert not missing, f"the dispatch exemptions name no file inside the tree they scan: {missing}"
 
     unused = sorted(
         str(path)
