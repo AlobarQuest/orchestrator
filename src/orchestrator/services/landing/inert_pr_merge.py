@@ -7,8 +7,8 @@ on a default branch until something separately acts on it, which for these six r
 nothing. What it costs is not a running service; it is that `main` is what every build session
 branches from and what default-branch CI now runs on.
 
-The shape is copied from the sibling that lands where landing DOES change something already
-serving, deliberately and almost exactly: a cascade of named refusals re-evaluated here, a row
+The shape is shared with the sibling that lands where landing DOES change something already
+serving, and its steps live once in `lane_act`: a cascade of named refusals re-evaluated here, a row
 with a unique constraint so a repeat is detectable, an injected gateway so the whole path runs
 with no network, and credentials resolved once so the gate can never attest to credentials the
 actor does not use.
