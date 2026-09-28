@@ -81,21 +81,22 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
 from orchestrator.services.landing.estate_landing import EstateLandingSource
-from orchestrator.services.landing.estate_landing_admission import (
-    EstateGatewayError,
-    EstateReadGateway,
-    gateway_failure_detail,
-)
 from orchestrator.services.landing.estate_pr_merge import (
-    NEVER_SENT,
     GitHubEstatePullRequests,
-    MergeOutcome,
 )
 from orchestrator.services.landing.inert_landing_admission import (
     InertLandingAdmission,
     inert_landing_admission,
 )
 from orchestrator.services.landing.inert_landing_policy import InertLandingPolicySource
+from orchestrator.services.landing.interfaces import (
+    MERGE_REFUSED_BY_REMOTE,
+    NEVER_SENT,
+    EstateGatewayError,
+    EstateReadGateway,
+    MergeOutcome,
+    gateway_failure_detail,
+)
 
 # The trailer the landing writes into the landing commit's body, and the estate's ledger reads back
 # out of it. It reaches the artifact under either landing method, measured rather than assumed --
@@ -115,11 +116,6 @@ INERT_LANDING_POLICY_TRAILER: Final = "SDS-Inert-Landing-Policy"
 INERT_MERGE_NOT_ADMISSIBLE: Final = "inert_merge_not_admissible"
 INERT_MERGE_REFUSED_BY_REMOTE: Final = "inert_merge_refused_by_remote"
 INERT_MERGE_HEAD_MOVED: Final = "inert_merge_head_moved"
-
-# Recorded on the one ambiguous outcome: the remote refused and the confirming read also failed,
-# so a landing cannot be ruled out. The same reason code the sibling writes, because the row it
-# is written into is the same row and one column may not carry two vocabularies.
-MERGE_REFUSED_BY_REMOTE: Final = "merge_refused_by_remote"
 
 
 class InertPullRequestGateway(EstateReadGateway, Protocol):

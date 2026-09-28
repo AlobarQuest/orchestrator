@@ -18,8 +18,11 @@ from typing import Any
 import httpx
 import pytest
 
-from orchestrator.services.landing.estate_landing_admission import EstateGatewayError, HeadCheckRun
 from orchestrator.services.landing.estate_pr_merge import GitHubEstatePullRequests
+from orchestrator.services.landing.interfaces import (
+    EstateGatewayError,
+    HeadCheckRun,
+)
 
 REPOSITORY = "alobarquest/change-manager"
 HEAD = "e7e984b24978d0d41b40d4c400fc194da4b99a2b"

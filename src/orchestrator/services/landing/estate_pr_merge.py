@@ -67,14 +67,20 @@ from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.landing.change_record import ChangeRecordSource
 from orchestrator.services.landing.estate_landing import EstateLandingSource
 from orchestrator.services.landing.estate_landing_admission import (
-    EstateGatewayError,
     EstateLandingAdmission,
+    estate_landing_admission,
+)
+from orchestrator.services.landing.interfaces import (
+    MERGE_REFUSED_BY_REMOTE,
+    NEVER_SENT,
+    SQUASH,
+    EstateGatewayError,
     EstatePullRequest,
     EstateReadGateway,
     HeadCheckRun,
+    MergeOutcome,
     OpenPullRequest,
     PullRequestCommit,
-    estate_landing_admission,
     gateway_failure_detail,
 )
 
@@ -98,44 +104,6 @@ POLICY_VERSION_TRAILER: Final = "SDS-Policy-Version"
 ESTATE_MERGE_NOT_ADMISSIBLE: Final = "estate_merge_not_admissible"
 ESTATE_MERGE_REFUSED_BY_REMOTE: Final = "estate_merge_refused_by_remote"
 ESTATE_MERGE_HEAD_MOVED: Final = "estate_merge_head_moved"
-
-# Recorded on the one ambiguous outcome: the remote refused and the confirming read also failed,
-# so a landing cannot be ruled out.
-MERGE_REFUSED_BY_REMOTE: Final = "merge_refused_by_remote"
-
-# The prefix of every gateway code raised BEFORE anything is sent. `_headers()` mints the App
-# token first, so a mint failure means the request provably did not leave this process -- and a
-# landing that cannot have happened must never be recorded, because the row is permanent and
-# would bar the pull request forever on one transient outage. Everything else in `submit_merge`
-# happens at or after the send, where a lost response and a refusal are indistinguishable and the
-# conservative record is the right answer.
-NEVER_SENT: Final = "app_token_mint:"
-
-# How the remote is asked to bring a branch onto the default branch. GitHub's vocabulary, spelled
-# here because this is the one place either value crosses to it, and named rather than written
-# inline so a caller states which it means instead of repeating a literal.
-#
-# SQUASH discards the branch's own commits and lands one new commit for its content. That is right
-# for a branch whose commits nobody will merge from again, which is every subject either lane has
-# had until now.
-#
-# MERGE_COMMIT keeps them, and is right for exactly one thing: a branch replaying commits from a
-# source this estate does not own and WILL merge from again. Git resolves a later merge against the
-# most recent commit both sides share, so a squash leaves that shared point where it was -- the
-# content arrives without the commits carrying it, and the next sync compares against the stale
-# point and finds both sides having rewritten the same lines. It cannot tell the two rewrites are
-# one edit, so it conflicts, on files nobody here ever touched. Measured 2026-09-13 on
-# `claude-octopus#14`: 18 conflicting paths, and all 17 content files' fork blobs byte-identical to
-# some upstream commit's blob.
-MERGE_COMMIT: Final = "merge"
-SQUASH: Final = "squash"
-
-
-@dataclass(frozen=True)
-class MergeOutcome:
-    landed: bool
-    commit_sha: str | None
-    status_code: int | None
 
 
 class EstatePullRequestGateway(EstateReadGateway, Protocol):

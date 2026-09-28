@@ -18,11 +18,10 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event
+from orchestrator.services.landing.branch_update_serialization import INERT_BRANCH_UPDATE_ACTION
 from orchestrator.services.landing.estate_landing import EstateAnswer
-from orchestrator.services.landing.estate_landing_admission import EstateGatewayError
 from orchestrator.services.landing.inert_landing_policy import InertLandingAnswer
 from orchestrator.services.landing.inert_pr_branch_update import (
-    INERT_BRANCH_UPDATE_ACTION,
     INERT_BRANCH_UPDATE_HEAD_MOVED,
     INERT_BRANCH_UPDATE_NOT_QUALIFIED,
     INERT_BRANCH_UPDATE_REFUSED_BY_REMOTE,
@@ -30,6 +29,9 @@ from orchestrator.services.landing.inert_pr_branch_update import (
     INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE,
     InertBranchUpdateCommand,
     update_inert_pull_request_branch,
+)
+from orchestrator.services.landing.interfaces import (
+    EstateGatewayError,
 )
 from tests.services.estate_doubles import LANDING_REDEPLOYS, FakeEstateLandingSource
 from tests.services.estate_landing_doubles import (
@@ -418,7 +420,7 @@ def test_the_callers_SETTLED_set_is_exactly_the_refusals_that_mean_there_is_noth
     module that raises them, so a rename there reddens this rather than making one landing a
     nightly page forever."""
     from inert_lander.cli import _SETTLED
-    from orchestrator.services.landing.estate_landing_admission import (
+    from orchestrator.services.landing.interfaces import (
         LANDING_ALREADY_RECORDED,
         LANDING_PULL_REQUEST_NOT_OPEN,
     )

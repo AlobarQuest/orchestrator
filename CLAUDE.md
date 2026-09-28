@@ -3173,8 +3173,8 @@ style of that module.
   records at all. Plan: `~/docs/software-delivery-system/2026-08-13-toil-surface-onboarding-plan.md`.
 
 - **A landing stales every sibling pull request, and `update-branch` clears it synchronously where
-  `@dependabot rebase` takes ~14 hours.** `_freshness_term`
-  (`services/landing/estate_landing_admission.py`) calls `commits_behind_base` and refuses on `behind > 0`
+  `@dependabot rebase` takes ~14 hours.** `freshness_term`
+  (`services/landing/terms.py`) calls `commits_behind_base` and refuses on `behind > 0`
   — correct, because checks are deliberately not up-to-date-gated estate-wide, so a squash of a
   behind head produces a tree nothing executed, and on a deploying repository that tree is what
   starts serving. But the lane therefore CREATES the condition it refuses on: `change-manager#51`
@@ -4809,7 +4809,7 @@ style of that module.
 
 - **A NARROWING THAT SEPARATES ONE VALUE'S CAUSES LEAVES EVERY OTHER VALUE COLLAPSED, AND A TEST
   CAN PIN THAT RESIDUAL AS THOUGH IT WERE THE DESIGN.** `checks_term`
-  (`services/landing/estate_landing_admission.py`) took `mergeable_state: blocked` apart into a failing
+  (`services/landing/terms.py`) took `mergeable_state: blocked` apart into a failing
   check, an abandoned one and one still running — the module's own comment records that it "used to
   be raised for every `mergeable_state` that was not `clean`, which collapsed 'a check said no' into
   'a check said nothing yet'". **The fix stopped there**: every OTHER unpermitted value — `dirty`,

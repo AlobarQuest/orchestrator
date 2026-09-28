@@ -1278,7 +1278,7 @@ def test_the_no_verdict_vocabulary_matches_the_lane_that_owns_it() -> None:
     about the same word, which this estate has now found four times.
     """
     from landing_ledger.audit import NO_VERDICT_CONCLUSIONS as MIRROR
-    from orchestrator.services.landing.estate_landing_admission import (
+    from orchestrator.services.landing.interfaces import (
         NO_VERDICT_CONCLUSIONS as OWNED,
     )
 

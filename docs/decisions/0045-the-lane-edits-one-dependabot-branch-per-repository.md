@@ -252,6 +252,9 @@ The code wins in each case.
    It and the two read shapes (`OpenPullRequest`, `PullRequestCommit`) live in
    `estate_landing_admission.py`, **not** the new module, because putting them there is an import
    cycle (`estate_pr_merge` → new module → `inert_landing_admission` → `estate_pr_merge`).
+   **Superseded 2026-09-28 (Tier 2 wave 2, PR 3):** all three now live in
+   `services/landing/interfaces.py`, which imports nothing from either lane, so the cycle cannot
+   form; `inert_landing_admission` no longer imports `estate_pr_merge` at all.
 3. **The served field cannot be computed where `rollout_base_matches_pin` is** — inside the
    admission module, which the rule may not live in. It is a dataclass field with no default, set
    `False` at each admission function's single constructor and filled by the route with

@@ -77,7 +77,15 @@ from orchestrator.services.landing.estate_landing import (
 from orchestrator.services.landing.estate_landing import (
     SOURCE_UNCONFIGURED as ESTATE_SOURCE_UNCONFIGURED,
 )
-from orchestrator.services.landing.estate_landing_admission import (
+from orchestrator.services.landing.inert_landing_policy import (
+    RULES_UNDECLARED,
+    InertLandingPolicySource,
+    InertLandingRules,
+)
+from orchestrator.services.landing.inert_landing_policy import (
+    SOURCE_UNCONFIGURED as POLICY_SOURCE_UNCONFIGURED,
+)
+from orchestrator.services.landing.interfaces import (
     LANDING_ALREADY_RECORDED,
     LANDING_APP_CREDENTIALS_MISSING,
     LANDING_BASE_NOT_DEFAULT_BRANCH,
@@ -88,24 +96,19 @@ from orchestrator.services.landing.estate_landing_admission import (
     LANDING_NOT_ENABLED,
     LANDING_PULL_REQUEST_NOT_OPEN,
     LANDING_PULL_REQUEST_UNREADABLE,
+    MERGE_COMMIT,
     MERGEABLE_UNKNOWN,
+    SQUASH,
     EstateGatewayError,
     EstatePullRequest,
     EstateReadGateway,
     Term,
+)
+from orchestrator.services.landing.terms import (
     checks_term,
     ecosystem_exclusion_term,
     freshness_term,
     qualifies_for_branch_update,
-)
-from orchestrator.services.landing.estate_pr_merge import MERGE_COMMIT, SQUASH
-from orchestrator.services.landing.inert_landing_policy import (
-    RULES_UNDECLARED,
-    InertLandingPolicySource,
-    InertLandingRules,
-)
-from orchestrator.services.landing.inert_landing_policy import (
-    SOURCE_UNCONFIGURED as POLICY_SOURCE_UNCONFIGURED,
 )
 
 # The estate says landing on this repository's default branch DOES change something already

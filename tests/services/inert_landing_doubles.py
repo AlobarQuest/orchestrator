@@ -12,11 +12,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from orchestrator.services.landing.estate_landing_admission import EstateGatewayError
-from orchestrator.services.landing.estate_pr_merge import MergeOutcome
 from orchestrator.services.landing.inert_landing_policy import (
     InertLandingAnswer,
     InertLandingRules,
+)
+from orchestrator.services.landing.interfaces import (
+    EstateGatewayError,
+    MergeOutcome,
 )
 from tests.services.estate_landing_doubles import FakeEstateGateway
 
