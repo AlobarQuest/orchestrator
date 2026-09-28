@@ -536,7 +536,9 @@ style of that module.
   `commands/ready` → dispatch. (Verified 2026-07-17 dispatching the brain AC-002 unit.)
 
 - **Decomposition approval is human-only and reachable ONLY through the `/review` GUI, never the
-  raw `/api` path.** `approve_decomposition_proposal` calls `_require_decision_actor`, which
+  raw `/api` path.** **The raw `/api` approve and reject routes, and their `approve-decomposition` /
+  `reject-decomposition` CLI commands, were DELETED on 2026-09-28 (Tier 3 item 24b); the rest of
+  this bullet is why they could never have been used.** `approve_decomposition_proposal` calls `_require_decision_actor`, which
   raises unless `actor.role is ActorRole.HUMAN`. But the raw `POST
   /api/v1/decomposition-proposals/{id}/approve` sits on the default `orchestrator-api` Traefik
   router (headers-strip only = **M2M-only**), so a browser session `fetch` to it `401`s **by

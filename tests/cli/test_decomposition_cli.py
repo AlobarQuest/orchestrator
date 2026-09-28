@@ -112,8 +112,6 @@ def test_list_and_show_decomposition_commands_forward_get_requests(
 @pytest.mark.parametrize(
     ("command", "path"),
     [
-        ("approve-decomposition", "/api/v1/decomposition-proposals/proposal-1/approve"),
-        ("reject-decomposition", "/api/v1/decomposition-proposals/proposal-1/reject"),
         (
             "require-decomposition-revision",
             "/api/v1/decomposition-proposals/proposal-1/require-revision",

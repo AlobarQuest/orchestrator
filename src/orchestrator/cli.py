@@ -637,11 +637,9 @@ for _command_name in (
     _register_lifecycle_command(_command_name)
 
 
-for _command_name, _endpoint in (
-    ("approve-decomposition", "approve"),
-    ("reject-decomposition", "reject"),
-    ("require-decomposition-revision", "require-revision"),
-):
+# Approving or rejecting a breakdown is a human decision made in /review; the /api routes these
+# commands once called were deleted by Tier 3 item 24b. Requiring a revision still has one.
+for _command_name, _endpoint in (("require-decomposition-revision", "require-revision"),):
     _register_decomposition_decision_command(_command_name, _endpoint)
 
 

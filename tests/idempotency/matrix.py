@@ -77,12 +77,6 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/idempotency/test_reclaim_idempotency.py::test_a_duplicate_reclaim_writes_one_failed_and_one_ready_event",
     ),
     MatrixRow(
-        "recover expired claim",
-        "/api/v1/work-units/{unit_id}/recover-expired-claim",
-        ADVISORY_LOCK,
-        "tests/idempotency/test_reclaim_idempotency.py::test_concurrent_expired_claim_recovery_reused_key_for_different_units_is_stable",
-    ),
-    MatrixRow(
         "retry authorization",
         "/api/v1/work-units/{unit_id}/retry-authorization",
         ROW_LOCK,

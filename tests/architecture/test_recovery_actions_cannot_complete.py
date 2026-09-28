@@ -26,7 +26,6 @@ from orchestrator.main import create_app
 RECOVERY_ENTRY_POINTS = (
     ("src/orchestrator/services/lifecycle/claims.py", "requeue_unit"),
     ("src/orchestrator/services/lifecycle/claims.py", "authorize_retry"),
-    ("src/orchestrator/services/lifecycle/claims.py", "recover_expired_claim"),
 )
 ALLOWED_RECOVERY_TARGETS = {"READY", "CANCELLED"}
 

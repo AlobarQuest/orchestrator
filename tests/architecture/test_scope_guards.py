@@ -50,15 +50,12 @@ def test_production_post_route_inventory_is_explicit() -> None:
     assert observed == {
         "/api/v1/package-intakes",
         "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
-        "/api/v1/decomposition-proposals/{proposal_id}/approve",
-        "/api/v1/decomposition-proposals/{proposal_id}/reject",
         "/api/v1/decomposition-proposals/{proposal_id}/require-revision",
         "/api/v1/revisions",
         "/api/v1/revisions/{revision_id}/work-units",
         "/api/v1/work-units/{unit_id}/claim",
         "/api/v1/work-units/{unit_id}/renew",
         "/api/v1/work-units/{unit_id}/reclaim-expired-claim",
-        "/api/v1/work-units/{unit_id}/recover-expired-claim",
         "/api/v1/work-units/{unit_id}/preflight",
         "/api/v1/work-units/{unit_id}/dispatch",
         # ADR-0020: the factory lands its own pull request. SYSTEM-only, one caller (whoever

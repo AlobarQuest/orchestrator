@@ -10,8 +10,8 @@
 # modelled on were described throughout the repository as scheduled and were scheduled by nothing;
 # every pass any of them ever made was typed by hand. That is now resolved in both directions --
 # nine lanes have a LaunchAgent, and on 2026-09-05 ADR-0040 deleted two of those three rather than
-# scheduling them. The survivor is run-follow-up-mint.sh, still operator-invoked and still the open
-# question that ADR names.
+# scheduling them. The survivor, run-follow-up-mint.sh, was deleted on 2026-09-28 (Tier 3 item
+# 24b): infraops-mcp-server's drift-audit.sh runs the daily mint pass.
 #
 # Verify afterwards with:
 #   launchctl list | grep landing-ledger
