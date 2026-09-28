@@ -243,3 +243,28 @@ def test_boot_outcome_for_each_environment(
             monkeypatch.setenv(name, value)
 
     assert _outcome() == expected
+
+
+@pytest.mark.parametrize("bundle", [BUNDLE, UNSET], ids=["bundle_set", "bundle_unset"])
+def test_a_malformed_unrelated_setting_refuses_as_the_same_runtime_error(
+    monkeypatch: pytest.MonkeyPatch, bundle: str | None
+) -> None:
+    """Outside the table above, which predates the fold and did not read other settings.
+
+    Reading `Settings` validates every field, so the uniform refusal must cover a value that has
+    nothing to do with authentication -- without echoing that value, which pydantic's own
+    message would.
+    """
+    for name in AUTH_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in {**VALID, "ORCHESTRATOR_REGISTRY_BUNDLE": bundle}.items():
+        if value is not None:
+            monkeypatch.setenv(name, value)
+    monkeypatch.setenv("ORCHESTRATOR_DISPATCH_ENABLED", "leaked-sentinel-value")
+
+    with pytest.raises(RuntimeError) as refusal:
+        load_auth_config()
+
+    assert str(refusal.value) == MESSAGE
+    assert type(refusal.value.__cause__).__name__ == "ValidationError"
+    assert "leaked-sentinel-value" not in str(refusal.value)

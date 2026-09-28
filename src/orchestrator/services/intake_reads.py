@@ -117,4 +117,5 @@ def proposal_children(session: Session, proposal_ids: Sequence[uuid.UUID]) -> Pr
             )
         ):
             retained[row.proposal_id].append(row)
-    return ProposalChildren(units, dependencies, mappings, retained)
+    # Plain dicts out: a defaultdict would let a caller's `[missing_id]` insert a phantom entry.
+    return ProposalChildren(dict(units), dict(dependencies), dict(mappings), dict(retained))

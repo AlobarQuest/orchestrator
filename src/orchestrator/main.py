@@ -78,9 +78,15 @@ def load_auth_config(settings: Settings | None = None) -> AuthConfig | None:
 
     Every refusal is the same `RuntimeError`, so nothing about which value was wrong -- or
     what it held -- reaches a log. A fresh `Settings` is read rather than the cached one, so the
-    environment at the moment of the call is the one judged.
+    environment at the moment of the call is the one judged. Reading `Settings` validates every
+    setting, not only the auth ones, so a malformed unrelated value refuses here too -- as the
+    same `RuntimeError` (pydantic's `ValidationError` is a `ValueError`) rather than escaping
+    with the offending input in its message.
     """
-    settings = settings if settings is not None else Settings.model_validate({})
+    try:
+        settings = settings if settings is not None else Settings.model_validate({})
+    except ValueError as error:
+        raise RuntimeError("invalid runtime authentication configuration") from error
     bundle_path = settings.registry_bundle
     if not bundle_path:
         return None

@@ -1,6 +1,5 @@
 import re
 import uuid
-from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -117,6 +116,7 @@ from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     ContextSnapshot,
     DecompositionProposal,
+    DecompositionProposalUnit,
     Observation,
     WorkPackageRevision,
     WorkUnit,
@@ -2413,6 +2413,12 @@ def _package_intake_payload(
     }
 
 
+def _proposal_unit_payload(unit: DecompositionProposalUnit) -> dict[str, object]:
+    payload = DecompositionProposalUnitResponse.model_validate(unit).model_dump(mode="json")
+    payload["authority"] = normalize_authority(unit.authority).normalized()
+    return payload
+
+
 def _proposal_payloads(
     session: Session,
     proposals: Sequence[DecompositionProposal],
@@ -2420,12 +2426,10 @@ def _proposal_payloads(
     if not proposals:
         return {}
     children = proposal_children(session, tuple(proposal.id for proposal in proposals))
-    units_by_proposal: dict[UUID, list[dict[str, object]]] = defaultdict(list)
-    for proposal_id, units in children.units.items():
-        for unit in units:
-            payload = DecompositionProposalUnitResponse.model_validate(unit).model_dump(mode="json")
-            payload["authority"] = normalize_authority(unit.authority).normalized()
-            units_by_proposal[proposal_id].append(payload)
+    units_by_proposal = {
+        proposal_id: [_proposal_unit_payload(unit) for unit in units]
+        for proposal_id, units in children.units.items()
+    }
     dependencies_by_proposal = {
         proposal_id: [
             DecompositionProposalDependencyResponse.model_validate(dependency).model_dump(

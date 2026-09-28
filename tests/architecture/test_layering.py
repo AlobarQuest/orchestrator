@@ -6,9 +6,11 @@ surface (`api`), the HTML surface (`web`), process wiring (`main`, `cli`) and co
 (`config`, `db`, `identity`) are built ON those layers and hand them plain values.
 
 Until the Tier-2 layering change, three services imported their response models from
-`api.schemas`, `github_app` read `Settings` itself, and `ActorContext` lived in the auth module
-while the kernel's callers needed it. Each was a dependency pointing the wrong way, and nothing
-said so. This module is what says so now.
+`api.schemas`, `github_app` read `Settings` itself, and the two-field `ActorContext` every
+service passes around lived in `services/lifecycle`, so modules needing only that value type
+imported the lifecycle service to get it (it is now in `kernel.states`; the auth module's own,
+larger class of the same name is `AuthenticatedIdentity`). Each was a dependency pointing the
+wrong way, and nothing said so. This module is what says so now.
 
 Two shapes of rule, deliberately different:
 
@@ -48,7 +50,11 @@ def _internal_imports(path: Path) -> set[str]:
             modules = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
             assert node.level == 0, f"{path}:{node.lineno} uses a relative import"
-            modules = [node.module or ""]
+            if node.module == "orchestrator":
+                # `from orchestrator import config` names the layer in the imported name.
+                modules = [f"orchestrator.{alias.name}" for alias in node.names]
+            else:
+                modules = [node.module or ""]
         elif (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name | ast.Attribute)
@@ -61,8 +67,12 @@ def _internal_imports(path: Path) -> set[str]:
             modules = [node.args[0].value]
         for module in modules:
             parts = module.split(".")
-            if parts[0] == "orchestrator" and len(parts) > 1:
-                targets.add(parts[1])
+            if parts[0] != "orchestrator":
+                continue
+            # A bare `import orchestrator` reaches every layer by attribute access, which no
+            # import scan can attribute to one; the source tree uses none, so refuse it.
+            assert len(parts) > 1, f"{path}:{node.lineno} imports the bare orchestrator package"
+            targets.add(parts[1])
     return targets
 
 
@@ -123,6 +133,8 @@ def test_every_denied_name_is_a_real_module() -> None:
         ("import importlib\nimportlib.import_module('orchestrator.main')\n", {"main"}),
         ("from importlib import import_module\nimport_module('orchestrator.cli')\n", {"cli"}),
         ("import httpx\nfrom orchestrator.kernel.states import ActorRole\n", {"kernel"}),
+        ("from orchestrator import config\n", {"config"}),
+        ("from orchestrator import api, errors\n", {"api", "errors"}),
     ],
 )
 def test_the_scanner_sees_every_import_shape(
@@ -134,9 +146,18 @@ def test_the_scanner_sees_every_import_shape(
     assert _internal_imports(path) == expected
 
 
-def test_the_scanner_refuses_a_relative_import(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("source", "refusal"),
+    [
+        ("from ..api import schemas\n", "relative import"),
+        ("import orchestrator\n", "bare orchestrator package"),
+    ],
+)
+def test_the_scanner_refuses_an_import_it_cannot_attribute(
+    tmp_path: Path, source: str, refusal: str
+) -> None:
     path = tmp_path / "module.py"
-    path.write_text("from ..api import schemas\n")
+    path.write_text(source)
 
-    with pytest.raises(AssertionError, match="relative import"):
+    with pytest.raises(AssertionError, match=refusal):
         _internal_imports(path)
