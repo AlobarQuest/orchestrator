@@ -14,7 +14,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import Adjudication, Approval, Evidence, WorkUnit
-from orchestrator.services.evidence_pack import (
+from orchestrator.services.reporting.evidence_pack import (
     EvidencePackAdjudicationResponse,
     EvidencePackCriterionRefusalResponse,
     EvidencePackResponse,

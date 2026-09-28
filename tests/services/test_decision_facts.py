@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.reach_vocabulary import REACH_VOCABULARY
-from orchestrator.services.decision_facts import (
+from orchestrator.services.reporting.decision_facts import (
     REVERSIBILITY_BY_CHANGE_CLASS,
     decision_facts_for_revision,
     decision_facts_for_unit,

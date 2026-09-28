@@ -18,7 +18,7 @@ from orchestrator.services.reconciliation import (
     record_reconciliation_condition,
 )
 from orchestrator.services.release_artifacts import record_release_artifact
-from orchestrator.services.traceability import (
+from orchestrator.services.reporting.traceability import (
     TraceabilityAnchor,
     build_chain,
     resolve_anchors,

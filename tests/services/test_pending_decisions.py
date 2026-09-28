@@ -18,12 +18,12 @@ from orchestrator.services.decomposition import (
     submit_decomposition_proposal,
 )
 from orchestrator.services.package_intake import register_package_intake
-from orchestrator.services.pending_decisions import pending_decisions
 from orchestrator.services.reconciliation import (
     ConditionCommand,
     ConditionOutcome,
     record_reconciliation_condition,
 )
+from orchestrator.services.reporting.pending_decisions import pending_decisions
 from tests.services.test_decomposition import package_ac_ids, proposal_command, worker_actor
 from tests.services.test_dependencies import register_unit
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command

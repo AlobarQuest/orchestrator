@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from orchestrator.config import Settings
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import WorkUnit
-from orchestrator.services.dead_letter import dead_letter
+from orchestrator.services.reporting.dead_letter import dead_letter
 from tests.services.test_dependencies import register_unit
 
 THRESHOLD = 3

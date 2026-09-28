@@ -1,7 +1,7 @@
 """Which work unit, if any, a landing belongs to — and the observation that records its rollout.
 
 ADR-0022, the second half. Phase-3's exit criterion asks that a real release's traceability chain
-CARRY a real observation, and `services/traceability.py` filters that hop on
+CARRY a real observation, and `services/reporting/traceability.py` filters that hop on
 `subject_type="work_unit"`. Measured 2026-08-12: of 553 observations, 509 are repo-scoped, 39
 service, 1 deployment and 4 work-unit — all four written by `orchestrator-system`, none by an
 external producer. Every unconnected producer in the estate's census is estate-, service- or

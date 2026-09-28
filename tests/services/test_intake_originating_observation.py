@@ -20,7 +20,7 @@ from orchestrator.persistence.models import Event, Observation, WorkPackageRevis
 from orchestrator.services.observations import ObservationCommand, record_observation
 from orchestrator.services.package_intake import _command_identity, register_package_intake
 from orchestrator.services.packages import register_approved_unit, register_revision
-from orchestrator.services.traceability import (
+from orchestrator.services.reporting.traceability import (
     TraceabilityAnchor,
     resolve_anchors,
     traceability_response,

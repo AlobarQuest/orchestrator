@@ -19,11 +19,11 @@ THE PREDICATE IS THE WHOLE DESIGN. Two wrong ones were prototyped first, and bot
 2. NAME-KEYED REACHABILITY flags 3 of 93 and looks excellent. It is blind to twelve of its own
    subjects. `cli.py` is a pure HTTP client -- it imports zero services and reaches them only
    over HTTP -- but its typer commands are named identically to the services they proxy
-   (`cli.py::dead_letter` vs `services/dead_letter.py::dead_letter`). Seeding roots by NAME
-   marks the SERVICE reachable by the mere existence of its CLI command. Delete the dead_letter
-   route entirely -- the WS-P2.1 defect, reconstructed -- and a name-keyed graph does not
-   notice. `test_the_guard_flags_a_service_whose_only_production_caller_was_removed` is that
-   control, and it is the reason this file resolves imports.
+   (`cli.py::dead_letter` vs `services/reporting/dead_letter.py::dead_letter`). Seeding roots
+   by NAME marks the SERVICE reachable by the mere existence of its CLI command. Delete the
+   dead_letter route entirely -- the WS-P2.1 defect, reconstructed -- and a name-keyed graph
+   does not notice. `test_the_guard_flags_a_service_whose_only_production_caller_was_removed` is
+   that control, and it is the reason this file resolves imports.
 
 So: nodes are import-resolved `(module, symbol)` pairs, roots are NODES rather than names, and
 only reachable nodes propagate reachability -- which is what refuses to launder a dead callee
@@ -323,7 +323,7 @@ def test_the_guard_flags_a_dead_function_whose_name_collides_with_a_live_one(
     """
     _write(
         fake_src,
-        "orchestrator/services/dead_letter.py",
+        "orchestrator/services/reporting/dead_letter.py",
         "def dead_letter() -> None:\n    pass\n",
     )
     _write(
@@ -334,7 +334,7 @@ def test_the_guard_flags_a_dead_function_whose_name_collides_with_a_live_one(
     )
     _write(fake_src, "orchestrator/api/routes.py", "def index() -> None:\n    pass\n")
     flagged = {(module, name) for module, name, _where in CallGraph(fake_src).unreachable()}
-    assert ("orchestrator.services.dead_letter", "dead_letter") in flagged, (
+    assert ("orchestrator.services.reporting.dead_letter", "dead_letter") in flagged, (
         "the service function is dead; only the identically-named CLI command is a root. "
         "A name-keyed graph misses this -- which is exactly how it stayed blind to 12 of 93 "
         "real symbols."
@@ -352,14 +352,14 @@ def test_the_guard_flags_a_service_whose_only_production_caller_was_removed(
     """
     _write(
         fake_src,
-        "orchestrator/services/dead_letter.py",
+        "orchestrator/services/reporting/dead_letter.py",
         "def dead_letter() -> None:\n    pass\n",
     )
     # WITH the route: reachable.
     _write(
         fake_src,
         "orchestrator/api/routes.py",
-        "from orchestrator.services.dead_letter import dead_letter\n\n\n"
+        "from orchestrator.services.reporting.dead_letter import dead_letter\n\n\n"
         "def dead_letter_route() -> None:\n    dead_letter()\n",
     )
     before = {name for _module, name, _where in CallGraph(fake_src).unreachable()}

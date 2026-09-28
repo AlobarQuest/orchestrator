@@ -647,14 +647,15 @@ style of that module.
   `_actor: ActorDep` with no role gate — the runner's worker credential reads them, consistent with
   `runner-brief`/`status-ledger`/`history` (all auth-only). Because factory-runner posts the
   **markdown** as a comment on the target repo, **which may be public**, the markdown renderer
-  (`services/evidence_pack.py::render_evidence_pack_markdown`) omits approver identities and waiver
-  rationale (`decided_by`, `rationale`, `approved_by`, `reason`, event `actor_id`) while keeping the
-  facts. The **JSON stays full-fidelity** (auth-gated, for WS-P2.6/audit). The redaction is
-  hand-edited per section — a new markdown section that interpolates those fields must redact them by
-  hand until a structural allowlist exists (backlogged). A `text/markdown` route also needs an entry
-  in `NON_JSON_SUCCESS_PATHS` (`tests/api/test_lifecycle_api.py`) to satisfy the
-  every-success-response-has-a-json-schema invariant. (Verified 2026-07-25, WS-P2.5 Inc 1 — the
-  public-exposure decision was the final review's one Important finding.)
+  (`services/reporting/evidence_pack.py::render_evidence_pack_markdown`) omits approver
+  identities and waiver rationale (`decided_by`, `rationale`, `approved_by`, `reason`, event
+  `actor_id`) while keeping the facts. The **JSON stays full-fidelity** (auth-gated, for
+  WS-P2.6/audit). The redaction is hand-edited per section — a new markdown section that
+  interpolates those fields must redact them by hand until a structural allowlist exists
+  (backlogged). A `text/markdown` route also needs an entry in `NON_JSON_SUCCESS_PATHS`
+  (`tests/api/test_lifecycle_api.py`) to satisfy the every-success-response-has-a-json-schema
+  invariant. (Verified 2026-07-25, WS-P2.5 Inc 1 — the public-exposure decision was the final
+  review's one Important finding.)
 
 - **The brains have a REST read API built for off-machine agents, it is approved-only by
   default, and there is NO read-only credential.** Code Brain (`https://code-brain.devonwatkins.com`)
@@ -1012,7 +1013,7 @@ style of that module.
   WS-6.3 roles-before-credentials write. Verified 2026-07-27 (WS-P3.0) on image
   `8da4af3-wsp27inc2-amd64`: bundle revision `65655ddf…`, 13 actors, `drift-reconciler` present.
 - **The traceability query's observation hop is unit-scoped, so most observation producers are
-  invisible to it.** `services/traceability.py` filters observations on
+  invisible to it.** `services/reporting/traceability.py` filters observations on
   `subject_type="work_unit"` AND the unit id. An observation about a service, endpoint, monitor or
   environment — which is what every external monitor naturally produces — lands in
   `GET /api/v1/observations` and in nothing else. Do not treat "wired an observation producer" as
@@ -1901,7 +1902,8 @@ style of that module.
   attesting to its own compliance. Backlogged P2 `7874128ae3ac` with a named trigger.
 
 - **`GET /api/v1/status-ledger` defaults `include_inactive=false` and every production unit is
-  terminal, so the bare call returns `[]`.** `routes.py:1217` / `services/status_ledger.py:25,95`.
+  terminal, so the bare call returns `[]`.** `routes.py:1217` /
+  `services/reporting/status_ledger.py:25,95`.
   This is the most misleading read on the production API surface, because an empty list **looks
   like an answer** rather than like a filter — the same shape as the estate-wide rule that a search
   zero is not evidence of absence. Pass `include_inactive=true` when the question is "what does the
@@ -3939,7 +3941,7 @@ style of that module.
 
 - **On `GET /api/v1/traceability`, ADDING `source_repository` to a `pr_number` anchor can turn a
   real answer into `chains: []` — the two forms route through DIFFERENT TABLES, and the more
-  specific one is the one that fails.** `_resolve_pr` (`services/traceability.py`) reads
+  specific one is the one that fails.** `_resolve_pr` (`services/reporting/traceability.py`) reads
   **`ReleaseArtifactBinding`** when `source_repository` is supplied and **`UnitPrBinding`** when it
   is not. A factory landing writes the second and not the first, so qualifying the query with the
   repository — the natural thing to do, and the thing that looks more careful — reports that the

@@ -20,7 +20,7 @@ _COST_ACTION = "attempt.cost_recorded"
 # The event that records an overrun the moment it becomes known. `is_over_budget` decides
 # whether a unit may be granted ANOTHER attempt, so an attempt that blows the ceiling and then
 # finishes is never asked the question -- see `orchestrator.services.cost_actuals` for the
-# emitter and `orchestrator.services.slo_report` for the reader.
+# emitter and `orchestrator.services.reporting.slo_report` for the reader.
 BREACH_ACTION = "attempt.budget_breached"
 
 

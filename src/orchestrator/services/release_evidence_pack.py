@@ -20,12 +20,12 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.deployment_observations import DeploymentObservationResponse
-from orchestrator.services.evidence_pack import (
+from orchestrator.services.release_artifacts import ReleaseArtifactResponse
+from orchestrator.services.reporting.evidence_pack import (
     EvidencePackResponse,
     evidence_pack_projection,
     evidence_pack_response,
 )
-from orchestrator.services.release_artifacts import ReleaseArtifactResponse
 
 
 class ReleaseEvidencePackRevisionResponse(BaseModel):

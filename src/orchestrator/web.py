@@ -31,10 +31,6 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.claims import authorize_retry
-from orchestrator.services.decision_facts import (
-    decision_facts_for_revision,
-    decision_facts_for_unit,
-)
 from orchestrator.services.decomposition import (
     approve_decomposition_proposal,
     reject_decomposition_proposal,
@@ -44,7 +40,6 @@ from orchestrator.services.evidence import (
     AdjudicationDecision,
     record_adjudications,
 )
-from orchestrator.services.evidence_pack import evidence_pack_projection
 from orchestrator.services.graduation_ledger import graduation_ledger
 from orchestrator.services.intake_reads import (
     intake_authority,
@@ -54,17 +49,22 @@ from orchestrator.services.intake_reads import (
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import record_approval
-from orchestrator.services.pending_decisions import (
-    SETTLED_STATES,
-    adjudicable_criteria,
-    grouped_pending_decisions,
-)
 from orchestrator.services.reconciliation import (
     ResolutionCommand,
     open_conditions,
     record_resolution,
 )
 from orchestrator.services.release_evidence_pack import release_evidence_pack_response
+from orchestrator.services.reporting.decision_facts import (
+    decision_facts_for_revision,
+    decision_facts_for_unit,
+)
+from orchestrator.services.reporting.evidence_pack import evidence_pack_projection
+from orchestrator.services.reporting.pending_decisions import (
+    SETTLED_STATES,
+    adjudicable_criteria,
+    grouped_pending_decisions,
+)
 
 router = APIRouter(prefix="/review", include_in_schema=False)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")

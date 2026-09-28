@@ -17,7 +17,7 @@ from orchestrator.persistence.models import WorkPackageRevision
 from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.services.authority_gate import POLICY_UNREADABLE, human_authority_gate
 from orchestrator.services.packages import evaluate_readiness
-from orchestrator.services.pending_decisions import pending_decisions
+from orchestrator.services.reporting.pending_decisions import pending_decisions
 from tests.services.test_dispatch import recognised_unit
 
 NOVEL_COMMANDS: dict[str, list[str]] = {
