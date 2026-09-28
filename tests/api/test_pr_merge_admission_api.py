@@ -18,15 +18,15 @@ away. No network is reached: the source refuses before constructing a request.
 
 import dataclasses
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi.testclient import TestClient
 
 from orchestrator.api.schemas import PrMergeAdmissionResponse
 from orchestrator.services.pr_merge_admission import MergeAdmission
+from tests._support.seeding import register_ready_unit
 from tests.api.test_lifecycle_api import AUTHORITY as BASE_AUTHORITY
-from tests.api.test_lifecycle_api import HUMAN, SYSTEM, WORKER
+from tests.api.test_lifecycle_api import WORKER
 
 TARGET_REPOSITORY = "AlobarQuest/intent-packages"
 # The unit must name the repository it would land in, or the estate is never asked about anything
@@ -35,63 +35,7 @@ AUTHORITY = {**BASE_AUTHORITY, "constraints": {"target_repository": TARGET_REPOS
 
 
 def _register_ready_unit(db_client: TestClient, suffix: str) -> str:
-    revision = db_client.post(
-        "/api/v1/revisions",
-        headers=HUMAN,
-        json={
-            "idempotency_key": f"{suffix}-revision",
-            "expected_version": 0,
-            "package_id": f"{suffix}-package",
-            "source_repository": "owner/repo",
-            "revision": 1,
-            "content_hash": f"sha256:{suffix}",
-            "source_path": "intent.md",
-            "source_commit": "abc123",
-            "approved_by": "devon",
-            "approved_at": datetime(2026, 7, 5, tzinfo=UTC).isoformat(),
-            "approval_event_id": str(uuid.uuid4()),
-            "enforcement_snapshot": {"acceptance_criteria": ["ac-1"]},
-            "authority": AUTHORITY,
-            "registry_version": 1,
-        },
-    )
-    assert revision.status_code == 201
-    unit = db_client.post(
-        f"/api/v1/revisions/{revision.json()['id']}/work-units",
-        headers=HUMAN,
-        json={
-            "idempotency_key": f"{suffix}-unit",
-            "expected_version": 0,
-            "unit_key": f"{suffix}-unit",
-            "title": f"{suffix} unit",
-            "outcome": "the answer is inspectable",
-            "required_capability": "repo.edit",
-            "authority": AUTHORITY,
-            "max_attempts": 3,
-            "approved_by": "devon",
-            "approved_at": datetime(2026, 7, 5, tzinfo=UTC).isoformat(),
-        },
-    )
-    assert unit.status_code == 201
-    unit_id = unit.json()["id"]
-    approved = db_client.post(
-        f"/api/v1/work-units/{unit_id}/approvals",
-        headers=HUMAN,
-        json={
-            "idempotency_key": f"{suffix}-authority",
-            "expected_version": 1,
-            "subject_type": "authority",
-            "reason": "approved",
-        },
-    )
-    assert approved.status_code == 200
-    ready = db_client.post(
-        f"/api/v1/work-units/{unit_id}/commands/ready",
-        headers=SYSTEM,
-        json={"idempotency_key": f"{suffix}-ready", "expected_version": 1},
-    )
-    assert ready.status_code == 200
-    return unit_id
+    return register_ready_unit(db_client, suffix, authority=AUTHORITY)
 
 
 def _admission(db_client: TestClient, unit_id: str) -> dict[str, Any]:

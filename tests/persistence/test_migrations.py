@@ -20,10 +20,13 @@ from orchestrator.services.decomposition import (
 )
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import register_approved_unit, register_revision
-from tests.conftest import TEST_DATABASE_URL
-from tests.persistence.conftest import alembic_config
+from tests._support.database import TEST_DATABASE_URL, alembic_config
 from tests.services.test_package_intake import acceptance_criterion, intake_command
 from tests.services.test_package_registration import AUTHORITY, NOW, register_test_revision
+
+# Every test here moves the schema itself (downgrades, re-upgrades, or drops it outright), so each
+# starts from a fresh DROP + upgrade rather than the session's shared migrated schema.
+pytestmark = pytest.mark.schema_rebuild
 
 
 def column_default(engine, table: str, column: str) -> str | None:

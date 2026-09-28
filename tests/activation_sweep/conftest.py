@@ -22,11 +22,6 @@ from pathlib import Path
 
 import pytest
 
-# The migrated-database fixtures, re-exported the way every sibling suite does it. Only
-# `test_replay.py` uses them: it is the one place the record's bytes meet the real ingestion
-# service, the real CHECK constraints and the real conflict branch.
-from tests.persistence.conftest import migrated_engine, migrated_session  # noqa: F401
-
 ORIGIN_URL = "https://github.com/AlobarQuest/example.git"
 
 GIT_ENVIRONMENT = {

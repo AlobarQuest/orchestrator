@@ -12,10 +12,9 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from tests.api.conftest import auth_config, db_client
-from tests.persistence.conftest import migrated_engine
 from tests.services.test_dependencies import register_unit
 
-__all__ = ["auth_config", "db_client", "migrated_engine"]
+__all__ = ["auth_config", "db_client"]
 
 
 def _review_unit(
