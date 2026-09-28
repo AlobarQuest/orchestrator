@@ -43,9 +43,9 @@ from activation_sweep.checkout import (
     run_git,
 )
 
-# The prefix `services/release_artifacts.py::_validate_digests` requires. `shasum` and `hashlib`
-# both emit bare hex, and a digest without this is refused as "not an immutable sha256 digest" --
-# a validator this lane deliberately does not relax.
+# The prefix `services/release/release_artifacts.py::_validate_digests` requires. `shasum` and
+# `hashlib` both emit bare hex, and a digest without this is refused as "not an immutable sha256
+# digest" -- a validator this lane deliberately does not relax.
 DIGEST_PREFIX = "sha256:"
 
 # `git archive` writes a tar to stdout, so it is read as BYTES and streamed rather than decoded.

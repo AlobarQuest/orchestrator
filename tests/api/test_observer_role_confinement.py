@@ -35,7 +35,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.kernel.transitions import EDGE_ROLES, TransitionGuards, authorize_transition
 from orchestrator.services.decomposition import _require_submission_actor
-from orchestrator.services.observations import _authorize_actor
+from orchestrator.services.release.observations import _authorize_actor
 from orchestrator.web import _human
 from orchestrator.web import router as web_router
 from tests.api.test_observations_api import observation_body

@@ -7,7 +7,7 @@ import json
 import pytest
 
 from orchestrator.kernel.secret_metadata import SECRET_KEY_PARTS
-from orchestrator.services.observations import (
+from orchestrator.services.release.observations import (
     MAX_FACT_BYTES,
     MAX_SUMMARY,
 )

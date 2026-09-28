@@ -38,7 +38,7 @@ from orchestrator.persistence.models import (
     OBSERVATION_TRUST_CLASSIFICATIONS,
     OBSERVATION_TYPES,
 )
-from orchestrator.services.observations import (
+from orchestrator.services.release.observations import (
     MAX_FACT_BYTES,
     MAX_SUMMARY,
 )

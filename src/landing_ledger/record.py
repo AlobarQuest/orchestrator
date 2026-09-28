@@ -36,8 +36,8 @@ SEVERITY = "info"
 DECISION = "ADR-0016"
 
 # The orchestrator bounds `facts` at 4096 encoded bytes, 512-character strings, 30-item lists and
-# 64-character keys (`services/observations.py`). Staying under the byte bound is structural here,
-# not hoped-for: `_fit` drops file paths until the record fits, deterministically, so the same
+# 64-character keys (`services/release/observations.py`). Staying under the byte bound is structural
+# here, not hoped-for: `_fit` drops file paths until the record fits, deterministically, so the same
 # landing always encodes to the same bytes.
 MAX_FACT_BYTES = 4096
 MAX_LIST = 30

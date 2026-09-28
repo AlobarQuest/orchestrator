@@ -264,7 +264,7 @@ OUTBOUND_ALLOWLIST = {
     # installation token, and the alternative (an out-of-process poller, ADR-0002's shape) would
     # put the observation outside the transaction that records it.
     Path("src/orchestrator/services/github_checks.py"),
-    Path("src/orchestrator/services/knowledge_promotions.py"),
+    Path("src/orchestrator/services/release/knowledge_promotions.py"),
     # WS-P2.28. Admission asks App Brain one question about the unit's target repository -- does
     # landing on its default branch change something already serving -- and writes nothing. Same
     # justification as github_checks.py above: a declaration is only worth checking if the

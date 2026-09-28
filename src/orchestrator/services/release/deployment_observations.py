@@ -28,7 +28,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.release_artifacts import SHA256_DIGEST
+from orchestrator.services.release.release_artifacts import SHA256_DIGEST
 
 
 class DeploymentObservationResponse(BaseModel):

@@ -896,7 +896,7 @@ def test_the_release_observation_criteria_still_refuse_public_adjudication(
     """The counterpart carve-out points the OTHER way and must stay that way. Without this,
     a future reader assumes the two generated-AC rules match and loosens the wrong one."""
     from orchestrator.persistence.models import DeploymentObservation
-    from orchestrator.services.deployment_observations import record_deployment_observation
+    from orchestrator.services.release.deployment_observations import record_deployment_observation
     from tests.services.test_deployment_observations import observation_command, release_binding
 
     _unit, binding = release_binding(migrated_session, key="wsp28-asymmetry")

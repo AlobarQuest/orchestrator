@@ -25,7 +25,7 @@ from orchestrator.persistence.models import (
     MACHINE_LOCAL_OBSERVATION,
     OPERATOR_MACHINE_ENVIRONMENT,
 )
-from orchestrator.services.deployment_observations import (
+from orchestrator.services.release.deployment_observations import (
     ACTIVATION_FACTS,
     ACTIVATION_RESULTS,
 )

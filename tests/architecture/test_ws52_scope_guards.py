@@ -5,7 +5,7 @@ from fastapi.routing import APIRoute
 
 from orchestrator.api.routes import router as api_router
 
-RELEASE_SERVICE = Path("src/orchestrator/services/release_artifacts.py")
+RELEASE_SERVICE = Path("src/orchestrator/services/release/release_artifacts.py")
 ROUTES = Path("src/orchestrator/api/routes.py")
 
 

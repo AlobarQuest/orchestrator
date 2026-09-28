@@ -10,12 +10,12 @@ does not know whether any session is using the binary, so nothing here says so.
 **Re-running over unchanged reality must change nothing.** `observed_at` is therefore the
 COMMITTER DATE OF THE INSTALLED REVISION, never the moment the pass ran. The orchestrator's replay
 check hashes the whole command, `observed_at` included
-(`services/observations.py::_fact_identity`), so a wall clock would give unchanged reality a new
-fact hash every pass -- and because the source reference would be the same, that reaches the
+(`services/release/observations.py::_fact_identity`), so a wall clock would give unchanged reality a
+new fact hash every pass -- and because the source reference would be the same, that reaches the
 same-source/different-facts branch and raises `observation_conflict`, permanently, from the second
-pass onward. A clock that is a function of the facts is the only one that replays. When the pass
-ran is recorded anyway: the orchestrator stamps `received_at` itself, which is a better answer
-than anything this program could assert about its own clock.
+pass onward. A clock that is a function of the facts is the only one that replays. When the pass ran
+is recorded anyway: the orchestrator stamps `received_at` itself, which is a better answer than
+anything this program could assert about its own clock.
 
 When nothing is installed, or the installed revision has been force-pushed out of the fork's
 history, there is no such date and the AVAILABLE revision's committer date stands in. That is
@@ -28,11 +28,11 @@ orchestrator compares: because the reference is also the idempotency key, the se
 lookup is by that key, and on a hit it compares the ENTIRE stored command -- `summary`, `status`,
 `severity`, `source_url`, `trust_classification`, `subject_type`, `observation_type`, every one
 producer-derived and none of them in `facts`
-(`services/observations.py::_validate_idempotent_replay`, `::_command_payload`). Rewording one
-clause of `summary_of` would otherwise make the next pass an `idempotency_conflict` for a machine
-whose tool had not moved, which for a healthy machine is every pass. Two independent adversarial
-reviews found this in the activation sweep, and no test could: every test generates both sides
-from one version of the producer. Digesting the whole body makes any producer change APPEND,
+(`services/release/observations.py::_validate_idempotent_replay`, `::_command_payload`). Rewording
+one clause of `summary_of` would otherwise make the next pass an `idempotency_conflict` for a
+machine whose tool had not moved, which for a healthy machine is every pass. Two independent
+adversarial reviews found this in the activation sweep, and no test could: every test generates both
+sides from one version of the producer. Digesting the whole body makes any producer change APPEND,
 which is always safe.
 
 **The residual is named rather than implied:** `actor_id` and `actor_role` are in the compared
@@ -97,7 +97,7 @@ STATE_BEHIND = "behind"
 STATE_ABSENT = "absent"
 
 MAX_SUMMARY = 512
-# The orchestrator's own bound on the encoded facts (`services/observations.py`).
+# The orchestrator's own bound on the encoded facts (`services/release/observations.py`).
 MAX_FACT_BYTES = 4096
 
 # An action that means something went wrong with the artifact itself, as opposed to one that means

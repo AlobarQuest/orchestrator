@@ -6,7 +6,7 @@ from fastapi.routing import APIRoute
 from orchestrator.api.routes import router as api_router
 
 SOURCE_ROOT = Path("src/orchestrator")
-PUBLICATION_SERVICE = Path("src/orchestrator/services/event_publications.py")
+PUBLICATION_SERVICE = Path("src/orchestrator/services/release/event_publications.py")
 
 
 def _source_files() -> tuple[Path, ...]:

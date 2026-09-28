@@ -19,8 +19,8 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.deployment_observations import DeploymentObservationResponse
-from orchestrator.services.release_artifacts import ReleaseArtifactResponse
+from orchestrator.services.release.deployment_observations import DeploymentObservationResponse
+from orchestrator.services.release.release_artifacts import ReleaseArtifactResponse
 from orchestrator.services.reporting.evidence_pack import (
     EvidencePackResponse,
     evidence_pack_projection,

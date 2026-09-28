@@ -54,7 +54,7 @@ from orchestrator.services.reconciliation.reconciliation import (
     open_conditions,
     record_resolution,
 )
-from orchestrator.services.release_evidence_pack import release_evidence_pack_response
+from orchestrator.services.release.release_evidence_pack import release_evidence_pack_response
 from orchestrator.services.reporting.decision_facts import (
     decision_facts_for_revision,
     decision_facts_for_unit,

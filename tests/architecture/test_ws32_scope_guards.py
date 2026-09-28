@@ -25,7 +25,7 @@ WS42_DISPATCH_PATHS = {
     Path("src/orchestrator/services/verifier_named_check.py"),
 }
 WS53_POST_DEPLOY_PATHS = {
-    Path("src/orchestrator/services/deployment_observations.py"),
+    Path("src/orchestrator/services/release/deployment_observations.py"),
     # WS-P2.16: the capability vocabulary names `post_deploy_verification` -- the capability the
     # orchestrator mints for its own post-hoc verification units. That string literal (and the
     # module docstring describing it) is data, not a merge/dispatch/mutation path.
@@ -38,7 +38,7 @@ WS53_POST_DEPLOY_PATHS = {
     # post-deploy verification unit -- has_post_deploy_unit=False IS the deploy-nobody-reported
     # signal. It reads that state; it never dispatches, deploys, or merges.
     Path("src/orchestrator/services/reconciliation/in_flight.py"),
-    Path("src/orchestrator/services/event_publications.py"),
+    Path("src/orchestrator/services/release/event_publications.py"),
     Path("src/orchestrator/services/evidence.py"),
     Path("src/orchestrator/services/lifecycle.py"),
     Path("src/orchestrator/services/verifier_criteria.py"),
