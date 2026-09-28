@@ -167,6 +167,7 @@ for their date and are not current policy.
 - [ ] (P2) Dispatch admission discards TargetDeclaration.reason. services/execution/factory_target.py names which precondition failed (no identity, no bws binary, a status that is not an answer, an unparseable file) and services/execution/dispatch.py reads only .target, so an operator sees target_repository_declaration_unreadable with no reason. Same class as the bare 'no orchestrator bearer available' that hid a PATH gap for 28 nights. — added 2026-09-17
 - [ ] (P3) scripts/run-inert-landing.sh accepts --dry-run for the dead-man switch and forwards it to the inert-landing CLI, which rejects it ('unrecognized arguments: --dry-run', exit 2). The CLI's only flag is --submit, so the bare invocation is its reporting form. Measured 2026-09-16. — added 2026-09-17
 - [ ] (P3) Consolidate the remaining duplicated test seeding helpers (two completed_unit copies; the _unit/_ready_unit/_revision/_claimed_unit family in service tests) into tests/_support/seeding.py — needs a per-helper decision on what each test's assertions depend on. Tier 2 item 10 remainder. — added 2026-09-28
+- [ ] (P2) Build a new recovery-drill suite to replace the local drills retired with the seeding routes (Tier 3 item 24): drills must drive state only through public, production-reachable surfaces (intake → decomposition → /review), not the removed WS-3.1 seeding routes. — added 2026-09-28
 ## Future plans
 
 ## Known Non-obvious Invariants
