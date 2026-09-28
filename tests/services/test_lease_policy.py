@@ -59,7 +59,7 @@ DECIDED = 'decided = "2026-08-02"'
 # distinguishable from "one number applied everywhere". The other two declare none, which is how
 # the default-contributing case is exercised in the same document.
 LEASED = f"""
-version = 5
+version = 6
 
 [reach.source_repository]
 rationale = "repository only"

@@ -164,10 +164,9 @@ def evaluate_due(facts: RevisionFacts, *, now: datetime, due_after_days: int) ->
     # unit is new work on a live record, so admitting it on "nobody said what this touches" would
     # reopen through the back door the exact gap the admission term just closed -- and it would
     # reopen it for every revision that has ever settled, which is the whole population. Refused
-    # here rather than at the due check so it reports the moment it is asked, and refused for the
-    # grandfathered revisions too: that exemption covers records that already exist, not new units
-    # created today. The consequence is intended -- seven revisions declare a follow-up and none
-    # declares reach, so none can mint until a package that does reaches this point.
+    # here rather than at the due check so it reports the moment it is asked. The consequence is
+    # intended -- seven revisions declare a follow-up and none declares reach, so none can mint
+    # until a package that does reaches this point.
     if facts.reach is None:
         return DueDecision(facts.revision_id, None, SKIP_REACH_UNDECLARED)
 

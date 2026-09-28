@@ -213,7 +213,7 @@ def _dispatch_work_unit(
         revision,
         settings,
         gate,
-        reach_admission_refusal(session, revision),
+        reach_admission_refusal(revision),
         change_window_refusal(session, revision, clock),
         landing_source,
         target_source,

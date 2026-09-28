@@ -309,7 +309,7 @@ command_prefixes = ["uv add"]
 """
 
 VALID_V2 = f"""
-version = 5
+version = 6
 
 [reach.source_repository]
 rationale = "repository only"
@@ -375,7 +375,7 @@ def write(tmp_path: Path, text: str) -> Path:
 def test_a_valid_v2_artifact_loads_the_control_for_every_malformation(tmp_path: Path) -> None:
     policy = load_factory_policy(write(tmp_path, VALID_V2))
 
-    assert policy.version == 5
+    assert policy.version == 6
     assert [pattern.name for pattern in policy.rows["source_repository"].known_good] == ["example"]
     assert policy.rows["live_estate"].known_good == ()
 

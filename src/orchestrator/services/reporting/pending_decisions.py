@@ -159,7 +159,8 @@ def _package_breakdowns(session: Session) -> list[dict[str, Any]]:
     that should go no further is rejected with the existing control on its own page; the revision
     then returns to this queue, because nothing records "declined" for a revision. So a revision a
     person has chosen not to break down stays here -- `wsp211-conformance-kit` revision 1 is the
-    known permanent resident while the grandfathering table ships. See
+    known permanent resident, and since ADR-0047 removed its grandfathering it declares no reach, so
+    no unit broken out of it could be admitted anyway. See
     `docs/operations/pre-work-recovery.md`, section B.
 
     `manual_ws31` (the superseded bootstrap path) and `protocol_fixture` revisions are excluded:
