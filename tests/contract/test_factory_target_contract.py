@@ -23,7 +23,7 @@ from typing import Any
 import httpx
 import pytest
 
-from orchestrator.services.factory_target import FILENAME, GitHubFactoryTargetSource
+from orchestrator.services.execution.factory_target import FILENAME, GitHubFactoryTargetSource
 from work_carrier.declaration import parse as carrier_parse
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "factory_target_declarations.json"

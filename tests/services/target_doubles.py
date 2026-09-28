@@ -6,7 +6,7 @@ at all?" is a real assertion: a term that short-circuits before the read is chea
 never reads is absent.
 """
 
-from orchestrator.services.factory_target import TargetDeclaration
+from orchestrator.services.execution.factory_target import TargetDeclaration
 
 __all__ = [
     "FakeFactoryTargetSource",

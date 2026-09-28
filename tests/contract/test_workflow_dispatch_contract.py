@@ -29,7 +29,7 @@ import yaml
 
 from orchestrator.config import Settings
 from orchestrator.persistence.models import WorkUnit
-from orchestrator.services.dispatch import _payload
+from orchestrator.services.execution.dispatch import _payload
 from pin_watcher.github import CALLER_PATH
 
 CALLER_WORKFLOW = Path("tests/fixtures/factory_runner_caller.yml")
@@ -51,7 +51,7 @@ def _unit() -> WorkUnit:
 
 
 def _dispatch_settings() -> Any:
-    from orchestrator.services.dispatch import DispatchSettings
+    from orchestrator.services.execution.dispatch import DispatchSettings
 
     return DispatchSettings(
         enabled=True,

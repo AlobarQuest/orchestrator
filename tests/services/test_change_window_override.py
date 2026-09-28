@@ -32,10 +32,11 @@ from orchestrator.factory_policy import OUTSIDE_CHANGE_WINDOW, load_factory_poli
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkUnit
 from orchestrator.reach_vocabulary import LIVE_ESTATE
-from orchestrator.services.dispatch import (
+from orchestrator.services.execution.dispatch import (
     DispatchCommand,
     dispatch_work_unit,
 )
+from orchestrator.services.execution.reach_admission import REACH_POLICY_UNREADABLE
 from orchestrator.services.landing.pr_merge import MergeCommand, land_unit_pull_request
 from orchestrator.services.landing.pr_merge_admission import (
     MERGE_CHANGE_WINDOW_NOT_DECLARED,
@@ -43,7 +44,6 @@ from orchestrator.services.landing.pr_merge_admission import (
     MERGE_POLICY_UNREADABLE,
     admission_for,
 )
-from orchestrator.services.reach_admission import REACH_POLICY_UNREADABLE
 from tests.services.change_record_doubles import approved_record_source
 from tests.services.estate_doubles import inert_source, redeploying_source
 from tests.services.target_doubles import declared_source
@@ -276,7 +276,9 @@ def test_an_override_does_not_admit_work_whose_policy_could_not_be_read(
     def unreadable(*_args: object, **_kwargs: object) -> None:
         raise DomainError("factory_policy_invalid", "the policy artifact is invalid", "correct it")
 
-    monkeypatch.setattr("orchestrator.services.reach_admission.load_factory_policy", unreadable)
+    monkeypatch.setattr(
+        "orchestrator.services.execution.reach_admission.load_factory_policy", unreadable
+    )
     github = FakeGitHubDispatcher([])
 
     record = _start(

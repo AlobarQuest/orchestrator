@@ -18,7 +18,7 @@ merge.
 
 THE REVISION CHECKED IS THE RECOMMENDATION, and that is what dispatch makes load-bearing.
 Dispatch fires the caller workflow **in the unit's own target repository**
-(`services/dispatch.py`, from `authority.constraints.target_repository`), so the revision
+(`services/execution/dispatch.py`, from `authority.constraints.target_repository`), so the revision
 that actually runs is that repository's caller pin -- never a pin this repository holds.
 
 The estate's answer to "what should every caller be pinned to" already exists:

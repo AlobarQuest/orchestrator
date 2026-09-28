@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import DispatchRecord, Event, WorkUnit
 from orchestrator.services.dead_letter import dead_letter
-from orchestrator.services.dispatch import (
+from orchestrator.services.execution.dispatch import (
     circuit_open,
     failure_signature,
     signature_failure_count,

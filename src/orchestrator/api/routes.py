@@ -151,12 +151,6 @@ from orchestrator.services.deployment_observations import (
     list_deployment_observations,
     record_deployment_observation,
 )
-from orchestrator.services.dispatch import (
-    DispatchCommand,
-    DispatchSettings,
-    GitHubActionsDispatcher,
-    dispatch_work_unit,
-)
 from orchestrator.services.event_publications import (
     EventPublicationFilters,
     export_event_publications,
@@ -177,7 +171,13 @@ from orchestrator.services.evidence_pack import (
     evidence_pack_response,
     render_evidence_pack_markdown,
 )
-from orchestrator.services.factory_target import GitHubFactoryTargetSource
+from orchestrator.services.execution.dispatch import (
+    DispatchCommand,
+    DispatchSettings,
+    GitHubActionsDispatcher,
+    dispatch_work_unit,
+)
+from orchestrator.services.execution.factory_target import GitHubFactoryTargetSource
 from orchestrator.services.follow_ups import mint_due_follow_ups
 from orchestrator.services.github_app import (
     GitHubAppCredentials,

@@ -35,12 +35,12 @@ from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Approval, WorkPackageRevision, WorkUnit
 from orchestrator.services.authority_gate import human_authority_gate
-from orchestrator.services.dispatch import dispatch_work_unit
-from orchestrator.services.packages import register_approved_unit
-from orchestrator.services.reach_admission import (
+from orchestrator.services.execution.dispatch import dispatch_work_unit
+from orchestrator.services.execution.reach_admission import (
     REACH_POLICY_UNREADABLE,
     reach_admission_refusal,
 )
+from orchestrator.services.packages import register_approved_unit
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import declared_source
 from tests.services.test_authority_known_good import uv_bump
@@ -307,7 +307,9 @@ def grandfathering(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *revisions: 
     listed = ", ".join(f'"{revision}"' for revision in revisions)
     text = VALID.replace(f'["{NOT_GRANDFATHERED}"]', f"[{listed}]")
     policy = load_factory_policy(write(tmp_path, text))
-    monkeypatch.setattr("orchestrator.services.reach_admission.load_factory_policy", lambda: policy)
+    monkeypatch.setattr(
+        "orchestrator.services.execution.reach_admission.load_factory_policy", lambda: policy
+    )
 
 
 def settle(session: Session, unit: WorkUnit, state: WorkUnitState) -> None:
@@ -433,7 +435,9 @@ def test_an_unreadable_artifact_refuses_rather_than_falling_silent(
     def unreadable(*_args: object, **_kwargs: object) -> None:
         raise DomainError("factory_policy_invalid", "the policy artifact is invalid", "correct it")
 
-    monkeypatch.setattr("orchestrator.services.reach_admission.load_factory_policy", unreadable)
+    monkeypatch.setattr(
+        "orchestrator.services.execution.reach_admission.load_factory_policy", unreadable
+    )
 
     assert reach_admission_refusal(migrated_session, revision) == REACH_POLICY_UNREADABLE
 

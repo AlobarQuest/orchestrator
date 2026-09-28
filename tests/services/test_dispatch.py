@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-import orchestrator.services.dispatch as dispatch_module
+import orchestrator.services.execution.dispatch as dispatch_module
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
@@ -22,7 +22,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.authority_gate import human_authority_gate
-from orchestrator.services.dispatch import (
+from orchestrator.services.execution.dispatch import (
     DispatchCommand,
     DispatchSettings,
     GitHubActionsDispatcher,
@@ -32,7 +32,7 @@ from orchestrator.services.dispatch import (
     failure_signature,
     signature_failure_count,
 )
-from orchestrator.services.factory_target import GitHubFactoryTargetSource
+from orchestrator.services.execution.factory_target import GitHubFactoryTargetSource
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.packages import (

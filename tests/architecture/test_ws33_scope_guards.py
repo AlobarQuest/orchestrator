@@ -173,7 +173,7 @@ MANUAL_DISPATCH_WORKFLOWS = {
 # The runtime modules that may spell this vocabulary. `api/routes.py` was listed until 2026-09-28
 # and spelled none of it; an exemption nobody needs is one nobody is watching, so it came out.
 DISPATCH_EXEMPT_PATHS = {
-    Path("src/orchestrator/services/dispatch.py"),
+    Path("src/orchestrator/services/execution/dispatch.py"),
     Path("src/orchestrator/api/schemas.py"),
     Path("src/orchestrator/config.py"),
 }
