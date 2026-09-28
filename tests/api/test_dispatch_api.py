@@ -1,4 +1,3 @@
-import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 
@@ -13,8 +12,9 @@ from orchestrator.api.dependencies import AuthConfig, get_session
 from orchestrator.config import Settings, get_settings
 from orchestrator.main import create_app
 from orchestrator.services.github_app import GitHubAppTokenError, reset_token_providers
+from tests._support.seeding import register_ready_unit as seed_ready_unit
 from tests.api.test_lifecycle_api import AUTHORITY as BASE_AUTHORITY
-from tests.api.test_lifecycle_api import HUMAN, SYSTEM
+from tests.api.test_lifecycle_api import SYSTEM
 from tests.services.estate_doubles import FakeEstateLandingSource, inert_source
 from tests.services.target_doubles import FakeFactoryTargetSource, declared_source
 
@@ -102,63 +102,17 @@ def dispatch_client(
 
 
 def register_ready_unit(db_client: TestClient, *, key: str = "dispatch-api") -> str:
-    revision = db_client.post(
-        "/api/v1/revisions",
-        headers=HUMAN,
-        json={
-            "idempotency_key": f"{key}-revision",
-            "expected_version": 0,
-            "package_id": f"{key}-package",
-            "source_repository": "AlobarQuest/orchestrator",
-            "revision": 1,
-            "content_hash": f"sha256:{key}",
-            "source_path": "intent.md",
-            "source_commit": "abc123",
-            "approved_by": "devon",
-            "approved_at": datetime(2026, 7, 8, tzinfo=UTC).isoformat(),
-            "approval_event_id": str(uuid.uuid4()),
-            "enforcement_snapshot": {"reach": ["source_repository"]},
-            "authority": AUTHORITY,
-            "registry_version": 1,
-        },
+    return seed_ready_unit(
+        db_client,
+        key,
+        authority=AUTHORITY,
+        unit_key=key,
+        title="Dispatch API",
+        outcome="Dispatch API works",
+        source_repository="AlobarQuest/orchestrator",
+        enforcement_snapshot={"reach": ["source_repository"]},
+        approved_at=datetime(2026, 7, 8, tzinfo=UTC),
     )
-    assert revision.status_code == 201
-    unit = db_client.post(
-        f"/api/v1/revisions/{revision.json()['id']}/work-units",
-        headers=HUMAN,
-        json={
-            "idempotency_key": f"{key}-unit",
-            "expected_version": 0,
-            "unit_key": key,
-            "title": "Dispatch API",
-            "outcome": "Dispatch API works",
-            "required_capability": "repo.edit",
-            "authority": AUTHORITY,
-            "max_attempts": 3,
-            "approved_by": "devon",
-            "approved_at": datetime(2026, 7, 8, tzinfo=UTC).isoformat(),
-        },
-    )
-    assert unit.status_code == 201
-    unit_id = unit.json()["id"]
-    approved = db_client.post(
-        f"/api/v1/work-units/{unit_id}/approvals",
-        headers=HUMAN,
-        json={
-            "idempotency_key": f"{key}-authority",
-            "expected_version": 1,
-            "subject_type": "authority",
-            "reason": "approved",
-        },
-    )
-    assert approved.status_code == 200
-    ready = db_client.post(
-        f"/api/v1/work-units/{unit_id}/commands/ready",
-        headers=SYSTEM,
-        json={"idempotency_key": f"{key}-ready", "expected_version": 1},
-    )
-    assert ready.status_code == 200
-    return str(unit_id)
 
 
 def test_dispatch_api_declares_route(client: TestClient) -> None:

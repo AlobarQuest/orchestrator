@@ -88,6 +88,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
+  "xdist_group(name): run every test with this name on one xdist worker, in order (registered here too, so a serial -p no:xdist run does not warn).",
   "schema_rebuild: drop and re-migrate the test schema before this test instead of sharing the session's migrated schema (for tests of the migrations themselves).",
 ]
 

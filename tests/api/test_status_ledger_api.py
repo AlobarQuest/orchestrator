@@ -1,70 +1,18 @@
-import uuid
-from datetime import UTC, datetime
-
 from fastapi.testclient import TestClient
 
-from tests.api.test_lifecycle_api import AUTHORITY, HUMAN, SYSTEM, WORKER
+from tests._support.seeding import register_ready_unit
+from tests.api.test_lifecycle_api import AUTHORITY, HUMAN, WORKER
 
 
 def _register_ready_unit(db_client: TestClient, suffix: str = "") -> str:
-    key_suffix = f"-{suffix}" if suffix else ""
-    revision = db_client.post(
-        "/api/v1/revisions",
-        headers=HUMAN,
-        json={
-            "idempotency_key": f"ledger-api-revision{key_suffix}",
-            "expected_version": 0,
-            "package_id": f"ledger-api{key_suffix}",
-            "source_repository": "owner/repo",
-            "revision": 1,
-            "content_hash": f"sha256:ledger-api{key_suffix}",
-            "source_path": "intent.md",
-            "source_commit": "abc123",
-            "approved_by": "devon",
-            "approved_at": datetime(2026, 7, 5, tzinfo=UTC).isoformat(),
-            "approval_event_id": str(uuid.uuid4()),
-            "enforcement_snapshot": {"acceptance_criteria": ["ac-1"]},
-            "authority": AUTHORITY,
-            "registry_version": 1,
-        },
+    key = f"ledger-api-{suffix}" if suffix else "ledger-api"
+    return register_ready_unit(
+        db_client,
+        key,
+        authority=AUTHORITY,
+        title=f"Ledger API unit{'-' + suffix if suffix else ''}",
+        outcome="Ledger API is inspectable",
     )
-    assert revision.status_code == 201
-    unit = db_client.post(
-        f"/api/v1/revisions/{revision.json()['id']}/work-units",
-        headers=HUMAN,
-        json={
-            "idempotency_key": f"ledger-api-unit{key_suffix}",
-            "expected_version": 0,
-            "unit_key": f"ledger-api-unit{key_suffix}",
-            "title": f"Ledger API unit{key_suffix}",
-            "outcome": "Ledger API is inspectable",
-            "required_capability": "repo.edit",
-            "authority": AUTHORITY,
-            "max_attempts": 3,
-            "approved_by": "devon",
-            "approved_at": datetime(2026, 7, 5, tzinfo=UTC).isoformat(),
-        },
-    )
-    assert unit.status_code == 201
-    unit_id = unit.json()["id"]
-    approved = db_client.post(
-        f"/api/v1/work-units/{unit_id}/approvals",
-        headers=HUMAN,
-        json={
-            "idempotency_key": f"ledger-api-authority{key_suffix}",
-            "expected_version": 1,
-            "subject_type": "authority",
-            "reason": "approved",
-        },
-    )
-    assert approved.status_code == 200
-    ready = db_client.post(
-        f"/api/v1/work-units/{unit_id}/commands/ready",
-        headers=SYSTEM,
-        json={"idempotency_key": f"ledger-api-ready{key_suffix}", "expected_version": 1},
-    )
-    assert ready.status_code == 200
-    return unit_id
 
 
 def test_status_ledger_get_returns_read_only_projection(db_client: TestClient) -> None:
