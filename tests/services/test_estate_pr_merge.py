@@ -45,6 +45,7 @@ from tests.services.estate_landing_doubles import (
     approved,
     pull_request,
 )
+from tests.services.landing_locks import hold_landing_lock
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 WORKER = ActorContext("claude-code-runner", ActorRole.WORKER)
@@ -212,6 +213,8 @@ def test_an_event_records_the_act(migrated_session: Session, migrated_engine: En
         event = reader.scalar(select(Event).where(Event.subject_id == record.id))
         assert event is not None
         assert event.action == "estate_pr_merge.merged"
+        assert event.subject_type == "estate_pr_merge"
+        assert event.idempotency_key == f"{record.idempotency_key}:event"
         assert event.payload["change_record_id"] == 52
         assert event.payload["policy_version"] == POLICY_VERSION
 
@@ -231,6 +234,8 @@ def test_only_the_system_actor_may_land(migrated_session: Session, actor: ActorC
         _land(migrated_session, gateway, actor=actor)
 
     assert error.value.code == "role_forbidden"
+    # The act's own verb, shared with the other lane's landing and not with either branch update.
+    assert error.value.message == "only the orchestrator system actor may land a pull request"
     assert gateway.merges == []
 
 
@@ -441,19 +446,19 @@ def test_the_repository_lock_actually_SERIALISES_two_landings(migrated_engine: E
     """
     from sqlalchemy.exc import OperationalError
 
-    from orchestrator.services.landing.estate_pr_merge import _lock_repository
+    from orchestrator.services.landing.lane_act import _lock_repository
 
     with Session(migrated_engine) as first, Session(migrated_engine) as second:
-        _lock_repository(first, REPOSITORY)
+        _lock_repository(first, "estate_pr_merge", REPOSITORY)
         second.execute(text("SET LOCAL lock_timeout = '1s'"))
         with pytest.raises(OperationalError):
-            _lock_repository(second, REPOSITORY)
+            _lock_repository(second, "estate_pr_merge", REPOSITORY)
         second.rollback()
 
         # THE CONTROL. Without it this passes for a lock that blocks everything, including the
         # landings into other repositories it is supposed to leave alone.
         second.execute(text("SET LOCAL lock_timeout = '1s'"))
-        _lock_repository(second, "alobarquest/brain")
+        _lock_repository(second, "estate_pr_merge", "alobarquest/brain")
         second.rollback()
         first.rollback()
 
@@ -470,10 +475,8 @@ def test_the_ACTING_PATH_takes_the_repository_lock(migrated_engine: Engine) -> N
     """
     from sqlalchemy.exc import OperationalError
 
-    from orchestrator.services.landing.estate_pr_merge import _lock_repository
-
     with Session(migrated_engine) as holder:
-        _lock_repository(holder, REPOSITORY)
+        hold_landing_lock(holder, REPOSITORY)
 
         gateway = ActingGateway()
         with Session(migrated_engine) as blocked:
@@ -484,7 +487,7 @@ def test_the_ACTING_PATH_takes_the_repository_lock(migrated_engine: Engine) -> N
         holder.rollback()
 
     with Session(migrated_engine) as holder:
-        _lock_repository(holder, "alobarquest/brain")
+        hold_landing_lock(holder, "alobarquest/brain")
         control = ActingGateway()
         with Session(migrated_engine) as free:
             free.execute(text("SET LOCAL lock_timeout = '1s'"))

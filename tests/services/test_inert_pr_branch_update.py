@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -50,6 +50,7 @@ from tests.services.inert_landing_doubles import (
     FakeInertPolicySource,
     rules,
 )
+from tests.services.landing_locks import hold_branch_update_lock, hold_landing_lock
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 WORKER = ActorContext("claude-code-runner", ActorRole.WORKER)
@@ -120,6 +121,10 @@ def test_a_branch_whose_only_obstacle_is_freshness_is_brought_up_to_date(
             reader.scalars(select(Event).where(Event.action == INERT_BRANCH_UPDATE_ACTION))
         )
     assert len(events) == 1
+    # This lane's own subject, not the other lane's, though both write the one event stream.
+    assert events[0].subject_type == "inert_pull_request"
+    # The caller's key itself: this act writes no row, so its event is the one spent key.
+    assert events[0].idempotency_key == KEY
     assert events[0].payload == {
         "repository": INERT_REPOSITORY,
         "pr_number": PR,
@@ -231,6 +236,10 @@ def test_only_the_system_actor_may_bring_a_branch_up_to_date(
         _update(migrated_session, gateway=gateway, command=_command(actor=actor))
 
     assert caught.value.code == "role_forbidden"
+    # The act's own verb, shared with the other lane's branch update and not with either landing.
+    assert caught.value.message == (
+        "only the orchestrator system actor may bring a pull request's branch up to date"
+    )
     assert gateway.branch_updates == []
 
 
@@ -604,3 +613,32 @@ def test_inside_the_bound_the_undelivered_update_still_holds(migrated_session: S
 
     assert caught.value.code == INERT_BRANCH_UPDATE_SIBLING_HOLDING
     assert gateway.branch_updates == []
+
+
+def test_the_ACTING_PATH_takes_the_branch_update_lock_the_other_lane_takes(
+    migrated_engine: Engine,
+) -> None:
+    """THE KEY IS THE RACE, NOT THE BRANCH, and the event key space both lanes write is global, so
+    both lanes' branch updates serialise on ONE key per repository. Held here as a literal, so a
+    lane that took a namespace of its own would act straight through it. The CONTROL: the landing
+    key on the same repository does not hold it."""
+    from sqlalchemy.exc import OperationalError
+
+    with Session(migrated_engine) as holder:
+        hold_branch_update_lock(holder, INERT_REPOSITORY)
+        gateway = _behind_gateway()
+        with Session(migrated_engine) as blocked:
+            blocked.execute(text("SET LOCAL lock_timeout = '250ms'"))
+            with pytest.raises(OperationalError):
+                _update(blocked, gateway=gateway)
+        assert gateway.branch_updates == [], "it must not act while another holder has the lock"
+        holder.rollback()
+
+    with Session(migrated_engine) as holder:
+        hold_landing_lock(holder, INERT_REPOSITORY)
+        control = _behind_gateway()
+        with Session(migrated_engine) as free:
+            free.execute(text("SET LOCAL lock_timeout = '250ms'"))
+            _update(free, gateway=control)
+        assert control.branch_updates == [(INERT_REPOSITORY, PR, HEAD)]
+        holder.rollback()

@@ -79,6 +79,7 @@ from tests.services.estate_landing_doubles import (
     foreign_commit,
     pull_request,
 )
+from tests.services.landing_locks import hold_landing_lock
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 WORKER = ActorContext("claude-code-runner", ActorRole.WORKER)
@@ -791,6 +792,10 @@ def test_only_the_system_actor_may_bring_a_branch_up_to_date(
         _update(migrated_session, gateway=gateway, actor=actor)
 
     assert raised.value.code == "role_forbidden"
+    # The act's own verb, shared with the other lane's branch update and not with either landing.
+    assert raised.value.message == (
+        "only the orchestrator system actor may bring a pull request's branch up to date"
+    )
     assert gateway.branch_updates == []
 
 
@@ -825,6 +830,9 @@ def test_the_act_is_recorded_as_an_event_and_is_readable_from_ANOTHER_session(
         event = reader.scalar(select(Event).where(Event.action == BRANCH_UPDATE_ACTION))
         assert event is not None
         assert event.subject_type == BRANCH_UPDATE_SUBJECT
+        assert BRANCH_UPDATE_SUBJECT == "estate_pull_request"
+        # The caller's key itself: this act writes no row, so its event is the one spent key.
+        assert event.idempotency_key == "branch-update-1"
         assert event.actor_id == "orchestrator-system"
         assert event.payload["repository"] == REPOSITORY
         assert event.payload["pr_number"] == PR
@@ -1398,6 +1406,23 @@ def test_the_repository_lock_is_actually_TAKEN_and_actually_WAITS(
             _update(migrated_session, gateway=gateway)
 
         assert gateway.branch_updates == [], "it must not act while another holder has the lock"
+        holder.rollback()
+
+
+def test_the_LANDING_lock_does_not_hold_a_branch_update(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """The two acts serialise on two keys, not one. The control for the test above: a branch
+    update is not made to wait on a landing in the same repository, so a lock that collapsed the
+    two namespaces -- and would make every freshening wait out every landing -- fails here."""
+    with Session(migrated_engine) as holder:
+        hold_landing_lock(holder, REPOSITORY)
+        migrated_session.execute(text("SET LOCAL lock_timeout = '250ms'"))
+        gateway = _behind()
+
+        _update(migrated_session, gateway=gateway)
+
+        assert gateway.branch_updates == [(REPOSITORY, PR, HEAD)]
         holder.rollback()
 
 
