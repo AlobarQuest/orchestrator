@@ -37,8 +37,8 @@ def _cli() -> None:
     ``tracker-projection-adapter project ...`` invocation fail. That invocation had a launcher
     until ADR-0040 deleted it, so this program now has no operator; the reasoning is kept because
     it is why the exit-code shape is what it is, and because a wave-exit probe still executes this
-    package's tests. It also mirrors the reconciliation-runner convention and leaves room for a
-    second command (inbound, Increment 2).
+    package's tests. It also mirrors the convention of the retired reconciliation runner and
+    leaves room for a second command (inbound, Increment 2).
     """
 
 

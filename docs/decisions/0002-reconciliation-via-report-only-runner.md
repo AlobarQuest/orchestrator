@@ -2,6 +2,8 @@
 
 **Date:** 2026-07-11
 **Status:** Accepted (decision confirmed with Devon; formalized by WS-P2.1)
+**Mechanism superseded by:** ADR-0047 (2026-09-28) — the runner never ran and was deleted; the
+invariants below and the detect pass stand.
 **Workstream:** WS-P2.1 (recovery controls + drills) — Program Phase 2, Wave 1
 **Companion:** `~/docs/software-delivery-system/2026-07-09-program-phase2-post-mvp-plan.md`; intent package `ws-p2.1-recovery-controls-drills` (AlobarQuest/intent-packages)
 

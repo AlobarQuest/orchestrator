@@ -932,7 +932,7 @@ style of that module.
   the repo-wide outbound-egress scan: any file that imports an HTTP client (`httpx`, …) must be in
   `OUTBOUND_ALLOWLIST` with a reason, because the orchestrator is push-only. A new out-of-process
   runner/adapter package that legitimately speaks HTTP (e.g. `src/tracker_projection_adapter/`,
-  like `src/reconciliation_runner/` before it) must (a) register its egress files in that
+  like the retired `src/reconciliation_runner/` before it) must (a) register its egress files in that
   allowlist and (b) ship its own isolation test asserting it imports nothing from `orchestrator.*`
   and confines its third-party deps. Both of these are whole-repo scans: only a full `make check`
   runs them, so a per-task loop can look green and still break CI. (Verified 2026-07-26, WS-P2.7 —

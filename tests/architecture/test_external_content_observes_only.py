@@ -256,11 +256,6 @@ CLASSIFICATION: dict[str, Row] = {
         frozenset({OBSERVATIONS, RELEASE_BINDING, DEPLOYMENT_OBSERVATION}),
     ),
     # ---- REPORT-ONLY WRITERS: record divergence or a projection binding, never lifecycle. ----
-    "reconciliation_runner": Row(
-        Role.REPORT_ONLY_WRITER,
-        "ADR-0002: reconciliation via a report-only runner -- observations and a detect report",
-        frozenset({OBSERVATIONS, "/api/v1/reconciliation/detect"}),
-    ),
     "tracker_projection_adapter": Row(
         Role.REPORT_ONLY_WRITER,
         "ADR-0003/ADR-0004: outbound projection binding and inbound divergence report; retired "
