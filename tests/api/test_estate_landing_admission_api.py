@@ -13,9 +13,10 @@ field must be served on a REFUSING answer as much as on a permitting one.
 """
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import Engine
@@ -89,6 +90,19 @@ def test_a_body_that_observed_no_sibling_serves_the_withheld_fact_as_false(
 
     assert body["branch_update_qualifies"] is False
     assert body["branch_update_withheld_for_sibling"] is False
+
+
+def test_a_switched_off_deployment_refuses_by_name(db_client: TestClient) -> None:
+    """ADR-0046: the lane defaults ON, and `ORCHESTRATOR_ESTATE_LANDING_ENABLED=false` is the off
+    switch. Switched off, the served answer names that refusal; left alone, it does not."""
+    assert "landing_not_enabled" not in _admission(db_client)["refusals"]
+
+    switched_off = Settings.model_validate({"estate_landing_enabled": False})
+    cast(FastAPI, db_client.app).dependency_overrides[get_settings] = lambda: switched_off
+    body = _admission(db_client)
+
+    assert body["satisfied"] is False
+    assert "landing_not_enabled" in body["refusals"]
 
 
 # --------------------------------------------------------------------------------------------

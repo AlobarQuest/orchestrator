@@ -13,7 +13,7 @@
 #   3. The unit is RECOVERABLE through a public surface: once the lease lapses, an operator
 #      reclaims it to a next owner and work resumes. The crash costs one attempt, not the unit.
 #
-# No live workflow_dispatch is fired: `dispatch_enabled` defaults to False, so the dispatch is
+# No live workflow_dispatch is fired: drill_common switches dispatch OFF, so the dispatch is
 # recorded as `skipped`/`dispatch_disabled` and the drill touches no GitHub, no shared system.
 # That is asserted below, not assumed -- an outbound call from a drill would be the bug.
 

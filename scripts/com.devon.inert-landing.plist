@@ -19,8 +19,8 @@
      to sit away from the other lanes, whose fixed times cluster at :05, :15 and :50.
 
      THE PASS IS BOUNDED BY THE ORCHESTRATOR, not by this schedule. Every term is composed there,
-     inside the transaction that acts, and the lane refuses everything until
-     ORCHESTRATOR_INERT_LANDING_ENABLED is true in production.
+     inside the transaction that acts, and ORCHESTRATOR_INERT_LANDING_ENABLED=false in
+     production refuses everything (the lane defaults on since ADR-0046).
 
      RunAtLoad is false. There is nothing to catch up on, and a pass at login would run at an
      hour nobody chose.

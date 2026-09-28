@@ -32,9 +32,10 @@ with `422 Unexpected inputs provided` otherwise.
 
 ## Runtime Controls
 
-Dispatch is fail-closed by default.
+Every other admission term fails closed; the kill switch itself defaults ON (ADR-0046).
 
-- `ORCHESTRATOR_DISPATCH_ENABLED`: global kill switch. Defaults to `false`.
+- `ORCHESTRATOR_DISPATCH_ENABLED`: global kill switch. Defaults to `true`; set it to `false`
+  to stop dispatch (refused as `dispatch_disabled`).
   Read once per process (`get_settings` is `lru_cache`d), so flipping it needs a restart.
 - `ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES`: allowlisted change classes.
 - `ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES`: allowlisted runner capabilities.

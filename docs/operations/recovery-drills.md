@@ -38,8 +38,8 @@ Each drill owns everything it touches and destroys it on the way out:
   fixtures drop and recreate; pointing a drill at it would erase a concurrent test run
 - a throwaway uvicorn bound to 127.0.0.1, with credentials generated per run
 
-They make no outbound call, touch no shared system, and merge and push nothing. `dispatch_enabled`
-is off, so no `workflow_dispatch` is fired — drill 1 asserts that rather than assuming it.
+They make no outbound call, touch no shared system, and merge and push nothing. `drill_common.sh`
+switches dispatch and both landing lanes off by name (they default on, ADR-0046), so no `workflow_dispatch` is fired — drill 1 asserts that rather than assuming it.
 `tests/architecture/test_drill_scripts.py` pins all of this, so a drill cannot quietly grow a
 reach into something it does not own.
 

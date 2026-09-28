@@ -7,7 +7,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ORCHESTRATOR_")
     database_url: str
-    dispatch_enabled: bool = False
+    # ADR-0046. The three lane switches below default ON and each environment variable is kept
+    # as an OFF switch. They defaulted off until 2026-09-28, and every one of them was already
+    # set true in production by standing decision (dispatch since 2026-08-04). A default that
+    # disagrees with the standing decision fails in the wrong direction: a deployment that loses
+    # the variable -- a recreated application, a missed env copy -- silently halts a lane nobody
+    # meant to stop, and nothing reports it. Setting the variable to false still stops the lane,
+    # fail-closed, with a named refusal; what changed is only what ABSENCE means.
+    dispatch_enabled: bool = True
     dispatch_allowed_change_classes: frozenset[str] = Field(default_factory=frozenset)
     dispatch_enabled_capabilities: frozenset[str] = Field(default_factory=frozenset)
     # The workflow-dispatch endpoint takes a workflow file NAME or numeric id, not a path.
@@ -47,10 +54,8 @@ class Settings(BaseSettings):
     # caller is ever proposed, that decision is void*. This increment ships the scheduled caller.
     # A switch against a loop is a real control where a switch against one operator is ceremony.
     #
-    # Default false, and false is a REFUSAL rather than an absence: the release carrying this code
-    # lands nothing until somebody writes an environment variable, so merging it changes the
-    # estate's behaviour by exactly nothing.
-    estate_landing_enabled: bool = False
+    # Default true since ADR-0046; `ORCHESTRATOR_ESTATE_LANDING_ENABLED=false` is the off switch.
+    estate_landing_enabled: bool = True
     # ADR-0038 part 2. Whether this deployment may land a pull request into a repository where
     # landing on the default branch changes NOTHING already serving.
     #
@@ -60,11 +65,9 @@ class Settings(BaseSettings):
     # separately acts on it. Sharing a switch would mean turning either on turns both on, which is
     # a permission nobody granted.
     #
-    # Default false, and false is a REFUSAL rather than an absence: the release carrying this code
-    # lands nothing until somebody writes an environment variable, so merging it changes the
-    # estate's behaviour by exactly nothing. It reads the policy and the credentials the estate
-    # landing already needs, so activation is this one variable.
-    inert_landing_enabled: bool = False
+    # Default true since ADR-0046; `ORCHESTRATOR_INERT_LANDING_ENABLED=false` is the off switch.
+    # It reads the policy and the credentials the estate landing already needs.
+    inert_landing_enabled: bool = True
     dispatch_failure_signature_threshold: int = 3
     dispatch_orchestrator_url: str = "https://sds.alobar.net"
     # How long a human approval gate may go unanswered before the dead-letter view reports it as

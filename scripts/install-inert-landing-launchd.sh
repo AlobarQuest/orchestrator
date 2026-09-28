@@ -4,10 +4,9 @@
 # A SEPARATE OPERATOR STEP, and deliberately not something a build session runs. Writing a
 # LaunchAgent changes what Devon's machine does when nobody is watching.
 #
-# INSTALLING IT IS NOT ENOUGH, and that is by design. The orchestrator refuses every landing until
-# `ORCHESTRATOR_INERT_LANDING_ENABLED` is true in its environment, and it does not serve this
-# lane's routes at all until the release that carries them. So this schedule is inert on its own:
-# the job runs, asks, cannot be answered, and reports. Two separate acts, in two separate systems.
+# THE ORCHESTRATOR BOUNDS EVERY PASS, not this schedule. Every term is composed there, and
+# `ORCHESTRATOR_INERT_LANDING_ENABLED=false` in its environment refuses every landing (the lane
+# defaults ON since ADR-0046; the variable is the off switch).
 #
 # THE DEAD-MAN CHECK IS A THIRD ACT. `scripts/run-inert-landing.sh` arms `sds-inert-landing`;
 # until a Healthchecks check of exactly that name exists, arming logs one line and this lane runs
@@ -55,7 +54,6 @@ launchctl bootstrap "gui/$(id -u)" "$TARGET"
 
 echo "installed $TARGET"
 echo "  runs hourly at :35 local; log: $HOME/Library/Logs/inert-landing.log"
-echo "  it lands NOTHING until ORCHESTRATOR_INERT_LANDING_ENABLED is true in production"
-echo "  and nothing at all until production serves /api/v1/inert-pr-merge-admission"
+echo "  ORCHESTRATOR_INERT_LANDING_ENABLED=false in production stops every landing"
 echo "  report now, without asking for anything: $REPO_ROOT/scripts/run-inert-landing.sh"
 launchctl list | grep "$LABEL" || true
