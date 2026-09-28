@@ -291,7 +291,8 @@ def ecosystem_of(head_ref: str) -> str | None:
 
     The second segment of `dependabot/<ecosystem>/<rest>`, which is the same fact the estate's
     landing ledger reads and the same one the update bot's own metadata action derives. Read from
-    the BRANCH rather than from the title, unlike the version delta above, and the two are not in
+    the BRANCH rather than from the title, unlike the version delta
+    (`update_type_of`, in `estate_landing_admission`), and the two are not in
     tension: the branch goes stale about the VERSION when the bot rewrites a pull request in place,
     and it cannot go stale about the ecosystem, because an update never moves between them.
 

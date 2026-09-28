@@ -44,11 +44,11 @@ MERGEABLE_CLEAN: Final = "clean"
 # all. One word, four causes; see `checks_term` for the second read that separates them.
 MERGEABLE_BLOCKED: Final = "blocked"
 
-# The platform's word for "a NON-required check is not passing". Same second read as `blocked`
-# below, deliberately: both mean some run at this head has not said yes, and which of the three
-# causes holds is a question about the RUNS rather than about which composite word arrived. Giving
-# it a cruder answer of its own would rebuild, one state over, the collapse `checks_term` already
-# paid to take apart.
+# The platform's word for "a NON-required check is not passing". Same second read as `blocked` in
+# `checks_term`, deliberately: both mean some run at this head has not said yes, and which of the
+# three causes holds is a question about the RUNS rather than about which composite word arrived.
+# Giving it a cruder answer of its own would rebuild, one state over, the collapse `checks_term`
+# already paid to take apart.
 MERGEABLE_UNSTABLE: Final = "unstable"
 
 # THE BRANCH CANNOT BE MERGED AT ALL -- git cannot compute the result. Nothing to do with checks,
@@ -114,7 +114,7 @@ LANDING_CHECKS_NOT_CLEAN: Final = "landing_checks_not_clean"
 # gate abandoned mid-run, a gate still running, and a green gate. The first three all answer
 # `blocked` and only the last answers `clean` -- so the composite is a single string covering
 # three causes with three different remedies, and reading it alone reports the wrong one for two
-# of them. Hence the second read below.
+# of them. Hence the second read in `checks_term`.
 LANDING_CHECKS_AWAITING_VERDICT: Final = "landing_checks_awaiting_verdict"
 
 # A check at this head is STILL RUNNING. Deliberately not the refusal above, because the remedy is
@@ -210,8 +210,9 @@ MERGE_REFUSED_BY_REMOTE: Final = "merge_refused_by_remote"
 NEVER_SENT: Final = "app_token_mint:"
 
 # How the remote is asked to bring a branch onto the default branch. GitHub's vocabulary, spelled
-# here because this is the one place either value crosses to it, and named rather than written
-# inline so a caller states which it means instead of repeating a literal.
+# once here for both acts, which send it through the gateway's `submit_merge` -- the one place
+# either value crosses to GitHub -- and named rather than written inline so a caller states
+# which it means instead of repeating a literal.
 #
 # SQUASH discards the branch's own commits and lands one new commit for its content. That is right
 # for a branch whose commits nobody will merge from again, which is every subject either lane has
@@ -238,7 +239,7 @@ class MergeOutcome:
 
 @dataclass(frozen=True)
 class HeadCheckRun:
-    """One workflow run at a head, as the classification below needs it.
+    """One workflow run at a head, as `checks_term`'s classification needs it.
 
     Run-level rather than job-level, and that is the right grain HERE rather than a simplification.
     The question is *what does this head currently report*, and a re-run supersedes its
@@ -253,7 +254,7 @@ class HeadCheckRun:
 
 @dataclass(frozen=True)
 class EstatePullRequest:
-    """What the remote says about the pull request, as this module needs it."""
+    """What the remote says about the pull request, as the landing terms need it."""
 
     number: int
     title: str
@@ -305,7 +306,7 @@ def gateway_failure_detail(error: EstateGatewayError) -> str:
 
 
 class EstateReadGateway(Protocol):
-    """The reads every term below needs. Injected, so the whole cascade runs with no network."""
+    """The reads every landing term needs. Injected, so the whole cascade runs with no network."""
 
     def read_pull_request(self, *, repository: str, number: int) -> EstatePullRequest: ...
 

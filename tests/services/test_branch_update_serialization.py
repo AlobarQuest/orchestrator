@@ -24,6 +24,7 @@ from orchestrator.services.landing import (
     estate_landing_admission,
     inert_landing_admission,
     interfaces,
+    terms,
 )
 from orchestrator.services.landing.branch_update_serialization import (
     _HOLDING_BESIDE_THE_CRITERION,
@@ -335,13 +336,14 @@ HOLDING = (
 def _refusal_codes() -> set[str]:
     """Every refusal-code constant the two admission modules and their shared vocabulary define.
 
-    By VALUE, and the shared vocabulary is `interfaces`, where the codes both lanes raise live.
+    By VALUE. The shared vocabulary is `interfaces`, where the codes both lanes raise live, and
+    `terms`, which defines none today and is read so that a code placed there is not missed.
 
     The value predicate excludes the platform words (`clean`, `blocked`...), the run vocabulary,
     the update-type labels, the bot login and the branch prefix, none of which is a refusal.
     """
     codes: set[str] = set()
-    for module in (interfaces, estate_landing_admission, inert_landing_admission):
+    for module in (interfaces, terms, estate_landing_admission, inert_landing_admission):
         for name, value in vars(module).items():
             if (
                 name.isupper()

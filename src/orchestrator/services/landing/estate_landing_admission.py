@@ -150,8 +150,8 @@ LANDING_CONDITIONS_UNREADABLE: Final = "landing_conditions_unreadable"
 LANDING_CHANGE_WINDOW_NOT_DECLARED: Final = "landing_change_window_not_declared"
 LANDING_POLICY_UNREADABLE: Final = "landing_policy_unreadable"
 
+# What GitHub says about the pull request itself.
 LANDING_AUTHOR_NOT_THE_UPDATE_BOT: Final = "landing_author_not_the_update_bot"
-
 
 # The version delta, parsed from the title at the moment of the act rather than frozen into the
 # record. The update bot rewrites a pull request IN PLACE when a newer version appears, so the
@@ -169,11 +169,9 @@ LANDING_AUTHOR_NOT_THE_UPDATE_BOT: Final = "landing_author_not_the_update_bot"
 LANDING_UPDATE_TYPE_UNPARSEABLE: Final = "landing_update_type_unparseable"
 LANDING_UPDATE_TYPE_NOT_PERMITTED: Final = "landing_update_type_not_permitted"
 
-
 # Whether the rollout this landing would cause is still the one the record's criteria describe.
 LANDING_ROLLOUT_UNPINNED: Final = "landing_rollout_unpinned"
 LANDING_ROLLOUT_UNREADABLE: Final = "landing_rollout_unreadable"
-
 
 # `bump <name> from <a> to <b>`, anchored at the end so a grouped bump -- whose title carries
 # trailing text naming the group -- refuses rather than being classified on whichever dependency
@@ -202,10 +200,10 @@ class EstateLandingAdmission:
     # can report what a live pass would do without anything acting -- the acting path recomposes
     # this from scratch and never trusts a caller's copy of it.
     branch_update_qualifies: bool
-    # ADR-0024. The fact the freshness-derived criterion below takes as an argument, served so the
-    # OTHER consumer -- the out-of-process reporting agent, which cannot import this module -- can
-    # ask the same question this process asks. It is a fact rather than a verdict: what to do with
-    # it differs between the two, and only the term that read the blobs knows it.
+    # ADR-0024. The fact the freshness-derived criterion (in `terms`) takes as an argument, served
+    # so the OTHER consumer -- the out-of-process reporting agent, which cannot import this module
+    # -- can ask the same question this process asks. It is a fact rather than a verdict: what to do
+    # with it differs between the two, and only the term that read the blobs knows it.
     rollout_base_matches_pin: bool
     # ADR-0045. Is the branch update withheld because another Dependabot pull request this lane has
     # already edited is queued to land? ALWAYS FALSE AS COMPOSED HERE, and deliberately so: finding
