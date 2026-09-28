@@ -204,7 +204,12 @@ def test_dispatch_exemptions_name_only_files_that_exist_and_still_need_them() ->
         *(WORKFLOW_ROOT / name for name in sorted(MANUAL_DISPATCH_WORKFLOWS)),
         *sorted(DISPATCH_EXEMPT_PATHS),
     ]
-    missing = [str(path) for path in exempt if not path.is_file()]
+    missing = [
+        str(path)
+        for path in exempt
+        if not path.is_file()
+        or not path.is_relative_to(WORKFLOW_ROOT if path.suffix == ".yml" else RUNTIME_ROOT)
+    ]
     assert not missing, f"the dispatch exemptions name files that no longer exist: {missing}"
 
     unused = [

@@ -1768,8 +1768,9 @@ style of that module.
 - **`test_ws34_scope_guards` forbids the literal `github.actions`, and the CLAUDE.md list of ws34's
   forbidden strings omits it.** The full set in
   `test_ws34_adds_no_factory_runner_or_workflow_dispatch_code` is `workflow_dispatch`,
-  `factory_runner`, **`github.actions`**, allowlisted only in `services/dispatch.py`,
-  `api/routes.py`, `api/schemas.py`, `config.py` — a different and *smaller* allowlist than ws32's.
+  `factory_runner`, **`github.actions`**, allowlisted only in `services/dispatch.py`
+  (the other three entries were unneeded and came out on 2026-09-28, #301) — a different and
+  *smaller* allowlist than ws32's.
   WS-P2.20 reddened it on a constant whose value was `"github.actions.jobs"`; reworded to
   `"github.workflow_jobs"`. This is a *substring* match on the lowercased file text, not the
   whole-token tokenizer ws32 uses, so `github.actions.jobs` matches where `deployment` would not.

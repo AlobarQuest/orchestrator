@@ -266,7 +266,11 @@ def test_ws32_file_exemptions_name_only_files_that_exist_and_still_need_them() -
         ("WS42_DISPATCH_PATHS", WS42_DISPATCH_PATHS),
         ("WS53_POST_DEPLOY_PATHS", WS53_POST_DEPLOY_PATHS),
     ):
-        missing = sorted(str(path) for path in exempt if not path.exists())
+        missing = sorted(
+            str(path)
+            for path in exempt
+            if not path.is_file() or not path.is_relative_to(SOURCE_ROOT)
+        )
         assert not missing, f"{name} names files that no longer exist: {missing}"
 
         unused = sorted(

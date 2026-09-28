@@ -47,7 +47,11 @@ def test_ws34_adds_no_factory_runner_or_workflow_dispatch_code() -> None:
 def test_ws34_dispatch_exemptions_name_only_files_that_exist_and_still_need_them() -> None:
     """The allowlist above is a filter, so a stale entry excuses nothing and reddens nothing. Each
     entry must name a file that exists and still spells the vocabulary it is excused from."""
-    missing = sorted(str(path) for path in DISPATCH_EXEMPT_PATHS if not path.is_file())
+    missing = sorted(
+        str(path)
+        for path in DISPATCH_EXEMPT_PATHS
+        if not path.is_file() or not path.is_relative_to(SOURCE_ROOT)
+    )
     assert not missing, f"the dispatch exemptions name files that no longer exist: {missing}"
 
     unused = sorted(
