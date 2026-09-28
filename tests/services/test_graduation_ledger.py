@@ -35,8 +35,8 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.authority_gate import human_authority_gate
-from orchestrator.services.graduation_ledger import (
+from orchestrator.services.intake.authority_gate import human_authority_gate
+from orchestrator.services.intake.graduation_ledger import (
     ABANDONED,
     CLEAN,
     LEDGER_WINDOW,
@@ -45,7 +45,7 @@ from orchestrator.services.graduation_ledger import (
     GraduationLedger,
     graduation_ledger,
 )
-from orchestrator.services.packages import (
+from orchestrator.services.intake.packages import (
     record_approval,
     register_approved_unit,
     register_revision,

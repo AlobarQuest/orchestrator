@@ -15,8 +15,8 @@ from orchestrator.persistence.models import (
     UnitPrBinding,
     WorkUnit,
 )
+from orchestrator.services.intake.packages import register_approved_unit, register_revision
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
-from orchestrator.services.packages import register_approved_unit, register_revision
 from orchestrator.services.verifier.evidence import current_evidence, record_adjudication
 from orchestrator.services.verifier.verifier import VerifyCommand, verify_work_unit
 from tests.fixtures.named_check import (

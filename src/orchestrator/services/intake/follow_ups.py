@@ -71,10 +71,10 @@ def validate_follow_up(value: object) -> dict[str, Any] | None:
 # source of truth also consulted by `lifecycle`'s own identity predicate and by
 # `services.verifier.verifier_criteria` / `services.verifier.evidence`) rather than defined here a
 # second time. Re-exported under these names because external code (tests included) already imports
-# them from `orchestrator.services.follow_ups`. The capability is in NEITHER the runner vocabulary
-# nor ORCHESTRATOR_ONLY_CAPABILITIES: `_mint` constructs its unit directly and never passes through
-# `validate_unit_capabilities`, so ingress has no reason to accept the marker from an author, and
-# the byte-pinned cross-repo envelope fixture stays untouched either way.
+# them from `orchestrator.services.intake.follow_ups`. The capability is in NEITHER the runner
+# vocabulary nor ORCHESTRATOR_ONLY_CAPABILITIES: `_mint` constructs its unit directly and never
+# passes through `validate_unit_capabilities`, so ingress has no reason to accept the marker from an
+# author, and the byte-pinned cross-repo envelope fixture stays untouched either way.
 
 # Why a revision was passed over. Individual constants rather than a collection: a module-level
 # tuple of strings used in a membership test becomes a discovered subject of the cross-boundary

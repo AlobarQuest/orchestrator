@@ -167,8 +167,8 @@ PAYLOAD_DIGEST_KEYS = frozenset({"artifact_digest", "observed_artifact_digest"})
 
 WORK_UNIT_CONSTRUCTORS = frozenset(
     {
-        "services/packages.py",
-        "services/follow_ups.py",
+        "services/intake/packages.py",
+        "services/intake/follow_ups.py",
         "services/release/deployment_observations.py",
     }
 )

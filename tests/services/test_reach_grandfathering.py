@@ -34,13 +34,13 @@ from orchestrator.factory_policy import (
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Approval, WorkPackageRevision, WorkUnit
-from orchestrator.services.authority_gate import human_authority_gate
 from orchestrator.services.execution.dispatch import dispatch_work_unit
 from orchestrator.services.execution.reach_admission import (
     REACH_POLICY_UNREADABLE,
     reach_admission_refusal,
 )
-from orchestrator.services.packages import register_approved_unit
+from orchestrator.services.intake.authority_gate import human_authority_gate
+from orchestrator.services.intake.packages import register_approved_unit
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import declared_source
 from tests.services.test_authority_known_good import uv_bump

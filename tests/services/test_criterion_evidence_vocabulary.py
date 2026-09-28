@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.persistence.models import Evidence, PackageAcceptanceCriterion
+from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.services.lifecycle import POST_DEPLOY_AC_IDS
-from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.verifier.verifier_evaluators import (
     DETERMINISTIC_PERMITTED_TYPES,
     DETERMINISTIC_TYPES,

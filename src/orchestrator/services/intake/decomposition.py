@@ -30,7 +30,7 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
     WorkPackageRevision,
 )
-from orchestrator.services.packages import (
+from orchestrator.services.intake.packages import (
     DependencySpec,
     register_approved_unit,
     register_dependency_with_event,

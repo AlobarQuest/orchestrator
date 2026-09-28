@@ -11,8 +11,8 @@ from orchestrator.persistence.models import (
     DecompositionProposalUnit,
     WorkPackageRevision,
 )
-from orchestrator.services.decomposition import submit_decomposition_proposal
-from orchestrator.services.package_intake import register_package_intake
+from orchestrator.services.intake.decomposition import submit_decomposition_proposal
+from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.web import _decomposition_proposal_projection
 from tests.api.test_lifecycle_api import HUMAN
 from tests.services.test_decomposition import package_ac_ids, proposal_command, worker_actor

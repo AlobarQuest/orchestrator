@@ -17,8 +17,8 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.claims import LeaseGrant, claim_unit
+from orchestrator.services.intake.packages import register_approved_unit, register_revision
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
-from orchestrator.services.packages import register_approved_unit, register_revision
 from orchestrator.services.verifier.evidence import append_evidence
 from orchestrator.services.verifier.github_checks import (
     CheckObservation,

@@ -7,17 +7,17 @@ import pytest
 from sqlalchemy import Engine, event, select, text
 from sqlalchemy.orm import Session
 
-import orchestrator.services.package_intake as package_intake
+import orchestrator.services.intake.package_intake as package_intake
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event, PackageAcceptanceCriterion, WorkPackageRevision
-from orchestrator.services.package_intake import (
+from orchestrator.services.intake.package_intake import (
     AcceptanceCriterionProjection,
     PackageIntakeCommand,
     register_package_intake,
 )
-from orchestrator.services.packages import register_approved_unit, register_revision
+from orchestrator.services.intake.packages import register_approved_unit, register_revision
 
 AUTHORITY = AuthorityEnvelope(
     capabilities={"repo.edit": "allowed"},

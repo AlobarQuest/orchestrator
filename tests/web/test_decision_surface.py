@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
-from orchestrator.services.package_intake import register_package_intake
+from orchestrator.services.intake.package_intake import register_package_intake
 from tests.api.test_lifecycle_api import HUMAN
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
 

@@ -25,8 +25,8 @@ from orchestrator.persistence.models import (
 from orchestrator.services.budget import is_over_budget
 from orchestrator.services.claim_release import release_claim
 from orchestrator.services.context import PreflightCommand, require_claim_context
+from orchestrator.services.intake.packages import evaluate_readiness
 from orchestrator.services.lease_policy import claim_lease
-from orchestrator.services.packages import evaluate_readiness
 
 # PostgreSQL two-key advisory locks share one database-wide namespace. 0x57435243 is the
 # dedicated "WCRC" namespace for work-claim recovery commands.

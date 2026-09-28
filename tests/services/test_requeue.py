@@ -13,7 +13,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkUnit
 from orchestrator.services.claims import claim_unit, requeue_unit
-from orchestrator.services.packages import DependencySpec
+from orchestrator.services.intake.packages import DependencySpec
 from orchestrator.services.reporting.dead_letter import dead_letter
 from tests.services.test_claims import worker
 from tests.services.test_dependencies import register_unit

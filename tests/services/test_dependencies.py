@@ -11,7 +11,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Approval, Dependency, WorkUnit
-from orchestrator.services.packages import (
+from orchestrator.services.intake.packages import (
     DependencySpec,
     evaluate_readiness,
     register_approved_unit,

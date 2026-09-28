@@ -38,7 +38,12 @@ from orchestrator.kernel.runner_authority import (
     runner_command_authority_violation,
 )
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
-from orchestrator.services.decomposition import (
+from orchestrator.services.execution.dispatch import (
+    DispatchCommand,
+    DispatchSettings,
+    dispatch_work_unit,
+)
+from orchestrator.services.intake.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
     ProposedUnit,
@@ -47,15 +52,10 @@ from orchestrator.services.decomposition import (
     approve_decomposition_proposal,
     submit_decomposition_proposal,
 )
-from orchestrator.services.execution.dispatch import (
-    DispatchCommand,
-    DispatchSettings,
-    dispatch_work_unit,
-)
+from orchestrator.services.intake.package_intake import register_package_intake
+from orchestrator.services.intake.packages import record_approval
+from orchestrator.services.intake.runner_brief import runner_brief
 from orchestrator.services.lifecycle import TransitionCommand, transition_unit
-from orchestrator.services.package_intake import register_package_intake
-from orchestrator.services.packages import record_approval
-from orchestrator.services.runner_brief import runner_brief
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import declared_source
 from tests.services.test_decomposition import package_ac_ids

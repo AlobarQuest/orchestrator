@@ -34,8 +34,8 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.authority_gate import human_authority_gate
 from orchestrator.services.execution_stall import stalled_executions
+from orchestrator.services.intake.authority_gate import human_authority_gate
 from orchestrator.services.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.reconciliation.reconciliation import open_conditions
 from orchestrator.services.verifier.evidence import current_adjudication, current_evidence

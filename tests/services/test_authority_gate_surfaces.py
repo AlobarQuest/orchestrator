@@ -15,8 +15,8 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.persistence.models import WorkPackageRevision
 from orchestrator.persistence.repositories import PackageRepository
-from orchestrator.services.authority_gate import POLICY_UNREADABLE, human_authority_gate
-from orchestrator.services.packages import evaluate_readiness
+from orchestrator.services.intake.authority_gate import POLICY_UNREADABLE, human_authority_gate
+from orchestrator.services.intake.packages import evaluate_readiness
 from orchestrator.services.reporting.pending_decisions import pending_decisions
 from tests.services.test_dispatch import recognised_unit
 
@@ -97,7 +97,9 @@ def test_an_unreadable_artifact_asks(migrated_session: Session, monkeypatch: pyt
     def unreadable(*_args: object, **_kwargs: object) -> None:
         raise DomainError("factory_policy_invalid", "the policy artifact is invalid", "correct it")
 
-    monkeypatch.setattr("orchestrator.services.authority_gate.load_factory_policy", unreadable)
+    monkeypatch.setattr(
+        "orchestrator.services.intake.authority_gate.load_factory_policy", unreadable
+    )
     gate = human_authority_gate(unit, revision)
 
     assert gate.refusals == (POLICY_UNREADABLE,)

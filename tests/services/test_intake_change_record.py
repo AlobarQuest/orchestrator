@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event, WorkPackageRevision
-from orchestrator.services.package_intake import _command_identity, register_package_intake
-from orchestrator.services.packages import register_approved_unit, register_revision
+from orchestrator.services.intake.package_intake import _command_identity, register_package_intake
+from orchestrator.services.intake.packages import register_approved_unit, register_revision
 from orchestrator.services.reporting.traceability import TraceabilityAnchor, traceability_response
 from tests.services.test_package_intake import AUTHORITY, human_actor, intake_command
 
