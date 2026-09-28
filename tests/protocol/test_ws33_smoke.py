@@ -669,7 +669,6 @@ def test_ws33_end_to_end_protocol_smoke_suite(
 
     revision_unit_id = _approved_decomposition_unit(
         db_client,
-        monkeypatch,
         suffix="revision",
         max_attempts=3,
     )
@@ -735,7 +734,6 @@ def test_ws33_end_to_end_protocol_smoke_suite(
 
     retry_unit_id = _approved_decomposition_unit(
         db_client,
-        monkeypatch,
         suffix="retry",
         max_attempts=1,
     )
@@ -793,7 +791,6 @@ def test_ws33_end_to_end_protocol_smoke_suite(
 
     reclaim_unit_id = _approved_decomposition_unit(
         db_client,
-        monkeypatch,
         suffix="reclaim",
         max_attempts=3,
     )
@@ -879,7 +876,6 @@ def test_ws33_end_to_end_protocol_smoke_suite(
 
 def _approved_decomposition_unit(
     db_client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
     *,
     suffix: str,
     max_attempts: int,
