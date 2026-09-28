@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import WorkUnit
-from orchestrator.services.pr_bindings import upsert_pr_binding
+from orchestrator.services.lifecycle.pr_bindings import upsert_pr_binding
 from orchestrator.services.reconciliation.in_flight import in_flight_snapshot
 from orchestrator.services.reconciliation.reconciliation_detection import (
     detect_reconciliation_conditions,

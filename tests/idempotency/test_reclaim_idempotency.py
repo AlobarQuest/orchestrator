@@ -18,7 +18,7 @@ from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Event, WorkUnit
-from orchestrator.services.claims import (
+from orchestrator.services.lifecycle.claims import (
     LeaseGrant,
     claim_unit,
     reclaim_expired_claim,

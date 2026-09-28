@@ -9,7 +9,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Observation, ReconciliationCondition, WorkUnit
 from orchestrator.services.intake.packages import record_approval, register_approved_unit
-from orchestrator.services.pr_bindings import upsert_pr_binding
+from orchestrator.services.lifecycle.pr_bindings import upsert_pr_binding
 from orchestrator.services.reconciliation.reconciliation import (
     ConditionCommand,
     ConditionOutcome,

@@ -18,7 +18,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.claims import LeaseGrant, claim_unit
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
 from orchestrator.services.release.deployment_observations import record_deployment_observation
 from orchestrator.services.release.event_publications import (
     deterministic_factory_event_id,

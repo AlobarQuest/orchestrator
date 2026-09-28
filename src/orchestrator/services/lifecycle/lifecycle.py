@@ -34,7 +34,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.claim_release import release_claim
+from orchestrator.services.lifecycle.claim_release import release_claim
 
 # The single source of truth for the generated post-deploy AC ids: this module PRODUCES them
 # (required_ac_ids for a generated post-deploy unit); `services.verifier.evidence` imports this same
@@ -396,7 +396,7 @@ def _execution_context_snapshot_id(
             raise DomainError("context_missing_required", "standing context is incomplete", None)
         return None
 
-    from orchestrator.services.context import PreflightCommand, require_execution_context
+    from orchestrator.services.lifecycle.context import PreflightCommand, require_execution_context
 
     snapshot = require_execution_context(
         session,

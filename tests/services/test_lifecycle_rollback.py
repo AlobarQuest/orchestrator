@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, WorkUnit
-from orchestrator.services.claims import LeaseGrant, claim_unit
-from orchestrator.services.lifecycle import transition_unit
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
+from orchestrator.services.lifecycle.lifecycle import transition_unit
 from tests.services.test_lifecycle_events import command_for, worker_command
 
 

@@ -22,20 +22,20 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.budget import is_over_budget
-from orchestrator.services.claim_release import release_claim
-from orchestrator.services.context import PreflightCommand, require_claim_context
 from orchestrator.services.intake.packages import evaluate_readiness
-from orchestrator.services.lease_policy import claim_lease
+from orchestrator.services.lifecycle.budget import is_over_budget
+from orchestrator.services.lifecycle.claim_release import release_claim
+from orchestrator.services.lifecycle.context import PreflightCommand, require_claim_context
+from orchestrator.services.lifecycle.lease_policy import claim_lease
 
 # PostgreSQL two-key advisory locks share one database-wide namespace. 0x57435243 is the
 # dedicated "WCRC" namespace for work-claim recovery commands.
 EXPIRED_CLAIM_RECOVERY_LOCK_NAMESPACE = 0x57435243
 
 # The states in which a unit still holds the claim it was granted. One definition, because the
-# three functions below and the stall report (`services.execution_stall`) all have to agree about
-# what "still held" means, and a report keyed on a narrower set than the write path enforces is
-# a vocabulary divergence in the place where it would be silent.
+# three functions below and the stall report (`services.lifecycle.execution_stall`) all have to
+# agree about what "still held" means, and a report keyed on a narrower set than the write path
+# enforces is a vocabulary divergence in the place where it would be silent.
 CLAIM_HOLDING_STATES = frozenset({WorkUnitState.CLAIMED, WorkUnitState.EXECUTING})
 
 

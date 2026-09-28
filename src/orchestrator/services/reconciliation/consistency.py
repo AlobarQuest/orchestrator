@@ -27,7 +27,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import required_ac_ids
+from orchestrator.services.lifecycle.lifecycle import required_ac_ids
 
 # Exactly one unsuperseded head per (revision, unit, ac) -- for evidence that participates in
 # supersession. `release_artifacts` writes one row per binding under the constant ac_id

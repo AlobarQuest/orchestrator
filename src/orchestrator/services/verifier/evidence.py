@@ -24,8 +24,8 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.claim_release import release_claim
-from orchestrator.services.claims import validate_active_claim
+from orchestrator.services.lifecycle.claim_release import release_claim
+from orchestrator.services.lifecycle.claims import validate_active_claim
 
 # POST_DEPLOY_AC_IDS is the SINGLE source of truth in `lifecycle` (the producer that generates
 # these ACs). This module is the consumer that gates public adjudication against them, so it
@@ -33,7 +33,7 @@ from orchestrator.services.claims import validate_active_claim
 # newly-generated post-deploy AC be publicly adjudicated (the invariant this guards).
 # FOLLOW_UP_AC_ID is the same producer/consumer split, pointing the opposite way: it must be
 # ACCEPTED, not refused.
-from orchestrator.services.lifecycle import (
+from orchestrator.services.lifecycle.lifecycle import (
     FOLLOW_UP_AC_ID,
     FOLLOW_UP_EVIDENCE_TYPE,
     POST_DEPLOY_AC_IDS,

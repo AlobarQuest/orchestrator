@@ -121,16 +121,6 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.claims import (
-    authorize_retry,
-    claim_unit,
-    reclaim_expired_claim,
-    recover_expired_claim,
-    renew_claim,
-    requeue_unit,
-)
-from orchestrator.services.context import PreflightCommand, record_preflight
-from orchestrator.services.cost_actuals import record_cost_actuals
 from orchestrator.services.execution.dispatch import (
     DispatchCommand,
     DispatchSettings,
@@ -142,11 +132,6 @@ from orchestrator.services.github_app import (
     GitHubAppCredentials,
     github_app_credentials,
     token_provider_for,
-)
-from orchestrator.services.infra_links import (
-    InfraLaneLinkCommand,
-    list_infra_lane_links,
-    record_infra_lane_link,
 )
 from orchestrator.services.intake.change_record_work import work_for_change_record
 from orchestrator.services.intake.decomposition import (
@@ -223,13 +208,28 @@ from orchestrator.services.landing.pr_merge import (
     land_unit_pull_request,
 )
 from orchestrator.services.landing.pr_merge_admission import pr_merge_admission
-from orchestrator.services.lifecycle import (
+from orchestrator.services.lifecycle.claims import (
+    authorize_retry,
+    claim_unit,
+    reclaim_expired_claim,
+    recover_expired_claim,
+    renew_claim,
+    requeue_unit,
+)
+from orchestrator.services.lifecycle.context import PreflightCommand, record_preflight
+from orchestrator.services.lifecycle.cost_actuals import record_cost_actuals
+from orchestrator.services.lifecycle.infra_links import (
+    InfraLaneLinkCommand,
+    list_infra_lane_links,
+    record_infra_lane_link,
+)
+from orchestrator.services.lifecycle.lifecycle import (
     TransitionCommand,
     require_operator_actor,
     transition_unit,
     unit_history,
 )
-from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
+from orchestrator.services.lifecycle.pr_bindings import arm_verification_head, upsert_pr_binding
 from orchestrator.services.reconciliation.consistency import check_consistency
 from orchestrator.services.reconciliation.in_flight import in_flight_snapshot
 from orchestrator.services.reconciliation.reconciliation_detection import (

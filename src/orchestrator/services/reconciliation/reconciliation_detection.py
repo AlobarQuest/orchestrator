@@ -28,7 +28,7 @@ from orchestrator.persistence.models import (
     UnitTrackerBinding,
     WorkUnit,
 )
-from orchestrator.services.pr_bindings import get_pr_binding
+from orchestrator.services.lifecycle.pr_bindings import get_pr_binding
 from orchestrator.services.reconciliation.reconciliation import (
     ConditionCommand,
     ConditionOutcome,

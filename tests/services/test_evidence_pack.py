@@ -11,7 +11,7 @@ from orchestrator.persistence.models import (
     EventPublication,
     Evidence,
 )
-from orchestrator.services.budget import BREACH_ACTION
+from orchestrator.services.lifecycle.budget import BREACH_ACTION
 from orchestrator.services.reporting.evidence_pack import (
     evidence_pack_projection,
     evidence_pack_response,

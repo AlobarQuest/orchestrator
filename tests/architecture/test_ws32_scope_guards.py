@@ -40,7 +40,7 @@ WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/reconciliation/in_flight.py"),
     Path("src/orchestrator/services/release/event_publications.py"),
     Path("src/orchestrator/services/verifier/evidence.py"),
-    Path("src/orchestrator/services/lifecycle.py"),
+    Path("src/orchestrator/services/lifecycle/lifecycle.py"),
     Path("src/orchestrator/services/verifier/verifier_criteria.py"),
     Path("src/orchestrator/services/verifier/verifier_evaluators.py"),
 }

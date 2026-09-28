@@ -59,7 +59,7 @@ style of that module.
 - Generic authority approvals satisfy work-unit readiness only. Authority-expanding
   standing-context updates require a named human approval bound to the exact
   standing-context fingerprint — enforced by `classify_context_update()`
-  (`kernel/context.py`) via `services/context.py::_effective_decision`.
+  (`kernel/context.py`) via `services/lifecycle/context.py::_effective_decision`.
   **That is the STANDING-CONTEXT check, and it is not the whole story.** It compares
   capability *sets* and authority-profile *rank*. It does **not** check capability
   *levels* or *budgets*. **Work-unit envelope expansion — including budget expansion —
@@ -299,17 +299,17 @@ style of that module.
   would read "in fact it is called" means the predicate is broken; fix the predicate.
 
 - **`work_units.version` has exactly THREE writers, and recording an adjudication is not one of
-  them.** They are `services/lifecycle.py::_perform_transition`, `services/claims.py::_transition`
-  and `services/verifier/evidence.py::_system_fail_without_new_attempt` — every one a state
-  transition. Consequently a submission's single `expected_version`, checked once against the locked
-  unit row, stays valid for every criterion in it: it guards against another actor **transitioning
-  the unit** between render and submit, not against a sibling criterion. Any note claiming that the
-  old per-criterion adjudication forms staleness-broke each other is **wrong**; the real WS-P2.13
-  AC-002 defects were the missing atomicity (a refusal on the third criterion left the first two
-  committed — fixed in WS-P2.17 Increment 3) and a `<select>` whose first option defaulted to
-  `passed`. Note the Increment 3 docstring on `record_adjudications` says "the only two writers",
-  omitting `_perform_transition`; the count is three. (Verified 2026-07-31 by grep, WS-P2.17
-  Inc 4.)
+  them.** They are `services/lifecycle/lifecycle.py::_perform_transition`,
+  `services/lifecycle/claims.py::_transition` and
+  `services/verifier/evidence.py::_system_fail_without_new_attempt` — every one a state transition.
+  Consequently a submission's single `expected_version`, checked once against the locked unit row,
+  stays valid for every criterion in it: it guards against another actor **transitioning the unit**
+  between render and submit, not against a sibling criterion. Any note claiming that the old
+  per-criterion adjudication forms staleness-broke each other is **wrong**; the real WS-P2.13 AC-002
+  defects were the missing atomicity (a refusal on the third criterion left the first two committed
+  — fixed in WS-P2.17 Increment 3) and a `<select>` whose first option defaulted to `passed`. Note
+  the Increment 3 docstring on `record_adjudications` says "the only two writers", omitting
+  `_perform_transition`; the count is three. (Verified 2026-07-31 by grep, WS-P2.17 Inc 4.)
 
 - **`work_units.updated_at` cannot be back-dated — a DB trigger rewrites it on EVERY update.**
   `set_work_unit_updated_at` (migration 0001) sets `NEW.updated_at = now()` on any UPDATE, so a
@@ -337,9 +337,9 @@ style of that module.
 - **Ordinary terminal lifecycle commands release active claims in the same transaction.** A
   WORKER transition to `FAILED` uses `work_unit_failed`; a HUMAN transition to `CANCELLED` releases
   the latest unreleased claim, when present, with `work_unit_cancelled`. Both paths go through the
-  sole `services.claim_release.release_claim` primitive and reuse the transition timestamp. Keep
-  idempotent replay before release and preserve the unit-then-claim row-lock order, or retries can
-  mutate terminal metadata and concurrent lifecycle operations can deadlock.
+  sole `services.lifecycle.claim_release.release_claim` primitive and reuse the transition
+  timestamp. Keep idempotent replay before release and preserve the unit-then-claim row-lock order,
+  or retries can mutate terminal metadata and concurrent lifecycle operations can deadlock.
 
 - **This system had THREE vocabulary mismatches, and at the time nothing checked any of them.**
   Wherever two vocabularies must agree, assume they don't until you have grepped both sides. All
@@ -415,8 +415,8 @@ style of that module.
        `conformance` only); the orchestrator will accept **any string** as a capability." All three
        clauses are now false. `github.pr.create` is a member of the capability vocabulary
        (`capability_vocabulary.py`) and IS read as a permission —
-       `services/lifecycle.py` gates PR-opening on `envelope.level_for("github.pr.create") ==
-       "allowed"`. Names ARE validated at ingress: `validate_unit_capabilities`
+       `services/lifecycle/lifecycle.py` gates PR-opening on `envelope.level_for("github.pr.create")
+       == "allowed"`. Names ARE validated at ingress: `validate_unit_capabilities`
        (`capability_vocabulary.py`) is called from both `services/intake/packages.py` and
        `services/intake/decomposition.py`, so an unknown capability string is a named error at the
        gate. ADR-0001 still defers the package-authority → unit-capability projection (`pr_open` →
@@ -632,15 +632,15 @@ style of that module.
 
 - **`claim_unit` is NOT the only place a unit is granted an attempt — `reclaim_expired_claim`
   bypasses it.** `reclaim_expired_claim` → `_perform_reclaim` → `_acquire_reclaimed_claim`
-  (`services/claims.py`) transitions an expired unit and grants a fresh CLAIMED attempt **without
-  ever calling `claim_unit`**. So any per-attempt gate placed only in `claim_unit` (e.g. a budget
-  cap) is silently bypassed when a lease expires. The choke point for "may this unit get another
-  attempt?" is the shared `_readiness_eligibility_error` (`claims.py`), used by BOTH reclaim and
-  requeue — it is where `attempts_exhausted` lives and where WS-P2.4 Inc 2 added the `is_over_budget`
-  gate. Any future "can this unit run again" rule belongs there, not (only) in `claim_unit`.
-  (Verified 2026-07-25, WS-P2.4 Inc 2 — the final whole-branch review caught an over-budget unit
-  running past its cap via the reclaim path; per-task reviews and the plan's own claim-only decision
-  missed it.)
+  (`services/lifecycle/claims.py`) transitions an expired unit and grants a fresh CLAIMED attempt
+  **without ever calling `claim_unit`**. So any per-attempt gate placed only in `claim_unit` (e.g. a
+  budget cap) is silently bypassed when a lease expires. The choke point for "may this unit get
+  another attempt?" is the shared `_readiness_eligibility_error` (`claims.py`), used by BOTH reclaim
+  and requeue — it is where `attempts_exhausted` lives and where WS-P2.4 Inc 2 added the
+  `is_over_budget` gate. Any future "can this unit run again" rule belongs there, not (only) in
+  `claim_unit`. (Verified 2026-07-25, WS-P2.4 Inc 2 — the final whole-branch review caught an
+  over-budget unit running past its cap via the reclaim path; per-task reviews and the plan's own
+  claim-only decision missed it.)
 
 - **The evidence-pack `/api` is authentication-only (any authenticated actor reads any unit's full
   pack); the markdown relayed onto a possibly-public PR comment is deliberately REDACTED, the JSON
@@ -1505,28 +1505,30 @@ style of that module.
   twenty-one.
 
 - **A lapsed lease does not merely permit a second claimant — it stops the FIRST worker recording
-  what it already did.** `validate_active_claim` (`services/claims.py`) raises `claim_not_active`
-  when `claim.lease_expires_at <= now`, and it is shared by evidence recording and PR-binding
-  reporting. So shortening a lease is a correctness hazard, not a scheduling preference: a run that
-  outlives its hold cannot submit its own evidence, and the natural first design — *give the fastest
-  reach the shortest hold* — is the one that breaks runs. This is why the WS-P2.18 Increment 6 policy
-  lease may only ever **lengthen** (`kernel/leases.py` bounds it strictly above `DEFAULT_LEASE` and
-  at or below `LEASE_CEILING`) and why a reach set composes by **maximum**, the opposite arrangement
-  from the change window, which composes by intersection. Both compose toward more restraint;
-  restraint points the other way for a hold than it does for an hour. Neither the WS-P2.18 spec nor
-  the Increment 6 handoff mentioned this, and without it the direction looks arbitrary. See ADR-0013.
+  what it already did.** `validate_active_claim` (`services/lifecycle/claims.py`) raises
+  `claim_not_active` when `claim.lease_expires_at <= now`, and it is shared by evidence recording
+  and PR-binding reporting. So shortening a lease is a correctness hazard, not a scheduling
+  preference: a run that outlives its hold cannot submit its own evidence, and the natural first
+  design — *give the fastest reach the shortest hold* — is the one that breaks runs. This is why the
+  WS-P2.18 Increment 6 policy lease may only ever **lengthen** (`kernel/leases.py` bounds it
+  strictly above `DEFAULT_LEASE` and at or below `LEASE_CEILING`) and why a reach set composes by
+  **maximum**, the opposite arrangement from the change window, which composes by intersection. Both
+  compose toward more restraint; restraint points the other way for a hold than it does for an hour.
+  Neither the WS-P2.18 spec nor the Increment 6 handoff mentioned this, and without it the direction
+  looks arbitrary. See ADR-0013.
 
 - **`work_units`' lease has THREE writers, not the two the reclaim trap suggests.**
   `claim_unit`, `renew_claim` and `reclaim_expired_claim` → `_perform_reclaim` →
-  `_acquire_reclaimed_claim` (`services/claims.py`), all now reading
-  `services/lease_policy.py::claim_lease`. The documented trap is the third — reclaim never calls
-  `claim_unit`, so a per-claim rule placed only there is ignored on exactly the path a lapsed lease
-  leads to. **`renew_claim` is the one that gets forgotten after that**, because it extends rather
-  than grants: a renewal that reset the hold to the kernel default would silently undo a considered
-  one, on the path a long-running attempt takes by definition. Any future per-claim rule must name
-  all three. Separately, `RENEWAL_CADENCE` (a 5-minute constant in `kernel/leases.py` since WS-3.1)
-  had **no reader in either repository** and was deleted in Increment 6 — factory-runner renews only
-  on an explicit `local-heavy-renew` command, so nothing renews on a cadence at all.
+  `_acquire_reclaimed_claim` (`services/lifecycle/claims.py`), all now reading
+  `services/lifecycle/lease_policy.py::claim_lease`. The documented trap is the third — reclaim
+  never calls `claim_unit`, so a per-claim rule placed only there is ignored on exactly the path a
+  lapsed lease leads to. **`renew_claim` is the one that gets forgotten after that**, because it
+  extends rather than grants: a renewal that reset the hold to the kernel default would silently
+  undo a considered one, on the path a long-running attempt takes by definition. Any future
+  per-claim rule must name all three. Separately, `RENEWAL_CADENCE` (a 5-minute constant in
+  `kernel/leases.py` since WS-3.1) had **no reader in either repository** and was deleted in
+  Increment 6 — factory-runner renews only on an explicit `local-heavy-renew` command, so nothing
+  renews on a cadence at all.
 
 - **Policy 4 (self-update) is HALF SHIPPED and the shipped half is easy to re-litigate.** WS-P2.18
   Increment 5 already answered *when* the orchestrator may update itself: `live_estate`'s
@@ -1660,7 +1662,7 @@ style of that module.
 
 - **A claim is NOT released when a unit COMPLETES — only on failure and cancellation — so
   "unreleased claim" carries no information about whether anything is wrong.** `release_claim`
-  (`services/lifecycle.py`) is called with `terminal_reason="work_unit_failed"` and
+  (`services/lifecycle/lifecycle.py`) is called with `terminal_reason="work_unit_failed"` and
   `"work_unit_cancelled"` and for nothing else; success leaves the row unreleased. Verified in
   production 2026-08-02: **29 of 43 units carry an unreleased claim whose hold lapsed days ago, every
   one of them on a finished unit.** WS-P2.19 found this by asking production before building, and it
@@ -1835,10 +1837,10 @@ style of that module.
   bullet before relying on it.]** **A VERIFIER credential could drive a unit to COMPLETED with ZERO
   evidence rows — the completion
   guard reads adjudications and structurally cannot read evidence.** `_completion_satisfied`
-  (`services/lifecycle.py:473`) takes `(required_ac_ids, adjudications, occurred_at)`: there is no
-  evidence parameter, so completion is decided on adjudication rows alone. `_authorize_outcome`'s
-  VERIFIER branch (`services/verifier/evidence.py:966`) is `allowed = outcome in
-  NON_WAIVER_OUTCOMES` with no evidence requirement, and `_validate_adjudication_fields` demands
+  (`services/lifecycle/lifecycle.py:473`) takes `(required_ac_ids, adjudications, occurred_at)`:
+  there is no evidence parameter, so completion is decided on adjudication rows alone.
+  `_authorize_outcome`'s VERIFIER branch (`services/verifier/evidence.py:966`) is `allowed = outcome
+  in NON_WAIVER_OUTCOMES` with no evidence requirement, and `_validate_adjudication_fields` demands
   evidence only for `waived` (a `failed_evidence_id`) — `passed` needs a rationale string, and
   `evidence_id` is validated only when non-null. `(SUBMITTED→COMPLETED)` is a verifier-held edge. So
   POSTing `passed` with prose on each required AC completes the unit, and **everything WS-P2.20
@@ -1872,8 +1874,8 @@ style of that module.
   value on a different column reached from a different API field — and the name collision is what
   makes it invisible.** The envelope budget is parsed (`kernel/authority.py:105`), contributes to
   the authority fingerprint the human approves, and **has no enforcement reader**: the only
-  `.budgets.` access in `services/budget.py` is `max_llm_calls`. What actually bounds attempts is
-  the `work_units.max_attempts` column (`persistence/models.py:235`, defaulted from
+  `.budgets.` access in `services/lifecycle/budget.py` is `max_llm_calls`. What actually bounds
+  attempts is the `work_units.max_attempts` column (`persistence/models.py:235`, defaulted from
   `DEFAULT_MAX_ATTEMPTS` via `services/intake/packages.py`), checked at `claims.py:79`, `:552` and
   `:590`, and raised by `authorize_retry` with no reference to the envelope at all. Nothing ever
   compares the two. **CORRECTS an earlier claim of HQ's** — a WS-P2.31 handoff asserted
@@ -2480,17 +2482,17 @@ style of that module.
   validation, and an unmatched route yields `None`, which is not in the allowlist, so the unknown
   case refuses. Reads are deliberately unconfined. **Confining it by the ~20 service-level
   allowlists instead would have failed**, because four POST routes carry no role check at all —
-  `work-units/{id}/preflight` and the three `/event-publications/*` — and `services/context.py`
-  and `services/release/event_publications.py` contain **zero** `ActorRole` references between them.
-  "The service layer gates writes" is not a property the service layer provides. Those four are a
-  live defect for every other role (backlogged); OBSERVER is simply not exposed to them. **Proven
-  against production 2026-08-07, not just in tests:** `commands/ready`, `dispatch`, `verify`,
-  `preflight`, `event-publications/queue` and `/export` all **403**; `POST /observations` reaches
-  request validation and a valid post returns **201** attributed to `drift-reconciler`; `GET
-  /observations` returns 200. Note approval-shaped routes answer **302** from outside — they sit
-  behind the human forward-auth chain at the proxy, so the request never reaches the app; that
-  surface is covered by the in-process architecture test over all 49 confined routes, not by an
-  external probe.
+  `work-units/{id}/preflight` and the three `/event-publications/*` — and
+  `services/lifecycle/context.py` and `services/release/event_publications.py` contain **zero**
+  `ActorRole` references between them. "The service layer gates writes" is not a property the
+  service layer provides. Those four are a live defect for every other role (backlogged); OBSERVER
+  is simply not exposed to them. **Proven against production 2026-08-07, not just in tests:**
+  `commands/ready`, `dispatch`, `verify`, `preflight`, `event-publications/queue` and `/export` all
+  **403**; `POST /observations` reaches request validation and a valid post returns **201**
+  attributed to `drift-reconciler`; `GET /observations` returns 200. Note approval-shaped routes
+  answer **302** from outside — they sit behind the human forward-auth chain at the proxy, so the
+  request never reaches the app; that surface is covered by the in-process architecture test over
+  all 49 confined routes, not by an external probe.
 
 - **A build-session worktree gets a DIFFERENT Python than CI unless you pin it, and the digest in
   a handoff is stale the moment anything merges.** Two release-time traps, both hit on 2026-08-07.

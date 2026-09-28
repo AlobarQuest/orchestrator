@@ -20,9 +20,9 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
-from orchestrator.services.claims import claim_unit
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
-from orchestrator.services.pr_bindings import (
+from orchestrator.services.lifecycle.claims import claim_unit
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.pr_bindings import (
     arm_verification_head,
     get_pr_binding,
     upsert_pr_binding,

@@ -55,7 +55,7 @@ from orchestrator.services.intake.decomposition import (
 from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.services.intake.packages import record_approval
 from orchestrator.services.intake.runner_brief import runner_brief
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import declared_source
 from tests.services.test_decomposition import package_ac_ids

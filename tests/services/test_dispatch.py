@@ -39,7 +39,7 @@ from orchestrator.services.intake.packages import (
     register_approved_unit,
     register_revision,
 )
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import (
     declared_source,

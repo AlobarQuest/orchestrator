@@ -7,13 +7,13 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Claim, ContextSnapshot, Event
-from orchestrator.services.claims import LeaseGrant, claim_unit
-from orchestrator.services.context import PreflightCommand, record_preflight
 from orchestrator.services.intake.packages import (
     record_approval,
     register_approved_unit,
     register_revision,
 )
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
+from orchestrator.services.lifecycle.context import PreflightCommand, record_preflight
 from tests.services.test_package_registration import AUTHORITY, NOW
 
 

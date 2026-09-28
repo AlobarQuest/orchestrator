@@ -29,7 +29,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import verifier_decided_completion
+from orchestrator.services.lifecycle.lifecycle import verifier_decided_completion
 from orchestrator.services.verifier.evidence import record_adjudication
 from tests.services.test_adjudications import FROM_EVALUATION, add_criterion, add_evidence
 from tests.services.test_dependencies import register_unit

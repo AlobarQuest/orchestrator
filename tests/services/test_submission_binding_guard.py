@@ -17,10 +17,10 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Approval
-from orchestrator.services.claims import LeaseGrant, claim_unit, reclaim_expired_claim
 from orchestrator.services.intake.packages import register_approved_unit
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
-from orchestrator.services.pr_bindings import (
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit, reclaim_expired_claim
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.pr_bindings import (
     arm_verification_head,
     get_pr_binding,
     upsert_pr_binding,

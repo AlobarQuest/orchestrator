@@ -73,7 +73,7 @@ from orchestrator.services.landing.estate_landing import (
     SOURCE_UNCONFIGURED,
     EstateLandingSource,
 )
-from orchestrator.services.lifecycle import verifier_decided_completion
+from orchestrator.services.lifecycle.lifecycle import verifier_decided_completion
 from orchestrator.services.reconciliation.reconciliation import open_conditions
 
 # The capability a human approves per unit, in the envelope, the way every other capability is

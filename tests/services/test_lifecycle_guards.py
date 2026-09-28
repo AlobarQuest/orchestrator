@@ -18,13 +18,13 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
     WorkUnit,
 )
-from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.intake.packages import (
     record_approval,
     register_approved_unit,
     register_revision,
 )
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.verifier.evidence import record_adjudication
 from tests.services.test_context_preflight import register_context_unit, valid_context
 from tests.services.test_dependencies import register_unit

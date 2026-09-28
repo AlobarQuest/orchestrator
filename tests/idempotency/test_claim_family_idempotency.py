@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import Claim, Event
-from orchestrator.services.claims import LeaseGrant, claim_unit, renew_claim
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit, renew_claim
 from tests.services.test_claims import worker
 
 

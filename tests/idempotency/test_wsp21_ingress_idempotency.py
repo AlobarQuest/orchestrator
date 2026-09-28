@@ -11,8 +11,8 @@ from orchestrator.persistence.models import (
     UnitPrBinding,
     WorkUnit,
 )
-from orchestrator.services.claims import requeue_unit
-from orchestrator.services.pr_bindings import get_pr_binding, upsert_pr_binding
+from orchestrator.services.lifecycle.claims import requeue_unit
+from orchestrator.services.lifecycle.pr_bindings import get_pr_binding, upsert_pr_binding
 from orchestrator.services.reconciliation.reconciliation import (
     ConditionCommand,
     ConditionOutcome,

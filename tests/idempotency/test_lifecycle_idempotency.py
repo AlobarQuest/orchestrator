@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkUnit
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from tests.services.test_dependencies import register_unit
 
 KEY = "lifecycle-concurrent-double-submit"

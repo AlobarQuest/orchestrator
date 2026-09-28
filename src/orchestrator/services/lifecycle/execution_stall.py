@@ -54,7 +54,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.persistence.models import Claim, WorkUnit
-from orchestrator.services.claims import CLAIM_HOLDING_STATES
+from orchestrator.services.lifecycle.claims import CLAIM_HOLDING_STATES
 
 
 @dataclass(frozen=True)
