@@ -10,7 +10,7 @@ that short-circuits before the call is the difference between a check that is ch
 is absent.
 """
 
-from orchestrator.services.estate_landing import (
+from orchestrator.services.landing.estate_landing import (
     LANDING_INERT,
     LANDING_REDEPLOYS,
     LANDING_UNKNOWN,

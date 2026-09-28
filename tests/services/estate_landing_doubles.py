@@ -10,13 +10,13 @@ green suite over a wire nobody read.
 
 from __future__ import annotations
 
-from orchestrator.services.change_record import (
+from orchestrator.services.landing.change_record import (
     ChangeRecord,
     ChangeRecordAnswer,
     LandingConditions,
     WorkflowPin,
 )
-from orchestrator.services.estate_landing_admission import (
+from orchestrator.services.landing.estate_landing_admission import (
     EstateGatewayError,
     EstatePullRequest,
     HeadCheckRun,

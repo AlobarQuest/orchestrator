@@ -22,7 +22,7 @@ import json
 import httpx
 import pytest
 
-from orchestrator.services.change_record import (
+from orchestrator.services.landing.change_record import (
     RECORD_AMBIGUOUS,
     SOURCE_UNCONFIGURED,
     SOURCE_UNREADABLE,

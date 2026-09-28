@@ -835,8 +835,8 @@ def test_the_spellings_match_the_only_writer_of_them() -> None:
     from the orchestrator -- its isolation test says so. Naming the literal in both places is what
     turns a rename into a red test instead of a landing silently recorded with no basis.
 
-    The writer is `orchestrator/services/estate_pr_merge.py`, and its own test asserts the same
-    two strings appear in the body it composes.
+    The writer is `orchestrator/services/landing/estate_pr_merge.py`, and its own test asserts the
+    same two strings appear in the body it composes.
     """
     body = "SDS-Change-Record: 7\nSDS-Policy-Version: 3\n"
     permission = policy_permission(body)
@@ -876,8 +876,8 @@ def test_the_inert_landing_trailer_is_read_from_a_landing_commit() -> None:
 def test_the_inert_spelling_matches_the_only_writer_of_it() -> None:
     """A LITERAL on each side, exactly as the change-record pair above.
 
-    The writer is `orchestrator/services/inert_pr_merge.py::INERT_LANDING_POLICY_TRAILER`, and
-    its own test asserts the same string. A rename on either side is a red test rather than a
+    The writer is `orchestrator/services/landing/inert_pr_merge.py::INERT_LANDING_POLICY_TRAILER`,
+    and its own test asserts the same string. A rename on either side is a red test rather than a
     landing silently recorded with no basis -- which no detector reads.
     """
     permission = inert_landing_permission("SDS-Inert-Landing-Policy: 6\n")

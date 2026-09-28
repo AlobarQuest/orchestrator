@@ -197,7 +197,7 @@ carry a test asserting no reported status is a substring of another. The **field
 
 ### Where it lives
 
-One module, `services/branch_update_serialization.py`, called by both acts (as a conjunct after
+One module, `services/landing/branch_update_serialization.py`, called by both acts (as a conjunct after
 `branch_update_qualifies` and the head checks, immediately before `update_branch`, inside the act's
 transaction and under its per-repository advisory lock) and by both admission routes. Neither
 admission module imports it, so composing a sibling's answer can never recurse into composing that

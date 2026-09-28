@@ -27,8 +27,8 @@ from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.main import create_app
-from orchestrator.services.estate_landing_admission import EstateGatewayError
-from orchestrator.services.estate_pr_branch_update import (
+from orchestrator.services.landing.estate_landing_admission import EstateGatewayError
+from orchestrator.services.landing.estate_pr_branch_update import (
     BRANCH_UPDATE_SIBLING_HOLDING,
     BRANCH_UPDATE_SIBLINGS_UNREADABLE,
     EstateBranchUpdateCommand,
@@ -73,7 +73,7 @@ def test_the_body_carries_every_field_of_the_composed_answer(db_client: TestClie
     """Stated as SET EQUALITY over the served keys rather than as a membership check for this
     increment's one field: the silent-drop hole belongs to the model, not to the field, and a
     membership check would not see the next addition fall through it."""
-    from orchestrator.services.estate_landing_admission import EstateLandingAdmission
+    from orchestrator.services.landing.estate_landing_admission import EstateLandingAdmission
 
     assert set(_admission(db_client)) == set(EstateLandingAdmission.__dataclass_fields__)
 

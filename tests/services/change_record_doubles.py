@@ -10,7 +10,7 @@ absent. It records the pair, because asking about the right repository and the w
 is the mistake a repository-keyed lookup invites.
 """
 
-from orchestrator.services.change_record import (
+from orchestrator.services.landing.change_record import (
     RECORD_AMBIGUOUS,
     SOURCE_UNCONFIGURED,
     SOURCE_UNREADABLE,

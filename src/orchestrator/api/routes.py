@@ -121,13 +121,6 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.branch_update_serialization import (
-    branch_update_sibling_outcome,
-    estate_sibling_composer,
-    inert_sibling_composer,
-    withheld_for_sibling,
-)
-from orchestrator.services.change_record import ChangeRecordSource, HttpChangeRecordSource
 from orchestrator.services.change_record_work import work_for_change_record
 from orchestrator.services.claims import (
     authorize_retry,
@@ -164,17 +157,6 @@ from orchestrator.services.dispatch import (
     GitHubActionsDispatcher,
     dispatch_work_unit,
 )
-from orchestrator.services.estate_landing import EstateLandingSource, HttpEstateLandingSource
-from orchestrator.services.estate_landing_admission import estate_landing_admission
-from orchestrator.services.estate_pr_branch_update import (
-    EstateBranchUpdateCommand,
-    update_estate_pull_request_branch,
-)
-from orchestrator.services.estate_pr_merge import (
-    EstateMergeCommand,
-    GitHubEstatePullRequests,
-    land_estate_pull_request,
-)
 from orchestrator.services.event_publications import (
     EventPublicationFilters,
     export_event_publications,
@@ -204,20 +186,6 @@ from orchestrator.services.github_app import (
 )
 from orchestrator.services.github_checks import CheckObserver, GitHubActionsCheckObserver
 from orchestrator.services.in_flight import in_flight_snapshot
-from orchestrator.services.inert_landing_admission import inert_landing_admission
-from orchestrator.services.inert_landing_policy import (
-    HttpInertLandingPolicySource,
-    InertLandingPolicySource,
-)
-from orchestrator.services.inert_pr_branch_update import (
-    InertBranchUpdateCommand,
-    update_inert_pull_request_branch,
-)
-from orchestrator.services.inert_pr_merge import (
-    GitHubInertPullRequests,
-    InertMergeCommand,
-    land_inert_pull_request,
-)
 from orchestrator.services.infra_links import (
     InfraLaneLinkCommand,
     list_infra_lane_links,
@@ -240,6 +208,47 @@ from orchestrator.services.knowledge_promotions import (
     proposal_state,
     submit_knowledge_promotion_to_brain,
 )
+from orchestrator.services.landing.branch_update_serialization import (
+    branch_update_sibling_outcome,
+    estate_sibling_composer,
+    inert_sibling_composer,
+    withheld_for_sibling,
+)
+from orchestrator.services.landing.change_record import ChangeRecordSource, HttpChangeRecordSource
+from orchestrator.services.landing.estate_landing import (
+    EstateLandingSource,
+    HttpEstateLandingSource,
+)
+from orchestrator.services.landing.estate_landing_admission import estate_landing_admission
+from orchestrator.services.landing.estate_pr_branch_update import (
+    EstateBranchUpdateCommand,
+    update_estate_pull_request_branch,
+)
+from orchestrator.services.landing.estate_pr_merge import (
+    EstateMergeCommand,
+    GitHubEstatePullRequests,
+    land_estate_pull_request,
+)
+from orchestrator.services.landing.inert_landing_admission import inert_landing_admission
+from orchestrator.services.landing.inert_landing_policy import (
+    HttpInertLandingPolicySource,
+    InertLandingPolicySource,
+)
+from orchestrator.services.landing.inert_pr_branch_update import (
+    InertBranchUpdateCommand,
+    update_inert_pull_request_branch,
+)
+from orchestrator.services.landing.inert_pr_merge import (
+    GitHubInertPullRequests,
+    InertMergeCommand,
+    land_inert_pull_request,
+)
+from orchestrator.services.landing.pr_merge import (
+    GitHubPullRequests,
+    MergeCommand,
+    land_unit_pull_request,
+)
+from orchestrator.services.landing.pr_merge_admission import pr_merge_admission
 from orchestrator.services.lifecycle import (
     TransitionCommand,
     require_operator_actor,
@@ -268,12 +277,6 @@ from orchestrator.services.packages import (
     resolve_dependency_command,
 )
 from orchestrator.services.pr_bindings import arm_verification_head, upsert_pr_binding
-from orchestrator.services.pr_merge import (
-    GitHubPullRequests,
-    MergeCommand,
-    land_unit_pull_request,
-)
-from orchestrator.services.pr_merge_admission import pr_merge_admission
 from orchestrator.services.reconciliation_detection import (
     ObservedTrackerItem,
     detect_observation_conditions,

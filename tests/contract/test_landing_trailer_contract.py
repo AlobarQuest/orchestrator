@@ -1,12 +1,12 @@
 """The commit trailers one program writes and another reads, pinned from both ends.
 
-`services/estate_pr_merge.py` writes `SDS-Change-Record:` / `SDS-Policy-Version:` into the squash
-body of every landing it performs, and `landing_ledger/github.py::policy_permission` reads them
-back to record what permitted the landing. The two live in different programs -- `src/orchestrator`
-imports nothing from `src/landing_ledger`, and an architecture test enforces that -- so neither
-module can notice if the other renames a trailer. Until 2026-09-27 the writer's own test asserted
-through its constant, so a rename there reddened nothing: the ledger would have recorded every
-such landing as having no basis, and no detector reads that class.
+`services/landing/estate_pr_merge.py` writes `SDS-Change-Record:` / `SDS-Policy-Version:` into the
+squash body of every landing it performs, and `landing_ledger/github.py::policy_permission` reads
+them back to record what permitted the landing. The two live in different programs --
+`src/orchestrator` imports nothing from `src/landing_ledger`, and an architecture test enforces that
+-- so neither module can notice if the other renames a trailer. Until 2026-09-27 the writer's own
+test asserted through its constant, so a rename there reddened nothing: the ledger would have
+recorded every such landing as having no basis, and no detector reads that class.
 
 `SDS-Unit:` is read by two programs, `deploy_watcher/units.py` and `landing_ledger/github.py`,
 each with its own copy of the pattern for the same isolation reason. They must match the same
@@ -25,8 +25,8 @@ from deploy_watcher import units
 from landing_ledger import github as ledger_github
 from landing_ledger import model as ledger_model
 from landing_ledger.model import PolicyPermission
-from orchestrator.services import estate_pr_merge
-from orchestrator.services.estate_landing_admission import EstateLandingAdmission
+from orchestrator.services.landing import estate_pr_merge
+from orchestrator.services.landing.estate_landing_admission import EstateLandingAdmission
 
 UNIT = "7a81c2c2-0835-5bba-a308-36e868719b62"
 

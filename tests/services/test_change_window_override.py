@@ -20,7 +20,7 @@ import uuid
 import pytest
 from sqlalchemy.orm import Session
 
-import orchestrator.services.pr_merge_admission as admission_module
+import orchestrator.services.landing.pr_merge_admission as admission_module
 from orchestrator.change_window_override import (
     REASON_REQUIRED,
     ChangeWindowOverride,
@@ -36,8 +36,8 @@ from orchestrator.services.dispatch import (
     DispatchCommand,
     dispatch_work_unit,
 )
-from orchestrator.services.pr_merge import MergeCommand, land_unit_pull_request
-from orchestrator.services.pr_merge_admission import (
+from orchestrator.services.landing.pr_merge import MergeCommand, land_unit_pull_request
+from orchestrator.services.landing.pr_merge_admission import (
     MERGE_CHANGE_WINDOW_NOT_DECLARED,
     MERGE_OUTSIDE_CHANGE_WINDOW,
     MERGE_POLICY_UNREADABLE,

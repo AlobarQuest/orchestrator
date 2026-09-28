@@ -20,8 +20,8 @@ import pytest
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import EstatePrMerge
-from orchestrator.services.change_record import ChangeRecordAnswer, WorkflowPin
-from orchestrator.services.estate_landing_admission import (
+from orchestrator.services.landing.change_record import ChangeRecordAnswer, WorkflowPin
+from orchestrator.services.landing.estate_landing_admission import (
     LANDING_APP_CREDENTIALS_MISSING,
     LANDING_AUTHOR_NOT_THE_UPDATE_BOT,
     LANDING_BASE_NOT_DEFAULT_BRANCH,

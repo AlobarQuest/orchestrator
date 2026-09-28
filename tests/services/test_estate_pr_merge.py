@@ -20,9 +20,9 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
-from orchestrator.services import estate_pr_merge
-from orchestrator.services.estate_landing_admission import EstateGatewayError
-from orchestrator.services.estate_pr_merge import (
+from orchestrator.services.landing import estate_pr_merge
+from orchestrator.services.landing.estate_landing_admission import EstateGatewayError
+from orchestrator.services.landing.estate_pr_merge import (
     CHANGE_RECORD_TRAILER,
     MERGE_COMMIT,
     POLICY_VERSION_TRAILER,
@@ -439,7 +439,7 @@ def test_the_repository_lock_actually_SERIALISES_two_landings(migrated_engine: E
     """
     from sqlalchemy.exc import OperationalError
 
-    from orchestrator.services.estate_pr_merge import _lock_repository
+    from orchestrator.services.landing.estate_pr_merge import _lock_repository
 
     with Session(migrated_engine) as first, Session(migrated_engine) as second:
         _lock_repository(first, REPOSITORY)
@@ -468,7 +468,7 @@ def test_the_ACTING_PATH_takes_the_repository_lock(migrated_engine: Engine) -> N
     """
     from sqlalchemy.exc import OperationalError
 
-    from orchestrator.services.estate_pr_merge import _lock_repository
+    from orchestrator.services.landing.estate_pr_merge import _lock_repository
 
     with Session(migrated_engine) as holder:
         _lock_repository(holder, REPOSITORY)

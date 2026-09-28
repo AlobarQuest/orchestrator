@@ -26,7 +26,7 @@ from orchestrator.api.schemas import PrMergeResponse
 from orchestrator.config import Settings, get_settings
 from orchestrator.main import create_app
 from orchestrator.persistence.models import UnitPrMerge
-from orchestrator.services.pr_merge import MergeOutcome, PullRequestState
+from orchestrator.services.landing.pr_merge import MergeOutcome, PullRequestState
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM, WORKER
 from tests.api.test_pr_merge_admission_api import TARGET_REPOSITORY, _register_ready_unit
 from tests.services.estate_doubles import FakeEstateLandingSource, inert_source

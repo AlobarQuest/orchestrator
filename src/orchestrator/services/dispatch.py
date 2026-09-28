@@ -23,9 +23,9 @@ from orchestrator.kernel.runner_authority import runner_authority_violation
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
 from orchestrator.services.authority_gate import AuthorityGate, human_authority_gate
-from orchestrator.services.estate_landing import EstateLandingSource
 from orchestrator.services.factory_target import FactoryTargetSource
 from orchestrator.services.github_app import GitHubAppTokenError
+from orchestrator.services.landing.estate_landing import EstateLandingSource
 from orchestrator.services.reach_admission import (
     change_window_refusal,
     estate_refusal,

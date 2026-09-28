@@ -23,7 +23,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from orchestrator.api.schemas import PrMergeAdmissionResponse
-from orchestrator.services.pr_merge_admission import MergeAdmission
+from orchestrator.services.landing.pr_merge_admission import MergeAdmission
 from tests._support.seeding import register_ready_unit
 from tests.api.test_lifecycle_api import AUTHORITY as BASE_AUTHORITY
 from tests.api.test_lifecycle_api import WORKER

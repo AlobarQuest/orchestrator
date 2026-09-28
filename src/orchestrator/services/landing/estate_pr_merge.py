@@ -63,9 +63,10 @@ from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
-from orchestrator.services.change_record import ChangeRecordSource
-from orchestrator.services.estate_landing import EstateLandingSource
-from orchestrator.services.estate_landing_admission import (
+from orchestrator.services.github_app import GitHubAppTokenError
+from orchestrator.services.landing.change_record import ChangeRecordSource
+from orchestrator.services.landing.estate_landing import EstateLandingSource
+from orchestrator.services.landing.estate_landing_admission import (
     EstateGatewayError,
     EstateLandingAdmission,
     EstatePullRequest,
@@ -76,7 +77,6 @@ from orchestrator.services.estate_landing_admission import (
     estate_landing_admission,
     gateway_failure_detail,
 )
-from orchestrator.services.github_app import GitHubAppTokenError
 
 GITHUB_API_URL: Final = "https://api.github.com"
 

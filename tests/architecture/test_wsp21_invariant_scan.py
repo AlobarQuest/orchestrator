@@ -79,7 +79,7 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # from evidence the orchestrator OBSERVED, with no human adjudication; a human approved the
     # envelope that grants the capability; and the estate says landing on that repository's
     # default branch changes nothing already serving.
-    Path("src/orchestrator/services/pr_merge.py"),
+    Path("src/orchestrator/services/landing/pr_merge.py"),
     # ADR-0019 Increment 5b, and the SECOND entry -- deliberately its own, because what makes the
     # first defensible does not carry over. There is no work unit here, so no criteria the
     # orchestrator resolved from evidence and no envelope a human approved; and the estate says
@@ -92,7 +92,7 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # a head current with its base; a permitted version delta; the rollout workflow still being
     # the bytes the record's criteria describe; one landing per repository per window; and an
     # environment switch that defaults to refusing.
-    Path("src/orchestrator/services/estate_pr_merge.py"),
+    Path("src/orchestrator/services/landing/estate_pr_merge.py"),
     # ADR-0033, the THIRD entry and the first that is not about landing a pull request -- so
     # neither justification above carries over, and the difference is larger than between the
     # two of them. There is no work unit here, so no criteria the orchestrator resolved from
@@ -140,7 +140,7 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # could land pull requests and be invisible to the one control that lists every file that
     # does. The gateway method is named for the spelling the guard reads, deliberately, so that
     # the exemption is taken openly rather than avoided by a verb the scanner does not cover.
-    Path("src/orchestrator/services/inert_pr_merge.py"),
+    Path("src/orchestrator/services/landing/inert_pr_merge.py"),
     # ADR-0042's plugin row, the FIFTH entry, and the second that publishes a commit to a default
     # branch rather than landing a pull request -- so ADR-0033's entry above is the only one whose
     # justification is even the same shape, and it does not carry over unexamined. There is no work
@@ -271,7 +271,7 @@ OUTBOUND_ALLOWLIST = {
     # orchestrator saw the estate's own answer, and the out-of-process alternative (ADR-0002's
     # shape) would put that answer outside the transaction that records the admission decision.
     # The credential is READ-ONLY and App Brain scopes it to two read paths.
-    Path("src/orchestrator/services/estate_landing.py"),
+    Path("src/orchestrator/services/landing/estate_landing.py"),
     # ADR-0015. Admission reads ONE file -- the target repository's own `factory-target.toml` --
     # and, when that answers 404, the repository beneath it, so an absence is confirmed rather
     # than believed. It writes nothing, borrows github_app.py's installation token, and replaced a
@@ -286,12 +286,12 @@ OUTBOUND_ALLOWLIST = {
     # listing route and holds a bearer that can read change records; the fact that the same shared
     # secret could also approve one is change-manager's to narrow, and is recorded in ADR-0019
     # rather than implied here.
-    Path("src/orchestrator/services/change_record.py"),
+    Path("src/orchestrator/services/landing/change_record.py"),
     # ADR-0020 Increment 4b. The one genuinely MUTATING egress this repository has: it reads one
     # pull request and asks for it to be landed, naming the head the criteria were adjudicated at
     # so the remote refuses any other. It borrows the same App installation token the workflow
     # trigger and the named-check observer use, and speaks to nothing else.
-    Path("src/orchestrator/services/pr_merge.py"),
+    Path("src/orchestrator/services/landing/pr_merge.py"),
     # ADR-0019 Increment 5b. The SECOND mutating egress, and the more consequential one: it lands
     # into a repository where landing changes something already serving. Four calls -- the pull
     # request, how far its head is behind its base, the object name of the rollout workflow at
@@ -301,12 +301,12 @@ OUTBOUND_ALLOWLIST = {
     # for the reason the readers above give: every one of them decides an admission term, and an
     # answer obtained outside the transaction that records the decision is an answer about a
     # moment that has passed.
-    Path("src/orchestrator/services/estate_pr_merge.py"),
+    Path("src/orchestrator/services/landing/estate_pr_merge.py"),
     # ADR-0038 part 2. It reads the policy naming which repositories a person declared landable
     # unattended -- ONE request, to the same service and with the same bearer as the change-record
     # reader above, whose own entry states why an admission term's read belongs inside the
     # transaction that records the decision. It writes nothing and reaches one route.
-    Path("src/orchestrator/services/inert_landing_policy.py"),
+    Path("src/orchestrator/services/landing/inert_landing_policy.py"),
     # ADR-0026. `work_carrier` is a SEPARATE program (ADR-0002's shape), out of process and on a
     # schedule, so this is not the orchestrator speaking HTTP. It makes ONE request here -- a
     # listing of the work proposals a human approved in change-manager -- and holds no write

@@ -32,8 +32,8 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event
-from orchestrator.services import estate_pr_merge
-from orchestrator.services.estate_landing_admission import (
+from orchestrator.services.landing import estate_pr_merge
+from orchestrator.services.landing.estate_landing_admission import (
     DELIBERATE_REFUSALS,
     LANDING_CHECKS_AWAITING_VERDICT,
     LANDING_CHECKS_IN_FLIGHT,
@@ -51,7 +51,7 @@ from orchestrator.services.estate_landing_admission import (
     freshness_derived_refusals,
     qualifies_for_branch_update,
 )
-from orchestrator.services.estate_pr_branch_update import (
+from orchestrator.services.landing.estate_pr_branch_update import (
     BRANCH_UPDATE_ACTION,
     BRANCH_UPDATE_HEAD_MOVED,
     BRANCH_UPDATE_NOT_QUALIFIED,
@@ -62,7 +62,7 @@ from orchestrator.services.estate_pr_branch_update import (
     EstateBranchUpdateCommand,
     update_estate_pull_request_branch,
 )
-from orchestrator.services.estate_pr_merge import GitHubEstatePullRequests
+from orchestrator.services.landing.estate_pr_merge import GitHubEstatePullRequests
 from tests.services.change_record_doubles import FakeChangeRecordSource
 from tests.services.estate_doubles import inert_source, redeploying_source
 from tests.services.estate_landing_doubles import (
@@ -482,7 +482,7 @@ def test_the_WIRE_KEY_the_lander_reads_the_withheld_fact_from_is_a_field_this_si
 def test_composing_the_answer_alone_observes_no_sibling(migrated_session: Session) -> None:
     """The admission function never scans siblings -- that would recurse -- so it sets the fact
     false even on an answer that qualifies. Only the route fills it in."""
-    from orchestrator.services.estate_landing_admission import estate_landing_admission
+    from orchestrator.services.landing.estate_landing_admission import estate_landing_admission
 
     answer = estate_landing_admission(
         migrated_session,
@@ -929,7 +929,7 @@ def test_the_served_answer_DECLARES_the_verdict_the_caller_reads() -> None:
     to the composed answer has the same silent hole, and a membership check would not see it.
     """
     from orchestrator.api.schemas import EstateLandingAdmissionResponse
-    from orchestrator.services.estate_landing_admission import EstateLandingAdmission
+    from orchestrator.services.landing.estate_landing_admission import EstateLandingAdmission
 
     assert set(EstateLandingAdmissionResponse.model_fields) == set(
         EstateLandingAdmission.__dataclass_fields__
@@ -1435,7 +1435,7 @@ def test_neither_new_code_contains_the_other() -> None:
     """A code that is a substring of another satisfies every substring reader of the other -- the
     report greps, and the discriminating tests that assert a code is ABSENT on one pass and PRESENT
     on the next. Checked over all four sibling codes, across both lanes."""
-    from orchestrator.services.inert_pr_branch_update import (
+    from orchestrator.services.landing.inert_pr_branch_update import (
         INERT_BRANCH_UPDATE_SIBLING_HOLDING,
         INERT_BRANCH_UPDATE_SIBLINGS_UNREADABLE,
     )

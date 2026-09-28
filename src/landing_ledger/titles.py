@@ -8,7 +8,7 @@ only one of the three that tracked the change.
 
 **THIS IS A SECOND COPY OF A PARSER THAT ALREADY EXISTS, and it is held to the original
 rather than trusted.** The authority is
-:func:`orchestrator.services.estate_landing_admission.update_type_of`, which the programs
+:func:`orchestrator.services.landing.estate_landing_admission.update_type_of`, which the programs
 here cannot import: an out-of-process program in this repository imports nothing from
 ``orchestrator``, and that module reaches SQLAlchemy. The estate's answer to a vocabulary
 that must agree across that boundary is a mirror pinned by a test that imports both -- the

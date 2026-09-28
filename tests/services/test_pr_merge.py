@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event, UnitPrMerge, WorkUnit
-from orchestrator.services.pr_merge import (
+from orchestrator.services.landing.pr_merge import (
     GitHubGatewayError,
     MergeCommand,
     MergeOutcome,
