@@ -87,9 +87,9 @@ def _unanimous(runs: list[Run]) -> Run:
 
     Measured over both repositories' entire history, every merge produced exactly one rollout
     run -- 67 of 67 -- so this is a guard against a future that has not happened rather than a
-    routine reduction. Unanimity rather than newest-wins, copying `services/github_checks.py`:
-    picking either the newest or the first would let a genuinely failing rollout be resolved by
-    a green sibling.
+    routine reduction. Unanimity rather than newest-wins, copying
+    `services/verifier/github_checks.py`: picking either the newest or the first would let a
+    genuinely failing rollout be resolved by a green sibling.
     """
     if len(runs) == 1:
         return runs[0]

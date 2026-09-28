@@ -30,8 +30,8 @@ DELIBERATE BLIND SPOTS (documented, like WS-P2.15's detector documented its own)
  * **Direction is one-way (`used` => must be triaged).** A consumer member that no producer emits
    is a dead branch this cannot see; that is a `judgment`/reverse-report concern.
  * **Case / whitespace, raw SQL, and the evidence-row `evidence_type` vs criterion `evidence_type`
-   collision** (`services/evidence.py` takes a free writer type the verifier never correlates) are
-   set-membership-invisible and remain backlogged.
+   collision** (`services/verifier/evidence.py` takes a free writer type the verifier never
+   correlates) are set-membership-invisible and remain backlogged.
  * **`ac_id` UUID-vs-human-string** is one name with two value domains and no enumerated set;
    membership cannot see meaning.
  * **Derived collections are invisible** -- only LITERAL collections are discovered. A vocabulary
@@ -76,7 +76,7 @@ EXEMPT_MARKER = "# not-a-vocabulary:"
 # single source of truth and where the OTHER side is validated. An entry that would read "a
 # legitimate second copy pinned elsewhere" means the predicate is wrong -- fix the predicate, do
 # not add the entry.
-_VE = "services/verifier_evaluators.py"
+_VE = "services/verifier/verifier_evaluators.py"
 VOCABULARY_REGISTRY: dict[str, str] = {
     # The intent-packages evidence vocabulary (producer: intent-packages YAML `evidence_type`;
     # consumer: the verifier). Validated on the orchestrator side at intake by
@@ -87,7 +87,9 @@ VOCABULARY_REGISTRY: dict[str, str] = {
     # The GitHub Checks API conclusion vocabulary (producer: GitHub; consumer: the verifier).
     f"{_VE}:CHECK_PASS_CONCLUSIONS": "GitHub Checks API conclusion values",
     f"{_VE}:CHECK_FAIL_CONCLUSIONS": "GitHub Checks API conclusion values",
-    "services/verifier_evidence.py:SUPPORTED_CONCLUSIONS": "GitHub Checks API conclusion values",
+    "services/verifier/verifier_evidence.py:SUPPORTED_CONCLUSIONS": (
+        "GitHub Checks API conclusion values"
+    ),
     # The status-string vocabulary a runner/gate may report a result as, in cross-repo payloads.
     f"{_VE}:PASS_VALUES": "runner/gate status-string vocabulary (evidence payloads)",
     f"{_VE}:FAIL_VALUES": "runner/gate status-string vocabulary (evidence payloads)",
@@ -141,7 +143,7 @@ VOCABULARY_REGISTRY: dict[str, str] = {
 
 @dataclass(frozen=True)
 class Definition:
-    module: str  # module-relpath under src, e.g. "services/verifier_evaluators.py"
+    module: str  # module-relpath under src, e.g. "services/verifier/verifier_evaluators.py"
     name: str
     lineno: int
     end_lineno: int

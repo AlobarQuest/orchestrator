@@ -10,9 +10,9 @@ from typing import Any
 import httpx
 import pytest
 
-from orchestrator.services import github_checks
 from orchestrator.services.github_app import GitHubAppTokenError
-from orchestrator.services.github_checks import (
+from orchestrator.services.verifier import github_checks
+from orchestrator.services.verifier.github_checks import (
     CheckObservationError,
     GitHubActionsCheckObserver,
 )

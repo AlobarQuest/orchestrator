@@ -36,10 +36,6 @@ from orchestrator.services.decomposition import (
     reject_decomposition_proposal,
     require_decomposition_revision,
 )
-from orchestrator.services.evidence import (
-    AdjudicationDecision,
-    record_adjudications,
-)
 from orchestrator.services.graduation_ledger import graduation_ledger
 from orchestrator.services.intake_reads import (
     intake_authority,
@@ -64,6 +60,10 @@ from orchestrator.services.reporting.pending_decisions import (
     SETTLED_STATES,
     adjudicable_criteria,
     grouped_pending_decisions,
+)
+from orchestrator.services.verifier.evidence import (
+    AdjudicationDecision,
+    record_adjudications,
 )
 
 router = APIRouter(prefix="/review", include_in_schema=False)

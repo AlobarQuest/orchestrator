@@ -617,7 +617,7 @@ class Adjudication(UUIDPrimaryKey, Base):
     # The KIND of actor that decided, recorded at the moment of the decision. `decided_by` is a
     # free-text identity string with no naming contract, so classifying it after the fact is a
     # heuristic keyed on spelling; this is a fact. Written once, by the single construction site
-    # in `services/evidence.py`, from the authenticated actor's own role.
+    # in `services/verifier/evidence.py`, from the authenticated actor's own role.
     decided_by_role: Mapped[str | None] = mapped_column(String)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     rationale: Mapped[str] = mapped_column(Text)

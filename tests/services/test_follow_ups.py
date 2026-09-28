@@ -9,7 +9,6 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
-from orchestrator.services.evidence import record_adjudication
 from orchestrator.services.follow_ups import (
     _DEFAULT_REVISIT,
     FOLLOW_UP_CAPABILITY,
@@ -28,7 +27,8 @@ from orchestrator.services.follow_ups import (
 )
 from orchestrator.services.lifecycle import follow_up_unit_id, required_ac_ids
 from orchestrator.services.packages import register_approved_unit, register_revision
-from orchestrator.services.verifier_criteria import (
+from orchestrator.services.verifier.evidence import record_adjudication
+from orchestrator.services.verifier.verifier_criteria import (
     _FOLLOW_UP_DEFAULT_REVISIT,
     load_required_criteria,
 )

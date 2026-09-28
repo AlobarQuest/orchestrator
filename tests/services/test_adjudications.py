@@ -15,14 +15,14 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
     WorkUnit,
 )
-from orchestrator.services.evidence import (
+from orchestrator.services.verifier.evidence import (
     AdjudicationDecision,
     current_adjudication,
     current_evidence,
     record_adjudication,
     record_adjudications,
 )
-from orchestrator.services.verifier_evaluators import human_may_adjudicate
+from orchestrator.services.verifier.verifier_evaluators import human_may_adjudicate
 from tests.services.test_dependencies import register_unit
 
 

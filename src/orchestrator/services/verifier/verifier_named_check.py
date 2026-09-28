@@ -11,7 +11,7 @@ from orchestrator.persistence.models import (
     UnitPrBinding,
     WorkUnit,
 )
-from orchestrator.services.verifier_evaluators import EvaluationStatus
+from orchestrator.services.verifier.verifier_evaluators import EvaluationStatus
 
 BindingFailure = tuple[EvaluationStatus, str, str]
 

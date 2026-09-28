@@ -19,7 +19,6 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.claims import LeaseGrant, claim_unit
-from orchestrator.services.evidence import append_evidence
 from orchestrator.services.release.deployment_observations import record_deployment_observation
 from orchestrator.services.release.event_publications import (
     deterministic_factory_event_id,
@@ -31,6 +30,7 @@ from orchestrator.services.release.event_publications import (
 )
 from orchestrator.services.release.observations import record_observation
 from orchestrator.services.release.release_artifacts import record_release_artifact
+from orchestrator.services.verifier.evidence import append_evidence
 from tests.services.test_deployment_observations import observation_command
 from tests.services.test_observations import command as general_observation_command
 from tests.services.test_release_artifacts import command as release_command

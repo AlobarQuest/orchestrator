@@ -12,7 +12,6 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.claims import requeue_unit
-from orchestrator.services.evidence import recover_evidence
 from orchestrator.services.pr_bindings import get_pr_binding, upsert_pr_binding
 from orchestrator.services.reconciliation.reconciliation import (
     ConditionCommand,
@@ -25,6 +24,7 @@ from orchestrator.services.reconciliation.reconciliation_detection import (
     DetectionCounters,
     detect_reconciliation_conditions,
 )
+from orchestrator.services.verifier.evidence import recover_evidence
 from tests.services.test_claims import worker
 from tests.services.test_dependencies import register_unit
 from tests.services.test_evidence_recovery import expired_claim, heads, recovery_kwargs

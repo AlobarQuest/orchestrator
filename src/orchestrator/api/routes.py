@@ -143,13 +143,6 @@ from orchestrator.services.decomposition import (
     require_decomposition_revision,
     submit_decomposition_proposal,
 )
-from orchestrator.services.evidence import (
-    append_evidence,
-    list_evidence,
-    record_adjudication,
-    recover_evidence,
-    supersede_evidence,
-)
 from orchestrator.services.execution.dispatch import (
     DispatchCommand,
     DispatchSettings,
@@ -163,7 +156,6 @@ from orchestrator.services.github_app import (
     github_app_credentials,
     token_provider_for,
 )
-from orchestrator.services.github_checks import CheckObserver, GitHubActionsCheckObserver
 from orchestrator.services.infra_links import (
     InfraLaneLinkCommand,
     list_infra_lane_links,
@@ -306,8 +298,16 @@ from orchestrator.services.reporting.traceability import (
     traceability_response,
 )
 from orchestrator.services.runner_brief import runner_brief
-from orchestrator.services.verifier import VerifyCommand, verify_work_unit
-from orchestrator.services.verifier_evidence import (
+from orchestrator.services.verifier.evidence import (
+    append_evidence,
+    list_evidence,
+    record_adjudication,
+    recover_evidence,
+    supersede_evidence,
+)
+from orchestrator.services.verifier.github_checks import CheckObserver, GitHubActionsCheckObserver
+from orchestrator.services.verifier.verifier import VerifyCommand, verify_work_unit
+from orchestrator.services.verifier.verifier_evidence import (
     NamedCheckEvidenceCommand,
     record_named_check_evidence,
 )

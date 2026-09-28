@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from orchestrator.kernel.states import ActorContext, WorkUnitState
-from orchestrator.services.verifier_evaluators import EvaluationStatus
+from orchestrator.services.verifier.verifier_evaluators import EvaluationStatus
 
 VerificationResult = Literal["completed", "revision_required", "awaiting_review", "failed"]
 

@@ -18,11 +18,11 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
     UnitPrBinding,
 )
-from orchestrator.services.evidence import append_evidence, append_verifier_evidence
-from orchestrator.services.github_checks import CheckObservationError
-from orchestrator.services.verifier import VerifyCommand, verify_work_unit
-from orchestrator.services.verifier_evaluators import evaluate_criterion
-from orchestrator.services.verifier_evidence import NamedCheckEvidenceCommand
+from orchestrator.services.verifier.evidence import append_evidence, append_verifier_evidence
+from orchestrator.services.verifier.github_checks import CheckObservationError
+from orchestrator.services.verifier.verifier import VerifyCommand, verify_work_unit
+from orchestrator.services.verifier.verifier_evaluators import evaluate_criterion
+from orchestrator.services.verifier.verifier_evidence import NamedCheckEvidenceCommand
 from tests.fixtures.named_check import (
     AUTOMATED_CHECK_AUTHORITY,
     CHECK_NAME,

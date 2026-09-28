@@ -7,12 +7,12 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import Evidence, PackageAcceptanceCriterion, WorkUnit
-from orchestrator.services.evidence import (
+from orchestrator.services.verifier.evidence import (
     HUMAN_ADJUDICABLE_OUTCOMES,
     current_adjudication,
     current_evidence,
 )
-from orchestrator.services.verifier_evaluators import human_may_adjudicate
+from orchestrator.services.verifier.verifier_evaluators import human_may_adjudicate
 from tests.api.test_lifecycle_api import HUMAN
 from tests.web.conftest import criterion_condition, criterion_expectation
 

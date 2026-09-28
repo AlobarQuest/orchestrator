@@ -35,12 +35,12 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.authority_gate import human_authority_gate
-from orchestrator.services.evidence import current_adjudication, current_evidence
 from orchestrator.services.execution_stall import stalled_executions
 from orchestrator.services.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.reconciliation.reconciliation import open_conditions
-from orchestrator.services.verifier_criteria import load_required_criteria
-from orchestrator.services.verifier_evaluators import human_may_adjudicate
+from orchestrator.services.verifier.evidence import current_adjudication, current_evidence
+from orchestrator.services.verifier.verifier_criteria import load_required_criteria
+from orchestrator.services.verifier.verifier_evaluators import human_may_adjudicate
 
 # A unit in one of these states is finished with people. FAILED is not one of them: it is stopped
 # and nothing automatic will move it, which is precisely a decision waiting on someone.
