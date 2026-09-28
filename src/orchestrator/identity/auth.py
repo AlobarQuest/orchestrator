@@ -15,7 +15,9 @@ class AuthenticationError(PermissionError):
 
 
 @dataclass(frozen=True)
-class ActorContext:
+class AuthenticatedIdentity:
+    """What authentication resolved about a caller, before the API narrows it to an actor."""
+
     actor_id: str
     role: ActorRole
     authority_profile: str
@@ -35,7 +37,7 @@ def authenticate_m2m(
     credential_key_id: str,
     credentials: Mapping[str, M2MCredential],
     registry: RegistryAdapter,
-) -> ActorContext:
+) -> AuthenticatedIdentity:
     _validate_m2m_credentials(credentials)
     credential = credentials.get(credential_key_id)
     if credential is None:
@@ -49,7 +51,7 @@ def authenticate_m2m(
         raise AuthenticationError("invalid machine identity") from error
     if actor.runtime == "human" or actor.authority_profile == "human-operator-v1":
         raise AuthenticationError("human identities cannot use machine credentials")
-    return ActorContext(
+    return AuthenticatedIdentity(
         actor_id=actor.agent_id,
         role=ActorRole.WORKER,
         authority_profile=actor.authority_profile,
@@ -68,7 +70,7 @@ def authenticate_human(
     email_header: str,
     email_to_actor: Mapping[str, str],
     registry: RegistryAdapter,
-) -> ActorContext:
+) -> AuthenticatedIdentity:
     marker_values = _header_values(headers, proxy_marker_header)
     email_values = _header_values(headers, email_header)
     has_forward_auth = bool(marker_values) or bool(email_values)
@@ -94,7 +96,7 @@ def authenticate_human(
         raise AuthenticationError("invalid human identity") from error
     if actor.runtime != "human" or actor.authority_profile != "human-operator-v1":
         raise AuthenticationError("registry identity is not a human operator")
-    return ActorContext(
+    return AuthenticatedIdentity(
         actor_id=actor.agent_id,
         role=ActorRole.HUMAN,
         authority_profile=actor.authority_profile,

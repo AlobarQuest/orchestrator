@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, ContextSnapshot, Event, Evidence
 from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.evidence import (
@@ -17,7 +17,7 @@ from orchestrator.services.evidence import (
     current_evidence,
     supersede_evidence,
 )
-from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from tests.services.test_context_preflight import register_context_unit, valid_context
 from tests.services.test_dependencies import register_unit
 

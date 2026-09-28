@@ -1,6 +1,5 @@
 import re
 import uuid
-from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
@@ -38,7 +37,6 @@ from orchestrator.api.schemas import (
     DependencyResolutionCommand,
     DependencyResponse,
     DeploymentObservationCommandModel,
-    DeploymentObservationResponse,
     DispatchCommandModel,
     DispatchResponse,
     ErrorResponse,
@@ -53,7 +51,6 @@ from orchestrator.api.schemas import (
     EventPublicationRetryCommand,
     EventResponse,
     EvidenceCommand,
-    EvidencePackResponse,
     EvidenceResponse,
     FactoryPolicyResponse,
     FollowUpMintCommand,
@@ -92,8 +89,6 @@ from orchestrator.api.schemas import (
     RecoverEvidenceCommand,
     RecoverExpiredClaimCommand,
     ReleaseArtifactCommandModel,
-    ReleaseArtifactResponse,
-    ReleaseEvidencePackResponse,
     RenewCommand,
     RequeueCommand,
     RetryCommand,
@@ -102,7 +97,6 @@ from orchestrator.api.schemas import (
     RunnerBriefResponse,
     SloReportResponse,
     StatusLedgerRowResponse,
-    TraceabilityResponse,
     TrackerBindingCommand,
     TrackerBindingResponse,
     TrackerReconciliationDetectCommand,
@@ -118,17 +112,12 @@ from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import normalize_authority
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     ContextSnapshot,
     DecompositionProposal,
-    DecompositionProposalAcMapping,
-    DecompositionProposalDependency,
-    DecompositionProposalRetainedAc,
     DecompositionProposalUnit,
-    Event,
     Observation,
-    PackageAcceptanceCriterion,
     WorkPackageRevision,
     WorkUnit,
 )
@@ -165,6 +154,7 @@ from orchestrator.services.decomposition import (
 )
 from orchestrator.services.deployment_observations import (
     DeploymentObservationCommand,
+    DeploymentObservationResponse,
     list_deployment_observations,
     record_deployment_observation,
 )
@@ -200,13 +190,18 @@ from orchestrator.services.evidence import (
     supersede_evidence,
 )
 from orchestrator.services.evidence_pack import (
+    EvidencePackResponse,
     evidence_pack_projection,
     evidence_pack_response,
     render_evidence_pack_markdown,
 )
 from orchestrator.services.factory_target import GitHubFactoryTargetSource
 from orchestrator.services.follow_ups import mint_due_follow_ups
-from orchestrator.services.github_app import github_app_credentials, token_provider_for
+from orchestrator.services.github_app import (
+    GitHubAppCredentials,
+    github_app_credentials,
+    token_provider_for,
+)
 from orchestrator.services.github_checks import CheckObserver, GitHubActionsCheckObserver
 from orchestrator.services.in_flight import in_flight_snapshot
 from orchestrator.services.inert_landing_admission import inert_landing_admission
@@ -228,6 +223,12 @@ from orchestrator.services.infra_links import (
     list_infra_lane_links,
     record_infra_lane_link,
 )
+from orchestrator.services.intake_reads import (
+    acceptance_criteria_by_id,
+    intake_authority,
+    proposal_children,
+    revision_acceptance_criteria,
+)
 from orchestrator.services.knowledge_promotions import (
     HttpBrainProposalClient,
     KnowledgePromotionProposalCommand,
@@ -240,7 +241,6 @@ from orchestrator.services.knowledge_promotions import (
     submit_knowledge_promotion_to_brain,
 )
 from orchestrator.services.lifecycle import (
-    ActorContext,
     TransitionCommand,
     require_operator_actor,
     transition_unit,
@@ -283,14 +283,22 @@ from orchestrator.services.reconciliation_detection import (
 )
 from orchestrator.services.release_artifacts import (
     ReleaseArtifactCommand,
+    ReleaseArtifactResponse,
     list_release_artifacts,
     record_release_artifact,
 )
-from orchestrator.services.release_evidence_pack import release_evidence_pack_response
+from orchestrator.services.release_evidence_pack import (
+    ReleaseEvidencePackResponse,
+    release_evidence_pack_response,
+)
 from orchestrator.services.runner_brief import runner_brief
 from orchestrator.services.slo_report import SloReportFilters, slo_report
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
-from orchestrator.services.traceability import TraceabilityAnchor, traceability_response
+from orchestrator.services.traceability import (
+    TraceabilityAnchor,
+    TraceabilityResponse,
+    traceability_response,
+)
 from orchestrator.services.tracker_bindings import list_tracker_bindings, upsert_tracker_binding
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from orchestrator.services.verifier_evidence import (
@@ -303,6 +311,14 @@ ActorDep = Annotated[ActorContext, Depends(get_actor)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
+def _github_app_credentials(settings: Settings) -> GitHubAppCredentials | None:
+    return github_app_credentials(
+        app_id=settings.github_app_id,
+        installation_id=settings.github_app_installation_id,
+        private_key_b64=settings.github_app_private_key_b64,
+    )
+
+
 def get_check_observer(settings: SettingsDep) -> CheckObserver:
     """Build the thing that asks GitHub how a named check concluded.
 
@@ -311,7 +327,7 @@ def get_check_observer(settings: SettingsDep) -> CheckObserver:
     same App installation serves both, resolved through the one definition of "App credentials
     are configured".
     """
-    return GitHubActionsCheckObserver(token_provider_for(github_app_credentials(settings)))
+    return GitHubActionsCheckObserver(token_provider_for(_github_app_credentials(settings)))
 
 
 CheckObserverDep = Annotated[CheckObserver, Depends(get_check_observer)]
@@ -796,7 +812,7 @@ def estate_landing_admission_route(
     The credentials are resolved once and fed to both this answer and the act, so the gate can
     never attest to credentials the actor does not hold.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubEstatePullRequests(token_provider_for(credentials))
     enabled = settings.estate_landing_enabled
     credentials_configured = credentials is not None
@@ -847,7 +863,7 @@ def estate_pr_merge_route(
     Its caller is a scheduled one, which is why this path has an off-switch where its unit-bound
     sibling deliberately has none. Unconfigured refuses.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubEstatePullRequests(token_provider_for(credentials))
     record = land_estate_pull_request(
         session,
@@ -882,7 +898,7 @@ def estate_pr_branch_update_route(
     off the same composed answer -- so a deployment that may not land may not touch a branch
     either, by the term that already says so rather than by a second one.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubEstatePullRequests(token_provider_for(credentials))
     return update_estate_pull_request_branch(
         session,
@@ -921,7 +937,7 @@ def inert_landing_admission_route(
     The credentials are resolved once and fed to both this answer and the act, so the gate can
     never attest to credentials the actor does not hold.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubInertPullRequests(token_provider_for(credentials))
     enabled = settings.inert_landing_enabled
     credentials_configured = credentials is not None
@@ -972,7 +988,7 @@ def inert_pr_merge_route(
     and the switch is its own rather than the deploying lane's: the two were activated by different
     decisions and neither implies the other.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubInertPullRequests(token_provider_for(credentials))
     return land_inert_pull_request(
         session,
@@ -1006,7 +1022,7 @@ def inert_pr_branch_update_route(
     the same composed answer -- so a deployment that may not land may not touch a branch either, by
     the term that already says so rather than by a second one.
     """
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     gateway = GitHubInertPullRequests(token_provider_for(credentials))
     return update_inert_pull_request_branch(
         session,
@@ -1068,7 +1084,7 @@ def pr_merge_route(
     """
     # One resolution feeds both the gate and the actor, so the gate can never attest to
     # credentials the gateway does not actually hold — the rule the workflow trigger states.
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     return land_unit_pull_request(
         session,
         MergeCommand(
@@ -1096,7 +1112,7 @@ def dispatch_route(
 ) -> object:
     # One resolution feeds both the admission gate and the minter, so the gate can never
     # attest to credentials the dispatcher does not actually use.
-    credentials = github_app_credentials(settings)
+    credentials = _github_app_credentials(settings)
     dispatch_settings = DispatchSettings(
         enabled=settings.dispatch_enabled,
         allowed_change_classes=settings.dispatch_allowed_change_classes,
@@ -2363,23 +2379,7 @@ def _package_intake_payload(
     session: Session,
     revision: WorkPackageRevision,
 ) -> dict[str, object]:
-    acceptance_criteria = tuple(
-        session.scalars(
-            select(PackageAcceptanceCriterion)
-            .where(PackageAcceptanceCriterion.work_package_revision_id == revision.id)
-            .order_by(PackageAcceptanceCriterion.ac_id, PackageAcceptanceCriterion.id)
-        )
-    )
-    intake_event = session.scalar(
-        select(Event)
-        .where(
-            Event.subject_type == "work_package_revision",
-            Event.subject_id == revision.id,
-            Event.action == "package_revision.intake_registered",
-        )
-        .order_by(Event.occurred_at, Event.id)
-    )
-    command = intake_event.payload.get("command", {}) if intake_event is not None else {}
+    acceptance_criteria = revision_acceptance_criteria(session, revision.id)
     return {
         "id": revision.id,
         "package_id": revision.work_package.package_id,
@@ -2399,7 +2399,7 @@ def _package_intake_payload(
         "verification_limitations": revision.verification_limitations,
         "enforcement_snapshot": revision.enforcement_snapshot,
         "authority_fingerprint": revision.authority_fingerprint,
-        "authority": command.get("authority"),
+        "authority": intake_authority(session, revision.id),
         "follow_up": revision.follow_up,
         "change_record_id": revision.change_record_id,
         "originating_observation_id": revision.originating_observation_id,
@@ -2413,75 +2413,42 @@ def _package_intake_payload(
     }
 
 
+def _proposal_unit_payload(unit: DecompositionProposalUnit) -> dict[str, object]:
+    payload = DecompositionProposalUnitResponse.model_validate(unit).model_dump(mode="json")
+    payload["authority"] = normalize_authority(unit.authority).normalized()
+    return payload
+
+
 def _proposal_payloads(
     session: Session,
     proposals: Sequence[DecompositionProposal],
 ) -> dict[UUID, dict[str, object]]:
     if not proposals:
         return {}
-    proposal_ids = tuple(proposal.id for proposal in proposals)
-    units_by_proposal: dict[UUID, list[dict[str, object]]] = defaultdict(list)
-    dependencies_by_proposal: dict[UUID, list[dict[str, object]]] = defaultdict(list)
-    mappings_by_proposal: dict[UUID, list[DecompositionProposalAcMapping]] = defaultdict(list)
-    retained_by_proposal: dict[UUID, list[DecompositionProposalRetainedAc]] = defaultdict(list)
-
-    for unit in session.scalars(
-        select(DecompositionProposalUnit)
-        .where(DecompositionProposalUnit.proposal_id.in_(proposal_ids))
-        .order_by(DecompositionProposalUnit.proposal_id, DecompositionProposalUnit.unit_key)
-    ):
-        payload = DecompositionProposalUnitResponse.model_validate(unit).model_dump(mode="json")
-        payload["authority"] = normalize_authority(unit.authority).normalized()
-        units_by_proposal[unit.proposal_id].append(payload)
-    for dependency in session.scalars(
-        select(DecompositionProposalDependency)
-        .where(DecompositionProposalDependency.proposal_id.in_(proposal_ids))
-        .order_by(
-            DecompositionProposalDependency.proposal_id,
-            DecompositionProposalDependency.source_unit_key,
-            DecompositionProposalDependency.target_unit_key,
-            DecompositionProposalDependency.external_ref,
-        )
-    ):
-        dependencies_by_proposal[dependency.proposal_id].append(
+    children = proposal_children(session, tuple(proposal.id for proposal in proposals))
+    units_by_proposal = {
+        proposal_id: [_proposal_unit_payload(unit) for unit in units]
+        for proposal_id, units in children.units.items()
+    }
+    dependencies_by_proposal = {
+        proposal_id: [
             DecompositionProposalDependencyResponse.model_validate(dependency).model_dump(
                 mode="json"
             )
-        )
-    criterion_ids: set[UUID] = set()
-    for mapping in session.scalars(
-        select(DecompositionProposalAcMapping)
-        .where(DecompositionProposalAcMapping.proposal_id.in_(proposal_ids))
-        .order_by(
-            DecompositionProposalAcMapping.proposal_id,
-            DecompositionProposalAcMapping.unit_key,
-            DecompositionProposalAcMapping.package_acceptance_criterion_id,
-        )
-    ):
-        mappings_by_proposal[mapping.proposal_id].append(mapping)
-        criterion_ids.add(mapping.package_acceptance_criterion_id)
-    for retained in session.scalars(
-        select(DecompositionProposalRetainedAc)
-        .where(DecompositionProposalRetainedAc.proposal_id.in_(proposal_ids))
-        .order_by(
-            DecompositionProposalRetainedAc.proposal_id,
-            DecompositionProposalRetainedAc.package_acceptance_criterion_id,
-        )
-    ):
-        retained_by_proposal[retained.proposal_id].append(retained)
-        criterion_ids.add(retained.package_acceptance_criterion_id)
-
+            for dependency in dependencies
+        ]
+        for proposal_id, dependencies in children.dependencies.items()
+    }
+    mappings_by_proposal = children.mappings
+    retained_by_proposal = children.retained
+    criterion_ids = {
+        row.package_acceptance_criterion_id
+        for rows in (*mappings_by_proposal.values(), *retained_by_proposal.values())
+        for row in rows
+    }
     criteria_by_id = {
-        criterion.id: PackageAcceptanceCriterionResponse.model_validate(criterion)
-        for criterion in (
-            session.scalars(
-                select(PackageAcceptanceCriterion)
-                .where(PackageAcceptanceCriterion.id.in_(criterion_ids))
-                .order_by(PackageAcceptanceCriterion.ac_id, PackageAcceptanceCriterion.id)
-            )
-            if criterion_ids
-            else ()
-        )
+        criterion_id: PackageAcceptanceCriterionResponse.model_validate(criterion)
+        for criterion_id, criterion in acceptance_criteria_by_id(session, criterion_ids).items()
     }
 
     payloads: dict[UUID, dict[str, object]] = {}

@@ -1,13 +1,14 @@
 import json
-import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from pydantic import SecretStr
 
 from orchestrator.api.dependencies import APIAuthenticationError, AuthConfig
 from orchestrator.api.health import router as health_router
 from orchestrator.api.routes import router as api_router
+from orchestrator.config import Settings
 from orchestrator.errors import DomainError
 from orchestrator.identity.auth import TOKEN_HASH_PATTERN, M2MCredential
 from orchestrator.identity.registry import RegistryAdapter
@@ -72,54 +73,65 @@ def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
     return application
 
 
-def load_auth_config() -> AuthConfig | None:
-    bundle_path = os.environ.get("ORCHESTRATOR_REGISTRY_BUNDLE")
+def load_auth_config(settings: Settings | None = None) -> AuthConfig | None:
+    """Build the runtime authentication configuration, or refuse to boot.
+
+    Every refusal is the same `RuntimeError`, so nothing about which value was wrong -- or
+    what it held -- reaches a log. A fresh `Settings` is read rather than the cached one, so the
+    environment at the moment of the call is the one judged. Reading `Settings` validates every
+    setting, not only the auth ones, so a malformed unrelated value refuses here too -- as the
+    same `RuntimeError` (pydantic's `ValidationError` is a `ValueError`) rather than escaping
+    with the offending input in its message.
+    """
+    try:
+        settings = settings if settings is not None else Settings.model_validate({})
+    except ValueError as error:
+        raise RuntimeError("invalid runtime authentication configuration") from error
+    bundle_path = settings.registry_bundle
     if not bundle_path:
         return None
     try:
         registry = RegistryAdapter.from_path(Path(bundle_path))
-        credentials = _m2m_credentials(registry)
-        trusted_proxy_ips = frozenset(_json_list("ORCHESTRATOR_TRUSTED_PROXY_IPS"))
-        email_to_actor = _email_actor_mapping(registry)
+        credentials = _m2m_credentials(registry, settings.m2m_credentials)
+        trusted_proxy_ips = frozenset(_json_list(settings.trusted_proxy_ips))
+        email_to_actor = _email_actor_mapping(registry, settings.email_to_actor)
         roles = {
             str(key): ActorRole(value)
-            for key, value in _json_object("ORCHESTRATOR_M2M_ROLES", required=False).items()
+            for key, value in _json_object(settings.m2m_roles, required=False).items()
         }
         if not set(roles) <= set(credentials) or any(
             role is ActorRole.HUMAN for role in roles.values()
         ):
             raise RuntimeError("invalid runtime authentication configuration")
-        marker = _required_environment("ORCHESTRATOR_PROXY_MARKER")
-        csrf_secret = _required_environment("ORCHESTRATOR_CSRF_SECRET").encode()
+        marker = _required_secret(settings.proxy_marker)
+        csrf_secret = _required_secret(settings.csrf_secret).encode()
         return AuthConfig(
             registry=registry,
             m2m_credentials=credentials,
             trusted_proxy_ips=trusted_proxy_ips,
-            proxy_marker_header=os.environ.get(
-                "ORCHESTRATOR_PROXY_MARKER_HEADER", "X-Alobar-Proxy"
-            ),
+            proxy_marker_header=settings.proxy_marker_header,
             proxy_marker=marker,
-            email_header=os.environ.get("ORCHESTRATOR_EMAIL_HEADER", "X-Alobar-Email"),
+            email_header=settings.email_header,
             email_to_actor=email_to_actor,
             m2m_roles=roles,
-            credential_key_header=os.environ.get(
-                "ORCHESTRATOR_CREDENTIAL_KEY_HEADER", "X-Credential-Key-Id"
-            ),
+            credential_key_header=settings.credential_key_header,
             csrf_secret=csrf_secret,
         )
     except (TypeError, ValueError, KeyError) as error:
         raise RuntimeError("invalid runtime authentication configuration") from error
 
 
-def _required_environment(name: str) -> str:
-    value = os.environ.get(name)
+def _required(value: str | None) -> str:
     if not value:
         raise RuntimeError("invalid runtime authentication configuration")
     return value
 
 
-def _json_object(name: str, *, required: bool = True) -> dict[str, object]:
-    raw = os.environ.get(name)
+def _required_secret(value: SecretStr | None) -> str:
+    return _required(value.get_secret_value() if value is not None else None)
+
+
+def _json_object(raw: str | None, *, required: bool = True) -> dict[str, object]:
     if raw is None and not required:
         return {}
     try:
@@ -131,10 +143,9 @@ def _json_object(name: str, *, required: bool = True) -> dict[str, object]:
     return value
 
 
-def _json_list(name: str) -> list[str]:
-    raw = _required_environment(name)
+def _json_list(raw: str | None) -> list[str]:
     try:
-        value = json.loads(raw)
+        value = json.loads(_required(raw))
     except json.JSONDecodeError as error:
         raise RuntimeError("invalid runtime authentication configuration") from error
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
@@ -142,9 +153,9 @@ def _json_list(name: str) -> list[str]:
     return value
 
 
-def _m2m_credentials(registry: RegistryAdapter) -> dict[str, M2MCredential]:
+def _m2m_credentials(registry: RegistryAdapter, document: str | None) -> dict[str, M2MCredential]:
     credentials: dict[str, M2MCredential] = {}
-    for key, raw in _json_object("ORCHESTRATOR_M2M_CREDENTIALS").items():
+    for key, raw in _json_object(document).items():
         if (
             not key
             or not isinstance(raw, dict)
@@ -166,9 +177,9 @@ def _m2m_credentials(registry: RegistryAdapter) -> dict[str, M2MCredential]:
     return credentials
 
 
-def _email_actor_mapping(registry: RegistryAdapter) -> dict[str, str]:
+def _email_actor_mapping(registry: RegistryAdapter, raw: str | None) -> dict[str, str]:
     mapping: dict[str, str] = {}
-    for email, actor_id in _json_object("ORCHESTRATOR_EMAIL_TO_ACTOR").items():
+    for email, actor_id in _json_object(raw).items():
         if (
             not isinstance(email, str)
             or email != email.strip().lower()

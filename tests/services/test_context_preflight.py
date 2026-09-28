@@ -5,11 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Claim, ContextSnapshot, Event
 from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.context import PreflightCommand, record_preflight
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import (
     record_approval,
     register_approved_unit,

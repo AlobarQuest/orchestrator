@@ -5,10 +5,10 @@ from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, WorkUnit
 from orchestrator.services.claims import LeaseGrant, claim_unit
-from orchestrator.services.lifecycle import ActorContext, transition_unit
+from orchestrator.services.lifecycle import transition_unit
 from tests.services.test_lifecycle_events import command_for, worker_command
 
 

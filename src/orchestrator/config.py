@@ -130,6 +130,22 @@ class Settings(BaseSettings):
     execution_stall_grace_seconds: int = Field(
         default=900, ge=0, le=86_400
     )  # 15 minutes; capped at a day
+    # Runtime authentication, read once at boot by `main.load_auth_config`. Every one of these is
+    # a RAW STRING on purpose, including the three that hold JSON. A `dict` or `list` annotation
+    # would have pydantic-settings decode them itself, so a malformed value would fail while
+    # `get_settings()` runs at import -- with a different error, and even when no registry bundle
+    # is set and authentication is off. Keeping them strings leaves the parsing, the shape checks,
+    # the registry resolution and the one fail-closed error where they have always been.
+    registry_bundle: str | None = None
+    m2m_credentials: str | None = None
+    m2m_roles: str | None = None
+    trusted_proxy_ips: str | None = None
+    proxy_marker: SecretStr | None = None
+    proxy_marker_header: str = "X-Alobar-Proxy"
+    email_header: str = "X-Alobar-Email"
+    email_to_actor: str | None = None
+    credential_key_header: str = "X-Credential-Key-Id"
+    csrf_secret: SecretStr | None = None
 
 
 @lru_cache

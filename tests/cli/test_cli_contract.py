@@ -11,9 +11,9 @@ from typer.testing import CliRunner
 
 from orchestrator.api.dependencies import get_actor, get_session
 from orchestrator.cli import app
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.main import create_app
-from orchestrator.services.lifecycle import ActorContext, TransitionResult
+from orchestrator.services.lifecycle import TransitionResult
 
 LIFECYCLE_COMMANDS = (
     ("ready", "ready"),

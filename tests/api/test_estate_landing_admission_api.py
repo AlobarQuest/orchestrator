@@ -25,7 +25,7 @@ import orchestrator.api.routes as routes
 from orchestrator.api.dependencies import AuthConfig, get_session
 from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.main import create_app
 from orchestrator.services.estate_landing_admission import EstateGatewayError
 from orchestrator.services.estate_pr_branch_update import (
@@ -34,7 +34,6 @@ from orchestrator.services.estate_pr_branch_update import (
     EstateBranchUpdateCommand,
     update_estate_pull_request_branch,
 )
-from orchestrator.services.lifecycle import ActorContext
 from tests.api.test_lifecycle_api import SYSTEM
 from tests.services.change_record_doubles import FakeChangeRecordSource
 from tests.services.estate_doubles import redeploying_source

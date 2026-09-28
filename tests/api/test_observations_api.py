@@ -138,9 +138,8 @@ def test_observation_route_records_a_reconciliation_condition_after_commit(
 ) -> None:
     """AC-001 end to end: a merged PR pushed for a not-yet-completed unit raises the
     never-auto-merge alarm on ingest -- and merges nothing, completes nothing."""
-    from orchestrator.kernel.states import ActorRole
+    from orchestrator.kernel.states import ActorContext, ActorRole
     from orchestrator.persistence.models import ReconciliationCondition, WorkUnit
-    from orchestrator.services.lifecycle import ActorContext
     from orchestrator.services.pr_bindings import upsert_pr_binding
     from tests.services.test_dependencies import register_unit
 

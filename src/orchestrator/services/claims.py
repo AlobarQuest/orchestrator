@@ -12,7 +12,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.context import context_fingerprint
 from orchestrator.kernel.leases import hash_lease_token
 from orchestrator.kernel.readiness import ReadinessStatus
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
     Approval,
@@ -26,7 +26,6 @@ from orchestrator.services.budget import is_over_budget
 from orchestrator.services.claim_release import release_claim
 from orchestrator.services.context import PreflightCommand, require_claim_context
 from orchestrator.services.lease_policy import claim_lease
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import evaluate_readiness
 
 # PostgreSQL two-key advisory locks share one database-wide namespace. 0x57435243 is the

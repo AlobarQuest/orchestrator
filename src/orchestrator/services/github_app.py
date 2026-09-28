@@ -22,8 +22,6 @@ import httpx
 import jwt
 from pydantic import SecretStr
 
-from orchestrator.config import Settings
-
 GITHUB_API_URL = "https://api.github.com"
 
 # GitHub rejects an assertion whose `exp` is more than 10 minutes out, and one whose `iat`
@@ -53,20 +51,24 @@ class GitHubAppCredentials:
     private_key_b64: SecretStr = field(repr=False)
 
 
-def github_app_credentials(settings: Settings) -> GitHubAppCredentials | None:
+def github_app_credentials(
+    *,
+    app_id: str | None,
+    installation_id: str | None,
+    private_key_b64: SecretStr | None,
+) -> GitHubAppCredentials | None:
     """The single definition of "App credentials are configured".
 
     The dispatch gate and the minter both read it, so a partially configured trio fails
     closed at the gate (`github_app_credentials_missing`) rather than at mint time.
     """
-    private_key_b64 = settings.github_app_private_key_b64
-    if not settings.github_app_id or not settings.github_app_installation_id:
+    if not app_id or not installation_id:
         return None
     if private_key_b64 is None or not private_key_b64.get_secret_value():
         return None
     return GitHubAppCredentials(
-        app_id=settings.github_app_id,
-        installation_id=settings.github_app_installation_id,
+        app_id=app_id,
+        installation_id=installation_id,
         private_key_b64=private_key_b64,
     )
 

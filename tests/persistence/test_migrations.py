@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.kernel.authority import normalize_authority
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event, WorkUnit
 from orchestrator.services.decomposition import (
     AcMapping,
@@ -18,7 +18,6 @@ from orchestrator.services.decomposition import (
     approve_decomposition_proposal,
     submit_decomposition_proposal,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import register_approved_unit, register_revision
 from tests.conftest import TEST_DATABASE_URL

@@ -1,11 +1,11 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Dependency, Event
 from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.evidence import append_evidence, record_adjudication
-from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.packages import DependencySpec
 from orchestrator.services.status_ledger import StatusLedgerFilters, status_ledger
 from tests.services.test_context_preflight import register_context_unit, valid_context

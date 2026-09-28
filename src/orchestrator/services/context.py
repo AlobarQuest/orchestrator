@@ -17,6 +17,7 @@ from orchestrator.kernel.context import (
     normalize_standing_context,
 )
 from orchestrator.kernel.leases import hash_lease_token
+from orchestrator.kernel.states import ActorContext
 from orchestrator.persistence.models import (
     Approval,
     Claim,
@@ -25,7 +26,6 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import ActorContext
 
 
 @dataclass(frozen=True)

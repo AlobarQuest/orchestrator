@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityEnvelope
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import (
     Event,
     Observation,
@@ -19,7 +19,6 @@ from orchestrator.persistence.models import (
 from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.reach_vocabulary import carry_reach, validate_reach
 from orchestrator.services.follow_ups import validate_follow_up
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import register_revision
 from orchestrator.services.verifier_evaluators import SUPPORTED_CRITERION_EVIDENCE_TYPES
 

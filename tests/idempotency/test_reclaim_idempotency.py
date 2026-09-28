@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Event, WorkUnit
 from orchestrator.services.claims import (
     LeaseGrant,
@@ -24,7 +24,6 @@ from orchestrator.services.claims import (
     reclaim_expired_claim,
     recover_expired_claim,
 )
-from orchestrator.services.lifecycle import ActorContext
 from tests.services.test_claims import worker
 from tests.services.test_dependencies import register_unit
 from tests.services.test_reclaim import authorize_readiness, expire

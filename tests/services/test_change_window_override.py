@@ -29,14 +29,13 @@ from orchestrator.change_window_override import (
 )
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import OUTSIDE_CHANGE_WINDOW, load_factory_policy
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkUnit
 from orchestrator.reach_vocabulary import LIVE_ESTATE
 from orchestrator.services.dispatch import (
     DispatchCommand,
     dispatch_work_unit,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.pr_merge import MergeCommand, land_unit_pull_request
 from orchestrator.services.pr_merge_admission import (
     MERGE_CHANGE_WINDOW_NOT_DECLARED,

@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import StrEnum
 
 
@@ -34,6 +35,19 @@ class ActorRole(StrEnum):
     # adding a second, you are widening what an observation producer may do to this estate --
     # which is the thing this role exists to prevent. See ADR-0017.
     OBSERVER = "observer"
+
+
+@dataclass(frozen=True)
+class ActorContext:
+    """Who is acting, and in which role: the only actor fact the lifecycle rules read.
+
+    Authentication resolves richer facts than this (`identity.auth.AuthenticatedIdentity`);
+    the API boundary narrows them to these two, so nothing below it can branch on a
+    credential or a registry version.
+    """
+
+    actor_id: str
+    role: ActorRole
 
 
 # not-a-vocabulary: DB CHECK-pinned, not a cross-boundary vocabulary. This tuple is the SINGLE

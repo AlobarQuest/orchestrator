@@ -8,23 +8,13 @@ deployment-observation fetchers; it never writes, never transitions, and never t
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy import Select, or_, select
 from sqlalchemy.orm import Session
 
-from orchestrator.api.schemas import (
-    TraceabilityAnchorResponse,
-    TraceabilityArtifactHop,
-    TraceabilityChainResponse,
-    TraceabilityCommitHop,
-    TraceabilityConditionHop,
-    TraceabilityDeploymentHop,
-    TraceabilityIntentHop,
-    TraceabilityObservationHop,
-    TraceabilityPrHop,
-    TraceabilityResponse,
-    TraceabilityUnitHop,
-)
 from orchestrator.errors import DomainError
 from orchestrator.persistence.models import (
     DeploymentObservation,
@@ -41,6 +31,124 @@ from orchestrator.services.evidence_pack import evidence_pack_projection
 from orchestrator.services.observations import ObservationFilters, list_observations
 from orchestrator.services.pr_bindings import get_pr_binding
 from orchestrator.services.release_artifacts import list_release_artifacts
+
+
+class TraceabilityAnchorResponse(BaseModel):
+    """WS-P2.6: identifies which entity the caller anchored the traceability query on."""
+
+    matched_on: str
+    value: str
+
+
+class TraceabilityIntentHop(BaseModel):
+    revision: int
+    content_hash: str
+    source_path: str
+    source_commit: str
+    registered_by: str
+    # ADR-0026. The chain could already answer what a work unit caused; this is the half that
+    # says what caused the work. It belongs on the intent hop because the revision is where the
+    # link is stored -- an observation would not do, because the observation hop filters on
+    # `subject_type="work_unit"`, so a revision-scoped observation never reaches any chain.
+    change_record_id: int | None = None
+    # ADR-0026 amendment 1. The other half of the same join, and it rides the SAME hop for the
+    # same reason: the observation hop is unit-scoped, so the fact that caused this work could
+    # never arrive through it. Declared here because a FastAPI `response_model` silently drops
+    # any key it does not declare -- the service could set it and the consumer read nothing.
+    originating_observation_id: uuid.UUID | None = None
+
+
+class TraceabilityUnitHop(BaseModel):
+    id: uuid.UUID
+    unit_key: str
+    title: str
+    state: str
+    authority_fingerprint: str
+    authority_approved_by: str | None = None
+    authority_decision: str | None = None
+
+
+class TraceabilityPrHop(BaseModel):
+    pr_number: int
+    head_sha: str
+
+
+class TraceabilityCommitHop(BaseModel):
+    source_repository: str
+    source_commit: str
+    merge_commit: str
+    implementation_pr_number: int | None = None
+
+
+class TraceabilityArtifactHop(BaseModel):
+    artifact_digest: str
+    # The ONE field that separates the estate's two activation models. A reader who does not know
+    # which repository is hosted and which is machine-local reads this and knows anyway.
+    kind: str
+    artifact_registry: str | None = None
+    artifact_repository: str | None = None
+    artifact_name: str | None = None
+    artifact_tag: str | None = None
+    workflow_run_url: str | None = None
+    builder_id: str | None = None
+    provenance_digest: str | None = None
+    sbom_digest: str | None = None
+
+
+class TraceabilityDeploymentHop(BaseModel):
+    """One observation of an artifact being live, in whichever of the two activation models.
+
+    `kind` is the single field that separates them: a hosted deployment carries the URL and the
+    probe summary, a machine-local activation carries neither and reports the activation summary
+    instead. A reader can tell which without knowing anything about the repository.
+    """
+
+    environment: str
+    kind: str
+    observed_artifact_digest: str
+    digest_matches: bool
+    deployment_ref: str
+    deployment_url: str | None
+    deployer: str | None
+    observed_at: datetime
+    status_summary: dict[str, Any]
+    probe_summary: dict[str, Any]
+    activation_summary: dict[str, Any]
+
+
+class TraceabilityConditionHop(BaseModel):
+    observation_kind: str
+    condition_type: str
+    detail: str
+    resolution_generation: int
+    detected_at: datetime
+    open: bool
+    resolution_decision: str | None = None
+
+
+class TraceabilityObservationHop(BaseModel):
+    source_system: str
+    observation_type: str
+    status: str
+    severity: str
+    summary: str
+    observed_at: datetime
+
+
+class TraceabilityChainResponse(BaseModel):
+    intent: TraceabilityIntentHop
+    unit: TraceabilityUnitHop
+    pr: TraceabilityPrHop | None = None
+    commit: list[TraceabilityCommitHop]
+    artifact: list[TraceabilityArtifactHop]
+    deployment: list[TraceabilityDeploymentHop]
+    conditions: list[TraceabilityConditionHop]
+    observations: list[TraceabilityObservationHop]
+
+
+class TraceabilityResponse(BaseModel):
+    anchor: TraceabilityAnchorResponse
+    chains: list[TraceabilityChainResponse]
 
 
 @dataclass(frozen=True)

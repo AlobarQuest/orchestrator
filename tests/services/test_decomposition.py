@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
 from orchestrator.kernel.runner_authority import runner_command_authority_violation
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
     DecompositionProposal,
@@ -31,7 +31,6 @@ from orchestrator.services.decomposition import (
     require_decomposition_revision,
     submit_decomposition_proposal,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.package_intake import (
     register_package_intake,
 )

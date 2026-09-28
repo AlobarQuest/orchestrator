@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import DeploymentObservation, Event, Evidence, WorkUnit
 from orchestrator.services.deployment_observations import (
     DeploymentObservationCommand,
@@ -16,7 +16,6 @@ from orchestrator.services.deployment_observations import (
     record_deployment_observation,
 )
 from orchestrator.services.evidence import record_adjudication
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.release_artifacts import record_release_artifact
 from orchestrator.services.verifier import VerifyCommand, verify_work_unit
 from tests.services.test_release_artifacts import (

@@ -19,11 +19,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Evidence, WorkUnit
 from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.evidence import append_evidence, current_evidence, recover_evidence
-from orchestrator.services.lifecycle import ActorContext
 from tests.services.test_claims import worker
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)

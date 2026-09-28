@@ -8,10 +8,9 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.leases import DEFAULT_LEASE, hash_lease_token
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Claim, ContextSnapshot
 from orchestrator.services.claims import LeaseGrant, claim_unit, release_claim, renew_claim
-from orchestrator.services.lifecycle import ActorContext
 from tests.services.test_context_preflight import register_context_unit, valid_context
 
 

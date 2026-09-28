@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 import orchestrator.package_sources as package_sources
 import orchestrator.services.package_intake as package_intake
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.package_sources import (
     PackageSourceError,
     VerifiedApproval,
@@ -22,7 +22,6 @@ from orchestrator.services.decomposition import (
     ProposedUnit,
     submit_decomposition_proposal,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.package_intake import PackageIntakeCommand, register_package_intake
 from orchestrator.services.packages import register_approved_unit, register_revision
 from tests.services.test_package_intake import AUTHORITY, acceptance_criterion, human_actor

@@ -109,29 +109,25 @@ def install(monkeypatch: pytest.MonkeyPatch, fake: FakeGitHub) -> FakeGitHub:
 
 @pytest.mark.parametrize(
     "absent",
-    ["github_app_id", "github_app_installation_id", "github_app_private_key_b64"],
+    ["app_id", "installation_id", "private_key_b64"],
 )
 def test_credentials_are_absent_when_any_field_is_missing(absent: str) -> None:
     values: dict[str, Any] = {
-        "database_url": "postgresql+psycopg://localhost/x",
-        "github_app_id": APP_ID,
-        "github_app_installation_id": INSTALLATION_ID,
-        "github_app_private_key_b64": "cGVt",
+        "app_id": APP_ID,
+        "installation_id": INSTALLATION_ID,
+        "private_key_b64": SecretStr("cGVt"),
     }
     values[absent] = None
 
-    assert github_app_credentials(Settings(**values)) is None
+    assert github_app_credentials(**values) is None
 
 
 def test_credentials_are_present_when_all_three_fields_are_set() -> None:
-    settings = Settings(
-        database_url="postgresql+psycopg://localhost/x",
-        github_app_id=APP_ID,
-        github_app_installation_id=INSTALLATION_ID,
-        github_app_private_key_b64=SecretStr("cGVt"),
+    resolved = github_app_credentials(
+        app_id=APP_ID,
+        installation_id=INSTALLATION_ID,
+        private_key_b64=SecretStr("cGVt"),
     )
-
-    resolved = github_app_credentials(settings)
 
     assert resolved is not None
     assert resolved.app_id == APP_ID

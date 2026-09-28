@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.secret_metadata import secret_metadata_path
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     CONTAINER_IMAGE_KIND,
     MACHINE_LOCAL_KIND,
@@ -22,7 +23,43 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import ActorContext
+
+
+class ReleaseArtifactResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    work_unit_id: uuid.UUID
+    work_package_revision_id: uuid.UUID
+    package_revision_hash: str
+    source_repository: str
+    implementation_pr_number: int | None
+    source_commit: str
+    merge_commit: str
+    kind: str
+    artifact_registry: str | None
+    artifact_repository: str | None
+    artifact_name: str | None
+    artifact_digest: str
+    artifact_tag: str | None
+    workflow_run_id: str | None
+    workflow_run_attempt: int | None
+    workflow_path: str | None
+    workflow_ref: str | None
+    workflow_run_url: str | None
+    builder_id: str | None
+    builder_class: str | None
+    provenance_ref: str | None
+    provenance_digest: str | None
+    sbom_ref: str | None
+    sbom_digest: str | None
+    summary: dict[str, Any]
+    recorded_by: str
+    recorded_at: datetime
+    event_id: uuid.UUID
+    evidence_id: uuid.UUID
+    idempotency_key: str
+
 
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533532
 SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")

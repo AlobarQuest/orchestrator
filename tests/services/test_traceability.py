@@ -6,10 +6,9 @@ import pytest
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Observation, ReconciliationCondition, WorkUnit
 from orchestrator.services.deployment_observations import record_deployment_observation
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.observations import ObservationCommand, record_observation
 from orchestrator.services.packages import record_approval, register_approved_unit
 from orchestrator.services.pr_bindings import upsert_pr_binding

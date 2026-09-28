@@ -13,13 +13,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from orchestrator.api.schemas import (
+from orchestrator.persistence.models import Adjudication, Approval, Evidence, WorkUnit
+from orchestrator.services.evidence_pack import (
     EvidencePackAdjudicationResponse,
     EvidencePackCriterionRefusalResponse,
     EvidencePackResponse,
     EvidencePackVerifierDecidedResponse,
 )
-from orchestrator.persistence.models import Adjudication, Approval, Evidence, WorkUnit
 from tests.api.test_lifecycle_api import HUMAN, WORKER
 from tests.api.test_status_ledger_api import _register_ready_unit
 

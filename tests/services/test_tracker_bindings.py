@@ -11,9 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import UnitTrackerBinding, WorkUnit
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.tracker_bindings import (
     list_tracker_bindings,
     upsert_tracker_binding,

@@ -8,7 +8,7 @@ from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
     Evidence,
@@ -22,7 +22,6 @@ from orchestrator.services.evidence import (
     record_adjudication,
     record_adjudications,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.verifier_evaluators import human_may_adjudicate
 from tests.services.test_dependencies import register_unit
 

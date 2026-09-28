@@ -7,9 +7,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Observation, ReconciliationCondition, WorkUnit
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.observations import ObservationCommand, record_observation
 from orchestrator.services.pr_bindings import record_verification_read_head, upsert_pr_binding
 from orchestrator.services.reconciliation_detection import (

@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig, get_actor, get_session
@@ -23,16 +22,10 @@ from orchestrator.api.schemas import PackageIntakeRegistration
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.runner_authority import runner_authority_violation
-from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorRole, WorkUnitState
+from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorContext, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
     DecompositionProposal,
-    DecompositionProposalAcMapping,
-    DecompositionProposalDependency,
-    DecompositionProposalRetainedAc,
-    DecompositionProposalUnit,
-    Event,
-    PackageAcceptanceCriterion,
     ReconciliationCondition,
     WorkPackageRevision,
     WorkUnit,
@@ -53,11 +46,12 @@ from orchestrator.services.evidence import (
 )
 from orchestrator.services.evidence_pack import evidence_pack_projection
 from orchestrator.services.graduation_ledger import graduation_ledger
-from orchestrator.services.lifecycle import (
-    ActorContext,
-    TransitionCommand,
-    transition_unit,
+from orchestrator.services.intake_reads import (
+    intake_authority,
+    proposal_children,
+    revision_acceptance_criteria,
 )
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.package_intake import register_package_intake
 from orchestrator.services.packages import record_approval
 from orchestrator.services.pending_decisions import (
@@ -313,28 +307,12 @@ def _package_intake_projection(session: Session, revision_id: uuid.UUID) -> dict
             "package intake does not exist for this revision",
             None,
         )
-    acceptance_criteria = tuple(
-        session.scalars(
-            select(PackageAcceptanceCriterion)
-            .where(PackageAcceptanceCriterion.work_package_revision_id == revision.id)
-            .order_by(PackageAcceptanceCriterion.ac_id, PackageAcceptanceCriterion.id)
-        )
-    )
-    intake_event = session.scalar(
-        select(Event)
-        .where(
-            Event.subject_type == "work_package_revision",
-            Event.subject_id == revision.id,
-            Event.action == "package_revision.intake_registered",
-        )
-        .order_by(Event.occurred_at, Event.id)
-    )
-    command = intake_event.payload.get("command", {}) if intake_event is not None else {}
+    acceptance_criteria = revision_acceptance_criteria(session, revision.id)
     return {
         "revision": revision,
         "package": revision.work_package,
         "acceptance_criteria": acceptance_criteria,
-        "authority": command.get("authority"),
+        "authority": intake_authority(session, revision.id),
         "decision_facts": decision_facts_for_revision(revision),
     }
 
@@ -349,13 +327,8 @@ def _decomposition_proposal_projection(session: Session, proposal_id: uuid.UUID)
         )
     revision = session.get(WorkPackageRevision, proposal.work_package_revision_id)
     assert revision is not None
-    proposal_units = tuple(
-        session.scalars(
-            select(DecompositionProposalUnit)
-            .where(DecompositionProposalUnit.proposal_id == proposal.id)
-            .order_by(DecompositionProposalUnit.unit_key)
-        )
-    )
+    children = proposal_children(session, (proposal.id,))
+    proposal_units = tuple(children.units.get(proposal.id, ()))
     units = tuple(
         {
             "unit_key": unit.unit_key,
@@ -368,42 +341,11 @@ def _decomposition_proposal_projection(session: Session, proposal_id: uuid.UUID)
         }
         for unit in proposal_units
     )
-    dependencies = tuple(
-        session.scalars(
-            select(DecompositionProposalDependency)
-            .where(DecompositionProposalDependency.proposal_id == proposal.id)
-            .order_by(
-                DecompositionProposalDependency.source_unit_key,
-                DecompositionProposalDependency.target_unit_key,
-                DecompositionProposalDependency.external_ref,
-            )
-        )
-    )
-    criteria = tuple(
-        session.scalars(
-            select(PackageAcceptanceCriterion)
-            .where(PackageAcceptanceCriterion.work_package_revision_id == revision.id)
-            .order_by(PackageAcceptanceCriterion.ac_id, PackageAcceptanceCriterion.id)
-        )
-    )
+    dependencies = tuple(children.dependencies.get(proposal.id, ()))
+    criteria = revision_acceptance_criteria(session, revision.id)
     criteria_by_id = {criterion.id: criterion for criterion in criteria}
-    mappings = tuple(
-        session.scalars(
-            select(DecompositionProposalAcMapping)
-            .where(DecompositionProposalAcMapping.proposal_id == proposal.id)
-            .order_by(
-                DecompositionProposalAcMapping.unit_key,
-                DecompositionProposalAcMapping.package_acceptance_criterion_id,
-            )
-        )
-    )
-    retained_acs = tuple(
-        session.scalars(
-            select(DecompositionProposalRetainedAc)
-            .where(DecompositionProposalRetainedAc.proposal_id == proposal.id)
-            .order_by(DecompositionProposalRetainedAc.package_acceptance_criterion_id)
-        )
-    )
+    mappings = tuple(children.mappings.get(proposal.id, ()))
+    retained_acs = tuple(children.retained.get(proposal.id, ()))
     mapped_by_criterion = {mapping.package_acceptance_criterion_id: mapping for mapping in mappings}
     retained_by_criterion = {
         retained.package_acceptance_criterion_id: retained for retained in retained_acs

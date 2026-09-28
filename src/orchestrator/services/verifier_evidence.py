@@ -16,7 +16,7 @@ from orchestrator.kernel.evidence_types import (
     NAMED_CHECK_OBSERVATION_SOURCE,
     VERIFIER_NAMED_CHECK_EVIDENCE_TYPE,
 )
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     DispatchRecord,
     Event,
@@ -35,7 +35,6 @@ from orchestrator.services.github_checks import (
     CheckObservationError,
     CheckObserver,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.verifier_criteria import load_required_criteria
 
 SUPPORTED_CONCLUSIONS = frozenset(

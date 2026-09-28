@@ -11,7 +11,7 @@ from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.evidence_types import VERIFIER_EVIDENCE_PREFIX
 from orchestrator.kernel.leases import hash_lease_token
-from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorRole, WorkUnitState
+from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorContext, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
     Adjudication,
@@ -37,7 +37,6 @@ from orchestrator.services.lifecycle import (
     FOLLOW_UP_AC_ID,
     FOLLOW_UP_EVIDENCE_TYPE,
     POST_DEPLOY_AC_IDS,
-    ActorContext,
     is_generated_follow_up_unit,
 )
 from orchestrator.services.verifier_evaluators import human_may_adjudicate

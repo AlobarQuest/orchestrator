@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
     DecompositionProposal,
@@ -24,7 +24,7 @@ from orchestrator.services.github_checks import (
     CheckObserver,
     ObservedJob,
 )
-from orchestrator.services.lifecycle import ActorContext, TransitionCommand, transition_unit
+from orchestrator.services.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.packages import register_approved_unit, register_revision
 from orchestrator.services.verifier_evidence import (
     NamedCheckEvidenceCommand,

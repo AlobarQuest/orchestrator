@@ -6,14 +6,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Event,
     ReconciliationCondition,
     ReconciliationResolution,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.reconciliation import (
     ConditionCommand,
     ConditionOutcome,

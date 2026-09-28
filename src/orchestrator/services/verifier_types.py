@@ -2,8 +2,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Literal
 
-from orchestrator.kernel.states import WorkUnitState
-from orchestrator.services.lifecycle import ActorContext
+from orchestrator.kernel.states import ActorContext, WorkUnitState
 from orchestrator.services.verifier_evaluators import EvaluationStatus
 
 VerificationResult = Literal["completed", "revision_required", "awaiting_review", "failed"]

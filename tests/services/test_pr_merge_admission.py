@@ -26,7 +26,7 @@ from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.evidence_types import VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
     Event,
@@ -38,7 +38,6 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.reach_vocabulary import LIVE_ESTATE
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import record_approval, register_approved_unit
 from orchestrator.services.pr_bindings import record_verification_read_head, upsert_pr_binding
 from orchestrator.services.pr_merge_admission import (

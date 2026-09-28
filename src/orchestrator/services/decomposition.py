@@ -18,7 +18,7 @@ from orchestrator.kernel.authority import (
 from orchestrator.kernel.enrichment import validate_enrichment
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
 from orchestrator.kernel.runner_authority import runner_authority_violation
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
     DecompositionProposal,
@@ -30,7 +30,6 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
     WorkPackageRevision,
 )
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.packages import (
     DependencySpec,
     register_approved_unit,

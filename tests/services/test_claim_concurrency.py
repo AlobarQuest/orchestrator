@@ -4,9 +4,8 @@ from threading import Barrier
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.services.claims import LeaseGrant, claim_unit
-from orchestrator.services.lifecycle import ActorContext
 from tests.services.test_dependencies import register_unit
 
 

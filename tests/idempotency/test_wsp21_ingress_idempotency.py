@@ -3,7 +3,7 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Evidence,
     ReconciliationCondition,
@@ -13,7 +13,6 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.claims import requeue_unit
 from orchestrator.services.evidence import recover_evidence
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.pr_bindings import get_pr_binding, upsert_pr_binding
 from orchestrator.services.reconciliation import (
     ConditionCommand,

@@ -5,9 +5,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event, Observation, WorkUnit
-from orchestrator.services.lifecycle import ActorContext
 from orchestrator.services.observations import (
     ObservationCommand,
     ObservationFilters,
