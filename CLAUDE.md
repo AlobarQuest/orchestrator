@@ -1945,7 +1945,8 @@ style of that module.
 
 - **But the revision-anchored and unit-anchored traceability answers are DIFFERENT query paths and
   can disagree — so "no second surface" is not "no second reading".** `resolve_anchors` branches,
-  and the reconciliation runner writes on a schedule, so asking the unit-anchored query about the
+  and conditions arrive whenever a producer reports (the reconciliation runner that was meant
+  to write them on a schedule never ran and was retired by ADR-0047), so asking the unit-anchored query about the
   same units is a genuine second reading rather than a restatement. **Concluding that production
   serves no corroborating surface, and stopping there, is what shipped WS-P2.41's severe defect** —
   a carrier scan that failed to exclude the release's own units, so a release whose unit carried a
