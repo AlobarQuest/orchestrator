@@ -36,20 +36,12 @@ envelope draws that objection, so the human-authority requirement is the DEFAULT
 the exception -- which is why a pattern that fails to load, a reach nobody declared, and a field no
 pattern accounts for all resolve the same way, to asking.
 
-**Schema version 3 makes an undeclared reach refuse admission, and grandfathers a NAMED LIST of
-revisions from that.** The list holds revision ids, never a date and never the predicate "this
-package declared no reach". Both of those look equivalent on the day they ship and are permanent
-holes: a date still absolves a package authored before it and broken down after it, and keying on
-absence absolves every future package that forgets to declare. An id is a boundary a revision
-created tomorrow cannot satisfy, because nobody can add it to a document that ships with the image.
-
-**And the list is required to die.** :meth:`FactoryPolicy.require_live_subject` raises once no
-listed revision can still produce work, which is the state in which the exemption has nothing left
-to exempt. The check takes that fact as an argument rather than reading it, because this module
-cannot reach the database and must not learn how -- but the effect is the artifact's, not the
-caller's: nothing here caches, so refusing at every consultation is refusing to load. A dead knob
-is the same defect as a dead function, and this one deletes itself rather than waiting to be
-noticed.
+**Schema version 3 made an undeclared reach refuse admission, and schema version 6 removed the
+exemption it carried (ADR-0047).** Schema 3 grandfathered a named list of revision ids from that
+refusal and required the list to die; its one remaining subject was never broken down, so the table
+and its loader went in one change. A document still carrying ``[grandfathered]`` names an unknown
+top-level key and does not load. Every revision is now held to the same rule: no declared reach, no
+admission.
 
 **Schema version 4 adds the change window, and it too is only a refusal.** A window is the hours in
 which policy raises no objection to work of a reach STARTING; outside them the objection is
@@ -105,7 +97,7 @@ PACKAGED_ARTIFACT: Final[Path] = Path(__file__).parent / "factory-policy.toml"
 # narrowing the new version introduced, which is the permissive reading of a version skew. A new
 # version is therefore a coordinated change -- the loader learns it in the same commit that ships
 # the document at it and the code that reads its new field.
-SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({5})
+SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({6})
 
 # Why policy objects. These are the whole output vocabulary of this module.
 REACH_UNDECLARED: Final = "reach_undeclared"
@@ -116,8 +108,7 @@ OUTSIDE_CHANGE_WINDOW: Final = "outside_change_window"
 
 _ROW_REQUIRED_FIELDS = frozenset({"rationale", "decided"})
 _ROW_OPTIONAL_FIELDS = frozenset({"known_good", "change_window", "lease"})
-_TOP_LEVEL_FIELDS = frozenset({"version", "reach", "grandfathered"})
-_GRANDFATHERED_FIELDS = frozenset({"rationale", "decided", "revisions"})
+_TOP_LEVEL_FIELDS = frozenset({"version", "reach"})
 _WINDOW_FIELDS = frozenset({"rationale", "decided", "timezone", "start", "end"})
 _LEASE_FIELDS = frozenset({"rationale", "decided", "minutes"})
 _PATTERN_FIELDS = frozenset(
@@ -199,22 +190,6 @@ class KnownGoodPattern:
 
 
 @dataclass(frozen=True)
-class Grandfathering:
-    """The revisions exempt from having to declare reach, named one by one.
-
-    A closed set of ids, so the exemption cannot be earned: nothing a package does makes it a
-    member, because membership is written in a document that ships with the image. That is the
-    whole difference between this and the two rules it replaced -- a cutoff date, which a package
-    authored before it and broken down after it still satisfies, and "reach is absent", which every
-    future package that forgets to declare satisfies forever.
-    """
-
-    rationale: str
-    decided: date
-    revisions: frozenset[UUID]
-
-
-@dataclass(frozen=True)
 class ChangeWindow:
     """The hours somebody decided work of this reach may start in, held as a refusal boundary.
 
@@ -285,7 +260,6 @@ class FactoryPolicy:
     version: int
     source: str
     rows: Mapping[str, ReachPolicy]
-    grandfathered: Grandfathering | None = None
 
     def refusals_for(self, reach: Sequence[str] | None) -> tuple[str, ...]:
         """Why this policy objects to work of the given reach; empty means it does not object.
@@ -304,28 +278,10 @@ class FactoryPolicy:
                 refusals.add(REACH_NOT_IN_POLICY)
         return tuple(sorted(refusals))
 
-    def admission_refusals(
-        self, reach: Sequence[str] | None, revision_id: UUID | None
-    ) -> tuple[str, ...]:
-        """Why policy objects to admitting work of this reach, allowing for grandfathering.
-
-        Withholds exactly one objection, from exactly the revisions named in the artifact, and
-        only when that objection stands alone. A declaration naming a member this build does not
-        know, or one no row covers, is the author having said something broken rather than the
-        author having said nothing -- a condition that did not exist before this field did, so it
-        is not a thing to be grandfathered from. The exemption is therefore narrower than "these
-        revisions are exempt from reach": it is "these revisions are exempt from having to have
-        declared it".
-        """
-        refusals = self.refusals_for(reach)
-        if refusals == (REACH_UNDECLARED,) and self._grandfathers(revision_id):
-            return ()
-        return refusals
-
     def window_refusal(self, reach: Sequence[str] | None, now: datetime) -> str | None:
         """Why policy objects to work of this reach STARTING at ``now``; ``None`` means it does not.
 
-        A separate question from :meth:`admission_refusals`, and separate on purpose. That one asks
+        A separate question from :meth:`refusals_for`, and separate on purpose. That one asks
         whether the declaration is usable at all, which nothing but editing the package can fix;
         this one asks whether it is the time, which fixes itself. Reporting the second in place of
         the first would send an operator away to wait for a moment that changes nothing.
@@ -339,8 +295,8 @@ class FactoryPolicy:
         one -- reach is declared, never inferred (ADR-0009 R8), and the fail-closed-looking
         alternative of requiring every window at once is worse than it sounds: two rows whose hours
         do not overlap would make such work unrunnable forever rather than merely restrained. The
-        exposure is exactly the set the admission term still lets through, which is the named
-        grandfathering list, which deletes itself.
+        exposure is empty: the admission term refuses every undeclared reach, with no exemption
+        since schema 6 (ADR-0047).
         """
         # Before the early return, not after it: a clock this module cannot read is a fault whether
         # or not this particular reach would have consulted a window, and a guard that only fires on
@@ -422,28 +378,6 @@ class FactoryPolicy:
         row = self.rows.get(member)
         return DEFAULT_LEASE if row is None or row.lease is None else row.lease.duration
 
-    def require_live_subject(self, live_revisions: Sequence[UUID]) -> None:
-        """Raise once no grandfathered revision can still produce work needing admission.
-
-        The caller supplies which of the listed revisions are still live, because this module
-        cannot see the database and must not learn how. What it decides is nonetheless the
-        artifact's own answer: the exemption exists only for records that can still be affected by
-        it, and when none can, the document is describing nobody. Refusing then is what forces the
-        table to be deleted on the day that becomes true, rather than leaving a rule nobody
-        revisits -- and because refusing permits nothing, forgetting is expensive in the safe
-        direction.
-        """
-        if self.grandfathered is None:
-            return
-        if not self.grandfathered.revisions & set(live_revisions):
-            raise DomainError(
-                "factory_policy_grandfathering_spent",
-                "every grandfathered revision is spent: none can still produce work that "
-                "admission would judge, so the exemption describes nobody",
-                "delete the `[grandfathered]` table from the policy artifact and release the "
-                "build; until then the artifact does not load and policy permits nothing",
-            )
-
     def authority_refusals(
         self,
         reach: Sequence[str] | None,
@@ -458,14 +392,11 @@ class FactoryPolicy:
         build does not know, is answered by ``refusals_for`` before any pattern is consulted, so an
         unclassifiable reach never reaches the matcher at all.
 
-        **Grandfathering deliberately does not apply here, and calling ``refusals_for`` rather than
-        ``admission_refusals`` is the load-bearing line of this method.** Withholding
-        ``reach_undeclared`` from this answer would not soften the human requirement, it would
-        DELETE it: with no reach there is no row, with no row no pattern is consulted, and the loop
-        below would fall straight through to an empty refusal set -- lifting the gate on an
-        envelope nothing recognised. The exemption says a revision need not have declared reach to
-        be admitted. It has never said a person need not read its envelope, and the two questions
-        stay separate for exactly this reason.
+        **An undeclared reach draws ``reach_undeclared`` here too, and that is load-bearing.** With
+        no reach there is no row, and with no row no pattern is consulted, so an empty answer would
+        fall straight through and lift the gate on an envelope nothing recognised. Any future
+        exemption from declaring reach must never be applied to this answer: an exemption from
+        admission has never meant that a person need not read the envelope.
         """
         refusals = set(self.refusals_for(reach))
         if refusals or reach is None:
@@ -481,17 +412,8 @@ class FactoryPolicy:
             return AuthorityRecognition(tuple(sorted(refusals)), ())
         return AuthorityRecognition((), tuple(sorted(names)))
 
-    def _grandfathers(self, revision_id: UUID | None) -> bool:
-        return self.grandfathered is not None and revision_id in self.grandfathered.revisions
-
     def report(self) -> dict[str, Any]:
-        """What this process is enforcing, for an operator reading the running instance.
-
-        The grandfathered list is reported in full rather than counted. It is a temporary
-        exemption from a rule everything else is held to, so the operator question it has to
-        answer is "which records is this still covering, and can I delete it yet" -- and a count
-        answers neither.
-        """
+        """What this process is enforcing, for an operator reading the running instance."""
         return {
             "version": self.version,
             "source": self.source,
@@ -502,7 +424,6 @@ class FactoryPolicy:
                 "default_minutes": int(DEFAULT_LEASE.total_seconds() // 60),
                 "ceiling_minutes": int(LEASE_CEILING.total_seconds() // 60),
             },
-            "grandfathered": _grandfathering_report(self.grandfathered),
             "reach": [
                 {
                     "member": row.member,
@@ -566,16 +487,6 @@ def _lease_report(lease: Lease | None) -> dict[str, Any] | None:
         "rationale": lease.rationale,
         "decided": lease.decided,
         "minutes": int(lease.duration.total_seconds() // 60),
-    }
-
-
-def _grandfathering_report(grandfathering: Grandfathering | None) -> dict[str, Any] | None:
-    if grandfathering is None:
-        return None
-    return {
-        "rationale": grandfathering.rationale,
-        "decided": grandfathering.decided,
-        "revisions": sorted(str(revision) for revision in grandfathering.revisions),
     }
 
 
@@ -720,42 +631,6 @@ def load_factory_policy(path: Path = PACKAGED_ARTIFACT) -> FactoryPolicy:
         version=_schema_version(document),
         source=path.name,
         rows=_rows(document),
-        grandfathered=_grandfathering(document.get("grandfathered")),
-    )
-
-
-def _grandfathering(value: object) -> Grandfathering | None:
-    """The `[grandfathered]` table, or ``None`` when the exemption has been deleted.
-
-    Absent is the END STATE, not a default: the table is deleted once it has no subject left, and
-    a document without it grandfathers nobody. That is why absence is the permissive-looking
-    reading and is still safe -- it withholds no objection at all.
-    """
-    if value is None:
-        return None
-    if not isinstance(value, dict) or set(value) != _GRANDFATHERED_FIELDS:
-        raise _invalid(
-            "`[grandfathered]` must be a table declaring exactly "
-            + ", ".join(sorted(_GRANDFATHERED_FIELDS))
-        )
-    revisions = _string_list("grandfathered", "revisions", value["revisions"])
-    parsed = []
-    for entry in revisions:
-        try:
-            parsed.append(UUID(entry))
-        except ValueError as error:
-            # An id that is not one cannot match a revision, so it would sit in the list looking
-            # like an exemption and granting none -- and worse, would keep the table alive past
-            # the day it should have been deleted.
-            raise _invalid(
-                f"`grandfathered.revisions` entry is not a revision id: {entry!r}"
-            ) from error
-    if len(set(parsed)) != len(parsed):
-        raise _invalid("`grandfathered.revisions` names the same revision twice")
-    return Grandfathering(
-        rationale=_text("grandfathered", "rationale", value["rationale"]),
-        decided=_decided("grandfathered", value["decided"]),
-        revisions=frozenset(parsed),
     )
 
 

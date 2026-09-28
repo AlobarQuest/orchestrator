@@ -1555,20 +1555,6 @@ class FactoryPolicyReachResponse(BaseModel):
     lease: FactoryPolicyLeaseResponse | None
 
 
-class FactoryPolicyGrandfatheringResponse(BaseModel):
-    """The revisions exempt from having to declare reach, in full.
-
-    Not a count. This is a temporary exemption from a rule everything else is held to, and the
-    operator question is which records it still covers and whether it can be deleted yet.
-    """
-
-    model_config = ConfigDict(from_attributes=True)
-
-    rationale: str
-    decided: date
-    revisions: list[str]
-
-
 class FactoryPolicyResponse(BaseModel):
     """What policy the running process is enforcing.
 
@@ -1583,7 +1569,6 @@ class FactoryPolicyResponse(BaseModel):
     # A response model silently DROPS every key the service returns and the model does not declare,
     # which is how WS-P2.12 served an empty enrichment while every service assertion passed.
     lease_bounds: FactoryPolicyLeaseBoundsResponse
-    grandfathered: FactoryPolicyGrandfatheringResponse | None
     reach: list[FactoryPolicyReachResponse]
 
 

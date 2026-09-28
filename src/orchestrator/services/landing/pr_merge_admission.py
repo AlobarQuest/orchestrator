@@ -465,11 +465,6 @@ def _change_window_term(
     loading and nothing red. So the affirmative case here is "a window is declared and now is
     inside it", never "nothing objected".
 
-    `require_live_subject` is deliberately not consulted. It asserts that the grandfathering list
-    still has a subject, which is about a revision's own reach declaration; this term reads the
-    landing act's reach, which no revision declares. The other reader of a loaded policy -- the
-    route that reports what this process is enforcing -- does not consult it either.
-
     **A supervised override suppresses ONE of the three refusals below (ADR-0032), and it is the
     one about the hour.** A policy artifact that declares no hours at all, and one this process
     could not read, are faults somebody has to fix; an operator saying a landing is watched has

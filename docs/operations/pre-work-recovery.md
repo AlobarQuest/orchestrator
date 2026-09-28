@@ -90,10 +90,11 @@ says what is possible:
 - Once no proposal is pending and no breakdown is approved, the revision **comes back onto the
   queue** and stays there. Nothing records "declined" for a revision.
 
-**Known permanent resident: `wsp211-conformance-kit` revision 1.** It is the only live subject of
-the factory-policy grandfathering table. Breaking it down and settling it while that table ships
-would make the policy artifact stop loading (see the grandfathering bullets in `CLAUDE.md`). It
-stays on the queue until the table is removed, in the same change that settles it.
+**Known permanent resident: `wsp211-conformance-kit` revision 1.** It was the last subject of the
+factory-policy grandfathering table, which ADR-0047 removed (schema 6). It declares no reach, so a
+unit broken out of it cannot be admitted; it stays on the queue because nothing retires a revision.
+Until an image carrying schema 6 is running, production still ships the table, so do not break it
+down and settle it before then: that would make the running artifact stop loading.
 
 ---
 

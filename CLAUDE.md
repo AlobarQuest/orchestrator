@@ -1484,7 +1484,11 @@ style of that module.
   is safe only where empty means "this policy raises no objection" and some *other* term still has to
   say yes.
 
-- **The grandfathering table deletes itself, which couples it to deployment: if its last live
+- **[REMOVED 2026-09-28 by ADR-0047 (schema 6) — historical until an image carrying it runs.]**
+  The table and `require_live_subject` are gone from `main`; a document carrying `[grandfathered]`
+  no longer loads, and every revision is refused for undeclared reach. The hazard below stands for
+  production ONLY until that image is deployed.
+  **The grandfathering table deletes itself, which couples it to deployment: if its last live
   revision settles while the table still ships, the artifact stops loading and recovery needs a
   release.** WS-P2.18 Inc 4's rule names an explicit list of revision ids (never a date — a date can
   still absolve a package created before it but decomposed after), and `require_live_subject` raises

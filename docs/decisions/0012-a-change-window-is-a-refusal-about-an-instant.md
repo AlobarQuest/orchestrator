@@ -119,7 +119,8 @@ The fail-closed-looking alternative — requiring *every* declared window at onc
 sounds, and §4 is why: two windows that do not overlap would make such work permanently unrunnable
 rather than merely restrained, which is not a safety property but a brick. The exposure is exactly
 the set the admission term still lets through, which is the named grandfathering list of Increment
-4, which is one revision and which deletes itself.
+4, which is one revision and which deletes itself. *(Amended 2026-09-28: ADR-0047 removed that
+list, so the exposure is now empty.)*
 
 ## Consequences
 

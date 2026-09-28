@@ -6,6 +6,8 @@ and until this route existed there was no way to ask the running instance which 
 
 from fastapi.testclient import TestClient
 
+from orchestrator.api.schemas import FactoryPolicyResponse
+from orchestrator.factory_policy import load_factory_policy
 from orchestrator.reach_vocabulary import REACH_VOCABULARY
 from tests.api.test_lifecycle_api import SYSTEM, WORKER
 
@@ -19,7 +21,12 @@ def test_the_policy_surface_reports_the_version_and_every_reach_row(db_client: T
 
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == 5
+    assert body["version"] == 6
+    # Served keys, model fields and report keys are one set: a response model drops what it does
+    # not declare, and a field the report stopped producing must not linger in the model either.
+    assert (
+        set(body) == set(FactoryPolicyResponse.model_fields) == set(load_factory_policy().report())
+    )
     assert body["source"] == "factory-policy.toml"
     assert [row["member"] for row in body["reach"]] == sorted(REACH_VOCABULARY)
     assert all(row["rationale"] and row["decided"] for row in body["reach"])

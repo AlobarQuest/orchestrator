@@ -60,7 +60,7 @@ DECIDED = 'decided = "2026-08-01"'
 # overlap, which is exactly the composition case §7 below needs and exactly the arrangement the
 # shipped artifact avoids.
 WINDOWED = f"""
-version = 5
+version = 6
 
 [reach.source_repository]
 rationale = "repository only"
@@ -258,8 +258,8 @@ def test_a_reach_nobody_declared_draws_no_window_objection(tmp_path: Path) -> No
     Every window hangs off a reach row, so an undeclared reach has no row to consult and no honest
     way to pick one -- reach is declared, never inferred. Requiring every window at once would be
     fail-closed in name only: the fixture's two windows are disjoint, so such work would become
-    permanently unrunnable rather than restrained. The exposure is exactly the set the admission
-    term still lets through, which is the named grandfathering list, which deletes itself.
+    permanently unrunnable rather than restrained. The exposure is empty: the admission term
+    refuses every undeclared reach, with no exemption since schema 6 (ADR-0047).
     """
     policy = windowed(tmp_path)
     shut = local(2026, 8, 12, 20)
