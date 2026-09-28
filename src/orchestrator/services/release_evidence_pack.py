@@ -8,15 +8,10 @@ GUI page. It reads canonical rows only; it never dispatches, deploys, or writes 
 
 import uuid
 
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from orchestrator.api.schemas import (
-    DeploymentObservationResponse,
-    ReleaseArtifactResponse,
-    ReleaseEvidencePackResponse,
-    ReleaseEvidencePackRevisionResponse,
-)
 from orchestrator.errors import DomainError
 from orchestrator.persistence.models import (
     DeploymentObservation,
@@ -24,10 +19,33 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.deployment_observations import DeploymentObservationResponse
 from orchestrator.services.evidence_pack import (
+    EvidencePackResponse,
     evidence_pack_projection,
     evidence_pack_response,
 )
+from orchestrator.services.release_artifacts import ReleaseArtifactResponse
+
+
+class ReleaseEvidencePackRevisionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    work_package_id: uuid.UUID
+    revision: int
+    content_hash: str
+    source_path: str
+    source_commit: str
+    approved_by: str
+    registered_by: str
+
+
+class ReleaseEvidencePackResponse(BaseModel):
+    revision: ReleaseEvidencePackRevisionResponse
+    units: list[EvidencePackResponse]
+    release_artifacts: list[ReleaseArtifactResponse]
+    deployments: list[DeploymentObservationResponse]
 
 
 def release_evidence_pack_response(

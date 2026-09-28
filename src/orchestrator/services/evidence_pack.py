@@ -7,27 +7,13 @@ other callers can share the identical assembly and query logic.
 """
 
 import uuid
+from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from orchestrator.api.schemas import (
-    EvidencePackAdjudicationResponse,
-    EvidencePackApprovalResponse,
-    EvidencePackAuthorityResponse,
-    EvidencePackAuthorityViolationResponse,
-    EvidencePackClaimResponse,
-    EvidencePackCriterionRefusalResponse,
-    EvidencePackDependencyResponse,
-    EvidencePackEventPublicationResponse,
-    EvidencePackEventResponse,
-    EvidencePackEvidenceResponse,
-    EvidencePackProvenanceResponse,
-    EvidencePackResponse,
-    EvidencePackVerifierDecidedResponse,
-    EvidencePackWorkUnitResponse,
-)
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.runner_authority import runner_authority_violation
@@ -46,6 +32,165 @@ from orchestrator.services.lifecycle import (
     VerifierDecidedCompletion,
     verifier_decided_completion,
 )
+
+
+class EvidencePackWorkUnitResponse(BaseModel):
+    """WS-P2.5: the subset of a work unit the evidence pack keys everything else against."""
+
+    id: uuid.UUID
+    title: str
+    state: str
+    authority_fingerprint: str
+
+
+class EvidencePackProvenanceResponse(BaseModel):
+    """The canonical package-revision facts a reviewer checks first: what was actually built."""
+
+    revision: int
+    content_hash: str
+    source_path: str
+    source_commit: str
+    registered_by: str
+
+
+class EvidencePackAuthorityViolationResponse(BaseModel):
+    code: str
+    message: str
+    remediation: str | None = None
+
+
+class EvidencePackAuthorityResponse(BaseModel):
+    authority_fingerprint: str
+    envelope: dict[str, Any]
+    authority_violation: EvidencePackAuthorityViolationResponse | None = None
+
+
+class EvidencePackDependencyResponse(BaseModel):
+    kind: str
+    required_state_or_condition: str
+    status: str
+
+
+class EvidencePackClaimResponse(BaseModel):
+    attempt: int
+    claimed_by: str
+    lease_expires_at: datetime
+    terminal_reason: str | None = None
+
+
+class EvidencePackEvidenceResponse(BaseModel):
+    """One AC-keyed evidence record. `supersedes` chains to a prior entry's `id`."""
+
+    id: uuid.UUID
+    ac_id: str
+    current: bool
+    evidence_type: str
+    stable_ref: str | None = None
+    payload: dict[str, Any] | None = None
+    supersedes: uuid.UUID | None = None
+
+
+class EvidencePackAdjudicationResponse(BaseModel):
+    """One AC-keyed adjudication. Waiver fields are populated only when `outcome == "waived"`."""
+
+    id: uuid.UUID
+    ac_id: str
+    outcome: str
+    current: bool
+    decided_by: str
+    # WS-P3.7. The KIND of actor that decided, as a stored fact. NULL on every row written before
+    # the column existed, and NULL means *unknown* -- a consumer must never read it as "not human".
+    decided_by_role: str | None = None
+    # The evidence the decision was recorded against. `failed_evidence_id` below is the waiver
+    # field and answers a different question; only it was projected before.
+    evidence_id: uuid.UUID | None = None
+    rationale: str
+    risk: str | None = None
+    follow_up: str | None = None
+    scope: str | None = None
+    expires_at: datetime | None = None
+    failed_evidence_id: uuid.UUID | None = None
+
+
+class EvidencePackCriterionRefusalResponse(BaseModel):
+    """One reason the unit does not qualify. `ac_id` is null when the reason is unit-wide."""
+
+    ac_id: str | None = None
+    code: str
+
+
+class EvidencePackVerifierDecidedResponse(BaseModel):
+    """Whether every required acceptance criterion of this unit reached a current terminal
+    adjudication that the verifier recorded from its own evaluation of evidence.
+
+    Computed once, in `services/lifecycle.py`, and served here so an off-process consumer can read
+    the answer without parsing `/history` for an opaque event payload. Fails closed in every
+    direction: an unrecorded decider kind, a criterion with no single current adjudication, a
+    waiver, or a revision that declares no usable criteria all make `satisfied` false and name
+    themselves in `refusals`.
+    """
+
+    satisfied: bool
+    # ADR-0020's sentence, as its two clauses. `decided_by_verifier` is "with no human
+    # adjudication"; `evidence_observed` is "from observed evidence". Served separately because a
+    # criterion can fail either one alone, and an off-process consumer that can only read the AND
+    # cannot tell which -- which is the whole reason Increment 1 made the condition readable.
+    decided_by_verifier: bool
+    evidence_observed: bool
+    refusals: list[EvidencePackCriterionRefusalResponse]
+
+
+class EvidencePackApprovalResponse(BaseModel):
+    subject_type: str
+    decision: str
+    approved_by: str
+    reason: str
+
+
+class EvidencePackEventPublicationResponse(BaseModel):
+    source_ref: str
+    status: str
+    event_id: str
+    export_ref: str | None = None
+    last_error: str | None = None
+
+
+class EvidencePackEventResponse(BaseModel):
+    """One event, projected. A key this model does not declare is silently dropped, so a payload
+    field a reader needs has to be named here as well as written there."""
+
+    occurred_at: datetime
+    action: str
+    actor_id: str
+    from_state: str | None = None
+    to_state: str | None = None
+    reason: str | None = None
+    # ADR-0032, on the two acts that can carry one. Full fidelity in this JSON, which is
+    # authenticated; the markdown renderer relays onto a possibly-public pull request comment and
+    # deliberately does not interpolate the operator's words.
+    change_window_override: dict[str, Any] | None = None
+
+
+class EvidencePackResponse(BaseModel):
+    """A single work unit's full evidentiary record, structured for programmatic consumption.
+
+    Mirrors the field set of the `/review` evidence-pack HTML page (`templates/evidence_pack.html`)
+    exactly, but as JSON any authenticated caller can read -- including the runner's WORKER
+    credential, which has no role gate on this route. Field names are chosen so a per-release pack
+    (WS-P2.5 Increment 2) can nest a `list[EvidencePackResponse]` without renaming anything here.
+    """
+
+    work_unit: EvidencePackWorkUnitResponse
+    provenance: EvidencePackProvenanceResponse
+    authority: EvidencePackAuthorityResponse
+    dependencies: list[EvidencePackDependencyResponse]
+    claims: list[EvidencePackClaimResponse]
+    evidence: list[EvidencePackEvidenceResponse]
+    adjudications: list[EvidencePackAdjudicationResponse]
+    verifier_decided_completion: EvidencePackVerifierDecidedResponse
+    approvals: list[EvidencePackApprovalResponse]
+    event_publications: list[EvidencePackEventPublicationResponse]
+    events: list[EvidencePackEventResponse]
 
 
 def evidence_pack_projection(session: Session, unit_id: uuid.UUID) -> dict[str, Any]:
@@ -179,7 +324,7 @@ def _verifier_decided_response(
 def evidence_pack_response(projection: dict[str, Any]) -> EvidencePackResponse:
     """Serialize `evidence_pack_projection`'s ORM/set-bearing dict into a JSON-safe response.
 
-    The projection is deliberately GUI-shaped (ORM rows, `set[UUID]` membership tests) since it
+    The projection is deliberately GUI-shaped (ORM rows, `set[uuid.UUID]` membership tests) since it
     was originally private to the `/review` template. This is the one place that maps it to plain,
     JSON-serializable types -- callers must never return the projection dict directly from a JSON
     route.

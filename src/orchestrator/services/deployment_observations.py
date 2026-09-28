@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -28,6 +29,38 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.release_artifacts import SHA256_DIGEST
+
+
+class DeploymentObservationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    release_artifact_binding_id: uuid.UUID
+    implementation_work_unit_id: uuid.UUID
+    work_package_revision_id: uuid.UUID
+    package_revision_hash: str
+    kind: str
+    post_deploy_work_unit_id: uuid.UUID | None
+    environment: str
+    base_url: str | None
+    observed_artifact_digest: str
+    deployment_ref: str
+    deployment_url: str | None
+    deployer: str | None
+    observed_at: datetime
+    probe_summary: dict[str, Any]
+    route_summary: dict[str, Any]
+    auth_summary: dict[str, Any]
+    dispatch_summary: dict[str, Any]
+    status_summary: dict[str, Any]
+    activation_summary: dict[str, Any]
+    recorded_by: str
+    recorded_at: datetime
+    event_id: uuid.UUID
+    post_deploy_event_id: uuid.UUID | None
+    evidence_ids: list[str]
+    idempotency_key: str
+
 
 IDEMPOTENCY_LOCK_NAMESPACE = 0x57533533
 ENVIRONMENT = re.compile(r"^[a-z][a-z0-9_-]{1,62}$")
