@@ -63,15 +63,15 @@ def test_every_level_is_one_of_the_three() -> None:
 def test_exactly_five_revisions_confirm_the_deployed_build() -> None:
     """A literal assertion, not a derived one.
 
-    Of both repositories' entire history, three workflow revisions make a green run mean that the
-    merged build is the one production is serving: `change-manager`'s `191ec5a` (2026-08-07),
-    `brain`'s `1d9e7d3` (2026-08-14), which is the same improvement made a week later, and
-    `brain#62` (2026-09-08), which keeps that poll and adds two refusals around it. The other two
-    are `191ec5a` and `brain#62` again with only their setup steps moved to Python 3.14
-    (change-manager#99, brain#77, 2026-09-28): same production job, same bytes where it counts.
-    Deriving this
-    from the registry would let the registry change it silently — and a REVISION level is the
-    difference between a record that can be landed unattended and one that cannot.
+    Of both repositories' entire history, five workflow revisions make a green run mean that the
+    merged build is the one production is serving. Three are real improvements:
+    `change-manager`'s `191ec5a` (2026-08-07); `brain`'s `1d9e7d3` (2026-08-14), the same
+    improvement a week later; and `brain#62` (2026-09-08), which keeps that poll and adds two
+    refusals around it. The other two are `191ec5a` and `brain#62` with only their setup steps
+    moved to Python 3.14 (change-manager#99, brain#77, 2026-09-28), so the production job is the
+    same bytes. Deriving this from the registry would let the registry change it silently -- and a
+    REVISION level is the difference between a record that can be landed unattended and one that
+    cannot.
 
     ADR-0044 gives this list a second consumer and a sharper edge. The supersession clause admits
     a failed rollout as an EXCEPTION only when the run that moved production past it ran at a
@@ -120,7 +120,7 @@ def test_every_brain_revision_before_the_revision_poll_is_unverified() -> None:
     those bytes still means what they said.
     """
     brain = [a for a in REGISTRY.values() if a.rollout_job == "deploy"]
-    assert len(brain) == 5
+    assert len(brain) == 6
     unverified = sorted(a.revision for a in brain if a.level == ATTESTS_UNVERIFIED)
     assert unverified == [
         "6cad4cf9f03d816ce8bf8fb87fa67d8634486ef1",
