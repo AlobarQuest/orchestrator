@@ -166,6 +166,7 @@ for their date and are not current policy.
 - [ ] (P3) The com.devon.security-scan LaunchAgent's PATH lacks /usr/local/bin, where bws lives. Measured 2026-09-16 alongside the factory-events fix: those two were the only installed plists missing it. security-scan does not source observe-run.sh today, so nothing is broken — it matters only if that lane ever needs bws or another /usr/local/bin tool. — added 2026-09-17
 - [ ] (P2) Dispatch admission discards TargetDeclaration.reason. services/factory_target.py names which precondition failed (no identity, no bws binary, a status that is not an answer, an unparseable file) and services/dispatch.py reads only .target, so an operator sees target_repository_declaration_unreadable with no reason. Same class as the bare 'no orchestrator bearer available' that hid a PATH gap for 28 nights. — added 2026-09-17
 - [ ] (P3) scripts/run-inert-landing.sh accepts --dry-run for the dead-man switch and forwards it to the inert-landing CLI, which rejects it ('unrecognized arguments: --dry-run', exit 2). The CLI's only flag is --submit, so the bare invocation is its reporting form. Measured 2026-09-16. — added 2026-09-17
+- [ ] (P3) Consolidate the remaining duplicated test seeding helpers (two completed_unit copies; the _unit/_ready_unit/_revision/_claimed_unit family in service tests) into tests/_support/seeding.py — needs a per-helper decision on what each test's assertions depend on. Tier 2 item 10 remainder. — added 2026-09-28
 ## Future plans
 
 ## Known Non-obvious Invariants
