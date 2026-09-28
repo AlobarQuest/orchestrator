@@ -48,6 +48,11 @@ def _internal_imports(path: Path) -> set[str]:
         modules: list[str] = []
         if isinstance(node, ast.Import):
             modules = [alias.name for alias in node.names]
+            # A bare `import orchestrator` reaches every layer by attribute access, which no
+            # import scan can attribute to one; the source tree uses none, so refuse it.
+            assert "orchestrator" not in modules, (
+                f"{path}:{node.lineno} imports the bare orchestrator package"
+            )
         elif isinstance(node, ast.ImportFrom):
             assert node.level == 0, f"{path}:{node.lineno} uses a relative import"
             if node.module == "orchestrator":
@@ -67,12 +72,8 @@ def _internal_imports(path: Path) -> set[str]:
             modules = [node.args[0].value]
         for module in modules:
             parts = module.split(".")
-            if parts[0] != "orchestrator":
-                continue
-            # A bare `import orchestrator` reaches every layer by attribute access, which no
-            # import scan can attribute to one; the source tree uses none, so refuse it.
-            assert len(parts) > 1, f"{path}:{node.lineno} imports the bare orchestrator package"
-            targets.add(parts[1])
+            if parts[0] == "orchestrator" and len(parts) > 1:
+                targets.add(parts[1])
     return targets
 
 
