@@ -395,12 +395,6 @@ OUTBOUND_ALLOWLIST = {
     # the
     # estate lane's, whose population lands into something already serving.
     Path("src/inert_lander/orchestrator_client.py"),
-    # The reconciliation runner is a SEPARATE program (ADR-0002). Polling GitHub is its entire
-    # job, and it may only push what it finds back through two endpoints -- enforced in code by
-    # ALLOWED_WRITE_ENDPOINTS and in tests by tests/reconciliation_runner/test_client_surface.py.
-    # It is not
-    # the orchestrator, and its egress is not the orchestrator's.
-    Path("src/reconciliation_runner/client.py"),
     # The WS-P2.7 tracker projection adapter is a SEPARATE program (ADR-0003), the same
     # report-only-runner shape as ADR-0002. It reads canonical state and projects it onto Todoist;
     # projecting is its entire job. It shares no import path with src/orchestrator/, and its write

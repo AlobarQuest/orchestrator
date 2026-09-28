@@ -203,20 +203,6 @@ TABLE: dict[str, Row] = {
         "urllib",
         no_sibling_lanes=True,
     ),
-    # AC-009. `orchestrator.persistence` above all: a database session would let the runner write
-    # canonical state directly, and the report-only mandate would be a comment, not a property.
-    "reconciliation_runner": _row(
-        "__future__",
-        "datetime",
-        "hashlib",
-        "httpx",
-        "json",
-        "os",
-        "pathlib",
-        "pydantic",
-        "typer",
-        "typing",
-    ),
     # ADR-0002: it reads reality and files what it saw. The lanes import one another for DOMAIN
     # knowledge and never for plumbing, and this one borrows neither. Measured when the table was
     # built: it had a sibling ban and no dependency allowlist of its own.

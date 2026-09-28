@@ -147,7 +147,7 @@ OBSERVATION_TYPES = (
     # -- auto-merged, merged by a person, pushed at the branch -- is `permitted_by` on the
     # facts, not a second observation type. Deliberately not `github_pr`, which already means
     # "a fact about a pull request bound to a work unit" in the reconciliation lane
-    # (`reconciliation_runner/facts.py`,
+    # (written by the retired `reconciliation_runner`, ADR-0047;
     # `services/reconciliation/reconciliation_detection.py`); the two never collide today only
     # because their subject_reference namespaces are disjoint, which
     # is a coincidence to rely on rather than a design.
@@ -194,10 +194,11 @@ OBSERVATION_TYPES = (
     # under a fact that does not. Keeping them out is what lets the row stay frozen while the
     # judgment is re-taken every pass. `github_pr` is the near miss and is wrong -- it already
     # means "a fact about a pull request bound to a work unit" in the reconciliation lane
-    # (`reconciliation_runner/facts.py`), whose rows are subject_type `work_unit`; this one is
-    # `repo`, and relying on two namespaces staying disjoint is a coincidence rather than a
-    # design. `drift` belongs to the infrastructure drift digest, and `inventory` asserts only
-    # that something was enumerated, where this states two specific falsifiable versions.
+    # (the retired `reconciliation_runner`, ADR-0047), whose rows are subject_type
+    # `work_unit`; this one is `repo`, and relying on two namespaces staying disjoint is a
+    # coincidence rather than a design. `drift` belongs to the infrastructure drift digest, and
+    # `inventory` asserts only that something was enumerated, where this states two specific
+    # falsifiable versions.
     "dependency_update",
 )
 OBSERVATION_STATUSES = (

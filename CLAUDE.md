@@ -932,7 +932,7 @@ style of that module.
   the repo-wide outbound-egress scan: any file that imports an HTTP client (`httpx`, …) must be in
   `OUTBOUND_ALLOWLIST` with a reason, because the orchestrator is push-only. A new out-of-process
   runner/adapter package that legitimately speaks HTTP (e.g. `src/tracker_projection_adapter/`,
-  like `src/reconciliation_runner/` before it) must (a) register its egress files in that
+  like the retired `src/reconciliation_runner/` before it) must (a) register its egress files in that
   allowlist and (b) ship its own isolation test asserting it imports nothing from `orchestrator.*`
   and confines its third-party deps. Both of these are whole-repo scans: only a full `make check`
   runs them, so a per-task loop can look green and still break CI. (Verified 2026-07-26, WS-P2.7 —
@@ -1950,7 +1950,8 @@ style of that module.
 
 - **But the revision-anchored and unit-anchored traceability answers are DIFFERENT query paths and
   can disagree — so "no second surface" is not "no second reading".** `resolve_anchors` branches,
-  and the reconciliation runner writes on a schedule, so asking the unit-anchored query about the
+  and conditions arrive whenever a producer reports (the reconciliation runner that was meant
+  to write them on a schedule never ran and was retired by ADR-0047), so asking the unit-anchored query about the
   same units is a genuine second reading rather than a restatement. **Concluding that production
   serves no corroborating surface, and stopping there, is what shipped WS-P2.41's severe defect** —
   a carrier scan that failed to exclude the release's own units, so a release whose unit carried a

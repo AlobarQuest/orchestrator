@@ -1,6 +1,6 @@
 """`work_carrier` is a separate program that happens to live in this repository.
 
-Same shape as the watcher's, the ledger's, the lander's and the reconciliation runner's
+Same shape as the watcher's, the ledger's, the lander's and the retired reconciliation runner's
 isolation tests, and for the same reason: hosting an out-of-process program here is a packaging
 choice, and the moment it can import the orchestrator it stops being one.
 
