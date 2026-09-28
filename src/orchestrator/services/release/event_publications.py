@@ -472,7 +472,7 @@ def _security_standards_src() -> Path | None:
     if env_dir:
         candidate = Path(env_dir) / "src"
         return candidate if candidate.is_dir() else None
-    candidate = Path(__file__).resolve().parents[3].parent / "security-standards" / "src"
+    candidate = Path(__file__).resolve().parents[4].parent / "security-standards" / "src"
     return candidate if candidate.is_dir() else None
 
 
