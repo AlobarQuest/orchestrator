@@ -7,9 +7,9 @@ repositories the estate calls inert, where the landed commit sits until somethin
 on it. Here the landing IS the change to a running service.
 
 The shape is shared with that sibling, and its steps live once in `lane_act`: an admission
-cascade of named refusals re-evaluated here, a record row with a unique constraint so a repeat is detectable,
-an injected client so the whole path runs with no network, and credentials resolved once so the
-gate can never attest to credentials the actor does not use.
+cascade of named refusals re-evaluated here, a record row with a unique constraint so a repeat is
+detectable, an injected client so the whole path runs with no network, and credentials resolved
+once so the gate can never attest to credentials the actor does not use.
 
 ## Why the orchestrator, rather than the platform's own arming
 
