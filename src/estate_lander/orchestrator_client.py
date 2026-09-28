@@ -18,9 +18,9 @@ from typing import Any
 
 import httpx
 
-# The two refusal classes are the shared body's, because `lander.core` catches them; imported here
-# so this client raises exactly the classes that body can see, and re-exported for its callers.
-from lander.core import LandingRefused, OrchestratorError
+# The two refusal classes live in the leaf `lander.errors`, because `lander.core` catches them;
+# imported so this client raises exactly the classes that body can see, and re-exported.
+from lander.errors import LandingRefused, OrchestratorError
 
 DEFAULT_BASE_URL = "https://sds.alobar.net"
 USER_AGENT = "estate-lander/1 (+AlobarQuest/orchestrator)"

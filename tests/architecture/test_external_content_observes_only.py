@@ -276,9 +276,10 @@ CLASSIFICATION: dict[str, Row] = {
     ),
     "lander": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,
-        "ADR-0038 amendment 1 (Tier 3 item 27): the body the two landing callers share; names no "
-        "orchestrator path and acts only through the confined client a lane passes in, whose "
-        "writes are that lane's row",
+        "ADR-0038 amendment 1 (Tier 3 item 27): the body the two landing callers share. It "
+        "DECIDES when to land and to update a branch, but names no orchestrator path: every write "
+        "goes through the confined client a lane passes in, and that lane's row declares it. Its "
+        "own isolation row forbids it importing any client, so it cannot acquire one",
     ),
     "work_watcher": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,

@@ -136,14 +136,6 @@ class RecordSource(Protocol):
     def records(self) -> list[dict[str, Any]]: ...
 
 
-def _key(repository: str, number: int, head_sha: str) -> str:
-    return core.landing_key(LANE, repository, number, head_sha)
-
-
-def _update_key(repository: str, number: int, head_sha: str) -> str:
-    return core.update_key(LANE, repository, number, head_sha)
-
-
 @dataclass(frozen=True)
 class Selection:
     """What one read of the listing yielded: what to act on, and what was left to another lane.

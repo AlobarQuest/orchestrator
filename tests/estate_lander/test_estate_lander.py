@@ -18,10 +18,8 @@ from estate_lander.cli import (
     LANE,
     _branch_updates,
     _deferral_reason,
-    _key,
     _pass,
     _subjects,
-    _update_key,
     report,
     run,
 )
@@ -37,6 +35,8 @@ from lander.core import (
     NOT_A_FINDING,
     REPORTED,
     Outcome,
+    landing_key,
+    update_key,
 )
 
 REPOSITORY = "alobarquest/change-manager"
@@ -244,9 +244,9 @@ def test_an_admissible_answer_with_no_head_lands_nothing() -> None:
 def test_the_idempotency_key_is_content_addressed_so_a_replay_is_a_replay() -> None:
     """A random key would make every pass a new request for the same act, which the orchestrator
     refuses as a key belonging to a different subject -- turning a re-run into a finding."""
-    assert _key(REPOSITORY, 49, HEAD) == _key(REPOSITORY, 49, HEAD)
-    assert _key(REPOSITORY, 49, HEAD) != _key(REPOSITORY, 50, HEAD)
-    assert _key(REPOSITORY, 49, HEAD) != _key(REPOSITORY, 49, "b" * 40)
+    assert landing_key(LANE, REPOSITORY, 49, HEAD) == landing_key(LANE, REPOSITORY, 49, HEAD)
+    assert landing_key(LANE, REPOSITORY, 49, HEAD) != landing_key(LANE, REPOSITORY, 50, HEAD)
+    assert landing_key(LANE, REPOSITORY, 49, HEAD) != landing_key(LANE, REPOSITORY, 49, "b" * 40)
 
 
 def test_the_pass_is_ordered_so_which_one_lands_is_reproducible() -> None:
@@ -784,7 +784,7 @@ def test_a_branch_the_orchestrator_says_qualifies_is_brought_up_to_date() -> Non
     outcomes = _branch_updates(_subjects_of(FakeRecords([_row(49)])), client, submit=True)  # type: ignore[arg-type]
 
     assert [o.status for o in outcomes] == ["updated"]
-    assert client.updated == [(REPOSITORY, 49, HEAD, _update_key(REPOSITORY, 49, HEAD))]
+    assert client.updated == [(REPOSITORY, 49, HEAD, update_key(LANE, REPOSITORY, 49, HEAD))]
 
 
 def test_a_branch_that_does_not_qualify_is_NOT_ASKED_ABOUT_and_gets_no_line() -> None:
@@ -816,9 +816,9 @@ def test_the_MATCHED_PAIR_is_separated_in_ONE_pass() -> None:
 def test_the_key_is_content_addressed_over_the_head_so_a_rerun_is_a_replay() -> None:
     """And so a LATER update, after the base moves again, is a genuinely different key -- which is
     what stops one night's landing barring this branch forever."""
-    assert _update_key(REPOSITORY, 49, HEAD) == _update_key(REPOSITORY, 49, HEAD)
-    assert _update_key(REPOSITORY, 49, HEAD) != _update_key(REPOSITORY, 49, "d" * 40)
-    assert _update_key(REPOSITORY, 49, HEAD) != _key(REPOSITORY, 49, HEAD)
+    assert update_key(LANE, REPOSITORY, 49, HEAD) == update_key(LANE, REPOSITORY, 49, HEAD)
+    assert update_key(LANE, REPOSITORY, 49, HEAD) != update_key(LANE, REPOSITORY, 49, "d" * 40)
+    assert update_key(LANE, REPOSITORY, 49, HEAD) != landing_key(LANE, REPOSITORY, 49, HEAD)
 
 
 def test_an_orchestrator_refusal_is_reported_rather_than_retried() -> None:

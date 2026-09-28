@@ -28,32 +28,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from lander.errors import LandingRefused, OrchestratorError
+
 EXIT_OK = 0
 EXIT_TOOL_FAILURE = 1
 EXIT_UNUSABLE = 2
 EXIT_FINDINGS = 3
-
-
-class OrchestratorError(Exception):
-    """The orchestrator could not be asked, or refused in a way this pass cannot interpret."""
-
-
-class LandingRefused(OrchestratorError):
-    """The orchestrator refused. A fact about the subject, not a broken tool.
-
-    It CARRIES THE REFUSAL CODE as well as the message, because not every refusal means the same
-    thing to a reader. Some name a condition somebody must act on; others say only that the answer
-    moved between the read and the request, which the next pass re-decides on its own. Classifying
-    those apart needs the code -- a `DomainError` reaches the wire nested under `error`, and the
-    message is prose that will be reworded.
-
-    Defined HERE rather than in each lane's client because the body below catches it: the two
-    clients raise this class, and a lane-local copy would be a class this body could not see.
-    """
-
-    def __init__(self, message: str, code: str = "") -> None:
-        super().__init__(message)
-        self.code = code
 
 
 class LandingClient(Protocol):
@@ -294,7 +274,11 @@ def held_status(
     """
     present = set(refusals)
     unexplained = present - lane.deliberate - lane.exception
-    derived = freshness_derived(present, rollout_base_matches_pin=rollout_base_matches_pin)
+    # The lane's flag is applied HERE rather than by the caller, so no path into this function can
+    # switch a rollout suppression on for a lane that does not evaluate a rollout pin.
+    derived = freshness_derived(
+        present, rollout_base_matches_pin=lane.reads_rollout_pin and rollout_base_matches_pin
+    )
     if lane.exception & present or withheld_for_sibling:
         unexplained -= derived
     if unexplained or not refusals:
@@ -326,9 +310,7 @@ def consider(
         status = held_status(
             lane,
             refusals,
-            rollout_base_matches_pin=(
-                lane.reads_rollout_pin and answer.get(BASE_MATCHES_PIN) is True
-            ),
+            rollout_base_matches_pin=answer.get(BASE_MATCHES_PIN) is True,
             withheld_for_sibling=answer.get(WITHHELD_FOR_SIBLING) is True,
         )
         return Outcome(repository, number, status, ", ".join(refusals))

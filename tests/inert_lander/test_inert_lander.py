@@ -23,10 +23,8 @@ from inert_lander.cli import (
     _DEFERRAL_AUTHOR,
     LANE,
     _branch_updates,
-    _key,
     _pass,
     _subjects,
-    _update_key,
     report,
     run,
 )
@@ -44,6 +42,8 @@ from lander.core import (
     REPORTED,
     SETTLED,
     Outcome,
+    landing_key,
+    update_key,
 )
 
 REPOSITORY = "alobarquest/intent-packages"
@@ -296,7 +296,7 @@ def test_an_admissible_pull_request_is_landed_on_the_head_THE_ANSWER_WAS_ABOUT()
     client = FakeOrchestrator({(REPOSITORY, 1): _admissible()})
     outcomes = _pass([(REPOSITORY, 1)], client, True)
     assert [o.status for o in outcomes] == ["landed"]
-    assert client.landed == [(REPOSITORY, 1, HEAD, _key(REPOSITORY, 1, HEAD))]
+    assert client.landed == [(REPOSITORY, 1, HEAD, landing_key(LANE, REPOSITORY, 1, HEAD))]
 
 
 def test_a_held_pull_request_names_the_condition_it_misses_and_is_a_FINDING() -> None:
@@ -478,21 +478,20 @@ def test_an_error_at_the_landing_is_reported_as_an_ERROR_and_is_a_finding() -> N
 def test_the_idempotency_key_is_content_addressed_so_a_replay_is_a_replay() -> None:
     """A random key would make every pass a new request for the same act, which the orchestrator
     would refuse as a spent key belonging to a different subject."""
-    assert _key(REPOSITORY, 1, HEAD) == _key(REPOSITORY, 1, HEAD)
-    assert _key(REPOSITORY, 1, HEAD) != _key(REPOSITORY, 2, HEAD)
-    assert _key(REPOSITORY, 1, HEAD) != _key(REPOSITORY, 1, "0" * 40)
-    assert _key(REPOSITORY, 1, HEAD) != _update_key(REPOSITORY, 1, HEAD)
+    assert landing_key(LANE, REPOSITORY, 1, HEAD) == landing_key(LANE, REPOSITORY, 1, HEAD)
+    assert landing_key(LANE, REPOSITORY, 1, HEAD) != landing_key(LANE, REPOSITORY, 2, HEAD)
+    assert landing_key(LANE, REPOSITORY, 1, HEAD) != landing_key(LANE, REPOSITORY, 1, "0" * 40)
+    assert landing_key(LANE, REPOSITORY, 1, HEAD) != update_key(LANE, REPOSITORY, 1, HEAD)
 
 
 def test_this_lanes_keys_can_never_collide_with_the_SIBLING_lanes() -> None:
     """The two lanes cannot have the same subject -- each requires the opposite answer from the
     estate about a repository -- but a shared prefix would make that a fact a reader has to know
     rather than one the key states."""
-    from estate_lander.cli import _key as estate_key
-    from estate_lander.cli import _update_key as estate_update_key
+    from estate_lander.cli import LANE as ESTATE_LANE
 
-    assert _key(REPOSITORY, 1, HEAD) != estate_key(REPOSITORY, 1, HEAD)
-    assert _update_key(REPOSITORY, 1, HEAD) != estate_update_key(REPOSITORY, 1, HEAD)
+    assert landing_key(LANE, REPOSITORY, 1, HEAD) != landing_key(ESTATE_LANE, REPOSITORY, 1, HEAD)
+    assert update_key(LANE, REPOSITORY, 1, HEAD) != update_key(ESTATE_LANE, REPOSITORY, 1, HEAD)
 
 
 # --------------------------------------------------------------------------------------------
@@ -522,7 +521,7 @@ def test_a_branch_the_orchestrator_says_qualifies_is_brought_up_to_date() -> Non
     client = FakeOrchestrator({(REPOSITORY, 1): _qualifies()})
     outcomes = _branch_updates([(REPOSITORY, 1)], client, True)
     assert [o.status for o in outcomes] == ["updated"]
-    assert client.updated == [(REPOSITORY, 1, HEAD, _update_key(REPOSITORY, 1, HEAD))]
+    assert client.updated == [(REPOSITORY, 1, HEAD, update_key(LANE, REPOSITORY, 1, HEAD))]
     assert report(outcomes, {}, 6) == EXIT_OK
 
 
@@ -610,8 +609,8 @@ def test_an_error_at_the_update_is_reported_as_an_ERROR() -> None:
 def test_the_update_key_is_content_addressed_over_the_head() -> None:
     """A successful update CHANGES the head, so the next legitimate update after the base moves
     again necessarily carries a different key and can never be barred by this one."""
-    assert _update_key(REPOSITORY, 1, HEAD) == _update_key(REPOSITORY, 1, HEAD)
-    assert _update_key(REPOSITORY, 1, HEAD) != _update_key(REPOSITORY, 1, "0" * 40)
+    assert update_key(LANE, REPOSITORY, 1, HEAD) == update_key(LANE, REPOSITORY, 1, HEAD)
+    assert update_key(LANE, REPOSITORY, 1, HEAD) != update_key(LANE, REPOSITORY, 1, "0" * 40)
 
 
 # --------------------------------------------------------------------------------------------
@@ -768,7 +767,7 @@ def test_a_bare_run_asks_for_nothing_while_submit_is_what_asks(monkeypatch) -> N
     run([])
     assert client.landed == []
     run(["--submit"])
-    assert client.landed == [(REPOSITORY, 1, HEAD, _key(REPOSITORY, 1, HEAD))]
+    assert client.landed == [(REPOSITORY, 1, HEAD, landing_key(LANE, REPOSITORY, 1, HEAD))]
 
 
 # --------------------------------------------------------------------------------------------

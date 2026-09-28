@@ -130,6 +130,12 @@ def test_only_the_estate_lane_reads_the_ROLLOUT_PIN() -> None:
         == "exception"
     )
     assert _status(inert, [BEHIND, ROLLOUT, ECOSYSTEM], rollout_base_matches_pin=True) == "held"
+    # And not only through `consider`: the classifier itself applies the lane's flag, so no other
+    # caller can hand it the pin and switch the suppression on for the inert lane.
+    assert (
+        core.held_status(inert.LANE, [BEHIND, ROLLOUT, ECOSYSTEM], rollout_base_matches_pin=True)
+        == "held"
+    )
     # The control for the estate half: the same answer with the base NOT carrying the pin.
     assert _status(estate, [BEHIND, ROLLOUT, UNPARSEABLE], rollout_base_matches_pin=False) == "held"
 

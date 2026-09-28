@@ -455,9 +455,10 @@ def test_the_caller_composes_the_key_THIS_TEST_FILE_IS_WRITTEN_AGAINST() -> None
     """`KEY` above claims to be the caller's own composition. Until ADR-0038 part 2a there was no
     caller, so the claim could not be checked and was written from the sibling lane's shape with
     the head at full length. This makes it true by derivation instead of by assertion."""
-    from inert_lander.cli import _update_key
+    from inert_lander.cli import LANE
+    from lander.core import update_key
 
-    assert _update_key(INERT_REPOSITORY, PR, HEAD) == KEY
+    assert update_key(LANE, INERT_REPOSITORY, PR, HEAD) == KEY
 
 
 # ------------------------------------------------------------------------------------------

@@ -203,14 +203,6 @@ class Selection:
     unreadable: list[Outcome]
 
 
-def _key(repository: str, number: int, head_sha: str) -> str:
-    return core.landing_key(LANE, repository, number, head_sha)
-
-
-def _update_key(repository: str, number: int, head_sha: str) -> str:
-    return core.update_key(LANE, repository, number, head_sha)
-
-
 def _subjects(reader: PullRequestSource, rule: InertLanding) -> Selection:
     """Every open pull request this lane is for, in a stable order, and what was left alone.
 

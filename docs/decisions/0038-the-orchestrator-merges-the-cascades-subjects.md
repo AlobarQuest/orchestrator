@@ -308,5 +308,5 @@ confined clients and enumerations. The objection recorded when the inert lander 
 sharing the classifier would install suppressions that cannot fire for this lane -- is answered by
 the descriptor rather than overridden: the inert `Lane` carries an empty deliberate set, its own
 exception, its own `inert_*` self-clearing set and `reads_rollout_pin=False`, each pinned by a test
-that reddens if it is collapsed into the estate lane's. No output line, classification or exit code
-changed.
+that reddens if it is collapsed into the estate lane's. No pass-report line, classification or exit
+code changed; `estate-landing --help` prints the revised module docstring.
