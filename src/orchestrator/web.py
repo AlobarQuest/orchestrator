@@ -30,7 +30,6 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.claims import authorize_retry
 from orchestrator.services.intake.decomposition import (
     approve_decomposition_proposal,
     reject_decomposition_proposal,
@@ -44,7 +43,8 @@ from orchestrator.services.intake.intake_reads import (
 )
 from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.services.intake.packages import record_approval
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.claims import authorize_retry
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.reconciliation.reconciliation import (
     ResolutionCommand,
     open_conditions,

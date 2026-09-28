@@ -24,7 +24,7 @@ from orchestrator.kernel.authority import authority_fingerprint, normalize_autho
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
 from orchestrator.reach_vocabulary import reach_from_snapshot
-from orchestrator.services.lifecycle import FOLLOW_UP_CAPABILITY, follow_up_unit_id
+from orchestrator.services.lifecycle.lifecycle import FOLLOW_UP_CAPABILITY, follow_up_unit_id
 
 # The intent-packages `follow_up` block, mirrored field for field. Every key is mandatory-present;
 # `revisit_when` and `owner` may be null. Registered in the cross-boundary vocabulary registry.
@@ -67,8 +67,8 @@ def validate_follow_up(value: object) -> dict[str, Any] | None:
     }
 
 
-# `FOLLOW_UP_CAPABILITY` and `follow_up_unit_id` are imported from `services.lifecycle` (the single
-# source of truth also consulted by `lifecycle`'s own identity predicate and by
+# `FOLLOW_UP_CAPABILITY` and `follow_up_unit_id` are imported from `services.lifecycle.lifecycle`
+# (the single source of truth also consulted by `lifecycle`'s own identity predicate and by
 # `services.verifier.verifier_criteria` / `services.verifier.evidence`) rather than defined here a
 # second time. Re-exported under these names because external code (tests included) already imports
 # them from `orchestrator.services.intake.follow_ups`. The capability is in NEITHER the runner

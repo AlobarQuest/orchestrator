@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Adjudication, Evidence
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.verifier.evidence import record_adjudication
 
 NOW = datetime(2027, 7, 5, tzinfo=UTC)

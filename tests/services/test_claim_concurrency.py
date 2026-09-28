@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
-from orchestrator.services.claims import LeaseGrant, claim_unit
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
 from tests.services.test_dependencies import register_unit
 
 

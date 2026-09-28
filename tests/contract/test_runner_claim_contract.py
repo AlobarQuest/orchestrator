@@ -13,10 +13,10 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
-from orchestrator.services.claims import claim_unit
 from orchestrator.services.intake.packages import record_approval
 from orchestrator.services.intake.runner_brief import runner_brief
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.claims import claim_unit
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from tests.services.test_dispatch import ready_unit
 
 WORKER = ActorContext("factory-runner", ActorRole.WORKER)

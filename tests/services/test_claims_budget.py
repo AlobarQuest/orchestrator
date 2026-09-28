@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Event, WorkUnit
-from orchestrator.services.claims import LeaseGrant, claim_unit
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
 from tests.services.test_budget import (
     READY_UNIT_MAX_LLM_CALLS,
     _build_unit_no_ceiling,

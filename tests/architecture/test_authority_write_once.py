@@ -12,9 +12,9 @@ What actually makes the deletion safe is STRUCTURAL, and it is asserted here:
     A work unit's authority envelope is assigned exactly once, at construction. Nothing mutates
     it. So there is no "old envelope vs new envelope" for an expansion check to compare.
 
-(The live budget-raising path -- `retry`, services/claims.py -- raises `unit.max_attempts`, the
-COLUMN. It never touched the envelope, and `is_expansion` never saw it. Envelope and enforced
-budget already diverge.)
+(The live budget-raising path -- `retry`, services/lifecycle/claims.py -- raises
+`unit.max_attempts`, the COLUMN. It never touched the envelope, and `is_expansion` never saw it.
+Envelope and enforced budget already diverge.)
 
 The point of this file is the FUTURE. If WS-P2.4, or anyone, introduces a path that raises a
 unit's budget or capabilities by mutating the envelope, this test goes red and they are forced to

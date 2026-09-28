@@ -20,8 +20,8 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.budget import BREACH_ACTION
-from orchestrator.services.lifecycle import required_ac_ids
+from orchestrator.services.lifecycle.budget import BREACH_ACTION
+from orchestrator.services.lifecycle.lifecycle import required_ac_ids
 from orchestrator.services.reconciliation.consistency import SATISFIED_ACS
 
 STATUS_COMPUTED = "computed"

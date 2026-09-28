@@ -20,8 +20,8 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Event, WorkUnit
-from orchestrator.services.claims import LeaseGrant, claim_unit
-from orchestrator.services.cost_actuals import record_cost_actuals
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
+from orchestrator.services.lifecycle.cost_actuals import record_cost_actuals
 from tests.services.test_dependencies import register_unit
 from tests.services.test_evidence import active_claim, worker
 

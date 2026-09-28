@@ -44,7 +44,10 @@ from orchestrator.services.landing.pr_merge_admission import (
     admission_for,
     pr_merge_admission,
 )
-from orchestrator.services.pr_bindings import record_verification_read_head, upsert_pr_binding
+from orchestrator.services.lifecycle.pr_bindings import (
+    record_verification_read_head,
+    upsert_pr_binding,
+)
 from tests.services.change_record_doubles import (
     RECORD_AMBIGUOUS,
     ChangeRecordAnswer,

@@ -26,7 +26,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.pr_bindings import get_pr_binding
+from orchestrator.services.lifecycle.pr_bindings import get_pr_binding
 from orchestrator.services.release.deployment_observations import list_deployment_observations
 from orchestrator.services.release.observations import ObservationFilters, list_observations
 from orchestrator.services.release.release_artifacts import list_release_artifacts

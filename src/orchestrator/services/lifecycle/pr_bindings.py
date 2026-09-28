@@ -41,7 +41,7 @@ from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import UnitPrBinding, WorkUnit
-from orchestrator.services.claims import validate_active_claim
+from orchestrator.services.lifecycle.claims import validate_active_claim
 
 
 def get_pr_binding(session: Session, work_unit_id: uuid.UUID) -> UnitPrBinding | None:

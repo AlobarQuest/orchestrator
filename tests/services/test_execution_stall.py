@@ -35,13 +35,13 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.leases import DEFAULT_LEASE, LEASE_CEILING
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Claim, Event, WorkUnit
-from orchestrator.services.claims import (
+from orchestrator.services.lifecycle.claims import (
     CLAIM_HOLDING_STATES,
     LeaseGrant,
     claim_unit,
     renew_claim,
 )
-from orchestrator.services.execution_stall import stalled_executions
+from orchestrator.services.lifecycle.execution_stall import stalled_executions
 from tests.services.test_claims import worker
 from tests.services.test_dispatch import ready_unit
 from tests.services.test_reclaim import expire

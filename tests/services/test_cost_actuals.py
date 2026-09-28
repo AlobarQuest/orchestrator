@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event
-from orchestrator.services.budget import BREACH_ACTION
-from orchestrator.services.cost_actuals import record_cost_actuals
+from orchestrator.services.lifecycle.budget import BREACH_ACTION
+from orchestrator.services.lifecycle.cost_actuals import record_cost_actuals
 from tests.services.test_budget import (
     READY_UNIT_MAX_LLM_CALLS,
     _build_unit_no_ceiling,

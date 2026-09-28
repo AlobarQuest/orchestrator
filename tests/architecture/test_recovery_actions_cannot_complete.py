@@ -24,9 +24,9 @@ from orchestrator.kernel.transitions import EDGE_ROLES, TransitionGuards, author
 from orchestrator.main import create_app
 
 RECOVERY_ENTRY_POINTS = (
-    ("src/orchestrator/services/claims.py", "requeue_unit"),
-    ("src/orchestrator/services/claims.py", "authorize_retry"),
-    ("src/orchestrator/services/claims.py", "recover_expired_claim"),
+    ("src/orchestrator/services/lifecycle/claims.py", "requeue_unit"),
+    ("src/orchestrator/services/lifecycle/claims.py", "authorize_retry"),
+    ("src/orchestrator/services/lifecycle/claims.py", "recover_expired_claim"),
 )
 ALLOWED_RECOVERY_TARGETS = {"READY", "CANCELLED"}
 
@@ -70,7 +70,7 @@ def test_every_transition_into_completed_is_gated_by_completion_satisfied() -> N
 
 
 def test_no_recovery_path_grants_a_waiver() -> None:
-    source = Path("src/orchestrator/services/claims.py").read_text()
+    source = Path("src/orchestrator/services/lifecycle/claims.py").read_text()
     tree = ast.parse(source)
     literals = {
         node.value

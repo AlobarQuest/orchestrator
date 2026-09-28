@@ -31,13 +31,13 @@ from orchestrator.factory_policy import FactoryPolicy, load_factory_policy
 from orchestrator.kernel.leases import DEFAULT_LEASE, LEASE_CEILING
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Claim
-from orchestrator.services.claims import (
+from orchestrator.services.execution.dispatch import dispatch_work_unit
+from orchestrator.services.lifecycle.claims import (
     LeaseGrant,
     claim_unit,
     reclaim_expired_claim,
     renew_claim,
 )
-from orchestrator.services.execution.dispatch import dispatch_work_unit
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import declared_source
 from tests.services.test_claims import worker
@@ -376,7 +376,9 @@ def test_an_unreadable_artifact_grants_the_default_rather_than_refusing_a_hold(
     def unreadable(*_args: object, **_kwargs: object) -> None:
         raise DomainError("factory_policy_invalid", "the policy artifact is invalid", "correct it")
 
-    monkeypatch.setattr("orchestrator.services.lease_policy.load_factory_policy", unreadable)
+    monkeypatch.setattr(
+        "orchestrator.services.lifecycle.lease_policy.load_factory_policy", unreadable
+    )
     reclaimed = reclaim_expired_claim(
         migrated_session, unit.id, SYSTEM, worker("worker-2"), "unreadable-reclaim"
     )

@@ -26,7 +26,7 @@ from orchestrator.services.intake.follow_ups import (
     validate_follow_up,
 )
 from orchestrator.services.intake.packages import register_approved_unit, register_revision
-from orchestrator.services.lifecycle import follow_up_unit_id, required_ac_ids
+from orchestrator.services.lifecycle.lifecycle import follow_up_unit_id, required_ac_ids
 from orchestrator.services.verifier.evidence import record_adjudication
 from orchestrator.services.verifier.verifier_criteria import (
     _FOLLOW_UP_DEFAULT_REVISIT,

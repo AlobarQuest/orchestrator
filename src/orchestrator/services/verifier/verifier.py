@@ -12,7 +12,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import (
+from orchestrator.services.lifecycle.lifecycle import (
     TransitionCommand,
     transition_unit,
 )

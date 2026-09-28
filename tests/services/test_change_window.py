@@ -32,13 +32,13 @@ from orchestrator.factory_policy import (
 )
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import WorkPackageRevision
-from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.execution.dispatch import dispatch_work_unit
 from orchestrator.services.execution.reach_admission import (
     REACH_POLICY_UNREADABLE,
     change_window_refusal,
 )
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import declared_source
 from tests.services.test_dispatch import (

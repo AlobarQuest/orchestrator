@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Approval, Claim, Event, WorkUnit
-from orchestrator.services.claims import (
+from orchestrator.services.lifecycle.claims import (
     LeaseGrant,
     authorize_retry,
     claim_unit,

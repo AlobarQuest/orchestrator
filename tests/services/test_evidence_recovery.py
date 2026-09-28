@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Evidence, WorkUnit
-from orchestrator.services.claims import LeaseGrant, claim_unit
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
 from orchestrator.services.verifier.evidence import (
     append_evidence,
     current_evidence,

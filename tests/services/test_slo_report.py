@@ -7,8 +7,8 @@ from orchestrator.clock import TransactionClock
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Adjudication, Claim, Event, Evidence, WorkUnit
-from orchestrator.services.budget import BREACH_ACTION
 from orchestrator.services.intake.packages import register_approved_unit, register_revision
+from orchestrator.services.lifecycle.budget import BREACH_ACTION
 from orchestrator.services.reporting.slo_report import (
     STATUS_COMPUTED,
     STATUS_NO_DATA,
@@ -481,7 +481,7 @@ def test_evidence_completeness_ratio(migrated_session):
     revision, unit = _build_unit(
         migrated_session, "complete", enforcement={"acceptance_criteria": ["ac-1", "ac-2"]}
     )
-    from orchestrator.services.lifecycle import required_ac_ids
+    from orchestrator.services.lifecycle.lifecycle import required_ac_ids
 
     required = required_ac_ids(migrated_session, revision, migrated_session.get(WorkUnit, unit.id))
     assert required is not None

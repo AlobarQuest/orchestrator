@@ -10,7 +10,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.lifecycle import (
+from orchestrator.services.lifecycle.lifecycle import (
     FOLLOW_UP_AC_ID,
     FOLLOW_UP_EVIDENCE_TYPE,
     is_generated_follow_up_unit,

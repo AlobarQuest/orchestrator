@@ -6,12 +6,12 @@ from orchestrator.clock import TransactionClock
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
 from orchestrator.persistence.models import Event, WorkUnit
-from orchestrator.services.budget import (
+from orchestrator.services.intake.packages import register_approved_unit, register_revision
+from orchestrator.services.lifecycle.budget import (
     cumulative_llm_calls,
     declared_ceiling,
     is_over_budget,
 )
-from orchestrator.services.intake.packages import register_approved_unit, register_revision
 from tests.services.test_package_registration import AUTHORITY as READY_UNIT_AUTHORITY
 
 READY_UNIT_MAX_LLM_CALLS = READY_UNIT_AUTHORITY.budgets.max_llm_calls

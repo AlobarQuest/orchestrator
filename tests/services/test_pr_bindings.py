@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import UnitPrBinding
-from orchestrator.services.pr_bindings import (
+from orchestrator.services.lifecycle.pr_bindings import (
     get_pr_binding,
     record_verification_read_head,
     upsert_pr_binding,

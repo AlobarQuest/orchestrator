@@ -4,13 +4,13 @@ from orchestrator.clock import TransactionClock
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkUnit
-from orchestrator.services.claims import LeaseGrant, claim_unit
 from orchestrator.services.intake.packages import (
     record_approval,
     register_approved_unit,
     register_revision,
 )
-from orchestrator.services.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 
 AUTHORITY = AuthorityEnvelope(
     capabilities={"repo.edit": "allowed"},

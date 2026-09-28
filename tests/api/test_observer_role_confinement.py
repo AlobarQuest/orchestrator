@@ -155,10 +155,10 @@ def test_an_observer_still_reads_a_route_it_may_not_write(db_client: TestClient)
 
     The route must also be one with no role gate of its OWN, or the read is refused for an
     unrelated reason and the test again proves nothing. `/api/v1/in-flight-units` is the trap
-    here: it is operator-only (`services/lifecycle.py` admits SYSTEM and HUMAN alone), so an
-    observer is refused there exactly as a worker or verifier is -- by a pre-existing guard, not
-    by this one. `/api/v1/status-ledger` carries no role gate, which is what makes it a reading
-    of the method check and nothing else.
+    here: it is operator-only (`services/lifecycle/lifecycle.py` admits SYSTEM and HUMAN alone), so
+    an observer is refused there exactly as a worker or verifier is -- by a pre-existing guard, not
+    by this one. `/api/v1/status-ledger` carries no role gate, which is what makes it a reading of
+    the method check and nothing else.
 
     If a later change narrows observer reads, that is a policy decision and belongs to whoever
     makes it -- not to a producer discovering it in production.

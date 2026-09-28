@@ -13,7 +13,7 @@ from orchestrator.api.dependencies import get_actor, get_session
 from orchestrator.cli import app
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.main import create_app
-from orchestrator.services.lifecycle import TransitionResult
+from orchestrator.services.lifecycle.lifecycle import TransitionResult
 
 LIFECYCLE_COMMANDS = (
     ("ready", "ready"),
