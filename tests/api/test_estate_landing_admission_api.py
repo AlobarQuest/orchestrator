@@ -27,12 +27,14 @@ from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.main import create_app
-from orchestrator.services.landing.estate_landing_admission import EstateGatewayError
 from orchestrator.services.landing.estate_pr_branch_update import (
     BRANCH_UPDATE_SIBLING_HOLDING,
     BRANCH_UPDATE_SIBLINGS_UNREADABLE,
     EstateBranchUpdateCommand,
     update_estate_pull_request_branch,
+)
+from orchestrator.services.landing.interfaces import (
+    EstateGatewayError,
 )
 from tests.api.test_lifecycle_api import SYSTEM
 from tests.services.change_record_doubles import FakeChangeRecordSource

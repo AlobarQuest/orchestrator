@@ -18,8 +18,6 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
 from orchestrator.services.landing.estate_landing import EstateAnswer
-from orchestrator.services.landing.estate_landing_admission import EstateGatewayError
-from orchestrator.services.landing.estate_pr_merge import MERGE_COMMIT, SQUASH, MergeOutcome
 from orchestrator.services.landing.inert_landing_policy import InertLandingAnswer
 from orchestrator.services.landing.inert_pr_merge import (
     INERT_LANDING_POLICY_TRAILER,
@@ -28,6 +26,12 @@ from orchestrator.services.landing.inert_pr_merge import (
     INERT_MERGE_REFUSED_BY_REMOTE,
     InertMergeCommand,
     land_inert_pull_request,
+)
+from orchestrator.services.landing.interfaces import (
+    MERGE_COMMIT,
+    SQUASH,
+    EstateGatewayError,
+    MergeOutcome,
 )
 from tests.services.estate_doubles import LANDING_REDEPLOYS, FakeEstateLandingSource
 from tests.services.estate_landing_doubles import HEAD, pull_request

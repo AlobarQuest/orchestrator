@@ -95,9 +95,11 @@ from orchestrator.services.landing.branch_update_serialization import (
 from orchestrator.services.landing.change_record import ChangeRecordSource
 from orchestrator.services.landing.estate_landing import EstateLandingSource
 from orchestrator.services.landing.estate_landing_admission import (
+    estate_landing_admission,
+)
+from orchestrator.services.landing.interfaces import (
     EstateGatewayError,
     SiblingReadGateway,
-    estate_landing_admission,
     gateway_failure_detail,
 )
 

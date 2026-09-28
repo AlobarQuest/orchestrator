@@ -142,7 +142,7 @@ FAILING_CONCLUSIONS = frozenset(
 # four days on the strength of runs GitHub cancelled when the Actions quota ran out.
 #
 # A DELIBERATE MIRROR of
-# `orchestrator.services.landing.estate_landing_admission.NO_VERDICT_CONCLUSIONS`, which this
+# `orchestrator.services.landing.interfaces.NO_VERDICT_CONCLUSIONS`, which this
 # program may not import -- the isolation test says so -- and pinned to it by a test that imports
 # both, the same arrangement `titles.py` uses. Its polarity is the safety: anything NOT named here
 # is read as a verdict, so a conclusion the platform has not yet invented fails toward refusing

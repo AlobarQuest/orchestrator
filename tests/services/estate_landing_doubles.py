@@ -16,7 +16,7 @@ from orchestrator.services.landing.change_record import (
     LandingConditions,
     WorkflowPin,
 )
-from orchestrator.services.landing.estate_landing_admission import (
+from orchestrator.services.landing.interfaces import (
     EstateGatewayError,
     EstatePullRequest,
     HeadCheckRun,

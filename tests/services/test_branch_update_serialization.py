@@ -20,7 +20,11 @@ from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event
-from orchestrator.services.landing import estate_landing_admission, inert_landing_admission
+from orchestrator.services.landing import (
+    estate_landing_admission,
+    inert_landing_admission,
+    interfaces,
+)
 from orchestrator.services.landing.branch_update_serialization import (
     _HOLDING_BESIDE_THE_CRITERION,
     BRANCH_UPDATE_ACTION,
@@ -36,7 +40,11 @@ from orchestrator.services.landing.branch_update_serialization import (
     branch_update_sibling_outcome,
     withheld_for_sibling,
 )
-from orchestrator.services.landing.estate_landing_admission import (
+from orchestrator.services.landing.estate_pr_branch_update import (
+    EstateBranchUpdateCommand,
+    update_estate_pull_request_branch,
+)
+from orchestrator.services.landing.interfaces import (
     DELIBERATE_REFUSALS,
     LANDING_CHECKS_AWAITING_VERDICT,
     LANDING_CHECKS_IN_FLIGHT,
@@ -49,10 +57,6 @@ from orchestrator.services.landing.estate_landing_admission import (
     LANDING_ROLLOUT_MOVED,
     EstateGatewayError,
     PullRequestCommit,
-)
-from orchestrator.services.landing.estate_pr_branch_update import (
-    EstateBranchUpdateCommand,
-    update_estate_pull_request_branch,
 )
 from tests.services.change_record_doubles import FakeChangeRecordSource
 from tests.services.estate_doubles import redeploying_source
@@ -329,13 +333,15 @@ HOLDING = (
 
 
 def _refusal_codes() -> set[str]:
-    """Every refusal-code constant both admission modules define, by VALUE.
+    """Every refusal-code constant the two admission modules and their shared vocabulary define.
+
+    By VALUE, and the shared vocabulary is `interfaces`, where the codes both lanes raise live.
 
     The value predicate excludes the platform words (`clean`, `blocked`...), the run vocabulary,
     the update-type labels, the bot login and the branch prefix, none of which is a refusal.
     """
     codes: set[str] = set()
-    for module in (estate_landing_admission, inert_landing_admission):
+    for module in (interfaces, estate_landing_admission, inert_landing_admission):
         for name, value in vars(module).items():
             if (
                 name.isupper()

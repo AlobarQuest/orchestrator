@@ -23,7 +23,26 @@ from orchestrator.services.landing.estate_landing import (
     SOURCE_UNREADABLE,
     EstateAnswer,
 )
-from orchestrator.services.landing.estate_landing_admission import (
+from orchestrator.services.landing.inert_landing_admission import (
+    INERT_LANDING_AUTHOR_NOT_PERMITTED,
+    INERT_LANDING_POLICY_SOURCE_UNCONFIGURED,
+    INERT_LANDING_POLICY_SOURCE_UNREADABLE,
+    INERT_LANDING_REPOSITORY_NOT_DECLARED,
+    INERT_LANDING_RULES_UNDECLARED,
+    INERT_LANDING_TARGET_NOT_INERT,
+    inert_landing_admission,
+)
+from orchestrator.services.landing.inert_landing_policy import (
+    RULES_UNDECLARED,
+    InertLandingAnswer,
+)
+from orchestrator.services.landing.inert_landing_policy import (
+    SOURCE_UNCONFIGURED as POLICY_SOURCE_UNCONFIGURED,
+)
+from orchestrator.services.landing.inert_landing_policy import (
+    SOURCE_UNREADABLE as POLICY_SOURCE_UNREADABLE,
+)
+from orchestrator.services.landing.interfaces import (
     LANDING_ALREADY_RECORDED,
     LANDING_APP_CREDENTIALS_MISSING,
     LANDING_BASE_NOT_DEFAULT_BRANCH,
@@ -44,27 +63,9 @@ from orchestrator.services.landing.estate_landing_admission import (
     LANDING_PULL_REQUEST_CONFLICTED,
     LANDING_PULL_REQUEST_NOT_OPEN,
     LANDING_PULL_REQUEST_UNREADABLE,
+    MERGE_COMMIT,
+    SQUASH,
     EstateGatewayError,
-)
-from orchestrator.services.landing.estate_pr_merge import MERGE_COMMIT, SQUASH
-from orchestrator.services.landing.inert_landing_admission import (
-    INERT_LANDING_AUTHOR_NOT_PERMITTED,
-    INERT_LANDING_POLICY_SOURCE_UNCONFIGURED,
-    INERT_LANDING_POLICY_SOURCE_UNREADABLE,
-    INERT_LANDING_REPOSITORY_NOT_DECLARED,
-    INERT_LANDING_RULES_UNDECLARED,
-    INERT_LANDING_TARGET_NOT_INERT,
-    inert_landing_admission,
-)
-from orchestrator.services.landing.inert_landing_policy import (
-    RULES_UNDECLARED,
-    InertLandingAnswer,
-)
-from orchestrator.services.landing.inert_landing_policy import (
-    SOURCE_UNCONFIGURED as POLICY_SOURCE_UNCONFIGURED,
-)
-from orchestrator.services.landing.inert_landing_policy import (
-    SOURCE_UNREADABLE as POLICY_SOURCE_UNREADABLE,
 )
 from tests.services.estate_doubles import FakeEstateLandingSource
 from tests.services.estate_landing_doubles import (
