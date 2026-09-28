@@ -43,9 +43,6 @@ WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/lifecycle.py"),
     Path("src/orchestrator/services/verifier_criteria.py"),
     Path("src/orchestrator/services/verifier_evaluators.py"),
-    Path("src/orchestrator/services/release_evidence_pack.py"),
-    # WS-P2.5 Inc 2: the per-release evidence pack COMPOSES deployment observations into a
-    # read-only projection. It reads canonical rows; it never dispatches, deploys, or merges.
 }
 # ADR-0020's named exception, in this guard. The two allowlists above are FILE-scoped: a path in
 # them is excused from every forbidden sequence at once, including `deploy` and `coolify`. That is
@@ -257,6 +254,33 @@ def test_ws32_merge_exemption_names_only_files_that_exist_and_still_need_it() ->
         f"these files are exempt from the merge vocabulary but no longer name any of it: "
         f"{unused}. Remove them."
     )
+
+
+def test_ws32_file_exemptions_name_only_files_that_exist_and_still_need_them() -> None:
+    """The rot check for the two FILE-scoped allowlists, which had none. `_find_matches` skips a
+    listed path with `in`, so an entry that no longer names a file -- a module moved or renamed --
+    excuses nothing and reddens nothing, and the moved module's new path is scanned or not by
+    accident. The second half is the merge exemption's own: an entry whose file no longer carries
+    any forbidden term goes on excusing every term a later edit adds to it, unwatched."""
+    for name, exempt in (
+        ("WS42_DISPATCH_PATHS", WS42_DISPATCH_PATHS),
+        ("WS53_POST_DEPLOY_PATHS", WS53_POST_DEPLOY_PATHS),
+    ):
+        missing = sorted(str(path) for path in exempt if not path.exists())
+        assert not missing, f"{name} names files that no longer exist: {missing}"
+
+        unused = sorted(
+            str(path)
+            for path in exempt
+            if not any(
+                _forbidden_labels(term.tokens)
+                for kind in (_iter_identifier_terms, _iter_string_terms)
+                for term in kind(path, _parse_source(path))
+            )
+        )
+        assert not unused, (
+            f"{name} exempts files that no longer carry any forbidden term: {unused}. Remove them."
+        )
 
 
 def test_ws32_string_scanner_covers_spaced_forbidden_phrases() -> None:

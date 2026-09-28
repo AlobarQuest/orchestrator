@@ -24,23 +24,43 @@ def _imported_modules(path: Path) -> set[str]:
     return modules
 
 
+DISPATCH_VOCABULARY = ("workflow_dispatch", "factory_runner", "github.actions")
+# `api/routes.py`, `api/schemas.py` and `config.py` were listed here too until 2026-09-28 and
+# spelled none of this vocabulary; they came out because an unneeded exemption is unwatched.
+DISPATCH_EXEMPT_PATHS = {
+    Path("src/orchestrator/services/dispatch.py"),
+}
+
+
 def test_ws34_adds_no_factory_runner_or_workflow_dispatch_code() -> None:
-    forbidden = ("workflow_dispatch", "factory_runner", "github.actions")
-    ws42_dispatch_paths = {
-        Path("src/orchestrator/services/dispatch.py"),
-        Path("src/orchestrator/api/routes.py"),
-        Path("src/orchestrator/api/schemas.py"),
-        Path("src/orchestrator/config.py"),
-    }
     matches = [
         f"{path}:{value}"
         for path in _source_files()
-        if path not in ws42_dispatch_paths
-        for value in forbidden
+        if path not in DISPATCH_EXEMPT_PATHS
+        for value in DISPATCH_VOCABULARY
         if value in path.read_text(encoding="utf-8").lower()
     ]
 
     assert not matches
+
+
+def test_ws34_dispatch_exemptions_name_only_files_that_exist_and_still_need_them() -> None:
+    """The allowlist above is a filter, so a stale entry excuses nothing and reddens nothing. Each
+    entry must name a file that exists and still spells the vocabulary it is excused from."""
+    missing = sorted(str(path) for path in DISPATCH_EXEMPT_PATHS if not path.is_file())
+    assert not missing, f"the dispatch exemptions name files that no longer exist: {missing}"
+
+    unused = sorted(
+        str(path)
+        for path in DISPATCH_EXEMPT_PATHS
+        if not any(
+            value in path.read_text(encoding="utf-8").lower() for value in DISPATCH_VOCABULARY
+        )
+    )
+    assert not unused, (
+        f"these files are exempt from the dispatch vocabulary but no longer spell any of it: "
+        f"{unused}. Remove them."
+    )
 
 
 def test_ws34_adds_no_production_deploy_coolify_or_automatic_merge_path() -> None:

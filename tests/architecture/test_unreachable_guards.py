@@ -221,6 +221,15 @@ def test_every_allowlist_entry_is_still_unreachable(graph: CallGraph) -> None:
     )
 
 
+def test_every_entry_point_names_a_module_that_exists() -> None:
+    """`roots()` matches ENTRY_MODULES by membership, so an entry whose module has moved simply
+    stops being a root. That is loud for a module that reaches services and SILENT for one that
+    reaches none (`cli.py` imports no service), so the list is checked against the tree."""
+    missing = sorted(entry for entry in ENTRY_MODULES if not (SRC / entry).is_file())
+    missing += sorted(entry for entry in ENTRY_PACKAGES if not (SRC / entry).is_dir())
+    assert not missing, f"entry points that name nothing on disk: {missing}"
+
+
 def test_every_allowlist_entry_carries_a_justification() -> None:
     empty = [
         f"{module}.{name}" for (module, name), why in ALLOWLIST.items() if len(why.strip()) < 40
