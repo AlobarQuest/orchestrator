@@ -1263,3 +1263,19 @@ def test_nothing_is_posted_for_a_carried_record_through_the_real_client(
         "the read is the only request a carried record produces; a POST here is the defect"
     )
     assert "[CARRIED]" in out.getvalue()
+
+
+def test_a_refused_listing_names_its_status() -> None:
+    """A revoked token, a proxy refusal and a server fault read differently to whoever acts."""
+    import httpx
+
+    from work_carrier.change_manager import HttpWorkRecordSource
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"detail": "nope"})
+
+    source = HttpWorkRecordSource(
+        base_url="https://example.invalid", token="t", transport=httpx.MockTransport(handler)
+    )
+    with pytest.raises(ChangeManagerError, match="HTTP 403"):
+        source.approved_work()

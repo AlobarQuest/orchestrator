@@ -27,6 +27,8 @@ from typing import Any
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
+
 API = "https://api.github.com"
 RUNNER_REPOSITORY = "AlobarQuest/factory-runner"
 RECOMMENDATION_PATH = "RECOMMENDED_CALLER_PIN"
@@ -53,6 +55,14 @@ class ForbiddenMethodError(PinWatcherError):
     """The reader attempted something other than a read."""
 
 
+def _permits(method: str, path: str) -> bool:
+    return method == "GET" and path.startswith("/")
+
+
+def _refuse(_method: str, path: str) -> ForbiddenMethodError:
+    return ForbiddenMethodError(f"the reader may not fetch {path}")
+
+
 class GitHubReader:
     def __init__(
         self,
@@ -61,17 +71,25 @@ class GitHubReader:
         base_url: str = API,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "pin-watcher/1 (+AlobarQuest/orchestrator)",
-            },
-            timeout=30.0,
-            transport=transport,
-        )
+        try:
+            self._client = ConfinedClient(
+                base_url=base_url,
+                user_agent="pin-watcher/1 (+AlobarQuest/orchestrator)",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                timeout=30.0,
+                transport=transport,
+                permits=_permits,
+                refuse=_refuse,
+            )
+        except TransportFailure as failure:
+            # Construction is guarded as well as the request (ADR-0050).
+            raise PinWatcherError(
+                f"the github base URL is unusable: {failure.error_type}"
+            ) from None
 
     def close(self) -> None:
         self._client.close()
@@ -83,20 +101,12 @@ class GitHubReader:
         self.close()
 
     def get(self, path: str, **params: Any) -> Any:
-        if not path.startswith("/"):
-            raise ForbiddenMethodError(f"the reader may not fetch {path}")
         try:
             response = self._client.request("GET", path, params=params or None)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # Three families, not one. A malformed host reaches IDNA encoding and raises
-            # UnicodeError -- a ValueError, neither an HTTPError nor an InvalidURL -- and only
-            # `DomainError` and `APIAuthenticationError` have handlers upstream, so anything else
-            # escaping here ends the pass. Type name only: an exception from a client carries the
-            # request, and a diagnostic that prints what it was given is how a value that should
-            # not be in a transcript gets into one.
+        except TransportFailure as failure:
             raise PinWatcherError(
-                f"github is unreachable for GET {path}: {type(error).__name__}"
-            ) from error
+                f"github is unreachable for GET {path}: {failure.error_type}"
+            ) from None
         if response.status_code == 404:
             return None
         if response.status_code >= 400:

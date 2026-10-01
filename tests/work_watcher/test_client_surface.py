@@ -174,9 +174,8 @@ def test_a_forbidden_github_read_never_reaches_the_transport() -> None:
 
     reader = PullRequestReader(
         "x",
-        client=httpx.Client(
-            base_url="https://api.github.example", transport=httpx.MockTransport(record)
-        ),
+        base_url="https://api.github.example",
+        transport=httpx.MockTransport(record),
     )
     with pytest.raises(ForbiddenGitHubError):
         reader.state("AlobarQuest/../brain", 33)

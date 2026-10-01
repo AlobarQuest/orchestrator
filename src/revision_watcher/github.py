@@ -12,6 +12,8 @@ from typing import Any
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
+
 API = "https://api.github.com"
 
 
@@ -23,6 +25,14 @@ class ForbiddenMethodError(GitHubUnreadable):
     """The reader was asked for something outside its shape."""
 
 
+def _permits(method: str, path: str) -> bool:
+    return method == "GET" and path.startswith("/")
+
+
+def _refuse(_method: str, path: str) -> ForbiddenMethodError:
+    return ForbiddenMethodError(f"the reader may not fetch {path}")
+
+
 class GitHubReader:
     def __init__(
         self,
@@ -31,17 +41,23 @@ class GitHubReader:
         base_url: str = API,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "revision-watcher/1 (+AlobarQuest/orchestrator)",
-            },
-            timeout=30.0,
-            transport=transport,
-        )
+        try:
+            self._client = ConfinedClient(
+                base_url=base_url,
+                user_agent="revision-watcher/1 (+AlobarQuest/orchestrator)",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                timeout=30.0,
+                transport=transport,
+                permits=_permits,
+                refuse=_refuse,
+            )
+        except TransportFailure as failure:
+            # Construction is guarded as well as the request (ADR-0050).
+            raise GitHubUnreadable(failure.error_type) from None
         self._commits: dict[str, str | None] = {}
 
     def close(self) -> None:
@@ -75,13 +91,10 @@ class GitHubReader:
         return self._commits[key]
 
     def get(self, path: str) -> Any:
-        if not path.startswith("/"):
-            raise ForbiddenMethodError(f"the reader may not fetch {path}")
         try:
             response = self._client.request("GET", path)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # The type name only. See `estate.py` for why three families and why not the message.
-            raise GitHubUnreadable(type(error).__name__) from error
+        except TransportFailure as failure:
+            raise GitHubUnreadable(failure.error_type) from None
         if response.status_code == 404:
             return None
         if response.status_code >= 400:

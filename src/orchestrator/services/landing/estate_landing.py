@@ -29,6 +29,8 @@ from typing import Any, Final, Protocol
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
+
 # App Brain's answer vocabulary, mirrored EXACTLY. This is a cross-boundary vocabulary and it is
 # registered as one: the source of truth is `LANDING_*` in AlobarQuest/brain
 # `src/brains/app/models.py`, served by GET /api/apps/default-branch-landing. Nothing is added to
@@ -46,6 +48,10 @@ SOURCE_UNREADABLE: Final = "source_unreadable"
 
 _ROUTE: Final = "/api/apps/default-branch-landing"
 _USER_AGENT: Final = "orchestrator-reach-check/1 (+AlobarQuest/orchestrator)"
+
+
+class _ForbiddenRoute(Exception):
+    """This reader tried to reach a route other than its one."""
 
 
 @dataclass(frozen=True)
@@ -100,24 +106,25 @@ class HttpEstateLandingSource:
         if not self._base_url or not self._read_key:
             return EstateAnswer(None, SOURCE_UNCONFIGURED)
         try:
-            with httpx.Client(transport=self._transport, timeout=self._timeout_seconds) as client:
-                response = client.get(
-                    f"{self._base_url}{_ROUTE}",
-                    params={"github_repo": github_repo},
-                    headers={"x-brain-key": self._read_key, "user-agent": _USER_AGENT},
-                )
-        # `InvalidURL` is NOT an `HTTPError` -- it derives straight from `Exception` -- so catching
-        # the latter alone left the totality this module's docstring promises untrue. The input
-        # that reaches it is not exotic: a TRAILING NEWLINE on the configured base URL, which
-        # `.rstrip("/")` does not remove, and which is the ordinary way an environment variable
-        # gets malformed. Escaping here is an unhandled 500 from every caller, because only
-        # `DomainError` and `APIAuthenticationError` have registered handlers.
-        # `ValueError` joins the tuple for the reason ADR-0019 Increment 3 found it here: IDNA
-        # encoding of a malformed HOST raises `UnicodeError`, which is a `ValueError` and neither
-        # of the other two, so a doubled dot or an over-long DNS label escaped this module and
-        # surfaced as a bare 500 from the admission path -- the one outcome its own docstring
-        # promises cannot happen.
-        except httpx.HTTPError, httpx.InvalidURL, ValueError:
+            client = ConfinedClient(
+                base_url=self._base_url,
+                user_agent=_USER_AGENT,
+                headers={"x-brain-key": self._read_key},
+                timeout=self._timeout_seconds,
+                transport=self._transport,
+                permits=lambda method, path: method == "GET" and path == _ROUTE,
+                refuse=lambda method, path: _ForbiddenRoute(
+                    f"the estate reader may not {method} {path}"
+                ),
+            )
+            try:
+                response = client.request("GET", _ROUTE, params={"github_repo": github_repo})
+            finally:
+                client.close()
+        # Every transport failure, construction included, is no answer (ADR-0050). An escape here
+        # would be an unhandled 500 from every caller: only `DomainError` and
+        # `APIAuthenticationError` have registered handlers.
+        except TransportFailure:
             return EstateAnswer(None, SOURCE_UNREADABLE)
         if response.status_code != 200:
             return EstateAnswer(None, SOURCE_UNREADABLE)

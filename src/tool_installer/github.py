@@ -24,6 +24,8 @@ from typing import Any
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
+
 GITHUB_API = "https://api.github.com"
 
 
@@ -35,6 +37,14 @@ class ForbiddenMethodError(GitHubReadError):
     """A path this reader did not build, which could leave the intended host."""
 
 
+def _permits(method: str, path: str) -> bool:
+    return method == "GET" and path.startswith("/") and not path.startswith("//")
+
+
+def _refuse(_method: str, path: str) -> ForbiddenMethodError:
+    return ForbiddenMethodError(f"the reader may not fetch {path}")
+
+
 class GitHubReader:
     def __init__(
         self,
@@ -42,16 +52,25 @@ class GitHubReader:
         token: str,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=GITHUB_API,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=30.0,
-            transport=transport,
-        )
+        try:
+            self._client = ConfinedClient(
+                base_url=GITHUB_API,
+                user_agent="tool-installer/1 (+AlobarQuest/orchestrator)",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                timeout=30.0,
+                transport=transport,
+                permits=_permits,
+                refuse=_refuse,
+            )
+        except TransportFailure as failure:
+            # Construction is guarded as well as the request (ADR-0050).
+            raise GitHubReadError(
+                f"the github base URL is unusable: {failure.error_type}"
+            ) from None
 
     def close(self) -> None:
         self._client.close()
@@ -64,16 +83,12 @@ class GitHubReader:
 
     def get(self, path: str) -> dict[str, Any] | None:
         """The whole surface. `None` means GitHub said the subject is not there."""
-        if not path.startswith("/") or path.startswith("//"):
-            raise ForbiddenMethodError(f"the reader may not fetch {path}")
         try:
             response = self._client.request("GET", path)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # The third family is the one a two-member tuple misses: IDNA encoding of a malformed
-            # host raises `UnicodeError`, a `ValueError`.
+        except TransportFailure as failure:
             raise GitHubReadError(
-                f"github is unreachable for GET {path}: {type(error).__name__}"
-            ) from error
+                f"github is unreachable for GET {path}: {failure.error_type}"
+            ) from None
         if response.status_code == 404:
             return None
         if response.status_code >= 400:
