@@ -144,6 +144,8 @@ TABLE: dict[str, Row] = {
         "__future__",
         # `collections.abc`, for the injected-reader signature in `transcription_currency`.
         "collections",
+        # `ExitStack`, so the clients are built inside the pass guard (ADR-0050).
+        "contextlib",
         "dataclasses",
         "datetime",
         "estate_clients",
