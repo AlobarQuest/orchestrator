@@ -40,15 +40,16 @@ def docstring_nodes(tree: ast.AST) -> set[int]:
 
 
 def is_code_string(value: str) -> bool:
-    """A non-empty string with no whitespace in it. Anything else is prose."""
-    return bool(value) and not any(character.isspace() for character in value)
+    """A non-empty string with no whitespace once its ends are stripped. Anything else is prose."""
+    stripped = value.strip()
+    return bool(stripped) and not any(character.isspace() for character in stripped)
 
 
 def code_strings(tree: ast.AST) -> list[str]:
-    """Every string constant in the tree that is code rather than prose."""
+    """Every string constant in the tree that is code rather than prose, with its ends stripped."""
     docstrings = docstring_nodes(tree)
     return [
-        node.value
+        node.value.strip()
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant)
         and isinstance(node.value, str)
@@ -57,20 +58,39 @@ def code_strings(tree: ast.AST) -> list[str]:
     ]
 
 
+def identifier_of(node: ast.AST) -> tuple[str, str] | None:
+    """The `(kind, name)` a node introduces or uses, or None. Imports are `identifier_terms`'."""
+    if isinstance(node, ast.Name):
+        return "name", node.id
+    if isinstance(node, ast.Attribute):
+        return "attribute", node.attr
+    if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        return "definition", node.name
+    if isinstance(node, ast.arg):
+        return "parameter", node.arg
+    if isinstance(node, ast.keyword) and node.arg is not None:
+        return "keyword", node.arg
+    return None
+
+
+def identifier_terms(tree: ast.AST) -> list[tuple[str, str]]:
+    """Every identifier and import path in the tree, as `(kind, value)` pairs."""
+    terms: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            terms.extend(("import", alias.name) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                terms.append(("import-from", node.module))
+            terms.extend(("import-name", alias.name) for alias in node.names)
+        elif (identifier := identifier_of(node)) is not None:
+            terms.append(identifier)
+    return terms
+
+
 def code_text(path: Path) -> str:
     """A file's code terms, lowercased and one per line, for the guards that match substrings."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    terms: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            terms.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            terms.append(node.module)
-        elif isinstance(node, ast.Name):
-            terms.append(node.id)
-        elif isinstance(node, ast.Attribute):
-            terms.append(node.attr)
-        elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-            terms.append(node.name)
+    terms = [value for _, value in identifier_terms(tree)]
     terms.extend(code_strings(tree))
     return "\n".join(terms).lower()

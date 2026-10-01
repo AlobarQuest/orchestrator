@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from tests.architecture.code_terms import code_strings
+from tests.architecture.code_terms import code_strings, identifier_terms
 
 SOURCE_ROOT = Path("src/orchestrator")
 WS42_DISPATCH_PATHS = {
@@ -52,6 +52,10 @@ WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/lifecycle/lifecycle.py"),
     Path("src/orchestrator/services/verifier/verifier_criteria.py"),
     Path("src/orchestrator/services/verifier/verifier_evaluators.py"),
+    # The verifier evaluates generated post-deploy criteria, which only it may decide, so it passes
+    # allow_generated_post_deploy=True to evidence.py. The keyword became visible to this guard when
+    # ADR-0051 widened the identifier scan to keyword arguments.
+    Path("src/orchestrator/services/verifier/verifier.py"),
 }
 # ADR-0020's named exception, in this guard. The two allowlists above are FILE-scoped: a path in
 # them is excused from every forbidden sequence at once, including `deploy` and `coolify`. That is
@@ -125,41 +129,10 @@ def _parse_source(path: Path) -> ast.AST:
 
 
 def _iter_identifier_terms(path: Path, tree: ast.AST) -> list[RuntimeTerm]:
-    terms: list[RuntimeTerm] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                terms.append(
-                    RuntimeTerm(
-                        path=path, kind="import", value=alias.name, tokens=_tokenize(alias.name)
-                    )
-                )
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            terms.append(
-                RuntimeTerm(
-                    path=path,
-                    kind="import-from",
-                    value=node.module,
-                    tokens=_tokenize(node.module),
-                )
-            )
-        elif isinstance(node, ast.Name):
-            terms.append(
-                RuntimeTerm(path=path, kind="name", value=node.id, tokens=_tokenize(node.id))
-            )
-        elif isinstance(node, ast.Attribute):
-            terms.append(
-                RuntimeTerm(
-                    path=path, kind="attribute", value=node.attr, tokens=_tokenize(node.attr)
-                )
-            )
-        elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-            terms.append(
-                RuntimeTerm(
-                    path=path, kind="definition", value=node.name, tokens=_tokenize(node.name)
-                )
-            )
-    return terms
+    return [
+        RuntimeTerm(path=path, kind=kind, value=value, tokens=_tokenize(value))
+        for kind, value in identifier_terms(tree)
+    ]
 
 
 def _iter_string_terms(path: Path, tree: ast.AST) -> list[RuntimeTerm]:
@@ -309,6 +282,16 @@ def test_ws32_reads_code_and_not_prose() -> None:
     assert _labels_in('path = "/work-units/{id}/dispatch"\n') == ["dispatch"]
     assert _labels_in('event = "workflow_dispatch"\n') == ["dispatch", "workflow_dispatch"]
     assert _labels_in('x = 1\nnote = "Dispatch."\n') == ["dispatch"]
+
+
+def test_ws32_reads_every_kind_of_identifier() -> None:
+    """Keyword arguments, parameters, imported names and a code string with whitespace at its ends
+    are all code. Each was outside the guard before ADR-0051's review widened it."""
+    assert _labels_in("run(repo, workflow_dispatch=True)\n") == ["dispatch", "workflow_dispatch"]
+    assert _labels_in("def f(deploy_target):\n    pass\n") == ["deploy"]
+    assert _labels_in("from . import factory_runner\n") == ["factory-runner"]
+    assert _labels_in('target = "deploy\\n"\n') == ["deploy"]
+    assert _labels_in("run(repo, ref=True)\n") == []
 
 
 def test_verifier_named_check_dispatch_access_is_read_only() -> None:

@@ -19,7 +19,12 @@ from orchestrator.package_sources import (
 )
 from orchestrator.persistence.models import INTAKE_SOURCES
 from orchestrator.services.intake import package_intake
-from tests.architecture.code_terms import code_text, docstring_nodes, is_code_string
+from tests.architecture.code_terms import (
+    code_text,
+    docstring_nodes,
+    identifier_of,
+    is_code_string,
+)
 
 RUNTIME_ROOT = Path("src/orchestrator")
 WORKFLOW_ROOT = Path(".github/workflows")
@@ -107,14 +112,15 @@ def _python_automatic_merge_matches(path: Path) -> list[SourceMatch]:
             if id(node) in docstrings or not is_code_string(node.value):
                 continue
             tokens = _tokens(node.value)
-        elif isinstance(node, (ast.Name, ast.Attribute)):
-            value = node.id if isinstance(node, ast.Name) else node.attr
-            tokens = _tokens(value)
+        elif (identifier := identifier_of(node)) is not None:
+            tokens = _tokens(identifier[1])
         elif isinstance(node, (ast.List, ast.Tuple)):
             values = [
                 item.value
                 for item in node.elts
-                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+                if isinstance(item, ast.Constant)
+                and isinstance(item.value, str)
+                and is_code_string(item.value)
             ]
             tokens = tuple(token for value in values for token in _tokens(value))
         sequence = _automatic_merge_sequence(tokens)
@@ -343,3 +349,18 @@ def test_the_merge_scan_reads_code_and_not_prose(tmp_path: Path) -> None:
 
     assert _python_automatic_merge_matches(prose) == []
     assert [match.value for match in _python_automatic_merge_matches(code)] == ["auto merge"]
+
+
+def test_the_merge_scan_reads_list_prose_as_prose(tmp_path: Path) -> None:
+    """A sentence inside a tuple is prose like any other; a code element in a tuple, or a keyword
+    argument, is still read."""
+    prose = tmp_path / "prose.py"
+    prose.write_text('REASONS = ("cannot merge pull request yet", "will not auto merge")\n')
+    element = tmp_path / "element.py"
+    element.write_text('FLAGS = ("auto_merge", "other")\n')
+    keyword = tmp_path / "keyword.py"
+    keyword.write_text("enable(auto_merge=True)\n")
+
+    assert _python_automatic_merge_matches(prose) == []
+    assert _python_automatic_merge_matches(element)
+    assert [match.value for match in _python_automatic_merge_matches(keyword)] == ["auto merge"]
