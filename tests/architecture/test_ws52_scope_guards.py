@@ -1,14 +1,24 @@
 import ast
+import inspect
+import textwrap
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi.routing import APIRoute
 
-from orchestrator.api.routes import release as release_routes
+from orchestrator.main import API_ROUTERS
 
 RELEASE_SERVICE = Path("src/orchestrator/services/release/release_artifacts.py")
-# Read from the module the router lives in, so the routes this scans and the file it parses
-# cannot name different modules -- if they did, no function would match and the test would pass.
-ROUTES = Path(release_routes.__file__)
+# Every route module, so a file-level scan sees a route whichever domain module it is added to.
+ROUTE_SOURCES = sorted(Path("src/orchestrator/api/routes").glob("*.py"))
+
+
+def _route_function(endpoint: Callable[..., object]) -> ast.FunctionDef:
+    # The route's OWN source, wherever it lives: reading one named file would miss a matching
+    # route added to another domain module and pass without having looked at it.
+    node = ast.parse(textwrap.dedent(inspect.getsource(endpoint))).body[0]
+    assert isinstance(node, ast.FunctionDef)
+    return node
 
 
 def _called_names(function: ast.FunctionDef) -> set[str]:
@@ -22,14 +32,14 @@ def _called_names(function: ast.FunctionDef) -> set[str]:
 
 
 def test_ws52_release_routes_do_not_call_lifecycle_or_worker_mutators() -> None:
-    route_functions = {
-        route.endpoint.__name__
-        for route in release_routes.router.routes
+    route_functions = [
+        _route_function(route.endpoint)
+        for router in API_ROUTERS
+        for route in router.routes
         if isinstance(route, APIRoute)
         and route.path.startswith("/api/v1/work-units/")
         and route.path.endswith("/release-artifacts")
-    }
-    tree = ast.parse(ROUTES.read_text(encoding="utf-8"))
+    ]
     forbidden_calls = {
         "transition_unit",
         "record_adjudication",
@@ -40,16 +50,13 @@ def test_ws52_release_routes_do_not_call_lifecycle_or_worker_mutators() -> None:
         "authorize_retry",
         "dispatch_work_unit",
     }
-    matches: list[str] = []
-    scanned: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name in route_functions:
-            scanned.add(node.name)
-            calls = _called_names(node)
-            matches.extend(f"{node.name}:{name}" for name in sorted(calls & forbidden_calls))
-
     # Without this the guard passes when it finds nothing to scan.
-    assert route_functions and scanned == route_functions
+    assert route_functions
+    matches = [
+        f"{node.name}:{name}"
+        for node in route_functions
+        for name in sorted(_called_names(node) & forbidden_calls)
+    ]
 
     assert not matches
 
