@@ -20,8 +20,9 @@ from pydantic import SecretStr
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-import orchestrator.api.routes as routes
 from orchestrator.api.dependencies import AuthConfig, get_session
+from orchestrator.api.routes import common as common_routes
+from orchestrator.api.routes import landing as landing_routes
 from orchestrator.api.schemas.landing import PrMergeResponse
 from orchestrator.config import Settings, get_settings
 from orchestrator.main import create_app
@@ -60,8 +61,8 @@ def merge_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
     FakeGateway.calls = []
-    monkeypatch.setattr(routes, "GitHubPullRequests", FakeGateway)
-    monkeypatch.setattr(routes, "HttpEstateLandingSource", _fake_landing_source)
+    monkeypatch.setattr(landing_routes, "GitHubPullRequests", FakeGateway)
+    monkeypatch.setattr(common_routes, "HttpEstateLandingSource", _fake_landing_source)
     app = create_app(auth_config)
     mount_seeding_routes(app)
 

@@ -7,13 +7,37 @@ from pydantic import SecretStr
 
 from orchestrator.api.dependencies import APIAuthenticationError, AuthConfig
 from orchestrator.api.health import router as health_router
-from orchestrator.api.routes import router as api_router
+from orchestrator.api.routes import (
+    execution,
+    intake,
+    landing,
+    lifecycle,
+    reconciliation,
+    release,
+    reporting,
+    verifier,
+)
 from orchestrator.config import Settings
 from orchestrator.errors import DomainError
 from orchestrator.identity.auth import TOKEN_HASH_PATTERN, M2MCredential
 from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.kernel.states import ActorRole
 from orchestrator.web import router as web_router
+
+# One router per domain, included in this order. FastAPI's include_router copies routes rather
+# than nesting them, so an aggregate router would hide every route from `router.routes`; each
+# domain's router is included here directly. No two routes overlap on a method, so the order
+# decides nothing today -- keep it so if a route is added.
+API_ROUTERS = (
+    intake.router,
+    reporting.router,
+    landing.router,
+    execution.router,
+    release.router,
+    lifecycle.router,
+    reconciliation.router,
+    verifier.router,
+)
 
 
 def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
@@ -67,7 +91,8 @@ def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
                 detail[name] = getattr(error, name)
         return JSONResponse(status_code=status, content={"error": detail})
 
-    application.include_router(api_router)
+    for api_router in API_ROUTERS:
+        application.include_router(api_router)
     application.include_router(health_router)
     application.include_router(web_router)
     return application

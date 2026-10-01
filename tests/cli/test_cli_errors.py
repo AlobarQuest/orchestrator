@@ -44,7 +44,7 @@ def test_cli_error_preserves_api_contract(monkeypatch, command: str) -> None:
             current_version=4,
         )
 
-    monkeypatch.setattr("orchestrator.api.routes.transition_unit", version_conflict)
+    monkeypatch.setattr("orchestrator.api.routes.lifecycle.transition_unit", version_conflict)
     api_response = TestClient(application).post(
         f"/api/v1/work-units/00000000-0000-0000-0000-000000000001/commands/{command}",
         json={"idempotency_key": f"{command}-1", "expected_version": 3},

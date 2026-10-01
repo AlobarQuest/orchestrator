@@ -803,9 +803,9 @@ style of that module.
   covered by an `/api` row belongs in the exclusion set with that delegation named. It is gated
   both ways: a stale exclusion for a route that no longer exists also fails, and every matrix row
   must name a test that actually exists.
-  `api/routes.py` and the `api/schemas/<domain>.py` modules that need it are in
-  `WS42_DISPATCH_PATHS`, so their *words* are exempt; a schema module that does not need the
-  exemption is not listed, and a new one that does must be added — but the route-inventory sets are NOT word guards and apply to every route regardless.
+  The `api/routes/<domain>.py` and `api/schemas/<domain>.py` modules that need it are in
+  `WS42_DISPATCH_PATHS`, so their *words* are exempt; a module that does not need the exemption
+  is not listed, and a new one that does must be added — but the route-inventory sets are NOT word guards and apply to every route regardless.
   `web.py` is in no allowlist: keep its route bodies free of the bare words (delegate to a service).
   Jinja `.html` templates are not scanned at all.
   (Verified 2026-07-25, WS-P2.5 Inc 2 — the ws33 "merges" guard and the GET-route inventory caught
@@ -1916,7 +1916,7 @@ style of that module.
   attesting to its own compliance. Backlogged P2 `7874128ae3ac` with a named trigger.
 
 - **`GET /api/v1/status-ledger` defaults `include_inactive=false` and every production unit is
-  terminal, so the bare call returns `[]`.** `routes.py:1217` /
+  terminal, so the bare call returns `[]`.** `api/routes/reporting.py` /
   `services/reporting/status_ledger.py:25,95`.
   This is the most misleading read on the production API surface, because an empty list **looks
   like an answer** rather than like a filter — the same shape as the estate-wide rule that a search
@@ -3702,7 +3702,7 @@ style of that module.
   ingestion route accepts `expected_conclusion: "failure"` and records what GitHub actually
   concluded under `observation` — then `commands/fail` with the reason, so the terminal state cites
   an observation rather than an assertion. The cancel is the human's. (Verified 2026-08-19 on unit
-  `6bc89d79`, read from `kernel/transitions.py` and `api/routes.py::COMMAND_TARGETS` rather than
+  `6bc89d79`, read from `kernel/transitions.py` and `api/routes/lifecycle.py::COMMAND_TARGETS` rather than
   guessed.)
 
 - **A full `--register` pass of the work lane exits 3 on change record 62, and that is NOT the

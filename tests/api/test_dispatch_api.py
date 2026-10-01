@@ -9,8 +9,9 @@ from pydantic import SecretStr
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-import orchestrator.api.routes as routes
 from orchestrator.api.dependencies import AuthConfig, get_session
+from orchestrator.api.routes import common as common_routes
+from orchestrator.api.routes import execution as execution_routes
 from orchestrator.config import Settings, get_settings
 from orchestrator.main import create_app
 from orchestrator.services.github_app import GitHubAppTokenError, reset_token_providers
@@ -70,13 +71,15 @@ def dispatch_client(
     FakeGitHubActionsDispatcher.calls = []
     CAPTURED_TOKEN_PROVIDERS.clear()
     reset_token_providers()
-    monkeypatch.setattr(routes, "GitHubActionsDispatcher", FakeGitHubActionsDispatcher)
+    monkeypatch.setattr(execution_routes, "GitHubActionsDispatcher", FakeGitHubActionsDispatcher)
     # WS-P2.28: admission asks the estate whether landing on the target repository changes
     # anything already serving. Configured AND faked here for the same reason the workflow
     # client is: an unconfigured source refuses, which is the point of it.
-    monkeypatch.setattr(routes, "HttpEstateLandingSource", FakeEstateLandingSourceFactory)
+    monkeypatch.setattr(common_routes, "HttpEstateLandingSource", FakeEstateLandingSourceFactory)
     # ADR-0015: admission reads the target repository's own declaration from GitHub.
-    monkeypatch.setattr(routes, "GitHubFactoryTargetSource", FakeFactoryTargetSourceFactory)
+    monkeypatch.setattr(
+        execution_routes, "GitHubFactoryTargetSource", FakeFactoryTargetSourceFactory
+    )
     app = create_app(auth_config)
     mount_seeding_routes(app)
 

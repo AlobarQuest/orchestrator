@@ -16,8 +16,8 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from orchestrator.api.dependencies import AuthConfig, get_actor, get_session
-from orchestrator.api.routes import SettingsDep, package_intake_command
+from orchestrator.api.dependencies import AuthConfig, SettingsDep, get_actor, get_session
+from orchestrator.api.routes.intake import package_intake_command
 from orchestrator.api.schemas.intake import PackageIntakeRegistration
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority

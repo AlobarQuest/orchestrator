@@ -94,7 +94,7 @@ VOCABULARY_REGISTRY: dict[str, str] = {
     f"{_VE}:PASS_VALUES": "runner/gate status-string vocabulary (evidence payloads)",
     f"{_VE}:FAIL_VALUES": "runner/gate status-string vocabulary (evidence payloads)",
     # The commands/{command} API vocabulary the worker and CLI send.
-    "api/routes.py:COMMAND_TARGETS": "commands/{command} API vocabulary (worker/CLI)",
+    "api/routes/lifecycle.py:COMMAND_TARGETS": "commands/{command} API vocabulary (worker/CLI)",
     # The capability LEVEL vocabulary the runner validates every envelope entry against
     # (factory_runner/authority.py SUPPORTED_LEVELS). Derived on both sides from the
     # byte-identical tests/fixtures/runner_capability_levels.json (WS-P2.34); the golden

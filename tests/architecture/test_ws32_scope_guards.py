@@ -7,7 +7,12 @@ from pathlib import Path
 
 SOURCE_ROOT = Path("src/orchestrator")
 WS42_DISPATCH_PATHS = {
-    Path("src/orchestrator/api/routes.py"),
+    # The route modules that name these words; one per domain since Tier 2 item 14.
+    Path("src/orchestrator/api/routes/execution.py"),
+    Path("src/orchestrator/api/routes/landing.py"),
+    Path("src/orchestrator/api/routes/release.py"),
+    Path("src/orchestrator/api/routes/reporting.py"),
+    Path("src/orchestrator/api/routes/verifier.py"),
     # WS-P2.1 AC-005: the dead-letter view READS DispatchRecord rows and re-applies the shared
     # failure-signature predicate to derive open circuit breakers. It reads that state; it never
     # dispatches, deploys, or merges.

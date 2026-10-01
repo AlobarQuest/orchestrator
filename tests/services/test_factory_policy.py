@@ -324,9 +324,9 @@ def test_the_artifact_cannot_read_the_hard_off_switch() -> None:
 
 
 def test_the_settings_dependency_detector_fires_on_a_module_that_does_read_them() -> None:
-    # The control, on a real reader: `api/routes.py` imports the settings the off-switch lives in,
-    # so a predicate that finds nothing there finds nothing anywhere.
-    reader = Path("src/orchestrator/api/routes.py").read_text(encoding="utf-8")
+    # The control, on a real reader: `api/dependencies.py` imports the settings the off-switch
+    # lives in, so a predicate that finds nothing there finds nothing anywhere.
+    reader = Path("src/orchestrator/api/dependencies.py").read_text(encoding="utf-8")
 
     assert _settings_dependencies(reader) != []
 

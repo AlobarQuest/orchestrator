@@ -22,8 +22,9 @@ from pydantic import SecretStr
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-import orchestrator.api.routes as routes
 from orchestrator.api.dependencies import AuthConfig, get_session
+from orchestrator.api.routes import common as common_routes
+from orchestrator.api.routes import landing as landing_routes
 from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
@@ -147,7 +148,9 @@ def sibling_client(
     fake is reached -- and App credentials are configured so the answer can qualify at all.
     """
     slot: dict[str, SiblingGateway] = {}
-    monkeypatch.setattr(routes, "GitHubEstatePullRequests", lambda _provider: slot["gateway"])
+    monkeypatch.setattr(
+        landing_routes, "GitHubEstatePullRequests", lambda _provider: slot["gateway"]
+    )
     app = create_app(auth_config)
 
     def database_session() -> Iterator[Session]:
@@ -165,8 +168,8 @@ def sibling_client(
 
     app.dependency_overrides[get_session] = database_session
     app.dependency_overrides[get_settings] = runtime_settings
-    app.dependency_overrides[routes.get_landing_source] = redeploying_source
-    app.dependency_overrides[routes.get_change_record_source] = _records
+    app.dependency_overrides[common_routes.get_landing_source] = redeploying_source
+    app.dependency_overrides[landing_routes.get_change_record_source] = _records
     with TestClient(
         app, base_url="https://testserver", raise_server_exceptions=False
     ) as test_client:

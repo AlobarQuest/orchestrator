@@ -43,7 +43,7 @@ def test_lifecycle_commands_preserve_api_result(
     application.dependency_overrides[get_actor] = lambda: ActorContext("worker", ActorRole.WORKER)
     application.dependency_overrides[get_session] = lambda: Mock(spec=Session)
     monkeypatch.setattr(
-        "orchestrator.api.routes.transition_unit",
+        "orchestrator.api.routes.lifecycle.transition_unit",
         lambda *_args, **_kwargs: TransitionResult(unit_id, WorkUnitState(state), 7, event_id),
     )
     api_response = TestClient(application).post(
