@@ -30,10 +30,10 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from orchestrator.api.dependencies import OBSERVER_WRITE_ROUTES, _confine_observer
-from orchestrator.api.routes import router as api_router
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.kernel.transitions import EDGE_ROLES, TransitionGuards, authorize_transition
+from orchestrator.main import API_ROUTERS
 from orchestrator.services.intake.decomposition import _require_submission_actor
 from orchestrator.services.release.observations import _authorize_actor
 from orchestrator.web import _human
@@ -58,7 +58,8 @@ def _post_routes() -> set[str]:
     routes = {path for path, operations in _openapi()["paths"].items() if "post" in operations}
     routes.update(
         route.path
-        for route in (*api_router.routes, *web_router.routes)
+        for router in (*API_ROUTERS, web_router)
+        for route in router.routes
         if isinstance(route, APIRoute) and "POST" in (route.methods or set())
     )
     return routes

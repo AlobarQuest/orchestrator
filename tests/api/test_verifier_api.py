@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from orchestrator.api.routes import get_check_observer
+from orchestrator.api.routes.verifier import get_check_observer
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import PackageAcceptanceCriterion, WorkUnit
 from tests._support.seeding import SEED_REVISIONS, seed_units_path

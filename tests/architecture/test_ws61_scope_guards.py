@@ -3,10 +3,12 @@ from pathlib import Path
 
 from fastapi.routing import APIRoute
 
-from orchestrator.api.routes import router as api_router
+from orchestrator.api.routes import release as release_routes
 
 OBSERVATION_SERVICE = Path("src/orchestrator/services/release/observations.py")
-ROUTES = Path("src/orchestrator/api/routes.py")
+# Read from the module the router lives in, so the routes this scans and the file it parses
+# cannot name different modules -- if they did, no function would match and the test would pass.
+ROUTES = Path(release_routes.__file__)
 
 
 def _called_names(function: ast.FunctionDef) -> set[str]:
@@ -22,7 +24,7 @@ def _called_names(function: ast.FunctionDef) -> set[str]:
 def test_ws61_observation_routes_do_not_call_lifecycle_or_worker_mutators() -> None:
     route_functions = {
         route.endpoint.__name__
-        for route in api_router.routes
+        for route in release_routes.router.routes
         if isinstance(route, APIRoute) and route.path == "/api/v1/observations"
     }
     tree = ast.parse(ROUTES.read_text(encoding="utf-8"))
@@ -40,10 +42,15 @@ def test_ws61_observation_routes_do_not_call_lifecycle_or_worker_mutators() -> N
         "record_release_artifact",
     }
     matches: list[str] = []
+    scanned: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name in route_functions:
+            scanned.add(node.name)
             calls = _called_names(node)
             matches.extend(f"{node.name}:{name}" for name in sorted(calls & forbidden_calls))
+
+    # Without this the guard passes when it finds nothing to scan.
+    assert route_functions and scanned == route_functions
 
     assert not matches
 

@@ -1,9 +1,11 @@
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from typing import Annotated
 
-from fastapi import Request
+from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
+from orchestrator.config import Settings, get_settings
 from orchestrator.db import session_factory
 from orchestrator.errors import DomainError
 from orchestrator.identity.auth import (
@@ -155,3 +157,8 @@ def _raw_headers(request: Request) -> list[tuple[str, str]]:
 def _header_values(headers: list[tuple[str, str]], target: str) -> list[str]:
     normalized = target.lower()
     return [value for name, value in headers if name.lower() == normalized]
+
+
+SessionDep = Annotated[Session, Depends(get_session)]
+ActorDep = Annotated[ActorContext, Depends(get_actor)]
+SettingsDep = Annotated[Settings, Depends(get_settings)]

@@ -1,3 +1,9 @@
+"""Request and response models the routes of more than one domain use.
+
+Every other model lives in `api/schemas/<domain>.py`, beside the routes of the domain that serves
+it; a model moves here only when a second domain's routes need it.
+"""
+
 from typing import Any
 from uuid import UUID
 

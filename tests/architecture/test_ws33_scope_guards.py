@@ -10,7 +10,7 @@ import pytest
 from fastapi.routing import APIRoute
 
 import orchestrator.package_sources as package_sources
-from orchestrator.api.routes import router as api_router
+from orchestrator.main import API_ROUTERS
 from orchestrator.package_sources import (
     PackageSourceError,
     VerifiedApproval,
@@ -238,7 +238,7 @@ def test_runtime_has_no_external_factory_events_publisher_import() -> None:
 
 def test_status_ledger_exposes_no_mutation_routes() -> None:
     ledger_operations: dict[str, set[str]] = {}
-    for route in api_router.routes:
+    for route in (route for router in API_ROUTERS for route in router.routes):
         if not isinstance(route, APIRoute) or not route.path.startswith("/api/v1/status-ledger"):
             continue
         ledger_operations.setdefault(route.path, set()).update(

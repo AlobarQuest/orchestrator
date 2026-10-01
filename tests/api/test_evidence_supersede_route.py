@@ -12,8 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-import orchestrator.api.routes as routes
 from orchestrator.api.dependencies import AuthConfig, get_session
+from orchestrator.api.routes import verifier as verifier_routes
 from orchestrator.main import create_app
 
 _WORKER = {
@@ -53,10 +53,10 @@ def routing_client(
 
         return _fn
 
-    monkeypatch.setattr(routes, "append_evidence", _sentinel("append"))
-    monkeypatch.setattr(routes, "supersede_evidence", _sentinel("supersede"))
+    monkeypatch.setattr(verifier_routes, "append_evidence", _sentinel("append"))
+    monkeypatch.setattr(verifier_routes, "supersede_evidence", _sentinel("supersede"))
     # _raise_error passes a plain mapping straight through.
-    monkeypatch.setattr(routes, "_raise_error", lambda value: value)
+    monkeypatch.setattr(verifier_routes, "raise_error", lambda value: value)
 
     app = create_app(auth_config)
 

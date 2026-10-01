@@ -50,16 +50,16 @@ SRC = Path("src")
 
 # The surfaces the outside world can actually enter through. Everything defined in them is a
 # root. `web.py` is the human /review lane; `cli.py` an operator's client; `main.py` the app
-# factory. ENTRY_PACKAGES names a separate program under `src/` whose own CLI makes it a root
-# set; the one it named, `reconciliation_runner`, was retired by ADR-0048, so it is empty.
+# factory. ENTRY_PACKAGES names directories every module of which is a root: the HTTP API's
+# per-domain route modules. (It once named a separate program, `reconciliation_runner`, retired
+# by ADR-0048.)
 ENTRY_MODULES = {
-    "orchestrator/api/routes.py",
     "orchestrator/api/health.py",
     "orchestrator/web.py",
     "orchestrator/cli.py",
     "orchestrator/main.py",
 }
-ENTRY_PACKAGES: tuple[str, ...] = ()
+ENTRY_PACKAGES: tuple[str, ...] = ("orchestrator/api/routes/",)
 
 # The subject: the layers where a guard would plausibly be written and forgotten.
 SCOPE = ("orchestrator/kernel/", "orchestrator/services/")
@@ -272,7 +272,7 @@ def test_the_guard_flags_an_isolated_unreachable_function(fake_src: Path) -> Non
     _write(fake_src, "orchestrator/services/svc.py", "def orphan() -> None:\n    pass\n")
     _write(
         fake_src,
-        "orchestrator/api/routes.py",
+        "orchestrator/api/routes/units.py",
         "def index() -> None:\n    pass\n",
     )
     flagged = {name for _module, name, _where in CallGraph(fake_src).unreachable()}
@@ -283,7 +283,7 @@ def test_the_guard_does_not_flag_a_function_a_route_actually_calls(fake_src: Pat
     _write(fake_src, "orchestrator/services/svc.py", "def live_one() -> None:\n    pass\n")
     _write(
         fake_src,
-        "orchestrator/api/routes.py",
+        "orchestrator/api/routes/units.py",
         "from orchestrator.services.svc import live_one\n\n\n"
         "def index() -> None:\n    live_one()\n",
     )
@@ -306,7 +306,7 @@ def test_the_guard_flags_a_function_laundered_by_a_dead_cross_module_caller(
         "from orchestrator.services.svc import laundered\n\n\n"
         "def also_dead() -> None:\n    laundered()\n",
     )
-    _write(fake_src, "orchestrator/api/routes.py", "def index() -> None:\n    pass\n")
+    _write(fake_src, "orchestrator/api/routes/units.py", "def index() -> None:\n    pass\n")
     flagged = {name for _module, name, _where in CallGraph(fake_src).unreachable()}
     assert "laundered" in flagged
     assert "also_dead" in flagged
@@ -332,7 +332,7 @@ def test_the_guard_flags_a_dead_function_whose_name_collides_with_a_live_one(
         "def dead_letter() -> None:\n    _http_get('/api/v1/dead-letter')\n\n\n"
         "def _http_get(path: str) -> None:\n    pass\n",
     )
-    _write(fake_src, "orchestrator/api/routes.py", "def index() -> None:\n    pass\n")
+    _write(fake_src, "orchestrator/api/routes/units.py", "def index() -> None:\n    pass\n")
     flagged = {(module, name) for module, name, _where in CallGraph(fake_src).unreachable()}
     assert ("orchestrator.services.reporting.dead_letter", "dead_letter") in flagged, (
         "the service function is dead; only the identically-named CLI command is a root. "
@@ -358,7 +358,7 @@ def test_the_guard_flags_a_service_whose_only_production_caller_was_removed(
     # WITH the route: reachable.
     _write(
         fake_src,
-        "orchestrator/api/routes.py",
+        "orchestrator/api/routes/units.py",
         "from orchestrator.services.reporting.dead_letter import dead_letter\n\n\n"
         "def dead_letter_route() -> None:\n    dead_letter()\n",
     )
@@ -366,7 +366,7 @@ def test_the_guard_flags_a_service_whose_only_production_caller_was_removed(
     assert "dead_letter" not in before, "precondition: the route makes it reachable"
 
     # Remove the ONLY production caller. Nothing else changes.
-    _write(fake_src, "orchestrator/api/routes.py", "def index() -> None:\n    pass\n")
+    _write(fake_src, "orchestrator/api/routes/units.py", "def index() -> None:\n    pass\n")
     after = {name for _module, name, _where in CallGraph(fake_src).unreachable()}
     assert "dead_letter" in after, (
         "removing a service's only production caller must make the guard flag it. This is the "
