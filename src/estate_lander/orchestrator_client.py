@@ -18,6 +18,13 @@ from typing import Any
 
 import httpx
 
+from estate_clients.confined import (
+    ConfinedClient,
+    TransportFailure,
+    error_code,
+    error_detail,
+)
+
 # The two refusal classes live in the leaf `lander.errors`, because `lander.core` catches them;
 # imported so this client raises exactly the classes that body can see, and re-exported.
 from lander.errors import LandingRefused, OrchestratorError
@@ -49,43 +56,8 @@ def is_allowed_write(path: str) -> bool:
     return path in (_LAND, _BRANCH_UPDATE)
 
 
-def _detail(response: httpx.Response) -> str:
-    """The orchestrator's own explanation, bounded. Never the whole body, never headers.
-
-    A `DomainError` reaches the wire NESTED under `error`, which is worth reading rather than
-    guessing at: a check written from the handler's shape matches neither that nor the framework's
-    own `detail`, and this estate has already recorded that trap.
-    """
-    try:
-        payload = response.json()
-    except ValueError:
-        return f"HTTP {response.status_code}"
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict) and error.get("message"):
-            return str(error["message"])[:400]
-        if payload.get("detail"):
-            return str(payload["detail"])[:400]
-    return f"HTTP {response.status_code}"
-
-
-def _code(response: httpx.Response) -> str:
-    """The refusal's own code, read from where a `DomainError` actually puts it.
-
-    NESTED under `error`, never top-level -- a check written from the handler's shape matches
-    neither that nor the framework's own `detail`, and this estate has already recorded that trap.
-    An unreadable body yields the empty string, which no classifier recognises, so an answer this
-    program cannot parse stays a finding.
-    """
-    try:
-        payload = response.json()
-    except ValueError:
-        return ""
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict) and isinstance(error.get("code"), str):
-            return error["code"]
-    return ""
+def _permits(method: str, path: str) -> bool:
+    return is_allowed_read(path) if method == "GET" else is_allowed_write(path)
 
 
 class OrchestratorClient:
@@ -98,8 +70,8 @@ class OrchestratorClient:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         try:
-            self._client = httpx.Client(
-                base_url=base_url.rstrip("/"),
+            self._client = ConfinedClient(
+                base_url=base_url,
                 timeout=TIMEOUT_SECONDS,
                 transport=transport,
                 headers={
@@ -108,14 +80,16 @@ class OrchestratorClient:
                     "User-Agent": USER_AGENT,
                     "Accept": "application/json",
                 },
+                permits=_permits,
+                refuse=lambda method, path: ForbiddenEndpointError(
+                    f"the lander may not {method} {path}"
+                ),
             )
-        except (httpx.InvalidURL, ValueError) as error:
-            # CONSTRUCTION raises for some malformed URLs and request time for others: a control
-            # character is refused here by `urlparse`, while a doubled dot or an over-long DNS
-            # label survives until IDNA encoding at `request`. Guarding one half leaves an
-            # environment-variable typo crashing the pass with a traceback instead of reporting.
+        except TransportFailure as failure:
+            # Construction is guarded as well as the request: some malformed URLs are refused
+            # here and others only at request time (ADR-0050).
             raise OrchestratorError(
-                f"the orchestrator base URL is unusable: {type(error).__name__}"
+                f"the orchestrator base URL is unusable: {failure.error_type}"
             ) from None
 
     def close(self) -> None:
@@ -128,25 +102,20 @@ class OrchestratorClient:
         self.close()
 
     def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        """The ONE way anything leaves this process, guard first."""
-        permitted = is_allowed_read(path) if method == "GET" else is_allowed_write(path)
-        if not permitted:
-            raise ForbiddenEndpointError(f"the lander may not {method} {path}")
+        """The ONE way anything leaves this process; the confined client asks `_permits` first."""
         try:
             response = self._client.request(method, path, **kwargs)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # The exception TYPE only. An httpx error carries the request, and a diagnostic that
-            # prints what it was given is how a bearer token reaches a transcript.
+        except TransportFailure as failure:
             raise OrchestratorError(
-                f"the orchestrator is unreachable for {method} {path}: {type(error).__name__}"
+                f"the orchestrator is unreachable for {method} {path}: {failure.error_type}"
             ) from None
         if response.status_code == 409:
-            raise LandingRefused(_detail(response), _code(response))
+            raise LandingRefused(error_detail(response), error_code(response))
         if response.status_code >= 400:
             hint = " -- the credential is not the system one" if response.status_code == 403 else ""
             raise OrchestratorError(
                 f"the orchestrator answered {response.status_code} for {path}{hint}: "
-                f"{_detail(response)}"
+                f"{error_detail(response)}"
             )
         return response
 

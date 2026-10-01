@@ -15,6 +15,8 @@ from typing import Any
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
+
 STATUS_LEDGER_ENDPOINT = "/api/v1/status-ledger"
 TRACKER_BINDINGS_ENDPOINT = "/api/v1/tracker-bindings"
 # The tracker-binding write: /api/v1/work-units/<uuid>/tracker-binding. `\Z` (not `$`) so a
@@ -40,6 +42,16 @@ class ForbiddenEndpointError(ProjectionError):
     """The adapter attempted a write outside its projection-only surface."""
 
 
+def _permits(method: str, path: str) -> bool:
+    return method == "GET" or (method == "POST" and _is_allowed_write(path))
+
+
+def _refuse(method: str, path: str) -> ForbiddenEndpointError:
+    if method == "POST":
+        return ForbiddenEndpointError(f"the adapter may not write to {path}")
+    return ForbiddenEndpointError(f"the adapter may not use {method}")
+
+
 class OrchestratorClient:
     def __init__(
         self,
@@ -49,15 +61,22 @@ class OrchestratorClient:
         token: str,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-Credential-Key-Id": credential_key_id,
-            },
-            timeout=30.0,
-            transport=transport,
-        )
+        try:
+            self._client = ConfinedClient(
+                base_url=base_url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Credential-Key-Id": credential_key_id,
+                },
+                timeout=30.0,
+                transport=transport,
+                permits=_permits,
+                refuse=_refuse,
+            )
+        except TransportFailure as failure:
+            raise ProjectionError(
+                f"the orchestrator URL is not usable: {failure.error_type}"
+            ) from None
 
     def status_ledger(self) -> list[dict[str, Any]]:
         return self._request(
@@ -103,14 +122,15 @@ class OrchestratorClient:
         )
 
     def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if not _is_allowed_write(path):
-            raise ForbiddenEndpointError(f"the adapter may not write to {path}")
         return self._request("POST", path, json=payload).json()
 
     def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        if method not in {"GET", "POST"}:
-            raise ForbiddenEndpointError(f"the adapter may not use {method}")
-        response = self._client.request(method, path, **kwargs)
+        try:
+            response = self._client.request(method, path, **kwargs)
+        except TransportFailure as failure:
+            raise ProjectionError(
+                f"orchestrator is unreachable for {method} {path}: {failure.error_type}"
+            ) from None
         if response.status_code >= 400:
             raise ProjectionError(f"orchestrator rejected {method} {path}: {response.status_code}")
         return response

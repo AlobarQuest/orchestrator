@@ -135,7 +135,7 @@ def test_a_forbidden_read_never_reaches_the_transport() -> None:
         "x",
         "orchestrator-system",
         base_url="https://sds.example",
-        client=httpx.Client(base_url="https://sds.example", transport=httpx.MockTransport(record)),
+        transport=httpx.MockTransport(record),
     )
     with pytest.raises(ForbiddenReadError):
         client._get("/api/v1/work-units/1/dispatch")

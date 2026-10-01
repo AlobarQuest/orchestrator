@@ -29,18 +29,16 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
+
+from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem
 
 CANDIDATES_ENDPOINT = "/api/v1/machine-activation-candidates"
 WORK_UNIT_ID = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 _BIND = re.compile(rf"^/api/v1/work-units/{WORK_UNIT_ID}/release-artifacts$")
 _OBSERVE = re.compile(rf"^/api/v1/release-artifacts/{WORK_UNIT_ID}/deployment-observations$")
 
-# See the sibling client: a DNS label over 63 octets and an empty one both CONSTRUCT fine and
-# raise `UnicodeError` at REQUEST time from IDNA encoding, so the guard has to be explicit.
-MAX_DNS_LABEL = 63
 
 TIMEOUT_SECONDS = 30.0
 
@@ -65,6 +63,14 @@ def is_allowed_write(path: str) -> bool:
     return _BIND.match(path) is not None or _OBSERVE.match(path) is not None
 
 
+def _permits(method: str, path: str) -> bool:
+    return is_allowed_read(path) if method == "GET" else is_allowed_write(path)
+
+
+def _refuse(method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"this lane may not {method} {path}")
+
+
 def bind_path(work_unit_id: str) -> str:
     return f"/api/v1/work-units/{work_unit_id}/release-artifacts"
 
@@ -74,12 +80,9 @@ def observe_path(binding_id: str) -> str:
 
 
 def _validate_base_url(base_url: str) -> None:
-    parsed = urlsplit(base_url.strip())
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise UnusableEndpointError("the orchestrator URL must be https with a host")
-    for label in parsed.hostname.split("."):
-        if not label or len(label) > MAX_DNS_LABEL:
-            raise UnusableEndpointError("the orchestrator URL has a malformed host")
+    problem = base_url_problem(base_url)
+    if problem is not None:
+        raise UnusableEndpointError(f"the orchestrator URL {problem}")
 
 
 def open_binding_client(
@@ -102,10 +105,10 @@ def open_binding_client(
             token=token,
             transport=transport,
         )
-    except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+    except TransportFailure as failure:
         raise UnusableEndpointError(
-            f"the orchestrator URL is not usable: {type(error).__name__}"
-        ) from error
+            f"the orchestrator URL is not usable: {failure.error_type}"
+        ) from None
 
 
 class BindingClient:
@@ -117,14 +120,16 @@ class BindingClient:
         token: str,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
+        self._client = ConfinedClient(
+            base_url=base_url,
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Credential-Key-Id": credential_key_id,
             },
             timeout=TIMEOUT_SECONDS,
             transport=transport,
+            permits=_permits,
+            refuse=_refuse,
         )
 
     def close(self) -> None:
@@ -155,19 +160,13 @@ class BindingClient:
         return body
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
-        """The ONE way anything leaves this process, guard first and per method."""
-        allowed = is_allowed_read(path) if method == "GET" else is_allowed_write(path)
-        if not allowed:
-            raise ForbiddenEndpointError(f"this lane may not {method} {path}")
+        """The ONE way anything leaves this process; the confined client asks `_permits` first."""
         try:
             response = self._client.request(method, path, **kwargs)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # THREE exception families, and the third is the one a two-member tuple misses: IDNA
-            # encoding of a malformed host raises `UnicodeError`, a `ValueError` and neither of
-            # the other two.
+        except TransportFailure as failure:
             raise BindingCallError(
-                f"orchestrator is unreachable for {method} {path}: {type(error).__name__}"
-            ) from error
+                f"orchestrator is unreachable for {method} {path}: {failure.error_type}"
+            ) from None
         if response.status_code >= 400:
             # The status only. A rejection body echoes the command back, and a diagnostic that
             # prints what it was given is how a value that should not be in a transcript gets

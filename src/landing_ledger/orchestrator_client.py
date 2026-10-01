@@ -48,6 +48,7 @@ from typing import Any
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure, error_code
 from landing_ledger.model import WORK_UNIT_ID
 
 OBSERVATIONS_ENDPOINT = "/api/v1/observations"
@@ -82,6 +83,18 @@ def is_allowed_read(path: str) -> bool:
     return path == OBSERVATIONS_ENDPOINT or _UNIT_READS.match(path) is not None
 
 
+def _permits(method: str, path: str) -> bool:
+    if method == "GET":
+        return is_allowed_read(path)
+    return method == "POST" and is_allowed_write(path)
+
+
+def _refuse(method: str, path: str) -> LedgerWriteError:
+    if method == "GET":
+        return ForbiddenReadError(f"the ledger may not read {path}")
+    return ForbiddenEndpointError(f"the ledger may not write to {path}")
+
+
 def evidence_pack_path(work_unit_id: str) -> str:
     return f"/api/v1/work-units/{work_unit_id}/evidence-pack"
 
@@ -99,15 +112,22 @@ class OrchestratorClient:
         token: str,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-Credential-Key-Id": credential_key_id,
-            },
-            timeout=30.0,
-            transport=transport,
-        )
+        try:
+            self._client = ConfinedClient(
+                base_url=base_url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Credential-Key-Id": credential_key_id,
+                },
+                timeout=30.0,
+                transport=transport,
+                permits=_permits,
+                refuse=_refuse,
+            )
+        except TransportFailure as failure:
+            raise LedgerWriteError(
+                f"the orchestrator URL is not usable: {failure.error_type}"
+            ) from None
 
     def close(self) -> None:
         self._client.close()
@@ -168,22 +188,15 @@ class OrchestratorClient:
         `{"error": {"code": "work_unit_not_found", …}}`. FastAPI's own 404 is `{"detail": "Not
         Found"}`, and a proxy's is not JSON at all -- neither matches, which is the point.
         """
-        try:
-            body = response.json()
-        except ValueError:
-            return False
-        error = body.get("error") if isinstance(body, dict) else None
-        return isinstance(error, dict) and str(error.get("code", "")).endswith("_not_found")
+        return error_code(response).endswith("_not_found")
 
     def _read(self, path: str, **params: str) -> Any:
-        if not is_allowed_read(path):
-            raise ForbiddenReadError(f"the ledger may not read {path}")
         try:
             response = self._client.request("GET", path, params=params or None)
-        except httpx.HTTPError as error:
+        except TransportFailure as failure:
             raise LedgerWriteError(
-                f"orchestrator is unreachable for GET {path}: {type(error).__name__}"
-            ) from error
+                f"orchestrator is unreachable for GET {path}: {failure.error_type}"
+            ) from None
         if response.status_code == 404:
             # A 404 is an ANSWER only when the ORCHESTRATOR says so. It answers a missing unit with
             # its own `DomainError` body carrying `code: "work_unit_not_found"` (`main.py`), while
@@ -198,17 +211,15 @@ class OrchestratorClient:
         return response.json()
 
     def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if not is_allowed_write(path):
-            raise ForbiddenEndpointError(f"the ledger may not write to {path}")
         try:
             response = self._client.request("POST", path, json=payload)
-        except httpx.HTTPError as error:
+        except TransportFailure as failure:
             # An unreachable orchestrator raises before any status code exists. Same reasoning as
             # the reader's: it must become this client's own error, or one landing's write takes
             # the whole pass down.
             raise LedgerWriteError(
-                f"orchestrator is unreachable for POST {path}: {type(error).__name__}"
-            ) from error
+                f"orchestrator is unreachable for POST {path}: {failure.error_type}"
+            ) from None
         if response.status_code >= 400:
             # The status only. A rejection body echoes the command back, and a diagnostic that
             # prints what it was given is how a value that should not be in a transcript gets

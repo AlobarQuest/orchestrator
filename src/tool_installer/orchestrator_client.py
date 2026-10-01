@@ -5,21 +5,19 @@ is deliberate -- see `policy_client.py` for why two credentials never share a gu
 putting the same bound in the client makes a second write structurally unreachable rather than
 merely unwritten.
 
-THIS IS THE PIN WATCHER'S CLIENT, DELIBERATELY COPIED RATHER THAN IMPORTED. Lanes in `src/` import
-one another for DOMAIN knowledge -- never for plumbing. A lane that reached into a sibling for an
-HTTP client would make an unrelated lane's refactor able to break this one's schedule.
+The transport and its guards are the estate's shared confined client (ADR-0050); what is this
+program's own is the one path it may reach, its exception classes and their wording.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 
-OBSERVATIONS_ENDPOINT = "/api/v1/observations"
+from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem
 
-MAX_DNS_LABEL = 63
+OBSERVATIONS_ENDPOINT = "/api/v1/observations"
 
 
 class ObservationWriteError(RuntimeError):
@@ -35,16 +33,21 @@ class UnusableEndpointError(RuntimeError):
 
 
 def _validate_base_url(base_url: str) -> None:
-    parsed = urlsplit(base_url.strip())
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise UnusableEndpointError("the orchestrator URL must be https with a host")
-    for label in parsed.hostname.split("."):
-        if not label or len(label) > MAX_DNS_LABEL:
-            raise UnusableEndpointError("the orchestrator URL has a malformed host")
+    problem = base_url_problem(base_url)
+    if problem is not None:
+        raise UnusableEndpointError(f"the orchestrator URL {problem}")
 
 
 def is_allowed_write(path: str) -> bool:
     return path == OBSERVATIONS_ENDPOINT
+
+
+def _permits(method: str, path: str) -> bool:
+    return method == "POST" and is_allowed_write(path)
+
+
+def _refuse(_method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"the installer may not write to {path}")
 
 
 def open_client(
@@ -62,10 +65,10 @@ def open_client(
             token=token,
             transport=transport,
         )
-    except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+    except TransportFailure as failure:
         raise UnusableEndpointError(
-            f"the orchestrator URL is not usable: {type(error).__name__}"
-        ) from error
+            f"the orchestrator URL is not usable: {failure.error_type}"
+        ) from None
 
 
 class OrchestratorClient:
@@ -77,14 +80,16 @@ class OrchestratorClient:
         token: str,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
+        self._client = ConfinedClient(
+            base_url=base_url,
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Credential-Key-Id": credential_key_id,
             },
             timeout=30.0,
             transport=transport,
+            permits=_permits,
+            refuse=_refuse,
         )
 
     def close(self) -> None:
@@ -100,14 +105,12 @@ class OrchestratorClient:
         return self.post(OBSERVATIONS_ENDPOINT, payload)
 
     def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if not is_allowed_write(path):
-            raise ForbiddenEndpointError(f"the installer may not write to {path}")
         try:
             response = self._client.request("POST", path, json=payload)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+        except TransportFailure as failure:
             raise ObservationWriteError(
-                f"orchestrator is unreachable for POST {path}: {type(error).__name__}"
-            ) from error
+                f"orchestrator is unreachable for POST {path}: {failure.error_type}"
+            ) from None
         if response.status_code >= 400:
             raise ObservationWriteError(
                 f"orchestrator rejected POST {path}: {response.status_code}"

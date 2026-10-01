@@ -43,7 +43,7 @@ def _reader(handler) -> OrchestratorClient:
         "tok",
         "orchestrator-system",
         base_url="https://sds.example",
-        client=httpx.Client(base_url="https://sds.example", transport=httpx.MockTransport(handler)),
+        transport=httpx.MockTransport(handler),
     )
 
 

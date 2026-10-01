@@ -20,7 +20,10 @@ WHAT IS ASSERTED, PER PROGRAM
    a property of the table on its own, whatever that closure does or does not walk.
 4. **A row marked `no_sibling_lanes` permits no other program at all**, measured against the
    population on disk rather than a hand-written list of siblings -- the three hand lists this
-   replaces had each fallen behind the programs that existed.
+   replaces had each fallen behind the programs that existed. A row marked `library` is not a
+   program in that sense: it is shared plumbing with no lane of its own (ADR-0050), so a sibling
+   ban does not forbid it. A library row must itself carry `no_sibling_lanes`, so plumbing can
+   never become a back door from one lane into another.
 5. **The scan saw something.** A program with no files, or whose files import nothing, would pass
    every check above vacuously; that is the shape of a guard that has quietly stopped guarding.
 
@@ -54,10 +57,11 @@ ORCHESTRATOR = "orchestrator"
 class Row:
     allowed: frozenset[str]
     no_sibling_lanes: bool = False
+    library: bool = False
 
 
-def _row(*names: str, no_sibling_lanes: bool = False) -> Row:
-    return Row(frozenset(names), no_sibling_lanes)
+def _row(*names: str, no_sibling_lanes: bool = False, library: bool = False) -> Row:
+    return Row(frozenset(names), no_sibling_lanes, library)
 
 
 # Every name below is a top-level import the program actually makes; the comments are the reasons
@@ -67,6 +71,7 @@ TABLE: dict[str, Row] = {
         "__future__",
         "dataclasses",
         "datetime",
+        "estate_clients",
         "hashlib",
         "httpx",
         "json",
@@ -102,6 +107,7 @@ TABLE: dict[str, Row] = {
         "dataclasses",
         # ADR-0034. It takes a bump only once the required checks have settled against it.
         "datetime",
+        "estate_clients",
         # G1+G2. The observation's facts are content-addressed, so an unchanged re-run replays.
         "hashlib",
         "httpx",
@@ -138,6 +144,7 @@ TABLE: dict[str, Row] = {
         "collections",
         "dataclasses",
         "datetime",
+        "estate_clients",
         "hashlib",
         "httpx",
         "json",
@@ -157,6 +164,7 @@ TABLE: dict[str, Row] = {
         "argparse",
         "change_proposer",
         "dataclasses",
+        "estate_clients",
         "httpx",
         "lander",
         "os",
@@ -173,6 +181,7 @@ TABLE: dict[str, Row] = {
         "bump_proposer",
         "dataclasses",
         "deploy_watcher",
+        "estate_clients",
         "httpx",
         "lander",
         "os",
@@ -189,10 +198,23 @@ TABLE: dict[str, Row] = {
         "typing",
         no_sibling_lanes=True,
     ),
+    # ADR-0050: the one confined transport every program reaches a service through. It holds the
+    # guards and none of any program's wording, and imports no program.
+    "estate_clients": _row(
+        "__future__",
+        "collections",
+        "httpx",
+        "typing",
+        # `urllib.parse` only, for the base-URL shape check.
+        "urllib",
+        no_sibling_lanes=True,
+        library=True,
+    ),
     "landing_ledger": _row(
         "__future__",
         "dataclasses",
         "datetime",
+        "estate_clients",
         "hashlib",
         "httpx",
         "json",
@@ -201,13 +223,13 @@ TABLE: dict[str, Row] = {
         "typer",
         "typing",
     ),
-    # Lanes share DOMAIN knowledge; this one has none to borrow. Its client is the activation
-    # sweep's, deliberately COPIED -- a lane that reached into a sibling for plumbing would let an
-    # unrelated refactor break this lane's schedule.
+    # Lanes share DOMAIN knowledge; this one has none to borrow. Its transport is the shared
+    # confined client (ADR-0050), which is plumbing with no lane of its own.
     "pin_watcher": _row(
         "__future__",
         "base64",
         "dataclasses",
+        "estate_clients",
         "hashlib",
         "httpx",
         "json",
@@ -227,6 +249,7 @@ TABLE: dict[str, Row] = {
         "contextlib",
         "dataclasses",
         "datetime",
+        "estate_clients",
         "hashlib",
         "httpx",
         "json",
@@ -241,6 +264,7 @@ TABLE: dict[str, Row] = {
         "__future__",
         "dataclasses",
         "datetime",
+        "estate_clients",
         "hashlib",
         "httpx",
         "json",
@@ -260,6 +284,7 @@ TABLE: dict[str, Row] = {
         "__future__",
         "dataclasses",
         "datetime",
+        "estate_clients",
         "httpx",
         "json",
         "os",
@@ -274,6 +299,7 @@ TABLE: dict[str, Row] = {
         "__future__",
         "argparse",
         "dataclasses",
+        "estate_clients",
         "httpx",
         "json",
         "os",
@@ -294,6 +320,7 @@ TABLE: dict[str, Row] = {
     "work_watcher": _row(
         "__future__",
         "argparse",
+        "estate_clients",
         "httpx",
         "os",
         "re",
@@ -326,10 +353,13 @@ def violations(src: Path, table: Mapping[str, Row], package: str) -> list[str]:
 
     if ORCHESTRATOR in row.allowed:
         found.append(f"{package}: its row permits importing the orchestrator")
+    if row.library and not row.no_sibling_lanes:
+        found.append(f"{package}: a library row must forbid sibling programs")
+    libraries = {name for name, other in table.items() if other.library}
     if row.no_sibling_lanes:
         found += [
             f"{package}: its row permits sibling program {sibling!r}"
-            for sibling in sorted(row.allowed & (population - {package}))
+            for sibling in sorted(row.allowed & (population - {package} - libraries))
         ]
 
     imports = package_imports(src, package)
@@ -454,6 +484,19 @@ def test_control_a_sibling_in_a_no_sibling_row_fails_against_the_derived_populat
     assert violations(src, table, "lane") == ["lane: its row permits sibling program 'other'"]
     # The same row without the flag is an ordinary reuse, which is how `inert_lander` borrows.
     assert violations(src, {**table, "lane": _row("httpx", "os", "other")}, "lane") == []
+
+
+def test_control_a_library_is_not_a_sibling_but_a_library_row_must_ban_siblings(
+    tmp_path: Path,
+) -> None:
+    src = _tree(tmp_path, {**CLEAN, "lane/client.py": "import os\nfrom other import x\n"})
+    lane = _row("httpx", "os", "other", no_sibling_lanes=True)
+    library = _row("json", no_sibling_lanes=True, library=True)
+    assert violations(src, {**CLEAN_TABLE, "lane": lane, "other": library}, "lane") == []
+    loose = _row("json", library=True)
+    assert violations(src, {**CLEAN_TABLE, "lane": lane, "other": loose}, "other") == [
+        "other: a library row must forbid sibling programs"
+    ]
 
 
 def test_control_a_program_whose_scan_is_empty_fails(tmp_path: Path) -> None:
