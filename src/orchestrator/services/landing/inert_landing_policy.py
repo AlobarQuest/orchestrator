@@ -51,6 +51,8 @@ from typing import Any, Final, Protocol
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
+
 # Why THIS process has no answer -- distinct from the document answering with a block this build
 # cannot read, which is a statement about the estate. These need different people: one sets an
 # environment variable, the other looks at why a service is refusing.
@@ -72,6 +74,27 @@ _BLOCK: Final = "inert_landing"
 
 _ROUTE: Final = "/api/landing-policy"
 _USER_AGENT: Final = "orchestrator-inert-landing-policy/1 (+AlobarQuest/orchestrator)"
+
+
+class _ForbiddenRoute(Exception):
+    """This reader tried to reach a route other than its one."""
+
+
+def _confined(
+    base_url: str, token: str, timeout: float, transport: httpx.BaseTransport | None
+) -> ConfinedClient:
+    """The shared confined transport, permitted exactly one read: ``GET {_ROUTE}``."""
+    return ConfinedClient(
+        base_url=base_url,
+        user_agent=_USER_AGENT,
+        headers={"authorization": f"Bearer {token}"},
+        timeout=timeout,
+        transport=transport,
+        permits=lambda method, path: method == "GET" and path == _ROUTE,
+        refuse=lambda method, path: _ForbiddenRoute(
+            f"the landing-policy reader may not {method} {path}"
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -190,21 +213,13 @@ class HttpInertLandingPolicySource:
         if not self._base_url or not self._token:
             return InertLandingAnswer(None, SOURCE_UNCONFIGURED)
         try:
-            with httpx.Client(transport=self._transport, timeout=self._timeout_seconds) as client:
-                response = client.get(
-                    f"{self._base_url}{_ROUTE}",
-                    headers={
-                        "authorization": f"Bearer {self._token}",
-                        "user-agent": _USER_AGENT,
-                    },
-                )
-        # THREE FAMILIES, and the third is not an `httpx` exception at all. `InvalidURL` derives
-        # straight from `Exception`, and IDNA encoding of a malformed host raises `UnicodeError`,
-        # which is a `ValueError` -- so a base URL with a trailing newline, a doubled dot or an
-        # over-long DNS label escapes a tuple that names only `HTTPError`. Every one of those is
-        # an ordinary way for an environment variable to be malformed, and every one of them
-        # would surface as a bare 500 from the admission path.
-        except httpx.HTTPError, httpx.InvalidURL, ValueError:
+            client = _confined(self._base_url, self._token, self._timeout_seconds, self._transport)
+            try:
+                response = client.request("GET", _ROUTE)
+            finally:
+                client.close()
+        # Every transport failure, construction included, is no answer (ADR-0050).
+        except TransportFailure:
             return InertLandingAnswer(None, SOURCE_UNREADABLE)
         if response.status_code != 200:
             return InertLandingAnswer(None, SOURCE_UNREADABLE)

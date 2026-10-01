@@ -41,6 +41,7 @@ from typing import Any, Final
 import httpx
 
 from bump_proposer.change_manager import DEFAULT_BASE_URL, TIMEOUT_SECONDS, USER_AGENT
+from estate_clients.confined import ConfinedClient, TransportFailure
 
 # The one path this module reaches. See the docstring: there is no path parameter, so this
 # constant and the request that uses it cannot drift apart.
@@ -180,41 +181,31 @@ def read_inert_landing(
     if not token:
         raise LandingPolicyError("no READ-scoped change-manager credential")
     try:
-        client = httpx.Client(
-            base_url=base_url.rstrip("/"),
+        client = ConfinedClient(
+            base_url=base_url,
+            user_agent=USER_AGENT,
             timeout=TIMEOUT_SECONDS,
             transport=transport,
             headers={
                 "Authorization": f"Bearer {token}",
-                "User-Agent": USER_AGENT,
                 "Accept": "application/json",
             },
+            permits=lambda method, path: method == "GET" and path == _PATH,
+            refuse=lambda method, path: LandingPolicyError(
+                f"the landing-policy reader may not {method} {path}"
+            ),
         )
-    except (httpx.InvalidURL, ValueError) as error:
-        # Construction raises for some malformed URLs and request time for others, exactly as
-        # `change_manager.py` records: a control character is refused here by `urlparse`, while a
-        # doubled dot or an over-long DNS label survives until IDNA encoding at `request`.
-        #
-        # THE `ValueError` ARM HERE IS UNREACHABLE, and it is kept knowingly rather than by
-        # copying. Measured 2026-08-31 against httpx: `InvalidURL` is NOT a `ValueError` subclass
-        # (its bases are `Exception`), and every malformed base URL that fails at CONSTRUCTION --
-        # a control character, a non-numeric port, a broken IPv6 literal, a Unicode full-stop --
-        # raises `InvalidURL`. So no input can kill this arm, and a mutation set will report it as
-        # a survivor. It stays for two reasons: `change_manager.py` one file over carries the
-        # identical tuple, and a divergence between two clients of one service is a worse artifact
-        # than one defensive arm. The REQUEST tuple below is a different matter -- `ValueError` is
-        # load-bearing there, because IDNA encoding raises `UnicodeError`, which is one.
+    except TransportFailure as failure:
+        # Construction is guarded as well as the request (ADR-0050).
         raise LandingPolicyError(
-            f"the change-manager base URL is unusable: {type(error).__name__}"
+            f"the change-manager base URL is unusable: {failure.error_type}"
         ) from None
     try:
         try:
-            response = client.get(_PATH)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # The exception TYPE only. An httpx error carries the request, and a diagnostic that
-            # prints what it was given is how a bearer token reaches a transcript.
+            response = client.request("GET", _PATH)
+        except TransportFailure as failure:
             raise LandingPolicyError(
-                f"change-manager is unreachable for {_PATH}: {type(error).__name__}"
+                f"change-manager is unreachable for {_PATH}: {failure.error_type}"
             ) from None
         if response.status_code >= 400:
             hint = (

@@ -404,9 +404,7 @@ def test_the_listing_request_names_the_source_and_the_status() -> None:
     source = HttpWorkRecordSource(
         base_url="https://example.invalid",
         token="t",
-        client=httpx.Client(
-            base_url="https://example.invalid", transport=httpx.MockTransport(handler)
-        ),
+        transport=httpx.MockTransport(handler),
     )
     assert source.approved_work() == ()
     assert seen[0].get("source") == "work"
@@ -427,9 +425,7 @@ def test_a_row_from_another_pipeline_is_refused_even_though_it_was_asked_for() -
     source = HttpWorkRecordSource(
         base_url="https://example.invalid",
         token="t",
-        client=httpx.Client(
-            base_url="https://example.invalid", transport=httpx.MockTransport(handler)
-        ),
+        transport=httpx.MockTransport(handler),
     )
     with pytest.raises(ChangeManagerError) as raised:
         source.approved_work()
@@ -447,9 +443,7 @@ def test_a_row_that_is_not_approved_is_refused() -> None:
     source = HttpWorkRecordSource(
         base_url="https://example.invalid",
         token="t",
-        client=httpx.Client(
-            base_url="https://example.invalid", transport=httpx.MockTransport(handler)
-        ),
+        transport=httpx.MockTransport(handler),
     )
     with pytest.raises(ChangeManagerError):
         source.approved_work()
@@ -496,9 +490,7 @@ def test_a_row_missing_any_locator_field_is_refused_rather_than_guessed_at(
     source = HttpWorkRecordSource(
         base_url="https://example.invalid",
         token="t",
-        client=httpx.Client(
-            base_url="https://example.invalid", transport=httpx.MockTransport(handler)
-        ),
+        transport=httpx.MockTransport(handler),
     )
     with pytest.raises(ChangeManagerError) as raised:
         source.approved_work()
@@ -517,9 +509,7 @@ def _served(row: dict):
     return HttpWorkRecordSource(
         base_url="https://example.invalid",
         token="t",
-        client=httpx.Client(
-            base_url="https://example.invalid", transport=httpx.MockTransport(handler)
-        ),
+        transport=httpx.MockTransport(handler),
     )
 
 
@@ -624,9 +614,7 @@ def test_a_complete_row_is_accepted() -> None:
     source = HttpWorkRecordSource(
         base_url="https://example.invalid",
         token="t",
-        client=httpx.Client(
-            base_url="https://example.invalid", transport=httpx.MockTransport(handler)
-        ),
+        transport=httpx.MockTransport(handler),
     )
     assert source.approved_work()[0].change_record_id == 9
 

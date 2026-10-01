@@ -32,6 +32,8 @@ from typing import Any, Final, Protocol
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
+
 DEFAULT_BASE_URL: Final = "https://change-mgr.alobar.net"
 USER_AGENT: Final = "work-carrier/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 30.0
@@ -99,6 +101,10 @@ def is_allowed(path: str) -> bool:
     return path == _ITEMS
 
 
+def _refuse(_method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"{path} is not a path this program may reach")
+
+
 @dataclass(frozen=True)
 class WorkRecord:
     """One approved work proposal, projected onto what the carry needs.
@@ -133,12 +139,12 @@ class HttpWorkRecordSource:
         base_url: str,
         token: str,
         timeout_seconds: float = TIMEOUT_SECONDS,
-        client: httpx.Client | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._base_url = base_url
         self._token = token
         self._timeout = timeout_seconds
-        self._client = client
+        self._transport = transport
 
     def approved_work(self) -> tuple[WorkRecord, ...]:
         body = self._get(_ITEMS, {"status": APPROVED, "source": WORK_SOURCE})
@@ -147,30 +153,36 @@ class HttpWorkRecordSource:
         return tuple(_record(row) for row in body if isinstance(row, dict))
 
     def _get(self, path: str, params: dict[str, str]) -> Any:
-        if not is_allowed(path):
-            raise ForbiddenEndpointError(f"{path} is not a path this program may reach")
         try:
-            client = self._client or httpx.Client(
+            client = ConfinedClient(
                 base_url=self._base_url,
+                user_agent=USER_AGENT,
                 timeout=self._timeout,
-                headers={"User-Agent": USER_AGENT, "Authorization": f"Bearer {self._token}"},
+                headers={"Authorization": f"Bearer {self._token}"},
+                transport=self._transport,
+                permits=lambda method, path: method == "GET" and is_allowed(path),
+                refuse=_refuse,
             )
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # `httpx` raises at the CONSTRUCTOR for some malformed URLs and at request time for
-            # others, and the third family is a `ValueError`: IDNA encoding of a malformed host
-            # raises `UnicodeError`, which is neither an `HTTPError` nor an `InvalidURL`. A
-            # doubled dot or an over-long DNS label in an environment variable is an ordinary
-            # typo and must be a finding, not a traceback.
-            raise ChangeManagerError(f"change-manager base URL is unusable: {error}") from error
+        except TransportFailure as failure:
+            # Construction is guarded as well as the request (ADR-0050). The type only: an httpx
+            # error carries the request, and printing what it was given leaks it.
+            raise ChangeManagerError(
+                f"change-manager base URL is unusable: {failure.error_type}"
+            ) from None
         try:
-            response = client.get(path, params=params)
+            response = client.request("GET", path, params=params)
             response.raise_for_status()
             return response.json()
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            raise ChangeManagerError(f"change-manager could not be read: {error}") from error
+        except TransportFailure as failure:
+            raise ChangeManagerError(
+                f"change-manager could not be read: {failure.error_type}"
+            ) from None
+        except (httpx.HTTPStatusError, ValueError) as error:
+            raise ChangeManagerError(
+                f"change-manager could not be read: {type(error).__name__}"
+            ) from None
         finally:
-            if self._client is None:
-                client.close()
+            client.close()
 
 
 def _record(row: dict[str, Any]) -> WorkRecord:

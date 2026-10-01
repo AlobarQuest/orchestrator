@@ -10,7 +10,8 @@ WHAT IS ASSERTED, PER PROGRAM
 
 1. **The orchestrator imports nothing from it.** A program the orchestrator imports runs inside
    the orchestrator's process, and an out-of-process reading of the orchestrator taken from
-   inside it is not independent of anything.
+   inside it is not independent of anything. A `library` row is the exception (ADR-0050): it
+   takes no reading of anything, so the orchestrator's own clients may share its transport.
 2. **Every top-level name it imports is a name its row permits.** The row is the program's whole
    dependency surface -- third-party packages, the standard library and any sibling program it
    reuses -- so a new dependency has to be written here, beside the reason it exists, rather than
@@ -130,6 +131,7 @@ TABLE: dict[str, Row] = {
         "collections",
         "dataclasses",
         "deploy_watcher",
+        "estate_clients",
         "httpx",
         "os",
         "re",
@@ -142,6 +144,8 @@ TABLE: dict[str, Row] = {
         "__future__",
         # `collections.abc`, for the injected-reader signature in `transcription_currency`.
         "collections",
+        # `ExitStack`, so the clients are built inside the pass guard (ADR-0050).
+        "contextlib",
         "dataclasses",
         "datetime",
         "estate_clients",
@@ -370,11 +374,12 @@ def violations(src: Path, table: Mapping[str, Row], package: str) -> list[str]:
         for record in imports
         if record.top != package and record.top not in row.allowed
     ]
-    found += [
-        f"{package}: orchestrator {record.describe(src)}"
-        for record in package_imports(src, ORCHESTRATOR)
-        if record.top == package
-    ]
+    if not row.library:
+        found += [
+            f"{package}: orchestrator {record.describe(src)}"
+            for record in package_imports(src, ORCHESTRATOR)
+            if record.top == package
+        ]
     return found
 
 
@@ -474,6 +479,9 @@ def test_control_the_orchestrator_importing_a_program_fails_naming_file_and_impo
         "lane: orchestrator orchestrator/app.py:1: imports lane.client"
     ]
     assert violations(src, CLEAN_TABLE, "other") == []
+    # A library is shared plumbing, not a program taking a reading, so the orchestrator may use it.
+    library = {**CLEAN_TABLE, "lane": _row("httpx", "os", no_sibling_lanes=True, library=True)}
+    assert violations(src, library, "lane") == []
 
 
 def test_control_a_sibling_in_a_no_sibling_row_fails_against_the_derived_population(

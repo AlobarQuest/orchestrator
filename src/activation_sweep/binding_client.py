@@ -122,6 +122,7 @@ class BindingClient:
     ) -> None:
         self._client = ConfinedClient(
             base_url=base_url,
+            user_agent="activation-sweep/1 (+AlobarQuest/orchestrator)",
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Credential-Key-Id": credential_key_id,

@@ -61,11 +61,16 @@ changes from a traceback to the program's own error.
   and `deploy_watcher/transcription_currency.py`.
 - `src/orchestrator/cli.py` stays outside it. It is an operator's client to any route, not a
   confined program, and it lives inside the orchestrator package.
-- The orchestrator's own in-process clients (`services/landing/change_record.py`,
-  `services/execution/factory_target.py` and the GitHub readers) cannot adopt this package as it
-  stands: the isolation table refuses any import of an out-of-process package from
-  `src/orchestrator`. Whether a `library` row may be imported by the orchestrator is decided in the
-  change-manager pull request, which is the first to need it.
+- The orchestrator may import a `library` row (decided in the change-manager pull request, the
+  first to need it). The isolation table's rule that the orchestrator imports nothing from a
+  program exists because an out-of-process reading taken from inside the orchestrator is not
+  independent; a library takes no reading, so the rule does not reach it. The in-process
+  change-manager readers (`services/landing/change_record.py`,
+  `services/landing/inert_landing_policy.py`) use it from that pull request on.
+- `user_agent` is a required argument (also from the change-manager pull request). change-manager
+  sits behind Cloudflare, which refuses Python's default agent with `error code: 1010`; requiring
+  the argument makes that refusal impossible to reintroduce. Clients that sent no User-Agent
+  before now name themselves.
 - Malformed-URL behaviour that moves in the first pull request: `tracker_projection_adapter`'s
   client caught no transport error at all, so a typo in its base URL ended the run with a traceback
   and now raises its own `ProjectionError`; `landing_ledger`'s caught only `httpx.HTTPError`, so a

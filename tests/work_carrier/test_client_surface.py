@@ -183,9 +183,7 @@ def test_a_forbidden_path_never_reaches_the_transport() -> None:
     source = HttpWorkRecordSource(
         base_url="https://example.invalid",
         token="t",
-        client=httpx.Client(
-            base_url="https://example.invalid", transport=httpx.MockTransport(handler)
-        ),
+        transport=httpx.MockTransport(handler),
     )
     with pytest.raises(ForbiddenEndpointError):
         source._get("/api/items/1/approve", {})

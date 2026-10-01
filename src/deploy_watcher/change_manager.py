@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 
 from deploy_watcher.model import ChangeRecord
+from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem
 
 DEFAULT_BASE_URL = "https://change-mgr.alobar.net"
 USER_AGENT = "deploy-watcher/1 (+AlobarQuest/orchestrator)"
@@ -54,6 +55,15 @@ def is_allowed_read(path: str) -> bool:
     return path == _ITEMS or _OBSERVATIONS.match(path) is not None
 
 
+def _permits(method: str, path: str) -> bool:
+    return is_allowed_read(path) if method == "GET" else is_allowed_write(path)
+
+
+def _refuse(method: str, path: str) -> ForbiddenEndpointError:
+    verb = "read" if method == "GET" else "write"
+    return ForbiddenEndpointError(f"the watcher may not {verb} {path}")
+
+
 def _iso(value: datetime) -> str:
     return value.isoformat()
 
@@ -66,16 +76,28 @@ class ChangeManagerClient:
         base_url: str = DEFAULT_BASE_URL,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url,
-            timeout=TIMEOUT_SECONDS,
-            transport=transport,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                "User-Agent": USER_AGENT,
-            },
-        )
+        # A malformed address is reported as the address, not as change-manager being down
+        # (ADR-0050); construction is guarded as well as the request.
+        problem = base_url_problem(base_url)
+        if problem is not None:
+            raise ChangeManagerError(f"the change-manager address {problem}")
+        try:
+            self._client = ConfinedClient(
+                base_url=base_url,
+                user_agent=USER_AGENT,
+                timeout=TIMEOUT_SECONDS,
+                transport=transport,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                permits=_permits,
+                refuse=_refuse,
+            )
+        except TransportFailure as failure:
+            raise ChangeManagerError(
+                f"the change-manager address is unusable: {failure.error_type}"
+            ) from None
 
     def close(self) -> None:
         self._client.close()
@@ -87,14 +109,12 @@ class ChangeManagerClient:
         self.close()
 
     def _get(self, path: str, **params: Any) -> Any:
-        if not is_allowed_read(path):
-            raise ForbiddenEndpointError(f"the watcher may not read {path}")
         try:
-            response = self._client.get(path, params=params or None)
-        except httpx.HTTPError as error:
+            response = self._client.request("GET", path, params=params or None)
+        except TransportFailure as failure:
             raise ChangeManagerError(
-                f"change-manager is unreachable for GET {path}: {type(error).__name__}"
-            ) from error
+                f"change-manager is unreachable for GET {path}: {failure.error_type}"
+            ) from None
         if response.status_code >= 400:
             raise ChangeManagerError(f"change-manager rejected GET {path}: {response.status_code}")
         try:
@@ -136,14 +156,12 @@ class ChangeManagerClient:
     def observe(self, item_id: int, body: dict[str, Any]) -> dict[str, Any]:
         """Append one observation. A 409 is change-manager REFUSING, which is a finding."""
         path = f"/api/items/{item_id}/deploy-observation"
-        if not is_allowed_write(path):
-            raise ForbiddenEndpointError(f"the watcher may not write {path}")
         try:
-            response = self._client.post(path, json=body)
-        except httpx.HTTPError as error:
+            response = self._client.request("POST", path, json=body)
+        except TransportFailure as failure:
             raise ChangeManagerError(
-                f"change-manager is unreachable for POST {path}: {type(error).__name__}"
-            ) from error
+                f"change-manager is unreachable for POST {path}: {failure.error_type}"
+            ) from None
         if response.status_code == 409:
             raise RefusedError(_detail(response))
         if response.status_code >= 400:

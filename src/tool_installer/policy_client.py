@@ -21,16 +21,12 @@ halves would otherwise carry different exit codes.
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 
-FACTORY_POLICY_ENDPOINT = "/api/v1/factory-policy"
+from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem
 
-# RFC 1035: a DNS label is at most 63 octets and may not be empty. Checked here rather than left
-# to `httpx` because a doubled dot and an over-long label both CONSTRUCT cleanly and raise
-# `UnicodeError` from IDNA encoding at REQUEST time.
-MAX_DNS_LABEL = 63
+FACTORY_POLICY_ENDPOINT = "/api/v1/factory-policy"
 
 
 class PolicyReadError(RuntimeError):
@@ -46,16 +42,21 @@ class UnusableEndpointError(RuntimeError):
 
 
 def _validate_base_url(base_url: str) -> None:
-    parsed = urlsplit(base_url.strip())
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise UnusableEndpointError("the orchestrator URL must be https with a host")
-    for label in parsed.hostname.split("."):
-        if not label or len(label) > MAX_DNS_LABEL:
-            raise UnusableEndpointError("the orchestrator URL has a malformed host")
+    problem = base_url_problem(base_url)
+    if problem is not None:
+        raise UnusableEndpointError(f"the orchestrator URL {problem}")
 
 
 def is_allowed_read(path: str) -> bool:
     return path == FACTORY_POLICY_ENDPOINT
+
+
+def _permits(method: str, path: str) -> bool:
+    return method == "GET" and is_allowed_read(path)
+
+
+def _refuse(_method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"the installer may not read {path}")
 
 
 def open_policy_client(
@@ -73,10 +74,10 @@ def open_policy_client(
             token=token,
             transport=transport,
         )
-    except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+    except TransportFailure as failure:
         raise UnusableEndpointError(
-            f"the orchestrator URL is not usable: {type(error).__name__}"
-        ) from error
+            f"the orchestrator URL is not usable: {failure.error_type}"
+        ) from None
 
 
 class PolicyClient:
@@ -88,14 +89,17 @@ class PolicyClient:
         token: str,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
+        self._client = ConfinedClient(
+            base_url=base_url,
+            user_agent="tool-installer/1 (+AlobarQuest/orchestrator)",
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Credential-Key-Id": credential_key_id,
             },
             timeout=30.0,
             transport=transport,
+            permits=_permits,
+            refuse=_refuse,
         )
 
     def close(self) -> None:
@@ -112,17 +116,12 @@ class PolicyClient:
 
     def get(self, path: str) -> dict[str, Any]:
         """The whole surface, and the only method there is -- read-only by construction."""
-        if not is_allowed_read(path):
-            raise ForbiddenEndpointError(f"the installer may not read {path}")
         try:
             response = self._client.request("GET", path)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # THREE exception families, and the third is the one a two-member tuple misses: IDNA
-            # encoding of a malformed HOST raises `UnicodeError`, a `ValueError` and neither of
-            # the other two. An escape here is a traceback instead of a named refusal.
+        except TransportFailure as failure:
             raise PolicyReadError(
-                f"orchestrator is unreachable for GET {path}: {type(error).__name__}"
-            ) from error
+                f"orchestrator is unreachable for GET {path}: {failure.error_type}"
+            ) from None
         if response.status_code >= 400:
             # The status only. A rejection body echoes the request back, and a diagnostic that
             # prints what it was given is how a value that should not be in a log gets into one.

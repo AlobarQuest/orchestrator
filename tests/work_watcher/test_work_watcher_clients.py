@@ -32,9 +32,7 @@ def _retirer(handler) -> RetirementClient:
     return RetirementClient(
         base_url="https://change-mgr.example",
         token="tok",
-        client=httpx.Client(
-            base_url="https://change-mgr.example", transport=httpx.MockTransport(handler)
-        ),
+        transport=httpx.MockTransport(handler),
     )
 
 

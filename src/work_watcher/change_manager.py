@@ -33,6 +33,8 @@ from typing import Any, Final
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
+
 USER_AGENT: Final = "work-watcher/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 30.0
 
@@ -68,6 +70,14 @@ def is_allowed_write(path: str) -> bool:
     return _RETIRE.match(path) is not None
 
 
+def _permits(method: str, path: str) -> bool:
+    return method == "POST" and is_allowed_write(path)
+
+
+def _refuse(method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"this program may not {method} {path}")
+
+
 class RetirementClient:
     def __init__(
         self,
@@ -75,12 +85,12 @@ class RetirementClient:
         base_url: str,
         token: str,
         timeout_seconds: float = TIMEOUT_SECONDS,
-        client: httpx.Client | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._base_url = base_url
         self._token = token
         self._timeout = timeout_seconds
-        self._client = client
+        self._transport = transport
 
     def retire(self, item_id: int, *, package_id: str, package_revision: int) -> dict[str, Any]:
         """Report that the work this record asked for was built. Returns the updated record.
@@ -101,33 +111,31 @@ class RetirementClient:
         return self._post(path, body)
 
     def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        """The ONE way anything leaves this process, guard first."""
-        if not is_allowed_write(path):
-            raise ForbiddenEndpointError(f"this program may not POST {path}")
+        """The ONE way anything leaves this process; the confined client asks `_permits` first."""
         try:
-            client = self._client or httpx.Client(
+            client = ConfinedClient(
                 base_url=self._base_url,
+                user_agent=USER_AGENT,
                 timeout=self._timeout,
-                headers={"User-Agent": USER_AGENT, "Authorization": f"Bearer {self._token}"},
+                headers={"Authorization": f"Bearer {self._token}"},
+                transport=self._transport,
+                permits=_permits,
+                refuse=_refuse,
             )
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # `httpx` raises at the CONSTRUCTOR for some malformed URLs and at request time for
-            # others, and the third family is a `ValueError`: IDNA encoding of a malformed host
-            # raises `UnicodeError`, which is neither an `HTTPError` nor an `InvalidURL`. An
-            # environment-variable typo is an ordinary mistake and must be a finding, not a
-            # traceback out of a scheduled job.
-            raise ChangeManagerError(f"change-manager base URL is unusable: {error}") from error
-        try:
-            response = client.post(path, json=body)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # The exception TYPE only. An httpx error carries the request, and a diagnostic that
-            # prints what it was given is how a bearer token reaches a log.
+        except TransportFailure as failure:
+            # Construction is guarded as well as the request (ADR-0050). The type only: an httpx
+            # error carries the request, and printing what it was given leaks it.
             raise ChangeManagerError(
-                f"change-manager is unreachable for POST {path}: {type(error).__name__}"
+                f"change-manager base URL is unusable: {failure.error_type}"
+            ) from None
+        try:
+            response = client.request("POST", path, json=body)
+        except TransportFailure as failure:
+            raise ChangeManagerError(
+                f"change-manager is unreachable for POST {path}: {failure.error_type}"
             ) from None
         finally:
-            if self._client is None:
-                client.close()
+            client.close()
         if not 200 <= response.status_code < 300:
             # ANY non-2xx rather than `>= 400`, for the reason the carry records: this service sits
             # behind a proxy, and a redirect waved through to `.json()` reports a routing refusal
