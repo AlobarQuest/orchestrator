@@ -37,6 +37,7 @@ from typing import Final, Protocol
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
 from orchestrator.services.github_app import GITHUB_API_URL, GitHubAppTokenError
 
 FILENAME: Final = "factory-target.toml"
@@ -47,6 +48,12 @@ _USER_AGENT: Final = "orchestrator-admission/1 (+AlobarQuest/orchestrator)"
 # authored envelope, so it is judged before any route is composed from it: a name carrying a `/`,
 # a `?` or a `..` would otherwise ask GitHub about somewhere else.
 _REPOSITORY: Final = re.compile(r"(?!\.\.?/)[A-Za-z0-9._-]+/(?!\.\.?$)[A-Za-z0-9._-]+")
+# The two reads, as paths the shared confined transport checks before anything is sent.
+_READS: Final = re.compile(rf"/repos/{_REPOSITORY.pattern}(?:/contents/{re.escape(FILENAME)})?")
+
+
+class _ForbiddenRoute(Exception):
+    """This reader tried to reach a route other than its two."""
 
 
 @dataclass(frozen=True)
@@ -95,26 +102,28 @@ class GitHubFactoryTargetSource:
             token = self._token_provider()
         except GitHubAppTokenError as error:
             return TargetDeclaration(None, f"the App token could not be minted: {error.code}")
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": _USER_AGENT,
-        }
         try:
-            with httpx.Client(
+            client = ConfinedClient(
                 base_url=self._base_url,
-                headers=headers,
+                user_agent=_USER_AGENT,
+                headers={"Authorization": f"Bearer {token}", "X-GitHub-Api-Version": "2022-11-28"},
                 timeout=self._timeout_seconds,
                 transport=self._transport,
-            ) as client:
-                response = client.get(
+                permits=lambda method, path: method == "GET" and _READS.fullmatch(path) is not None,
+                refuse=lambda method, path: _ForbiddenRoute(f"admission may not {method} {path}"),
+            )
+            try:
+                response = client.request(
+                    "GET",
                     f"/repos/{repository}/contents/{FILENAME}",
                     # The raw bytes rather than the JSON envelope: no base64 hop to get wrong.
                     headers={"Accept": "application/vnd.github.raw"},
                 )
                 if response.status_code == 404:
-                    probe = client.get(
-                        f"/repos/{repository}", headers={"Accept": "application/vnd.github+json"}
+                    probe = client.request(
+                        "GET",
+                        f"/repos/{repository}",
+                        headers={"Accept": "application/vnd.github+json"},
                     )
                     return _absence(repository, probe.status_code)
                 if response.status_code != 200:
@@ -123,13 +132,13 @@ class GitHubFactoryTargetSource:
                         None, f"{repository}'s {FILENAME} answered {response.status_code}"
                     )
                 return _parse_declaration(response.text)
-        # Three families, because httpx raises three: `HTTPError`, `InvalidURL` (which is not an
-        # `HTTPError`), and `UnicodeError` from IDNA encoding a malformed host, which is a
-        # `ValueError`. The type name only -- an exception from a client carries the request, and
-        # the request carries the token.
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+            finally:
+                client.close()
+        # Every transport failure, construction included (ADR-0050). The type name only -- an
+        # exception from a client carries the request, and the request carries the token.
+        except TransportFailure as failure:
             return TargetDeclaration(
-                None, f"github could not be read for {repository}: {type(error).__name__}"
+                None, f"github could not be read for {repository}: {failure.error_type}"
             )
 
 

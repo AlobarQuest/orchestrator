@@ -59,6 +59,16 @@ changes from a traceback to the program's own error.
   for the IDNA case, which a mock transport cannot exercise.
 - Three clients stay outside it: `revision_watcher/estate.py`, `tracker_projection_adapter/tracker.py`
   and `deploy_watcher/transcription_currency.py`.
+- `work_carrier/declaration.py` stays outside it. It composes a GitHub path from authored text,
+  so it builds the request and checks the path httpx actually built, after dot-segment
+  resolution; the shared client checks the path it was given. That check is stronger, and the
+  shared client does not offer it.
+- The orchestrator's acting GitHub gateways (`services/landing/pr_merge.py`,
+  `estate_pr_merge.py`, `services/execution/dispatch.py`, `services/verifier/github_checks.py`,
+  and the token mint in `services/github_app.py`) stay outside it for now. They call
+  `httpx.get`, `put` and `post` at module level inside gateway classes that the routes inject and
+  the tests replace, and two of them merge pull requests. Moving them is a change to the acting
+  paths rather than to a reader's transport, so it is left to its own pull request.
 - `src/orchestrator/cli.py` stays outside it. It is an operator's client to any route, not a
   confined program, and it lives inside the orchestrator package.
 - The orchestrator may import a `library` row (decided in the change-manager pull request, the

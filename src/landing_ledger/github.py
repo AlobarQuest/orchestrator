@@ -22,6 +22,7 @@ from typing import Any
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
 from landing_ledger.model import (
     WORK_UNIT_ID,
     Check,
@@ -81,6 +82,14 @@ class ForbiddenMethodError(LedgerError):
     """The reader attempted something other than a read."""
 
 
+def _permits(method: str, path: str) -> bool:
+    return method == "GET" and path.startswith("/")
+
+
+def _refuse(_method: str, path: str) -> ForbiddenMethodError:
+    return ForbiddenMethodError(f"the reader may not fetch {path}")
+
+
 class GitHubReader:
     def __init__(
         self,
@@ -89,17 +98,23 @@ class GitHubReader:
         base_url: str = API,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "landing-ledger/1 (+AlobarQuest/orchestrator)",
-            },
-            timeout=30.0,
-            transport=transport,
-        )
+        try:
+            self._client = ConfinedClient(
+                base_url=base_url,
+                user_agent="landing-ledger/1 (+AlobarQuest/orchestrator)",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                timeout=30.0,
+                transport=transport,
+                permits=_permits,
+                refuse=_refuse,
+            )
+        except TransportFailure as failure:
+            # Construction is guarded as well as the request (ADR-0050).
+            raise LedgerError(f"the github base URL is unusable: {failure.error_type}") from None
 
     def close(self) -> None:
         self._client.close()
@@ -114,20 +129,12 @@ class GitHubReader:
         return self._request(path, **params)
 
     def _request(self, path: str, **params: Any) -> Any:
-        if not path.startswith("/"):
-            raise ForbiddenMethodError(f"the reader may not fetch {path}")
         try:
             response = self._client.request("GET", path, params=params or None)
-        except httpx.HTTPError as error:
-            # UNREACHABLE is not the same as UNHEALTHY, and only one of them has a status code.
-            # A refused connection, a DNS failure or a timeout raises here, before any response
-            # exists, so it has to become the reader's own error or it escapes the pass entirely
-            # -- which is the one thing a recorder must never do. Type name only: an exception
-            # from a client carries the request, and a diagnostic that prints what it was given
-            # is how a value that should not be in a transcript gets into one.
+        except TransportFailure as failure:
             raise LedgerError(
-                f"github is unreachable for GET {path}: {type(error).__name__}"
-            ) from (error)
+                f"github is unreachable for GET {path}: {failure.error_type}"
+            ) from None
         if response.status_code == 404:
             return None
         if response.status_code >= 400:

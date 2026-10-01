@@ -21,6 +21,7 @@ from typing import Final
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
 from work_carrier.declaration import TOKEN_ENV
 
 API: Final = "https://api.github.com"
@@ -61,6 +62,14 @@ def is_allowed_read(path: str) -> bool:
     return _PULL.match(path) is not None
 
 
+def _permits(method: str, path: str) -> bool:
+    return method == "GET" and is_allowed_read(path)
+
+
+def _refuse(method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"this program may not {method} {path}")
+
+
 class PullRequestReader:
     def __init__(
         self,
@@ -68,16 +77,15 @@ class PullRequestReader:
         *,
         base_url: str = API,
         timeout_seconds: float = TIMEOUT_SECONDS,
-        client: httpx.Client | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._injected = client
-        self._base_url = base_url.rstrip("/")
+        self._transport = transport
+        self._base_url = base_url
         self._timeout = timeout_seconds
         self._headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": USER_AGENT,
         }
 
     def state(self, repository: str, number: int) -> str:
@@ -97,24 +105,27 @@ class PullRequestReader:
 
     def _get(self, path: str) -> dict:
         """The ONE way anything leaves this process, guard first."""
-        if not is_allowed_read(path):
-            raise ForbiddenEndpointError(f"this program may not GET {path}")
         try:
-            client = self._injected or httpx.Client(
-                base_url=self._base_url, timeout=self._timeout, headers=self._headers
+            client = ConfinedClient(
+                base_url=self._base_url,
+                user_agent=USER_AGENT,
+                timeout=self._timeout,
+                headers=self._headers,
+                transport=self._transport,
+                permits=_permits,
+                refuse=_refuse,
             )
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            raise GitHubError(f"the GitHub base URL is unusable: {type(error).__name__}") from None
+        except TransportFailure as failure:
+            raise GitHubError(f"the GitHub base URL is unusable: {failure.error_type}") from None
         try:
-            response = client.get(path)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+            response = client.request("GET", path)
+        except TransportFailure as failure:
             # The exception TYPE only: an httpx error carries the request, bearer included.
             raise GitHubError(
-                f"GitHub is unreachable for GET {path}: {type(error).__name__}"
+                f"GitHub is unreachable for GET {path}: {failure.error_type}"
             ) from None
         finally:
-            if self._injected is None:
-                client.close()
+            client.close()
         if response.status_code in (401, 403):
             raise GitHubCredentialRefused(
                 f"GitHub refused the credential ({response.status_code}) for GET {path}"

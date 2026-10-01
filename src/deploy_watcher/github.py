@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 from deploy_watcher.model import Merge, Run, is_sha
+from estate_clients.confined import ConfinedClient, TransportFailure
 
 GITHUB_API_URL = "https://api.github.com"
 USER_AGENT = "deploy-watcher/1 (+AlobarQuest/orchestrator)"
@@ -39,6 +40,14 @@ def _parse_time(value: Any) -> datetime | None:
         return None
 
 
+def _permits(method: str, path: str) -> bool:
+    return method == "GET" and path.startswith("/")
+
+
+def _refuse(_method: str, path: str) -> ForbiddenMethodError:
+    return ForbiddenMethodError(f"the reader may not fetch {path}")
+
+
 class GitHubReader:
     def __init__(
         self,
@@ -47,17 +56,23 @@ class GitHubReader:
         base_url: str = GITHUB_API_URL,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url,
-            timeout=TIMEOUT_SECONDS,
-            transport=transport,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": USER_AGENT,
-            },
-        )
+        try:
+            self._client = ConfinedClient(
+                base_url=base_url,
+                user_agent=USER_AGENT,
+                timeout=TIMEOUT_SECONDS,
+                transport=transport,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                permits=_permits,
+                refuse=_refuse,
+            )
+        except TransportFailure as failure:
+            # Construction is guarded as well as the request (ADR-0050).
+            raise ReadError(f"the github base URL is unusable: {failure.error_type}") from None
 
     def close(self) -> None:
         self._client.close()
@@ -69,16 +84,10 @@ class GitHubReader:
         self.close()
 
     def _get(self, path: str, **params: Any) -> Any:
-        if not path.startswith("/"):
-            raise ForbiddenMethodError(f"the reader may not fetch {path}")
         try:
             response = self._client.request("GET", path, params=params or None)
-        except httpx.HTTPError as error:
-            # The exception type only. An httpx error carries the request, and a diagnostic that
-            # prints what it was given is how a token reaches a transcript.
-            raise ReadError(
-                f"github is unreachable for GET {path}: {type(error).__name__}"
-            ) from error
+        except TransportFailure as failure:
+            raise ReadError(f"github is unreachable for GET {path}: {failure.error_type}") from None
         if response.status_code == 404:
             return None
         if response.status_code != 200:

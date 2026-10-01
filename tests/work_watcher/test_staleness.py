@@ -457,9 +457,8 @@ def _reader(status: int, body: object) -> PullRequestReader:
 
     return PullRequestReader(
         "x",
-        client=httpx.Client(
-            base_url="https://api.github.example", transport=httpx.MockTransport(handler)
-        ),
+        base_url="https://api.github.example",
+        transport=httpx.MockTransport(handler),
     )
 
 
