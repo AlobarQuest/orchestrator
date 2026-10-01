@@ -192,7 +192,8 @@ def test_automated_test_is_deterministically_evaluable_when_real_evidence_arrive
 
 
 def test_automated_test_is_not_in_deterministic_types() -> None:
-    # The mechanism guard. CLAUDE.md records that adding `automated_test` to DETERMINISTIC_TYPES
+    # The mechanism guard. docs/history/claude-md-invariants-archive.md #35 records
+    # that adding `automated_test` to DETERMINISTIC_TYPES
     # halts the factory (four adversarial reviews). WS-P2.17 deliberately achieves the outcome via
     # the floor instead. If a later change moves it, this reds.
     assert "automated_test" not in DETERMINISTIC_TYPES

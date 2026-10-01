@@ -44,7 +44,8 @@ docstrings, which are prose about the code, and comments are not in the AST at a
 for `/api/v1`. Each hit is reduced to path segments (f-string placeholders and regex fragments
 become wildcards, a regex alternation `(a|b)` is expanded) and matched against
 `create_app().openapi()["paths"]` -- flattened and authoritative, where `app.routes` hides an
-included router (CLAUDE.md). A wildcard may only stand where the template has a `{param}`; one
+included router (docs/method-lessons.md #171). A wildcard may only stand where the template has
+a `{param}`; one
 standing where the template has a word is DYNAMIC path construction and fails the test, because
 the guard cannot say what it names.
 

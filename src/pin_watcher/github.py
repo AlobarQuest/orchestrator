@@ -3,7 +3,8 @@
 **THE POPULATION IS SELF-DESCRIBING, and that is the decision here rather than an implementation
 detail.** A repository is watched because it CARRIES a caller workflow, never because it appears on
 a list in this file. This estate already has four disagreeing answers to "which repositories are
-factory targets" (CLAUDE.md, 2026-08-17), and ADR-0015 ruled that the declaration belongs to the
+factory targets" (docs/history/claude-md-invariants-archive.md #198, 2026-08-17),
+and ADR-0015 ruled that the declaration belongs to the
 repository rather than to a list the affected repository cannot see. A fifth hand-maintained list
 would be the same defect wearing this lane's name -- and it would go stale in exactly the way this
 lane exists to catch.

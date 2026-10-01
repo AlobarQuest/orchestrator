@@ -73,8 +73,8 @@ CriterionFloor = Literal["human", "deterministic_permitted"]
 # Evidence may satisfy AT or ABOVE this floor and never below it. This is a separate concept from
 # DETERMINISTIC_TYPES, which describes what the verifier knows how to READ; the floor describes what
 # the package author is entitled to INSIST ON. Keeping them separate is what lets `automated_test`
-# become machine-evaluable without being added to DETERMINISTIC_TYPES -- an addition CLAUDE.md
-# records as halting the factory.
+# become machine-evaluable without being added to DETERMINISTIC_TYPES -- an addition
+# docs/history/claude-md-invariants-archive.md #35 records as halting the factory.
 HUMAN_FLOOR_TYPES: frozenset[str] = JUDGMENT_TYPES - {"automated_test"}
 DETERMINISTIC_PERMITTED_TYPES: frozenset[str] = DETERMINISTIC_TYPES | {"automated_test"}
 
