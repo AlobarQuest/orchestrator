@@ -19,6 +19,12 @@ from orchestrator.package_sources import (
 )
 from orchestrator.persistence.models import INTAKE_SOURCES
 from orchestrator.services.intake import package_intake
+from tests.architecture.code_terms import (
+    code_text,
+    docstring_nodes,
+    identifier_of,
+    is_code_string,
+)
 
 RUNTIME_ROOT = Path("src/orchestrator")
 WORKFLOW_ROOT = Path(".github/workflows")
@@ -30,8 +36,10 @@ AUTOMATIC_MERGE_SEQUENCES: tuple[tuple[str, ...], ...] = (
     ("merge", "pull", "request"),
     ("auto", "merge"),
     ("automerge",),
-    ("merges",),
 )
+# The bare word `merges` came out with ADR-0051. It only ever matched prose ("never dispatches,
+# deploys, or merges"), and the merge commands themselves are read from raw text by
+# test_wsp21_invariant_scan.py.
 
 # THERE IS NO EXEMPTION HERE ANY MORE. `dependabot-auto-merge.yml` was exempt from the two
 # sequences it necessarily spelled while it armed GitHub's own auto-merge. ADR-0038 deleted that
@@ -60,6 +68,9 @@ def _workflow_sources() -> list[Path]:
 
 
 def _read_lower(path: Path) -> str:
+    """Workflows are read whole; Python is read as its code terms, never its prose (ADR-0051)."""
+    if path.suffix == ".py":
+        return code_text(path)
     return path.read_text(encoding="utf-8").lower()
 
 
@@ -91,20 +102,25 @@ def _imported_modules(path: Path) -> set[str]:
 
 
 def _python_automatic_merge_matches(path: Path) -> list[SourceMatch]:
+    """Code only (ADR-0051): a docstring or a string with whitespace is prose and is not read."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    docstrings = docstring_nodes(tree)
     matches: list[SourceMatch] = []
     for node in ast.walk(tree):
         tokens: tuple[str, ...] = ()
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if id(node) in docstrings or not is_code_string(node.value):
+                continue
             tokens = _tokens(node.value)
-        elif isinstance(node, (ast.Name, ast.Attribute)):
-            value = node.id if isinstance(node, ast.Name) else node.attr
-            tokens = _tokens(value)
+        elif (identifier := identifier_of(node)) is not None:
+            tokens = _tokens(identifier[1])
         elif isinstance(node, (ast.List, ast.Tuple)):
             values = [
                 item.value
                 for item in node.elts
-                if isinstance(item, ast.Constant) and isinstance(item.value, str)
+                if isinstance(item, ast.Constant)
+                and isinstance(item.value, str)
+                and is_code_string(item.value)
             ]
             tokens = tuple(token for value in values for token in _tokens(value))
         sequence = _automatic_merge_sequence(tokens)
@@ -174,7 +190,6 @@ MANUAL_DISPATCH_WORKFLOWS = {
 # and spelled none of it; an exemption nobody needs is one nobody is watching, so it came out.
 DISPATCH_EXEMPT_PATHS = {
     Path("src/orchestrator/services/execution/dispatch.py"),
-    Path("src/orchestrator/api/schemas/intake.py"),
     Path("src/orchestrator/config.py"),
 }
 
@@ -323,3 +338,29 @@ def test_protocol_fixture_path_is_named_and_guarded(
     assert limitations["protocol_fixture_only"] is True
     assert "protocol_fixture" in INTAKE_SOURCES
     assert package_intake._PROTOCOL_FIXTURE_SOURCE == "protocol_fixture"
+
+
+def test_the_merge_scan_reads_code_and_not_prose(tmp_path: Path) -> None:
+    """Pairs that must differ (ADR-0051): the sentence is not read, the same words as code are."""
+    prose = tmp_path / "prose.py"
+    prose.write_text('"""This never auto merges; it merges nothing."""\nnote = "an auto merge"\n')
+    code = tmp_path / "code.py"
+    code.write_text('flag = "auto_merge"\n')
+
+    assert _python_automatic_merge_matches(prose) == []
+    assert [match.value for match in _python_automatic_merge_matches(code)] == ["auto merge"]
+
+
+def test_the_merge_scan_reads_list_prose_as_prose(tmp_path: Path) -> None:
+    """A sentence inside a tuple is prose like any other; a code element in a tuple, or a keyword
+    argument, is still read."""
+    prose = tmp_path / "prose.py"
+    prose.write_text('REASONS = ("cannot merge pull request yet", "will not auto merge")\n')
+    element = tmp_path / "element.py"
+    element.write_text('FLAGS = ("auto_merge", "other")\n')
+    keyword = tmp_path / "keyword.py"
+    keyword.write_text("enable(auto_merge=True)\n")
+
+    assert _python_automatic_merge_matches(prose) == []
+    assert _python_automatic_merge_matches(element)
+    assert [match.value for match in _python_automatic_merge_matches(keyword)] == ["auto merge"]

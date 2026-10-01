@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from tests.architecture.code_terms import code_text
+
 SOURCE_ROOT = Path("src/orchestrator")
 
 
@@ -21,7 +23,7 @@ def test_ws34_adds_no_factory_runner_or_workflow_dispatch_code() -> None:
         for path in _source_files()
         if path not in DISPATCH_EXEMPT_PATHS
         for value in DISPATCH_VOCABULARY
-        if value in path.read_text(encoding="utf-8").lower()
+        if value in code_text(path)
     ]
 
     assert not matches
@@ -40,9 +42,7 @@ def test_ws34_dispatch_exemptions_name_only_files_that_exist_and_still_need_them
     unused = sorted(
         str(path)
         for path in DISPATCH_EXEMPT_PATHS
-        if not any(
-            value in path.read_text(encoding="utf-8").lower() for value in DISPATCH_VOCABULARY
-        )
+        if not any(value in code_text(path) for value in DISPATCH_VOCABULARY)
     )
     assert not unused, (
         f"these files are exempt from the dispatch vocabulary but no longer spell any of it: "
@@ -51,12 +51,15 @@ def test_ws34_dispatch_exemptions_name_only_files_that_exist_and_still_need_them
 
 
 def test_ws34_adds_no_production_deploy_coolify_or_automatic_merge_path() -> None:
-    forbidden = ("coolify", "gh pr merge", "git push origin main", "merge_to_main")
+    # Code terms only (ADR-0051). The spaced command phrases `gh pr merge` and
+    # `git push origin main` came out: a code term has no whitespace, so they could no longer
+    # match here, and test_wsp21_invariant_scan.py reads raw text for exactly those commands.
+    forbidden = ("coolify", "merge_to_main")
     matches = [
         f"{path}:{value}"
         for path in _source_files()
         for value in forbidden
-        if value in path.read_text(encoding="utf-8").lower()
+        if value in code_text(path)
     ]
 
     assert not matches
