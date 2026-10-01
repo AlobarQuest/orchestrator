@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.orm import Session
 
-from orchestrator.api.schemas import FactoryPolicyReachResponse
+from orchestrator.api.schemas.execution import FactoryPolicyReachResponse
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import (
     OUTSIDE_CHANGE_WINDOW,

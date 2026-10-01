@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import get_actor, get_session
-from orchestrator.api.schemas import CommandBase
+from orchestrator.api.schemas.common import CommandBase
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorContext
 from orchestrator.services.intake.packages import register_approved_unit, register_revision

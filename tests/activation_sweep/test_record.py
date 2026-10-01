@@ -28,7 +28,7 @@ from activation_sweep.record import (
     reference_for,
     summary_of,
 )
-from orchestrator.api.schemas import ObservationCommandModel
+from orchestrator.api.schemas.release import ObservationCommandModel
 from orchestrator.kernel.secret_metadata import SECRET_KEY_PARTS
 from orchestrator.persistence.models import (
     OBSERVATION_SEVERITIES,

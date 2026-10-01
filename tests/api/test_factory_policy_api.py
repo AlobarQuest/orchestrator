@@ -6,7 +6,7 @@ and until this route existed there was no way to ask the running instance which 
 
 from fastapi.testclient import TestClient
 
-from orchestrator.api.schemas import FactoryPolicyResponse
+from orchestrator.api.schemas.execution import FactoryPolicyResponse
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.reach_vocabulary import REACH_VOCABULARY
 from tests.api.test_lifecycle_api import SYSTEM, WORKER

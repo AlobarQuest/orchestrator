@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig, get_actor, get_session
 from orchestrator.api.routes import SettingsDep, package_intake_command
-from orchestrator.api.schemas import PackageIntakeRegistration
+from orchestrator.api.schemas.intake import PackageIntakeRegistration
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.runner_authority import runner_authority_violation

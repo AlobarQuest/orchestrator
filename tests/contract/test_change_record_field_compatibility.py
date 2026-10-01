@@ -24,7 +24,7 @@ import pytest
 
 from bump_proposer import cli as bump_proposer_cli
 from change_proposer import cli as change_proposer_cli
-from orchestrator.api.schemas import RunnerBriefResponse
+from orchestrator.api.schemas.intake import RunnerBriefResponse
 from scripts import check_change_record_field_compatibility as check
 from work_carrier import change_manager as work_carrier_change_manager
 
@@ -123,9 +123,9 @@ def test_the_field_parser_agrees_with_pydantic() -> None:
     model on this side -- one that inherits `BaseModel` directly, since the parse reads a class
     body and an inherited field would be invisible to it.
     """
-    source = Path("src/orchestrator/api/schemas.py").read_text(encoding="utf-8")
+    source = Path("src/orchestrator/api/schemas/intake.py").read_text(encoding="utf-8")
 
-    assert check.declared_fields(source, "RunnerBriefResponse", "schemas.py") == set(
+    assert check.declared_fields(source, "RunnerBriefResponse", "intake.py") == set(
         RunnerBriefResponse.model_fields
     )
 

@@ -4,7 +4,7 @@ from typing import get_args
 
 from fastapi.testclient import TestClient
 
-from orchestrator.api.schemas import SkippedRevisionResponse
+from orchestrator.api.schemas.intake import SkippedRevisionResponse
 from orchestrator.services.intake import follow_ups
 from tests.api.test_lifecycle_api import SYSTEM, WORKER
 

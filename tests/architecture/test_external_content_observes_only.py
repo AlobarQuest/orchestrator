@@ -145,7 +145,10 @@ import typer
 
 from orchestrator import cli as orchestrator_cli
 from orchestrator.api.dependencies import OBSERVER_WRITE_ROUTES
-from orchestrator.api.schemas import DeploymentObservationCommandModel, ReleaseArtifactCommandModel
+from orchestrator.api.schemas.release import (
+    DeploymentObservationCommandModel,
+    ReleaseArtifactCommandModel,
+)
 from orchestrator.main import create_app
 from orchestrator.persistence.models import (
     CONTAINER_IMAGE_KIND,

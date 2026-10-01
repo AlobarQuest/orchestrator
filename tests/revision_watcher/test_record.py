@@ -158,6 +158,6 @@ def test_the_payload_satisfies_the_ROUTES_OWN_REQUEST_MODEL() -> None:
     """The second rule set. FastAPI answers before any service code runs, so a field the request
     model rejects is an HTTP 422 that no named error and no service test can reach -- the shape
     that refused twelve candidate rows in the binding lane before this one."""
-    from orchestrator.api.schemas import ObservationCommandModel
+    from orchestrator.api.schemas.release import ObservationCommandModel
 
     ObservationCommandModel.model_validate(revision_observation(_reading()))
