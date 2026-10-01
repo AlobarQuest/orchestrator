@@ -10,24 +10,20 @@ from local git, and re-running is made safe by the observation's own idempotency
 first asking what is already there. The landing ledger's audit had to widen its reads and did so
 as a decision; there is nothing here to widen, and `is_allowed_read` does not exist rather than
 existing and returning False, so a future read has to be written deliberately.
+
+The transport and its guards are the estate's shared confined client (ADR-0050); what is this
+program's own is the one path it may reach, its exception classes and their wording.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 
-OBSERVATIONS_ENDPOINT = "/api/v1/observations"
+from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem
 
-# A DNS label is at most 63 octets (RFC 1035) and may not be empty. Both limits are checked here
-# rather than left to `httpx`, and the reason is measured: a doubled dot and an over-long label
-# both CONSTRUCT fine and raise `UnicodeError` at REQUEST time, from IDNA encoding. Left to the
-# request they would be absorbed as nine per-checkout write failures and reported as an incomplete
-# pass -- the opposite of what they are, which is one typo making the tool unusable for every
-# checkout at once.
-MAX_DNS_LABEL = 63
+OBSERVATIONS_ENDPOINT = "/api/v1/observations"
 
 
 class SweepWriteError(RuntimeError):
@@ -63,12 +59,9 @@ def _validate_base_url(base_url: str) -> None:
     `https://host..example` and a label over sixty-three characters construct cleanly and raise
     `UnicodeError` from IDNA encoding at request time.
     """
-    parsed = urlsplit(base_url.strip())
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise UnusableEndpointError("the orchestrator URL must be https with a host")
-    for label in parsed.hostname.split("."):
-        if not label or len(label) > MAX_DNS_LABEL:
-            raise UnusableEndpointError("the orchestrator URL has a malformed host")
+    problem = base_url_problem(base_url)
+    if problem is not None:
+        raise UnusableEndpointError(f"the orchestrator URL {problem}")
 
 
 def open_client(
@@ -92,14 +85,22 @@ def open_client(
             token=token,
             transport=transport,
         )
-    except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+    except TransportFailure as failure:
         raise UnusableEndpointError(
-            f"the orchestrator URL is not usable: {type(error).__name__}"
-        ) from error
+            f"the orchestrator URL is not usable: {failure.error_type}"
+        ) from None
 
 
 def is_allowed_write(path: str) -> bool:
     return path == OBSERVATIONS_ENDPOINT
+
+
+def _permits(method: str, path: str) -> bool:
+    return method == "POST" and is_allowed_write(path)
+
+
+def _refuse(_method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"the sweep may not write to {path}")
 
 
 class OrchestratorClient:
@@ -111,14 +112,16 @@ class OrchestratorClient:
         token: str,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
+        self._client = ConfinedClient(
+            base_url=base_url,
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Credential-Key-Id": credential_key_id,
             },
             timeout=30.0,
             transport=transport,
+            permits=_permits,
+            refuse=_refuse,
         )
 
     def close(self) -> None:
@@ -134,19 +137,12 @@ class OrchestratorClient:
         return self.post(OBSERVATIONS_ENDPOINT, payload)
 
     def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if not is_allowed_write(path):
-            raise ForbiddenEndpointError(f"the sweep may not write to {path}")
         try:
             response = self._client.request("POST", path, json=payload)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # THREE exception families, and the third is the one a two-member tuple misses: IDNA
-            # encoding of a malformed HOST raises `UnicodeError`, which is a `ValueError` and
-            # neither of the other two. The triggers are ordinary environment-variable typos -- a
-            # doubled dot, a DNS label over 63 characters -- and an escape here takes the whole
-            # pass down with a traceback instead of costing one checkout its row.
+        except TransportFailure as failure:
             raise SweepWriteError(
-                f"orchestrator is unreachable for POST {path}: {type(error).__name__}"
-            ) from error
+                f"orchestrator is unreachable for POST {path}: {failure.error_type}"
+            ) from None
         if response.status_code >= 400:
             # The status only. A rejection body echoes the command back, and a diagnostic that
             # prints what it was given is how a value that should not be in a transcript gets

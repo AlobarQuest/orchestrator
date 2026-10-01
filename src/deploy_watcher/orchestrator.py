@@ -28,6 +28,13 @@ from typing import Any
 
 import httpx
 
+from estate_clients.confined import (
+    ConfinedClient,
+    TransportFailure,
+    base_url_problem,
+    error_code,
+)
+
 DEFAULT_BASE_URL = "https://sds.alobar.net"
 USER_AGENT = "deploy-watcher/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS = 30.0
@@ -68,6 +75,14 @@ def is_allowed_read(path: str) -> bool:
     return _UNIT_HISTORY.match(path) is not None
 
 
+def _permits(method: str, path: str) -> bool:
+    return is_allowed_read(path) if method == "GET" else is_allowed_write(path)
+
+
+def _refuse(method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"the watcher may not {method} {path}")
+
+
 def history_path(work_unit_id: str) -> str:
     return f"/api/v1/work-units/{work_unit_id}/history"
 
@@ -81,14 +96,16 @@ class OrchestratorClient:
         credential_key_id: str = OBSERVER_KEY_ID,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        # CONSTRUCTION IS GUARDED AS WELL AS THE REQUEST, because httpx refuses a malformed URL in
-        # two different places: a control character is refused by `urlparse` here and now, while a
-        # doubled dot or an over-long DNS label survives to IDNA encoding at request time. Both are
-        # ordinary environment-variable typos, and a guard on one half is not a guard -- this
-        # estate has written that down and then shipped the escape anyway.
+        # A doubled dot or an over-long DNS label constructs cleanly and fails only at request
+        # time, where it would read as the orchestrator being down. Asked here first, the typo is
+        # reported as the typo.
+        problem = base_url_problem(base_url)
+        if problem is not None:
+            raise OrchestratorError(f"the orchestrator address {problem}")
+        # Construction is guarded as well as the request (ADR-0050).
         try:
-            self._client = httpx.Client(
-                base_url=base_url.rstrip("/"),
+            self._client = ConfinedClient(
+                base_url=base_url,
                 timeout=TIMEOUT_SECONDS,
                 transport=transport,
                 headers={
@@ -97,11 +114,13 @@ class OrchestratorClient:
                     "Content-Type": "application/json",
                     "User-Agent": USER_AGENT,
                 },
+                permits=_permits,
+                refuse=_refuse,
             )
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+        except TransportFailure as failure:
             raise OrchestratorError(
-                f"the orchestrator address is unusable: {type(error).__name__}"
-            ) from error
+                f"the orchestrator address is unusable: {failure.error_type}"
+            ) from None
 
     def close(self) -> None:
         self._client.close()
@@ -154,7 +173,7 @@ class OrchestratorClient:
         return body
 
     def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        """Every request this client makes, and the ONE place the surface is enforced.
+        """Every request this client makes; the confined client enforces the surface first.
 
         The allowlists were checked at each call site first, and adversarial review showed both
         checks were tautologies — `is_allowed_write(OBSERVATIONS_ENDPOINT)` is a constant compared
@@ -164,25 +183,12 @@ class OrchestratorClient:
         refusal without anybody remembering, which is the property `change_manager.py` has because
         its paths interpolate an id.
         """
-        allowed = is_allowed_read(path) if method == "GET" else is_allowed_write(path)
-        if not allowed:
-            raise ForbiddenEndpointError(f"the watcher may not {method} {path}")
         try:
             return self._client.request(method, path, **kwargs)
-        except httpx.HTTPError as error:
-            # The exception TYPE only, and `ValueError` is caught alongside `HTTPError` because
-            # httpx raises three unrelated families for a malformed URL: IDNA encoding of a
-            # malformed host raises `UnicodeError`, which is a `ValueError` and is neither an
-            # `HTTPError` nor an `InvalidURL`. A doubled dot or an over-long DNS label in a base
-            # URL is an ordinary environment-variable typo, and this estate has already shipped
-            # that escape twice.
+        except TransportFailure as failure:
             raise OrchestratorError(
-                f"the orchestrator is unreachable for {method} {path}: {type(error).__name__}"
-            ) from error
-        except (httpx.InvalidURL, ValueError) as error:
-            raise OrchestratorError(
-                f"the orchestrator address is unusable for {method} {path}: {type(error).__name__}"
-            ) from error
+                f"the orchestrator is unreachable for {method} {path}: {failure.error_type}"
+            ) from None
 
 
 def _json(response: httpx.Response, what: str) -> Any:
@@ -193,9 +199,4 @@ def _json(response: httpx.Response, what: str) -> Any:
 
 
 def _is_domain_absence(response: httpx.Response) -> bool:
-    try:
-        body = response.json()
-    except ValueError:
-        return False
-    error = body.get("error") if isinstance(body, dict) else None
-    return isinstance(error, dict) and str(error.get("code", "")).endswith("_not_found")
+    return error_code(response).endswith("_not_found")

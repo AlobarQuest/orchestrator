@@ -40,6 +40,8 @@ from typing import Any, Final
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure, error_code, error_detail
+
 DEFAULT_BASE_URL: Final = "https://sds.alobar.net"
 USER_AGENT: Final = "work-carrier/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 60.0
@@ -79,24 +81,14 @@ def is_allowed_read(path: str) -> bool:
     return _WORK.match(path) is not None
 
 
-def _detail(response: httpx.Response) -> str:
-    """The orchestrator's own explanation, bounded. Never the whole body, never headers.
+def _permits(method: str, path: str) -> bool:
+    if method == "GET":
+        return is_allowed_read(path)
+    return method == "POST" and is_allowed_write(path)
 
-    A `DomainError` reaches the wire NESTED under `error`; FastAPI's own validation failures
-    arrive as `detail`. A reader written from one shape matches neither the other nor a proxy's
-    HTML, and this estate has already recorded that trap.
-    """
-    try:
-        payload = response.json()
-    except ValueError:
-        return f"HTTP {response.status_code}"
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict) and error.get("message"):
-            return str(error["message"])[:400]
-        if payload.get("detail"):
-            return str(payload["detail"])[:400]
-    return f"HTTP {response.status_code}"
+
+def _refuse(method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"the carry may not {method} {path}")
 
 
 def _hint(response: httpx.Response) -> str:
@@ -107,23 +99,10 @@ def _hint(response: httpx.Response) -> str:
     neighbour. Keying on the code rather than on 403 keeps the hint attached to the case it was
     written for even when the status for that case moves.
     """
-    if _error_code(response) in {"intake_registrar_invalid", "role_forbidden"}:
+    if error_code(response) in {"intake_registrar_invalid", "role_forbidden"}:
         return " -- the credential is not the system one"
     if 300 <= response.status_code < 400:
         return " -- a redirect, so the request did not reach the app: check the proxy routing"
-    return ""
-
-
-def _error_code(response: httpx.Response) -> str:
-    """The refusal's own code, read from where a `DomainError` actually puts it: NESTED."""
-    try:
-        payload = response.json()
-    except ValueError:
-        return ""
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict) and isinstance(error.get("code"), str):
-            return error["code"]
     return ""
 
 
@@ -137,8 +116,8 @@ class OrchestratorClient:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         try:
-            self._client = httpx.Client(
-                base_url=base_url.rstrip("/"),
+            self._client = ConfinedClient(
+                base_url=base_url,
                 timeout=TIMEOUT_SECONDS,
                 transport=transport,
                 headers={
@@ -147,14 +126,14 @@ class OrchestratorClient:
                     "User-Agent": USER_AGENT,
                     "Accept": "application/json",
                 },
+                permits=_permits,
+                refuse=_refuse,
             )
-        except (httpx.InvalidURL, ValueError) as error:
-            # CONSTRUCTION raises for some malformed URLs and request time for others: a control
-            # character is refused here by `urlparse`, while a doubled dot or an over-long DNS
-            # label survives until IDNA encoding at `request`. Guarding one half leaves an
-            # environment-variable typo crashing the pass with a traceback instead of reporting.
+        except TransportFailure as failure:
+            # Construction is guarded as well as the request: some malformed URLs are refused
+            # here and others only at request time (ADR-0050).
             raise OrchestratorError(
-                f"the orchestrator base URL is unusable: {type(error).__name__}"
+                f"the orchestrator base URL is unusable: {failure.error_type}"
             ) from None
 
     def close(self) -> None:
@@ -191,22 +170,17 @@ class OrchestratorClient:
         return tuple(str(revision) for revision in revisions)
 
     def _get(self, path: str) -> dict[str, Any]:
-        """The ONE way a question leaves this process, guard first.
+        """The ONE way a question leaves this process; the confined client asks `_permits` first.
 
         The write's twin, and the guards are separate rather than one path check: a read
         allowlist that admitted the write route, or the reverse, would be a surface nobody
         decided to open. Neither predicate can satisfy the other.
         """
-        if not is_allowed_read(path):
-            raise ForbiddenEndpointError(f"the carry may not GET {path}")
         try:
-            response = self._client.get(path)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # The exception TYPE only, for the reason the write path gives: an httpx error
-            # carries the request, and a diagnostic that prints what it was given is how a
-            # bearer token reaches a transcript.
+            response = self._client.request("GET", path)
+        except TransportFailure as failure:
             raise OrchestratorError(
-                f"the orchestrator is unreachable for GET {path}: {type(error).__name__}"
+                f"the orchestrator is unreachable for GET {path}: {failure.error_type}"
             ) from None
         if not 200 <= response.status_code < 300:
             # ANY non-2xx, so a redirect is named as one. This route is not behind the
@@ -237,16 +211,12 @@ class OrchestratorClient:
         return self._post(_INTAKES, payload)
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """The ONE way anything leaves this process, guard first."""
-        if not is_allowed_write(path):
-            raise ForbiddenEndpointError(f"the carry may not POST {path}")
+        """The ONE way anything leaves this process; the confined client asks `_permits` first."""
         try:
-            response = self._client.post(path, json=payload)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # The exception TYPE only. An httpx error carries the request, and a diagnostic that
-            # prints what it was given is how a bearer token reaches a transcript.
+            response = self._client.request("POST", path, json=payload)
+        except TransportFailure as failure:
             raise OrchestratorError(
-                f"the orchestrator is unreachable for POST {path}: {type(error).__name__}"
+                f"the orchestrator is unreachable for POST {path}: {failure.error_type}"
             ) from None
         if not 200 <= response.status_code < 300:
             # ANY non-2xx, not `>= 400`, and the difference is the production case rather than a
@@ -259,8 +229,8 @@ class OrchestratorClient:
             # answer point at the proxy.
             raise IntakeRefused(
                 f"the orchestrator answered {response.status_code} for {path}{_hint(response)}: "
-                f"{_detail(response)}",
-                _error_code(response),
+                f"{error_detail(response)}",
+                error_code(response),
             )
         try:
             body = response.json()

@@ -253,9 +253,17 @@ HTTP_CLIENTS = {
     "urllib.request",
     "urllib.error",
     "http.client",
+    # ADR-0050: the estate's own confined transport. Importing it is speaking HTTP, so a module
+    # that does must be in the allowlist below like any other; without this entry the package
+    # would be a way past the per-file chokepoint.
+    "estate_clients",
 }
 
 OUTBOUND_ALLOWLIST = {
+    # ADR-0050: the one transport the out-of-process programs share. It decides nothing about
+    # where a request goes -- each program passes in the paths it may reach -- and every module
+    # that imports it is listed here on its own account.
+    Path("src/estate_clients/confined.py"),
     Path("src/orchestrator/cli.py"),
     Path("src/orchestrator/services/execution/dispatch.py"),
     Path("src/orchestrator/services/github_app.py"),

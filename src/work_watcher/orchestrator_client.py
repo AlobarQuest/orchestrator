@@ -20,6 +20,8 @@ from typing import Any, Final
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
+
 DEFAULT_BASE_URL: Final = "https://sds.alobar.net"
 USER_AGENT: Final = "work-watcher/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 30.0
@@ -37,6 +39,14 @@ class ForbiddenEndpointError(OrchestratorError):
 
 def is_allowed_read(path: str) -> bool:
     return _WORK.match(path) is not None
+
+
+def _permits(method: str, path: str) -> bool:
+    return method == "GET" and is_allowed_read(path)
+
+
+def _refuse(method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"this program may not {method} {path}")
 
 
 class WorkCompletion:
@@ -60,9 +70,9 @@ class OrchestratorClient:
         *,
         base_url: str = DEFAULT_BASE_URL,
         timeout_seconds: float = TIMEOUT_SECONDS,
-        client: httpx.Client | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._injected = client
+        self._transport = transport
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
         self._headers = {
@@ -100,26 +110,28 @@ class OrchestratorClient:
         )
 
     def _get(self, path: str) -> dict[str, Any]:
-        """The ONE way anything leaves this process, guard first."""
-        if not is_allowed_read(path):
-            raise ForbiddenEndpointError(f"this program may not GET {path}")
+        """The ONE way anything leaves this process; the confined client asks `_permits` first."""
         try:
-            client = self._injected or httpx.Client(
-                base_url=self._base_url, timeout=self._timeout, headers=self._headers
+            client = ConfinedClient(
+                base_url=self._base_url,
+                timeout=self._timeout,
+                headers=self._headers,
+                transport=self._transport,
+                permits=_permits,
+                refuse=_refuse,
             )
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+        except TransportFailure as failure:
             raise OrchestratorError(
-                f"the orchestrator base URL is unusable: {type(error).__name__}"
+                f"the orchestrator base URL is unusable: {failure.error_type}"
             ) from None
         try:
-            response = client.get(path)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+            response = client.request("GET", path)
+        except TransportFailure as failure:
             raise OrchestratorError(
-                f"the orchestrator is unreachable for GET {path}: {type(error).__name__}"
+                f"the orchestrator is unreachable for GET {path}: {failure.error_type}"
             ) from None
         finally:
-            if self._injected is None:
-                client.close()
+            client.close()
         if not 200 <= response.status_code < 300:
             raise OrchestratorError(
                 f"the orchestrator answered {response.status_code} for GET {path}"

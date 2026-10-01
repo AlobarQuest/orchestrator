@@ -16,20 +16,23 @@ already hold it read it from the same environment variables this module's caller
 lane-prefixed spelling would be a second name for one credential, which is the estate's own
 N-copies defect in a different vocabulary.
 
-THE CLIENT IS THE PIN WATCHER'S AND THE REVISION WATCHER'S, DELIBERATELY COPIED RATHER THAN
-IMPORTED. The lanes here import one another for DOMAIN knowledge -- this producer reads the
-landing rule and the title parser from `landing_ledger` -- and none imports another lane's
-plumbing. A lane that reached into a sibling for an HTTP client would let an unrelated lane's
-refactor break this one's schedule, and each ships its own isolation test saying so.
+The transport and its guards are the estate's shared confined client (ADR-0050); what is this
+program's own is the one path it may reach, its exception classes and their wording.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any, Final
-from urllib.parse import urlsplit
 
 import httpx
+
+from estate_clients.confined import (
+    ConfinedClient,
+    TransportFailure,
+    base_url_problem,
+    error_code,
+)
 
 # NO DEFAULT BASE URL, unlike this program's change-manager client one module over. The two
 # sibling observer lanes require the URL from the environment and so does this: the host would
@@ -40,12 +43,6 @@ OBSERVATIONS_ENDPOINT: Final = "/api/v1/observations"
 USER_AGENT: Final = "bump-proposer/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 30.0
 
-# A DNS label is at most 63 octets (RFC 1035) and may not be empty. Both are checked here rather
-# than left to `httpx`, and the reason is measured: a doubled dot and an over-long label both
-# CONSTRUCT cleanly and raise `UnicodeError` -- a `ValueError`, neither an `HTTPError` nor an
-# `InvalidURL` -- at REQUEST time, from IDNA encoding. A guard on the constructor alone is not a
-# guard, and the triggers are ordinary environment-variable typos.
-MAX_DNS_LABEL: Final = 63
 
 # A `DomainError` reaches the wire NESTED -- `{"error": {"code": ...}}` -- and `code` is a closed
 # snake_case vocabulary. That is what makes it safe to print where the BODY is not: a rejection
@@ -94,6 +91,14 @@ def is_allowed_write(path: str) -> bool:
     return path == OBSERVATIONS_ENDPOINT
 
 
+def _permits(method: str, path: str) -> bool:
+    return method == "POST" and is_allowed_write(path)
+
+
+def _refuse(method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"the producer may not {method} {path}")
+
+
 def _named_code(response: httpx.Response) -> str:
     """The orchestrator's own error code when it sent one, and nothing else.
 
@@ -101,26 +106,14 @@ def _named_code(response: httpx.Response) -> str:
     row (`observation_conflict`) and a stale version all print as one number -- and the three want
     different acts from whoever reads the line.
     """
-    try:
-        body = response.json()
-    except ValueError:
-        return ""
-    if not isinstance(body, dict):
-        return ""
-    error = body.get("error")
-    code = error.get("code") if isinstance(error, dict) else None
-    if isinstance(code, str) and _SAFE_CODE.fullmatch(code):
-        return f" ({code})"
-    return ""
+    code = error_code(response)
+    return f" ({code})" if _SAFE_CODE.fullmatch(code) else ""
 
 
 def _validate_base_url(base_url: str) -> None:
-    parsed = urlsplit(base_url.strip())
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise UnusableEndpointError("the orchestrator URL must be https with a host")
-    for label in parsed.hostname.split("."):
-        if not label or len(label) > MAX_DNS_LABEL:
-            raise UnusableEndpointError("the orchestrator URL has a malformed host")
+    problem = base_url_problem(base_url)
+    if problem is not None:
+        raise UnusableEndpointError(f"the orchestrator URL {problem}")
 
 
 def open_client(
@@ -143,10 +136,10 @@ def open_client(
             token=token,
             transport=transport,
         )
-    except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+    except TransportFailure as failure:
         raise UnusableEndpointError(
-            f"the orchestrator URL is not usable: {type(error).__name__}"
-        ) from error
+            f"the orchestrator URL is not usable: {failure.error_type}"
+        ) from None
 
 
 class OrchestratorClient:
@@ -158,8 +151,8 @@ class OrchestratorClient:
         token: str,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._client = httpx.Client(
-            base_url=base_url.rstrip("/"),
+        self._client = ConfinedClient(
+            base_url=base_url,
             timeout=TIMEOUT_SECONDS,
             transport=transport,
             headers={
@@ -168,6 +161,8 @@ class OrchestratorClient:
                 "User-Agent": USER_AGENT,
                 "Accept": "application/json",
             },
+            permits=_permits,
+            refuse=_refuse,
         )
 
     def close(self) -> None:
@@ -197,16 +192,12 @@ class OrchestratorClient:
         return identifier
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """The ONE way anything leaves this process, guard first."""
-        if not is_allowed_write(path):
-            raise ForbiddenEndpointError(f"the producer may not POST {path}")
+        """The ONE way anything leaves this process; the confined client asks `_permits` first."""
         try:
-            response = self._client.post(path, json=payload)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # The exception TYPE only. An httpx error carries the request, and a diagnostic that
-            # prints what it was given is how a bearer token reaches a transcript.
+            response = self._client.request("POST", path, json=payload)
+        except TransportFailure as failure:
             raise ObservationWriteError(
-                f"the orchestrator is unreachable for POST {path}: {type(error).__name__}"
+                f"the orchestrator is unreachable for POST {path}: {failure.error_type}"
             ) from None
         if response.status_code in (401, 403):
             # BEFORE the generic branch, because this one must not be absorbed per bump. See
