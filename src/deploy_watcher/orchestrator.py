@@ -28,7 +28,12 @@ from typing import Any
 
 import httpx
 
-from estate_clients.confined import ConfinedClient, TransportFailure, error_code
+from estate_clients.confined import (
+    ConfinedClient,
+    TransportFailure,
+    base_url_problem,
+    error_code,
+)
 
 DEFAULT_BASE_URL = "https://sds.alobar.net"
 USER_AGENT = "deploy-watcher/1 (+AlobarQuest/orchestrator)"
@@ -91,6 +96,12 @@ class OrchestratorClient:
         credential_key_id: str = OBSERVER_KEY_ID,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        # A doubled dot or an over-long DNS label constructs cleanly and fails only at request
+        # time, where it would read as the orchestrator being down. Asked here first, the typo is
+        # reported as the typo.
+        problem = base_url_problem(base_url)
+        if problem is not None:
+            raise OrchestratorError(f"the orchestrator address {problem}")
         # Construction is guarded as well as the request (ADR-0050).
         try:
             self._client = ConfinedClient(

@@ -32,6 +32,7 @@ from deploy_watcher.orchestrator import (
 )
 from deploy_watcher.orchestrator import (
     OrchestratorClient,
+    OrchestratorError,
 )
 from deploy_watcher.orchestrator import (
     is_allowed_read as orchestrator_read,
@@ -172,3 +173,10 @@ def test_the_listing_always_names_the_source() -> None:
     client = ChangeManagerClient("t", transport=httpx.MockTransport(handler))
     client.deploy_changes()
     assert seen == ["https://change-mgr.alobar.net/api/items?source=deploy"]
+
+
+@pytest.mark.parametrize("base_url", ["https://sds..alobar.net", "https://" + "a" * 64 + ".net"])
+def test_a_malformed_address_is_reported_as_the_address(base_url: str) -> None:
+    """A typo that only fails at request time must not read as the orchestrator being down."""
+    with pytest.raises(OrchestratorError, match="malformed host"):
+        OrchestratorClient("t", base_url=base_url)
