@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.api.schemas import RunnerBriefResponse
+from orchestrator.api.schemas.intake import RunnerBriefResponse
 from scripts import check_brief_consumer_compatibility as check
 
 SCRIPT = Path("scripts/check_brief_consumer_compatibility.py")

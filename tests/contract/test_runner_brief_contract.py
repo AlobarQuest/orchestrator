@@ -26,7 +26,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from orchestrator.api.schemas import RunnerBriefResponse
+from orchestrator.api.schemas.intake import RunnerBriefResponse
 from orchestrator.services.intake.runner_brief import runner_brief
 from tests.contract.test_runner_envelope_contract import _approved_ready_unit
 

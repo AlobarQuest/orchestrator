@@ -63,7 +63,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SERVED_MODEL_SOURCE = REPO_ROOT / "src/orchestrator/api/schemas.py"
+SERVED_MODEL_SOURCE = REPO_ROOT / "src/orchestrator/api/schemas/intake.py"
 SERVED_MODEL = "RunnerBriefResponse"
 CONSUMER_REPOSITORY = "AlobarQuest/factory-runner"
 CONSUMER_MODEL_PATH = "src/factory_runner/models.py"

@@ -22,7 +22,7 @@ import pytest
 from pydantic import ValidationError
 
 from activation_sweep.bind import Candidate, binding_payload
-from orchestrator.api.schemas import ReleaseArtifactCommandModel
+from orchestrator.api.schemas.release import ReleaseArtifactCommandModel
 
 CANDIDATE_ROW: dict[str, Any] = {
     "work_unit_id": "eb7c36f7-4f7e-5d00-9709-779c0c1152a4",

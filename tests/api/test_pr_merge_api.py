@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 import orchestrator.api.routes as routes
 from orchestrator.api.dependencies import AuthConfig, get_session
-from orchestrator.api.schemas import PrMergeResponse
+from orchestrator.api.schemas.landing import PrMergeResponse
 from orchestrator.config import Settings, get_settings
 from orchestrator.main import create_app
 from orchestrator.persistence.models import UnitPrMerge

@@ -959,7 +959,7 @@ def test_the_served_answer_DECLARES_the_verdict_the_caller_reads() -> None:
     increment's one field, because the failure is not specific to this field: any future addition
     to the composed answer has the same silent hole, and a membership check would not see it.
     """
-    from orchestrator.api.schemas import EstateLandingAdmissionResponse
+    from orchestrator.api.schemas.landing import EstateLandingAdmissionResponse
     from orchestrator.services.landing.estate_landing_admission import EstateLandingAdmission
 
     assert set(EstateLandingAdmissionResponse.model_fields) == set(

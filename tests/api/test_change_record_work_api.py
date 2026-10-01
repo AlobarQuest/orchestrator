@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from orchestrator.api.schemas import ChangeRecordUnitResponse, ChangeRecordWorkResponse
+from orchestrator.api.schemas.intake import ChangeRecordUnitResponse, ChangeRecordWorkResponse
 from tests.api.test_lifecycle_api import SYSTEM
 from tests.services.test_change_record_work import RECORD, _revision, _unit
 

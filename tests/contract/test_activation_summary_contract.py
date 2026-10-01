@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from activation_sweep import activation
 from activation_sweep.bind import MACHINE_LOCAL_KIND, activation_payload
-from orchestrator.api.schemas import DeploymentObservationCommandModel
+from orchestrator.api.schemas.release import DeploymentObservationCommandModel
 from orchestrator.persistence.models import (
     MACHINE_LOCAL_OBSERVATION,
     OPERATOR_MACHINE_ENVIRONMENT,

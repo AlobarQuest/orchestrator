@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.api.schemas import CostActualsCommand
+from orchestrator.api.schemas.lifecycle import CostActualsCommand
 from tests.contract.test_cost_actuals_contract import golden_cost_actuals
 
 

@@ -224,7 +224,7 @@ def test_every_vocabulary_field_this_payload_sets_is_one_the_orchestrator_accept
 def test_the_payload_satisfies_the_ROUTES_OWN_REQUEST_MODEL() -> None:
     """The second rule set. FastAPI answers before any service code runs, so a field the request
     model rejects is an HTTP 422 that no named error and no service test can reach."""
-    from orchestrator.api.schemas import ObservationCommandModel
+    from orchestrator.api.schemas.release import ObservationCommandModel
 
     ObservationCommandModel.model_validate(bump_observation(_pending(), _bump()))
 
@@ -232,7 +232,7 @@ def test_the_payload_satisfies_the_ROUTES_OWN_REQUEST_MODEL() -> None:
 def test_the_key_cap_mirrored_here_is_the_one_the_request_model_actually_declares() -> None:
     """A mirrored constant nothing checks is how a vocabulary drifts, and this one decides whether
     a refusal is named or arrives as a 422 naming a field location."""
-    from orchestrator.api.schemas import CommandBase
+    from orchestrator.api.schemas.common import CommandBase
 
     declared = CommandBase.model_fields["idempotency_key"].metadata
     caps = [getattr(item, "max_length", None) for item in declared]

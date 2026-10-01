@@ -12,7 +12,11 @@ WS42_DISPATCH_PATHS = {
     # failure-signature predicate to derive open circuit breakers. It reads that state; it never
     # dispatches, deploys, or merges.
     Path("src/orchestrator/services/reporting/dead_letter.py"),
-    Path("src/orchestrator/api/schemas.py"),
+    # The API schemas that name these fields; one module per domain since Tier 2 item 14.
+    Path("src/orchestrator/api/schemas/execution.py"),
+    Path("src/orchestrator/api/schemas/reconciliation.py"),
+    Path("src/orchestrator/api/schemas/release.py"),
+    Path("src/orchestrator/api/schemas/verifier.py"),
     Path("src/orchestrator/config.py"),
     Path("src/orchestrator/persistence/models.py"),
     Path("src/orchestrator/services/execution/dispatch.py"),

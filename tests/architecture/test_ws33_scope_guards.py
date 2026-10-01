@@ -174,7 +174,7 @@ MANUAL_DISPATCH_WORKFLOWS = {
 # and spelled none of it; an exemption nobody needs is one nobody is watching, so it came out.
 DISPATCH_EXEMPT_PATHS = {
     Path("src/orchestrator/services/execution/dispatch.py"),
-    Path("src/orchestrator/api/schemas.py"),
+    Path("src/orchestrator/api/schemas/intake.py"),
     Path("src/orchestrator/config.py"),
 }
 

@@ -803,8 +803,9 @@ style of that module.
   covered by an `/api` row belongs in the exclusion set with that delegation named. It is gated
   both ways: a stale exclusion for a route that no longer exists also fails, and every matrix row
   must name a test that actually exists.
-  `api/routes.py` + `api/schemas.py` are already in `WS42_DISPATCH_PATHS`, so route/schema *words*
-  are exempt — but the route-inventory sets are NOT word guards and apply to every route regardless.
+  `api/routes.py` and the `api/schemas/<domain>.py` modules that need it are in
+  `WS42_DISPATCH_PATHS`, so their *words* are exempt; a schema module that does not need the
+  exemption is not listed, and a new one that does must be added — but the route-inventory sets are NOT word guards and apply to every route regardless.
   `web.py` is in no allowlist: keep its route bodies free of the bare words (delegate to a service).
   Jinja `.html` templates are not scanned at all.
   (Verified 2026-07-25, WS-P2.5 Inc 2 — the ws33 "merges" guard and the GET-route inventory caught
