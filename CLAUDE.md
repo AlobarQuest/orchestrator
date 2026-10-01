@@ -55,6 +55,9 @@ Placement rule: global CLAUDE.md §7.
 - Everything in this section must stay below `<!-- code-standards:end -->`: `inject_stanza` replaces
   the whole managed block. Re-rendering the block over this file must be a no-op. History:
   `docs/history/claude-md-invariants-archive.md` #2.
+- Generic authority approvals satisfy work-unit readiness only. An authority-expanding
+  standing-context update needs a named human approval bound to the exact standing-context
+  fingerprint (`kernel/context.py::classify_context_update`, via `services/lifecycle/context.py`).
 - Work-unit envelope expansion (capabilities, levels, budgets) has no detector; it is safe only
   because the envelope is write-once, enforced by `tests/architecture/test_authority_write_once.py`.
   A path that mutates the envelope must ship a fail-closed expansion check; never "fix" that test.
@@ -116,10 +119,12 @@ Placement rule: global CLAUDE.md §7.
 - Worker FAILED and human CANCELLED transitions release the latest claim in the same transaction via
   the sole `claim_release.release_claim`; keep replay-before-release and unit-then-claim lock order.
   History: `docs/history/claude-md-invariants-archive.md` #34.
-- `automated_test` criteria resolve deterministically from arriving evidence; `automated_check`
-  resolves only on verifier-owned named-check evidence, and only `automated_check` criteria accept it. Every
-  human-adjudication decision routes through `human_may_adjudicate`. Decomposition `ac_id` is the
-  criterion UUID; evidence wants `AC-001`. History: `docs/history/claude-md-invariants-archive.md` #35.
+- `automated_test` floors to deterministic-permitted: it resolves from arriving evidence that has an
+  evaluator and otherwise asks a human, who may decide it only while the unit is `awaiting_review`.
+  Never add it to `DETERMINISTIC_TYPES` (that halts the factory). `automated_check` resolves only
+  on verifier-owned named-check evidence, and only `automated_check` criteria accept that evidence.
+  Every human-adjudication decision routes through `human_may_adjudicate`. Decomposition `ac_id`
+  is the criterion UUID; evidence wants `AC-001`. History: `docs/history/claude-md-invariants-archive.md` #35.
 - Merged is not deployed: read `https://sds.alobar.net/openapi.json` before reasoning about what
   production serves. Detail: `docs/operations/deploy.md`.
 - SDS M2M bearers live in BWS project `SDS Operator`: bootstrap with `scripts/sds-token.sh` (never
@@ -144,8 +149,14 @@ Placement rule: global CLAUDE.md §7.
 - Serve a new brief field only after factory-runner declares it and the pin advances; the `Runner
   consumer compatibility` job enforces fields and capabilities. Renaming that required check must
   move the protected context too. Detail: `docs/operations/architecture-guards.md`.
+- Under `src/orchestrator/` the word guards (ADR-0051) refuse forbidden terms in CODE only:
+  identifiers, imports and non-docstring strings with no whitespace. ws32 forbids `dispatch`,
+  `deploy`, `coolify`, `workflow_dispatch`, `factory-runner`, `auto_merge`, `merge_pull_request` and
+  similar; ws34 forbids `workflow_dispatch`, `factory_runner`, `github.actions`, `coolify` and
+  `merge_to_main`. Read the lists in the tests; reword rather than allowlist.
 - New routes must be added to the exact POST/GET inventories in `test_scope_guards.py` (POST
-  includes `/review`) and to `tests/idempotency/test_matrix.py`; a `workflow_dispatch` workflow
+  includes `/review`); a new ingress POST route also needs a row in `tests/idempotency/test_matrix.py`
+  or a reasoned `NON_INGRESS_POST_ROUTES` entry; a `workflow_dispatch` workflow
   needs both workflow-guard allowlists edited. Detail: `docs/operations/architecture-guards.md`.
 - Coolify only pulls prebuilt GHCR tags; build with the `Release image` workflow (full 40-char sha
   as input). A hand build needs the labels and `ORCHESTRATOR_REVISION`. Detail:
@@ -178,7 +189,8 @@ Placement rule: global CLAUDE.md §7.
   `POST /work-units/{id}/dispatch`. Never restart the orchestrator while a dispatched run is live.
   Detail: `docs/operations/driving-a-unit.md`.
 - `budgets.max_llm_calls` gates the next claim, not a running attempt, and `budget_exceeded` is
-  unrecoverable: authorise `max_attempts x max_turns x 2`, held equal across all sites. Detail:
+  unrecoverable: authorise at least `max_attempts x max_turns x 2` (the profile's `BUDGETS`, its
+  approval-policy grant and the known-good pattern are held equal by the budget-agreement rule below). Detail:
   `docs/operations/driving-a-unit.md`.
 - `record_approval` enforces no lifecycle state for either subject type; an approval's reach is
   bounded by its consumers (the `AWAITING_APPROVAL -> READY` guard and admission), not by refusal.
@@ -208,8 +220,8 @@ Placement rule: global CLAUDE.md §7.
   (`claims.CLAIM_HOLDING_STATES`) and the newest attempt, never on `released_at IS NULL`. History:
   `docs/history/claude-md-invariants-archive.md` #96.
 - Build sessions work in `.worktrees/<ws>` with their own venv and their own
-  `orchestrator_test_<ws>` database, and tear all three down (plus the merged branch) at session
-  end. Detail: `docs/operations/local-development.md`.
+  `orchestrator_test_<ws>` database. At session end, check the MAIN tree's `git status` for stray
+  files you created, then remove the worktree, database and merged branch. Detail: `docs/operations/local-development.md`.
 - Whether landing on a repository redeploys is read from App Brain's `default-branch-landing` route,
   never derived; deploys can come from CI, a repo webhook or the host's git integration. A repo with
   no determination is un-landable. Detail: `docs/operations/landing-lanes.md`.
@@ -386,6 +398,8 @@ Placement rule: global CLAUDE.md §7.
 - An envelope's verifier must exercise what the change could break (build, tests), not merely
   confirm the edit; use the profile's generated command list, never a hand-authored one. Detail:
   `docs/operations/driving-a-unit.md`.
+- A reporting threshold is a plain int with a real default and no off value; a dead config knob is
+  deleted with the function it configured. Detail: `docs/method-lessons.md` #32.
 - `dead_letter` reports `stalled_verification` over `VERIFICATION_STATES`, kept separate from
   `APPROVAL_STATES` (different owner, different remedy); `revision_required` is deliberately
   uncovered. History: `docs/history/claude-md-invariants-archive.md` #276.
