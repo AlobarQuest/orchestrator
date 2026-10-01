@@ -9,6 +9,7 @@ import inspect
 import textwrap
 from collections.abc import Callable
 
+import pytest
 from fastapi.routing import APIRoute
 
 from orchestrator.main import API_ROUTERS
@@ -32,16 +33,8 @@ def _called_names(function: ast.FunctionDef) -> set[str]:
     return names
 
 
-def test_release_artifact_routes_call_no_lifecycle_or_worker_mutator() -> None:
-    route_functions = [
-        _route_function(route.endpoint)
-        for router in API_ROUTERS
-        for route in router.routes
-        if isinstance(route, APIRoute)
-        and route.path.startswith("/api/v1/work-units/")
-        and route.path.endswith("/release-artifacts")
-    ]
-    forbidden_calls = {
+FORBIDDEN_CALLS = frozenset(
+    {
         "transition_unit",
         "record_adjudication",
         "record_approval",
@@ -51,12 +44,36 @@ def test_release_artifact_routes_call_no_lifecycle_or_worker_mutator() -> None:
         "authorize_retry",
         "dispatch_work_unit",
     }
-    # Without this the guard passes when it finds nothing to scan.
-    assert route_functions
-    matches = [
+)
+
+
+def _mutator_calls(functions: list[ast.FunctionDef]) -> list[str]:
+    return [
         f"{node.name}:{name}"
-        for node in route_functions
-        for name in sorted(_called_names(node) & forbidden_calls)
+        for node in functions
+        for name in sorted(_called_names(node) & FORBIDDEN_CALLS)
     ]
 
-    assert not matches
+
+def test_release_artifact_routes_call_no_lifecycle_or_worker_mutator() -> None:
+    route_functions = [
+        _route_function(route.endpoint)
+        for router in API_ROUTERS
+        for route in router.routes
+        if isinstance(route, APIRoute)
+        and route.path.startswith("/api/v1/work-units/")
+        and route.path.endswith("/release-artifacts")
+    ]
+    # Without this the guard passes when it finds nothing to scan.
+    assert route_functions
+    assert _mutator_calls(route_functions) == []
+
+
+@pytest.mark.parametrize("call", sorted(FORBIDDEN_CALLS))
+def test_a_route_calling_a_mutator_is_reported(call: str) -> None:
+    """The control: the real routes call none of these, so only a route that does proves the check
+    can fail."""
+    source = f"def route(session):\n    return services.{call}(session)\n"
+    node = ast.parse(source).body[0]
+    assert isinstance(node, ast.FunctionDef)
+    assert _mutator_calls([node]) == [f"route:{call}"]
