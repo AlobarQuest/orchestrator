@@ -177,7 +177,13 @@ class HttpWorkRecordSource:
             raise ChangeManagerError(
                 f"change-manager could not be read: {failure.error_type}"
             ) from None
-        except (httpx.HTTPStatusError, ValueError) as error:
+        except httpx.HTTPStatusError as error:
+            # The status, which is what tells a revoked token, a proxy refusal and a server fault
+            # apart. Never the body or the URL.
+            raise ChangeManagerError(
+                f"change-manager could not be read: HTTP {error.response.status_code}"
+            ) from None
+        except ValueError as error:
             raise ChangeManagerError(
                 f"change-manager could not be read: {type(error).__name__}"
             ) from None
