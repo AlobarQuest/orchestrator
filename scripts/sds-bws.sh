@@ -16,7 +16,7 @@
 # THE TWO-ARGUMENT FORM IS KEYED ON THE ARGUMENT COUNT, NOT ON WHETHER THE SECOND IS EMPTY.
 # `BWS_ACCESS_TOKEN=""` for one fetch is a different request from inheriting the ambient token, and
 # the six launchers that juggle two identities pass the second argument precisely so that one
-# ambient value can never serve both (CLAUDE.md, "sds-token.sh RESPECTS an already-set
+# ambient value can never serve both (docs/operations/credentials.md #175, "sds-token.sh RESPECTS an already-set
 # BWS_ACCESS_TOKEN"). So this helper is identity-agnostic on purpose, and it does NOT source
 # `sds-token.sh`: that helper reads the Keychain and exports as a side effect, which those six
 # deliberately avoid.

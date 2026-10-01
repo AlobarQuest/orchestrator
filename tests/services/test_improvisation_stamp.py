@@ -60,7 +60,8 @@ def _approved_unit(session, key):
         actor_role=ActorRole.HUMAN,
     )
     # register_approved_unit creates the unit in DRAFT; DRAFT -> READY is a separate SYSTEM
-    # step (see CLAUDE.md invariant). Fixture setup bypasses that transition directly, the
+    # step (docs/operations/driving-a-unit.md #39). Fixture setup bypasses that transition
+    # directly, the
     # same way tests/services/test_context_preflight.py::register_context_unit does.
     unit.state = WorkUnitState.READY
     session.commit()
