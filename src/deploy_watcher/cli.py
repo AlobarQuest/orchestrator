@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from typing import Any
 
@@ -196,11 +197,20 @@ def watch(
     now = datetime.now(UTC)
     found = incomplete = False
 
-    with (
-        GitHubReader(github_token) as reader,
-        ChangeManagerClient(cm_token, base_url=change_manager_url) as changes,
-        OrchestratorClient(orchestrator_token, base_url=orchestrator_url) as units,
-    ):
+    with ExitStack() as stack:
+        try:
+            # Built inside the guard: a malformed address is refused at construction (ADR-0050),
+            # and it must be reported the way the same typo failing at request time always was.
+            reader = stack.enter_context(GitHubReader(github_token))
+            changes = stack.enter_context(
+                ChangeManagerClient(cm_token, base_url=change_manager_url)
+            )
+            units = stack.enter_context(
+                OrchestratorClient(orchestrator_token, base_url=orchestrator_url)
+            )
+        except (ChangeManagerError, OrchestratorError) as error:
+            _say(f"[incomplete] {error}")
+            raise typer.Exit(code=EXIT_INCOMPLETE) from error
         try:
             # The source is NAMED. `GET /api/items` withholds proposed sources when it is not,
             # which is increment 1's guard keeping these records away from the 04:00 executor --
@@ -610,10 +620,16 @@ def recheck(
     cm_token = _require(CHANGE_MANAGER_TOKEN_VAR)
     found = incomplete = False
 
-    with (
-        GitHubReader(github_token) as reader,
-        ChangeManagerClient(cm_token, base_url=change_manager_url) as changes,
-    ):
+    with ExitStack() as stack:
+        try:
+            # Built inside the guard, for the reason the observing pass gives.
+            reader = stack.enter_context(GitHubReader(github_token))
+            changes = stack.enter_context(
+                ChangeManagerClient(cm_token, base_url=change_manager_url)
+            )
+        except ChangeManagerError as error:
+            _say(f"[incomplete] {error}")
+            raise typer.Exit(code=EXIT_INCOMPLETE) from error
         try:
             records = changes.deploy_changes()
         except ChangeManagerError as error:

@@ -347,6 +347,29 @@ def test_the_orchestrator_credential_is_REQUIRED(monkeypatch: pytest.MonkeyPatch
     assert "DEPLOY_WATCHER_ORCHESTRATOR_TOKEN" in result.output
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["watch", "--change-manager-url", "https://change-mgr..alobar.net"],
+        ["watch", "--orchestrator-url", "https://sds..alobar.net"],
+        ["recheck", "--change-manager-url", "https://change-mgr..alobar.net"],
+    ],
+)
+def test_a_malformed_address_is_an_incomplete_pass_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, args: list[str]
+) -> None:
+    """The clients refuse a malformed address at construction (ADR-0050). Construction sits
+    inside the pass's guard, so the typo is reported and exits as incomplete, the way it did when
+    it only failed at request time."""
+    monkeypatch.setenv("DEPLOY_WATCHER_GITHUB_TOKEN", "g")
+    monkeypatch.setenv("DEPLOY_WATCHER_CHANGE_MANAGER_TOKEN", "c")
+    monkeypatch.setenv("DEPLOY_WATCHER_ORCHESTRATOR_TOKEN", "o")
+    result = CliRunner().invoke(watcher_cli.app, args)
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert result.exit_code == watcher_cli.EXIT_INCOMPLETE
+    assert "malformed host" in result.output
+
+
 def test_the_recheck_pass_does_NOT_need_it() -> None:
     """The control on the line above: `recheck` re-derives stored observations from GitHub and
     speaks to the orchestrator not at all, so requiring the credential there would be ceremony.
