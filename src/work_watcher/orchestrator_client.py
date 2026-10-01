@@ -78,7 +78,6 @@ class OrchestratorClient:
         self._headers = {
             "Authorization": f"Bearer {token}",
             "X-Credential-Key-Id": key_id,
-            "User-Agent": USER_AGENT,
             "Accept": "application/json",
         }
 
@@ -114,6 +113,7 @@ class OrchestratorClient:
         try:
             client = ConfinedClient(
                 base_url=self._base_url,
+                user_agent=USER_AGENT,
                 timeout=self._timeout,
                 headers=self._headers,
                 transport=self._transport,

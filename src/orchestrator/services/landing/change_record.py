@@ -39,6 +39,8 @@ from typing import Any, Final, Protocol
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
+
 # Why THIS process has no answer -- distinct from change-manager answering that it holds no record,
 # which is a statement about the estate. These need different people: one sets an environment
 # variable, the other looks at why a service is refusing.
@@ -58,6 +60,27 @@ STATUS_APPROVED: Final = "approved"
 
 _ROUTE: Final = "/api/items"
 _USER_AGENT: Final = "orchestrator-change-record-check/1 (+AlobarQuest/orchestrator)"
+
+
+class _ForbiddenRoute(Exception):
+    """This reader tried to reach a route other than its one."""
+
+
+def _confined(
+    base_url: str, token: str, timeout: float, transport: httpx.BaseTransport | None
+) -> ConfinedClient:
+    """The shared confined transport, permitted exactly one read: ``GET {_ROUTE}``."""
+    return ConfinedClient(
+        base_url=base_url,
+        user_agent=_USER_AGENT,
+        headers={"authorization": f"Bearer {token}"},
+        timeout=timeout,
+        transport=transport,
+        permits=lambda method, path: method == "GET" and path == _ROUTE,
+        refuse=lambda method, path: _ForbiddenRoute(
+            f"the change-record reader may not {method} {path}"
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -217,25 +240,13 @@ class HttpChangeRecordSource:
         if not self._base_url or not self._token or not self._pipeline:
             return ChangeRecordAnswer(False, reason=SOURCE_UNCONFIGURED)
         try:
-            with httpx.Client(transport=self._transport, timeout=self._timeout_seconds) as client:
-                response = client.get(
-                    f"{self._base_url}{_ROUTE}",
-                    params={"source": self._pipeline},
-                    headers={
-                        "authorization": f"Bearer {self._token}",
-                        "user-agent": _USER_AGENT,
-                    },
-                )
-        # THREE families, and the totality this module promises is only as complete as this tuple.
-        # `InvalidURL` is not an `HTTPError` -- it derives straight from `Exception` -- and
-        # `UnicodeError` (a `ValueError`) is raised by IDNA encoding of a malformed HOST before
-        # either of them can be, for a doubled dot or a DNS label over 63 characters. None of the
-        # three inputs is exotic: they are the ordinary ways a URL in an environment variable gets
-        # malformed, and `.rstrip("/")` removes none of them. Adversarial review found the third
-        # by probing rather than by reading -- the control written for this class used a trailing
-        # newline, which `InvalidURL` already covered, so the mutation guarding it was killed by a
-        # test that shared the same incomplete model of what httpx raises.
-        except httpx.HTTPError, httpx.InvalidURL, ValueError:
+            client = _confined(self._base_url, self._token, self._timeout_seconds, self._transport)
+            try:
+                response = client.request("GET", _ROUTE, params={"source": self._pipeline})
+            finally:
+                client.close()
+        # Every transport failure, construction included, is no answer (ADR-0050).
+        except TransportFailure:
             return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
         if response.status_code != 200:
             return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)

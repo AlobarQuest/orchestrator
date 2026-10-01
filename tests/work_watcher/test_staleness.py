@@ -525,9 +525,7 @@ def test_the_pipeline_listing_names_the_source_and_leaves_status_to_the_caller()
     source = PipelineListing(
         base_url="https://example.invalid",
         token="t",
-        client=httpx.Client(
-            base_url="https://example.invalid", transport=httpx.MockTransport(handler)
-        ),
+        transport=httpx.MockTransport(handler),
     )
     pipeline = source.work_pipeline()
 

@@ -27,6 +27,8 @@ from typing import Any, Final
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
+
 DEFAULT_BASE_URL: Final = "https://change-mgr.alobar.net"
 USER_AGENT: Final = "bump-proposer/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 30.0
@@ -64,6 +66,14 @@ def is_allowed_read(path: str) -> bool:
     return path == _ITEMS
 
 
+def _permits(method: str, path: str) -> bool:
+    return is_allowed_read(path) if method == "GET" else is_allowed_write(path)
+
+
+def _refuse(method: str, path: str) -> ForbiddenEndpointError:
+    return ForbiddenEndpointError(f"the producer may not {method} {path}")
+
+
 def _detail(response: httpx.Response) -> str:
     """change-manager's own explanation, bounded. Never the whole body, never headers."""
     try:
@@ -83,24 +93,22 @@ class ChangeManagerClient:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         try:
-            self._client = httpx.Client(
-                base_url=base_url.rstrip("/"),
+            self._client = ConfinedClient(
+                base_url=base_url,
+                user_agent=USER_AGENT,
                 timeout=TIMEOUT_SECONDS,
                 transport=transport,
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "User-Agent": USER_AGENT,
                     "Accept": "application/json",
                 },
+                permits=_permits,
+                refuse=_refuse,
             )
-        except (httpx.InvalidURL, ValueError) as error:
-            # Construction raises for some malformed URLs and request time for others, and the
-            # split is not obvious: a control character is refused here by `urlparse`, while a
-            # doubled dot or an over-long DNS label survives until IDNA encoding at `request`.
-            # Guarding only the request path leaves an environment-variable typo crashing the
-            # pass with a traceback instead of reporting a finding.
+        except TransportFailure as failure:
+            # Construction is guarded as well as the request (ADR-0050).
             raise ChangeManagerError(
-                f"the change-manager base URL is unusable: {type(error).__name__}"
+                f"the change-manager base URL is unusable: {failure.error_type}"
             ) from None
 
     def close(self) -> None:
@@ -113,19 +121,12 @@ class ChangeManagerClient:
         self.close()
 
     def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        """The ONE way anything leaves this process, guard first."""
-        permitted = is_allowed_read(path) if method == "GET" else is_allowed_write(path)
-        if not permitted:
-            raise ForbiddenEndpointError(f"the producer may not {method} {path}")
+        """The ONE way anything leaves this process; the confined client asks `_permits` first."""
         try:
             response = self._client.request(method, path, **kwargs)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # The exception TYPE only. An httpx error carries the request, and a diagnostic
-            # that prints what it was given is how a bearer token reaches a transcript.
-            # `ValueError` is in the tuple because IDNA encoding of a malformed host raises
-            # `UnicodeError`, which is neither an `HTTPError` nor an `InvalidURL`.
+        except TransportFailure as failure:
             raise ChangeManagerError(
-                f"change-manager is unreachable for {method} {path}: {type(error).__name__}"
+                f"change-manager is unreachable for {method} {path}: {failure.error_type}"
             ) from None
         if response.status_code == 409:
             raise ProposalRefused(f"change-manager refused {method} {path}: {_detail(response)}")

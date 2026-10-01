@@ -18,6 +18,9 @@ What lives here and nowhere else:
 * **Construction is guarded as well as the request.** `httpx` refuses some malformed URLs at the
   constructor (a control character) and others only at request time, so a guard on one half is
   not a guard.
+* **Every client names itself.** `user_agent` is required. change-manager sits behind Cloudflare,
+  which refuses Python's default agent with `error code: 1010` before the request reaches the
+  application -- a 403 that reads like an authentication failure.
 * **A failure carries the exception's TYPE and nothing else.** An `httpx` error holds the request,
   and a diagnostic that prints what it was given is how a bearer token reaches a transcript.
 
@@ -109,6 +112,7 @@ class ConfinedClient:
         self,
         *,
         base_url: str,
+        user_agent: str,
         headers: Mapping[str, str],
         timeout: float,
         permits: Callable[[str, str], bool],
@@ -116,12 +120,14 @@ class ConfinedClient:
         transport: httpx.BaseTransport | None = None,
         follow_redirects: bool = False,
     ) -> None:
+        if not user_agent.strip():
+            raise ValueError("a confined client must name itself in its User-Agent")
         self._permits = permits
         self._refuse = refuse
         try:
             self._client = httpx.Client(
                 base_url=base_url.rstrip("/"),
-                headers=dict(headers),
+                headers={**headers, "User-Agent": user_agent},
                 timeout=timeout,
                 transport=transport,
                 follow_redirects=follow_redirects,

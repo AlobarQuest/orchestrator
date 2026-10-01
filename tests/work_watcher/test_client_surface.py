@@ -115,9 +115,7 @@ def test_a_forbidden_write_never_reaches_the_transport() -> None:
     client = RetirementClient(
         base_url="https://change-mgr.example",
         token="x",
-        client=httpx.Client(
-            base_url="https://change-mgr.example", transport=httpx.MockTransport(record)
-        ),
+        transport=httpx.MockTransport(record),
     )
     with pytest.raises(ForbiddenEndpointError):
         client._post("/api/items/61/approve", {"actor": "x"})

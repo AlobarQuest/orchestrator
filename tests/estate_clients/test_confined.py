@@ -27,6 +27,7 @@ def _client(
 ) -> ConfinedClient:
     return ConfinedClient(
         base_url=base_url,
+        user_agent="test-client/1",
         headers={"Authorization": "Bearer secret-token"},
         timeout=5.0,
         permits=lambda _method, _path: permits,
@@ -52,12 +53,24 @@ def test_a_permitted_request_is_sent() -> None:
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(f"{request.method} {request.url.path}")
+        seen.append(f"{request.method} {request.url.path} {request.headers['user-agent']}")
         return httpx.Response(204)
 
     response = _client(httpx.MockTransport(handler)).request("GET", "/x")
     assert response.status_code == 204
-    assert seen == ["GET /x"]
+    assert seen == ["GET /x test-client/1"]
+
+
+def test_a_client_must_name_itself() -> None:
+    with pytest.raises(ValueError, match="User-Agent"):
+        ConfinedClient(
+            base_url="https://service.example",
+            user_agent=" ",
+            headers={},
+            timeout=5.0,
+            permits=lambda _method, _path: True,
+            refuse=lambda method, path: Refused(f"{method} {path}"),
+        )
 
 
 def test_a_transport_failure_carries_only_the_exception_type() -> None:
