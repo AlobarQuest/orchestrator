@@ -151,7 +151,11 @@ style of that module.
   `authority.constraints.target_repository`, never from a process-global setting.
   A global target does not fail closed — it silently misroutes every fan-out unit
   to whichever repo was configured at process start.
-- **The scope guard covers ALL of `src/orchestrator/`, not just `kernel/`** — an earlier
+- **[NARROWED 2026-10-01 by ADR-0051: the ws32/ws33/ws34 word guards read CODE only --
+  identifiers, imports, and string constants with no whitespace that are not docstrings.
+  Prose, docstrings included, no longer reddens them, ws33's bare `merges` is gone, and
+  ws52/ws53/ws61 are deleted. What follows is the record of the old behaviour.]**
+  **The scope guard covers ALL of `src/orchestrator/`, not just `kernel/`** — an earlier
   version of this bullet said `kernel/`, and that is wrong.
   `tests/architecture/test_ws32_scope_guards.py` walks `SOURCE_ROOT = src/orchestrator`
   and scans runtime string literals **including docstrings**, minus an explicit
@@ -766,7 +770,11 @@ style of that module.
   undeclared keys in the `runner.pr.opened` evidence payload (`unknown_brief_keys`), so an escape is
   neither fatal nor invisible.
 
-- **Adding a route — `/api` OR `/review` — or a new `src/orchestrator/` module trips a FAMILY of
+- **[NARROWED 2026-10-01 by ADR-0051: the ws32/ws33/ws34 word guards read CODE only --
+  identifiers, imports, and string constants with no whitespace that are not docstrings.
+  Prose, docstrings included, no longer reddens them, ws33's bare `merges` is gone, and
+  ws52/ws53/ws61 are deleted. What follows is the record of the old behaviour.]**
+  **Adding a route — `/api` OR `/review` — or a new `src/orchestrator/` module trips a FAMILY of
   architecture guards. There are FIVE, and three are exact set-equality inventories that fail CI on
   a missing entry.** The `test_ws32_scope_guards.py` word guard (bare tokens `deploy`/`dispatch`,
   with the `WS42_DISPATCH_PATHS`/`WS53_POST_DEPLOY_PATHS` allowlists) is the one this file documents
@@ -1468,7 +1476,11 @@ style of that module.
   that is xdist safe, keyed per worker (`orchestrator_test_gw0…`), because the fixtures drop and
   recreate the database and two suites must never share it.
 
-- **`coolify` is a forbidden runtime string literal in `src/orchestrator/`, in addition to the
+- **[NARROWED 2026-10-01 by ADR-0051: the ws32/ws33/ws34 word guards read CODE only --
+  identifiers, imports, and string constants with no whitespace that are not docstrings.
+  Prose, docstrings included, no longer reddens them, ws33's bare `merges` is gone, and
+  ws52/ws53/ws61 are deleted. What follows is the record of the old behaviour.]**
+  **`coolify` is a forbidden runtime string literal in `src/orchestrator/`, in addition to the
   `dispatch` / `deploy` / `merges` tokens documented above.** WS-P2.18 Inc 1 reddened both
   `test_ws32_scope_guards` and `test_ws34_scope_guards` on the phrase "a Coolify application or
   database" in a **description string**. The full ws32 forbidden sequence list is `factory-event/v1`,
@@ -1780,7 +1792,11 @@ style of that module.
   permission *does* something — `GET /repos/{repo}/pulls` answered 403 before and 200 after —
   because a reported permission and a functioning one are the same class of difference.
 
-- **`test_ws34_scope_guards` forbids the literal `github.actions`, and the CLAUDE.md list of ws34's
+- **[NARROWED 2026-10-01 by ADR-0051: the ws32/ws33/ws34 word guards read CODE only --
+  identifiers, imports, and string constants with no whitespace that are not docstrings.
+  Prose, docstrings included, no longer reddens them, ws33's bare `merges` is gone, and
+  ws52/ws53/ws61 are deleted. What follows is the record of the old behaviour.]**
+  **`test_ws34_scope_guards` forbids the literal `github.actions`, and the CLAUDE.md list of ws34's
   forbidden strings omits it.** The full set in
   `test_ws34_adds_no_factory_runner_or_workflow_dispatch_code` is `workflow_dispatch`,
   `factory_runner`, **`github.actions`**, allowlisted only in `services/execution/dispatch.py`
@@ -5198,7 +5214,11 @@ style of that module.
   do"*. Note what it means for reporting, which is the part that misleads: two merged pull requests
   now point at one landing.
 
-- **A MULTI-TOKEN `FORBIDDEN_SEQUENCES` ENTRY MATCHES ORDINARY SPACED PROSE, so quoting a commit
+- **[NARROWED 2026-10-01 by ADR-0051: the ws32/ws33/ws34 word guards read CODE only --
+  identifiers, imports, and string constants with no whitespace that are not docstrings.
+  Prose, docstrings included, no longer reddens them, ws33's bare `merges` is gone, and
+  ws52/ws53/ws61 are deleted. What follows is the record of the old behaviour.]**
+  **A MULTI-TOKEN `FORBIDDEN_SEQUENCES` ENTRY MATCHES ORDINARY SPACED PROSE, so quoting a commit
   message or a pull-request title in a docstring reddens the ws32 guard.** Measured 2026-09-14
   against the guard's own functions. The entries are `(label, token-tuple)` pairs —
   `("merge_pull_request", ("merge", "pull", "request"))` — `_tokenize` lowercases, splits camelCase
