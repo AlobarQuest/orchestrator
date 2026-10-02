@@ -20,17 +20,18 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Required, TypedDict, Unpack
 
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import get_actor, get_session
 from orchestrator.api.schemas.common import CommandBase
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope, normalize_authority
-from orchestrator.kernel.states import ActorContext, ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
 from orchestrator.services.intake.packages import (
     DependencySpec,
@@ -125,7 +126,21 @@ def mount_seeding_routes(app: FastAPI) -> None:
     app.include_router(seeding_router)
 
 
-def register_ready_unit(
+class SeededUnitFields(TypedDict, total=False):
+    """`register_seeded_unit`'s keyword arguments, so the wrappers that forward them stay typed."""
+
+    authority: Required[dict[str, Any]]
+    unit_key: str | None
+    title: str | None
+    outcome: str
+    source_repository: str
+    content_hash: str | None
+    source_commit: str
+    enforcement_snapshot: dict[str, Any] | None
+    approved_at: datetime
+
+
+def register_seeded_unit(
     db_client: TestClient,
     key: str,
     *,
@@ -134,13 +149,15 @@ def register_ready_unit(
     title: str | None = None,
     outcome: str = "the answer is inspectable",
     source_repository: str = "owner/repo",
+    content_hash: str | None = None,
+    source_commit: str = "abc123",
     enforcement_snapshot: dict[str, Any] | None = None,
     approved_at: datetime = datetime(2026, 7, 5, tzinfo=UTC),
-) -> str:
-    """Register a revision and one unit under ``key``, approve its authority, and make it ready."""
+) -> tuple[str, str]:
+    """Register a revision and one unit under ``key`` through the seeding routes; return the ids."""
     # Imported here, not at the top: test_lifecycle_api imports this module for SEED_REVISIONS,
     # so a module-level import back into it would be circular.
-    from tests.api.test_lifecycle_api import HUMAN, SYSTEM
+    from tests.api.test_lifecycle_api import HUMAN
 
     snapshot = enforcement_snapshot
     if snapshot is None:
@@ -154,9 +171,9 @@ def register_ready_unit(
             "package_id": f"{key}-package",
             "source_repository": source_repository,
             "revision": 1,
-            "content_hash": f"sha256:{key}",
+            "content_hash": content_hash or f"sha256:{key}",
             "source_path": "intent.md",
-            "source_commit": "abc123",
+            "source_commit": source_commit,
             "approved_by": "devon",
             "approved_at": approved_at.isoformat(),
             "approval_event_id": str(uuid.uuid4()),
@@ -166,8 +183,9 @@ def register_ready_unit(
         },
     )
     assert revision.status_code == 201, revision.text
+    revision_id = str(revision.json()["id"])
     unit = db_client.post(
-        seed_units_path(revision.json()["id"]),
+        seed_units_path(revision_id),
         headers=HUMAN,
         json={
             "idempotency_key": f"{key}-unit",
@@ -183,7 +201,16 @@ def register_ready_unit(
         },
     )
     assert unit.status_code == 201, unit.text
-    unit_id = str(unit.json()["id"])
+    return revision_id, str(unit.json()["id"])
+
+
+def register_ready_unit(
+    db_client: TestClient, key: str, **registration: Unpack[SeededUnitFields]
+) -> str:
+    """Register a unit as `register_seeded_unit` does, approve its authority, and make it ready."""
+    from tests.api.test_lifecycle_api import HUMAN, SYSTEM
+
+    _, unit_id = register_seeded_unit(db_client, key, **registration)
     approved = db_client.post(
         f"/api/v1/work-units/{unit_id}/approvals",
         headers=HUMAN,
@@ -202,6 +229,22 @@ def register_ready_unit(
     )
     assert ready.status_code == 200, ready.text
     return unit_id
+
+
+def register_completed_unit(
+    db_client: TestClient, engine: Engine, key: str, **registration: Unpack[SeededUnitFields]
+) -> tuple[str, str]:
+    """Register a unit as `register_seeded_unit` does, then write it straight to COMPLETED.
+
+    The write skips the lifecycle on purpose: these tests are about what happens after completion.
+    """
+    revision_id, unit_id = register_seeded_unit(db_client, key, **registration)
+    with Session(engine) as session:
+        unit = session.get(WorkUnit, uuid.UUID(unit_id))
+        assert unit is not None
+        unit.state = WorkUnitState.COMPLETED
+        session.commit()
+    return revision_id, unit_id
 
 
 # Session-level seeding, for tests that call the service functions directly rather than the routes.
