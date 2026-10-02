@@ -76,3 +76,20 @@ never by `create_app()`. Production does not serve them.
 - Rerunning `attest_wave_exit.py` measures Wave 1 clause 1 from its retained evidence alone.
 - `test_drill_scripts.py`, the seventh architecture guard, goes with the scripts it guarded; the
   replacement suite should carry its equivalent (drills change state only through the public API).
+
+## Amendment 1: the replacement suite (2026-10-02)
+
+The five drills are rebuilt as pytest tests in `tests/protocol/drills/` (backlog `d5e596e35e0a`).
+Each unit is born through package intake and a `/review` breakdown approval, so the drills reach
+only routes production serves. `tests/_support/protocol.py` holds the shared setup, which the
+WS-3.3 smoke test now uses too.
+
+- **They run in every `make check` and in CI.** The scripts ran by hand and went unexercised;
+  tests cannot.
+- **The retired guard has an equivalent.** `test_drills_change_state_publicly.py` refuses a
+  session write or a service import in a drill file, and allows exactly one writing function in the
+  shared setup, `expire_latest_claim`, because `DEFAULT_LEASE` is fifteen real minutes.
+- **What they do not do.** A crash is a fresh application over the same database rather than a
+  killed process, and they run locally only.
+- **Wave 1 clause 1 stays attested by its retained evidence.** A live check there would need
+  Postgres in the manual attestation workflow, and CI already runs the drills on every pull request.
