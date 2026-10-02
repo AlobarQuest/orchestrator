@@ -31,7 +31,6 @@ The instance runs `a351452-tier3-amd64`, which carries Tier 1, Tier 2 and Tier 3
 backlog rather than structure:
 
 - Python 3.14 for the three hook-run satellites (`fe09c9110a5c`).
-- A replacement drill suite (`d5e596e35e0a`, ADR-0049).
 - The rest of the seeding helpers (`12b7427f1f46`).
 
 `tests/architecture/test_layering.py` keeps its own import scanner on purpose. It needs the names

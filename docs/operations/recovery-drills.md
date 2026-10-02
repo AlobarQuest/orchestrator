@@ -1,10 +1,25 @@
 # Recovery drills
 
-> **Retired.** The five local drills, `drill_common.sh`, `run-drills.sh` and the seeding routes they
-> used were deleted by ADR-0049 (2026-09-28). This page is kept as the record of what they covered.
-> Exit criterion 5 was met by their 2026-07-27 production run
-> (`~/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md`); a replacement
-> suite that drives state only through the public API is backlogged (P2, `d5e596e35e0a`).
+> **Replaced.** The five drills are pytest tests in `tests/protocol/drills/`, run by every
+> `make check` and by CI. They drive state only through public routes: a unit is born through
+> package intake and a `/review` breakdown approval, never a seeding route, and the one sanctioned
+> write is lease expiry. `test_drills_change_state_publicly.py` holds them to that. Run them alone
+> with `pytest tests/protocol/drills`.
+>
+> | Drill | Test |
+> |---|---|
+> | 1, crash after dispatch | `test_drill_crash_after_dispatch.py` |
+> | 2, lease lapse before submit | `test_drill_lapse_before_submit.py` |
+> | 3, external pull request | `test_drill_external_pull_request.py` |
+> | 4, deploy split brain | `test_drill_deploy_split_brain.py` |
+> | 5, unanswered approval | `test_drill_unanswered_approval.py` |
+>
+> Two differences from the scripts below. A crash is a fresh application over the same database,
+> not a signal to a real process, which proves the state survives but not that a process does. And
+> the suite runs locally only; exit criterion 5 was met by the 2026-07-27 production run
+> (`~/docs/software-delivery-system/2026-07-27-production-recovery-drill-run.md`).
+>
+> The rest of this page is the record of the retired shell scripts (ADR-0049, 2026-09-28).
 
 Five scripted drills that put the orchestrator through the failures it is built to survive, and
 check that it actually survives them. They exist because recovery controls that have never been

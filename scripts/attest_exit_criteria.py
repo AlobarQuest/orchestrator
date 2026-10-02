@@ -12,7 +12,7 @@ Usage:
     python scripts/attest_exit_criteria.py --openapi-url http://127.0.0.1:8000/openapi.json
 
 Exit 0: every claimed route is served. Exit 1: at least one claim cites an unserved route.
-Runs quarterly with the recovery drills, and after any production image swap.
+Runs weekly in `attest-exit-criteria.yml`, and after any production image swap.
 """
 
 from __future__ import annotations
