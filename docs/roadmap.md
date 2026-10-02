@@ -27,22 +27,17 @@ instance at `sds.alobar.net`, and its scheduled lanes running against that deplo
 
 ## Remaining 1.0 work
 
-1. **Deploy the instance.** Production runs `ae88b28-tier1-amd64`, which predates Tier 2 and most of
-   Tier 3. Follow `docs/operations/migrations.md`: build the image, run `alembic upgrade head` from
-   the new image (migration 0038 drops `infra_lane_links`), then swap the Coolify tag. Verify the
-   digest, `alembic current` against `alembic heads`, the served OpenAPI paths, and the revision
-   that `/health/live` reports. Keep the kill-switch environment variables set until this deploy
-   lands, and don't break down `wsp211-conformance-kit` revision 1 before it.
-2. **Remove what the deploy makes dead.**
-   - Delete the Coolify environment variables `ORCHESTRATOR_BRAIN_PROPOSAL_*`. Nothing reads them,
-     and they may hold writable Brain keys.
-   - Delete the Traefik router `orchestrator-promotion-human`, which points at deleted paths.
-3. **Finish the follow-ups.**
-   - Point `tests/architecture/test_layering.py` at the shared `import_scan.py`.
-   - Advance factory-runner's `RECOMMENDED_CALLER_PIN` and every caller pin onto the Python 3.14
-     revision (factory-runner #85).
-   - Backlog: Python 3.14 for the three hook-run satellites (`fe09c9110a5c`), a replacement drill
-     suite (`d5e596e35e0a`, ADR-0049), and the rest of the seeding helpers (`12b7427f1f46`).
+The instance runs `a351452-tier3-amd64`, which carries Tier 1, Tier 2 and Tier 3. What is left is
+backlog rather than structure:
+
+- Python 3.14 for the three hook-run satellites (`fe09c9110a5c`).
+- A replacement drill suite (`d5e596e35e0a`, ADR-0049).
+- The rest of the seeding helpers (`12b7427f1f46`).
+
+`tests/architecture/test_layering.py` keeps its own import scanner on purpose. It needs the names
+after `from orchestrator import …` and must tell `import orchestrator` apart from
+`from orchestrator import x`; the shared `import_scan.py` reports both as `orchestrator`, and its
+other callers depend on that output staying as it is.
 
 ## After 1.0
 
