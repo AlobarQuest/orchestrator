@@ -649,3 +649,32 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   2026-09-15), so removing the variable from the deployment can happen in either order. (3) The
   parser is private because `test_unreachable_guards` does not count a call from a method in the same
   module as reachable; the agreement test reads through the client with a mock transport instead.
+
+## Added since the move
+
+### Test a caller pin before merging it
+
+To move a caller workflow onto a new factory-runner revision, prove the new pin works before any
+pull request merges:
+
+1. Push the pin change to a branch in one caller repository, for example `runner-pin-<sha>`.
+2. Dispatch that repository's caller from the branch with a well-formed work-unit ID that doesn't
+   exist:
+
+   ```bash
+   gh workflow run factory-runner-pilot.yml -R AlobarQuest/<repo> --ref <branch> \
+     -f work_unit_id=00000000-0000-4000-8000-000000000000
+   ```
+
+3. Read the failed step. The run is healthy if "Install pinned factory runner" and "Verify factory
+   runner revision" pass, and "Prepare scoped run" fails with
+   `404 work_unit_not_found`. That answer proves the runner installed, authenticated to
+   production, and reached the orchestrator. A 401 means the credential is wrong; a failure before
+   "Prepare scoped run" means the install is broken.
+
+The probe changes nothing: the runner claims before it codes, and an unknown unit has nothing to
+claim. Then merge the callers, and advance `RECOMMENDED_CALLER_PIN` last. `runner.caller` requires
+an exact match, so the order only shortens the window in which the two disagree.
+
+Measured on 2026-10-01 moving to `fec677b` (Python 3.14): the probe, run 36951954378, installed the
+runner on CPython 3.14.8 and stopped at `404 work_unit_not_found`.

@@ -1302,3 +1302,23 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   reviewer reading the wrong tree returns plausible prose about real code that is not yours — which
   a reader acts on. **Name the pull request and the checkout path when invoking it**, and check that
   what it reviewed is what you changed before believing any finding, including a clean one.
+
+## Added since the move
+
+### Check a restated rule against its whole source, not its headline
+
+When a long rule is condensed, the clauses that drop out are the qualifications, and they are
+usually the part that carried the rule's value. Moving CLAUDE.md's invariants on 2026-10-01
+restated 103 rules; a review of the restatements against their full original text found seven that
+had lost or overstated something, and none was false at headline level:
+
+- a rule kept "envelope expansion has no detector" and dropped the standing-context approval rule
+  beside it;
+- "held equal across all sites" turned a deliberate `>=` relation into an equality;
+- a verifier rule dropped both its human gate and the instruction never to add a type to
+  `DETERMINISTIC_TYPES`;
+- a route rule sent every new route to a matrix that covers only ingress POST routes.
+
+So when you summarize, restate, or move a rule, check each restatement against the full text it
+came from, clause by clause. Reviewing the restatements on their own, however carefully, can't
+find a clause that isn't there.
