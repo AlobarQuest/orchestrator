@@ -251,6 +251,7 @@ def register_unit(
     unit_id: uuid.UUID | None = None,
     dependencies: tuple[DependencySpec, ...] = (),
     acceptance_criteria: tuple[str, ...] = ("ac-1",),
+    authority: AuthorityEnvelope = AUTHORITY,
 ) -> WorkUnit:
     revision = register_test_revision(session, acceptance_criteria=acceptance_criteria)
     return register_approved_unit(
@@ -261,7 +262,7 @@ def register_unit(
         title=key,
         outcome=f"{key} complete",
         required_capability="repo.edit",
-        authority=AUTHORITY,
+        authority=authority,
         max_attempts=3,
         approved_by="human-1",
         approved_at=NOW,
