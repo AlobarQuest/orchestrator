@@ -18,7 +18,7 @@ from orchestrator.services.reconciliation.reconciliation_detection import (
     detect_observation_conditions,
 )
 from orchestrator.services.release.observations import ObservationCommand, record_observation
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 HEAD = "a" * 40

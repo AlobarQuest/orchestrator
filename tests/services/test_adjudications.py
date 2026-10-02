@@ -23,7 +23,7 @@ from orchestrator.services.verifier.evidence import (
     record_adjudications,
 )
 from orchestrator.services.verifier.verifier_evaluators import human_may_adjudicate
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 
 
 def record(session: Session, command: dict[str, Any]) -> Adjudication | DomainError:

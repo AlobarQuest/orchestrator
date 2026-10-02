@@ -22,7 +22,7 @@ from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Event, WorkUnit
 from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
 from orchestrator.services.lifecycle.cost_actuals import record_cost_actuals
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 from tests.services.test_evidence import active_claim, worker
 
 # `record_cost_actuals` commits, and the session's default `expire_on_commit=True` expires the

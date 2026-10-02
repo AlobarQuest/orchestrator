@@ -6,7 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from tests.services.test_package_registration import register_test_revision
+from tests._support.seeding import register_test_revision
 
 
 @pytest.mark.parametrize(

@@ -18,7 +18,7 @@ from orchestrator.services.lifecycle.pr_bindings import (
     record_verification_read_head,
     upsert_pr_binding,
 )
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 WORKER = ActorContext("worker-1", ActorRole.WORKER)

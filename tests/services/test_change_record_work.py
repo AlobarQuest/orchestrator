@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from orchestrator.kernel.states import ActorRole
 from orchestrator.services.intake.change_record_work import work_for_change_record
 from orchestrator.services.intake.packages import register_approved_unit, register_revision
-from tests.services.test_package_registration import AUTHORITY, NOW
+from tests._support.seeding import AUTHORITY, NOW
 
 RECORD = 61
 OTHER_RECORD = 62

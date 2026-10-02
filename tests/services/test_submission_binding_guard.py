@@ -25,7 +25,7 @@ from orchestrator.services.lifecycle.pr_bindings import (
     get_pr_binding,
     upsert_pr_binding,
 )
-from tests.services.test_package_registration import NOW, register_test_revision
+from tests._support.seeding import NOW, register_test_revision
 
 WORKER = ActorContext("worker", ActorRole.WORKER)
 SYSTEM = ActorContext("lease-reaper", ActorRole.SYSTEM)

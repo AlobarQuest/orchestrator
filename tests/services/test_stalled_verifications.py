@@ -27,7 +27,7 @@ from orchestrator.config import Settings
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import WorkUnit
 from orchestrator.services.reporting.dead_letter import dead_letter
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 
 THRESHOLD = 3
 WEEK = 604_800

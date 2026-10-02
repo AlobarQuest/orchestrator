@@ -24,8 +24,8 @@ from orchestrator.services.reconciliation.reconciliation import (
     record_reconciliation_condition,
 )
 from orchestrator.services.reporting.pending_decisions import pending_decisions
+from tests._support.seeding import register_unit
 from tests.services.test_decomposition import package_ac_ids, proposal_command, worker_actor
-from tests.services.test_dependencies import register_unit
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
 from tests.web.conftest import _review_unit_with_criteria
 

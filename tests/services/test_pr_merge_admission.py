@@ -48,6 +48,7 @@ from orchestrator.services.lifecycle.pr_bindings import (
     record_verification_read_head,
     upsert_pr_binding,
 )
+from tests._support.seeding import NOW, register_test_revision
 from tests.services.change_record_doubles import (
     RECORD_AMBIGUOUS,
     ChangeRecordAnswer,
@@ -65,7 +66,6 @@ from tests.services.estate_doubles import (
     redeploying_source,
 )
 from tests.services.test_adjudications import FROM_EVALUATION, add_criterion
-from tests.services.test_package_registration import NOW, register_test_revision
 from tests.services.test_verifier_decided_completion import VERIFIER, _decide
 
 OBSERVED_TYPE = VERIFIER_NAMED_CHECK_EVIDENCE_TYPE

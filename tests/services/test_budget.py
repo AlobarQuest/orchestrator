@@ -12,7 +12,7 @@ from orchestrator.services.lifecycle.budget import (
     declared_ceiling,
     is_over_budget,
 )
-from tests.services.test_package_registration import AUTHORITY as READY_UNIT_AUTHORITY
+from tests._support.seeding import AUTHORITY as READY_UNIT_AUTHORITY
 
 READY_UNIT_MAX_LLM_CALLS = READY_UNIT_AUTHORITY.budgets.max_llm_calls
 

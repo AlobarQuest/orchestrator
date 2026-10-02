@@ -9,43 +9,14 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.readiness import ReadinessStatus
-from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Approval, Dependency, WorkUnit
+from orchestrator.persistence.models import Approval, Dependency
 from orchestrator.services.intake.packages import (
     DependencySpec,
     evaluate_readiness,
-    register_approved_unit,
     register_dependency,
     resolve_dependency,
 )
-from tests.services.test_package_registration import AUTHORITY, NOW, register_test_revision
-
-
-def register_unit(
-    session: Session,
-    key: str,
-    *,
-    unit_id: uuid.UUID | None = None,
-    dependencies: tuple[DependencySpec, ...] = (),
-    acceptance_criteria: tuple[str, ...] = ("ac-1",),
-) -> WorkUnit:
-    revision = register_test_revision(session, acceptance_criteria=acceptance_criteria)
-    return register_approved_unit(
-        session,
-        unit_id=unit_id,
-        revision_id=revision.id,
-        unit_key=key,
-        title=key,
-        outcome=f"{key} complete",
-        required_capability="repo.edit",
-        authority=AUTHORITY,
-        max_attempts=3,
-        approved_by="human-1",
-        approved_at=NOW,
-        actor_id="human-1",
-        actor_role=ActorRole.HUMAN,
-        dependencies=dependencies,
-    )
+from tests._support.seeding import register_unit
 
 
 def test_internal_dependency_cycle_is_rejected(migrated_session: Session) -> None:

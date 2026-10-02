@@ -19,8 +19,8 @@ from orchestrator.services.lifecycle.claims import (
     claim_unit,
     reclaim_expired_claim,
 )
+from tests._support.seeding import register_unit
 from tests.services.test_claims import worker
-from tests.services.test_dependencies import register_unit
 from tests.services.test_reclaim import authorize_readiness, expire
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)

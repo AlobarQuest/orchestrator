@@ -14,7 +14,7 @@ from orchestrator.services.intake.packages import (
 )
 from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
 from orchestrator.services.lifecycle.context import PreflightCommand, record_preflight
-from tests.services.test_package_registration import AUTHORITY, NOW
+from tests._support.seeding import AUTHORITY, NOW
 
 
 def valid_context(**overrides: Any) -> dict[str, object]:

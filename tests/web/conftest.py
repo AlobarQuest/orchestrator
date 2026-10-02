@@ -11,8 +11,8 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
     WorkUnit,
 )
+from tests._support.seeding import register_unit
 from tests.api.conftest import auth_config, db_client
-from tests.services.test_dependencies import register_unit
 
 __all__ = ["auth_config", "db_client"]
 

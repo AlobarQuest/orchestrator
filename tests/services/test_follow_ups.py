@@ -32,8 +32,8 @@ from orchestrator.services.verifier.verifier_criteria import (
     _FOLLOW_UP_DEFAULT_REVISIT,
     load_required_criteria,
 )
-from tests.services.test_package_registration import AUTHORITY
-from tests.services.test_package_registration import NOW as REVISION_NOW
+from tests._support.seeding import AUTHORITY
+from tests._support.seeding import NOW as REVISION_NOW
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 WORKER = ActorContext("worker-1", ActorRole.WORKER)

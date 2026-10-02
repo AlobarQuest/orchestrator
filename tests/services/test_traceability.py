@@ -24,13 +24,13 @@ from orchestrator.services.reporting.traceability import (
     resolve_anchors,
     traceability_response,
 )
+from tests._support.seeding import AUTHORITY
 from tests.services.test_deployment_observations import (
     activation_command,
     machine_local_binding,
     observation_command,
     release_binding,
 )
-from tests.services.test_package_registration import AUTHORITY
 from tests.services.test_release_artifacts import (
     DIGEST,
     HUMAN,

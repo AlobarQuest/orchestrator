@@ -8,8 +8,8 @@ from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
 from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.reporting.status_ledger import StatusLedgerFilters, status_ledger
 from orchestrator.services.verifier.evidence import append_evidence, record_adjudication
+from tests._support.seeding import register_unit
 from tests.services.test_context_preflight import register_context_unit, valid_context
-from tests.services.test_dependencies import register_unit
 from tests.services.test_reclaim import authorize_readiness, expire
 
 WORKER = ActorContext("worker-1", ActorRole.WORKER)
