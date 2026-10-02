@@ -185,6 +185,7 @@ class BornUnit:
     revision_id: str
     unit_id: str
     ac_id: str  # the human id evidence and adjudication take, e.g. "AC-001"
+    content_hash: str
 
 
 def birth_unit(db_client: TestClient, *, suffix: str, max_attempts: int = 3) -> BornUnit:
@@ -239,6 +240,7 @@ def birth_unit(db_client: TestClient, *, suffix: str, max_attempts: int = 3) -> 
         revision_id=intake.json()["id"],
         unit_id=str(approved["created_work_unit_ids"][f"ws33-smoke-{suffix}-unit"]),
         ac_id=criterion["ac_id"],
+        content_hash=intake.json()["content_hash"],
     )
 
 
@@ -274,6 +276,14 @@ def unit_row(engine: Engine, unit_id: str) -> WorkUnit:
         assert unit is not None
         session.expunge(unit)
         return unit
+
+
+def rows[M](engine: Engine, model: type[M], *where: Any) -> list[M]:
+    """Committed rows of `model` matching `where`, read through a fresh session."""
+    with Session(engine, expire_on_commit=False) as session:
+        found = list(session.scalars(select(model).where(*where)))
+        session.expunge_all()
+    return found
 
 
 def claims_of(engine: Engine, unit_id: str) -> list[Claim]:
