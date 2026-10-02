@@ -7,7 +7,8 @@ rather than redone:
 2. An operator attaches the evidence through the recovery route. It supersedes the worker's head
    without forking the chain or overwriting the original, and a replay writes nothing new.
 3. Recovery releases the dead claim and fails the unit without minting an attempt.
-4. A requeued unit's next attempt submits on the recovered evidence.
+4. A requeued unit's next attempt submits on the recovered evidence, and the unit completes on
+   it: a human passes the criterion citing the recovered row.
 """
 
 import uuid
@@ -19,7 +20,9 @@ from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import Evidence
 from tests._support.protocol import (
+    HUMAN,
     SYSTEM,
+    VERIFIER,
     WORKER,
     birth_unit,
     claims_of,
@@ -142,9 +145,13 @@ def test_a_lapsed_lease_recovers_the_evidence_instead_of_the_work(
     impostor = db_client.post(
         recover_path,
         headers=SYSTEM,
-        json={**recover, "stable_ref": "artifact://drill2/something-else"},
+        json={
+            **recover,
+            "expected_version": version(),
+            "stable_ref": "artifact://drill2/something-else",
+        },
     )
-    assert impostor.status_code >= 400
+    assert refused(impostor) == "idempotency_conflict"
 
     # 3. The dead claim is released and the unit failed, at the same attempt.
     dead = [c for c in claims_of(migrated_engine, unit) if c.attempt == attempt]
@@ -156,7 +163,7 @@ def test_a_lapsed_lease_recovers_the_evidence_instead_of_the_work(
         headers=WORKER,
         json={"idempotency_key": "drill2-worker-complete", "expected_version": version()},
     )
-    assert forbidden.status_code >= 400
+    assert refused(forbidden) == "invalid_transition"
 
     # 4. Requeued, the next attempt submits on the recovered evidence without redoing the work.
     ok(
@@ -201,3 +208,37 @@ def test_a_lapsed_lease_recovers_the_evidence_instead_of_the_work(
     )
     assert unit_row(migrated_engine, unit).state == "submitted"
     assert _heads(_chain(migrated_engine, unit, ac_id)) == [uuid.UUID(recovered_id)]
+
+    # The recovered evidence is what the unit is judged on: the verifier hands it to a human, who
+    # passes the criterion on it, and the unit completes.
+    for name, headers in (("verify", VERIFIER), ("review", VERIFIER)):
+        ok(
+            db_client.post(
+                f"/api/v1/work-units/{unit}/commands/{name}",
+                headers=headers,
+                json={"idempotency_key": f"drill2-{name}", "expected_version": version()},
+            )
+        )
+    ok(
+        db_client.post(
+            f"/api/v1/work-units/{unit}/adjudications",
+            headers=HUMAN,
+            json={
+                "idempotency_key": "drill2-adjudicate",
+                "expected_version": version(),
+                "work_package_revision_id": born.revision_id,
+                "ac_id": ac_id,
+                "outcome": "passed",
+                "evidence_id": recovered_id,
+                "rationale": "drill: the recovered evidence satisfies the criterion",
+            },
+        )
+    )
+    ok(
+        db_client.post(
+            f"/api/v1/work-units/{unit}/commands/complete",
+            headers=HUMAN,
+            json={"idempotency_key": "drill2-complete", "expected_version": version()},
+        )
+    )
+    assert unit_row(migrated_engine, unit).state == "completed"

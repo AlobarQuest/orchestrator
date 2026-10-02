@@ -36,7 +36,7 @@ from tests._support.protocol import (
 )
 
 PR = 4242
-HEAD_A, HEAD_B, HEAD_C = "a" * 40, "b" * 40, "c" * 40
+HEAD_A, HEAD_B, HEAD_C, HEAD_X = "a" * 40, "b" * 40, "c" * 40, "d" * 40
 
 
 def test_a_moved_head_and_an_external_merge_are_detected_and_left_open(
@@ -128,6 +128,10 @@ def test_a_moved_head_and_an_external_merge_are_detected_and_left_open(
     binding = bind("drill3-binding-1", HEAD_A)
     assert (binding["head_sha"], binding["verification_read_head_sha"]) == (HEAD_A, None)
     observe("drill3-obs-1", HEAD_A, "open", merged=False, minute=0)
+    assert conditions() == []
+    # GitHub can show a rebase before the worker reports it. Unarmed, that is not a divergence:
+    # the alarm compares against the head SUBMIT hands over, never the one last reported.
+    observe("drill3-obs-early", HEAD_X, "open", merged=False, minute=2)
     assert conditions() == []
     assert bind("drill3-binding-2", HEAD_B)["head_sha"] == HEAD_B
     observe("drill3-obs-2", HEAD_B, "open", merged=False, minute=5)

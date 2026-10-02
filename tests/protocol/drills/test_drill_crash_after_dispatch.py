@@ -2,11 +2,11 @@
 
 The claim it granted is now held by nobody. The drill proves three things:
 
-1. The crash leaves nothing half-written. The dispatch is recorded once, the unit is still
-   EXECUTING on the attempt it was on, and its claim is still open.
+1. What the dispatch committed is all there is: one dispatch record, the unit still EXECUTING on
+   its attempt, and its claim still open. (The drill cannot interrupt a write midway, so it does
+   not test that a dispatch is atomic.)
 2. A restarted orchestrator sees the same state. Canonical state lives in the database, and the
-   process holds none of it. The restart is a fresh application over the same database; the first
-   one is abandoned without being asked to finish anything.
+   process holds none of it. The restart is a fresh application over the same database.
 3. The unit recovers through a public route. Once the lease lapses, an operator reclaims it to a
    next owner, and the crash costs one attempt rather than the unit.
 
@@ -106,6 +106,7 @@ def test_a_crash_after_dispatch_leaves_a_recoverable_unit(
     # The crash: the first application is abandoned. Nothing it held survives except what it
     # committed, which is everything there is.
     with protocol_client(auth_config, migrated_engine) as restarted:
+        cast(FastAPI, restarted.app).dependency_overrides[get_settings] = lambda: switched_off
         # 1. Nothing was half-written.
         assert len(_dispatch_records(migrated_engine, unit)) == 1
         assert [c.released_at for c in claims_of(migrated_engine, unit)] == [None]

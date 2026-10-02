@@ -5,7 +5,7 @@ The release is live and nothing has confirmed it. Reconciliation must notice and
 1. A completed unit is bound to a release artifact and a production deployment is observed,
    which mints a post-deploy verification unit that then stalls in SUBMITTED.
 2. A detection pass records one `deploy_split_brain` against the stalled unit.
-3. The pass creates no unit, moves no unit, makes no outbound call and resolves nothing.
+3. The pass creates no unit, moves no unit, records no dispatch and resolves nothing.
 4. A second pass suppresses the duplicate, so the operator sees one alarm.
 
 The stall threshold is shortened through settings rather than by waiting or back-dating a row.
