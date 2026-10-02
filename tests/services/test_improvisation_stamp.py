@@ -1,67 +1,18 @@
-import uuid
-
-from orchestrator.clock import TransactionClock
-from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkUnit
-from orchestrator.services.intake.packages import (
-    record_approval,
-    register_approved_unit,
-    register_revision,
-)
+from orchestrator.services.intake.packages import record_approval
 from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
 from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
+from tests._support.seeding import register_unit
 
-AUTHORITY = AuthorityEnvelope(
-    capabilities={"repo.edit": "allowed"},
-    budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=4),
-)
 WORKER = ActorContext("worker-1", ActorRole.WORKER)
 HUMAN = ActorContext("human-1", ActorRole.HUMAN)
 
 
-def _revision(session):
-    now = TransactionClock().now(session)
-    return register_revision(
-        session,
-        package_id="pkg-improv",
-        source_repository="owner/repo",
-        revision=1,
-        content_hash="sha256:improv",
-        source_path="intent.md",
-        source_commit="abc123",
-        approved_by="human-1",
-        approved_at=now,
-        approval_event_id=str(uuid.UUID(int=1)),
-        enforcement_snapshot={"acceptance_criteria": ["ac-1"]},
-        authority=AUTHORITY,
-        registry_version=1,
-        actor_id="human-1",
-        actor_role=ActorRole.HUMAN,
-    )
-
-
 def _approved_unit(session, key):
-    now = TransactionClock().now(session)
-    revision = _revision(session)
-    unit = register_approved_unit(
-        session,
-        unit_id=None,
-        revision_id=revision.id,
-        unit_key=key,
-        title=key,
-        outcome=f"{key} complete",
-        required_capability="repo.edit",
-        authority=AUTHORITY,
-        max_attempts=3,
-        approved_by="human-1",
-        approved_at=now,
-        actor_id="human-1",
-        actor_role=ActorRole.HUMAN,
-    )
-    # register_approved_unit creates the unit in DRAFT; DRAFT -> READY is a separate SYSTEM
-    # step (docs/operations/driving-a-unit.md #39). Fixture setup bypasses that transition
-    # directly, the
+    unit = register_unit(session, key)
+    # register_unit creates the unit in DRAFT; DRAFT -> READY is a separate SYSTEM step
+    # (docs/operations/driving-a-unit.md #39). Fixture setup bypasses that transition directly, the
     # same way tests/services/test_context_preflight.py::register_context_unit does.
     unit.state = WorkUnitState.READY
     session.commit()

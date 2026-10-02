@@ -20,7 +20,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.states import ActorRole
 from orchestrator.services.intake.decomposition import ProposedUnit, _validate_unit_constraints
-from tests.services.test_package_registration import NOW, register_test_revision
+from tests._support.seeding import NOW, register_test_revision
 
 _BUDGETS = AuthorityBudgets(max_attempts=3, max_llm_calls=4)
 

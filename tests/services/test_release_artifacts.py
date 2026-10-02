@@ -17,7 +17,7 @@ from orchestrator.services.release.release_artifacts import (
     list_release_artifacts,
     record_release_artifact,
 )
-from tests.services.test_package_registration import AUTHORITY
+from tests._support.seeding import AUTHORITY
 
 NOW = datetime(2026, 7, 8, tzinfo=UTC)
 HUMAN = ActorContext("human-1", ActorRole.HUMAN)

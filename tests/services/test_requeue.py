@@ -15,8 +15,8 @@ from orchestrator.persistence.models import Event, WorkUnit
 from orchestrator.services.intake.packages import DependencySpec
 from orchestrator.services.lifecycle.claims import claim_unit, requeue_unit
 from orchestrator.services.reporting.dead_letter import dead_letter
+from tests._support.seeding import register_unit
 from tests.services.test_claims import worker
-from tests.services.test_dependencies import register_unit
 from tests.services.test_reclaim import authorize_readiness
 
 # Long enough that nothing in these fixtures is stale; the stalled-approval

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import UnitTrackerBinding
 from orchestrator.services.reconciliation.tracker_bindings import upsert_tracker_binding
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 

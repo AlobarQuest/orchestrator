@@ -26,10 +26,9 @@ from orchestrator.services.intake.packages import (
 from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
 from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.verifier.evidence import record_adjudication
+from tests._support.seeding import AUTHORITY, register_unit
+from tests._support.seeding import NOW as APPROVED_AT
 from tests.services.test_context_preflight import register_context_unit, valid_context
-from tests.services.test_dependencies import register_unit
-from tests.services.test_package_registration import AUTHORITY
-from tests.services.test_package_registration import NOW as APPROVED_AT
 
 NOW = datetime(2026, 7, 5, tzinfo=UTC)
 

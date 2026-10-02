@@ -13,10 +13,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from orchestrator.kernel.states import WorkUnitState
-from orchestrator.persistence.models import UnitPrBinding, WorkUnit
-from tests._support.seeding import SEED_REVISIONS, seed_units_path
-from tests.api.test_lifecycle_api import HUMAN, SYSTEM
+from orchestrator.persistence.models import UnitPrBinding
+from tests._support.seeding import register_completed_unit
+from tests.api.test_lifecycle_api import SYSTEM
 
 OBSERVER = {"Authorization": "Bearer observer-token", "X-Credential-Key-Id": "observer-key"}
 
@@ -34,52 +33,26 @@ AUTHORITY = {
 
 
 def completed_unit(db_client: TestClient, migrated_engine: Engine, *, key: str = "activation-api"):
-    revision = db_client.post(
-        SEED_REVISIONS,
-        headers=HUMAN,
-        json={
-            "idempotency_key": f"{key}-revision",
-            "expected_version": 0,
-            "package_id": f"{key}-package",
-            "source_repository": REPOSITORY,
-            "revision": 1,
-            "content_hash": PACKAGE_HASH,
-            "source_path": "intent.md",
-            "source_commit": HEAD_SHA,
-            "approved_by": "devon",
-            "approved_at": datetime(2026, 8, 19, tzinfo=UTC).isoformat(),
-            "approval_event_id": str(uuid.uuid4()),
-            "enforcement_snapshot": {"acceptance_criteria": ["AC-001"]},
-            "authority": AUTHORITY,
-            "registry_version": 1,
-        },
+    revision_id, unit_id = register_completed_unit(
+        db_client,
+        migrated_engine,
+        key,
+        authority=AUTHORITY,
+        unit_key=key,
+        title="Update eslint",
+        outcome="The bump lands",
+        source_repository=REPOSITORY,
+        content_hash=PACKAGE_HASH,
+        source_commit=HEAD_SHA,
+        enforcement_snapshot={"acceptance_criteria": ["AC-001"]},
+        approved_at=datetime(2026, 8, 19, tzinfo=UTC),
     )
-    assert revision.status_code == 201
-    unit = db_client.post(
-        seed_units_path(revision.json()["id"]),
-        headers=HUMAN,
-        json={
-            "idempotency_key": f"{key}-unit",
-            "expected_version": 0,
-            "unit_key": key,
-            "title": "Update eslint",
-            "outcome": "The bump lands",
-            "required_capability": "repo.edit",
-            "authority": AUTHORITY,
-            "max_attempts": 3,
-            "approved_by": "devon",
-            "approved_at": datetime(2026, 8, 19, tzinfo=UTC).isoformat(),
-        },
-    )
-    assert unit.status_code == 201
-    unit_id = unit.json()["id"]
     with Session(migrated_engine) as session:
-        stored = session.get(WorkUnit, unit_id)
-        assert stored is not None
-        stored.state = WorkUnitState.COMPLETED
-        session.add(UnitPrBinding(work_unit_id=stored.id, pr_number=PR_NUMBER, head_sha=HEAD_SHA))
+        session.add(
+            UnitPrBinding(work_unit_id=uuid.UUID(unit_id), pr_number=PR_NUMBER, head_sha=HEAD_SHA)
+        )
         session.commit()
-    return revision.json()["id"], unit_id
+    return revision_id, unit_id
 
 
 def record_landing(db_client: TestClient) -> None:

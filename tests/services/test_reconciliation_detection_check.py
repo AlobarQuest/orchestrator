@@ -14,7 +14,7 @@ from orchestrator.services.reconciliation.reconciliation_detection import (
     DetectionCounters,
     detect_observation_conditions,
 )
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 from tests.services.test_reconciliation_detection_pr import (
     HEAD,
     NEW_HEAD,

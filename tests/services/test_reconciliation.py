@@ -21,7 +21,7 @@ from orchestrator.services.reconciliation.reconciliation import (
     record_reconciliation_condition,
     record_resolution,
 )
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 HUMAN = ActorContext("devon", ActorRole.HUMAN)

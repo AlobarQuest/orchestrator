@@ -31,8 +31,8 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.lifecycle.lifecycle import verifier_decided_completion
 from orchestrator.services.verifier.evidence import record_adjudication
+from tests._support.seeding import register_unit
 from tests.services.test_adjudications import FROM_EVALUATION, add_criterion, add_evidence
-from tests.services.test_dependencies import register_unit
 
 VERIFIER = ActorContext("orchestrator-verifier", ActorRole.VERIFIER)
 HUMAN = ActorContext("devon", ActorRole.HUMAN)

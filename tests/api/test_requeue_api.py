@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Event
+from tests._support.seeding import register_unit
 from tests.api.test_lifecycle_api import SYSTEM, WORKER
-from tests.services.test_dependencies import register_unit
 from tests.services.test_reclaim import authorize_readiness
 
 

@@ -141,7 +141,7 @@ def test_observation_route_records_a_reconciliation_condition_after_commit(
     from orchestrator.kernel.states import ActorContext, ActorRole
     from orchestrator.persistence.models import ReconciliationCondition, WorkUnit
     from orchestrator.services.lifecycle.pr_bindings import upsert_pr_binding
-    from tests.services.test_dependencies import register_unit
+    from tests._support.seeding import register_unit
 
     system = ActorContext("system", ActorRole.SYSTEM)
     with Session(migrated_engine) as session:

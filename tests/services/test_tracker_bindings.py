@@ -17,7 +17,7 @@ from orchestrator.services.reconciliation.tracker_bindings import (
     list_tracker_bindings,
     upsert_tracker_binding,
 )
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 WORKER = ActorContext("worker-1", ActorRole.WORKER)

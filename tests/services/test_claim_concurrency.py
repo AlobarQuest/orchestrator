@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 
 
 def test_two_workers_cannot_claim_same_unit(migrated_engine) -> None:

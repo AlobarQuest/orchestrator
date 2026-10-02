@@ -14,7 +14,7 @@ from orchestrator.services.reconciliation.reconciliation_detection import (
     detect_reconciliation_conditions,
 )
 from orchestrator.services.release.deployment_observations import record_deployment_observation
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 from tests.services.test_deployment_observations import (
     activation_command,
     machine_local_binding,

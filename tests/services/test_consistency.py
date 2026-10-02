@@ -21,7 +21,7 @@ from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import EVIDENCE_HEAD_BOOKKEEPING_AC_ID, Evidence, WorkUnit
 from orchestrator.services.reconciliation.consistency import check_consistency
 from orchestrator.services.verifier.evidence import current_evidence
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 from tests.services.test_lifecycle_guards import add_adjudication, submitted_unit
 
 

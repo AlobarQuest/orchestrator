@@ -38,7 +38,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.reach_vocabulary import LIVE_ESTATE
-from orchestrator.services.intake.packages import record_approval, register_approved_unit
+from orchestrator.services.intake.packages import record_approval
 from orchestrator.services.landing.pr_merge_admission import (
     MERGE_CAPABILITY,
     admission_for,
@@ -48,6 +48,7 @@ from orchestrator.services.lifecycle.pr_bindings import (
     record_verification_read_head,
     upsert_pr_binding,
 )
+from tests._support.seeding import NOW, register_test_revision, register_unit
 from tests.services.change_record_doubles import (
     RECORD_AMBIGUOUS,
     ChangeRecordAnswer,
@@ -65,7 +66,6 @@ from tests.services.estate_doubles import (
     redeploying_source,
 )
 from tests.services.test_adjudications import FROM_EVALUATION, add_criterion
-from tests.services.test_package_registration import NOW, register_test_revision
 from tests.services.test_verifier_decided_completion import VERIFIER, _decide
 
 OBSERVED_TYPE = VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
@@ -83,27 +83,13 @@ def _envelope(*, merge_level: str = "allowed", target: str | None = TARGET) -> A
 
 
 def _unit(session: Session, key: str, *, envelope: AuthorityEnvelope | None = None) -> WorkUnit:
-    revision = register_test_revision(session, acceptance_criteria=("ac-1",))
-    unit = register_approved_unit(
-        session,
-        revision_id=revision.id,
-        unit_key=key,
-        title=key,
-        outcome=f"{key} complete",
-        required_capability="repo.edit",
-        authority=envelope or _envelope(),
-        max_attempts=3,
-        approved_by="human-1",
-        approved_at=NOW,
-        actor_id="human-1",
-        actor_role=ActorRole.HUMAN,
-    )
+    unit = register_unit(session, key, authority=envelope or _envelope())
     # `register_test_revision` is idempotent on the default criteria list -- fixed package id,
     # fixed content hash -- so a second unit here shares the FIRST unit's revision, and declaring
     # the criterion again violates UNIQUE(revision, ac_id). Declare it once per revision.
     already_declared = session.scalar(
         select(PackageAcceptanceCriterion.id).where(
-            PackageAcceptanceCriterion.work_package_revision_id == revision.id,
+            PackageAcceptanceCriterion.work_package_revision_id == unit.work_package_revision_id,
             PackageAcceptanceCriterion.ac_id == "ac-1",
         )
     )

@@ -18,8 +18,8 @@ from orchestrator.services.verifier.evidence import (
     current_evidence,
     supersede_evidence,
 )
+from tests._support.seeding import register_unit
 from tests.services.test_context_preflight import register_context_unit, valid_context
-from tests.services.test_dependencies import register_unit
 
 
 def worker() -> ActorContext:

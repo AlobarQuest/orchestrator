@@ -24,8 +24,8 @@ from orchestrator.services.reconciliation.reconciliation import (
     open_conditions,
     record_reconciliation_condition,
 )
+from tests._support.seeding import register_unit
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM
-from tests.services.test_dependencies import register_unit
 
 SYSTEM_ACTOR = ActorContext("system", ActorRole.SYSTEM)
 

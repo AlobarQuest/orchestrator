@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import WorkUnitState
-from tests.services.test_dependencies import register_unit
+from tests._support.seeding import register_unit
 
 
 @pytest.fixture

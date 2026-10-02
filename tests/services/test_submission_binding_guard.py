@@ -17,7 +17,6 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Approval
-from orchestrator.services.intake.packages import register_approved_unit
 from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit, reclaim_expired_claim
 from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.lifecycle.pr_bindings import (
@@ -25,7 +24,7 @@ from orchestrator.services.lifecycle.pr_bindings import (
     get_pr_binding,
     upsert_pr_binding,
 )
-from tests.services.test_package_registration import NOW, register_test_revision
+from tests._support.seeding import register_unit
 
 WORKER = ActorContext("worker", ActorRole.WORKER)
 SYSTEM = ActorContext("lease-reaper", ActorRole.SYSTEM)
@@ -42,21 +41,7 @@ NO_PR = AuthorityEnvelope(
 
 
 def _ready_unit(session: Session, key: str, authority: AuthorityEnvelope):
-    revision = register_test_revision(session)
-    unit = register_approved_unit(
-        session,
-        revision_id=revision.id,
-        unit_key=key,
-        title=key,
-        outcome=f"{key} complete",
-        required_capability="repo.edit",
-        authority=authority,
-        max_attempts=3,
-        approved_by="human-1",
-        approved_at=NOW,
-        actor_id="human-1",
-        actor_role=ActorRole.HUMAN,
-    )
+    unit = register_unit(session, key, authority=authority)
     approval = Approval(
         subject_type="authority",
         subject_id=unit.id,
