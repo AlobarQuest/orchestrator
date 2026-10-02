@@ -1,122 +1,31 @@
-import hashlib
 import json
 import uuid
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 from typer.testing import CliRunner
 
 import orchestrator.cli as cli_module
 import orchestrator.package_sources as package_sources
-from orchestrator.api.dependencies import AuthConfig, get_session
 from orchestrator.cli import app
-from orchestrator.identity.auth import M2MCredential
-from orchestrator.identity.registry import RegistryAdapter
-from orchestrator.kernel.states import ActorRole
-from orchestrator.main import create_app
-from orchestrator.package_sources import VerifiedApproval, load_package_intake_payload
-from orchestrator.persistence.models import Claim, WorkUnit
+from orchestrator.package_sources import load_package_intake_payload
+from orchestrator.persistence.models import WorkUnit
+from tests._support.protocol import (
+    HUMAN,
+    PACKAGE_FIXTURE,
+    WORKER,
+    birth_unit,
+    decomposition_payload,
+    expire_latest_claim,
+    standing_context,
+    verified,
+)
 from tests._support.review_forms import decide_decomposition
-
-HUMAN = {"X-Alobar-Proxy": "fixture-marker", "X-Alobar-Email": "devon@example.invalid"}
-WORKER = {"Authorization": "Bearer fixture-token", "X-Credential-Key-Id": "worker-key"}
-SYSTEM = {"Authorization": "Bearer system-token", "X-Credential-Key-Id": "system-key"}
-VERIFIER = {"Authorization": "Bearer verifier-token", "X-Credential-Key-Id": "verifier-key"}
-PACKAGE_FIXTURE = Path("tests/fixtures/intent-packages/ws32-approved-software")
-AUTHORITY = {
-    "capabilities": {"repo.edit": "allowed"},
-    "budgets": {"max_attempts": 3, "max_llm_calls": 4},
-}
-
-
-@pytest.fixture
-def auth_config() -> AuthConfig:
-    registry = RegistryAdapter(
-        {
-            "schema": "orchestrator-actor-bundle/v1",
-            "source_revision": "0123456789abcdef0123456789abcdef01234567",
-            "actors": [
-                {
-                    "agent_id": "worker",
-                    "version": 3,
-                    "status": "active",
-                    "runtime": "runner",
-                    "authority_profile": "agent-queue-v1",
-                },
-                {
-                    "agent_id": "devon",
-                    "version": 1,
-                    "status": "active",
-                    "runtime": "human",
-                    "authority_profile": "human-operator-v1",
-                },
-                {
-                    "agent_id": "system",
-                    "version": 1,
-                    "status": "active",
-                    "runtime": "orchestrator",
-                    "authority_profile": "system-v1",
-                },
-                {
-                    "agent_id": "verifier",
-                    "version": 1,
-                    "status": "active",
-                    "runtime": "verifier",
-                    "authority_profile": "verifier-v1",
-                },
-            ],
-        }
-    )
-    return AuthConfig(
-        registry=registry,
-        m2m_credentials={
-            "worker-key": M2MCredential(
-                agent_id="worker",
-                token_hash=hashlib.sha256(b"fixture-token").hexdigest(),
-            ),
-            "system-key": M2MCredential(
-                agent_id="system",
-                token_hash=hashlib.sha256(b"system-token").hexdigest(),
-            ),
-            "verifier-key": M2MCredential(
-                agent_id="verifier",
-                token_hash=hashlib.sha256(b"verifier-token").hexdigest(),
-            ),
-        },
-        trusted_proxy_ips=frozenset({"testclient"}),
-        proxy_marker_header="X-Alobar-Proxy",
-        proxy_marker="fixture-marker",
-        email_header="X-Alobar-Email",
-        email_to_actor={"devon@example.invalid": "devon"},
-        m2m_roles={
-            "system-key": ActorRole.SYSTEM,
-            "verifier-key": ActorRole.VERIFIER,
-        },
-        csrf_secret=b"test-only-csrf-secret-with-32-bytes",
-    )
-
-
-@pytest.fixture
-def db_client(auth_config: AuthConfig, migrated_engine: Engine) -> Iterator[TestClient]:
-    app_instance = create_app(auth_config)
-
-    def database_session() -> Iterator[Session]:
-        with Session(migrated_engine) as session:
-            yield session
-
-    app_instance.dependency_overrides[get_session] = database_session
-    with TestClient(
-        app_instance,
-        base_url="https://testserver",
-        raise_server_exceptions=False,
-    ) as test_client:
-        yield test_client
 
 
 @pytest.fixture
@@ -142,54 +51,6 @@ def in_process_transport(monkeypatch: pytest.MonkeyPatch, db_client: TestClient)
 
     monkeypatch.setattr(cli_module, "HTTP_TRANSPORT", httpx.MockTransport(handle))
     monkeypatch.setenv("ORCHESTRATOR_API_URL", "http://testserver")
-
-
-def _verified_approval() -> VerifiedApproval:
-    return VerifiedApproval(
-        approved_by="devon",
-        approved_at="2026-07-05T00:02:00Z",
-        approval_event_id="22222222-2222-2222-2222-222222222222",
-        approval_ledger_commit="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    )
-
-
-def _standing_context(**overrides: object) -> dict[str, object]:
-    context: dict[str, object] = {
-        "code_standards_version": "1.0",
-        "security_standards_version": "1.0",
-        "project_standards_version": "1.0",
-        "agent_id": "worker",
-        "authority_profile": "agent-queue-v1",
-        "runtime_name": "codex",
-        "runtime_version": "1.0",
-        "skill_bundle_id": "ws-3.3-protocol-smoke",
-        "skill_bundle_version": "1",
-        "capabilities": ["repository_write"],
-    }
-    context.update(overrides)
-    return context
-
-
-def _decomposition_payload(acceptance_criteria: dict[str, str]) -> dict[str, object]:
-    ac_ids = list(acceptance_criteria.values())
-    return {
-        "idempotency_key": "ws33-smoke-proposal",
-        "expected_version": 0,
-        "rationale": "Smoke suite covers one executable public protocol path.",
-        "proposed_units": [
-            {
-                "unit_key": "smoke-unit",
-                "title": "Exercise WS-3.3 smoke protocol",
-                "outcome": "The public lifecycle path is smoke tested.",
-                "required_capability": "repo.edit",
-                "authority": AUTHORITY,
-                "max_attempts": 3,
-            }
-        ],
-        "dependencies": [],
-        "ac_mappings": [{"ac_id": ac_ids[0], "unit_key": "smoke-unit"}],
-        "retained_acs": [],
-    }
 
 
 def _set_token(monkeypatch: pytest.MonkeyPatch, actor: str) -> None:
@@ -254,7 +115,7 @@ def _lease_value(lease: dict[str, Any], key: str) -> Any:
 
 def _write_context(tmp_path: Path, **overrides: object) -> Path:
     path = tmp_path / f"context-{uuid.uuid4()}.json"
-    path.write_text(json.dumps(_standing_context(**overrides)), encoding="utf-8")
+    path.write_text(json.dumps(standing_context(**overrides)), encoding="utf-8")
     return path
 
 
@@ -346,20 +207,6 @@ def _adjudicate(
     assert response.status_code == 200, response.json()
 
 
-def _expire_latest_claim(migrated_engine: Engine, unit_id: str) -> None:
-    with Session(migrated_engine) as session:
-        unit_uuid = uuid.UUID(unit_id)
-        claim = session.scalar(
-            select(Claim)
-            .where(Claim.work_unit_id == unit_uuid)
-            .order_by(Claim.attempt.desc())
-            .limit(1)
-        )
-        assert claim is not None
-        claim.lease_expires_at = claim.acquired_at
-        session.commit()
-
-
 def _reclaim(
     monkeypatch: pytest.MonkeyPatch,
     unit_id: str,
@@ -393,7 +240,7 @@ def test_ws33_end_to_end_protocol_smoke_suite(
     monkeypatch.setattr(
         package_sources,
         "_verify_current_approval",
-        lambda *args: _verified_approval(),
+        lambda *args: verified(),
     )
     monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
 
@@ -409,7 +256,7 @@ def test_ws33_end_to_end_protocol_smoke_suite(
         "expected_version": 0,
         "enforcement_snapshot": {
             **enforcement_snapshot,
-            "required_context": _standing_context(),
+            "required_context": standing_context(),
         },
     }
     intake = db_client.post("/api/v1/package-intakes", headers=HUMAN, json=intake_body)
@@ -421,7 +268,7 @@ def test_ws33_end_to_end_protocol_smoke_suite(
     proposal = db_client.post(
         f"/api/v1/package-intakes/{revision_id}/decomposition-proposals",
         headers=WORKER,
-        json=_decomposition_payload({"AC-001": ac_mapping_id}),
+        json=decomposition_payload({"AC-001": ac_mapping_id}),
     )
     assert proposal.status_code == 201, proposal.json()
     proposal_id = proposal.json()["id"]
@@ -667,11 +514,7 @@ def test_ws33_end_to_end_protocol_smoke_suite(
     assert completed_row["unit_state"] == "completed"
     assert completed_row["latest_adjudication"]["outcome"] == "passed"
 
-    revision_unit_id = _approved_decomposition_unit(
-        db_client,
-        suffix="revision",
-        max_attempts=3,
-    )
+    revision_unit_id = birth_unit(db_client, suffix="revision", max_attempts=3).unit_id
     _command(
         monkeypatch,
         "system",
@@ -732,11 +575,7 @@ def test_ws33_end_to_end_protocol_smoke_suite(
     )
     _assert_state(db_client, revision_unit_id, "ready")
 
-    retry_unit_id = _approved_decomposition_unit(
-        db_client,
-        suffix="retry",
-        max_attempts=1,
-    )
+    retry_unit_id = birth_unit(db_client, suffix="retry", max_attempts=1).unit_id
     _command(
         monkeypatch,
         "system",
@@ -789,11 +628,7 @@ def test_ws33_end_to_end_protocol_smoke_suite(
     )
     _assert_state(db_client, retry_unit_id, "ready", claim=retry_claim)
 
-    reclaim_unit_id = _approved_decomposition_unit(
-        db_client,
-        suffix="reclaim",
-        max_attempts=3,
-    )
+    reclaim_unit_id = birth_unit(db_client, suffix="reclaim", max_attempts=3).unit_id
     reclaim_authority = db_client.post(
         f"/api/v1/work-units/{reclaim_unit_id}/approvals",
         headers=HUMAN,
@@ -827,7 +662,7 @@ def test_ws33_end_to_end_protocol_smoke_suite(
             f"@{claim_context}",
         ],
     )
-    _expire_latest_claim(migrated_engine, reclaim_unit_id)
+    expire_latest_claim(migrated_engine, reclaim_unit_id)
     reclaimed = _reclaim(monkeypatch, reclaim_unit_id, claim_context)
     reclaimed_row = _assert_state(db_client, reclaim_unit_id, "claimed", claim=reclaimed)
     assert reclaimed_row["last_failure"]["reason"] == "lease_expired"
@@ -872,63 +707,3 @@ def test_ws33_end_to_end_protocol_smoke_suite(
         ("verifying", "awaiting_review"),
         ("awaiting_review", "completed"),
     ]
-
-
-def _approved_decomposition_unit(
-    db_client: TestClient,
-    *,
-    suffix: str,
-    max_attempts: int,
-) -> str:
-    package_payload = load_package_intake_payload(
-        PACKAGE_FIXTURE,
-        source_repository="AlobarQuest/intent-packages",
-    )
-    enforcement_snapshot = package_payload["enforcement_snapshot"]
-    assert isinstance(enforcement_snapshot, dict)
-    intake_body = {
-        **package_payload,
-        "idempotency_key": f"ws33-smoke-{suffix}-intake",
-        "expected_version": 0,
-        "package_id": f"ws33-smoke-{suffix}",
-        "enforcement_snapshot": {
-            **enforcement_snapshot,
-            "required_context": _standing_context(),
-        },
-    }
-    intake = db_client.post("/api/v1/package-intakes", headers=HUMAN, json=intake_body)
-    assert intake.status_code == 201, intake.json()
-    ac_id = intake.json()["acceptance_criteria"][0]["id"]
-    proposal = db_client.post(
-        f"/api/v1/package-intakes/{intake.json()['id']}/decomposition-proposals",
-        headers=WORKER,
-        json={
-            **_decomposition_payload({"AC-001": ac_id}),
-            "idempotency_key": f"ws33-smoke-{suffix}-proposal",
-            "proposed_units": [
-                {
-                    "unit_key": f"ws33-smoke-{suffix}-unit",
-                    "title": f"WS-3.3 smoke {suffix}",
-                    "outcome": "Auxiliary smoke path is exercised.",
-                    "required_capability": "repo.edit",
-                    "authority": AUTHORITY,
-                    "max_attempts": max_attempts,
-                }
-            ],
-            "ac_mappings": [
-                {
-                    "ac_id": ac_id,
-                    "unit_key": f"ws33-smoke-{suffix}-unit",
-                }
-            ],
-        },
-    )
-    assert proposal.status_code == 201, proposal.json()
-    approved = decide_decomposition(
-        db_client,
-        proposal.json()["id"],
-        "approve",
-        "Approved auxiliary smoke activation.",
-        headers=HUMAN,
-    )
-    return str(approved["created_work_unit_ids"][f"ws33-smoke-{suffix}-unit"])
