@@ -171,7 +171,7 @@ def register_seeded_unit(
             "package_id": f"{key}-package",
             "source_repository": source_repository,
             "revision": 1,
-            "content_hash": content_hash or f"sha256:{key}",
+            "content_hash": f"sha256:{key}" if content_hash is None else content_hash,
             "source_path": "intent.md",
             "source_commit": source_commit,
             "approved_by": "devon",
@@ -296,6 +296,7 @@ def register_unit(
     acceptance_criteria: tuple[str, ...] = ("ac-1",),
     authority: AuthorityEnvelope = AUTHORITY,
 ) -> WorkUnit:
+    """Register one unit under the canonical test revision; a second unit shares that revision."""
     revision = register_test_revision(session, acceptance_criteria=acceptance_criteria)
     return register_approved_unit(
         session,

@@ -288,7 +288,7 @@ def test_proposal_rejects_internal_dependency_cycle(migrated_session: Session) -
 
 
 def test_proposal_rejects_non_intaken_revision(migrated_session: Session) -> None:
-    from tests.services.test_package_registration import register_test_revision
+    from tests._support.seeding import register_test_revision
 
     revision = register_test_revision(migrated_session)
 
