@@ -9,7 +9,7 @@ from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Claim, WorkUnit
 from tests.api.test_lifecycle_api import HUMAN, WORKER
 
-STALL_DECISION = "Cancel this unit, or have the system recover its expired claim"
+STALL_DECISION = "Cancel this unit, or have the system reclaim its expired claim for a new attempt"
 
 
 def test_queue_is_human_authenticated_and_lists_the_decision_required(
