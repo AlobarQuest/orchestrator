@@ -27,8 +27,10 @@ instance at `sds.alobar.net`, and its scheduled lanes running against that deplo
 
 ## Remaining 1.0 work
 
-The instance runs `a351452-tier3-amd64`, which carries Tier 1, Tier 2 and Tier 3. What is left is
-backlog rather than structure: Python 3.14 for the three hook-run satellites (`fe09c9110a5c`).
+The instance runs `a351452-tier3-amd64`, which carries Tier 1, Tier 2 and Tier 3. No 1.0 work
+item remains open. The last one, Python 3.14 for the three hook-run satellites (`fe09c9110a5c`),
+landed on 2026-10-03: security-standards #65 and #66, project-standards #45 and #46, and
+code-standards #55.
 
 `tests/architecture/test_layering.py` keeps its own import scanner on purpose. It needs the names
 after `from orchestrator import …` and must tell `import orchestrator` apart from
