@@ -57,9 +57,10 @@ Two decisions aren't carried forward:
 1. **The stalled-execution instruction.** Merged in #336: the instruction now names
    `reclaim-expired-claim` instead of the deleted `recover-expired-claim`. It ships with the next
    orchestrator deploy.
-2. **Reversible decomposition before claim (2b-2, R5).** `superseded_at` is never written, so one
-   wrong approval costs a whole package revision. The rule that every unit's commands are dry-run
-   twice before approval exists because of this.
+2. **Reversible decomposition before claim (2b-2, R5).** Built to ADR-0052: a human supersedes an
+   approval none of whose units has been worked, from its proposal page in `/review`, and the
+   re-approval may reuse the retired units' keys. It ships with the next orchestrator deploy, which
+   runs migration 0039.
 3. **Traceability through observations (5c).** The observation hop in
    `services/reporting/traceability.py` reads only `subject_type="work_unit"`, so observations about
    a service or environment join no chain. Wave-2 exit clause 2 stays unmet until this ships.
