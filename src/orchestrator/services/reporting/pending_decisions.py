@@ -325,10 +325,10 @@ def _stalled_units(session: Session, grace_seconds: int) -> list[dict[str, Any]]
     """A unit that was claimed, started, and then went quiet (WS-P2.19).
 
     The decision names only what this person can actually do. Cancelling is theirs, from the
-    control on the unit page; recovering the expired claim is the system's, on request. Requeue is
-    deliberately not named -- it targets failed and blocked units, so offering it here would send
-    someone to an action that refuses them, which is the mistake `_failed_disposition` already
-    avoids in the other direction.
+    control on the unit page; reclaiming the expired claim (`reclaim-expired-claim`) is the
+    system's, on request, and starts a new attempt. Requeue is deliberately not named -- it targets
+    failed and blocked units, so offering it here would send someone to an action that refuses
+    them, which is the mistake `_failed_disposition` already avoids in the other direction.
 
     The detail says outright that the orchestrator cannot tell a dead worker from a live one,
     because a reader who assumed it could would over-read the entry. What it CAN say is the part
@@ -338,7 +338,7 @@ def _stalled_units(session: Session, grace_seconds: int) -> list[dict[str, Any]]
         _entry(
             "stalled_execution",
             stalled.title,
-            "Cancel this unit, or have the system recover its expired claim",
+            "Cancel this unit, or have the system reclaim its expired claim for a new attempt",
             (
                 f"Attempt {stalled.attempt} has held it in {stalled.state} since its hold ended "
                 f"at {stalled.hold_ended_at.isoformat()}, {stalled.stalled_seconds}s ago. That "
