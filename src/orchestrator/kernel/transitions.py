@@ -16,8 +16,9 @@ class TransitionGuards:
     # compute this in the service, never construct it bare on the submit path.
     submission_binding_recorded: bool = False
     # Guards DRAFT/READY -> CANCELLED only, which retire an unworked unit when a human supersedes
-    # its decomposition (ADR-0052). Only the supersede path sets it, so the ordinary cancel action
-    # still cannot cancel a draft or ready unit.
+    # its decomposition (ADR-0052). It is read from the database and holds only for a unit whose
+    # own approval is superseded, so the ordinary cancel action still cannot cancel a draft or
+    # ready unit.
     decomposition_superseded: bool = False
 
 

@@ -49,6 +49,7 @@ from orchestrator.persistence.models import (
     ReconciliationCondition,
     WorkUnit,
 )
+from orchestrator.services.lifecycle.lifecycle import approval_superseded
 
 # How many prior clearings are shown one by one. The counts above them are over the WHOLE
 # comparable population, so the window shortens the reading rather than the evidence -- a recent
@@ -129,7 +130,13 @@ def graduation_ledger(session: Session, unit: WorkUnit) -> GraduationLedger:
     They are reported instead.
     """
     envelope = normalize_authority(unit.authority)
-    cleared = _comparable_clearings(session, unit.id, envelope)
+    cleared = [
+        clearing
+        for clearing in _comparable_clearings(session, unit.id, envelope)
+        # A unit retired by superseding its approval never ran: it has no outcome to count
+        # (ADR-0052).
+        if not approval_superseded(session, clearing[0])
+    ]
     # No early return for the empty case: `in_(())` is an empty result, not an error, so the one
     # path builds an honest empty report. A shape with no history is the novel case R2 wants
     # gated, and saying so is the answer rather than the absence of one.

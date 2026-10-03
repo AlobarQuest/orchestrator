@@ -27,6 +27,7 @@ from orchestrator.persistence.models import (
     DecompositionProposalDependency,
     DecompositionProposalRetainedAc,
     DecompositionProposalUnit,
+    Dependency,
     Event,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
@@ -473,27 +474,10 @@ def supersede_approved_decomposition(
             "this proposal has no active approved decomposition to supersede",
             None,
         )
-    created = proposal.created_work_unit_ids
-    # Approval writes a {unit_key: unit_id} mapping; the column's wider type is historical.
-    unit_ids = sorted(
-        uuid.UUID(unit_id) for unit_id in (created.values() if isinstance(created, dict) else ())
-    )
-    units = tuple(
-        session.scalars(
-            select(WorkUnit)
-            .where(WorkUnit.id.in_(unit_ids))
-            .order_by(WorkUnit.id)
-            .with_for_update()
-        )
-    )
-    worked = [unit.unit_key for unit in units if _has_been_worked(session, unit)]
-    if worked:
-        raise DomainError(
-            "decomposition_work_started",
-            f"work has started on {', '.join(sorted(worked))}; only an unworked approval can be "
-            "superseded",
-            None,
-        )
+    units = _approval_units(session, proposal, lock=True)
+    refusal = _supersession_refusal(session, units)
+    if refusal is not None:
+        raise refusal
 
     superseded_at = TransactionClock().now(session)
     approved.superseded_at = superseded_at
@@ -543,12 +527,57 @@ def can_supersede(session: Session, proposal: DecompositionProposal) -> bool:
     approved = approval_of(session, proposal.id)
     if approved is None or approved.superseded_at is not None:
         return False
-    created = proposal.created_work_unit_ids
-    unit_ids = [
-        uuid.UUID(unit_id) for unit_id in (created.values() if isinstance(created, dict) else ())
-    ]
-    units = session.scalars(select(WorkUnit).where(WorkUnit.id.in_(unit_ids)))
-    return not any(_has_been_worked(session, unit) for unit in units)
+    return _supersession_refusal(session, _approval_units(session, proposal, lock=False)) is None
+
+
+def _approval_units(
+    session: Session, proposal: DecompositionProposal, *, lock: bool
+) -> tuple[WorkUnit, ...]:
+    """The units approving this proposal registered, from its own unit list rather than the
+    `created_work_unit_ids` copy, so a missing or malformed copy can't empty the check."""
+    keys = session.scalars(
+        select(DecompositionProposalUnit.unit_key).where(
+            DecompositionProposalUnit.proposal_id == proposal.id
+        )
+    )
+    ids = sorted(decomposition_unit_id(proposal.id, key) for key in keys)
+    query = select(WorkUnit).where(WorkUnit.id.in_(ids)).order_by(WorkUnit.id)
+    units = tuple(session.scalars(query.with_for_update() if lock else query))
+    if len(units) != len(ids):
+        raise DomainError(
+            "decomposition_units_missing",
+            "a unit this approval registered no longer exists",
+            None,
+        )
+    return units
+
+
+def _supersession_refusal(session: Session, units: tuple[WorkUnit, ...]) -> DomainError | None:
+    worked = [unit.unit_key for unit in units if _has_been_worked(session, unit)]
+    if worked:
+        return DomainError(
+            "decomposition_work_started",
+            f"work has started on {', '.join(sorted(worked))}; only an unworked approval can be "
+            "superseded",
+            None,
+        )
+    unit_ids = [unit.id for unit in units]
+    dependent = session.scalar(
+        select(Dependency.work_unit_id)
+        .where(
+            Dependency.depends_on_work_unit_id.in_(unit_ids),
+            Dependency.work_unit_id.not_in(unit_ids),
+        )
+        .limit(1)
+    )
+    if dependent is not None:
+        return DomainError(
+            "decomposition_has_dependents",
+            f"unit {dependent} outside this approval depends on one of its units; superseding "
+            "would strand it",
+            None,
+        )
+    return None
 
 
 def _has_been_worked(session: Session, unit: WorkUnit) -> bool:

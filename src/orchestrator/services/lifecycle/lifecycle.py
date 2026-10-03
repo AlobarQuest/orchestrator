@@ -476,12 +476,15 @@ def _transition_guards(
             occurred_at,
         ),
         _submission_binding_recorded(session, unit),
-        _decomposition_superseded(session, unit),
+        approval_superseded(session, unit),
     )
 
 
-def _decomposition_superseded(session: Session, unit: WorkUnit) -> bool:
+def approval_superseded(session: Session, unit: WorkUnit) -> bool:
     """Whether the approval that registered this unit has been superseded (ADR-0052).
+
+    A cancelled unit for which this holds was replaced, not given up: readers that judge a
+    revision's outcome skip it.
 
     Read from the database rather than taken from a caller, so nothing can retire a unit by
     asserting it. A unit registered outside a decomposition approval matches no proposal.

@@ -26,7 +26,9 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
+from orchestrator.services.lifecycle.lifecycle import approval_superseded
 
 # The one state that means the work a record asked for was built.
 #
@@ -105,11 +107,16 @@ def work_for_change_record(session: Session, change_record_id: int) -> ChangeRec
             all_units_completed=False,
         )
 
-    rows = session.scalars(
-        select(WorkUnit)
-        .where(WorkUnit.work_package_revision_id.in_(revision_ids))
-        .order_by(WorkUnit.work_package_revision_id, WorkUnit.unit_key)
-    )
+    rows = [
+        row
+        for row in session.scalars(
+            select(WorkUnit)
+            .where(WorkUnit.work_package_revision_id.in_(revision_ids))
+            .order_by(WorkUnit.work_package_revision_id, WorkUnit.unit_key)
+        )
+        # A unit retired by superseding its approval was replaced, not given up (ADR-0052).
+        if not (row.state == WorkUnitState.CANCELLED and approval_superseded(session, row))
+    ]
     units = tuple(
         UnitCompletion(
             unit_id=row.id,

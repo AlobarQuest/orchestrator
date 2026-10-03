@@ -24,10 +24,15 @@ A human may supersede an approved decomposition while none of its units has been
 - **Who and where.** A human, from the decomposition proposal's page in `/review`, giving a reason.
   The orchestrator offers the control only while the preconditions hold.
 - **Preconditions.** The approval is the revision's active one, and every unit it created is in
-  `draft` or `ready`, has `attempt_count` 0, has no claim, and has no dispatch record in
-  `dispatched` or `failed`. A dispatch is recorded before a claim, so such a record means a run may
-  be about to claim; a failed trigger call can still have reached GitHub. A `skipped` or `blocked`
-  record ran nothing and doesn't count (`services/execution/run_activity.py`).
+  `draft` or `ready`, has `attempt_count` 0, has no claim, and has no dispatch record whose trigger
+  call was made: status `dispatched`, or any record with a `failure_signature`, which only a raised
+  trigger call writes (`failed`, or `blocked` once the circuit breaker opens). A dispatch is
+  recorded before a claim, so such a record means a run may be about to claim, and a failed call can
+  still have reached GitHub. A record refused at admission ran nothing and doesn't count
+  (`services/execution/run_activity.py`). No unit outside the approval may depend on one of its
+  units, since the replacement would have a new id and the dependent would never become eligible.
+  The units are read from the proposal's own unit list, so a missing unit refuses rather than
+  shrinking the check.
 - **Effects, in one transaction.** The approval's `superseded_at`, `superseded_by` and
   `supersession_reason` are set; each of its units moves to `cancelled`; one
   `decomposition.superseded` event is written. The proposal stays `approved`: the approval row is
@@ -55,3 +60,8 @@ A human may supersede an approved decomposition while none of its units has been
   (intent-packages #104). Readers that join a unit's key to the revision's active decomposition (the
   runner brief, the verifier's criteria, `required_ac_ids`) show a retired unit the new approval's
   mappings; a retired unit is terminal, so nothing acts on that.
+- A unit retired by supersession was replaced, not given up. Readers that judge a revision's outcome
+  skip it, through `lifecycle.approval_superseded`: the change-record verdict the work watcher
+  retires a record on (otherwise the retired units would hold the record open forever), and the
+  graduation ledger (otherwise each supersession would add abandoned clearings for work that never
+  ran). An ordinary cancellation still counts as given up in both.
