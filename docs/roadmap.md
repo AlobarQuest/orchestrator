@@ -37,6 +37,69 @@ after `from orchestrator import …` and must tell `import orchestrator` apart f
 `from orchestrator import x`; the shared `import_scan.py` reports both as `orchestrator`, and its
 other callers depend on that output staying as it is.
 
+## SDS 1.1
+
+SDS 1.1 finishes the layer-by-layer simplification review of 2026-07-31
+(`~/docs/software-delivery-system/2026-07-31-simplification-review-notes.md`). The review's
+decisions and rulings were audited against the code on 2026-10-03: about half are built. This
+section holds every one that's partial, not started or deferred. Each entry names the review's
+identifier, so its reasoning can be found in the notes. When an item ships, delete its entry and
+record the outcome in the ADR or pull request that shipped it.
+
+Two decisions aren't carried forward:
+
+- 6b, confirming Todoist as the place to see factory work: ADR-0040 retired the tracker lane.
+- 6c, deriving candidate lessons automatically: Tier 3 item 24 deleted the promotion surface it
+  would have fed.
+
+### Order
+
+1. **The stalled-execution instruction.** The `stalled_execution` entry in
+   `services/reporting/pending_decisions.py` tells the operator to "have the system recover its
+   expired claim", a route #318 deleted. The surviving route is `reclaim-expired-claim`.
+2. **Evidence attribution (3d-1, R8).** factory-runner files all of a run's evidence under the
+   first acceptance criterion (`_first_ac_id` in its `cli.py`), so a unit with N criteria sends
+   N−1 of them to a human. The decomposition declares which criterion each piece of evidence
+   answers, and the orchestrator attributes it. This is a cross-repo contract change: the runner
+   brief and the envelope are pinned in both repositories.
+3. **A lapse costs no attempt (3b-2, 3b-3).** Reclaiming an expired claim still increments
+   `attempt_count` (`services/lifecycle/claims.py`), and a renewal that arrives after expiry is
+   refused outright. A unit can run out of attempts without ever failing.
+4. **Reversible decomposition before claim (2b-2, R5).** `superseded_at` is never written, so one
+   wrong approval costs a whole package revision. The rule that every unit's commands are dry-run
+   twice before approval exists because of this.
+5. **Traceability through observations (5c).** The observation hop in
+   `services/reporting/traceability.py` reads only `subject_type="work_unit"`, so observations about
+   a service or environment join no chain. Wave-2 exit clause 2 stays unmet until this ships.
+6. **A server-computed dispatch ordinal (3a-2).** `runner_attempt` is client-supplied; a reused
+   ordinal returns 200 and runs nothing, and only the `factory` client guards against that.
+7. **Automatic `ready` (2d-1).** DRAFT → READY is still a manual `factory ready` step on every
+   unit, with no server caller.
+8. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
+   still lists cancelled units that were already handled.
+
+### The rest of 1.1
+
+These follow the eight in the preceding list, in no fixed order.
+
+| Review id | Item | State today |
+|---|---|---|
+| waiver | A human may waive only a criterion that's currently failing. | Any human may waive any criterion. |
+| 5b | One declared deployment-observation schema. | Five summary dicts; only the secret detector is shared. |
+| 3c-1 | Separate the runner's permitted commands from its ordered verify script. | factory-runner still runs `allowed_commands` as the script. |
+| 3d-2 | Record real exit codes, or drop the field. | factory-runner writes a literal `exit_code: 0`. |
+| 4a-2 | One evidence vocabulary with a divergence test in both directions. | Five types copied by hand, checked one way. |
+| 4c-3 | Separate the deciding view from the auditing view. | One page with a decision section and context-gated forms. |
+| 5a | Record the release binding as part of deploying. | Only machine-local activations bind; Coolify deploys and self-builds don't. |
+| 7b | Dead-letter names the recovery action, as pending decisions does. | Pending decisions names dispositions; dead-letter doesn't. |
+| 7c | Run the whole-repo guards where the work happens. | `make check` refuses an empty collection; the guards still run only in a full `make check`. |
+| 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Machines can register intakes (ADR-0027); the human paste survives, and packages are LLM-authored through `factory create`. |
+| L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Four producers exist; where WS-P3.5 belongs is open decision 1. |
+| 3a-1 | Admission keeps two checks; posture moves to policy. | Admission grew (reach, estate and declaration terms). Review which terms fold into `factory-policy.toml`. |
+| R9 | Net gate load is a target set per wave. | Counted once, in the WS-P2.17 spec. |
+| R11 | Deploy documentation reflects R11. | `docs/operations/deploy.md` still says a step is done by hand by Devon. |
+| 7a | Deploy is automated like the build, and migrate/swap ordering is safe by construction. | Deferred by Devon on 2026-08-02. Migrate-before-swap is safe only because no health check reads readiness. Re-decide before building. |
+
 ## After 1.0
 
 - Revisit the three build-scoped standing rules (infra separation waived, construction mode, build
