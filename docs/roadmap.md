@@ -54,33 +54,43 @@ Two decisions aren't carried forward:
 
 ### Order
 
-1. **The stalled-execution instruction.** The `stalled_execution` entry in
-   `services/reporting/pending_decisions.py` tells the operator to "have the system recover its
-   expired claim", a route #318 deleted. The surviving route is `reclaim-expired-claim`.
-2. **Evidence attribution (3d-1, R8).** factory-runner files all of a run's evidence under the
-   first acceptance criterion (`_first_ac_id` in its `cli.py`), so a unit with N criteria sends
-   N−1 of them to a human. The decomposition declares which criterion each piece of evidence
-   answers, and the orchestrator attributes it. This is a cross-repo contract change: the runner
-   brief and the envelope are pinned in both repositories.
-3. **A lapse costs no attempt (3b-2, 3b-3).** Reclaiming an expired claim still increments
-   `attempt_count` (`services/lifecycle/claims.py`), and a renewal that arrives after expiry is
-   refused outright. A unit can run out of attempts without ever failing.
-4. **Reversible decomposition before claim (2b-2, R5).** `superseded_at` is never written, so one
+1. **The stalled-execution instruction.** Merged in #336: the instruction now names
+   `reclaim-expired-claim` instead of the deleted `recover-expired-claim`. It ships with the next
+   orchestrator deploy.
+2. **Reversible decomposition before claim (2b-2, R5).** `superseded_at` is never written, so one
    wrong approval costs a whole package revision. The rule that every unit's commands are dry-run
    twice before approval exists because of this.
-5. **Traceability through observations (5c).** The observation hop in
+3. **Traceability through observations (5c).** The observation hop in
    `services/reporting/traceability.py` reads only `subject_type="work_unit"`, so observations about
    a service or environment join no chain. Wave-2 exit clause 2 stays unmet until this ships.
-6. **A server-computed dispatch ordinal (3a-2).** `runner_attempt` is client-supplied; a reused
+4. **A server-computed dispatch ordinal (3a-2).** `runner_attempt` is client-supplied; a reused
    ordinal returns 200 and runs nothing, and only the `factory` client guards against that.
-7. **Automatic `ready` (2d-1).** DRAFT → READY is still a manual `factory ready` step on every
+5. **Automatic `ready` (2d-1).** DRAFT → READY is still a manual `factory ready` step on every
    unit, with no server caller.
-8. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
+6. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
    still lists cancelled units that were already handled.
+
+### Deferred, with the evidence
+
+Devon deferred these two on 2026-10-03, after measuring showed neither costs anything today.
+
+- **Evidence attribution (3d-1, R8).** factory-runner files its one evidence row under the first
+  acceptance criterion (`_first_ac_id`). That rarely matters: `factory decompose` maps exactly one
+  criterion to each unit and retains the rest. The row's type, `runner.pr.opened`, has no
+  evaluator, so it resolves no criterion either way. Correct attribution alone makes the record
+  honest but removes no human gate. Removing gates would need the runner's measured exit codes to
+  resolve `automated_test` and count toward landing, which makes worker-reported results
+  decision-bearing: a trust decision the review didn't make. The dead `build_verification_evidence`
+  went in factory-runner #88.
+- **A lapse costs no attempt (3b-2, 3b-3).** Reclaiming an expired claim still increments
+  `attempt_count` (`services/lifecycle/claims.py`), and a renewal after expiry is refused. But the
+  lease lengths per lane of 2026-08-02 (#128) ended the lapses: production's SLO report counts 8
+  expiries in 75 claims since 2026-07-01, and none in the 9 claims since 2026-08-15. Revisit if
+  `claim_expiry_rate` rises again.
 
 ### The rest of 1.1
 
-These follow the eight in the preceding list, in no fixed order.
+These follow the ordered list, in no fixed order.
 
 | Review id | Item | State today |
 |---|---|---|
