@@ -34,6 +34,8 @@ VERIFIER_OR_HUMAN = frozenset({ActorRole.VERIFIER, ActorRole.HUMAN})
 
 EXPECTED_EDGE_ROLES: dict[Edge, frozenset[ActorRole]] = {
     (WorkUnitState.DRAFT, WorkUnitState.READY): SYSTEM,
+    (WorkUnitState.DRAFT, WorkUnitState.CANCELLED): HUMAN,
+    (WorkUnitState.READY, WorkUnitState.CANCELLED): HUMAN,
     (WorkUnitState.READY, WorkUnitState.CLAIMED): SYSTEM,
     (WorkUnitState.READY, WorkUnitState.FAILED): SYSTEM,
     (WorkUnitState.CLAIMED, WorkUnitState.EXECUTING): WORKER,

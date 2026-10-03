@@ -245,7 +245,9 @@ REVIEW_OUTCOMES: tuple[tuple[str, str, WorkUnitState], ...] = (
 # The page models EDGE LEGALITY -- which is state-keyed and free -- and never guard satisfaction,
 # which costs queries. So it asks the kernel with every guard already met: "if the paperwork were
 # in order, could a person make this move at all?"
-_GUARDS_MET = TransitionGuards(True, True, True)
+_GUARDS_MET = TransitionGuards(
+    approval_recorded=True, completion_satisfied=True, submission_binding_recorded=True
+)
 
 
 def _a_human_could_move(state: WorkUnitState, target: WorkUnitState) -> bool:

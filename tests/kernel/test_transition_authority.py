@@ -11,7 +11,10 @@ def test_each_legal_edge_allows_exactly_its_declared_roles(
     edge: tuple[WorkUnitState, WorkUnitState], roles: frozenset[ActorRole]
 ) -> None:
     guards = TransitionGuards(
-        approval_recorded=True, completion_satisfied=True, submission_binding_recorded=True
+        approval_recorded=True,
+        completion_satisfied=True,
+        submission_binding_recorded=True,
+        decomposition_superseded=True,
     )
 
     for role in ActorRole:
@@ -114,3 +117,20 @@ def test_domain_error_exposes_stable_fields() -> None:
     assert error.code == "stable_code"
     assert error.message == "explanation"
     assert error.recovery == "recovery_action"
+
+
+@pytest.mark.parametrize("source", [WorkUnitState.DRAFT, WorkUnitState.READY])
+def test_retiring_an_unworked_unit_requires_a_superseded_decomposition(
+    source: WorkUnitState,
+) -> None:
+    """Ordinary cancel keeps its old reach: only a supersession retires these (ADR-0052)."""
+    with pytest.raises(DomainError) as exc:
+        authorize_transition(source, WorkUnitState.CANCELLED, ActorRole.HUMAN, TransitionGuards())
+
+    assert exc.value.code == "decomposition_supersession_required"
+    authorize_transition(
+        source,
+        WorkUnitState.CANCELLED,
+        ActorRole.HUMAN,
+        TransitionGuards(decomposition_superseded=True),
+    )
