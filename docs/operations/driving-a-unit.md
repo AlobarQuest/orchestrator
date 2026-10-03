@@ -22,12 +22,11 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #24
 
-- **An envelope that authorizes no mutating command cannot produce a diff, and the
-  authority approval that blessed it cannot be taken back.** `approve_decomposition_proposal`
-  raises `decomposition_already_approved` while an `ApprovedDecomposition` has
-  `superseded_at IS NULL`, no supersede route is exposed, and unit `authority` has no
-  mutation path — so a wrong envelope costs a whole new package revision plus a fresh
-  human approval per unit. Before spending any of that, dry-run each unit against its
+- **An envelope that authorizes no mutating command cannot produce a diff, and unit
+  `authority` has no mutation path.** While none of the approval's units has been claimed or
+  dispatched, a human can supersede the approval from its proposal page in `/review` and submit a
+  corrected breakdown (ADR-0052). Once a unit has been worked, a wrong envelope costs a whole new
+  package revision plus a fresh human approval per unit. Before spending any of that, dry-run each unit against its
   real target repo, read-only: prove the mutator yields a diff (`uv lock --upgrade
   --dry-run`, `npm outdated`) and prove the verifier actually executes tools (no
   `"… not installed — skipping"`, a real `collected N items`). Verifying a manifest's
@@ -370,7 +369,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   neither alone reproduces a CI checkout. The correct envelope is `["uv sync", "make check"]`.
   HQ authored a first envelope without this dry-run, which the repo's own invariants require, and it
   cost a whole package revision to fix — the envelope is inside the authority fingerprint, the human
-  approval is bound to it, and there is no supersede route for an approved decomposition.
+  approval is bound to it, and there was then no supersede route for an approved decomposition
+  (there is one since ADR-0052, for approvals with no worked unit).
 
 ### #132
 
@@ -483,8 +483,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   burned 40 turns and $1.39; (3) **an attempt that ends on `error_max_turns` is under-specified, not
   under-budgeted** — the 40-turn ceiling is a literal in factory-runner's workflow and is unrelated
   to `max_llm_calls`, which was barely touched. And the price of getting it wrong is the documented
-  one: an approved decomposition cannot be superseded, so this cost a whole new package revision
-  plus both human approvals again.
+  one: an approved decomposition could not then be superseded (it can since ADR-0052, before any
+  unit is worked), so this cost a whole new package revision plus both human approvals again.
 
 ### #205
 

@@ -91,12 +91,23 @@ FOLLOW_UP_AC_ID = "follow-up-review"
 FOLLOW_UP_EVIDENCE_TYPE = "observation"
 
 
+def decomposition_unit_id(proposal_id: uuid.UUID, unit_key: str) -> uuid.UUID:
+    """The id under which approving a decomposition proposal registers its unit `unit_key`.
+
+    Content-addressed by proposal, so a re-approval after a supersession (ADR-0052) mints new ids
+    even when it reuses the superseded units' keys, and a unit's id names the approval it came
+    from.
+    """
+    return uuid.uuid5(proposal_id, unit_key)
+
+
 def follow_up_unit_id(revision_id: uuid.UUID) -> uuid.UUID:
     """The id under which `services.intake.follow_ups` mints a revision's follow-up review unit.
 
     Content-addressed, so a second minting pass cannot create a second row. This is the structural
     half of the idempotency story; the already-minted skip is the reporting half, and the unique
-    constraint on `(work_package_revision_id, unit_key)` is the backstop if both are bypassed.
+    index on `(work_package_revision_id, unit_key)` among units that aren't cancelled is the
+    backstop if both are bypassed.
 
     Defined HERE rather than in `follow_ups` -- the same move already made for
     `FOLLOW_UP_CAPABILITY`, for the same reason. `follow_ups` imports one-way FROM this module, so
@@ -170,6 +181,16 @@ def transition_unit(
     except Exception:
         session.rollback()
         raise
+
+
+def transition_in_transaction(session: Session, command: TransitionCommand) -> TransitionResult:
+    """Perform a transition inside the caller's transaction, which the caller commits.
+
+    For a service that moves units as one step of a larger write, such as superseding a
+    decomposition (ADR-0052). It is the same writer as `transition_unit`, so it adds no writer of
+    `work_units.version`.
+    """
+    return _perform_transition(session, command, TransactionClock())
 
 
 def _perform_transition(
@@ -455,6 +476,25 @@ def _transition_guards(
             occurred_at,
         ),
         _submission_binding_recorded(session, unit),
+        _decomposition_superseded(session, unit),
+    )
+
+
+def _decomposition_superseded(session: Session, unit: WorkUnit) -> bool:
+    """Whether the approval that registered this unit has been superseded (ADR-0052).
+
+    Read from the database rather than taken from a caller, so nothing can retire a unit by
+    asserting it. A unit registered outside a decomposition approval matches no proposal.
+    """
+    superseded_proposals = session.scalars(
+        select(ApprovedDecomposition.proposal_id).where(
+            ApprovedDecomposition.work_package_revision_id == unit.work_package_revision_id,
+            ApprovedDecomposition.superseded_at.is_not(None),
+        )
+    )
+    return any(
+        decomposition_unit_id(proposal_id, unit.unit_key) == unit.id
+        for proposal_id in superseded_proposals
     )
 
 

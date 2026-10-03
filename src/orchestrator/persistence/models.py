@@ -333,7 +333,15 @@ WORK_UNIT_STATES = (
 class WorkUnit(UUIDPrimaryKey, Base):
     __tablename__ = "work_units"
     __table_args__ = (
-        UniqueConstraint("work_package_revision_id", "unit_key"),
+        # Unique among units that aren't cancelled: a superseded decomposition's re-approval may
+        # reuse its cancelled units' keys (ADR-0052, migration 0039).
+        Index(
+            "uq_work_units_live_unit_key",
+            "work_package_revision_id",
+            "unit_key",
+            unique=True,
+            postgresql_where=text("state <> 'cancelled'"),
+        ),
         CheckConstraint(f"state IN {WORK_UNIT_STATES!r}", name="ck_work_units_state"),
         CheckConstraint(
             "attempt_count >= 0 AND max_attempts >= 0 AND attempt_count <= max_attempts",

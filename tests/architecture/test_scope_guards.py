@@ -118,6 +118,7 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/review/decomposition-proposals/{proposal_id}/approve",
         "/review/decomposition-proposals/{proposal_id}/reject",
         "/review/decomposition-proposals/{proposal_id}/require-revision",
+        "/review/decomposition-proposals/{proposal_id}/supersede",
     }
 
 

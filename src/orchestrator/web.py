@@ -31,9 +31,12 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.intake.decomposition import (
+    approval_of,
     approve_decomposition_proposal,
+    can_supersede,
     reject_decomposition_proposal,
     require_decomposition_revision,
+    supersede_approved_decomposition,
 )
 from orchestrator.services.intake.graduation_ledger import graduation_ledger
 from orchestrator.services.intake.intake_reads import (
@@ -592,13 +595,19 @@ def decomposition_proposal_detail(
 ) -> HTMLResponse:
     _human(actor)
     context = _decomposition_proposal_projection(session, proposal_id)
-    if context["proposal"].state == "proposed":
-        keys = {action: str(uuid.uuid4()) for action in ("approve", "reject", "require_revision")}
-        context["idempotency_keys"] = keys
-        context["csrf_tokens"] = {
-            action: _issue_token(request, actor, proposal_id, action, key)
-            for action, key in keys.items()
-        }
+    proposal = context["proposal"]
+    actions: tuple[str, ...] = ()
+    if proposal.state == "proposed":
+        actions = ("approve", "reject", "require_revision")
+    elif can_supersede(session, proposal):
+        actions = ("supersede",)
+    keys = {action: str(uuid.uuid4()) for action in actions}
+    context["idempotency_keys"] = keys
+    context["csrf_tokens"] = {
+        action: _issue_token(request, actor, proposal_id, action, key)
+        for action, key in keys.items()
+    }
+    context["approval"] = approval_of(session, proposal_id)
     return _render(request, "decomposition_proposal.html", context)
 
 
@@ -988,6 +997,30 @@ def approve_decomposition_route(
     _human(actor)
     _require_form(request, actor, proposal_id, "approve", csrf_token, idempotency_key, confirm)
     approve_decomposition_proposal(
+        session,
+        proposal_id,
+        actor=actor,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+    session.commit()
+    return _proposal_redirect(proposal_id)
+
+
+@router.post("/decomposition-proposals/{proposal_id}/supersede")
+def supersede_decomposition_route(
+    request: Request,
+    proposal_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    reason: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    _human(actor)
+    _require_form(request, actor, proposal_id, "supersede", csrf_token, idempotency_key, confirm)
+    supersede_approved_decomposition(
         session,
         proposal_id,
         actor=actor,

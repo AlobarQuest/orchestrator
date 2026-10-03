@@ -565,15 +565,15 @@ def _poison_unit_key(session, revision: WorkPackageRevision) -> WorkUnit:
     docstring names the `(work_package_revision_id, unit_key)` unique constraint as the backstop
     for this), under a DIFFERENT capability so `evaluate_due`'s already-minted check -- which now
     requires BOTH `required_capability == FOLLOW_UP_CAPABILITY` and the derived `uuid5` id -- does
-    not short-circuit before `_mint` is ever attempted. Settled (CANCELLED) so it does not itself
+    not short-circuit before `_mint` is ever attempted. Settled (COMPLETED) so it does not itself
     block due-ness, and with no settling event of its own, so it contributes nothing to the
-    due-at computation."""
+    due-at computation. Not CANCELLED: a cancelled unit no longer holds its key (ADR-0052)."""
     unit = WorkUnit(
         work_package_revision_id=revision.id,
         unit_key=f"follow-up:{revision.id}",
         title="pre-existing collision",
         outcome="planted to occupy the unit_key _mint would use",
-        state=WorkUnitState.CANCELLED,
+        state=WorkUnitState.COMPLETED,
         decomposition_approved_by="human-1",
         decomposition_approved_at=REVISION_NOW,
         required_capability="repo.edit",
