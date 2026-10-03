@@ -15,6 +15,11 @@ class TransitionGuards:
     # NEXT caller that targets SUBMITTED with a bare `TransitionGuards()` is a silent deadlock --
     # compute this in the service, never construct it bare on the submit path.
     submission_binding_recorded: bool = False
+    # Guards DRAFT/READY -> CANCELLED only, which retire an unworked unit when a human supersedes
+    # its decomposition (ADR-0052). It is read from the database and holds only for a unit whose
+    # own approval is superseded, so the ordinary cancel action still cannot cancel a draft or
+    # ready unit.
+    decomposition_superseded: bool = False
 
 
 SYSTEM_EDGES = {
@@ -50,6 +55,8 @@ VERIFIER_EDGES = {
     if (source, target) in LEGAL_EDGES
 }
 HUMAN_EDGES = {
+    (WorkUnitState.DRAFT, WorkUnitState.CANCELLED),
+    (WorkUnitState.READY, WorkUnitState.CANCELLED),
     (WorkUnitState.CLAIMED, WorkUnitState.CANCELLED),
     (WorkUnitState.EXECUTING, WorkUnitState.CANCELLED),
     (WorkUnitState.AWAITING_APPROVAL, WorkUnitState.READY),
@@ -102,6 +109,16 @@ def authorize_transition(
         and not guards.approval_recorded
     ):
         raise DomainError("approval_required", "record approval before resuming", "approve")
+    if (
+        source in (WorkUnitState.DRAFT, WorkUnitState.READY)
+        and target is WorkUnitState.CANCELLED
+        and not guards.decomposition_superseded
+    ):
+        raise DomainError(
+            "decomposition_supersession_required",
+            "a draft or ready unit is retired only by superseding its decomposition",
+            "supersede the decomposition from its proposal page",
+        )
     if target is WorkUnitState.COMPLETED and not guards.completion_satisfied:
         raise DomainError("completion_incomplete", "completion guards failed", "verify")
     if (

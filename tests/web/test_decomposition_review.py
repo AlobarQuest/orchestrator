@@ -208,7 +208,8 @@ def test_approve_form_requires_human_confirmation_and_records_decision(
     detail = db_client.get(f"/review/decomposition-proposals/{proposal.id}", headers=HUMAN)
     assert "Approved for draft activation." in detail.text
     assert "State: approved" in detail.text
-    assert "No further review action is available" in detail.text
+    # Its units are unworked, so the only action left is superseding the approval (ADR-0052).
+    assert f'action="/review/decomposition-proposals/{proposal.id}/supersede"' in detail.text
     assert f'action="/review/decomposition-proposals/{proposal.id}/approve"' not in detail.text
 
 

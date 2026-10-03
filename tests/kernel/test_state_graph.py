@@ -32,7 +32,10 @@ def test_every_declared_edge_is_legal(source: WorkUnitState, target: WorkUnitSta
         target,
         next(iter(EXPECTED_EDGE_ROLES[(source, target)])),
         TransitionGuards(
-            approval_recorded=True, completion_satisfied=True, submission_binding_recorded=True
+            approval_recorded=True,
+            completion_satisfied=True,
+            submission_binding_recorded=True,
+            decomposition_superseded=True,
         ),
     )
 
@@ -44,8 +47,8 @@ def test_graph_partition_covers_all_169_ordered_state_pairs() -> None:
     all_ordered_pairs = set(itertools.product(WorkUnitState, repeat=2))
 
     assert len(all_ordered_pairs) == 169
-    assert len(EXPECTED_LEGAL_EDGES) == 30
-    assert len(INVALID_EDGES) == 139
+    assert len(EXPECTED_LEGAL_EDGES) == 32
+    assert len(INVALID_EDGES) == 137
     assert EXPECTED_LEGAL_EDGES | INVALID_EDGES == all_ordered_pairs
 
 

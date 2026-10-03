@@ -173,6 +173,18 @@
   <label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm this rejection.</label>
   <button class="danger" type="submit">Reject</button>
 </form>
+{% elif csrf_tokens.supersede %}
+<h3>Supersede this approval</h3>
+<p>None of this approval's units has been worked yet. Superseding it cancels them, and the revision can then take a new decomposition, which may reuse their keys.</p>
+<form method="post" action="/review/decomposition-proposals/{{ proposal.id }}/supersede">
+  <input type="hidden" name="csrf_token" value="{{ csrf_tokens.supersede }}"><input type="hidden" name="idempotency_key" value="{{ idempotency_keys.supersede }}">
+  <label for="supersede-reason">Reason</label>
+  <textarea id="supersede-reason" name="reason" required></textarea>
+  <label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm superseding this approval and cancelling its units.</label>
+  <button class="danger" type="submit">Supersede</button>
+</form>
+{% elif approval and approval.superseded_at %}
+<p class="meta">This approval was superseded at {{ approval.superseded_at.isoformat() }} by {{ approval.superseded_by }}: {{ approval.supersession_reason }}</p>
 {% else %}
 <p class="meta">This proposal has already been decided. No further review action is available on this page.</p>
 {% endif %}

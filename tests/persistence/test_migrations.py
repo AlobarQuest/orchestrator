@@ -897,3 +897,62 @@ def test_events_carry_the_indexes_their_readers_filter_on(migrated_engine) -> No
     assert isinstance(table, Table)
     declared = {index.name: [c.name for c in index.columns] for index in table.indexes}
     assert declared == expected
+
+
+def test_0039_scopes_unit_key_uniqueness_to_live_units_and_its_downgrade_guards(
+    migrated_engine,
+) -> None:
+    """ADR-0052: a cancelled unit frees its key. The downgrade restores the plain constraint, and
+    refuses while two units of one revision share a key, since that constraint can't hold them."""
+    config = alembic_config()
+    indexes = {index["name"]: index for index in inspect(migrated_engine).get_indexes("work_units")}
+    assert indexes["uq_work_units_live_unit_key"]["unique"]
+    assert "cancelled" in str(
+        indexes["uq_work_units_live_unit_key"]["dialect_options"]["postgresql_where"]
+    )
+
+    command.downgrade(config, "0038_t3_drop_infra_lane_links")
+    inspector = inspect(migrated_engine)
+    assert ("work_package_revision_id", "unit_key") in {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("work_units")
+    }
+    assert "uq_work_units_live_unit_key" not in {
+        i["name"] for i in inspector.get_indexes("work_units")
+    }
+
+    command.upgrade(config, "head")
+    with migrated_engine.begin() as connection:
+        package_id = connection.execute(
+            text(
+                "INSERT INTO work_packages (id, package_id, source_repository) "
+                "VALUES (gen_random_uuid(), 'pkg-0039', 'owner/repo') RETURNING id"
+            )
+        ).scalar_one()
+        revision_id = connection.execute(
+            text(
+                "INSERT INTO work_package_revisions (id, work_package_id, revision, content_hash, "
+                "source_path, source_commit, approved_by, approved_at, approval_event_id, "
+                "enforcement_snapshot, authority_fingerprint, registry_version, registered_by) "
+                "VALUES (gen_random_uuid(), :package, 1, 'h', 'p', 'c', 'h', now(), 'e', '{}', "
+                "'f', 1, 'h') RETURNING id"
+            ),
+            {"package": package_id},
+        ).scalar_one()
+        for state in ("cancelled", "draft"):
+            connection.execute(
+                text(
+                    "INSERT INTO work_units (id, work_package_revision_id, unit_key, title, "
+                    "outcome, state, required_capability, authority, authority_fingerprint, "
+                    "max_attempts, decomposition_approved_by, decomposition_approved_at) "
+                    "VALUES (gen_random_uuid(), :revision, 'shared', 't', 'o', :state, "
+                    "'repo.edit', '{}', 'f', 1, 'h', now())"
+                ),
+                {"revision": revision_id, "state": state},
+            )
+
+    with pytest.raises(RuntimeError, match="held by more than one unit"):
+        command.downgrade(config, "0038_t3_drop_infra_lane_links")
+    assert "uq_work_units_live_unit_key" in {
+        index["name"] for index in inspect(migrated_engine).get_indexes("work_units")
+    }

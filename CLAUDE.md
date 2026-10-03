@@ -96,9 +96,9 @@ Placement rule: global CLAUDE.md §7.
 - An M2M credential's `agent_id` must resolve in the registry bundle baked into the image from
   security-standards' git tree; attribution is permanent, so adding an actor needs a merged commit
   plus rebuild. Never borrow another identity. Detail: `docs/operations/credentials.md`.
-- An approved decomposition cannot be superseded and envelopes are write-once: dry-run every unit's
-  commands against the real target repo (twice, clean clone) before approval. Detail:
-  `docs/operations/driving-a-unit.md`.
+- Envelopes are write-once, and an approved decomposition can be superseded only while none of its
+  units has been claimed or dispatched (ADR-0052): dry-run every unit's commands against the real
+  target repo (twice, clean clone) before work starts. Detail: `docs/operations/driving-a-unit.md`.
 - `make check` here needs Postgres, `SECURITY_STANDARDS_DIR` and a migrated DB, so it must never
   appear in this repo's authority envelope; the envelope verifies `uv sync` + `uv lock --check`.
   Detail: `docs/operations/driving-a-unit.md`.
@@ -263,9 +263,9 @@ Placement rule: global CLAUDE.md §7.
 - `allowed_commands` is the coding agent's entire enforced Bash vocabulary (exact match) and is
   re-executed in order at finalize, so an envelope must list every command the work needs, mutators
   first, verifier last. Detail: `docs/operations/driving-a-unit.md`.
-- No role has a `READY -> CANCELLED` edge; dispatch is explicit-only so a stranded READY unit is
-  inert, and a bad unit is retired by letting it fail then cancelling. History:
-  `docs/history/claude-md-invariants-archive.md` #134.
+- `DRAFT/READY -> CANCELLED` need the `decomposition_superseded` guard, which only superseding the
+  unit's own approval sets (ADR-0052); otherwise a stranded READY unit is inert and is retired by
+  letting it fail then cancelling. History: `docs/history/claude-md-invariants-archive.md` #134.
 - Never set `required_approving_review_count`; a branch-protection required check is a JOB name
   verified against a real open pull request, and auto-merge with no required checks merges
   instantly. Detail: `docs/operations/landing-lanes.md`.

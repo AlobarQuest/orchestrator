@@ -552,6 +552,8 @@ def register_approved_unit(
         .where(
             WorkUnit.work_package_revision_id == revision.id,
             WorkUnit.unit_key == unit_key,
+            # A superseded decomposition's cancelled units may share this key (ADR-0052).
+            WorkUnit.state != WorkUnitState.CANCELLED,
         )
         .with_for_update()
     )

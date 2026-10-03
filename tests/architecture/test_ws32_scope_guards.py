@@ -27,6 +27,9 @@ WS42_DISPATCH_PATHS = {
     Path("src/orchestrator/config.py"),
     Path("src/orchestrator/persistence/models.py"),
     Path("src/orchestrator/services/execution/dispatch.py"),
+    # ADR-0052: superseding a decomposition refuses a unit whose run may have started, read from
+    # its dispatch records. It reads them; it never starts a run.
+    Path("src/orchestrator/services/execution/run_activity.py"),
     # The verifier evidence command reads the immutable dispatch identity to bind an externally
     # observed named check to the exact unit attempt. It cannot initiate workflow execution.
     Path("src/orchestrator/services/verifier/verifier_evidence.py"),

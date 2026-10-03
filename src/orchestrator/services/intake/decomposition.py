@@ -18,22 +18,31 @@ from orchestrator.kernel.authority import (
 from orchestrator.kernel.enrichment import validate_enrichment
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
 from orchestrator.kernel.runner_authority import runner_authority_violation
-from orchestrator.kernel.states import ActorContext, ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
+    Claim,
     DecompositionProposal,
     DecompositionProposalAcMapping,
     DecompositionProposalDependency,
     DecompositionProposalRetainedAc,
     DecompositionProposalUnit,
+    Dependency,
     Event,
     PackageAcceptanceCriterion,
     WorkPackageRevision,
+    WorkUnit,
 )
+from orchestrator.services.execution.run_activity import a_run_may_have_started
 from orchestrator.services.intake.packages import (
     DependencySpec,
     register_approved_unit,
     register_dependency_with_event,
+)
+from orchestrator.services.lifecycle.lifecycle import (
+    TransitionCommand,
+    decomposition_unit_id,
+    transition_in_transaction,
 )
 
 _PROPOSAL_ACTION = "decomposition.proposed"
@@ -169,7 +178,7 @@ def submit_decomposition_proposal(
         # the approved envelope identical to the one the runner will be served.
         stamped = _stamped_authority_payload(
             validated.authority_payload,
-            _proposal_unit_id(proposal.id, unit.unit_key),
+            decomposition_unit_id(proposal.id, unit.unit_key),
         )
         session.add(
             DecompositionProposalUnit(
@@ -322,7 +331,7 @@ def approve_decomposition_proposal(
         unit = register_approved_unit(
             session,
             revision_id=revision.id,
-            unit_id=_proposal_unit_id(proposal.id, proposal_unit.unit_key),
+            unit_id=decomposition_unit_id(proposal.id, proposal_unit.unit_key),
             unit_key=proposal_unit.unit_key,
             title=proposal_unit.title,
             outcome=proposal_unit.outcome,
@@ -418,6 +427,164 @@ def require_decomposition_revision(
 def _require_submission_actor(actor: ActorContext) -> None:
     if not actor.actor_id or actor.role not in _ALLOWED_ROLES:
         raise DomainError("role_forbidden", "actor may not submit decomposition proposals", None)
+
+
+_RETIRABLE = (WorkUnitState.DRAFT, WorkUnitState.READY)  # not-a-vocabulary: kernel enum members
+
+
+def supersede_approved_decomposition(
+    session: Session,
+    proposal_id: uuid.UUID,
+    *,
+    actor: ActorContext,
+    reason: str,
+    idempotency_key: str,
+) -> DecompositionProposal:
+    """Withdraw an approval none of whose units has been worked, and retire its units (ADR-0052).
+
+    The revision then takes a new proposal and approval, which may reuse the retired units' keys.
+    The proposal stays `approved`; its approval row records the supersession.
+    """
+    _require_decision_actor(actor)
+    _require_decision_reason(reason)
+    replay = _decision_replay(
+        session,
+        proposal_id=proposal_id,
+        action="decomposition.superseded",
+        actor=actor,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+    if replay is not None:
+        return replay
+
+    proposal = _proposal_for_decision(session, proposal_id)
+    session.get(WorkPackageRevision, proposal.work_package_revision_id, with_for_update=True)
+    approved = session.scalar(
+        select(ApprovedDecomposition)
+        .where(
+            ApprovedDecomposition.proposal_id == proposal.id,
+            ApprovedDecomposition.superseded_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if approved is None:
+        raise DomainError(
+            "decomposition_not_active",
+            "this proposal has no active approved decomposition to supersede",
+            None,
+        )
+    units = _approval_units(session, proposal, lock=True)
+    refusal = _supersession_refusal(session, units)
+    if refusal is not None:
+        raise refusal
+
+    superseded_at = TransactionClock().now(session)
+    approved.superseded_at = superseded_at
+    approved.superseded_by = actor.actor_id
+    approved.supersession_reason = reason
+    session.flush()
+    for unit in units:
+        transition_in_transaction(
+            session,
+            TransitionCommand(
+                unit_id=unit.id,
+                target=WorkUnitState.CANCELLED,
+                actor=actor,
+                expected_version=unit.version,
+                idempotency_key=_derived_idempotency_key(
+                    idempotency_key, f"retire:{unit.unit_key}"
+                ),
+                reason=reason,
+            ),
+        )
+    _record_decision_event(
+        session,
+        proposal=proposal,
+        actor=actor,
+        action="decomposition.superseded",
+        from_state=proposal.state,
+        reason=reason,
+        idempotency_key=idempotency_key,
+        payload={
+            "approved_decomposition_id": str(approved.id),
+            "retired_work_unit_ids": [str(unit.id) for unit in units],
+        },
+        occurred_at=superseded_at,
+    )
+    return proposal
+
+
+def approval_of(session: Session, proposal_id: uuid.UUID) -> ApprovedDecomposition | None:
+    """The approval this proposal received, active or superseded, or `None` if never approved."""
+    return session.scalar(
+        select(ApprovedDecomposition).where(ApprovedDecomposition.proposal_id == proposal_id)
+    )
+
+
+def can_supersede(session: Session, proposal: DecompositionProposal) -> bool:
+    """Whether `supersede_approved_decomposition` would accept this proposal now. Takes no locks."""
+    approved = approval_of(session, proposal.id)
+    if approved is None or approved.superseded_at is not None:
+        return False
+    return _supersession_refusal(session, _approval_units(session, proposal, lock=False)) is None
+
+
+def _approval_units(
+    session: Session, proposal: DecompositionProposal, *, lock: bool
+) -> tuple[WorkUnit, ...]:
+    """The units approving this proposal registered, from its own unit list rather than the
+    `created_work_unit_ids` copy, so a missing or malformed copy can't empty the check."""
+    keys = session.scalars(
+        select(DecompositionProposalUnit.unit_key).where(
+            DecompositionProposalUnit.proposal_id == proposal.id
+        )
+    )
+    ids = sorted(decomposition_unit_id(proposal.id, key) for key in keys)
+    query = select(WorkUnit).where(WorkUnit.id.in_(ids)).order_by(WorkUnit.id)
+    units = tuple(session.scalars(query.with_for_update() if lock else query))
+    if len(units) != len(ids):
+        raise DomainError(
+            "decomposition_units_missing",
+            "a unit this approval registered no longer exists",
+            None,
+        )
+    return units
+
+
+def _supersession_refusal(session: Session, units: tuple[WorkUnit, ...]) -> DomainError | None:
+    worked = [unit.unit_key for unit in units if _has_been_worked(session, unit)]
+    if worked:
+        return DomainError(
+            "decomposition_work_started",
+            f"work has started on {', '.join(sorted(worked))}; only an unworked approval can be "
+            "superseded",
+            None,
+        )
+    unit_ids = [unit.id for unit in units]
+    dependent = session.scalar(
+        select(Dependency.work_unit_id)
+        .where(
+            Dependency.depends_on_work_unit_id.in_(unit_ids),
+            Dependency.work_unit_id.not_in(unit_ids),
+        )
+        .limit(1)
+    )
+    if dependent is not None:
+        return DomainError(
+            "decomposition_has_dependents",
+            f"unit {dependent} outside this approval depends on one of its units; superseding "
+            "would strand it",
+            None,
+        )
+    return None
+
+
+def _has_been_worked(session: Session, unit: WorkUnit) -> bool:
+    if WorkUnitState(unit.state) not in _RETIRABLE or unit.attempt_count != 0:
+        return True
+    claimed = session.scalar(select(Claim.id).where(Claim.work_unit_id == unit.id).limit(1))
+    return claimed is not None or a_run_may_have_started(session, unit.id)
 
 
 def _require_decision_actor(actor: ActorContext) -> None:
@@ -950,10 +1117,6 @@ def _revalidate_ac_disposition(
         criteria_by_id,
     )
     _validate_ac_coverage(criteria_by_id, validated_mappings, validated_retained)
-
-
-def _proposal_unit_id(proposal_id: uuid.UUID, unit_key: str) -> uuid.UUID:
-    return uuid.uuid5(proposal_id, unit_key)
 
 
 def _derived_idempotency_key(idempotency_key: str, suffix: str) -> str:
