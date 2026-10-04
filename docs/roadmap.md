@@ -57,9 +57,12 @@ Two decisions aren't carried forward:
 
 ### Order
 
-1. **Traceability through observations (5c).** The observation hop in
-   `services/reporting/traceability.py` reads only `subject_type="work_unit"`, so observations about
-   a service or environment join no chain. Wave-2 exit clause 2 stays unmet until this ships.
+1. **Traceability through observations (5c).** The chain now joins the landing ledger's record of
+   each release commit and derives a pull request made outside the factory from it. Wave-2 exit
+   clause 2 still needs a post-deployment observation of a release: Devon ruled on 2026-10-04 that
+   a landing, recorded at merge, does not answer the observations hop. Both declared releases
+   predate any producer of one. The likely source is the revision watcher's `production_revision`
+   records, joined on the commit a service is serving.
 2. **A server-computed dispatch ordinal (3a-2).** `runner_attempt` is client-supplied; a reused
    ordinal returns 200 and runs nothing, and only the `factory` client guards against that.
 3. **Automatic `ready` (2d-1).** DRAFT → READY is still a manual `factory ready` step on every
