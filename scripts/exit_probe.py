@@ -24,6 +24,7 @@ import sys
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -549,9 +550,10 @@ def _conditions_hop_is_inapplicable(pack: dict, chains: list[dict]) -> tuple[str
 
 #: The hops that may EARN `not_applicable`, and the reading that earns it for each. Membership
 #: excuses nothing by itself. `observations` is deliberately absent and must stay absent: a
-#: unit-scoped observation is an ordinary thing that nothing currently produces, which is a real
-#: gap in the system rather than a condition of the world, and marking it inapplicable would
-#: convert an absence into a shrug.
+#: post-deployment observation of a release is an ordinary thing the system does not yet produce,
+#: which is a real gap in the system rather than a condition of the world, and marking it
+#: inapplicable would convert an absence into a shrug. A landing record the chain carries was made
+#: before deployment and does not count (`_observations_after_deployment`).
 INAPPLICABLE_WHEN: dict[str, Callable[[dict, list[dict]], tuple[str | None, dict]]] = {
     "conditions": _conditions_hop_is_inapplicable,
 }
@@ -640,6 +642,7 @@ def release_chain_answers_every_hop(*revisions: str) -> int:
             )
         chains = _chains(f"/api/v1/traceability?revision_id={revision}")
         union = {hop: sum(_hops(chain)[hop] for chain in chains) for hop in ALL_HOPS}
+        union["observations"], before_deployment = _observations_after_deployment(chains)
         missing = sorted(hop for hop, count in union.items() if not count)
         inapplicable: dict[str, str] = {}
         demonstrations: dict[str, dict] = {}
@@ -661,6 +664,10 @@ def release_chain_answers_every_hop(*revisions: str) -> int:
                 "release_artifacts": len(pack["release_artifacts"]),
                 "deployments": len(pack["deployments"]),
                 "composed_hops": union,
+                # Observations the chain carries that were made before the release deployed
+                # (a landing, recorded at merge). They are real, but they observe nothing about
+                # the release running, so the `observations` hop does not count them.
+                "observations_before_deployment": before_deployment,
                 "unanswered_hops": missing,
                 # Both are recorded whether or not the hop was excused, so the record shows what
                 # the reading found rather than only that it granted something.
@@ -680,6 +687,40 @@ def release_chain_answers_every_hop(*revisions: str) -> int:
         complete_releases=complete,
         release_census=census,
     )
+
+
+def _observed_at(entry: dict, hop: str) -> datetime:
+    value = entry.get("observed_at") if isinstance(entry, dict) else None
+    try:
+        return datetime.fromisoformat(value) if isinstance(value, str) else _unreadable()
+    except ValueError:
+        return _unreadable()
+
+
+def _unreadable() -> datetime:
+    raise Unavailable(
+        "an observation or deployment hop entry carries no readable `observed_at`, so whether it "
+        "was made after the release deployed cannot be told"
+    )
+
+
+def _observations_after_deployment(chains: list[dict]) -> tuple[int, int]:
+    """How many of a release's observations were made at or after it first deployed, and how
+    many before.
+
+    Devon's ruling of 2026-10-04: the C question-list's tail is the system observing the release
+    once it is out, so only an observation made after deployment answers it. The chain also
+    carries the landing ledger's record of the release commit, made at merge and so before
+    deployment; it is real and exactly joined, but it observes nothing running, and counting it
+    would turn this clause green without anything having watched a release in production.
+    """
+    deployed = [_observed_at(d, "deployment") for chain in chains for d in chain["deployment"]]
+    observed = [_observed_at(o, "observations") for chain in chains for o in chain["observations"]]
+    if not deployed:
+        return 0, len(observed)
+    first = min(deployed)
+    after = sum(1 for at in observed if at >= first)
+    return after, len(observed) - after
 
 
 def tracker_is_a_projection() -> int:

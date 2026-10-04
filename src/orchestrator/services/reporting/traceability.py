@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -28,6 +28,15 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.lifecycle.pr_bindings import get_pr_binding
 from orchestrator.services.release.deployment_observations import list_deployment_observations
+from orchestrator.services.release.machine_activation import (
+    LANDING_COMMIT,
+    LANDING_FACTS_KEY,
+    LANDING_HEAD_COMMIT,
+    LANDING_OBSERVATION_TYPE,
+    LANDING_PULL_REQUEST,
+    LANDING_SOURCE_SYSTEM,
+    LANDING_SUBJECT_TYPE,
+)
 from orchestrator.services.release.observations import ObservationFilters, list_observations
 from orchestrator.services.release.release_artifacts import list_release_artifacts
 from orchestrator.services.reporting.evidence_pack import evidence_pack_projection
@@ -48,13 +57,15 @@ class TraceabilityIntentHop(BaseModel):
     registered_by: str
     # ADR-0026. The chain could already answer what a work unit caused; this is the half that
     # says what caused the work. It belongs on the intent hop because the revision is where the
-    # link is stored -- an observation would not do, because the observation hop filters on
-    # `subject_type="work_unit"`, so a revision-scoped observation never reaches any chain.
+    # link is stored -- an observation would not do, because the observation hop reads only
+    # unit-scoped observations and the landings of the unit's release commits, so a
+    # revision-scoped observation never reaches any chain.
     change_record_id: int | None = None
     # ADR-0026 amendment 1. The other half of the same join, and it rides the SAME hop for the
-    # same reason: the observation hop is unit-scoped, so the fact that caused this work could
-    # never arrive through it. Declared here because a FastAPI `response_model` silently drops
-    # any key it does not declare -- the service could set it and the consumer read nothing.
+    # same reason: the observation hop reads only unit-scoped observations and release-commit
+    # landings, so the fact that caused this work could never arrive through it. Declared here
+    # because a FastAPI `response_model` silently drops any key it does not declare -- the
+    # service could set it and the consumer read nothing.
     originating_observation_id: uuid.UUID | None = None
 
 
@@ -71,6 +82,11 @@ class TraceabilityUnitHop(BaseModel):
 class TraceabilityPrHop(BaseModel):
     pr_number: int
     head_sha: str
+    # Where the pull request was read from. `unit_pr_binding` is a pull request the factory's
+    # worker opened and bound to this unit. `landing_ledger` is one made outside the factory (by a
+    # build session), read from the landing record of the commit this unit's release binding
+    # names, and only when the binding's own `implementation_pr_number` agrees with it.
+    source: str = "unit_pr_binding"
 
 
 class TraceabilityCommitHop(BaseModel):
@@ -127,6 +143,10 @@ class TraceabilityConditionHop(BaseModel):
 
 
 class TraceabilityObservationHop(BaseModel):
+    # What the observation is about: this work unit, or (for a landing record) the repository the
+    # unit's release binding names, joined on the exact commit that landed.
+    subject_type: str
+    subject_reference: str
     source_system: str
     observation_type: str
     status: str
@@ -236,8 +256,9 @@ def _resolve_observation(
     """What work did this signal cause? ADR-0026 amendment 1.
 
     It resolves through the revisions that NAME the observation rather than through the
-    observation hop, which is unit-scoped and therefore can never carry a repository-scoped
-    signal -- the shape every signal producer in this estate emits.
+    observation hop, which reads only unit-scoped observations and the landings of the unit's
+    release commits, and so can never carry an arbitrary repository-scoped signal -- the shape
+    every signal producer in this estate emits.
 
     THE EXISTENCE CHECK IS WHAT MAKES THE EMPTY ANSWER MEAN SOMETHING. "This signal caused
     nothing yet" is ordinary -- it is the state of every observation nobody has acted on -- and
@@ -368,10 +389,21 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
         else {}
     )
 
-    observations = list_observations(
-        session,
-        ObservationFilters(subject_type="work_unit", subject_reference=str(unit_id)),
-    )
+    landings = [
+        (binding, landing)
+        for binding in artifacts
+        if (landing := _landing_of_commit(session, binding.source_repository, binding.merge_commit))
+        is not None
+    ]
+    # Several bindings can name one commit (an image and a machine-local activation of the same
+    # merge), so one landing is listed once.
+    landed = {landing.id: landing for _, landing in landings}
+    observations = list(
+        list_observations(
+            session,
+            ObservationFilters(subject_type="work_unit", subject_reference=str(unit_id)),
+        )
+    ) + list(landed.values())
 
     return TraceabilityChainResponse(
         intent=TraceabilityIntentHop(
@@ -395,7 +427,7 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
         pr=(
             TraceabilityPrHop(pr_number=pr_binding.pr_number, head_sha=pr_binding.head_sha)
             if pr_binding is not None
-            else None
+            else _landed_pull_request(landings)
         ),
         commit=[
             TraceabilityCommitHop(
@@ -436,6 +468,8 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
         ],
         observations=[
             TraceabilityObservationHop(
+                subject_type=o.subject_type,
+                subject_reference=o.subject_reference,
                 source_system=o.source_system,
                 observation_type=o.observation_type,
                 status=o.status,
@@ -446,6 +480,51 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
             for o in observations
         ],
     )
+
+
+def _landing_of_commit(session: Session, repository: str, commit: str) -> Observation | None:
+    """The landing ledger's record of `commit` landing in `repository`, if it recorded one.
+
+    Landing records are content-addressed per (repository, landed commit), so this is exact: at
+    most one row, and only a record of that very commit landing.
+    """
+    return session.scalars(
+        select(Observation)
+        .where(
+            Observation.source_system == LANDING_SOURCE_SYSTEM,
+            Observation.subject_type == LANDING_SUBJECT_TYPE,
+            Observation.observation_type == LANDING_OBSERVATION_TYPE,
+            func.lower(Observation.subject_reference) == repository.lower(),
+            Observation.facts[LANDING_FACTS_KEY][LANDING_COMMIT].astext == commit,
+        )
+        .order_by(Observation.observed_at, Observation.id)
+        .limit(1)
+    ).first()
+
+
+def _landed_pull_request(
+    landings: list[tuple[ReleaseArtifactBinding, Observation]],
+) -> TraceabilityPrHop | None:
+    """A pull request made outside the factory, when two independent writers agree on it.
+
+    The release binding names the pull request and the commit it merged; the landing ledger,
+    which reads GitHub, recorded that commit landing through a pull request. Only when both name
+    the same number is the pull request this unit's.
+    """
+    for binding, landing in landings:
+        changed = landing.facts.get(LANDING_FACTS_KEY)
+        if not isinstance(changed, dict):
+            continue
+        number, head = changed.get(LANDING_PULL_REQUEST), changed.get(LANDING_HEAD_COMMIT)
+        if (
+            isinstance(number, int)
+            and not isinstance(number, bool)
+            and number == binding.implementation_pr_number
+            and isinstance(head, str)
+            and head
+        ):
+            return TraceabilityPrHop(pr_number=number, head_sha=head, source="landing_ledger")
+    return None
 
 
 def _unwrap[T](result: tuple[T, ...] | DomainError) -> tuple[T, ...]:

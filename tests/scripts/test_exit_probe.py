@@ -119,6 +119,12 @@ def _chain(unit_key: str, **present: bool) -> dict:
             chain[hop] = {"placeholder": unit_key} if carried else None
         else:
             chain[hop] = [{"placeholder": unit_key}] if carried else []
+    # The release check counts an observation only if it was made at or after the release first
+    # deployed, so both hops carry a time: the deployment first, the observation after it.
+    for entry in chain["deployment"]:
+        entry["observed_at"] = "2026-08-01T12:00:00+00:00"
+    for entry in chain["observations"]:
+        entry["observed_at"] = "2026-08-01T13:00:00+00:00"
     chain["unit"] = {"unit_key": unit_key, "id": unit_key}
     return chain
 
@@ -1431,3 +1437,21 @@ def test_a_report_always_names_the_host_it_measured(capsys, monkeypatch):
     payload = json.loads(capsys.readouterr().out.split("\n", 1)[1])
 
     assert payload["measured_against"] == "https://example.invalid"
+
+
+def test_an_observation_made_before_the_release_deployed_does_not_answer_the_tail(monkeypatch):
+    """Devon, 2026-10-04: a landing (recorded at merge) is real but observes nothing running."""
+    chain = _chain("release")
+    chain["observations"][0]["observed_at"] = "2026-08-01T11:00:00+00:00"
+    monkeypatch.setattr(exit_probe, "api_get", _api(_release_routes("rev-1", [chain])))
+
+    assert exit_probe.release_chain_answers_every_hop("rev-1") == FAIL
+
+
+def test_an_observation_with_no_time_is_unavailable_not_counted(monkeypatch):
+    chain = _chain("release")
+    del chain["observations"][0]["observed_at"]
+    monkeypatch.setattr(exit_probe, "api_get", _api(_release_routes("rev-1", [chain])))
+
+    with pytest.raises(Unavailable, match="observed_at"):
+        exit_probe.release_chain_answers_every_hop("rev-1")

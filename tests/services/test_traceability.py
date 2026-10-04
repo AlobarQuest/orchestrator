@@ -415,3 +415,171 @@ def test_a_machine_local_activation_lights_the_deployment_hop(migrated_session: 
     assert hop.deployer is None
     assert hop.activation_summary["merge_commit_present"] == "yes"
     assert hop.probe_summary == {}
+
+
+def _record_landing(
+    session: Session,
+    *,
+    commit: str = MERGE_COMMIT,
+    pull_request: int | None = 20,
+    repository: str = "AlobarQuest/orchestrator",
+) -> Observation:
+    """A landing-ledger row as `landing_ledger/record.py` writes one (shape pinned by
+    `tests/contract/test_landing_fact_contract.py`)."""
+    result = record_observation(
+        session,
+        ObservationCommand(
+            actor=SYSTEM,
+            source_system="github",
+            source_reference=f"landing:{repository}@{commit}",
+            source_url=None,
+            trust_classification="delivery_system",
+            subject_type="repo",
+            subject_reference=repository,
+            environment=None,
+            observation_type="landing",
+            status="observed",
+            severity="info",
+            observed_at=LATER,
+            summary=f"{commit[:7]} landed",
+            facts={
+                "what_changed": {
+                    "repository": repository,
+                    "commit": commit,
+                    "head_commit": HEAD_SHA,
+                    "pull_request": pull_request,
+                }
+            },
+            payload_digest=None,
+            idempotency_key=f"landing-{repository}-{commit}",
+            expected_version=0,
+        ),
+    )
+    assert not isinstance(result, DomainError)
+    return result
+
+
+def _released_unit(session: Session, key: str) -> WorkUnit:
+    unit = completed_unit(session, key=key)
+    binding = record_release_artifact(session, command(unit, key=f"{key}-binding"))
+    assert not isinstance(binding, DomainError)
+    return unit
+
+
+def test_a_release_chain_reaches_the_landing_of_its_commit(migrated_session: Session):
+    """Simplification review 5c: the observation hop reaches what is about the release, here the
+    landing ledger's record of the commit the release binding names, joined on that exact commit."""
+    unit = _released_unit(migrated_session, "landed-unit")
+    _record_landing(migrated_session)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert [(o.subject_type, o.observation_type) for o in chain.observations] == [
+        ("repo", "landing")
+    ]
+    assert chain.observations[0].subject_reference == "AlobarQuest/orchestrator"
+
+
+def test_a_build_session_pull_request_comes_from_the_landing_when_both_writers_agree(
+    migrated_session: Session,
+):
+    """No factory PR binding: the release binding names PR 20 and the landing recorded the commit
+    landing through PR 20, so the chain carries it, marked with where it came from."""
+    unit = _released_unit(migrated_session, "session-pr-unit")
+    _record_landing(migrated_session)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.pr is not None
+    assert (chain.pr.pr_number, chain.pr.head_sha, chain.pr.source) == (
+        20,
+        HEAD_SHA,
+        "landing_ledger",
+    )
+
+
+def test_a_landing_through_a_different_pull_request_supplies_no_pr(migrated_session: Session):
+    unit = _released_unit(migrated_session, "disagreeing-unit")
+    _record_landing(migrated_session, pull_request=21)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.pr is None
+    assert [o.observation_type for o in chain.observations] == ["landing"]
+
+
+def test_a_landing_of_another_commit_is_not_joined(migrated_session: Session):
+    unit = _released_unit(migrated_session, "other-commit-unit")
+    _record_landing(migrated_session, commit=OTHER_MERGE_COMMIT)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.observations == []
+    assert chain.pr is None
+
+
+def test_the_landing_join_ignores_repository_case(migrated_session: Session):
+    unit = _released_unit(migrated_session, "case-unit")
+    _record_landing(migrated_session, repository="alobarquest/orchestrator")
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert [o.observation_type for o in chain.observations] == ["landing"]
+    assert chain.pr is not None and chain.pr.source == "landing_ledger"
+
+
+def test_a_factory_pr_binding_takes_precedence_over_the_landing(migrated_session: Session):
+    unit = _released_unit(migrated_session, "factory-pr-unit")
+    _record_landing(migrated_session)
+    upsert_pr_binding(
+        migrated_session,
+        actor=SYSTEM,
+        work_unit_id=unit.id,
+        pr_number=99,
+        head_sha="2" * 40,
+        attempt=1,
+    )
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.pr is not None
+    assert (chain.pr.pr_number, chain.pr.source) == (99, "unit_pr_binding")
+
+
+def test_one_landing_is_listed_once_when_two_bindings_name_its_commit(migrated_session: Session):
+    unit = _released_unit(migrated_session, "two-bindings-unit")
+    second = record_release_artifact(
+        migrated_session,
+        replace(command(unit, key="two-bindings-second"), artifact_name="second-image"),
+    )
+    assert not isinstance(second, DomainError)
+    _record_landing(migrated_session)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert len(chain.artifact) == 2
+    assert [o.observation_type for o in chain.observations] == ["landing"]
+
+
+def test_a_push_without_a_pull_request_joins_but_supplies_no_pr(migrated_session: Session):
+    unit = _released_unit(migrated_session, "push-unit")
+    _record_landing(migrated_session, pull_request=None)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert [o.observation_type for o in chain.observations] == ["landing"]
+    assert chain.pr is None
+
+
+def test_a_binding_naming_no_pull_request_takes_none_from_the_landing(migrated_session: Session):
+    unit = completed_unit(migrated_session, key="no-pr-binding-unit")
+    binding = record_release_artifact(
+        migrated_session,
+        replace(command(unit, key="no-pr-binding"), implementation_pr_number=None),
+    )
+    assert not isinstance(binding, DomainError)
+    _record_landing(migrated_session)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.pr is None
