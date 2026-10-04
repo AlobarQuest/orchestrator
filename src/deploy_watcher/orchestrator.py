@@ -3,8 +3,9 @@
 ADR-0022. Until this increment the watcher did not speak to the orchestrator at all, and saying so
 was part of its isolation test. What changed is that a rollout the watcher observes may belong to a
 WORK UNIT, and the orchestrator's traceability chain reads unit-scoped observations on its
-observation hop (plus, since SDS 1.1, the landing of each release commit) -- so the watcher, which is already there and already knows which
-landing it is looking at, is the one producer positioned to fill it honestly.
+observation hop (plus, since SDS 1.1, the landing of each release commit) -- so the watcher,
+which is already there and already knows which landing it is looking at, is the one producer
+positioned to fill it honestly.
 
 THE WRITE IS THE OBSERVER ROLE'S WHOLE WRITE SURFACE, and the bound is repeated here in code for
 the reason both sibling adapters repeat it: a second write becomes structurally unreachable rather

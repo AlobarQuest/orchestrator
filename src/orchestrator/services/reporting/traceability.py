@@ -63,8 +63,9 @@ class TraceabilityIntentHop(BaseModel):
     change_record_id: int | None = None
     # ADR-0026 amendment 1. The other half of the same join, and it rides the SAME hop for the
     # same reason: the observation hop reads only unit-scoped observations and release-commit
-    # landings, so the fact that caused this work could never arrive through it. Declared here because a FastAPI `response_model` silently drops
-    # any key it does not declare -- the service could set it and the consumer read nothing.
+    # landings, so the fact that caused this work could never arrive through it. Declared here
+    # because a FastAPI `response_model` silently drops any key it does not declare -- the
+    # service could set it and the consumer read nothing.
     originating_observation_id: uuid.UUID | None = None
 
 
