@@ -395,12 +395,15 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
         if (landing := _landing_of_commit(session, binding.source_repository, binding.merge_commit))
         is not None
     ]
+    # Several bindings can name one commit (an image and a machine-local activation of the same
+    # merge), so one landing is listed once.
+    landed = {landing.id: landing for _, landing in landings}
     observations = list(
         list_observations(
             session,
             ObservationFilters(subject_type="work_unit", subject_reference=str(unit_id)),
         )
-    ) + [landing for _, landing in landings]
+    ) + list(landed.values())
 
     return TraceabilityChainResponse(
         intent=TraceabilityIntentHop(

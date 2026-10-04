@@ -544,3 +544,42 @@ def test_a_factory_pr_binding_takes_precedence_over_the_landing(migrated_session
 
     assert chain.pr is not None
     assert (chain.pr.pr_number, chain.pr.source) == (99, "unit_pr_binding")
+
+
+def test_one_landing_is_listed_once_when_two_bindings_name_its_commit(migrated_session: Session):
+    unit = _released_unit(migrated_session, "two-bindings-unit")
+    second = record_release_artifact(
+        migrated_session,
+        replace(command(unit, key="two-bindings-second"), artifact_name="second-image"),
+    )
+    assert not isinstance(second, DomainError)
+    _record_landing(migrated_session)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert len(chain.artifact) == 2
+    assert [o.observation_type for o in chain.observations] == ["landing"]
+
+
+def test_a_push_without_a_pull_request_joins_but_supplies_no_pr(migrated_session: Session):
+    unit = _released_unit(migrated_session, "push-unit")
+    _record_landing(migrated_session, pull_request=None)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert [o.observation_type for o in chain.observations] == ["landing"]
+    assert chain.pr is None
+
+
+def test_a_binding_naming_no_pull_request_takes_none_from_the_landing(migrated_session: Session):
+    unit = completed_unit(migrated_session, key="no-pr-binding-unit")
+    binding = record_release_artifact(
+        migrated_session,
+        replace(command(unit, key="no-pr-binding"), implementation_pr_number=None),
+    )
+    assert not isinstance(binding, DomainError)
+    _record_landing(migrated_session)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.pr is None
