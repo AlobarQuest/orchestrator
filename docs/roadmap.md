@@ -46,6 +46,9 @@ section holds every one that's partial, not started or deferred. Each entry name
 identifier, so its reasoning can be found in the notes. When an item ships, delete its entry and
 record the outcome in the ADR or pull request that shipped it.
 
+Shipped so far: the stalled-execution instruction (#336) and reversible decomposition before claim
+(2b-2, R5; ADR-0052, #338), both deployed on 2026-10-04 as `72fc88f-adr0052-amd64`.
+
 Two decisions aren't carried forward:
 
 - 6b, confirming Todoist as the place to see factory work: ADR-0040 retired the tracker lane.
@@ -54,21 +57,14 @@ Two decisions aren't carried forward:
 
 ### Order
 
-1. **The stalled-execution instruction.** Merged in #336: the instruction now names
-   `reclaim-expired-claim` instead of the deleted `recover-expired-claim`. It ships with the next
-   orchestrator deploy.
-2. **Reversible decomposition before claim (2b-2, R5).** Built to ADR-0052: a human supersedes an
-   approval none of whose units has been worked, from its proposal page in `/review`, and the
-   re-approval may reuse the retired units' keys. It ships with the next orchestrator deploy, which
-   runs migration 0039.
-3. **Traceability through observations (5c).** The observation hop in
+1. **Traceability through observations (5c).** The observation hop in
    `services/reporting/traceability.py` reads only `subject_type="work_unit"`, so observations about
    a service or environment join no chain. Wave-2 exit clause 2 stays unmet until this ships.
-4. **A server-computed dispatch ordinal (3a-2).** `runner_attempt` is client-supplied; a reused
+2. **A server-computed dispatch ordinal (3a-2).** `runner_attempt` is client-supplied; a reused
    ordinal returns 200 and runs nothing, and only the `factory` client guards against that.
-5. **Automatic `ready` (2d-1).** DRAFT → READY is still a manual `factory ready` step on every
+3. **Automatic `ready` (2d-1).** DRAFT → READY is still a manual `factory ready` step on every
    unit, with no server caller.
-6. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
+4. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
    still lists cancelled units that were already handled.
 
 ### Deferred, with the evidence
