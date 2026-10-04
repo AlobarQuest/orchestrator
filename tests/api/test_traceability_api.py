@@ -17,7 +17,12 @@ from orchestrator.services.reporting.traceability import (
     TraceabilityUnitHop,
 )
 from tests.api.test_lifecycle_api import SYSTEM, WORKER
-from tests.api.test_release_artifacts_api import DIGEST, completed_unit, release_body
+from tests.api.test_release_artifacts_api import (
+    DIGEST,
+    MERGE_COMMIT,
+    completed_unit,
+    release_body,
+)
 
 
 def _record_a_signal(migrated_engine: Engine) -> uuid.UUID:
@@ -162,6 +167,62 @@ def test_the_served_intent_hop_declares_the_originating_observation(
 
     assert response.status_code == 200
     assert "originating_observation_id" in response.json()["chains"][0]["intent"]
+
+
+def test_the_served_chain_declares_the_landing_join_and_the_pr_source(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """Simplification review 5c. The landing joined on the release's commit, and the pull request
+    derived from it, must survive the `response_model` at the wire."""
+    revision_id, unit_id = completed_unit(db_client, migrated_engine, key="landing-join")
+    created = db_client.post(
+        f"/api/v1/work-units/{unit_id}/release-artifacts",
+        headers=SYSTEM,
+        json=release_body(revision_id, key="landing-join-binding"),
+    )
+    assert created.status_code == 201
+    with Session(migrated_engine) as session:
+        landing = record_observation(
+            session,
+            ObservationCommand(
+                actor=ActorContext("system", ActorRole.SYSTEM),
+                source_system="github",
+                source_reference=f"landing:AlobarQuest/orchestrator@{MERGE_COMMIT}",
+                source_url=None,
+                trust_classification="delivery_system",
+                subject_type="repo",
+                subject_reference="AlobarQuest/orchestrator",
+                environment=None,
+                observation_type="landing",
+                status="observed",
+                severity="info",
+                observed_at=datetime(2026, 9, 18, 12, 0, tzinfo=UTC),
+                summary="landed",
+                facts={
+                    "what_changed": {
+                        "repository": "AlobarQuest/orchestrator",
+                        "commit": MERGE_COMMIT,
+                        "head_commit": "1" * 40,
+                        "pull_request": 20,
+                    }
+                },
+                payload_digest=None,
+                idempotency_key="api-landing-join",
+                expected_version=0,
+            ),
+        )
+        assert not isinstance(landing, DomainError), landing
+
+    response = db_client.get(
+        "/api/v1/traceability", headers=WORKER, params={"work_unit_id": unit_id}
+    )
+
+    assert response.status_code == 200
+    chain = response.json()["chains"][0]
+    assert chain["pr"] == {"pr_number": 20, "head_sha": "1" * 40, "source": "landing_ledger"}
+    assert [(o["subject_type"], o["subject_reference"]) for o in chain["observations"]] == [
+        ("repo", "AlobarQuest/orchestrator")
+    ]
 
 
 def test_traceability_requires_auth(db_client: TestClient) -> None:
