@@ -55,11 +55,14 @@ unresolved failures (6a, #348), deployed as `8f5691c-sds11deadletter-amd64`: a c
 cancelled unit is resolved, and the resolution is the acknowledgement, so no acknowledged state was
 added.
 
-Two decisions aren't carried forward:
+Three decisions aren't carried forward:
 
 - 6b, confirming Todoist as the place to see factory work: ADR-0040 retired the tracker lane.
 - 6c, deriving candidate lessons automatically: Tier 3 item 24 deleted the promotion surface it
   would have fed.
+- 3d-2, recording real exit codes: factory-runner records a command only after it exits 0, since
+  any other exit stops finalize first, so its `exit_code: 0` is measured, not assumed (factory-runner
+  backlog, closed 2026-09-27).
 
 ### Blocked
 
@@ -97,7 +100,6 @@ These are in no fixed order.
 | waiver | A human may waive only a criterion that's currently failing. | Any human may waive any criterion. |
 | 5b | One declared deployment-observation schema. | Five summary dicts; only the secret detector is shared. |
 | 3c-1 | Separate the runner's permitted commands from its ordered verify script. | factory-runner still runs `allowed_commands` as the script. |
-| 3d-2 | Record real exit codes, or drop the field. | factory-runner writes a literal `exit_code: 0`. |
 | 4a-2 | One evidence vocabulary with a divergence test in both directions. | Five types copied by hand, checked one way. |
 | 4c-3 | Separate the deciding view from the auditing view. | One page with a decision section and context-gated forms. |
 | 5a | Record the release binding as part of deploying. Unblocks the rest of 5c. | Only machine-local activations bind; Coolify deploys and self-builds don't. |
