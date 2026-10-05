@@ -49,7 +49,8 @@ record the outcome in the ADR or pull request that shipped it.
 Shipped so far: the stalled-execution instruction (#336) and reversible decomposition before claim
 (2b-2, R5; ADR-0052, #338), both deployed on 2026-10-04 as `72fc88f-adr0052-amd64`. The landing join for traceability (5c, #343) deployed
 as `ae9ebe4-sds11trace-amd64`, and the server-assigned dispatch ordinal (3a-2, #344, with
-intent-packages #106) as `ff4936f-sds11ordinal-amd64`.
+intent-packages #106) as `ff4936f-sds11ordinal-amd64`. Automatic `ready` (2d-1, #346, with
+intent-packages #107 and #108) deployed as `8371b04-sds11autoready-amd64`.
 
 Two decisions aren't carried forward:
 
@@ -59,11 +60,7 @@ Two decisions aren't carried forward:
 
 ### Order
 
-1. **Automatic `ready` (2d-1).** Built: the orchestrator takes `DRAFT → READY` once readiness
-   holds (authority approval, dependency resolved, or decomposition approval), and the edge is now
-   guarded on readiness. It ships with the next orchestrator deploy; `factory ready` already
-   treats a ready unit as success (intent-packages #107).
-2. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
+1. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
    still lists cancelled units that were already handled.
 
 ### Blocked
