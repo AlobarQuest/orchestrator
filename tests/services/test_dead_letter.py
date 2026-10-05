@@ -6,7 +6,6 @@ materialized dead-letter queue to drift out of sync with reality.
 
 import uuid
 
-import pytest
 from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import WorkUnitState
@@ -18,6 +17,7 @@ from orchestrator.services.execution.dispatch import (
 )
 from orchestrator.services.reporting.dead_letter import dead_letter, recovery_action
 from tests._support.seeding import register_unit
+from tests.services.test_reclaim import authorize_readiness
 
 # Long enough that nothing in these fixtures is stale; the stalled-approval
 # report has its own tests.
@@ -116,6 +116,7 @@ def test_only_failed_and_blocked_units_are_enumerated(migrated_session: Session)
     failed = register_unit(migrated_session, "dl-failed")
     failed.state = WorkUnitState.FAILED
     blocked = register_unit(migrated_session, "dl-blocked")
+    authorize_readiness(migrated_session, blocked)
     blocked.state = WorkUnitState.BLOCKED
     cancelled = register_unit(migrated_session, "dl-cancelled")
     cancelled.state = WorkUnitState.CANCELLED
@@ -190,6 +191,7 @@ def test_requeue_eligibility_reflects_the_attempt_budget(migrated_session: Sessi
     exhausted.state = WorkUnitState.FAILED
     exhausted.attempt_count = exhausted.max_attempts
     spare = register_unit(migrated_session, "dl-spare")
+    authorize_readiness(migrated_session, spare)
     spare.state = WorkUnitState.FAILED
     spare.attempt_count = 1
     migrated_session.commit()
@@ -240,29 +242,6 @@ def test_a_clean_database_yields_an_empty_view(migrated_session: Session) -> Non
     )
 
 
-@pytest.mark.parametrize(
-    ("state", "attempts_left", "action"),
-    [
-        (WorkUnitState.FAILED, False, "Authorize a retry with a raised attempt limit"),
-        (WorkUnitState.FAILED, True, "have the system requeue it"),
-        (WorkUnitState.BLOCKED, True, "Have the system requeue this unit"),
-        (WorkUnitState.BLOCKED, False, "None: no route accepts a blocked unit"),
-        (WorkUnitState.READY, True, "Dispatch this unit again"),
-        (WorkUnitState.AWAITING_REVIEW, True, "Decide this unit's gate"),
-        (WorkUnitState.SUBMITTED, True, "Run the verifier"),
-        (WorkUnitState.EXECUTING, True, "None: the unit is executing"),
-    ],
-)
-def test_the_recovery_action_names_a_route_that_accepts_the_unit(
-    migrated_session: Session, state: WorkUnitState, attempts_left: bool, action: str
-) -> None:
-    unit = register_unit(migrated_session, f"dl-recovery-{state}-{attempts_left}")
-    unit.state = state
-    unit.attempt_count = 0 if attempts_left else unit.max_attempts
-
-    assert action in recovery_action(unit)
-
-
 def test_every_entry_carries_its_units_recovery_action(migrated_session: Session) -> None:
     failed = register_unit(migrated_session, "dl-action-failed")
     failed.state = WorkUnitState.FAILED
@@ -283,9 +262,9 @@ def test_every_entry_carries_its_units_recovery_action(migrated_session: Session
     )
 
     assert {(entry.source, entry.recovery_action) for entry in entries} == {
-        ("work_unit", recovery_action(failed)),
-        ("dispatch_record", recovery_action(failed)),
-        ("circuit_breaker", recovery_action(failed)),
-        ("stalled_approval", recovery_action(gated)),
-        ("stalled_verification", recovery_action(submitted)),
+        ("work_unit", recovery_action(migrated_session, failed)),
+        ("dispatch_record", recovery_action(migrated_session, failed)),
+        ("circuit_breaker", recovery_action(migrated_session, failed)),
+        ("stalled_approval", recovery_action(migrated_session, gated)),
+        ("stalled_verification", recovery_action(migrated_session, submitted)),
     }

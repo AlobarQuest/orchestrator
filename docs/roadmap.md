@@ -106,7 +106,6 @@ These are in no fixed order.
 | L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Four producers exist; where WS-P3.5 belongs is open decision 1. |
 | 3a-1 | Admission keeps two checks; posture moves to policy. | Admission grew (reach, estate and declaration terms). Review which terms fold into `factory-policy.toml`. |
 | R9 | Net gate load is a target set per wave. | Counted once, in the WS-P2.17 spec. |
-| R11 | Deploy documentation reflects R11. | `docs/operations/deploy.md` still says a step is done by hand by Devon. |
 | 7a | Deploy is automated like the build, and migrate/swap ordering is safe by construction. | Deferred by Devon on 2026-08-02. Migrate-before-swap is safe only because no health check reads readiness. Re-decide before building. |
 
 ## After 1.0

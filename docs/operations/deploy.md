@@ -59,14 +59,14 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   Both are composed by `scripts/compute_image_tags.py` — it is the function, and it refuses a
   revision that is not a full 40-character sha, so a malformed one fails the build rather than
   producing an image that asserts an unresolvable provenance.
-  **The workflow only builds and pushes — it never deploys.** Pointing Coolify at the new tag
-  stays a separate, manual gate, same as before.
+  **The workflow only builds and pushes — it never deploys.** Pointing Coolify at the new tag is
+  a separate step that the deploying session performs. It isn't a human gate (R11).
   Two digests, two different jobs, not competing checks: the **bundle digest**
   (`REGISTRY_ARTIFACT_SHA256`, currently `7aea8471…` per the pin file) is the **build-time,
   security-critical** gate — the Dockerfile's `registry` build stage recomputes it from the
   shaped context and **fails closed** on any mismatch (wrong/tampered actor registry), whether
   the build runs in CI or by hand. The **image SHA / running container's `RepoDigest`** is the
-  separate **deploy-time identity** check Devon still does by hand after the Coolify swap —
+  separate **deploy-time identity** check the deploying session runs after the Coolify swap —
   proving prod is running bit-for-bit what the workflow pushed.
   **CORRECTED 2026-07-31 (WS-P2.17 Inc 4): the recipe this file has been shipping for that check
   does not work.** `docker inspect <container> --format '{{index .RepoDigests 0}}'` fails, because
@@ -216,9 +216,9 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #195
 
-- **Pointing Coolify at a new tag is HQ's mechanic, not Devon's gate.** The paved road's *"pointing
-  Coolify at the new tag stays a separate, manual gate"* means **the workflow does not do it**, not
-  that Devon does. His gate is deciding what and how a change may happen; the execution is HQ's, via
+- **Pointing Coolify at a new tag is HQ's mechanic, not Devon's gate.** The paved road once
+  called it *"a separate, manual gate"*, meaning **the workflow does not do it**, not that Devon
+  does. His gate is deciding what and how a change may happen; the execution is HQ's, via
   `infraops` (`coolify_update_application` + `coolify_deploy`), which is the sanctioned path and
   which this session's infra-separation waiver permits. Misreading it cost a round-trip on
   2026-08-16 and it is the same conflation as assigning him a merge. **Record the outgoing tag
