@@ -56,6 +56,12 @@ cancelled unit is resolved, and the resolution is the acknowledgement, so no ack
 added.
 Dead-letter entries name their recovery action (7b, with R11's deploy wording; #349), deployed as
 `770be9f-sds11recovery-amd64`.
+A waiver is accepted only for a criterion failing on its current evidence (#350), deployed as
+`5974561-sds11waiver-amd64`. Two dead ends found while building 7b are closed, as Devon chose on
+2026-10-05: a retry now takes a blocked unit whose attempt budget is spent (#351), and the review
+page's approval takes an `awaiting_approval` unit back to `ready` (#352). The package evidence
+vocabulary is one contract pinned in both repositories (4a-2, #353 with intent-packages #109). All
+three deployed as `433cd36-sds11approve-amd64`.
 
 Three decisions aren't carried forward:
 
