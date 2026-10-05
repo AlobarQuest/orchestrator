@@ -54,6 +54,8 @@ intent-packages #107 and #108) deployed as `8371b04-sds11autoready-amd64`. Dead-
 unresolved failures (6a, #348), deployed as `8f5691c-sds11deadletter-amd64`: a completed or
 cancelled unit is resolved, and the resolution is the acknowledgement, so no acknowledged state was
 added.
+Dead-letter entries name their recovery action (7b, with R11's deploy wording; #349), deployed as
+`770be9f-sds11recovery-amd64`.
 
 Three decisions aren't carried forward:
 
