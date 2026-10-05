@@ -957,9 +957,10 @@ def recognised_unit(
         actor_id=HUMAN.actor_id,
         actor_role=HUMAN.role,
     )
-    # Set directly, as fixture setup: these tests prove dispatch admission refuses an envelope
-    # nothing recognises, and since SDS 1.1 item 2d-1 such a unit cannot reach READY through the
-    # lifecycle (its readiness does not hold). Admission is the second line, tested on its own.
+    # Set directly, as fixture setup, so every caller gets a READY unit whatever its envelope.
+    # Several callers build one nothing recognises, to prove dispatch admission still refuses it;
+    # since SDS 1.1 item 2d-1 such a unit cannot reach READY through the lifecycle, because its
+    # readiness does not hold. Admission is the second line, tested here on its own.
     unit.state = WorkUnitState.READY
     session.flush()
     return unit

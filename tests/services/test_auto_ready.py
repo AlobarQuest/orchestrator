@@ -210,3 +210,70 @@ def test_an_approval_on_a_unit_past_draft_leaves_its_state_alone(migrated_sessio
     _approve(migrated_session, unit, "authority-2")
 
     assert (unit.state, unit.version) == (WorkUnitState.READY, version)
+
+
+def test_a_dependency_resolved_as_failed_does_not_ready_the_unit(migrated_session: Session) -> None:
+    unit = register_unit(migrated_session, "failed-dependency-unit")
+    dependency = register_dependency_with_event(
+        migrated_session,
+        work_unit_id=unit.id,
+        spec=DependencySpec.external("ci/build", "passed"),
+        actor_id=HUMAN.actor_id,
+        actor_role=HUMAN.role,
+        idempotency_key="dependency-failing",
+    )
+    _approve(migrated_session, unit)
+
+    resolve_dependency_command(
+        migrated_session,
+        dependency_id=dependency.id,
+        status="failed",
+        detail={"run": 2},
+        actor_id="system",
+        actor_role=ActorRole.SYSTEM,
+        expected_version=unit.version,
+        idempotency_key="resolve-failed",
+    )
+
+    assert unit.state == WorkUnitState.DRAFT
+
+
+def test_a_decomposition_approval_readies_only_the_units_without_a_pending_dependency(
+    migrated_session: Session,
+) -> None:
+    """The shared proposal has unit-2 depending on unit-1: unit-1 readies, unit-2 waits."""
+    snapshot = {**intake_command().enforcement_snapshot, "reach": ["source_repository"]}
+    revision = register_package_intake(
+        migrated_session,
+        intake_command(
+            package_id="pkg-mixed",
+            acceptance_criteria=(acceptance_criterion("AC-001"), acceptance_criterion("AC-002")),
+            enforcement_snapshot=snapshot,
+        ),
+        human_actor(),
+    )
+    command = proposal_command(revision.id, package_ac_ids(migrated_session, revision.id))
+    envelope = uv_bump(uuid.uuid4())
+    del envelope["constraints"]["work_unit_id"]
+    units = tuple(
+        unit.__class__(**{**unit.__dict__, "authority": normalize_authority(envelope)})
+        for unit in command.proposed_units
+    )
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        command.__class__(**{**command.__dict__, "proposed_units": units}),
+        worker_actor(),
+    )
+
+    approve_decomposition_proposal(
+        migrated_session, proposal.id, actor=human_actor(), reason="Ok.", idempotency_key="p-mixed"
+    )
+
+    states = dict(
+        migrated_session.execute(
+            select(WorkUnit.unit_key, WorkUnit.state).where(
+                WorkUnit.work_package_revision_id == revision.id
+            )
+        ).all()
+    )
+    assert states == {"unit-1": WorkUnitState.READY, "unit-2": WorkUnitState.DRAFT}

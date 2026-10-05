@@ -98,7 +98,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   - resolving a dependency to `satisfied`;
   - approving a decomposition whose unit policy already recognises and that has no dependency.
 
-  The event carries the triggering actor's id with the SYSTEM role. `DRAFT → READY` is guarded on
+  The event carries the triggering actor's id with the SYSTEM role, and it bumps the unit's
+  `version`: a client's next `expected_version` after an approval is one higher than before. `DRAFT → READY` is guarded on
   readiness (`readiness_not_satisfied` otherwise), so `POST /api/v1/work-units/{id}/commands/ready`
   is only a catch-up, for a unit whose readiness came to hold with no event, such as after a
   policy change. Until 2026-10-05 the approval left the unit in `DRAFT` and nothing checked

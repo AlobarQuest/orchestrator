@@ -193,7 +193,8 @@ def ready_if_satisfied(
     Called by the writes that can make readiness hold: an authority approval, a decomposition
     approval, a dependency resolved. It is a SYSTEM edge, and the event carries the id of whoever
     caused it with the SYSTEM role (Devon, 2026-10-05; the precedent is `claims.py`), and names
-    `cause`, the triggering write's idempotency key, which also derives this transition's own.
+    `cause`, the triggering write's idempotency key, in this transition's own key. The reason is a
+    fixed code: it reaches the public evidence pack, and `cause` is caller-chosen.
     Never commits: it runs inside the caller's transaction.
     """
     unit = session.get(WorkUnit, unit_id)
@@ -209,7 +210,7 @@ def ready_if_satisfied(
             actor=ActorContext(trigger.actor_id, ActorRole.SYSTEM),
             expected_version=unit.version,
             idempotency_key=f"{cause}:auto-ready",
-            reason=f"readiness satisfied ({cause})",
+            reason="readiness_satisfied",
         ),
     )
 
