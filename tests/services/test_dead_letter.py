@@ -15,8 +15,9 @@ from orchestrator.services.execution.dispatch import (
     failure_signature,
     signature_failure_count,
 )
-from orchestrator.services.reporting.dead_letter import dead_letter
+from orchestrator.services.reporting.dead_letter import dead_letter, recovery_action
 from tests._support.seeding import register_unit
+from tests.services.test_reclaim import authorize_readiness
 
 # Long enough that nothing in these fixtures is stale; the stalled-approval
 # report has its own tests.
@@ -115,6 +116,7 @@ def test_only_failed_and_blocked_units_are_enumerated(migrated_session: Session)
     failed = register_unit(migrated_session, "dl-failed")
     failed.state = WorkUnitState.FAILED
     blocked = register_unit(migrated_session, "dl-blocked")
+    authorize_readiness(migrated_session, blocked)
     blocked.state = WorkUnitState.BLOCKED
     cancelled = register_unit(migrated_session, "dl-cancelled")
     cancelled.state = WorkUnitState.CANCELLED
@@ -189,6 +191,7 @@ def test_requeue_eligibility_reflects_the_attempt_budget(migrated_session: Sessi
     exhausted.state = WorkUnitState.FAILED
     exhausted.attempt_count = exhausted.max_attempts
     spare = register_unit(migrated_session, "dl-spare")
+    authorize_readiness(migrated_session, spare)
     spare.state = WorkUnitState.FAILED
     spare.attempt_count = 1
     migrated_session.commit()
@@ -237,3 +240,31 @@ def test_a_clean_database_yields_an_empty_view(migrated_session: Session) -> Non
         )
         == ()
     )
+
+
+def test_every_entry_carries_its_units_recovery_action(migrated_session: Session) -> None:
+    failed = register_unit(migrated_session, "dl-action-failed")
+    failed.state = WorkUnitState.FAILED
+    for attempt in range(1, THRESHOLD + 1):
+        _fail_dispatch(migrated_session, failed, attempt, "failed")
+    gated = register_unit(migrated_session, "dl-action-gated")
+    gated.state = WorkUnitState.AWAITING_REVIEW
+    submitted = register_unit(migrated_session, "dl-action-submitted")
+    submitted.state = WorkUnitState.SUBMITTED
+    migrated_session.commit()
+
+    # Zero thresholds make every gated and submitted unit stalled at once.
+    entries = dead_letter(
+        migrated_session,
+        failure_signature_threshold=THRESHOLD,
+        stalled_approval_seconds=0,
+        stalled_verification_seconds=0,
+    )
+
+    assert {(entry.source, entry.recovery_action) for entry in entries} == {
+        ("work_unit", recovery_action(migrated_session, failed)),
+        ("dispatch_record", recovery_action(migrated_session, failed)),
+        ("circuit_breaker", recovery_action(migrated_session, failed)),
+        ("stalled_approval", recovery_action(migrated_session, gated)),
+        ("stalled_verification", recovery_action(migrated_session, submitted)),
+    }

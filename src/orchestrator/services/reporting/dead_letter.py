@@ -26,8 +26,8 @@ Two things about that, both deliberate:
   * SILENCE IS NEVER APPROVAL. This REPORTS. It transitions nothing, and it cannot: every edge
     out of an approval state requires a named HUMAN actor (asserted in
     tests/kernel/test_approval_edges_require_a_human.py). A stalled gate is therefore reported
-    and NOT requeue-eligible -- which falls out of the existing `_requeue_eligible` predicate
-    for free, since an approval state is not in REQUEUE_STATES.
+    and NOT requeue-eligible -- which falls out of `requeue_refusal` for free, since requeue
+    takes only failed and blocked units.
 """
 
 import uuid
@@ -38,9 +38,16 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
+from orchestrator.kernel.readiness import ReadinessStatus
+from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Claim, DispatchRecord, WorkUnit
 from orchestrator.services.execution.dispatch import circuit_open
+from orchestrator.services.lifecycle.budget import is_over_budget
+from orchestrator.services.lifecycle.claims import requeue_refusal
+from orchestrator.services.lifecycle.readiness import evaluate_readiness
 
+# `blocked` units are listed because requeue TARGETS them. An action whose subject is invisible in
+# the surface it is offered from is not an operator affordance.
 DEAD_LETTER_UNIT_STATES = ("failed", "blocked")
 DEAD_LETTER_DISPATCH_STATUSES = ("failed", "blocked")
 # A resolved unit has reached the end of its story, and resolving it is the acknowledgement: its old
@@ -48,11 +55,6 @@ DEAD_LETTER_DISPATCH_STATUSES = ("failed", "blocked")
 # not-a-vocabulary: internal policy subset of WorkUnitState (which states end a unit's story), not
 # a value shared across a repo or subsystem boundary.
 RESOLVED_UNIT_STATES = ("completed", "cancelled")
-# `blocked` is here because requeue TARGETS it. An action whose subject is invisible in the
-# surface it is offered from is not an operator affordance.
-# not-a-vocabulary: internal policy subset of WorkUnitState (which states requeue targets), not a
-# value shared across a repo or subsystem boundary.
-REQUEUE_STATES = ("failed", "blocked")
 # The gates a human must answer. Nothing here can be answered by time passing.
 APPROVAL_STATES = ("awaiting_approval", "awaiting_review")
 # The states a VERIFIER owes an answer on. Nothing here can be answered by time passing either:
@@ -75,6 +77,7 @@ class DeadLetterEntry:
     max_attempts: int
     requeue_eligible: bool
     occurred_at: datetime | None
+    recovery_action: str
 
 
 def dead_letter(
@@ -131,9 +134,10 @@ def _stalled_verifications(
             detail=f"awaiting a verifier decision since {unit.updated_at.isoformat()}",
             attempt_count=unit.attempt_count,
             max_attempts=unit.max_attempts,
-            # False, from the existing predicate: neither state is a REQUEUE_STATE. A stalled
-            # verification needs the verifier run, not another attempt.
-            requeue_eligible=_requeue_eligible(unit),
+            # False, from requeue's own predicate: it takes only failed and blocked units. A
+            # stalled verification needs the verifier run, not another attempt.
+            requeue_eligible=requeue_refusal(session, unit) is None,
+            recovery_action=recovery_action(session, unit),
             occurred_at=unit.updated_at,
         )
         for unit in units
@@ -160,9 +164,10 @@ def _stalled_approvals(
             detail=f"awaiting a human decision since {unit.updated_at.isoformat()}",
             attempt_count=unit.attempt_count,
             max_attempts=unit.max_attempts,
-            # False, from the existing predicate: an approval state is not a REQUEUE_STATE.
+            # False, from requeue's own predicate: it takes only failed and blocked units.
             # A stalled gate needs a human decision, not a retry.
-            requeue_eligible=_requeue_eligible(unit),
+            requeue_eligible=requeue_refusal(session, unit) is None,
+            recovery_action=recovery_action(session, unit),
             occurred_at=unit.updated_at,
         )
         for unit in units
@@ -194,7 +199,8 @@ def _unit_entry(session: Session, unit: WorkUnit) -> DeadLetterEntry:
         detail=str(claim.id) if claim is not None else None,
         attempt_count=unit.attempt_count,
         max_attempts=unit.max_attempts,
-        requeue_eligible=_requeue_eligible(unit),
+        requeue_eligible=requeue_refusal(session, unit) is None,
+        recovery_action=recovery_action(session, unit),
         occurred_at=claim.released_at if claim is not None else None,
     )
 
@@ -219,7 +225,8 @@ def _failed_dispatch_records(session: Session) -> tuple[DeadLetterEntry, ...]:
             detail=record.failure_signature,
             attempt_count=unit.attempt_count,
             max_attempts=unit.max_attempts,
-            requeue_eligible=_requeue_eligible(unit),
+            requeue_eligible=requeue_refusal(session, unit) is None,
+            recovery_action=recovery_action(session, unit),
             occurred_at=None,
         )
         for record, unit in rows
@@ -267,18 +274,74 @@ def _open_circuit_breakers(
                 detail=signature,
                 attempt_count=unit.attempt_count,
                 max_attempts=unit.max_attempts,
-                requeue_eligible=_requeue_eligible(unit),
+                requeue_eligible=requeue_refusal(session, unit) is None,
+                recovery_action=recovery_action(session, unit),
                 occurred_at=None,
             )
         )
     return tuple(entries)
 
 
-def _requeue_eligible(unit: WorkUnit) -> bool:
-    """An exhausted unit is NOT requeue-eligible.
+# The states whose way forward belongs to one owner and depends on nothing else about the unit.
+_OWNER_ACTIONS = {
+    WorkUnitState.READY: (
+        "Have the system dispatch this unit again once the failure's cause is fixed"
+    ),
+    WorkUnitState.DRAFT: "None yet: the orchestrator readies this unit once its readiness holds",
+    # Every command that reaches `ready` from here is a HUMAN command on `/api`, which production
+    # routes to no person; the page's approval form records an approval but takes no edge.
+    WorkUnitState.AWAITING_APPROVAL: (
+        "Cancel this unit on its review page; recording an approval there does not ready it"
+    ),
+    WorkUnitState.AWAITING_REVIEW: "Complete this unit or request a revision on its review page",
+    WorkUnitState.SUBMITTED: "Have the verifier evaluate this unit",
+    WorkUnitState.VERIFYING: "Have the verifier evaluate this unit",
+}
 
-    Requeue would land it READY, where `claim_unit` rejects it with `attempts_exhausted` -- and
-    it would drop out of this view at the same time: invisible AND unrunnable. `retry` (which
-    raises the budget) is the operator's path for that case.
+
+def recovery_action(session: Session, unit: WorkUnit) -> str:
+    """The action that moves this unit on, and who may take it (review 7b).
+
+    It follows the unit, not the entry: a dispatch failure or a breaker on a unit is recovered the
+    way the unit is.
     """
-    return unit.state in REQUEUE_STATES and unit.attempt_count < unit.max_attempts
+    state = WorkUnitState(unit.state)
+    if state in (WorkUnitState.FAILED, WorkUnitState.BLOCKED):
+        return _requeue_target_action(session, unit, state)
+    return _OWNER_ACTIONS.get(
+        state, f"None: the unit is {unit.state} and has moved past this failure"
+    )
+
+
+# Who restores a readiness term: an authority approval is recorded on the review page, and a
+# dependency is resolved through an `/api` route that production serves only to machines.
+_READINESS_OWNERS = "(an approval on its review page, or the system resolving a dependency)"
+
+
+def _requeue_target_action(session: Session, unit: WorkUnit, state: WorkUnitState) -> str:
+    """Built from the three facts that decide whether the unit can run again, each read on its
+    own: requeue reports only the first it fails, which would name the wrong blocker.
+
+    A spent LLM-call budget is final, since nothing raises it. A spent attempt budget is raised
+    only by `authorize_retry`, which takes failed units alone. Readiness that no longer holds is
+    recoverable, so it never reads as a dead end. Only a failed unit can be cancelled: no edge
+    leads from `blocked` to `cancelled`.
+    """
+    blocked = state is WorkUnitState.BLOCKED
+    if is_over_budget(session, unit):
+        if blocked:
+            return "None: its LLM-call budget is spent, and nothing raises it (budget_exceeded)"
+        return "Cancel this unit: its LLM-call budget is spent, and nothing raises it"
+    exhausted = unit.attempt_count >= unit.max_attempts
+    if exhausted and blocked:
+        return "None: its attempt budget is spent, and only a failed unit can be retried"
+    route = (
+        "authorize a retry with a raised attempt limit"
+        if exhausted
+        else "have the system requeue it"
+    )
+    if evaluate_readiness(session, unit.id, for_update=False).status is not ReadinessStatus.READY:
+        route = f"restore its readiness {_READINESS_OWNERS}, then {route}"
+    if blocked:
+        return route[0].upper() + route[1:]
+    return f"Cancel this unit, or {route}"

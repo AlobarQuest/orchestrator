@@ -50,13 +50,19 @@ Shipped so far: the stalled-execution instruction (#336) and reversible decompos
 (2b-2, R5; ADR-0052, #338), both deployed on 2026-10-04 as `72fc88f-adr0052-amd64`. The landing join for traceability (5c, #343) deployed
 as `ae9ebe4-sds11trace-amd64`, and the server-assigned dispatch ordinal (3a-2, #344, with
 intent-packages #106) as `ff4936f-sds11ordinal-amd64`. Automatic `ready` (2d-1, #346, with
-intent-packages #107 and #108) deployed as `8371b04-sds11autoready-amd64`.
+intent-packages #107 and #108) deployed as `8371b04-sds11autoready-amd64`. Dead-letter lists only
+unresolved failures (6a, #348), deployed as `8f5691c-sds11deadletter-amd64`: a completed or
+cancelled unit is resolved, and the resolution is the acknowledgement, so no acknowledged state was
+added.
 
-Two decisions aren't carried forward:
+Three decisions aren't carried forward:
 
 - 6b, confirming Todoist as the place to see factory work: ADR-0040 retired the tracker lane.
 - 6c, deriving candidate lessons automatically: Tier 3 item 24 deleted the promotion surface it
   would have fed.
+- 3d-2, recording real exit codes: factory-runner records a command only after it exits 0, since
+  any other exit stops finalize first, so its `exit_code: 0` is measured, not assumed (factory-runner
+  backlog, closed 2026-09-27).
 
 ### Blocked
 
@@ -94,17 +100,14 @@ These are in no fixed order.
 | waiver | A human may waive only a criterion that's currently failing. | Any human may waive any criterion. |
 | 5b | One declared deployment-observation schema. | Five summary dicts; only the secret detector is shared. |
 | 3c-1 | Separate the runner's permitted commands from its ordered verify script. | factory-runner still runs `allowed_commands` as the script. |
-| 3d-2 | Record real exit codes, or drop the field. | factory-runner writes a literal `exit_code: 0`. |
 | 4a-2 | One evidence vocabulary with a divergence test in both directions. | Five types copied by hand, checked one way. |
 | 4c-3 | Separate the deciding view from the auditing view. | One page with a decision section and context-gated forms. |
 | 5a | Record the release binding as part of deploying. Unblocks the rest of 5c. | Only machine-local activations bind; Coolify deploys and self-builds don't. |
-| 7b | Dead-letter names the recovery action, as pending decisions does. | Pending decisions names dispositions; dead-letter doesn't. |
 | 7c | Run the whole-repo guards where the work happens. | `make check` refuses an empty collection; the guards still run only in a full `make check`. |
 | 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Machines can register intakes (ADR-0027); the human paste survives, and packages are LLM-authored through `factory create`. |
 | L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Four producers exist; where WS-P3.5 belongs is open decision 1. |
 | 3a-1 | Admission keeps two checks; posture moves to policy. | Admission grew (reach, estate and declaration terms). Review which terms fold into `factory-policy.toml`. |
 | R9 | Net gate load is a target set per wave. | Counted once, in the WS-P2.17 spec. |
-| R11 | Deploy documentation reflects R11. | `docs/operations/deploy.md` still says a step is done by hand by Devon. |
 | 7a | Deploy is automated like the build, and migrate/swap ordering is safe by construction. | Deferred by Devon on 2026-08-02. Migrate-before-swap is safe only because no health check reads readiness. Re-decide before building. |
 
 ## After 1.0

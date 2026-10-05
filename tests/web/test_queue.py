@@ -42,7 +42,7 @@ def test_a_failed_unit_appears_on_the_queue_with_its_disposition(
 
     assert page.status_code == 200
     assert review_unit.title in page.text
-    assert "Authorize a retry with a raised attempt limit, or cancel this unit" in page.text
+    assert "authorize a retry with a raised attempt limit" in page.text
 
 
 def _executing_with_a_hold_ending(

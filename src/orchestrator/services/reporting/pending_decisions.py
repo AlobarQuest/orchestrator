@@ -38,6 +38,7 @@ from orchestrator.services.intake.authority_gate import human_authority_gate
 from orchestrator.services.lifecycle.execution_stall import stalled_executions
 from orchestrator.services.lifecycle.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.reconciliation.reconciliation import open_conditions
+from orchestrator.services.reporting.dead_letter import recovery_action
 from orchestrator.services.verifier.evidence import current_adjudication, current_evidence
 from orchestrator.services.verifier.verifier_criteria import load_required_criteria
 from orchestrator.services.verifier.verifier_evaluators import human_may_adjudicate
@@ -254,7 +255,7 @@ def _unit_decisions(session: Session) -> list[dict[str, Any]]:
                 )
             )
         if unit.state == str(WorkUnitState.FAILED):
-            entries.append(_failed_disposition(unit, href))
+            entries.append(_failed_disposition(session, unit, href))
         entries.extend(_undecided_criteria(session, unit, href))
     return entries
 
@@ -273,28 +274,18 @@ def _authority_gate_refusals(session: Session, unit: WorkUnit) -> tuple[str, ...
     return human_authority_gate(unit, revision).refusals
 
 
-def _failed_disposition(unit: WorkUnit, href: str) -> dict[str, Any]:
+def _failed_disposition(session: Session, unit: WorkUnit, href: str) -> dict[str, Any]:
     """The disposition a failed unit needs, named for what this person can actually do.
 
-    `authorize_retry` is the only route back for a unit whose attempt budget is spent, and it
-    refuses `attempts_not_exhausted` for one that still has attempts left -- where the way back is
-    a requeue, which only SYSTEM may perform. Naming a retry in that case would send a person to a
-    form that refuses them, so the two cases read differently. Cancellation is always theirs.
+    The action is the dead-letter view's `recovery_action`: it names a retry or a requeue only
+    when that route accepts the unit, or once a readiness term it names is restored. Naming one
+    that refuses would send a person to a form that refuses them. Cancellation is always theirs.
     """
-    attempts = f"It failed after {unit.attempt_count} of {unit.max_attempts} attempts."
-    if unit.attempt_count >= unit.max_attempts:
-        return _entry(
-            "failed_disposition",
-            unit.title,
-            "Authorize a retry with a raised attempt limit, or cancel this unit",
-            f"{attempts} Its attempt budget is spent, so running it again needs a raised limit.",
-            href,
-        )
     return _entry(
         "failed_disposition",
         unit.title,
-        "Cancel this unit, or have the system requeue it",
-        f"{attempts} It has attempts left, so a requeue needs no raised limit.",
+        recovery_action(session, unit),
+        f"It failed after {unit.attempt_count} of {unit.max_attempts} attempts.",
         href,
     )
 

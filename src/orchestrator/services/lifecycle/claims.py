@@ -495,10 +495,12 @@ def _readiness_eligibility_error(session: Session, unit: WorkUnit) -> DomainErro
         return DomainError("attempts_exhausted", "attempt budget is exhausted", "approve_retry")
     if is_over_budget(session, unit):
         return DomainError("budget_exceeded", "llm-call budget is exhausted", "approve_retry")
-    if evaluate_readiness(session, unit.id).status is not ReadinessStatus.READY:
+    # No lock of its own: requeue and reclaim already hold the unit, and the dead-letter view
+    # reads this without writing.
+    if evaluate_readiness(session, unit.id, for_update=False).status is not ReadinessStatus.READY:
         return DomainError(
             "readiness_not_satisfied",
-            "work unit is no longer ready after lease expiry",
+            "work unit's readiness no longer holds",
             "resolve_readiness",
         )
     return None
@@ -635,7 +637,7 @@ def _reclaim_error_replay(
         return DomainError(error_code, "attempt budget is exhausted", "approve_retry")
     return DomainError(
         "readiness_not_satisfied",
-        "work unit is no longer ready after lease expiry",
+        "work unit's readiness no longer holds",
         "resolve_readiness",
     )
 
@@ -754,6 +756,23 @@ def _idempotency_conflict() -> DomainError:
 REQUEUE_SOURCE_STATES = {WorkUnitState.FAILED, WorkUnitState.BLOCKED}
 
 
+def requeue_refusal(session: Session, unit: WorkUnit) -> DomainError | None:
+    """Why `requeue_unit` refuses this unit whoever asks; None means a SYSTEM requeue is accepted.
+
+    The dead-letter view reads this rather than restating it, so what it calls requeue-eligible is
+    what requeue accepts.
+    """
+    if WorkUnitState(unit.state) not in REQUEUE_SOURCE_STATES:
+        return DomainError(
+            "requeue_not_allowed",
+            "only failed or blocked work may be requeued",
+            None,
+            current_state=unit.state,
+            current_version=unit.version,
+        )
+    return _readiness_eligibility_error(session, unit)
+
+
 def requeue_unit(
     session: Session,
     unit_id: uuid.UUID,
@@ -781,17 +800,9 @@ def requeue_unit(
             raise DomainError("role_forbidden", "only the system may requeue work", None)
         if expected_version is not None:
             _require_version(unit, expected_version)
-        if WorkUnitState(unit.state) not in REQUEUE_SOURCE_STATES:
-            raise DomainError(
-                "requeue_not_allowed",
-                "only failed or blocked work may be requeued",
-                None,
-                current_state=unit.state,
-                current_version=unit.version,
-            )
-        eligibility_error = _readiness_eligibility_error(session, unit)
-        if eligibility_error is not None:
-            raise eligibility_error
+        refusal = requeue_refusal(session, unit)
+        if refusal is not None:
+            raise refusal
 
         _transition(
             session,

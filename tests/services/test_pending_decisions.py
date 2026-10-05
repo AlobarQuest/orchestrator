@@ -239,7 +239,8 @@ def test_a_failed_unit_names_the_disposition_it_needs(migrated_session: Session)
     entries = _entries_of_kind(migrated_session, "failed_disposition")
 
     assert [entry["subject"] for entry in entries] == [unit.title]
-    assert "retry" in entries[0]["decision"] and "cancel" in entries[0]["decision"]
+    decision = entries[0]["decision"].lower()
+    assert "retry" in decision and "cancel" in decision
     assert entries[0]["href"] == f"/review/units/{unit.id}"
 
 
