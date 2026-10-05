@@ -198,7 +198,7 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
     MatrixRow(
         "dispatch",
         "/api/v1/work-units/{unit_id}/dispatch",
-        "unique DispatchRecord.idempotency_key + (unit, runner_attempt) guard",
+        "unique DispatchRecord.idempotency_key, replayed before and under the unit lock",
         "tests/services/test_dispatch.py::test_dispatch_replay_is_idempotent_against_the_per_unit_repository",
     ),
     MatrixRow(

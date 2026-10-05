@@ -109,9 +109,11 @@ without changing the lifecycle state.
 
 ## Idempotency And Evidence
 
-Dispatch idempotency is enforced by both `idempotency_key` and
-`(work_unit_id, runner_attempt)`. Replaying the same dispatch returns the existing
-record and does not call GitHub again.
+Dispatch idempotency is enforced by `idempotency_key`: replaying a request with the same
+key returns the existing record and does not call GitHub again. The orchestrator assigns
+`runner_attempt` (one past the unit's claim count and every ordinal it has recorded); a
+request may omit it, and a supplied value other than the next one is refused
+`dispatch_attempt_not_next`. `(work_unit_id, runner_attempt)` stays unique.
 
 Every dispatch outcome records a `dispatch_records` row and a canonical orchestrator
 event:

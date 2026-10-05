@@ -1,7 +1,7 @@
 import hashlib
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 from urllib.parse import quote
 
@@ -56,7 +56,11 @@ class DispatchSettings:
 @dataclass(frozen=True)
 class DispatchCommand:
     unit_id: uuid.UUID
-    runner_attempt: int
+    # The dispatch ordinal. The orchestrator computes it (simplification review 3a): `None` asks
+    # for the next one, and a supplied value is accepted only if it IS the next one, because a
+    # reused ordinal used to replay the existing record -- HTTP 200 shaped like success -- and
+    # fire nothing.
+    runner_attempt: int | None
     actor: ActorContext
     idempotency_key: str
     expected_version: int | None = None
@@ -172,19 +176,20 @@ def _dispatch_work_unit(
     clock: Clock | None,
 ) -> DispatchRecord:
     _authorize_dispatch_actor(command.actor)
-    if command.runner_attempt <= 0:
+    if command.runner_attempt is not None and command.runner_attempt <= 0:
         raise DomainError("dispatch_attempt_invalid", "runner attempt must be positive", None)
 
-    existing = session.scalar(
-        select(DispatchRecord).where(DispatchRecord.idempotency_key == command.idempotency_key)
-    )
-    if existing is not None:
-        _validate_idempotent_record(session, existing, command, settings)
+    if (existing := _replayed(session, command, settings)) is not None:
         return existing
 
     unit = session.scalar(select(WorkUnit).where(WorkUnit.id == command.unit_id).with_for_update())
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    # Again under the lock: a retry with the same key can arrive while the first request holds
+    # the lock waiting on GitHub, miss its uncommitted record above, and wait here. Once the first
+    # commits, its record is visible, and the retry must replay it rather than dispatch again.
+    if (existing := _replayed(session, command, settings)) is not None:
+        return existing
     if command.expected_version is not None and unit.version != command.expected_version:
         raise DomainError(
             "version_conflict",
@@ -193,16 +198,7 @@ def _dispatch_work_unit(
             current_state=unit.state,
             current_version=unit.version,
         )
-    existing_attempt = session.scalar(
-        select(DispatchRecord)
-        .where(
-            DispatchRecord.work_unit_id == unit.id,
-            DispatchRecord.runner_attempt == command.runner_attempt,
-        )
-        .with_for_update()
-    )
-    if existing_attempt is not None:
-        return existing_attempt
+    command = replace(command, runner_attempt=_next_runner_attempt(session, unit, command))
     revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
@@ -292,6 +288,37 @@ def _dispatch_work_unit(
     )
 
 
+def _replayed(
+    session: Session, command: DispatchCommand, settings: DispatchSettings
+) -> DispatchRecord | None:
+    existing = session.scalar(
+        select(DispatchRecord).where(DispatchRecord.idempotency_key == command.idempotency_key)
+    )
+    if existing is not None:
+        _validate_idempotent_record(session, existing, command, settings)
+    return existing
+
+
+def _next_runner_attempt(session: Session, unit: WorkUnit, command: DispatchCommand) -> int:
+    """The ordinal this dispatch takes: one past every ordinal the unit has spent, and past its
+    claim count, since the two drift apart (a skipped dispatch spends an ordinal, a reclaim spends
+    a claim). Called with the unit row locked, so two dispatches can't take one ordinal."""
+    latest = session.scalar(
+        select(func.max(DispatchRecord.runner_attempt)).where(
+            DispatchRecord.work_unit_id == unit.id
+        )
+    )
+    expected = max(unit.attempt_count, latest or 0) + 1
+    if command.runner_attempt is not None and command.runner_attempt != expected:
+        raise DomainError(
+            "dispatch_attempt_not_next",
+            f"runner attempt {command.runner_attempt} is not this unit's next ({expected}); "
+            "omit it and the orchestrator assigns the next one",
+            "omit runner_attempt",
+        )
+    return expected
+
+
 def failure_signature(stage: str, code: str, message: str) -> str:
     normalized = " ".join(message.lower().split())
     digest = hashlib.sha256(normalized.encode()).hexdigest()[:16]
@@ -318,7 +345,7 @@ def _validate_idempotent_record(
     )
     if (
         record.work_unit_id != command.unit_id
-        or record.runner_attempt != command.runner_attempt
+        or (command.runner_attempt is not None and record.runner_attempt != command.runner_attempt)
         or (expected_repository is not None and record.target_repository != expected_repository)
         or record.workflow_id != settings.workflow_id
         or record.workflow_ref != settings.workflow_ref

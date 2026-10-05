@@ -1,3 +1,4 @@
+import threading
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -7,10 +8,11 @@ from typing import Any
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 import orchestrator.services.execution.dispatch as dispatch_module
+from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
@@ -1272,3 +1274,136 @@ def test_dispatch_blocks_an_envelope_field_the_runner_forbids(
 
     assert record.reason_code == "authority_unknown_fields"
     assert github.calls == []
+
+
+def _dispatch(session: Session, unit: WorkUnit, *, attempt: int | None, key: str):
+    return dispatch_work_unit(
+        session,
+        DispatchCommand(unit_id=unit.id, runner_attempt=attempt, actor=SYSTEM, idempotency_key=key),
+        settings(enabled=False),
+        FakeGitHubDispatcher([]),
+        inert_source(),
+        target_source=declared_source(),
+    )
+
+
+def test_the_orchestrator_assigns_the_next_ordinal_when_none_is_sent(
+    migrated_session: Session,
+) -> None:
+    """Simplification review 3a: the orchestrator computes the ordinal. A skipped dispatch spends
+    one, so the next omitted request takes the one after it."""
+    unit = ready_unit(migrated_session)
+
+    first = _dispatch(migrated_session, unit, attempt=None, key="ordinal-1")
+    second = _dispatch(migrated_session, unit, attempt=None, key="ordinal-2")
+
+    assert (first.runner_attempt, second.runner_attempt) == (1, 2)
+    assert first.id != second.id
+
+
+def test_a_reused_ordinal_is_refused_rather_than_replayed(migrated_session: Session) -> None:
+    """It used to return the existing record -- HTTP 200, shaped like success -- and fire
+    nothing. Now it says so, and writes nothing."""
+    unit = ready_unit(migrated_session)
+    _dispatch(migrated_session, unit, attempt=None, key="reuse-1")
+
+    with pytest.raises(DomainError) as error:
+        _dispatch(migrated_session, unit, attempt=1, key="reuse-2")
+
+    assert error.value.code == "dispatch_attempt_not_next"
+    records = migrated_session.scalars(
+        select(DispatchRecord).where(DispatchRecord.work_unit_id == unit.id)
+    ).all()
+    assert [record.runner_attempt for record in records] == [1]
+
+
+def test_a_supplied_ordinal_is_accepted_when_it_is_the_next(migrated_session: Session) -> None:
+    unit = ready_unit(migrated_session)
+
+    record = _dispatch(migrated_session, unit, attempt=1, key="supplied-next")
+
+    assert record.runner_attempt == 1
+
+
+def test_an_ordinal_past_the_next_is_refused(migrated_session: Session) -> None:
+    unit = ready_unit(migrated_session)
+
+    with pytest.raises(DomainError) as error:
+        _dispatch(migrated_session, unit, attempt=5, key="skipping-ahead")
+
+    assert error.value.code == "dispatch_attempt_not_next"
+
+
+def test_the_next_ordinal_also_passes_the_claim_count(migrated_session: Session) -> None:
+    """The two counters drift apart (a reclaim spends a claim), so the ordinal clears both."""
+    unit = ready_unit(migrated_session)
+    unit.attempt_count = 3
+    migrated_session.flush()
+
+    record = _dispatch(migrated_session, unit, attempt=None, key="past-claims")
+
+    assert record.runner_attempt == 4
+
+
+def test_a_replay_by_idempotency_key_returns_the_same_record_without_an_ordinal(
+    migrated_session: Session,
+) -> None:
+    unit = ready_unit(migrated_session)
+    first = _dispatch(migrated_session, unit, attempt=None, key="replayed")
+
+    again = _dispatch(migrated_session, unit, attempt=None, key="replayed")
+
+    assert again.id == first.id
+
+
+def test_a_same_key_retry_waiting_on_the_lock_replays_rather_than_dispatching_again(
+    migrated_engine: Engine,
+) -> None:
+    """Review of 3a-2: request A holds the unit lock while GitHub answers; a retry B with the same
+    key misses A's uncommitted record, then waits on the lock. Once A commits, B must replay A's
+    record. It used to be caught by the reused ordinal; with server-assigned ordinals only the
+    key can catch it."""
+    with Session(migrated_engine) as setup:
+        unit_id = ready_unit(setup).id
+        setup.commit()
+    released = threading.Event()
+    entered = threading.Event()
+
+    class SlowGitHub(FakeGitHubDispatcher):
+        def dispatch_workflow(self, **kwargs: object) -> dict[str, str]:
+            entered.set()
+            released.wait(timeout=10)
+            return super().dispatch_workflow(**kwargs)
+
+    first_github, retry_github = SlowGitHub([]), FakeGitHubDispatcher([])
+    command = DispatchCommand(
+        unit_id=unit_id, runner_attempt=None, actor=SYSTEM, idempotency_key="same-key-race"
+    )
+    results: dict[str, uuid.UUID] = {}
+
+    def run(name: str, github: FakeGitHubDispatcher) -> None:
+        with Session(migrated_engine) as session:
+            record = dispatch_work_unit(
+                session,
+                command,
+                settings(),
+                github,
+                inert_source(),
+                target_source=declared_source(),
+            )
+            session.commit()
+            results[name] = record.id
+
+    first = threading.Thread(target=run, args=("first", first_github))
+    first.start()
+    assert entered.wait(timeout=10)
+    retry = threading.Thread(target=run, args=("retry", retry_github))
+    retry.start()
+    retry.join(timeout=1)
+    assert retry.is_alive(), "the retry should be waiting on the unit lock"
+    released.set()
+    first.join(timeout=10)
+    retry.join(timeout=10)
+
+    assert results["retry"] == results["first"]
+    assert (len(first_github.calls), len(retry_github.calls)) == (1, 0)

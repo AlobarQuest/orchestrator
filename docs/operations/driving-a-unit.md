@@ -164,24 +164,16 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #65
 
-- **A REUSED `runner_attempt` makes dispatch a silent no-op that is indistinguishable from
-  success.** `dispatch_unit` (`services/execution/dispatch.py`) looks up `DispatchRecord` by
-  `(work_unit_id, runner_attempt)` and, if one exists, **returns that existing record** — HTTP 200,
-  `status: "dispatched"`, `reason_code: null` — **without triggering any `workflow_dispatch`.** The
-  response is byte-shaped like a real dispatch; only the `id` differs, and only if you knew the
-  prior one. **The caller supplies the ordinal and nothing computes it for you** — the route takes
-  `runner_attempt` in the body, and `dispatch_unit` only rejects a non-positive value and looks the
-  pair up. (This bullet used to name `_next_runner_attempt` =
-  `max(unit.attempt_count, latest_runner_attempt) + 1` as the correct next ordinal; that helper lost
-  its only caller in WS-P2.15 (`6e2614c`) and was deleted as dead code on 2026-09-27.) Pick one
-  greater than every ordinal already recorded: read the prior one from the last
-  `dispatch.dispatched` event's `payload.runner_attempt` in `GET /work-units/{id}/history` (a
-  `UniqueConstraint("work_unit_id", "runner_attempt")` backs this), remembering that a skipped
-  dispatch also spends its ordinal. **Verify a dispatch by confirming a NEW record id and a new
-  Actions run — never by the `status` field alone.** Note this compounds the already-documented
-  independence of dispatch and claim ordinals: they drift apart the moment a dispatch is skipped or
-  a claim is reclaimed, so "attempt_count + 1" is not a safe substitute. (Verified 2026-07-29,
-  GAP-4 attempt 3 — the prior two dispatches were ordinals 1 and 2.)
+- **The orchestrator assigns the dispatch ordinal; omit `runner_attempt`.** Since SDS 1.1 item
+  3a-2, `dispatch_work_unit` (`services/execution/dispatch.py::_next_runner_attempt`) takes
+  `max(unit.attempt_count, highest recorded runner_attempt) + 1` with the unit row locked, and the
+  response carries the ordinal it took. A supplied ordinal is accepted only if it is that next
+  one; anything else is refused `dispatch_attempt_not_next`. Until then a REUSED ordinal returned
+  the existing record (HTTP 200, `status: "dispatched"`) and fired no workflow, which is what this
+  entry used to warn about (verified 2026-07-29, GAP-4 attempt 3). A skipped dispatch still spends
+  its ordinal, and a retry is made safe by reusing the same `idempotency_key`, which replays the
+  record. Dispatch and claim ordinals stay independent: they drift apart the moment a dispatch is
+  skipped or a claim is reclaimed.
 
 ### #66
 
@@ -547,13 +539,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #243
 
-- **The dispatch route requires `runner_attempt` and it is NOT reusable — a skipped dispatch spends
-  the ordinal.** Omitting it is a FastAPI 422 before any service code runs. Worse, `dispatch_unit`
-  looks up by `(work_unit_id, runner_attempt)` and **returns the existing record** for a reused
-  ordinal: HTTP 200, byte-shaped like a real dispatch, having fired nothing. A dispatch refused by
-  an admission term still WRITES A RECORD at that ordinal, so a refusal consumes it. Measured
-  2026-08-26 on one unit: attempt 1 skipped (`outside_change_window`), attempt 2 skipped (control),
-  attempt 3 dispatched. **Verify a dispatch by a NEW record id, never by `status` alone.**
+- **A skipped dispatch spends its ordinal.** A dispatch refused by an admission term still WRITES A
+  RECORD at the ordinal it took. Measured 2026-08-26 on one unit: attempt 1 skipped
+  (`outside_change_window`), attempt 2 skipped (control), attempt 3 dispatched. The orchestrator
+  assigns ordinals (see #65), so a client need not track this; read the ordinal off the response.
 
 ### #244
 
