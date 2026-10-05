@@ -12,10 +12,10 @@ from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.persistence.models import Approval, Dependency
 from orchestrator.services.intake.packages import (
     DependencySpec,
-    evaluate_readiness,
     register_dependency,
     resolve_dependency,
 )
+from orchestrator.services.lifecycle.readiness import evaluate_readiness
 from tests._support.seeding import register_unit
 
 

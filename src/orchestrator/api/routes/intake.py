@@ -61,12 +61,12 @@ from orchestrator.services.intake.package_intake import (
 )
 from orchestrator.services.intake.packages import (
     DependencySpec,
-    evaluate_readiness,
     record_approval,
     register_dependency_command,
     resolve_dependency_command,
 )
 from orchestrator.services.intake.runner_brief import runner_brief
+from orchestrator.services.lifecycle.readiness import evaluate_readiness
 
 router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
 

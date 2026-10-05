@@ -11,7 +11,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.intake.packages import evaluate_readiness
+from orchestrator.services.lifecycle.readiness import evaluate_readiness
 
 
 def runner_brief(session: Session, unit_id: UUID) -> dict[str, object]:
