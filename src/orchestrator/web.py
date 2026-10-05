@@ -46,7 +46,7 @@ from orchestrator.services.intake.intake_reads import (
 )
 from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.services.intake.packages import record_approval
-from orchestrator.services.lifecycle.claims import authorize_retry
+from orchestrator.services.lifecycle.claims import REQUEUE_SOURCE_STATES, authorize_retry
 from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.reconciliation.reconciliation import (
     ResolutionCommand,
@@ -280,9 +280,9 @@ def _available_actions(unit: WorkUnit, authority_violation: object | None) -> di
     * **review outcomes** -- each outcome offered iff a human could make that move. From SUBMITTED
       only completion is a human's; requesting a revision there belongs to the verifier.
     * **cancel** -- the human edges into CANCELLED.
-    * **retry** -- `_require_retry_allowed`: FAILED, with the attempt budget spent. A failed unit
-      with attempts left goes back through a requeue, which only SYSTEM may perform, so naming a
-      retry there sends a person to a form that refuses them.
+    * **retry** -- `_require_retry_allowed`: FAILED or BLOCKED, with the attempt budget spent. A
+      unit with attempts left goes back through a requeue, which only SYSTEM may perform, so
+      naming a retry there sends a person to a form that refuses them.
 
     The guard `authorize_transition` applies to a COMPLETED target is NOT modelled here: whether
     every criterion is satisfied needs the criteria and the adjudications, so the review form is
@@ -299,8 +299,7 @@ def _available_actions(unit: WorkUnit, authority_violation: object | None) -> di
         "authority_approval": authority_violation is None and state not in SETTLED_STATES,
         "review_outcomes": review_outcomes,
         "cancel": _a_human_could_move(state, WorkUnitState.CANCELLED),
-        "retry": state in (WorkUnitState.FAILED, WorkUnitState.BLOCKED)
-        and unit.attempt_count >= unit.max_attempts,
+        "retry": state in REQUEUE_SOURCE_STATES and unit.attempt_count >= unit.max_attempts,
     }
     return actions
 
