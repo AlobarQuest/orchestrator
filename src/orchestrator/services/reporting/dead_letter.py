@@ -38,11 +38,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
+from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Claim, DispatchRecord, WorkUnit
 from orchestrator.services.execution.dispatch import circuit_open
 from orchestrator.services.lifecycle.budget import is_over_budget
 from orchestrator.services.lifecycle.claims import requeue_refusal
+from orchestrator.services.lifecycle.readiness import evaluate_readiness
 
 # `blocked` units are listed because requeue TARGETS them. An action whose subject is invisible in
 # the surface it is offered from is not an operator affordance.
@@ -286,8 +288,9 @@ _OWNER_ACTIONS = {
         "Have the system dispatch this unit again once the failure's cause is fixed"
     ),
     WorkUnitState.DRAFT: "None yet: the orchestrator readies this unit once its readiness holds",
+    # The approve command is the only edge to `ready`, and production routes it to no person.
     WorkUnitState.AWAITING_APPROVAL: (
-        "Cancel this unit on its review page, or approve it with the human approve command"
+        "Cancel this unit on its review page; no route a person can reach approves it"
     ),
     WorkUnitState.AWAITING_REVIEW: "Complete this unit or request a revision on its review page",
     WorkUnitState.SUBMITTED: "Have the verifier evaluate this unit",
@@ -310,18 +313,29 @@ def recovery_action(session: Session, unit: WorkUnit) -> str:
 
 
 def _requeue_target_action(session: Session, unit: WorkUnit, state: WorkUnitState) -> str:
-    """Requeue is named only when `requeue_refusal` accepts the unit, and a retry only when the
-    attempt budget is all that requeue refuses, because a retry raises nothing else. Otherwise
-    the text gives requeue's refusal code. A blocked unit has no other route: no edge leads from
-    `blocked` to `cancelled`, and `authorize_retry` takes only failed units.
+    """Built from the three facts that decide whether the unit can run again, each read on its
+    own: requeue reports only the first it fails, which would name the wrong blocker.
+
+    A spent LLM-call budget is final, since nothing raises it. A spent attempt budget is raised
+    only by `authorize_retry`, which takes failed units alone. Readiness that no longer holds is
+    recoverable, so it never reads as a dead end. Only a failed unit can be cancelled: no edge
+    leads from `blocked` to `cancelled`.
     """
-    refusal = requeue_refusal(session, unit)
-    if state is WorkUnitState.BLOCKED:
-        if refusal is None:
-            return "Have the system requeue this unit"
-        return f"None: requeue refuses it ({refusal.code}), and no other route takes it"
-    if refusal is None:
-        return "Cancel this unit, or have the system requeue it"
-    if refusal.code == "attempts_exhausted" and not is_over_budget(session, unit):
-        return "Authorize a retry with a raised attempt limit, or cancel this unit"
-    return f"Cancel this unit: neither a requeue nor a retry lets it run ({refusal.code})"
+    blocked = state is WorkUnitState.BLOCKED
+    if is_over_budget(session, unit):
+        if blocked:
+            return "None: its LLM-call budget is spent, and nothing raises it (budget_exceeded)"
+        return "Cancel this unit: its LLM-call budget is spent, and nothing raises it"
+    exhausted = unit.attempt_count >= unit.max_attempts
+    if exhausted and blocked:
+        return "None: its attempt budget is spent, and only a failed unit can be retried"
+    route = (
+        "authorize a retry with a raised attempt limit"
+        if exhausted
+        else "have the system requeue it"
+    )
+    if evaluate_readiness(session, unit.id, for_update=False).status is not ReadinessStatus.READY:
+        route = f"resolve its readiness, then {route}"
+    if blocked:
+        return route[0].upper() + route[1:]
+    return f"Cancel this unit, or {route}"

@@ -495,7 +495,9 @@ def _readiness_eligibility_error(session: Session, unit: WorkUnit) -> DomainErro
         return DomainError("attempts_exhausted", "attempt budget is exhausted", "approve_retry")
     if is_over_budget(session, unit):
         return DomainError("budget_exceeded", "llm-call budget is exhausted", "approve_retry")
-    if evaluate_readiness(session, unit.id).status is not ReadinessStatus.READY:
+    # No lock of its own: requeue and reclaim already hold the unit, and the dead-letter view
+    # reads this without writing.
+    if evaluate_readiness(session, unit.id, for_update=False).status is not ReadinessStatus.READY:
         return DomainError(
             "readiness_not_satisfied",
             "work unit is no longer ready after lease expiry",
