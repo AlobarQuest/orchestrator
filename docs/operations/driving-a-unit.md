@@ -68,8 +68,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 - **There are TWO kinds of approval, and the generic `/review` "approval" button records the
   one readiness does not want.** `POST /review/units/{id}/approval` (`web.py`) hardcodes
   `subject_type="action"` — which satisfies the `AWAITING_APPROVAL → READY` transition
-  guard, and takes that edge in the same transaction (the form is offered only in
-  `awaiting_approval`, and the API's `approve` command is served to no person). But readiness and dispatch both require an **`authority`** approval:
+  guard, and takes that edge in the same transaction. The form is offered only in
+  `awaiting_approval`, and the API's `approve` command is served to no person. But readiness and dispatch both require an **`authority`** approval:
   `subject_type="authority"`, bound to `subject_revision_or_fingerprint ==
   unit.authority_fingerprint`, setting `unit.authority_approval_id`
   (`persistence/repositories.py::exact_authority_approval`). **CORRECTION (verified 2026-07-22,

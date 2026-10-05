@@ -679,7 +679,9 @@ def approve(
             actor,
             expected_version,
             f"{idempotency_key}:ready",
-            reason=reason,
+            # A fixed code, as `ready_if_satisfied` uses: the person's words stay on the Approval
+            # row, and the event history is rendered into public pull-request comments.
+            reason="action_approved",
         ),
     )
     session.commit()
