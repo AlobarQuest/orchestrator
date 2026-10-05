@@ -47,7 +47,9 @@ identifier, so its reasoning can be found in the notes. When an item ships, dele
 record the outcome in the ADR or pull request that shipped it.
 
 Shipped so far: the stalled-execution instruction (#336) and reversible decomposition before claim
-(2b-2, R5; ADR-0052, #338), both deployed on 2026-10-04 as `72fc88f-adr0052-amd64`.
+(2b-2, R5; ADR-0052, #338), both deployed on 2026-10-04 as `72fc88f-adr0052-amd64`. The landing join for traceability (5c, #343) deployed
+as `ae9ebe4-sds11trace-amd64`, and the server-assigned dispatch ordinal (3a-2, #344, with
+intent-packages #106) as `ff4936f-sds11ordinal-amd64`.
 
 Two decisions aren't carried forward:
 
@@ -63,13 +65,9 @@ Two decisions aren't carried forward:
    a landing, recorded at merge, does not answer the observations hop. Both declared releases
    predate any producer of one. The likely source is the revision watcher's `production_revision`
    records, joined on the commit a service is serving.
-2. **A server-computed dispatch ordinal (3a-2).** Built: the orchestrator assigns `runner_attempt`
-   and refuses any other supplied value with `dispatch_attempt_not_next`, so a reused ordinal no
-   longer replays a record and fires nothing. It ships with the next orchestrator deploy; then the
-   `factory` client stops sending an ordinal.
-3. **Automatic `ready` (2d-1).** DRAFT → READY is still a manual `factory ready` step on every
+2. **Automatic `ready` (2d-1).** DRAFT → READY is still a manual `factory ready` step on every
    unit, with no server caller.
-4. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
+3. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
    still lists cancelled units that were already handled.
 
 ### Deferred, with the evidence
