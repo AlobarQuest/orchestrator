@@ -179,16 +179,17 @@ def _dispatch_work_unit(
     if command.runner_attempt is not None and command.runner_attempt <= 0:
         raise DomainError("dispatch_attempt_invalid", "runner attempt must be positive", None)
 
-    existing = session.scalar(
-        select(DispatchRecord).where(DispatchRecord.idempotency_key == command.idempotency_key)
-    )
-    if existing is not None:
-        _validate_idempotent_record(session, existing, command, settings)
+    if (existing := _replayed(session, command, settings)) is not None:
         return existing
 
     unit = session.scalar(select(WorkUnit).where(WorkUnit.id == command.unit_id).with_for_update())
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    # Again under the lock: a retry with the same key can arrive while the first request holds
+    # the lock waiting on GitHub, miss its uncommitted record above, and wait here. Once the first
+    # commits, its record is visible, and the retry must replay it rather than dispatch again.
+    if (existing := _replayed(session, command, settings)) is not None:
+        return existing
     if command.expected_version is not None and unit.version != command.expected_version:
         raise DomainError(
             "version_conflict",
@@ -285,6 +286,17 @@ def _dispatch_work_unit(
         github_run_url=result.get("workflow_run_url"),
         change_window_override=override,
     )
+
+
+def _replayed(
+    session: Session, command: DispatchCommand, settings: DispatchSettings
+) -> DispatchRecord | None:
+    existing = session.scalar(
+        select(DispatchRecord).where(DispatchRecord.idempotency_key == command.idempotency_key)
+    )
+    if existing is not None:
+        _validate_idempotent_record(session, existing, command, settings)
+    return existing
 
 
 def _next_runner_attempt(session: Session, unit: WorkUnit, command: DispatchCommand) -> int:

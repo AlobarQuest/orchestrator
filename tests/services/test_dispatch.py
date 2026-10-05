@@ -1,3 +1,4 @@
+import threading
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -7,7 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 import orchestrator.services.execution.dispatch as dispatch_module
@@ -1353,3 +1354,56 @@ def test_a_replay_by_idempotency_key_returns_the_same_record_without_an_ordinal(
     again = _dispatch(migrated_session, unit, attempt=None, key="replayed")
 
     assert again.id == first.id
+
+
+def test_a_same_key_retry_waiting_on_the_lock_replays_rather_than_dispatching_again(
+    migrated_engine: Engine,
+) -> None:
+    """Review of 3a-2: request A holds the unit lock while GitHub answers; a retry B with the same
+    key misses A's uncommitted record, then waits on the lock. Once A commits, B must replay A's
+    record. It used to be caught by the reused ordinal; with server-assigned ordinals only the
+    key can catch it."""
+    with Session(migrated_engine) as setup:
+        unit_id = ready_unit(setup).id
+        setup.commit()
+    released = threading.Event()
+    entered = threading.Event()
+
+    class SlowGitHub(FakeGitHubDispatcher):
+        def dispatch_workflow(self, **kwargs: object) -> dict[str, str]:
+            entered.set()
+            released.wait(timeout=10)
+            return super().dispatch_workflow(**kwargs)
+
+    first_github, retry_github = SlowGitHub([]), FakeGitHubDispatcher([])
+    command = DispatchCommand(
+        unit_id=unit_id, runner_attempt=None, actor=SYSTEM, idempotency_key="same-key-race"
+    )
+    results: dict[str, uuid.UUID] = {}
+
+    def run(name: str, github: FakeGitHubDispatcher) -> None:
+        with Session(migrated_engine) as session:
+            record = dispatch_work_unit(
+                session,
+                command,
+                settings(),
+                github,
+                inert_source(),
+                target_source=declared_source(),
+            )
+            session.commit()
+            results[name] = record.id
+
+    first = threading.Thread(target=run, args=("first", first_github))
+    first.start()
+    assert entered.wait(timeout=10)
+    retry = threading.Thread(target=run, args=("retry", retry_github))
+    retry.start()
+    retry.join(timeout=1)
+    assert retry.is_alive(), "the retry should be waiting on the unit lock"
+    released.set()
+    first.join(timeout=10)
+    retry.join(timeout=10)
+
+    assert results["retry"] == results["first"]
+    assert (len(first_github.calls), len(retry_github.calls)) == (1, 0)

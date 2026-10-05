@@ -308,3 +308,27 @@ def test_a_reasoned_override_reaches_the_record_through_the_route(
     assert [event["change_window_override"]["reason"] for event in started] == [
         "supervised build session"
     ]
+
+
+def test_the_route_assigns_the_ordinal_and_refuses_a_reused_one(
+    dispatch_client: TestClient,
+) -> None:
+    """Simplification review 3a-2, at the wire: an omitted ordinal is assigned, and a reused one is
+    a 409 that fires nothing, where it used to be a 200 replay of the earlier record."""
+    unit_id = register_ready_unit(dispatch_client, key="dispatch-api-ordinal")
+    path = f"/api/v1/work-units/{unit_id}/dispatch"
+
+    first = dispatch_client.post(
+        path, headers=SYSTEM, json={"idempotency_key": "ordinal-first", "expected_version": 2}
+    )
+    reused = dispatch_client.post(
+        path,
+        headers=SYSTEM,
+        json={"idempotency_key": "ordinal-reused", "expected_version": 2, "runner_attempt": 1},
+    )
+
+    assert first.status_code == 200
+    assert first.json()["runner_attempt"] == 1
+    assert reused.status_code == 409
+    assert reused.json()["error"]["code"] == "dispatch_attempt_not_next"
+    assert len(FakeGitHubActionsDispatcher.calls) == 1
