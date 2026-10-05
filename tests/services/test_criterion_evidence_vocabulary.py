@@ -27,6 +27,7 @@ from orchestrator.services.verifier.verifier_evaluators import (
     evaluate_criterion,
     floor_for,
 )
+from tests.contract.test_package_evidence_vocabulary_contract import package_evidence_types
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
 
 
@@ -221,13 +222,8 @@ def test_intake_rejects_an_unknown_criterion_evidence_type(migrated_session: Ses
 
 
 def test_intake_accepts_the_legal_package_evidence_vocabulary(migrated_session: Session) -> None:
-    legal_types = (
-        "automated_test",
-        "automated_check",
-        "human_review",
-        "external_attestation",
-        "observation",
-    )
+    # The shared package vocabulary, read from the contract rather than typed again here.
+    legal_types = package_evidence_types()
     criteria = tuple(
         type(acceptance_criterion())(
             **{**acceptance_criterion(f"AC-{i:03d}").__dict__, "evidence_type": evidence_type}
