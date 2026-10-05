@@ -15,6 +15,7 @@ def test_each_legal_edge_allows_exactly_its_declared_roles(
         completion_satisfied=True,
         submission_binding_recorded=True,
         decomposition_superseded=True,
+        readiness_satisfied=True,
     )
 
     for role in ActorRole:

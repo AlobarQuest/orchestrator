@@ -23,7 +23,7 @@ from orchestrator.kernel.runner_authority import (
     runner_authority_violation,
     runner_envelope_field_violation,
 )
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
     ApprovedDecomposition,
@@ -36,6 +36,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.persistence.repositories import PackageRepository
+from orchestrator.services.lifecycle.lifecycle import ready_if_satisfied
 from orchestrator.services.verifier.verifier_evaluators import SUPPORTED_CRITERION_EVIDENCE_TYPES
 
 
@@ -160,6 +161,10 @@ def record_approval(
         )
     )
     session.flush()
+    if unit.authority_approval_id == approval.id:
+        ready_if_satisfied(
+            session, unit.id, trigger=ActorContext(actor_id, actor_role), cause=idempotency_key
+        )
     return approval
 
 
@@ -939,6 +944,10 @@ def resolve_dependency_command(
         )
     )
     session.flush()
+    if resolved.status == "satisfied":
+        ready_if_satisfied(
+            session, unit.id, trigger=ActorContext(actor_id, actor_role), cause=idempotency_key
+        )
     return resolved
 
 

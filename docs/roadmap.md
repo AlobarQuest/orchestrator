@@ -59,16 +59,21 @@ Two decisions aren't carried forward:
 
 ### Order
 
-1. **Traceability through observations (5c).** The chain now joins the landing ledger's record of
-   each release commit and derives a pull request made outside the factory from it. Wave-2 exit
-   clause 2 still needs a post-deployment observation of a release: Devon ruled on 2026-10-04 that
-   a landing, recorded at merge, does not answer the observations hop. Both declared releases
-   predate any producer of one. The likely source is the revision watcher's `production_revision`
-   records, joined on the commit a service is serving.
-2. **Automatic `ready` (2d-1).** DRAFT → READY is still a manual `factory ready` step on every
-   unit, with no server caller.
-3. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
+1. **Automatic `ready` (2d-1).** Built: the orchestrator takes `DRAFT → READY` once readiness
+   holds (authority approval, dependency resolved, or decomposition approval), and the edge is now
+   guarded on readiness. It ships with the next orchestrator deploy; `factory ready` already
+   treats a ready unit as success (intent-packages #107).
+2. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
    still lists cancelled units that were already handled.
+
+### Blocked
+
+- **Traceability through observations (5c), the rest.** The chain joins each release commit's
+  landing and derives a pull request made outside the factory from it (#343). Wave-2 exit clause
+  2 still needs a post-deployment observation of a release, and Devon ruled on 2026-10-04 that a
+  landing, recorded at merge, does not answer it. Blocked by 5a: no deploy records a release
+  binding, so no release exists for the revision watcher's `production_revision` records (from
+  2026-09-08) to observe. Devon chose on 2026-10-05 to take it after 5a.
 
 ### Deferred, with the evidence
 
@@ -100,7 +105,7 @@ These follow the ordered list, in no fixed order.
 | 3d-2 | Record real exit codes, or drop the field. | factory-runner writes a literal `exit_code: 0`. |
 | 4a-2 | One evidence vocabulary with a divergence test in both directions. | Five types copied by hand, checked one way. |
 | 4c-3 | Separate the deciding view from the auditing view. | One page with a decision section and context-gated forms. |
-| 5a | Record the release binding as part of deploying. | Only machine-local activations bind; Coolify deploys and self-builds don't. |
+| 5a | Record the release binding as part of deploying. Unblocks the rest of 5c. | Only machine-local activations bind; Coolify deploys and self-builds don't. |
 | 7b | Dead-letter names the recovery action, as pending decisions does. | Pending decisions names dispositions; dead-letter doesn't. |
 | 7c | Run the whole-repo guards where the work happens. | `make check` refuses an empty collection; the guards still run only in a full `make check`. |
 | 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Machines can register intakes (ADR-0027); the human paste survives, and packages are LLM-authored through `factory create`. |

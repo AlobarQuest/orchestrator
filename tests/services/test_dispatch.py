@@ -41,7 +41,6 @@ from orchestrator.services.intake.packages import (
     register_approved_unit,
     register_revision,
 )
-from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import (
     declared_source,
@@ -170,16 +169,9 @@ def ready_unit(
         idempotency_key=f"{key}-authority",
         expected_version=1,
     )
-    transition_unit(
-        session,
-        TransitionCommand(
-            unit_id=unit.id,
-            target=WorkUnitState.READY,
-            actor=SYSTEM,
-            expected_version=1,
-            idempotency_key=f"{key}-ready",
-        ),
-    )
+    # The approval readies the unit itself (SDS 1.1 item 2d-1).
+    session.commit()
+    assert unit.state == WorkUnitState.READY
     return unit
 
 
@@ -965,16 +957,11 @@ def recognised_unit(
         actor_id=HUMAN.actor_id,
         actor_role=HUMAN.role,
     )
-    transition_unit(
-        session,
-        TransitionCommand(
-            unit_id=unit.id,
-            target=WorkUnitState.READY,
-            actor=SYSTEM,
-            expected_version=1,
-            idempotency_key=f"{key}-ready",
-        ),
-    )
+    # Set directly, as fixture setup: these tests prove dispatch admission refuses an envelope
+    # nothing recognises, and since SDS 1.1 item 2d-1 such a unit cannot reach READY through the
+    # lifecycle (its readiness does not hold). Admission is the second line, tested on its own.
+    unit.state = WorkUnitState.READY
+    session.flush()
     return unit
 
 

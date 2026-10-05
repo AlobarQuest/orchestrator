@@ -230,6 +230,22 @@ def _reclaim(
     )
 
 
+def _approve_authority(db_client: TestClient, unit_id: str, *, key: str) -> None:
+    """Record the human authority approval, which readies a born unit (SDS 1.1 item 2d-1)."""
+    response = db_client.post(
+        f"/api/v1/work-units/{unit_id}/approvals",
+        headers=HUMAN,
+        json={
+            "idempotency_key": key,
+            "expected_version": 1,
+            "subject_type": "authority",
+            "reason": "Authority envelope approved for the smoke.",
+        },
+    )
+    assert response.status_code == 200, response.json()
+    _assert_state(db_client, unit_id, "ready")
+
+
 def test_ws33_end_to_end_protocol_smoke_suite(
     db_client: TestClient,
     in_process_transport: None,
@@ -284,14 +300,19 @@ def test_ws33_end_to_end_protocol_smoke_suite(
         assert unit.work_package_revision_id == uuid.UUID(revision_id)
         assert unit.state == "draft"
 
-    _command(
-        monkeypatch,
-        "system",
-        "ready",
-        unit_id,
-        expected_version=1,
-        idempotency_key="ws33-smoke-ready-1",
+    # The human authority approval makes readiness hold, and the orchestrator readies the unit
+    # itself (SDS 1.1 item 2d-1); there is no separate `ready` command to send.
+    authority = db_client.post(
+        f"/api/v1/work-units/{unit_id}/approvals",
+        headers=HUMAN,
+        json={
+            "idempotency_key": "ws33-smoke-authority-1",
+            "expected_version": 1,
+            "subject_type": "authority",
+            "reason": "Authority envelope approved for the smoke.",
+        },
     )
+    assert authority.status_code == 200, authority.json()
     _assert_state(db_client, unit_id, "ready")
 
     claim_context = _write_context(tmp_path)
@@ -515,14 +536,7 @@ def test_ws33_end_to_end_protocol_smoke_suite(
     assert completed_row["latest_adjudication"]["outcome"] == "passed"
 
     revision_unit_id = birth_unit(db_client, suffix="revision", max_attempts=3).unit_id
-    _command(
-        monkeypatch,
-        "system",
-        "ready",
-        revision_unit_id,
-        expected_version=1,
-        idempotency_key="ws33-smoke-revision-ready",
-    )
+    _approve_authority(db_client, revision_unit_id, key="ws33-smoke-revision-ready")
     revision_claim = _invoke(
         monkeypatch,
         "worker",
@@ -576,14 +590,7 @@ def test_ws33_end_to_end_protocol_smoke_suite(
     _assert_state(db_client, revision_unit_id, "ready")
 
     retry_unit_id = birth_unit(db_client, suffix="retry", max_attempts=1).unit_id
-    _command(
-        monkeypatch,
-        "system",
-        "ready",
-        retry_unit_id,
-        expected_version=1,
-        idempotency_key="ws33-smoke-retry-ready",
-    )
+    _approve_authority(db_client, retry_unit_id, key="ws33-smoke-retry-ready")
     retry_claim = _invoke(
         monkeypatch,
         "worker",
@@ -639,15 +646,7 @@ def test_ws33_end_to_end_protocol_smoke_suite(
             "reason": "Approved authority for reclaim smoke.",
         },
     )
-    assert reclaim_authority.status_code == 200, reclaim_authority.json()
-    _command(
-        monkeypatch,
-        "system",
-        "ready",
-        reclaim_unit_id,
-        expected_version=1,
-        idempotency_key="ws33-smoke-reclaim-ready",
-    )
+    assert reclaim_authority.status_code == 200, reclaim_authority.json()  # and readies the unit
     stale_claim = _invoke(
         monkeypatch,
         "worker",

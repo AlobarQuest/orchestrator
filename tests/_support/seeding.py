@@ -222,12 +222,13 @@ def register_ready_unit(
         },
     )
     assert approved.status_code == 200, approved.text
-    ready = db_client.post(
-        f"/api/v1/work-units/{unit_id}/commands/ready",
+    # The approval readies the unit itself (SDS 1.1 item 2d-1): readiness then holds.
+    ledger = db_client.get(
+        "/api/v1/status-ledger",
         headers=SYSTEM,
-        json={"idempotency_key": f"{key}-ready", "expected_version": 1},
+        params={"work_unit_id": unit_id, "include_inactive": "true"},
     )
-    assert ready.status_code == 200, ready.text
+    assert ledger.json()[0]["unit_state"] == "ready", ledger.text
     return unit_id
 
 
