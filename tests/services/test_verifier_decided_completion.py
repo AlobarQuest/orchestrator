@@ -31,7 +31,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.lifecycle.lifecycle import verifier_decided_completion
 from orchestrator.services.verifier.evidence import record_adjudication
-from tests._support.seeding import register_unit
+from tests._support.seeding import record_failure, register_unit
 from tests.services.test_adjudications import FROM_EVALUATION, add_criterion, add_evidence
 
 VERIFIER = ActorContext("orchestrator-verifier", ActorRole.VERIFIER)
@@ -209,6 +209,7 @@ def test_a_waiver_disqualifies_the_unit_for_two_independent_reasons(
     add_evidence(migrated_session, unit, "ac-1", "test", {"status": "fail"})
     evidence = migrated_session.scalar(select(Evidence).where(Evidence.work_unit_id == unit.id))
     assert evidence is not None
+    record_failure(migrated_session, evidence)
 
     _decide(
         migrated_session,

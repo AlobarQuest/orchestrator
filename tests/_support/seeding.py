@@ -32,7 +32,7 @@ from orchestrator.api.dependencies import get_actor, get_session
 from orchestrator.api.schemas.common import CommandBase
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
-from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
+from orchestrator.persistence.models import Adjudication, Evidence, WorkPackageRevision, WorkUnit
 from orchestrator.services.intake.packages import (
     DependencySpec,
     register_approved_unit,
@@ -315,3 +315,26 @@ def register_unit(
         actor_role=ActorRole.HUMAN,
         dependencies=dependencies,
     )
+
+
+def record_failure(session: Session, evidence: Evidence) -> Adjudication:
+    """Make `evidence` its criterion's current failure, which a waiver must name.
+
+    Fixture setup, written directly: the verifier's own route needs a full evaluation run, and
+    what these tests exercise is the waiver that follows.
+    """
+    row = Adjudication(
+        work_package_revision_id=evidence.work_package_revision_id,
+        work_unit_id=evidence.work_unit_id,
+        ac_id=evidence.ac_id,
+        outcome="failed",
+        # The verifier's own shape: a failure cites what it failed on in `failed_evidence_id`.
+        failed_evidence_id=evidence.id,
+        decided_by="verifier",
+        decided_by_role=ActorRole.VERIFIER.value,
+        rationale="the evidence failed",
+        event_id=uuid.uuid4(),
+    )
+    session.add(row)
+    session.commit()
+    return row

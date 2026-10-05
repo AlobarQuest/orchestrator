@@ -515,6 +515,12 @@ def _record_one_adjudication(
         now,
     )
     previous = current_adjudication(session, work_package_revision_id, unit.id, ac_id)
+    if outcome == "waived":
+        _require_currently_failing(
+            current_evidence(session, work_package_revision_id, unit.id, ac_id),
+            previous,
+            failed_evidence_id,
+        )
     event_id = uuid.uuid4()
     row = Adjudication(
         work_package_revision_id=work_package_revision_id,
@@ -1055,6 +1061,35 @@ def _validate_adjudication_fields(
             "waiver_invalid",
             "waiver requires failed evidence, a risk class, follow-up, and a future expiry "
             "when set",
+            None,
+        )
+
+
+def _require_currently_failing(
+    head: Evidence | None, current: Adjudication | None, failed_evidence_id: uuid.UUID | None
+) -> None:
+    """A waiver accepts a known failure, so it may name only the criterion's current one.
+
+    The waiver must name the criterion's current evidence head, and the current adjudication must
+    be `failed`, or an earlier waiver, decided no earlier than that head was recorded. Which field
+    a failure cites varies by who recorded it -- the verifier cites its finding in
+    `failed_evidence_id`, a human may cite nothing -- so the rule reads the head instead.
+    Evidence that arrives after the failure reopens the question, and a criterion that passed, or
+    that nobody has decided, has no failure to accept. Both times are transaction-start times, so
+    an evidence write that began before, but committed after, the failure it follows reads as
+    judged; the window is the gap between a transaction's start and its unit lock.
+    """
+    if (
+        head is None
+        or head.id != failed_evidence_id
+        or current is None
+        or current.outcome not in ("failed", "waived")
+        or current.decided_at < head.recorded_at
+    ):
+        raise DomainError(
+            "waiver_invalid",
+            "a waiver may name only the current evidence of a criterion whose current "
+            "adjudication failed on it",
             None,
         )
 
