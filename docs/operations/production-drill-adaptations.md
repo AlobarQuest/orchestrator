@@ -46,7 +46,8 @@ SYSTEM bearer gets `_require_human` rejection. The route is unreachable by anybo
    `created_work_unit_ids` — this is where the drill units are born, in `DRAFT`.
 4. Per unit, the `/review/units/{id}` page → "Approve this authority envelope"
    (`POST /review/units/{id}/authority-approval`, `subject_type="authority"`).
-5. SYSTEM bearer → `POST /api/v1/work-units/{id}/commands/ready`.
+5. Nothing more: since 2026-10-05 (SDS 1.1 item 2d-1) the authority approval readies the unit
+   itself. Before then this step was SYSTEM bearer → `POST /api/v1/work-units/{id}/commands/ready`.
 
 **Vocabulary trap** (CLAUDE.md, confirmed in the live schemas): `PackageAcceptanceCriterionResponse`
 carries **both** `id` (DB UUID) and `ac_id` (the human string). `ac_mappings[].ac_id` on the
@@ -335,8 +336,8 @@ not against an empty report.
 Threshold changes are batched into one apply and one revert (Devon's decision, 2026-07-27).
 
 1. **Prerequisite 4** — fresh production backup, verified restorable, via the vps-backup lane.
-2. Seed the drill package: intake → decomposition → approve → 5× authority approval →
-   5× `commands/ready`.
+2. Seed the drill package: intake → decomposition → approve → 5× authority approval, which
+   readies each unit (until 2026-10-05, also 5× `commands/ready`).
 3. **Drill 3** (no threshold, no wait) — run first, it is the cheapest full proof.
 4. **Drills 1 and 2** concurrently to their lapse points → one shared 15-minute wait → both
    recovery halves.

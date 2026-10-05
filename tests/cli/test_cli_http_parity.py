@@ -6,11 +6,14 @@ from pathlib import Path
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine
+from sqlalchemy.orm import Session
 from typer.testing import CliRunner
 
 import orchestrator.package_sources as package_sources
 from orchestrator.cli import app
 from orchestrator.package_sources import VerifiedApproval, load_package_intake_payload
+from orchestrator.persistence.models import Approval, WorkUnit
 from tests._support.seeding import SEED_REVISIONS, seed_units_path
 from tests.api.test_context_api import standing_context
 
@@ -102,6 +105,7 @@ def in_process_transport(monkeypatch: pytest.MonkeyPatch, db_client: TestClient)
 
 def test_real_http_api_and_cli_have_success_and_error_parity(
     db_client: TestClient,
+    migrated_engine: Engine,
     in_process_transport: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -144,17 +148,26 @@ def test_real_http_api_and_cli_have_success_and_error_parity(
     )
     assert unit.status_code == 201
     unit_id = unit.json()["id"]
-    approval = db_client.post(
-        f"/api/v1/work-units/{unit_id}/approvals",
-        headers=HUMAN,
-        json={
-            "idempotency_key": "cli-http-authority",
-            "expected_version": 1,
-            "subject_type": "authority",
-            "reason": "approved",
-        },
-    )
-    assert approval.status_code == 200
+    # The authority approval written as setup, so no automatic ready fires: readiness then holds
+    # with no event, which is the case `commands/ready` is kept for (SDS 1.1 item 2d-1), and both
+    # surfaces have a real success to answer.
+    with Session(migrated_engine) as session:
+        stored = session.get(WorkUnit, uuid.UUID(unit_id))
+        assert stored is not None
+        approval = Approval(
+            subject_type="authority",
+            subject_id=stored.id,
+            subject_revision_or_fingerprint=stored.authority_fingerprint,
+            decision="approved",
+            approved_by="devon",
+            reason="approved",
+            event_id=uuid.uuid4(),
+            idempotency_key="cli-http-authority",
+        )
+        session.add(approval)
+        session.flush()
+        stored.authority_approval_id = approval.id
+        session.commit()
 
     body = {"idempotency_key": "cli-http-ready", "expected_version": 1}
     api_success = db_client.post(
@@ -392,13 +405,7 @@ def test_real_http_claim_context_cli_matches_api(
             "reason": "approved",
         },
     )
-    assert authority.status_code == 200
-    ready = db_client.post(
-        f"/api/v1/work-units/{unit_id}/commands/ready",
-        headers=SYSTEM,
-        json={"idempotency_key": "cli-http-context-ready", "expected_version": 1},
-    )
-    assert ready.status_code == 200
+    assert authority.status_code == 200  # which readies the unit (SDS 1.1 item 2d-1)
     context_path = tmp_path / "context.json"
     context_path.write_text(json.dumps(standing_context()), encoding="utf-8")
 

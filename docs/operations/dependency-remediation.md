@@ -61,9 +61,9 @@ PR #33 is the case that motivated this document and is the one case the factory 
    UUID** while evidence and adjudication want the human string; `expected_version` must be **0**.
 6. **Devon approves twice** — the decomposition proposal, then the unit's authority envelope via
    the dedicated form, not the generic approve button.
-7. **SYSTEM `commands/ready`**, then dispatch at the next unused ordinal. Verify by a **new
-   dispatch-record id and a new Actions run** — a reused ordinal returns `status: "dispatched"`
-   and does nothing.
+7. **Dispatch.** The authority approval readies the unit itself (SDS 1.1 item 2d-1), and the
+   orchestrator assigns the dispatch ordinal. Verify by a **new dispatch-record id and a new
+   Actions run**, never by `status` alone.
 8. **Verify and complete** — named-check evidence via the verifier credential, then `/verify`.
 9. **Return to the Dependabot PR**: `@dependabot rebase`. It should now pass and, if armed, merge
    itself. **Check whether it is actually armed first** — `gh pr list --json autoMergeRequest`.

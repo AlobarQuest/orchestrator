@@ -26,7 +26,8 @@ def test_a_concurrent_duplicate_transition_writes_one_event(
     migrated_engine: Engine, migrated_session: Session
 ) -> None:
     unit = register_unit(migrated_session, "idem-lifecycle")
-    unit.state = WorkUnitState.DRAFT
+    # READY -> FAILED: a SYSTEM edge with no readiness guard, so the race is all this exercises.
+    unit.state = WorkUnitState.READY
     migrated_session.commit()
     unit_id, version = unit.id, unit.version
     barrier = Barrier(2)
@@ -38,7 +39,7 @@ def test_a_concurrent_duplicate_transition_writes_one_event(
                 session,
                 TransitionCommand(
                     unit_id=unit_id,
-                    target=WorkUnitState.READY,
+                    target=WorkUnitState.FAILED,
                     actor=ActorContext("system", ActorRole.SYSTEM),
                     expected_version=version,
                     idempotency_key=KEY,
@@ -51,7 +52,7 @@ def test_a_concurrent_duplicate_transition_writes_one_event(
 
     # Identical responses, exactly one row, and the version bumped once -- with no advisory lock.
     # The row lock serialized them; the loser replayed the event by its globally-unique key.
-    assert results[0] == results[1] == (WorkUnitState.READY, version + 1)
+    assert results[0] == results[1] == (WorkUnitState.FAILED, version + 1)
     with Session(migrated_engine) as session:
         events = session.scalar(
             select(func.count()).select_from(Event).where(Event.idempotency_key == KEY)

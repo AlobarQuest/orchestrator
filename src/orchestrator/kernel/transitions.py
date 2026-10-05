@@ -20,6 +20,10 @@ class TransitionGuards:
     # own approval is superseded, so the ordinary cancel action still cannot cancel a draft or
     # ready unit.
     decomposition_superseded: bool = False
+    # Guards DRAFT -> READY: the unit's readiness (revision and decomposition approved, authority
+    # approved or recognised by policy, dependencies satisfied) holds. Nothing checked it on this
+    # edge before SDS 1.1 item 2d-1; the runner's brief refusal was the only backstop.
+    readiness_satisfied: bool = False
 
 
 SYSTEM_EDGES = {
@@ -118,6 +122,16 @@ def authorize_transition(
             "decomposition_supersession_required",
             "a draft or ready unit is retired only by superseding its decomposition",
             "supersede the decomposition from its proposal page",
+        )
+    if (
+        source is WorkUnitState.DRAFT
+        and target is WorkUnitState.READY
+        and not guards.readiness_satisfied
+    ):
+        raise DomainError(
+            "readiness_not_satisfied",
+            "the unit's readiness does not hold yet",
+            "read GET /api/v1/work-units/{unit_id}/readiness for its blockers",
         )
     if target is WorkUnitState.COMPLETED and not guards.completion_satisfied:
         raise DomainError("completion_incomplete", "completion guards failed", "verify")

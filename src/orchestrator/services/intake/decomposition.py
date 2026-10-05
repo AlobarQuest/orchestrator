@@ -42,6 +42,7 @@ from orchestrator.services.intake.packages import (
 from orchestrator.services.lifecycle.lifecycle import (
     TransitionCommand,
     decomposition_unit_id,
+    ready_if_satisfied,
     transition_in_transaction,
 )
 
@@ -361,6 +362,16 @@ def approve_decomposition_proposal(
             actor_id=actor.actor_id,
             actor_role=actor.role,
             idempotency_key=_dependency_idempotency_key(idempotency_key, proposal_dependency),
+        )
+
+    # Readiness can already hold: policy recognises the envelope and the unit has no pending
+    # dependency. Checked after the dependencies are registered (SDS 1.1 item 2d-1).
+    for unit_key, unit_id in units_by_key.items():
+        ready_if_satisfied(
+            session,
+            unit_id,
+            trigger=actor,
+            cause=_derived_idempotency_key(idempotency_key, f"ready:{unit_key}"),
         )
 
     proposal.state = "approved"

@@ -36,6 +36,7 @@ def test_every_declared_edge_is_legal(source: WorkUnitState, target: WorkUnitSta
             completion_satisfied=True,
             submission_binding_recorded=True,
             decomposition_superseded=True,
+            readiness_satisfied=True,
         ),
     )
 

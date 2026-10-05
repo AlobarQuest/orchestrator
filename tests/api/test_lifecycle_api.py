@@ -270,7 +270,12 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
             json=body,
         )
 
-    assert command("ready", 1, "ready-1", SYSTEM).json()["version"] == 2
+    # The authority approval made readiness hold, so the orchestrator readied the unit itself
+    # (SDS 1.1 item 2d-1); a manual ready now has nothing to do.
+    again = command("ready", 2, "ready-1", SYSTEM)
+    assert again.status_code == 409
+    assert again.json()["error"]["code"] == "invalid_transition"
+    assert again.json()["error"]["current_version"] == 2
     stale = command("start", 1, "stale-1", WORKER)
     assert stale.status_code == 409
     assert stale.json()["error"]["current_state"] == "ready"
@@ -458,7 +463,7 @@ def test_full_lifecycle_api_contract(db_client: TestClient, migrated_engine: Eng
             json={"idempotency_key": key, "expected_version": version},
         )
 
-    assert recovery_command("ready", 1, "recovery-ready", SYSTEM).status_code == 200
+    # The authority approval above readied the unit (SDS 1.1 item 2d-1).
     recovery_lease = db_client.post(
         f"/api/v1/work-units/{recovery_id}/claim",
         headers=WORKER,

@@ -245,7 +245,8 @@ def birth_unit(db_client: TestClient, *, suffix: str, max_attempts: int = 3) -> 
 
 
 def make_ready(db_client: TestClient, engine: Engine, unit_id: str, *, key: str) -> None:
-    """Production's next two steps: a human approves the authority envelope, then SYSTEM readies."""
+    """Production's next step: a human approves the authority envelope, and the orchestrator
+    readies the unit itself once that makes its readiness hold (SDS 1.1 item 2d-1)."""
     response = db_client.post(
         f"/api/v1/work-units/{unit_id}/approvals",
         headers=HUMAN,
@@ -257,16 +258,7 @@ def make_ready(db_client: TestClient, engine: Engine, unit_id: str, *, key: str)
         },
     )
     ok(response)
-    ok(
-        db_client.post(
-            f"/api/v1/work-units/{unit_id}/commands/ready",
-            headers=SYSTEM,
-            json={
-                "idempotency_key": f"{key}-ready",
-                "expected_version": unit_row(engine, unit_id).version,
-            },
-        )
-    )
+    assert unit_row(engine, unit_id).state == "ready"
 
 
 def unit_row(engine: Engine, unit_id: str) -> WorkUnit:

@@ -19,17 +19,11 @@ from orchestrator.kernel.authority import (
 from orchestrator.kernel.context import context_fingerprint
 from orchestrator.kernel.enrichment import validate_enrichment
 from orchestrator.kernel.leases import DEFAULT_MAX_ATTEMPTS
-from orchestrator.kernel.readiness import (
-    DependencyReadiness,
-    ReadinessDecision,
-    ReadinessFacts,
-    evaluate_readiness_facts,
-)
 from orchestrator.kernel.runner_authority import (
     runner_authority_violation,
     runner_envelope_field_violation,
 )
-from orchestrator.kernel.states import ActorRole, WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
     ApprovedDecomposition,
@@ -42,7 +36,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.persistence.repositories import PackageRepository
-from orchestrator.services.intake.authority_gate import human_authority_gate
+from orchestrator.services.lifecycle.lifecycle import ready_if_satisfied
 from orchestrator.services.verifier.verifier_evaluators import SUPPORTED_CRITERION_EVIDENCE_TYPES
 
 
@@ -167,6 +161,10 @@ def record_approval(
         )
     )
     session.flush()
+    if unit.authority_approval_id == approval.id:
+        ready_if_satisfied(
+            session, unit.id, trigger=ActorContext(actor_id, actor_role), cause=idempotency_key
+        )
     return approval
 
 
@@ -946,37 +944,11 @@ def resolve_dependency_command(
         )
     )
     session.flush()
+    if resolved.status == "satisfied":
+        ready_if_satisfied(
+            session, unit.id, trigger=ActorContext(actor_id, actor_role), cause=idempotency_key
+        )
     return resolved
-
-
-def evaluate_readiness(
-    session: Session, unit_id: uuid.UUID, *, for_update: bool = True
-) -> ReadinessDecision:
-    repository = PackageRepository(session)
-    unit = repository.unit_for_update(unit_id) if for_update else session.get(WorkUnit, unit_id)
-    if unit is None:
-        raise DomainError("work_unit_not_found", "work unit does not exist", None)
-    revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
-    assert revision is not None
-    dependencies = tuple(
-        DependencyReadiness(
-            dependency_id=dependency.id,
-            status=dependency.status,
-            detail=_dependency_detail(dependency),
-        )
-        for dependency in repository.dependencies_for_unit(unit.id)
-    )
-    return evaluate_readiness_facts(
-        ReadinessFacts(
-            revision_approved=bool(revision.approved_by and revision.approval_event_id),
-            decomposition_approved=bool(
-                unit.decomposition_approved_by and unit.decomposition_approved_at
-            ),
-            authority_approved=repository.exact_authority_approval(unit) is not None,
-            authority_recognised_by_policy=not human_authority_gate(unit, revision).refusals,
-            dependencies=dependencies,
-        )
-    )
 
 
 def _require_registrar(
@@ -1136,8 +1108,3 @@ def _has_internal_dependency_cycle(
         return False
 
     return any(visit(node) for node in graph)
-
-
-def _dependency_detail(dependency: Dependency) -> str:
-    reference = dependency.depends_on_work_unit_id or dependency.external_ref
-    return f"{dependency.kind} {reference} requires {dependency.required_state_or_condition}"

@@ -22,11 +22,11 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.intake.packages import evaluate_readiness
 from orchestrator.services.lifecycle.budget import is_over_budget
 from orchestrator.services.lifecycle.claim_release import release_claim
 from orchestrator.services.lifecycle.context import PreflightCommand, require_claim_context
 from orchestrator.services.lifecycle.lease_policy import claim_lease
+from orchestrator.services.lifecycle.readiness import evaluate_readiness
 
 # The states in which a unit still holds the claim it was granted. One definition, because the
 # three functions below and the stall report (`services.lifecycle.execution_stall`) all have to

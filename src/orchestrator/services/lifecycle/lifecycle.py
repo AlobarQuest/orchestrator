@@ -14,6 +14,7 @@ from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.context import context_fingerprint
 from orchestrator.kernel.evidence_types import OBSERVED_EVIDENCE_TYPES
 from orchestrator.kernel.leases import hash_lease_token
+from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import (
     DESIGNED_HUMAN_GATES,
@@ -35,6 +36,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.lifecycle.claim_release import release_claim
+from orchestrator.services.lifecycle.readiness import evaluate_readiness
 
 # The single source of truth for the generated post-deploy AC ids: this module PRODUCES them
 # (required_ac_ids for a generated post-deploy unit); `services.verifier.evidence` imports this same
@@ -181,6 +183,36 @@ def transition_unit(
     except Exception:
         session.rollback()
         raise
+
+
+def ready_if_satisfied(
+    session: Session, unit_id: uuid.UUID, *, trigger: ActorContext, cause: str
+) -> None:
+    """Take `DRAFT -> READY` for a unit whose readiness now holds (SDS 1.1 item 2d-1).
+
+    Called by the writes that can make readiness hold: an authority approval, a decomposition
+    approval, a dependency resolved. It is a SYSTEM edge, and the event carries the id of whoever
+    caused it with the SYSTEM role (Devon, 2026-10-05; the precedent is `claims.py`), and names
+    `cause`, the triggering write's idempotency key, in this transition's own key. The reason is a
+    fixed code: it reaches the public evidence pack, and `cause` is caller-chosen.
+    Never commits: it runs inside the caller's transaction.
+    """
+    unit = session.get(WorkUnit, unit_id)
+    if unit is None or unit.state != WorkUnitState.DRAFT:
+        return
+    if evaluate_readiness(session, unit_id, for_update=False).status is not ReadinessStatus.READY:
+        return
+    transition_in_transaction(
+        session,
+        TransitionCommand(
+            unit_id=unit_id,
+            target=WorkUnitState.READY,
+            actor=ActorContext(trigger.actor_id, ActorRole.SYSTEM),
+            expected_version=unit.version,
+            idempotency_key=f"{cause}:auto-ready",
+            reason="readiness_satisfied",
+        ),
+    )
 
 
 def transition_in_transaction(session: Session, command: TransitionCommand) -> TransitionResult:
@@ -477,6 +509,8 @@ def _transition_guards(
         ),
         _submission_binding_recorded(session, unit),
         approval_superseded(session, unit),
+        unit.state == WorkUnitState.DRAFT
+        and evaluate_readiness(session, unit.id, for_update=False).status is ReadinessStatus.READY,
     )
 
 
