@@ -1,0 +1,10 @@
+{
+  "_note": "The evidence types a package may declare on an acceptance criterion. Byte-identical in intent-packages and the orchestrator, each pinning the same CONTRACT_SHA256: intent-packages holds EVIDENCE_TYPES equal to it, and the orchestrator holds every member supported and classified.",
+  "evidence_types": [
+    "automated_check",
+    "automated_test",
+    "external_attestation",
+    "human_review",
+    "observation"
+  ]
+}
