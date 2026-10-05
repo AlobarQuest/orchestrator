@@ -43,11 +43,11 @@ from orchestrator.services.execution.dispatch import circuit_open
 
 DEAD_LETTER_UNIT_STATES = ("failed", "blocked")
 DEAD_LETTER_DISPATCH_STATUSES = ("failed", "blocked")
-# A unit in a settled state has been resolved, and resolving it is the acknowledgement: its old
+# A resolved unit has reached the end of its story, and resolving it is the acknowledgement: its old
 # dispatch failures and breakers no longer ask anyone for a decision, so the view leaves them out.
 # not-a-vocabulary: internal policy subset of WorkUnitState (which states end a unit's story), not
 # a value shared across a repo or subsystem boundary.
-SETTLED_UNIT_STATES = ("completed", "cancelled")
+RESOLVED_UNIT_STATES = ("completed", "cancelled")
 # `blocked` is here because requeue TARGETS it. An action whose subject is invisible in the
 # surface it is offered from is not an operator affordance.
 # not-a-vocabulary: internal policy subset of WorkUnitState (which states requeue targets), not a
@@ -205,7 +205,7 @@ def _failed_dispatch_records(session: Session) -> tuple[DeadLetterEntry, ...]:
         .join(WorkUnit, WorkUnit.id == DispatchRecord.work_unit_id)
         .where(
             DispatchRecord.status.in_(DEAD_LETTER_DISPATCH_STATUSES),
-            WorkUnit.state.not_in(SETTLED_UNIT_STATES),
+            WorkUnit.state.not_in(RESOLVED_UNIT_STATES),
         )
         .order_by(WorkUnit.unit_key, DispatchRecord.runner_attempt, DispatchRecord.id)
     ).all()
@@ -255,7 +255,7 @@ def _open_circuit_breakers(
         if not circuit_open(failures, failure_signature_threshold):
             continue
         unit = session.get(WorkUnit, unit_id)
-        if unit is None or unit.state in SETTLED_UNIT_STATES:
+        if unit is None or unit.state in RESOLVED_UNIT_STATES:
             continue
         entries.append(
             DeadLetterEntry(

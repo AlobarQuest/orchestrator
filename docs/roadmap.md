@@ -87,7 +87,7 @@ Devon deferred these two on 2026-10-03, after measuring showed neither costs any
 
 ### The rest of 1.1
 
-These follow the ordered list, in no fixed order.
+These are in no fixed order.
 
 | Review id | Item | State today |
 |---|---|---|

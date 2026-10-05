@@ -73,7 +73,7 @@ def dead_letter_route(
     session: SessionDep,
     settings: SettingsDep,
 ) -> object:
-    """Read-only: terminal failures AND stalled approval gates made visible.
+    """Read-only: unresolved failures AND stalled approval gates made visible.
 
     The stalled-approval threshold takes no parameter and has no off switch (WS-P2.15).
     """

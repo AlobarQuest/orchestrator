@@ -111,7 +111,7 @@ def test_the_at_rest_breaker_is_the_prospective_one_minus_exactly_one_failure(
     ]
 
 
-def test_terminal_and_blocked_units_are_enumerated(migrated_session: Session) -> None:
+def test_only_failed_and_blocked_units_are_enumerated(migrated_session: Session) -> None:
     failed = register_unit(migrated_session, "dl-failed")
     failed.state = WorkUnitState.FAILED
     blocked = register_unit(migrated_session, "dl-blocked")
@@ -130,8 +130,6 @@ def test_terminal_and_blocked_units_are_enumerated(migrated_session: Session) ->
     )
 
     units = {entry.work_unit_id: entry for entry in entries if entry.source == "work_unit"}
-    # A cancelled unit is resolved: cancelling it was the acknowledgement, so it asks no one for
-    # a decision and stays out of the view.
     assert set(units) == {failed.id, blocked.id}
     # `blocked` is in the view because requeue TARGETS it -- an action whose subject is invisible
     # in the surface it is offered from is not an operator affordance.
@@ -158,20 +156,18 @@ def test_failed_and_blocked_dispatch_records_are_enumerated(migrated_session: Se
     assert all(entry.reason_code == "github_api" for entry in dispatches)
 
 
-def test_a_settled_unit_leaves_its_dispatch_failures_and_breakers_out_of_the_view(
+def test_a_resolved_unit_leaves_its_dispatch_failures_and_breakers_out_of_the_view(
     migrated_session: Session,
 ) -> None:
-    """Completing or cancelling a unit resolves its old failures; only an unsettled unit's show."""
+    """Completing or cancelling a unit resolves its old failures; only an unresolved unit's show."""
     live = register_unit(migrated_session, "dl-live")
     live.state = WorkUnitState.READY
     _fail_dispatch(migrated_session, live, 1, "failed")
-    settled = []
     for state in (WorkUnitState.COMPLETED, WorkUnitState.CANCELLED):
-        unit = register_unit(migrated_session, f"dl-settled-{state}")
+        unit = register_unit(migrated_session, f"dl-resolved-{state}")
         unit.state = state
         for attempt in range(1, THRESHOLD + 1):
             _fail_dispatch(migrated_session, unit, attempt, "failed")
-        settled.append(unit.id)
     migrated_session.commit()
 
     entries = dead_letter(
@@ -184,7 +180,6 @@ def test_a_settled_unit_leaves_its_dispatch_failures_and_breakers_out_of_the_vie
     assert [(entry.source, entry.work_unit_id) for entry in entries] == [
         ("dispatch_record", live.id)
     ]
-    assert not {entry.work_unit_id for entry in entries} & set(settled)
 
 
 def test_requeue_eligibility_reflects_the_attempt_budget(migrated_session: Session) -> None:

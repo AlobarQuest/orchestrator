@@ -760,7 +760,7 @@ def recover_evidence(
 
 @app.command("dead-letter")
 def dead_letter(json_output: JsonOption = False) -> None:
-    """List terminal failures: failed/blocked units, failed dispatches, open circuit breakers."""
+    """List unresolved failures: failed/blocked units, failed dispatches, open circuit breakers."""
     _run(lambda: request("GET", "/api/v1/dead-letter"), json_output)
 
 
