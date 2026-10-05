@@ -288,9 +288,10 @@ _OWNER_ACTIONS = {
         "Have the system dispatch this unit again once the failure's cause is fixed"
     ),
     WorkUnitState.DRAFT: "None yet: the orchestrator readies this unit once its readiness holds",
-    # The approve command is the only edge to `ready`, and production routes it to no person.
+    # Every command that reaches `ready` from here is a HUMAN command on `/api`, which production
+    # routes to no person; the page's approval form records an approval but takes no edge.
     WorkUnitState.AWAITING_APPROVAL: (
-        "Cancel this unit on its review page; no route a person can reach approves it"
+        "Cancel this unit on its review page; recording an approval there does not ready it"
     ),
     WorkUnitState.AWAITING_REVIEW: "Complete this unit or request a revision on its review page",
     WorkUnitState.SUBMITTED: "Have the verifier evaluate this unit",
@@ -310,6 +311,11 @@ def recovery_action(session: Session, unit: WorkUnit) -> str:
     return _OWNER_ACTIONS.get(
         state, f"None: the unit is {unit.state} and has moved past this failure"
     )
+
+
+# Who restores a readiness term: an authority approval is recorded on the review page, and a
+# dependency is resolved through an `/api` route that production serves only to machines.
+_READINESS_OWNERS = "(an approval on its review page, or the system resolving a dependency)"
 
 
 def _requeue_target_action(session: Session, unit: WorkUnit, state: WorkUnitState) -> str:
@@ -335,7 +341,7 @@ def _requeue_target_action(session: Session, unit: WorkUnit, state: WorkUnitStat
         else "have the system requeue it"
     )
     if evaluate_readiness(session, unit.id, for_update=False).status is not ReadinessStatus.READY:
-        route = f"resolve its readiness, then {route}"
+        route = f"restore its readiness {_READINESS_OWNERS}, then {route}"
     if blocked:
         return route[0].upper() + route[1:]
     return f"Cancel this unit, or {route}"

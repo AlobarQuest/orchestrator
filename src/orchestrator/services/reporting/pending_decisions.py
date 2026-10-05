@@ -277,9 +277,9 @@ def _authority_gate_refusals(session: Session, unit: WorkUnit) -> tuple[str, ...
 def _failed_disposition(session: Session, unit: WorkUnit, href: str) -> dict[str, Any]:
     """The disposition a failed unit needs, named for what this person can actually do.
 
-    The action is the dead-letter view's `recovery_action`, which names a retry or a requeue only
-    when that route accepts the unit. Naming one that refuses would send a person to a form that
-    refuses them. Cancellation is always theirs.
+    The action is the dead-letter view's `recovery_action`: it names a retry or a requeue only
+    when that route accepts the unit, or once a readiness term it names is restored. Naming one
+    that refuses would send a person to a form that refuses them. Cancellation is always theirs.
     """
     return _entry(
         "failed_disposition",

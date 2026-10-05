@@ -500,7 +500,7 @@ def _readiness_eligibility_error(session: Session, unit: WorkUnit) -> DomainErro
     if evaluate_readiness(session, unit.id, for_update=False).status is not ReadinessStatus.READY:
         return DomainError(
             "readiness_not_satisfied",
-            "work unit is no longer ready after lease expiry",
+            "work unit's readiness no longer holds",
             "resolve_readiness",
         )
     return None
@@ -637,7 +637,7 @@ def _reclaim_error_replay(
         return DomainError(error_code, "attempt budget is exhausted", "approve_retry")
     return DomainError(
         "readiness_not_satisfied",
-        "work unit is no longer ready after lease expiry",
+        "work unit's readiness no longer holds",
         "resolve_readiness",
     )
 

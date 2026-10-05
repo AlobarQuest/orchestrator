@@ -43,6 +43,7 @@ def _unit(
 
 
 REQUEUE = "Cancel this unit, or have the system requeue it"
+RESTORE = "(an approval on its review page, or the system resolving a dependency)"
 RETRY = "Cancel this unit, or authorize a retry with a raised attempt limit"
 
 
@@ -56,15 +57,16 @@ RETRY = "Cancel this unit, or authorize a retry with a raised attempt limit"
             True,
             False,
             False,
-            "Cancel this unit, or resolve its readiness, then have the system requeue it",
+            f"Cancel this unit, or restore its readiness {RESTORE}, then have the system "
+            "requeue it",
         ),
         (
             WorkUnitState.FAILED,
             False,
             False,
             False,
-            "Cancel this unit, or resolve its readiness, then authorize a retry with a raised "
-            "attempt limit",
+            f"Cancel this unit, or restore its readiness {RESTORE}, then authorize a retry with a "
+            "raised attempt limit",
         ),
         (
             WorkUnitState.FAILED,
@@ -86,7 +88,7 @@ RETRY = "Cancel this unit, or authorize a retry with a raised attempt limit"
             True,
             False,
             False,
-            "Resolve its readiness, then have the system requeue it",
+            f"Restore its readiness {RESTORE}, then have the system requeue it",
         ),
         (
             WorkUnitState.BLOCKED,
@@ -176,7 +178,7 @@ def test_a_named_retry_is_accepted(migrated_session: Session) -> None:
         ),
         (
             WorkUnitState.AWAITING_APPROVAL,
-            "Cancel this unit on its review page; no route a person can reach approves it",
+            "Cancel this unit on its review page; recording an approval there does not ready it",
         ),
         (
             WorkUnitState.AWAITING_REVIEW,
