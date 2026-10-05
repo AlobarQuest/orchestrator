@@ -93,11 +93,8 @@ def test_a_crash_after_dispatch_leaves_a_recoverable_unit(
         db_client.post(
             f"/api/v1/work-units/{unit}/dispatch",
             headers=SYSTEM,
-            json={
-                "idempotency_key": "drill1-dispatch",
-                "expected_version": version(),
-                "runner_attempt": attempt,
-            },
+            # No ordinal: the orchestrator assigns the next one (simplification review 3a).
+            json={"idempotency_key": "drill1-dispatch", "expected_version": version()},
         )
     )
     assert (dispatch["status"], dispatch["reason_code"]) == ("skipped", "dispatch_disabled")

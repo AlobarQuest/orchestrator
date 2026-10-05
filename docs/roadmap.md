@@ -63,8 +63,10 @@ Two decisions aren't carried forward:
    a landing, recorded at merge, does not answer the observations hop. Both declared releases
    predate any producer of one. The likely source is the revision watcher's `production_revision`
    records, joined on the commit a service is serving.
-2. **A server-computed dispatch ordinal (3a-2).** `runner_attempt` is client-supplied; a reused
-   ordinal returns 200 and runs nothing, and only the `factory` client guards against that.
+2. **A server-computed dispatch ordinal (3a-2).** Built: the orchestrator assigns `runner_attempt`
+   and refuses any other supplied value with `dispatch_attempt_not_next`, so a reused ordinal no
+   longer replays a record and fires nothing. It ships with the next orchestrator deploy; then the
+   `factory` client stops sending an ordinal.
 3. **Automatic `ready` (2d-1).** DRAFT → READY is still a manual `factory ready` step on every
    unit, with no server caller.
 4. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`

@@ -185,8 +185,9 @@ Placement rule: global CLAUDE.md §7.
   five summaries, `machine_local` only `activation_summary`), and the secret detector rejects key
   names containing credential/token/key. History: `docs/history/claude-md-invariants-archive.md`
   #63.
-- A reused `runner_attempt` returns the existing dispatch record (200) and fires nothing: pick a new
-  ordinal and verify by a new record id. Detail: `docs/operations/driving-a-unit.md`.
+- The orchestrator assigns the dispatch ordinal (`max(attempt_count, highest recorded) + 1`); a
+  supplied `runner_attempt` other than that is refused `dispatch_attempt_not_next`, and a retry
+  reuses the `idempotency_key`. Detail: `docs/operations/driving-a-unit.md`.
 - `ORCHESTRATOR_DISPATCH_ENABLED` defaults true and is only an off switch; dispatch has one caller,
   `POST /work-units/{id}/dispatch`. Never restart the orchestrator while a dispatched run is live.
   Detail: `docs/operations/driving-a-unit.md`.

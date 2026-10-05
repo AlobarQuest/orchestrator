@@ -11,7 +11,8 @@ from orchestrator.api.schemas.common import ChangeWindowOverrideModel, CommandBa
 
 
 class DispatchCommandModel(CommandBase):
-    runner_attempt: int = Field(gt=0)
+    # Optional: omitted, the orchestrator assigns the next ordinal; supplied, it must be the next.
+    runner_attempt: int | None = Field(default=None, gt=0)
     # ADR-0032. Suppresses `outside_change_window` and nothing else, and grants nothing to the
     # act that lands the pull request the run produces -- that act carries its own.
     change_window_override: ChangeWindowOverrideModel | None = None
