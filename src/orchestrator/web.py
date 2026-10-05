@@ -47,7 +47,11 @@ from orchestrator.services.intake.intake_reads import (
 from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.services.intake.packages import record_approval
 from orchestrator.services.lifecycle.claims import REQUEUE_SOURCE_STATES, authorize_retry
-from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
+from orchestrator.services.lifecycle.lifecycle import (
+    TransitionCommand,
+    transition_in_transaction,
+    transition_unit,
+)
 from orchestrator.services.reconciliation.reconciliation import (
     ResolutionCommand,
     open_conditions,
@@ -662,6 +666,23 @@ def approve(
         reason=reason,
         idempotency_key=idempotency_key,
         expected_version=expected_version,
+    )
+    # The form is offered only for `awaiting_approval`, whose one human edge onward is to `ready`,
+    # guarded by the approval just recorded. Taking it here makes the page's approval decisive:
+    # the API's `approve` command is the only other route, and production serves it to no person.
+    # One transaction, so a refused edge leaves no approval behind.
+    transition_in_transaction(
+        session,
+        TransitionCommand(
+            unit_id,
+            WorkUnitState.READY,
+            actor,
+            expected_version,
+            f"{idempotency_key}:ready",
+            # A fixed code, as `ready_if_satisfied` uses: the person's words stay on the Approval
+            # row, and the event history is rendered into public pull-request comments.
+            reason="action_approved",
+        ),
     )
     session.commit()
     return _redirect(unit_id)

@@ -313,6 +313,84 @@ def test_stale_version_form_returns_conflict(db_client: TestClient, review_unit:
     assert response.json()["error"]["current_version"] == review_unit.version
 
 
+def test_approving_on_the_page_returns_the_unit_to_ready(
+    db_client: TestClient, migrated_engine: Engine, review_unit: WorkUnit
+) -> None:
+    """In production no person can reach the API's `approve` command, so the page must take the
+    edge itself; recording an approval alone left the unit where it was."""
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, review_unit.id)
+        assert unit is not None
+        unit.state = WorkUnitState.AWAITING_APPROVAL
+        session.commit()
+    page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+    token, key = _form(page.text, review_unit.id, "approval")
+
+    response = db_client.post(
+        f"/review/units/{review_unit.id}/approval",
+        headers=HUMAN,
+        data={
+            "csrf_token": token,
+            "idempotency_key": key,
+            "expected_version": str(review_unit.version),
+            "reason": "the change is approved",
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, review_unit.id)
+        assert unit is not None and unit.state == WorkUnitState.READY
+        transition = session.scalar(select(Event).where(Event.idempotency_key == f"{key}:ready"))
+        assert transition is not None
+        assert transition.to_state == WorkUnitState.READY
+        approval = session.scalar(select(Approval).where(Approval.idempotency_key == key))
+        assert approval is not None and transition.actor_id == approval.approved_by
+
+
+def test_a_refused_approval_edge_leaves_no_approval_behind(
+    db_client: TestClient, migrated_engine: Engine, review_unit: WorkUnit
+) -> None:
+    """The approval and the edge share one transaction: a page rendered in `awaiting_approval` and
+    submitted after the unit moved on records nothing."""
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, review_unit.id)
+        assert unit is not None
+        unit.state = WorkUnitState.AWAITING_APPROVAL
+        session.commit()
+    page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+    token, key = _form(page.text, review_unit.id, "approval")
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, review_unit.id)
+        assert unit is not None
+        unit.state = WorkUnitState.EXECUTING
+        session.commit()
+
+    response = db_client.post(
+        f"/review/units/{review_unit.id}/approval",
+        headers=HUMAN,
+        data={
+            "csrf_token": token,
+            "idempotency_key": key,
+            "expected_version": str(review_unit.version),
+            "reason": "approved from a stale page",
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code >= 400
+    with Session(migrated_engine) as session:
+        assert (
+            session.scalar(
+                select(func.count()).select_from(Approval).where(Approval.idempotency_key == key)
+            )
+            == 0
+        )
+
+
 def test_approval_replay_converges_to_one_row_and_event(
     db_client: TestClient, migrated_engine: Engine, review_unit: WorkUnit
 ) -> None:
@@ -344,6 +422,16 @@ def test_approval_replay_converges_to_one_row_and_event(
     )
     assert first.status_code == replay.status_code == 303
     with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, review_unit.id)
+        assert unit is not None and unit.state == WorkUnitState.READY
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(Event)
+                .where(Event.idempotency_key == f"{key}:ready")
+            )
+            == 1
+        )
         assert (
             session.scalar(
                 select(func.count()).select_from(Approval).where(Approval.idempotency_key == key)
@@ -488,7 +576,7 @@ def test_a_cancelled_unit_offers_no_action_the_service_would_refuse(
     page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN).text
 
     for heading in (
-        "Record approval",
+        "Approve and return to ready",
         "Approve this authority envelope",
         "Review outcome",
         "Cancel work unit",

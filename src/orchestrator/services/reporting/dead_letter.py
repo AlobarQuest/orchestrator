@@ -288,11 +288,7 @@ _OWNER_ACTIONS = {
         "Have the system dispatch this unit again once the failure's cause is fixed"
     ),
     WorkUnitState.DRAFT: "None yet: the orchestrator readies this unit once its readiness holds",
-    # Every command that reaches `ready` from here is a HUMAN command on `/api`, which production
-    # routes to no person; the page's approval form records an approval but takes no edge.
-    WorkUnitState.AWAITING_APPROVAL: (
-        "Cancel this unit on its review page; recording an approval there does not ready it"
-    ),
+    WorkUnitState.AWAITING_APPROVAL: "Approve or cancel this unit on its review page",
     WorkUnitState.AWAITING_REVIEW: "Complete this unit or request a revision on its review page",
     WorkUnitState.SUBMITTED: "Have the verifier evaluate this unit",
     WorkUnitState.VERIFYING: "Have the verifier evaluate this unit",
