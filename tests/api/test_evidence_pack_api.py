@@ -20,6 +20,7 @@ from orchestrator.services.reporting.evidence_pack import (
     EvidencePackResponse,
     EvidencePackVerifierDecidedResponse,
 )
+from tests._support.seeding import record_failure
 from tests.api.test_lifecycle_api import HUMAN, WORKER
 from tests.api.test_status_ledger_api import _register_ready_unit
 
@@ -63,6 +64,10 @@ def _built_and_evidenced_unit(
     )
     assert evidence.status_code == 200
     evidence_id = evidence.json()["id"]
+    with Session(migrated_engine) as session:
+        row = session.get(Evidence, uuid.UUID(evidence_id))
+        assert row is not None
+        record_failure(session, row)
 
     version, _ = _unit_version(migrated_engine, unit_id)
     expires_at = (datetime.now(UTC) + timedelta(days=365)).isoformat()

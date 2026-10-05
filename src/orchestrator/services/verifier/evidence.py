@@ -515,6 +515,8 @@ def _record_one_adjudication(
         now,
     )
     previous = current_adjudication(session, work_package_revision_id, unit.id, ac_id)
+    if outcome == "waived":
+        _require_currently_failing(previous, failed_evidence_id)
     event_id = uuid.uuid4()
     row = Adjudication(
         work_package_revision_id=work_package_revision_id,
@@ -1055,6 +1057,28 @@ def _validate_adjudication_fields(
             "waiver_invalid",
             "waiver requires failed evidence, a risk class, follow-up, and a future expiry "
             "when set",
+            None,
+        )
+
+
+def _require_currently_failing(
+    current: Adjudication | None, failed_evidence_id: uuid.UUID | None
+) -> None:
+    """A waiver accepts a known failure, so it may name only the criterion's current one.
+
+    The current adjudication must be `failed` on the evidence the waiver names, or an earlier
+    waiver of that same failure, which a renewal supersedes. A criterion that passed, or that
+    nobody has decided, has no failure to accept.
+    """
+    failing_on = None
+    if current is not None and current.outcome == "failed":
+        failing_on = current.evidence_id
+    elif current is not None and current.outcome == "waived":
+        failing_on = current.failed_evidence_id
+    if failing_on is None or failing_on != failed_evidence_id:
+        raise DomainError(
+            "waiver_invalid",
+            "a waiver may name only the failed evidence of the criterion's current failure",
             None,
         )
 

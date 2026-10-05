@@ -97,7 +97,6 @@ These are in no fixed order.
 
 | Review id | Item | State today |
 |---|---|---|
-| waiver | A human may waive only a criterion that's currently failing. | Any human may waive any criterion. |
 | 5b | One declared deployment-observation schema. | Five summary dicts; only the secret detector is shared. |
 | 3c-1 | Separate the runner's permitted commands from its ordered verify script. | factory-runner still runs `allowed_commands` as the script. |
 | 4a-2 | One evidence vocabulary with a divergence test in both directions. | Five types copied by hand, checked one way. |
