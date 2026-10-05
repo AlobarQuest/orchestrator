@@ -50,7 +50,10 @@ Shipped so far: the stalled-execution instruction (#336) and reversible decompos
 (2b-2, R5; ADR-0052, #338), both deployed on 2026-10-04 as `72fc88f-adr0052-amd64`. The landing join for traceability (5c, #343) deployed
 as `ae9ebe4-sds11trace-amd64`, and the server-assigned dispatch ordinal (3a-2, #344, with
 intent-packages #106) as `ff4936f-sds11ordinal-amd64`. Automatic `ready` (2d-1, #346, with
-intent-packages #107 and #108) deployed as `8371b04-sds11autoready-amd64`.
+intent-packages #107 and #108) deployed as `8371b04-sds11autoready-amd64`. Dead-letter lists only
+unresolved failures (6a, #348), deployed as `8f5691c-sds11deadletter-amd64`: a completed or
+cancelled unit is resolved, and the resolution is the acknowledgement, so no acknowledged state was
+added.
 
 Two decisions aren't carried forward:
 
@@ -98,7 +101,6 @@ These are in no fixed order.
 | 4a-2 | One evidence vocabulary with a divergence test in both directions. | Five types copied by hand, checked one way. |
 | 4c-3 | Separate the deciding view from the auditing view. | One page with a decision section and context-gated forms. |
 | 5a | Record the release binding as part of deploying. Unblocks the rest of 5c. | Only machine-local activations bind; Coolify deploys and self-builds don't. |
-| 7b | Dead-letter names the recovery action, as pending decisions does. | Pending decisions names dispositions; dead-letter doesn't. |
 | 7c | Run the whole-repo guards where the work happens. | `make check` refuses an empty collection; the guards still run only in a full `make check`. |
 | 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Machines can register intakes (ADR-0027); the human paste survives, and packages are LLM-authored through `factory create`. |
 | L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Four producers exist; where WS-P3.5 belongs is open decision 1. |

@@ -107,3 +107,4 @@ class DeadLetterEntryResponse(BaseModel):
     max_attempts: int
     requeue_eligible: bool
     occurred_at: datetime | None
+    recovery_action: str

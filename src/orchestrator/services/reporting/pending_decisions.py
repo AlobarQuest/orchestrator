@@ -38,6 +38,7 @@ from orchestrator.services.intake.authority_gate import human_authority_gate
 from orchestrator.services.lifecycle.execution_stall import stalled_executions
 from orchestrator.services.lifecycle.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.reconciliation.reconciliation import open_conditions
+from orchestrator.services.reporting.dead_letter import recovery_action
 from orchestrator.services.verifier.evidence import current_adjudication, current_evidence
 from orchestrator.services.verifier.verifier_criteria import load_required_criteria
 from orchestrator.services.verifier.verifier_evaluators import human_may_adjudicate
@@ -286,14 +287,14 @@ def _failed_disposition(unit: WorkUnit, href: str) -> dict[str, Any]:
         return _entry(
             "failed_disposition",
             unit.title,
-            "Authorize a retry with a raised attempt limit, or cancel this unit",
+            recovery_action(unit),
             f"{attempts} Its attempt budget is spent, so running it again needs a raised limit.",
             href,
         )
     return _entry(
         "failed_disposition",
         unit.title,
-        "Cancel this unit, or have the system requeue it",
+        recovery_action(unit),
         f"{attempts} It has attempts left, so a requeue needs no raised limit.",
         href,
     )

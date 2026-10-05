@@ -38,6 +38,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.clock import TransactionClock
+from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Claim, DispatchRecord, WorkUnit
 from orchestrator.services.execution.dispatch import circuit_open
 
@@ -54,12 +55,14 @@ RESOLVED_UNIT_STATES = ("completed", "cancelled")
 # value shared across a repo or subsystem boundary.
 REQUEUE_STATES = ("failed", "blocked")
 # The gates a human must answer. Nothing here can be answered by time passing.
+# not-a-vocabulary: internal policy subset of WorkUnitState, not shared across a boundary.
 APPROVAL_STATES = ("awaiting_approval", "awaiting_review")
 # The states a VERIFIER owes an answer on. Nothing here can be answered by time passing either:
 # no schedule runs the verifier, an operator drives it. Kept separate from APPROVAL_STATES rather
 # than folded into it because the two reports differ in WHO OWES THE DECISION and therefore in
 # the remedy -- an approval gate needs a human to decide, a stalled verification needs the
 # verifier run. Telling an operator the wrong one is worse than telling them nothing.
+# not-a-vocabulary: internal policy subset of WorkUnitState, not shared across a boundary.
 VERIFICATION_STATES = ("submitted", "verifying")
 
 
@@ -75,6 +78,7 @@ class DeadLetterEntry:
     max_attempts: int
     requeue_eligible: bool
     occurred_at: datetime | None
+    recovery_action: str
 
 
 def dead_letter(
@@ -134,6 +138,7 @@ def _stalled_verifications(
             # False, from the existing predicate: neither state is a REQUEUE_STATE. A stalled
             # verification needs the verifier run, not another attempt.
             requeue_eligible=_requeue_eligible(unit),
+            recovery_action=recovery_action(unit),
             occurred_at=unit.updated_at,
         )
         for unit in units
@@ -163,6 +168,7 @@ def _stalled_approvals(
             # False, from the existing predicate: an approval state is not a REQUEUE_STATE.
             # A stalled gate needs a human decision, not a retry.
             requeue_eligible=_requeue_eligible(unit),
+            recovery_action=recovery_action(unit),
             occurred_at=unit.updated_at,
         )
         for unit in units
@@ -195,6 +201,7 @@ def _unit_entry(session: Session, unit: WorkUnit) -> DeadLetterEntry:
         attempt_count=unit.attempt_count,
         max_attempts=unit.max_attempts,
         requeue_eligible=_requeue_eligible(unit),
+        recovery_action=recovery_action(unit),
         occurred_at=claim.released_at if claim is not None else None,
     )
 
@@ -220,6 +227,7 @@ def _failed_dispatch_records(session: Session) -> tuple[DeadLetterEntry, ...]:
             attempt_count=unit.attempt_count,
             max_attempts=unit.max_attempts,
             requeue_eligible=_requeue_eligible(unit),
+            recovery_action=recovery_action(unit),
             occurred_at=None,
         )
         for record, unit in rows
@@ -268,10 +276,40 @@ def _open_circuit_breakers(
                 attempt_count=unit.attempt_count,
                 max_attempts=unit.max_attempts,
                 requeue_eligible=_requeue_eligible(unit),
+                recovery_action=recovery_action(unit),
                 occurred_at=None,
             )
         )
     return tuple(entries)
+
+
+def recovery_action(unit: WorkUnit) -> str:
+    """The action that moves this unit on, named for who may take it (review 7b).
+
+    It follows the unit, not the entry: a dispatch failure or a breaker on a unit is recovered the
+    way the unit is. Each case names only a route that accepts the unit in its present state --
+    `authorize_retry` refuses a unit with attempts left, `requeue` (SYSTEM only) refuses one
+    whose budget is spent, and only `failed` has an edge to `cancelled`. A blocked unit whose
+    budget is spent is accepted by none of them, and the text says so rather than name a route
+    that refuses it.
+    """
+    state = WorkUnitState(unit.state)
+    exhausted = unit.attempt_count >= unit.max_attempts
+    if state is WorkUnitState.FAILED:
+        if exhausted:
+            return "Authorize a retry with a raised attempt limit, or cancel this unit"
+        return "Cancel this unit, or have the system requeue it"
+    if state is WorkUnitState.BLOCKED:
+        if exhausted:
+            return "None: no route accepts a blocked unit whose attempt budget is spent"
+        return "Have the system requeue this unit"
+    if state is WorkUnitState.READY:
+        return "Dispatch this unit again once the failure's cause is fixed"
+    if unit.state in APPROVAL_STATES:
+        return "Decide this unit's gate on its review page"
+    if unit.state in VERIFICATION_STATES:
+        return "Run the verifier on this unit"
+    return f"None: the unit is {unit.state} and has moved past this failure"
 
 
 def _requeue_eligible(unit: WorkUnit) -> bool:
