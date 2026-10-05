@@ -323,9 +323,9 @@ def _requeue_target_action(session: Session, unit: WorkUnit, state: WorkUnitStat
     own: requeue reports only the first it fails, which would name the wrong blocker.
 
     A spent LLM-call budget is final, since nothing raises it. A spent attempt budget is raised
-    only by `authorize_retry`, which takes failed units alone. Readiness that no longer holds is
-    recoverable, so it never reads as a dead end. Only a failed unit can be cancelled: no edge
-    leads from `blocked` to `cancelled`.
+    only by `authorize_retry`, which takes failed and blocked units. Readiness that no longer
+    holds is recoverable, so it never reads as a dead end. Only a failed unit can be cancelled: no
+    edge leads from `blocked` to `cancelled`.
     """
     blocked = state is WorkUnitState.BLOCKED
     if is_over_budget(session, unit):
@@ -333,8 +333,6 @@ def _requeue_target_action(session: Session, unit: WorkUnit, state: WorkUnitStat
             return "None: its LLM-call budget is spent, and nothing raises it (budget_exceeded)"
         return "Cancel this unit: its LLM-call budget is spent, and nothing raises it"
     exhausted = unit.attempt_count >= unit.max_attempts
-    if exhausted and blocked:
-        return "None: its attempt budget is spent, and only a failed unit can be retried"
     route = (
         "authorize a retry with a raised attempt limit"
         if exhausted

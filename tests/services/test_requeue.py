@@ -13,10 +13,18 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, WorkUnit
 from orchestrator.services.intake.packages import DependencySpec
-from orchestrator.services.lifecycle.claims import claim_unit, requeue_unit
+from orchestrator.services.lifecycle.claims import (
+    LeaseGrant,
+    authorize_retry,
+    claim_unit,
+    renew_claim,
+    requeue_unit,
+)
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.reporting.dead_letter import dead_letter
 from tests._support.seeding import register_unit
 from tests.services.test_claims import worker
+from tests.services.test_package_intake import human_actor
 from tests.services.test_reclaim import authorize_readiness
 
 # Long enough that nothing in these fixtures is stale; the stalled-approval
@@ -194,3 +202,44 @@ def test_requeue_replays_on_duplicate_delivery(migrated_session: Session) -> Non
         migrated_session.scalars(select(Event).where(Event.idempotency_key == "requeue-8"))
     )
     assert len(events) == 1
+
+
+def test_a_retried_blocked_unit_is_claimed_afresh_and_the_old_lease_is_dead(
+    migrated_session: Session,
+) -> None:
+    """Blocking does not release the claim, so the retry must not let the old lease act again."""
+    unit = register_unit(migrated_session, "retry-blocked-claimed")
+    authorize_readiness(migrated_session, unit)
+    unit.state = WorkUnitState.READY
+    unit.max_attempts = 1
+    migrated_session.commit()
+    first = claim_unit(migrated_session, unit.id, worker(), "retry-blocked-claim-1")
+    assert isinstance(first, LeaseGrant)
+    transition_unit(
+        migrated_session,
+        TransitionCommand(
+            unit_id=unit.id,
+            target=WorkUnitState.BLOCKED,
+            actor=worker(),
+            expected_version=unit.version,
+            idempotency_key="retry-blocked-block",
+            attempt=first.attempt,
+            lease_token=first.lease_token,
+        ),
+    )
+
+    retried = authorize_retry(
+        migrated_session,
+        unit.id,
+        human_actor(),
+        new_max_attempts=2,
+        reason="the blocker is cleared",
+        idempotency_key="retry-blocked-retry",
+    )
+    assert not isinstance(retried, DomainError)
+    second = claim_unit(migrated_session, unit.id, worker(), "retry-blocked-claim-2")
+
+    assert isinstance(second, LeaseGrant)
+    assert second.attempt == first.attempt + 1
+    stale = renew_claim(migrated_session, unit.id, worker(), first.attempt, first.lease_token)
+    assert isinstance(stale, DomainError)

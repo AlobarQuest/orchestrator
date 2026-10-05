@@ -95,7 +95,7 @@ RETRY = "Cancel this unit, or authorize a retry with a raised attempt limit"
             False,
             False,
             True,
-            "None: its attempt budget is spent, and only a failed unit can be retried",
+            "Authorize a retry with a raised attempt limit",
         ),
         (
             WorkUnitState.BLOCKED,
@@ -143,15 +143,24 @@ def test_a_named_requeue_is_accepted_and_an_unnamed_one_is_refused(
     assert entry.requeue_eligible is named
 
 
-def test_a_named_retry_is_accepted(migrated_session: Session) -> None:
+@pytest.mark.parametrize(
+    ("state", "action"),
+    [
+        (WorkUnitState.FAILED, RETRY),
+        (WorkUnitState.BLOCKED, "Authorize a retry with a raised attempt limit"),
+    ],
+)
+def test_a_named_retry_is_accepted_and_readies_the_unit(
+    migrated_session: Session, state: WorkUnitState, action: str
+) -> None:
     unit = _unit(
         migrated_session,
-        "dl-route-retry",
-        WorkUnitState.FAILED,
+        f"dl-route-retry-{state}",
+        state,
         attempts_left=False,
         over_budget=False,
     )
-    assert recovery_action(migrated_session, unit) == RETRY
+    assert recovery_action(migrated_session, unit) == action
 
     result = authorize_retry(
         migrated_session,
@@ -159,10 +168,13 @@ def test_a_named_retry_is_accepted(migrated_session: Session) -> None:
         human_actor(),
         new_max_attempts=unit.max_attempts + 1,
         reason="dead-letter probe",
-        idempotency_key="probe-retry",
+        idempotency_key=f"probe-retry-{state}",
     )
 
     assert not isinstance(result, DomainError)
+    migrated_session.expire_all()
+    refreshed = migrated_session.get(WorkUnit, unit.id)
+    assert refreshed is not None and refreshed.state == WorkUnitState.READY
 
 
 @pytest.mark.parametrize(
