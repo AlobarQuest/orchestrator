@@ -442,7 +442,7 @@ def _service_would_accept(state: WorkUnitState, *, attempts_exhausted: bool) -> 
         forms.add("review")
     if _kernel_would_authorize(state, WorkUnitState.CANCELLED):
         forms.add("cancel")
-    if state is WorkUnitState.FAILED and attempts_exhausted:
+    if state in (WorkUnitState.FAILED, WorkUnitState.BLOCKED) and attempts_exhausted:
         forms.add("retry")
     return forms
 

@@ -451,8 +451,10 @@ def _require_retry_allowed(
         raise DomainError("human_actor_required", "retry requires a registered human actor", None)
     if expected_version is not None:
         _require_version(unit, expected_version)
-    if WorkUnitState(unit.state) is not WorkUnitState.FAILED:
-        raise DomainError("retry_not_allowed", "only failed work may be retried", None)
+    # Blocked as well as failed: requeue refuses a blocked unit whose budget is spent, and no edge
+    # cancels one, so without a retry it could never move again.
+    if WorkUnitState(unit.state) not in REQUEUE_SOURCE_STATES:
+        raise DomainError("retry_not_allowed", "only failed or blocked work may be retried", None)
     if unit.attempt_count < unit.max_attempts:
         raise DomainError("attempts_not_exhausted", "attempt budget is not exhausted", None)
     if new_max_attempts <= unit.attempt_count:

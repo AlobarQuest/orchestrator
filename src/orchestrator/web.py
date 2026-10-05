@@ -299,7 +299,8 @@ def _available_actions(unit: WorkUnit, authority_violation: object | None) -> di
         "authority_approval": authority_violation is None and state not in SETTLED_STATES,
         "review_outcomes": review_outcomes,
         "cancel": _a_human_could_move(state, WorkUnitState.CANCELLED),
-        "retry": state is WorkUnitState.FAILED and unit.attempt_count >= unit.max_attempts,
+        "retry": state in (WorkUnitState.FAILED, WorkUnitState.BLOCKED)
+        and unit.attempt_count >= unit.max_attempts,
     }
     return actions
 
