@@ -152,7 +152,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   adjudicate on the ordering, say so in each rationale, and discharge the confirmation in the
   follow-up review unit the revision mints. **Do not reach for `waived` to express the caveat** —
   `waiver_invalid` requires *failed* evidence plus a risk class, follow-up and future expiry, and
-  the waiver must name the criterion's current evidence, on which its current adjudication failed.
+  the waiver must name the criterion's current evidence, on which its current adjudication failed
+  (or which an earlier waiver, being renewed, already named).
   So a waiver is not a general "accepted with reservations"; for judgment evidence the only honest
   outcomes are `passed` and `not_applicable`, with the caveat in the rationale. (Verified
   2026-07-28, WS-P2.8 deploy.)

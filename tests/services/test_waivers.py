@@ -231,7 +231,7 @@ def test_a_passed_criterion_cannot_be_waived(migrated_session: Session, ready_un
     assert result.code == "waiver_invalid"
 
 
-def test_a_waiver_must_name_the_evidence_the_criterion_failed_on(
+def test_evidence_newer_than_the_failure_cannot_be_waived(
     migrated_session: Session, ready_unit
 ) -> None:
     failed = failed_evidence(migrated_session, ready_unit)

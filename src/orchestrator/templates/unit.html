@@ -104,7 +104,7 @@
   <label for="rationale-{{ ac.ac_id }}">Rationale</label>
   <textarea id="rationale-{{ ac.ac_id }}" name="rationale"></textarea>
   <details><summary>Waiver fields (required only when waiving)</summary>
-    <label for="failed-{{ ac.ac_id }}">Failed evidence id (the criterion's current evidence, which its failure was judged on)</label>
+    <label for="failed-{{ ac.ac_id }}">Failed evidence id: the criterion's current evidence, {% if ac.evidence %}<code>{{ ac.evidence.id }}</code>{% else %}none recorded{% endif %}</label>
     <input id="failed-{{ ac.ac_id }}" name="failed_evidence_id">
     <label for="risk-{{ ac.ac_id }}">Risk class</label>
     <select id="risk-{{ ac.ac_id }}" name="risk"><option value="">—</option>{% for cls in waiver_risk_classes %}<option value="{{ cls }}">{{ cls }}</option>{% endfor %}</select>

@@ -558,3 +558,27 @@ def test_aware_expires_at_is_accepted(
         row = current_adjudication(verify, unit.work_package_revision_id, unit.id, "ac-1")
         assert row is not None
         assert row.outcome == "passed"
+
+
+def test_each_waiver_field_shows_the_id_a_waiver_must_name(
+    db_client: TestClient, migrated_engine: Engine, review_unit_with_two_judgment_acs: WorkUnit
+) -> None:
+    """A waiver must name the criterion's current evidence, so the page shows that id beside the
+    field. Without it, a person working from this page has no way to find it."""
+    unit = review_unit_with_two_judgment_acs
+    _record_evidence(migrated_engine, unit, "ac-1", "first-criterion")
+    _record_evidence(migrated_engine, unit, "ac-2", "second-criterion")
+    with Session(migrated_engine) as session:
+        heads = {
+            ac_id: current_evidence(session, unit.work_package_revision_id, unit.id, ac_id)
+            for ac_id in ("ac-1", "ac-2")
+        }
+
+    page = db_client.get(f"/review/units/{unit.id}", headers=HUMAN)
+
+    fieldsets = _fieldsets(page.text, unit.id)
+    for ac_id, other in (("ac-1", "ac-2"), ("ac-2", "ac-1")):
+        head, other_head = heads[ac_id], heads[other]
+        assert head is not None and other_head is not None
+        assert f"current evidence, <code>{head.id}</code>" in fieldsets[ac_id]
+        assert str(other_head.id) not in fieldsets[ac_id]

@@ -1073,9 +1073,11 @@ def _require_currently_failing(
     The waiver must name the criterion's current evidence head, and the current adjudication must
     be `failed`, or an earlier waiver, decided no earlier than that head was recorded. Which field
     a failure cites varies by who recorded it -- the verifier cites its finding in
-    `failed_evidence_id`, the review form cites nothing -- so the rule reads the head instead.
+    `failed_evidence_id`, a human may cite nothing -- so the rule reads the head instead.
     Evidence that arrives after the failure reopens the question, and a criterion that passed, or
-    that nobody has decided, has no failure to accept.
+    that nobody has decided, has no failure to accept. Both times are transaction-start times, so
+    an evidence write that began before, but committed after, the failure it follows reads as
+    judged; the window is the gap between a transaction's start and its unit lock.
     """
     if (
         head is None
