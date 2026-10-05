@@ -269,11 +269,10 @@ def test_a_decomposition_approval_readies_only_the_units_without_a_pending_depen
         migrated_session, proposal.id, actor=human_actor(), reason="Ok.", idempotency_key="p-mixed"
     )
 
-    states = dict(
-        migrated_session.execute(
-            select(WorkUnit.unit_key, WorkUnit.state).where(
-                WorkUnit.work_package_revision_id == revision.id
-            )
-        ).all()
-    )
+    rows = migrated_session.execute(
+        select(WorkUnit.unit_key, WorkUnit.state).where(
+            WorkUnit.work_package_revision_id == revision.id
+        )
+    ).all()
+    states = {unit_key: state for unit_key, state in rows}
     assert states == {"unit-1": WorkUnitState.READY, "unit-2": WorkUnitState.DRAFT}
