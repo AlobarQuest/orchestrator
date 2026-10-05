@@ -516,7 +516,11 @@ def _record_one_adjudication(
     )
     previous = current_adjudication(session, work_package_revision_id, unit.id, ac_id)
     if outcome == "waived":
-        _require_currently_failing(previous, failed_evidence_id)
+        _require_currently_failing(
+            current_evidence(session, work_package_revision_id, unit.id, ac_id),
+            previous,
+            failed_evidence_id,
+        )
     event_id = uuid.uuid4()
     row = Adjudication(
         work_package_revision_id=work_package_revision_id,
@@ -1062,23 +1066,28 @@ def _validate_adjudication_fields(
 
 
 def _require_currently_failing(
-    current: Adjudication | None, failed_evidence_id: uuid.UUID | None
+    head: Evidence | None, current: Adjudication | None, failed_evidence_id: uuid.UUID | None
 ) -> None:
     """A waiver accepts a known failure, so it may name only the criterion's current one.
 
-    The current adjudication must be `failed` on the evidence the waiver names, or an earlier
-    waiver of that same failure, which a renewal supersedes. A criterion that passed, or that
-    nobody has decided, has no failure to accept.
+    The waiver must name the criterion's current evidence head, and the current adjudication must
+    be `failed`, or an earlier waiver, decided no earlier than that head was recorded. Which field
+    a failure cites varies by who recorded it -- the verifier cites its finding in
+    `failed_evidence_id`, the review form cites nothing -- so the rule reads the head instead.
+    Evidence that arrives after the failure reopens the question, and a criterion that passed, or
+    that nobody has decided, has no failure to accept.
     """
-    failing_on = None
-    if current is not None and current.outcome == "failed":
-        failing_on = current.evidence_id
-    elif current is not None and current.outcome == "waived":
-        failing_on = current.failed_evidence_id
-    if failing_on is None or failing_on != failed_evidence_id:
+    if (
+        head is None
+        or head.id != failed_evidence_id
+        or current is None
+        or current.outcome not in ("failed", "waived")
+        or current.decided_at < head.recorded_at
+    ):
         raise DomainError(
             "waiver_invalid",
-            "a waiver may name only the failed evidence of the criterion's current failure",
+            "a waiver may name only the current evidence of a criterion whose current "
+            "adjudication failed on it",
             None,
         )
 

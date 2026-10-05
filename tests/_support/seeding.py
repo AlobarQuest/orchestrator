@@ -328,7 +328,8 @@ def record_failure(session: Session, evidence: Evidence) -> Adjudication:
         work_unit_id=evidence.work_unit_id,
         ac_id=evidence.ac_id,
         outcome="failed",
-        evidence_id=evidence.id,
+        # The verifier's own shape: a failure cites what it failed on in `failed_evidence_id`.
+        failed_evidence_id=evidence.id,
         decided_by="verifier",
         decided_by_role=ActorRole.VERIFIER.value,
         rationale="the evidence failed",

@@ -381,7 +381,8 @@ def _service_would_accept(migrated_engine: Engine, unit: WorkUnit) -> set[str]:
         )
         evidence = current_evidence(session, unit.work_package_revision_id, unit.id, "ac-1")
         may_decide = human_may_adjudicate(declared, evidence, unit.state)
-    # `waived` is authorized for any HUMAN on any criterion, independently of the predicate.
+    # `waived` is authorized for any HUMAN on any criterion, independently of the predicate;
+    # `record_adjudication` then refuses a waiver of a criterion that is not failing.
     return ({"waived"} | HUMAN_ADJUDICABLE_OUTCOMES) if may_decide else {"waived"}
 
 
