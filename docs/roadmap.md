@@ -58,11 +58,6 @@ Two decisions aren't carried forward:
 - 6c, deriving candidate lessons automatically: Tier 3 item 24 deleted the promotion surface it
   would have fed.
 
-### Order
-
-1. **Dead-letter entries carry an acknowledged state (6a).** `services/reporting/dead_letter.py`
-   still lists cancelled units that were already handled.
-
 ### Blocked
 
 - **Traceability through observations (5c), the rest.** The chain joins each release commit's
@@ -92,7 +87,7 @@ Devon deferred these two on 2026-10-03, after measuring showed neither costs any
 
 ### The rest of 1.1
 
-These follow the ordered list, in no fixed order.
+These are in no fixed order.
 
 | Review id | Item | State today |
 |---|---|---|

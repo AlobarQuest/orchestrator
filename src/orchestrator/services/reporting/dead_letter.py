@@ -1,4 +1,8 @@
-"""The dead-letter view: terminal failures AND stalled approval gates made visible.
+"""The dead-letter view: unresolved failures AND stalled approval gates made visible.
+
+The view lists only what still needs a decision. A unit that reached `completed` or `cancelled`
+is resolved, and that resolution is the acknowledgement: neither the unit nor the dispatch
+failures and breakers it left behind appear here. There is no separate acknowledged state.
 
 Derived LIVE from the source tables. There is no materialized dead-letter queue, so there is
 nothing to drift out of sync with the reality it reports. Read-only: this module performs no
@@ -37,8 +41,13 @@ from orchestrator.clock import TransactionClock
 from orchestrator.persistence.models import Claim, DispatchRecord, WorkUnit
 from orchestrator.services.execution.dispatch import circuit_open
 
-DEAD_LETTER_UNIT_STATES = ("failed", "blocked", "cancelled")
+DEAD_LETTER_UNIT_STATES = ("failed", "blocked")
 DEAD_LETTER_DISPATCH_STATUSES = ("failed", "blocked")
+# A resolved unit has reached the end of its story, and resolving it is the acknowledgement: its old
+# dispatch failures and breakers no longer ask anyone for a decision, so the view leaves them out.
+# not-a-vocabulary: internal policy subset of WorkUnitState (which states end a unit's story), not
+# a value shared across a repo or subsystem boundary.
+RESOLVED_UNIT_STATES = ("completed", "cancelled")
 # `blocked` is here because requeue TARGETS it. An action whose subject is invisible in the
 # surface it is offered from is not an operator affordance.
 # not-a-vocabulary: internal policy subset of WorkUnitState (which states requeue targets), not a
@@ -194,7 +203,10 @@ def _failed_dispatch_records(session: Session) -> tuple[DeadLetterEntry, ...]:
     rows = session.execute(
         select(DispatchRecord, WorkUnit)
         .join(WorkUnit, WorkUnit.id == DispatchRecord.work_unit_id)
-        .where(DispatchRecord.status.in_(DEAD_LETTER_DISPATCH_STATUSES))
+        .where(
+            DispatchRecord.status.in_(DEAD_LETTER_DISPATCH_STATUSES),
+            WorkUnit.state.not_in(RESOLVED_UNIT_STATES),
+        )
         .order_by(WorkUnit.unit_key, DispatchRecord.runner_attempt, DispatchRecord.id)
     ).all()
     return tuple(
@@ -243,7 +255,7 @@ def _open_circuit_breakers(
         if not circuit_open(failures, failure_signature_threshold):
             continue
         unit = session.get(WorkUnit, unit_id)
-        if unit is None:
+        if unit is None or unit.state in RESOLVED_UNIT_STATES:
             continue
         entries.append(
             DeadLetterEntry(

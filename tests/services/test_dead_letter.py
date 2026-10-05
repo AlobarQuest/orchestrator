@@ -111,7 +111,7 @@ def test_the_at_rest_breaker_is_the_prospective_one_minus_exactly_one_failure(
     ]
 
 
-def test_terminal_and_blocked_units_are_enumerated(migrated_session: Session) -> None:
+def test_only_failed_and_blocked_units_are_enumerated(migrated_session: Session) -> None:
     failed = register_unit(migrated_session, "dl-failed")
     failed.state = WorkUnitState.FAILED
     blocked = register_unit(migrated_session, "dl-blocked")
@@ -130,11 +130,10 @@ def test_terminal_and_blocked_units_are_enumerated(migrated_session: Session) ->
     )
 
     units = {entry.work_unit_id: entry for entry in entries if entry.source == "work_unit"}
-    assert set(units) == {failed.id, blocked.id, cancelled.id}
+    assert set(units) == {failed.id, blocked.id}
     # `blocked` is in the view because requeue TARGETS it -- an action whose subject is invisible
     # in the surface it is offered from is not an operator affordance.
     assert units[blocked.id].requeue_eligible is True
-    assert units[cancelled.id].requeue_eligible is False
 
 
 def test_failed_and_blocked_dispatch_records_are_enumerated(migrated_session: Session) -> None:
@@ -155,6 +154,32 @@ def test_failed_and_blocked_dispatch_records_are_enumerated(migrated_session: Se
     dispatches = [entry for entry in entries if entry.source == "dispatch_record"]
     assert len(dispatches) == 2
     assert all(entry.reason_code == "github_api" for entry in dispatches)
+
+
+def test_a_resolved_unit_leaves_its_dispatch_failures_and_breakers_out_of_the_view(
+    migrated_session: Session,
+) -> None:
+    """Completing or cancelling a unit resolves its old failures; only an unresolved unit's show."""
+    live = register_unit(migrated_session, "dl-live")
+    live.state = WorkUnitState.READY
+    _fail_dispatch(migrated_session, live, 1, "failed")
+    for state in (WorkUnitState.COMPLETED, WorkUnitState.CANCELLED):
+        unit = register_unit(migrated_session, f"dl-resolved-{state}")
+        unit.state = state
+        for attempt in range(1, THRESHOLD + 1):
+            _fail_dispatch(migrated_session, unit, attempt, "failed")
+    migrated_session.commit()
+
+    entries = dead_letter(
+        migrated_session,
+        failure_signature_threshold=THRESHOLD,
+        stalled_approval_seconds=STALLED_APPROVAL_SECONDS,
+        stalled_verification_seconds=604_800,
+    )
+
+    assert [(entry.source, entry.work_unit_id) for entry in entries] == [
+        ("dispatch_record", live.id)
+    ]
 
 
 def test_requeue_eligibility_reflects_the_attempt_budget(migrated_session: Session) -> None:
