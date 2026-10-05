@@ -190,7 +190,7 @@ def test_a_named_retry_is_accepted_and_readies_the_unit(
         ),
         (
             WorkUnitState.AWAITING_APPROVAL,
-            "Cancel this unit on its review page; recording an approval there does not ready it",
+            "Approve or cancel this unit on its review page",
         ),
         (
             WorkUnitState.AWAITING_REVIEW,
