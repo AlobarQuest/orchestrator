@@ -198,7 +198,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   genuinely strands a unit. Per-run toggling was buying a gate that stops nothing the seven inner
   gates don't, while creating a hazard they cannot prevent. The other three gates are unchanged and
   still standing: `CLASSES=["dependency-update","maintenance-remediation","software-delivery"]`,
-  `CAPS=["repo.edit","github.pr.create"]`, `REPOS=["AlobarQuest/intent-packages"]`.
+  `CAPS=["repo.edit","github.pr.create"]`, `REPOS=["AlobarQuest/intent-packages"]`. **Since
+  2026-10-06 (ADR-0053) the first two are not environment variables**: they are the `[admission]`
+  table of `factory-policy.toml`, with the same values, and widening one is an edit there that ships
+  as a release. The third became each repository's `factory-target.toml` (#301).
   **The restart hazard itself is still real for ANY restart** — a release, an env write, a Coolify
   swap — so the rule survives in that form: never restart while a run is live.
 

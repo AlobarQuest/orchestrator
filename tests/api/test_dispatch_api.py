@@ -22,6 +22,9 @@ from tests.api.test_lifecycle_api import SYSTEM
 from tests.services.estate_doubles import FakeEstateLandingSource, inert_source
 from tests.services.target_doubles import FakeFactoryTargetSource, declared_source
 
+# Admission's posture terms are the shipped policy's, plus the harness's fallback change class.
+pytestmark = pytest.mark.usefixtures("harness_posture")
+
 TARGET_REPOSITORY = "AlobarQuest/orchestrator"
 # Dispatch routes per-unit, so a dispatchable unit must declare its target repository.
 AUTHORITY = {
@@ -91,8 +94,6 @@ def dispatch_client(
         return Settings(
             database_url="postgresql+psycopg://postgres:postgres@127.0.0.1/orchestrator_test",
             dispatch_enabled=True,
-            dispatch_allowed_change_classes=frozenset({"repo.edit"}),
-            dispatch_enabled_capabilities=frozenset({"repo.edit"}),
             github_app_id="123456",
             github_app_installation_id="78901234",
             github_app_private_key_b64=SecretStr("cGVt"),

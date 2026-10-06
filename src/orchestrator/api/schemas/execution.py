@@ -107,6 +107,21 @@ class FactoryPolicyLeaseBoundsResponse(BaseModel):
     ceiling_minutes: int
 
 
+class FactoryPolicyAdmissionResponse(BaseModel):
+    """The capabilities and change classes that withhold admission's two posture objections.
+
+    Lists, not grants: a value absent from them draws the objection, and an empty list draws it for
+    every value. Served because nothing else now says what kind of work this image takes.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    rationale: str
+    decided: date
+    capabilities: list[str]
+    change_classes: list[str]
+
+
 class FactoryPolicyReachResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -131,5 +146,6 @@ class FactoryPolicyResponse(BaseModel):
     source: str
     # A response model silently DROPS every key the service returns and the model does not declare,
     # which is how WS-P2.12 served an empty enrichment while every service assertion passed.
+    admission: FactoryPolicyAdmissionResponse
     lease_bounds: FactoryPolicyLeaseBoundsResponse
     reach: list[FactoryPolicyReachResponse]

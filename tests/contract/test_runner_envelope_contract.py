@@ -138,13 +138,11 @@ def _authored(envelope: dict[str, Any]) -> dict[str, Any]:
     return {**envelope, "constraints": constraints}
 
 
-def _dispatch_settings(
-    change_class: str = CHANGE_CLASS, target_repository: str = TARGET_REPOSITORY
-) -> DispatchSettings:
+def _dispatch_settings() -> DispatchSettings:
+    # The capability and change-class terms are the SHIPPED policy's, so both golden change classes
+    # are admitted here on the values production enforces, not on a list this test supplies.
     return DispatchSettings(
         enabled=True,
-        allowed_change_classes=frozenset({change_class}),
-        enabled_capabilities=frozenset({CAPABILITY}),
         workflow_id="factory-runner-pilot.yml",
         workflow_ref="main",
         github_app_configured=True,
@@ -473,9 +471,7 @@ def test_orchestrator_serves_the_edit_envelope_and_admits_it(migrated_session: S
             actor=SYSTEM,
             idempotency_key="editshape-dispatch",
         ),
-        _dispatch_settings(
-            change_class=EDIT_CHANGE_CLASS, target_repository=EDIT_TARGET_REPOSITORY
-        ),
+        _dispatch_settings(),
         github,
         inert_source(),
         target_source=declared_source(),
@@ -550,9 +546,7 @@ def test_an_orchestrator_only_capability_is_refused_at_admission(
             actor=SYSTEM,
             idempotency_key="mixedvocab-dispatch",
         ),
-        _dispatch_settings(
-            change_class=EDIT_CHANGE_CLASS, target_repository=EDIT_TARGET_REPOSITORY
-        ),
+        _dispatch_settings(),
         FakeGitHubDispatcher(),
         inert_source(),
         target_source=declared_source(),

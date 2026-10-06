@@ -46,7 +46,7 @@ from orchestrator.services.landing.estate_landing import (
 # Policy could not be consulted or could not be evaluated, so it recognised nothing and objected to
 # nothing -- which is the one state where those two are not the same. Named separately from the
 # artifact's own refusals because it is a fault in this process rather than a statement about this
-# unit. Shared by both terms below: whichever notices first reports the same fault.
+# unit. Shared by every term below that reads policy: whichever notices first reports the fault.
 REACH_POLICY_UNREADABLE = "reach_policy_unreadable"
 
 # The declaration says nothing already serving changes; App Brain says landing on this
@@ -139,6 +139,19 @@ def estate_refusal(
     if answer.reason == SOURCE_UNCONFIGURED:
         return REACH_ESTATE_SOURCE_UNCONFIGURED
     return REACH_ESTATE_SOURCE_UNREADABLE
+
+
+def posture_refusal(required_capability: str, change_class: str) -> str | None:
+    """Why policy objects to this KIND of work; ``None`` means it raises no objection.
+
+    The capability and change-class terms, read from policy on every call like the two above. A
+    policy that will not load refuses here as it does there, and in practice never reaches this
+    term: the reach term is ordered above it and reports the same fault first.
+    """
+    try:
+        return load_factory_policy().posture_refusal(required_capability, change_class)
+    except DomainError:
+        return REACH_POLICY_UNREADABLE
 
 
 def change_window_refusal(

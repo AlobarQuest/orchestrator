@@ -21,7 +21,7 @@ def test_the_policy_surface_reports_the_version_and_every_reach_row(db_client: T
 
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == 6
+    assert body["version"] == 7
     # Served keys, model fields and report keys are one set: a response model drops what it does
     # not declare, and a field the report stopped producing must not linger in the model either.
     assert (
@@ -30,6 +30,20 @@ def test_the_policy_surface_reports_the_version_and_every_reach_row(db_client: T
     assert body["source"] == "factory-policy.toml"
     assert [row["member"] for row in body["reach"]] == sorted(REACH_VOCABULARY)
     assert all(row["rationale"] and row["decided"] for row in body["reach"])
+
+
+def test_the_policy_surface_serves_the_admission_posture(db_client: TestClient) -> None:
+    # Nothing else says what kind of work a running image takes now that the lists left the
+    # deployment's settings, so the deploy check reads them here, off the wire.
+    admission = db_client.get("/api/v1/factory-policy", headers=SYSTEM).json()["admission"]
+
+    assert admission["capabilities"] == ["github.pr.create", "repo.edit"]
+    assert admission["change_classes"] == [
+        "dependency-update",
+        "maintenance-remediation",
+        "software-delivery",
+    ]
+    assert admission["rationale"] and admission["decided"]
 
 
 def test_the_policy_surface_serves_the_change_window_a_row_declares(

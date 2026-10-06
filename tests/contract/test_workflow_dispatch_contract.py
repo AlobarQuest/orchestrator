@@ -55,8 +55,6 @@ def _dispatch_settings() -> Any:
 
     return DispatchSettings(
         enabled=True,
-        allowed_change_classes=frozenset({"dependency-update"}),
-        enabled_capabilities=frozenset({"repo.edit"}),
         workflow_id=Settings.model_fields["dispatch_workflow_id"].default,
         workflow_ref="main",
         github_app_configured=True,

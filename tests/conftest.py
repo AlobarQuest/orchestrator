@@ -12,8 +12,9 @@ from tests._support.database import (
     rebuild_schema,
     reset_data,
 )
+from tests._support.posture import harness_posture
 
-__all__ = ["TEST_DATABASE_URL"]
+__all__ = ["TEST_DATABASE_URL", "harness_posture"]
 
 
 @dataclass

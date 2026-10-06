@@ -32,6 +32,7 @@ from orchestrator.factory_policy import OUTSIDE_CHANGE_WINDOW, load_factory_poli
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkUnit
 from orchestrator.reach_vocabulary import LIVE_ESTATE
+from orchestrator.services.execution import reach_admission
 from orchestrator.services.execution.dispatch import (
     DispatchCommand,
     dispatch_work_unit,
@@ -44,6 +45,7 @@ from orchestrator.services.landing.pr_merge_admission import (
     MERGE_POLICY_UNREADABLE,
     admission_for,
 )
+from tests._support.posture import harness_policy
 from tests.services.change_record_doubles import approved_record_source
 from tests.services.estate_doubles import inert_source, redeploying_source
 from tests.services.target_doubles import declared_source
@@ -60,6 +62,8 @@ from tests.services.test_pr_merge_admission import (
     _ready_unit,
     _revision,
 )
+
+pytestmark = pytest.mark.usefixtures("harness_posture")
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 REASON = "supervised build session, 2026-08-26"
@@ -298,19 +302,28 @@ def test_an_override_does_not_admit_work_whose_policy_could_not_be_read(
 
 
 @pytest.mark.parametrize(
-    ("overrides", "expected"),
+    ("overrides", "posture", "expected"),
     [
-        ({"enabled": False}, "dispatch_disabled"),
-        ({"enabled_capabilities": frozenset()}, "capability_not_enabled"),
-        ({"allowed_change_classes": frozenset()}, "change_class_not_allowed"),
-        ({"github_app_configured": False}, "github_app_credentials_missing"),
+        ({"enabled": False}, {}, "dispatch_disabled"),
+        ({}, {"capabilities": frozenset()}, "capability_not_enabled"),
+        ({}, {"change_classes": frozenset()}, "change_class_not_allowed"),
+        ({"github_app_configured": False}, {}, "github_app_credentials_missing"),
     ],
 )
 def test_no_other_refusal_is_suppressed_while_an_override_is_carried(
-    migrated_session: Session, overrides: dict[str, object], expected: str
+    migrated_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    overrides: dict[str, object],
+    posture: dict[str, object],
+    expected: str,
 ) -> None:
     """Acceptance 5. It means "this term does not apply to a supervised run", never "skip
     admission"."""
+    policy = harness_policy()
+    narrowed = dataclasses.replace(
+        policy, admission=dataclasses.replace(policy.admission, **posture)
+    )
+    monkeypatch.setattr(reach_admission, "load_factory_policy", lambda: narrowed)
     key = f"other-terms-{expected}"
     unit = ready_unit(migrated_session, key=key, reach=["operator_machine"])
     github = FakeGitHubDispatcher([])

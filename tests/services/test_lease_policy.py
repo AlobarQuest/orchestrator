@@ -47,7 +47,11 @@ from tests.services.test_dispatch import (
     ready_unit,
     settings,
 )
+from tests.services.test_factory_policy import ADMISSION
 from tests.services.test_reclaim import SYSTEM, expire
+
+# Admission's posture terms are the shipped policy's, plus the harness's fallback change class.
+pytestmark = pytest.mark.usefixtures("harness_posture")
 
 # What the shipped artifact declares. Named here so a change to the document is a change to a
 # constant a reader can see, rather than a number buried in six assertions.
@@ -59,8 +63,8 @@ DECIDED = 'decided = "2026-08-02"'
 # distinguishable from "one number applied everywhere". The other two declare none, which is how
 # the default-contributing case is exercised in the same document.
 LEASED = f"""
-version = 6
-
+version = 7
+{ADMISSION}
 [reach.source_repository]
 rationale = "repository only"
 {DECIDED}

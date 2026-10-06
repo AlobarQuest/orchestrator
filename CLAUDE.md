@@ -205,8 +205,9 @@ Placement rule: global CLAUDE.md §7.
   no `orchestrator_self` member. Read it only via `reach_from_snapshot()`; execution locus is a
   separate, unmodelled dimension. History: `docs/history/claude-md-invariants-archive.md` #78.
 - `factory-policy.toml` can only REFUSE: no schema value permits, `factory_policy.py` imports no
-  config, empty means no objection. Exactly one row per `REACH_VOCABULARY` member or it fails to
-  load; `SUPPORTED_SCHEMA_VERSIONS` is exact; a new field ships with its reader. History:
+  config, an empty refusal list means no objection, and a listed value (`known_good`,
+  `[admission]`) only withholds one objection. Exactly one row per `REACH_VOCABULARY` member or it
+  fails to load; `SUPPORTED_SCHEMA_VERSIONS` is exact; a new field ships with its reader. History:
   `docs/history/claude-md-invariants-archive.md` #81.
 - Minted follow-up units are created in `AWAITING_REVIEW`, and minting refuses rather than inherit
   an unknown reach. History: `docs/history/claude-md-invariants-archive.md` #88.
@@ -287,8 +288,11 @@ Placement rule: global CLAUDE.md §7.
 - Interpreter is `.python-version`; `test_interpreter_agreement.py` holds Dockerfile, pyright and
   `requires-python` equal. Raising the floor rewrites source (ruff targets it). Tests need
   `postgresql+psycopg://`. Detail: `docs/operations/local-development.md`.
-- `change_class` is a free string matched against `ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES`
-  (falls back to `required_capability`); widening that list is a standing authority change. History:
+- `change_class` is a free string matched against `factory-policy.toml`'s `[admission]`
+  `change_classes`, and `required_capability` against its `capabilities` (bounded to
+  `RUNNER_CAPABILITIES` at load); a missing `change_class` falls back to `required_capability`,
+  which no listed class matches. Both lists only withhold an objection: empty refuses every value.
+  Widening one is a standing authority change and a release. History: ADR-0053;
   `docs/history/claude-md-invariants-archive.md` #147.
 - Key runner-shape gates on `RUNNER_ENVELOPE_FIELDS` (pinned by `runner_envelope_contract.json`),
   never `KNOWN_FIELDS`, which adds `unknown_fields`. Store `runner_payload(envelope)`, not
