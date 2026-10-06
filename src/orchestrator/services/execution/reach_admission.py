@@ -144,7 +144,7 @@ def estate_refusal(
 def posture_refusal(required_capability: str, change_class: str) -> str | None:
     """Why policy objects to this KIND of work; ``None`` means it raises no objection.
 
-    The capability and change-class terms, read from policy on every call like the two above. A
+    The capability and change-class terms, read from policy on every call like the reach term. A
     policy that will not load refuses here as it does there, and in practice never reaches this
     term: the reach term is ordered above it and reports the same fault first.
     """

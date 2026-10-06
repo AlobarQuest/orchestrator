@@ -42,8 +42,8 @@ TARGET_REPOSITORY_DECLARATION_UNREADABLE = "target_repository_declaration_unread
 
 @dataclass(frozen=True)
 class DispatchSettings:
-    # The off-switch, and the only admission posture this process holds. Which capabilities and
-    # change classes are taken at all is policy's, read per admission (schema 7).
+    # Which capabilities and change classes are taken at all is not a setting: it is policy's, read
+    # per admission (schema 7). The off-switch stays here.
     enabled: bool
     workflow_id: str
     workflow_ref: str
