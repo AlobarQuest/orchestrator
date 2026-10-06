@@ -311,9 +311,9 @@ Placement rule: global CLAUDE.md §7.
 - Unknown capability names fail closed but mistyped levels (e.g. `requires_approval`) read as
   prohibited and pass orchestrator gates while the runner refuses the envelope. History:
   `docs/history/claude-md-invariants-archive.md` #150.
-- `FACTORY_PR_TOKEN` (BWS `a3240c2e-…`) lives as Actions secrets in seven repositories; a rotation
-  re-sets every copy and is verified with a workflow-file push probe. Detail:
-  `docs/operations/credentials.md`.
+- `FACTORY_PR_TOKEN` (BWS `a3240c2e-…`) lives as Actions secrets in eight repositories, listed
+  per copy in factory-runner's `.cred-consumers.toml`; a rotation re-sets every copy and is
+  verified with a workflow-file push probe. Detail: `docs/operations/credentials.md`.
 - Named-check evidence is ingested only for criteria declared `automated_check`, with `check_name`
   the JOB name. A human adjudication does not complete a unit: `AWAITING_REVIEW -> COMPLETED` is a
   separate human gate. History: `docs/history/claude-md-invariants-archive.md` #154.
