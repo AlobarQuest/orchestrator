@@ -6,7 +6,14 @@ from sqlalchemy import select
 from orchestrator.clock import TransactionClock
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.kernel.states import ActorRole
-from orchestrator.persistence.models import Adjudication, Claim, Event, Evidence, WorkUnit
+from orchestrator.persistence.models import (
+    Adjudication,
+    Approval,
+    Claim,
+    Event,
+    Evidence,
+    WorkUnit,
+)
 from orchestrator.services.intake.packages import register_approved_unit, register_revision
 from orchestrator.services.lifecycle.budget import BREACH_ACTION
 from orchestrator.services.reporting.slo_report import (
@@ -145,6 +152,7 @@ def _add_adjudication(
     decided_at,
     failed_evidence_id=None,
     event_id=None,
+    decided_by_role: str | None = "verifier",
 ):
     adj = Adjudication(
         work_package_revision_id=revision_id,
@@ -152,6 +160,7 @@ def _add_adjudication(
         ac_id=ac_id,
         outcome=outcome,
         decided_by="verifier-1",
+        decided_by_role=decided_by_role,
         decided_at=decided_at,
         rationale="r",
         event_id=event_id or uuid.uuid4(),
@@ -216,6 +225,7 @@ def test_empty_store_reports_no_data_and_not_instrumented(migrated_session):
         report.revert_rate,
         report.evidence_completeness,
         report.improvisation,
+        report.gate_load,
     ):
         assert metric.status == STATUS_NO_DATA
         assert metric.value is None
@@ -751,3 +761,231 @@ def test_budget_breach_ignores_a_breach_outside_the_window(migrated_session):
     )
 
     assert report.budget_breach.status == STATUS_NO_DATA
+
+
+# ---- gate load ---------------------------------------------------------------
+
+
+def _add_approval(session, unit_id, *, subject_type, created_at):
+    approval = Approval(
+        subject_type=subject_type,
+        subject_id=unit_id,
+        subject_revision_or_fingerprint="1",
+        decision="approved",
+        approved_by="human-1",
+        reason="r",
+        created_at=created_at,
+        event_id=uuid.uuid4(),
+        idempotency_key=f"approval-{uuid.uuid4()}",
+    )
+    session.add(approval)
+    session.flush()
+    return approval
+
+
+def _complete(session, unit_id, *, occurred_at, from_state="verifying", actor_role="verifier"):
+    return _add_event(
+        session,
+        unit_id,
+        action="work_unit.transitioned",
+        from_state=from_state,
+        to_state="completed",
+        occurred_at=occurred_at,
+        actor_role=actor_role,
+    )
+
+
+def _gate_load_window(session, since, until):
+    return slo_report(session, SloReportFilters(since=since, until=until)).gate_load
+
+
+_GL_SINCE = datetime(2026, 7, 1, tzinfo=UTC)
+_GL_UNTIL = datetime(2026, 7, 8, tzinfo=UTC)
+_GL_INSIDE = datetime(2026, 7, 3, tzinfo=UTC)
+_GL_BEFORE = datetime(2026, 6, 30, tzinfo=UTC)
+
+
+def test_gate_load_counts_each_kind_of_human_decision_per_completed_unit(migrated_session):
+    revision, first = _build_unit(migrated_session, "gl-a")
+    _, second = _build_unit(migrated_session, "gl-b")
+    _add_approval(migrated_session, first.id, subject_type="action", created_at=_GL_INSIDE)
+    _add_approval(migrated_session, first.id, subject_type="authority", created_at=_GL_INSIDE)
+    _add_approval(migrated_session, first.id, subject_type="authority", created_at=_GL_INSIDE)
+    _add_approval(migrated_session, second.id, subject_type="retry", created_at=_GL_INSIDE)
+    _add_adjudication(
+        migrated_session,
+        revision.id,
+        first.id,
+        ac_id="ac-1",
+        outcome="passed",
+        decided_at=_GL_INSIDE,
+        decided_by_role="human",
+    )
+    _add_event(
+        migrated_session,
+        first.id,
+        action="work_unit.transitioned",
+        from_state="awaiting_approval",
+        to_state="ready",
+        occurred_at=_GL_INSIDE,
+        actor_role="human",
+    )
+    _complete(
+        migrated_session,
+        first.id,
+        from_state="awaiting_review",
+        actor_role="human",
+        occurred_at=_GL_INSIDE,
+    )
+    _complete(migrated_session, second.id, occurred_at=_GL_INSIDE)
+
+    metric = _gate_load_window(migrated_session, _GL_SINCE, _GL_UNTIL)
+
+    assert metric.status == STATUS_COMPUTED
+    assert metric.by_kind == {
+        "action_approval": 1,
+        "authority_approval": 2,
+        "retry_approval": 1,
+        "human_adjudication": 1,
+        "human_transition": 2,
+    }
+    assert metric.decisions == 7
+    assert metric.completed_units == 2
+    assert metric.value == 3.5
+
+
+def test_gate_load_counts_no_verifier_system_or_worker_decision(migrated_session):
+    revision, unit = _build_unit(migrated_session, "gl-machine")
+    _add_adjudication(
+        migrated_session,
+        revision.id,
+        unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        decided_at=_GL_INSIDE,
+        decided_by_role="verifier",
+    )
+    _add_adjudication(
+        migrated_session,
+        revision.id,
+        unit.id,
+        ac_id="ac-2",
+        outcome="passed",
+        decided_at=_GL_INSIDE,
+        decided_by_role="system",
+    )
+    # A system edge, and a worker edge: neither is a human's even when the role says so, and a
+    # system actor never takes a human edge.
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        from_state="failed",
+        to_state="ready",
+        occurred_at=_GL_INSIDE,
+        actor_role="system",
+    )
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        from_state="executing",
+        to_state="submitted",
+        occurred_at=_GL_INSIDE,
+        actor_role="human",
+    )
+    # The verifier and a human may both take submitted/verifying -> completed; only the role
+    # tells them apart.
+    _complete(migrated_session, unit.id, from_state="submitted", occurred_at=_GL_INSIDE)
+
+    metric = _gate_load_window(migrated_session, _GL_SINCE, _GL_UNTIL)
+
+    assert metric.status == STATUS_COMPUTED
+    assert metric.decisions == 0
+    assert set(metric.by_kind.values()) == {0}
+    assert metric.completed_units == 1
+    assert metric.value == 0.0
+
+
+def test_gate_load_ignores_decisions_and_completions_outside_the_window(migrated_session):
+    revision, unit = _build_unit(migrated_session, "gl-window")
+    _, late = _build_unit(migrated_session, "gl-late")
+    _add_approval(migrated_session, unit.id, subject_type="action", created_at=_GL_BEFORE)
+    _add_adjudication(
+        migrated_session,
+        revision.id,
+        unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        decided_at=_GL_BEFORE,
+        decided_by_role="human",
+    )
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        from_state="awaiting_approval",
+        to_state="ready",
+        occurred_at=_GL_BEFORE,
+        actor_role="human",
+    )
+    _complete(migrated_session, late.id, occurred_at=_GL_BEFORE)
+    _add_approval(migrated_session, unit.id, subject_type="retry", created_at=_GL_INSIDE)
+    _complete(migrated_session, unit.id, occurred_at=_GL_INSIDE)
+
+    metric = _gate_load_window(migrated_session, _GL_SINCE, _GL_UNTIL)
+
+    assert metric.decisions == 1
+    assert metric.by_kind["retry_approval"] == 1
+    assert metric.completed_units == 1
+
+
+def test_gate_load_with_no_completed_unit_is_no_data_and_still_reports_the_count(
+    migrated_session,
+):
+    _, unit = _build_unit(migrated_session, "gl-nodata")
+    _add_approval(migrated_session, unit.id, subject_type="action", created_at=_GL_INSIDE)
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        from_state="draft",
+        to_state="ready",
+        occurred_at=_GL_INSIDE,
+    )
+
+    metric = _gate_load_window(migrated_session, _GL_SINCE, _GL_UNTIL)
+
+    assert metric.status == STATUS_NO_DATA
+    assert metric.value is None
+    assert metric.decisions == 1
+    assert metric.by_kind["action_approval"] == 1
+    assert metric.completed_units == 0
+
+
+def test_gate_load_is_partial_when_an_adjudication_has_no_recorded_role(migrated_session):
+    revision, unit = _build_unit(migrated_session, "gl-unknown")
+    _add_adjudication(
+        migrated_session,
+        revision.id,
+        unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        decided_at=_GL_INSIDE,
+        decided_by_role=None,
+    )
+    _complete(migrated_session, unit.id, occurred_at=_GL_INSIDE)
+
+    metric = _gate_load_window(migrated_session, _GL_SINCE, _GL_UNTIL)
+
+    assert metric.status == STATUS_PARTIAL
+    assert metric.by_kind["human_adjudication"] == 0
+    assert "1 adjudications have no recorded role" in metric.basis
+
+
+def test_a_unit_completed_twice_in_the_window_is_one_completed_unit(migrated_session):
+    _, unit = _build_unit(migrated_session, "gl-twice")
+    _complete(migrated_session, unit.id, occurred_at=_GL_INSIDE)
+    _complete(migrated_session, unit.id, occurred_at=_GL_INSIDE + timedelta(hours=1))
+
+    assert _gate_load_window(migrated_session, _GL_SINCE, _GL_UNTIL).completed_units == 1

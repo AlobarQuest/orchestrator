@@ -52,6 +52,12 @@ class MetricValueResponse(BaseModel):
     basis: str
 
 
+class GateLoadMetricResponse(MetricValueResponse):
+    decisions: int
+    completed_units: int
+    by_kind: dict[str, int]
+
+
 class SloReportResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -67,6 +73,7 @@ class SloReportResponse(BaseModel):
     token_consumption: MetricValueResponse
     improvisation: MetricValueResponse
     budget_breach: MetricValueResponse
+    gate_load: GateLoadMetricResponse
 
 
 class StatusLedgerRowResponse(BaseModel):
