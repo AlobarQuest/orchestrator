@@ -1455,3 +1455,46 @@ def test_an_observation_with_no_time_is_unavailable_not_counted(monkeypatch):
 
     with pytest.raises(Unavailable, match="observed_at"):
         exit_probe.release_chain_answers_every_hop("rev-1")
+
+
+def _verified_release(*, state: str = "completed", satisfied: object = True) -> dict:
+    """A release whose chain observations all predate the deploy, and whose deployment minted a
+    post-deploy unit in `state`, with the verifier's decision `satisfied`."""
+    chain = _chain("release")
+    chain["observations"][0]["observed_at"] = "2026-08-01T11:00:00+00:00"
+    routes = _release_routes("rev-1", [chain])
+    pack = routes["/api/v1/revisions/rev-1/evidence-pack"]
+    pack["deployments"] = [{"environment": "production", "post_deploy_work_unit_id": "pd-1"}]
+    pack["units"].append(
+        {
+            "work_unit": {"id": "pd-1", "state": state},
+            "verifier_decided_completion": {"satisfied": satisfied, "refusals": []},
+        }
+    )
+    return routes
+
+
+def test_a_verifier_completed_post_deploy_unit_answers_the_tail(monkeypatch):
+    """Devon, 2026-10-06: the post-deploy verification is the post-deployment observation."""
+    monkeypatch.setattr(exit_probe, "api_get", _api(_verified_release()))
+
+    assert exit_probe.release_chain_answers_every_hop("rev-1") == PASS
+
+
+@pytest.mark.parametrize(
+    ("state", "satisfied"),
+    [("submitted", True), ("revision_required", False), ("completed", False)],
+)
+def test_an_unfinished_or_unverified_post_deploy_unit_does_not(monkeypatch, state, satisfied):
+    monkeypatch.setattr(
+        exit_probe, "api_get", _api(_verified_release(state=state, satisfied=satisfied))
+    )
+
+    assert exit_probe.release_chain_answers_every_hop("rev-1") == FAIL
+
+
+def test_an_unreadable_verifier_decision_is_unavailable_not_counted(monkeypatch):
+    monkeypatch.setattr(exit_probe, "api_get", _api(_verified_release(satisfied="yes")))
+
+    with pytest.raises(Unavailable, match="verifier_decided_completion"):
+        exit_probe.release_chain_answers_every_hop("rev-1")

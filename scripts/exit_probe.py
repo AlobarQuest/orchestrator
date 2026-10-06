@@ -550,10 +550,10 @@ def _conditions_hop_is_inapplicable(pack: dict, chains: list[dict]) -> tuple[str
 
 #: The hops that may EARN `not_applicable`, and the reading that earns it for each. Membership
 #: excuses nothing by itself. `observations` is deliberately absent and must stay absent: a
-#: post-deployment observation of a release is an ordinary thing the system does not yet produce,
-#: which is a real gap in the system rather than a condition of the world, and marking it
-#: inapplicable would convert an absence into a shrug. A landing record the chain carries was made
-#: before deployment and does not count (`_observations_after_deployment`).
+#: release with no post-deployment observation is a real gap, not a condition of the world, and
+#: marking it inapplicable would convert an absence into a shrug. A landing record the chain
+#: carries was made before deployment and does not count (`_observations_after_deployment`); a
+#: verifier-completed post-deploy unit does (`_post_deploy_verifications`).
 INAPPLICABLE_WHEN: dict[str, Callable[[dict, list[dict]], tuple[str | None, dict]]] = {
     "conditions": _conditions_hop_is_inapplicable,
 }
@@ -642,7 +642,9 @@ def release_chain_answers_every_hop(*revisions: str) -> int:
             )
         chains = _chains(f"/api/v1/traceability?revision_id={revision}")
         union = {hop: sum(_hops(chain)[hop] for chain in chains) for hop in ALL_HOPS}
-        union["observations"], before_deployment = _observations_after_deployment(chains)
+        after_deployment, before_deployment = _observations_after_deployment(chains)
+        verified = _post_deploy_verifications(pack)
+        union["observations"] = after_deployment + verified
         missing = sorted(hop for hop, count in union.items() if not count)
         inapplicable: dict[str, str] = {}
         demonstrations: dict[str, dict] = {}
@@ -668,6 +670,8 @@ def release_chain_answers_every_hop(*revisions: str) -> int:
                 # (a landing, recorded at merge). They are real, but they observe nothing about
                 # the release running, so the `observations` hop does not count them.
                 "observations_before_deployment": before_deployment,
+                # The release's post-deploy units the verifier completed from production's probes.
+                "post_deploy_verifications": verified,
                 "unanswered_hops": missing,
                 # Both are recorded whether or not the hop was excused, so the record shows what
                 # the reading found rather than only that it granted something.
@@ -721,6 +725,43 @@ def _observations_after_deployment(chains: list[dict]) -> tuple[int, int]:
     first = min(deployed)
     after = sum(1 for at in observed if at >= first)
     return after, len(observed) - after
+
+
+def _post_deploy_verifications(pack: dict) -> int:
+    """How many of the release's deployments the verifier confirmed in production.
+
+    Devon's ruling of 2026-10-06: the post-deploy verification IS the post-deployment observation
+    of a release. The verifier evaluates production's own probes, recorded by the deployment
+    observation, and that observation is what mints the post-deploy unit, so everything the unit
+    records was made after the release deployed. No clock is compared: the order is causal.
+
+    A deployment counts when its post-deploy unit completed and the verifier decided every
+    criterion. A revision watcher reading cannot stand in: it is stamped with the served commit's
+    own date to stay content-addressed, which always precedes the deploy.
+    """
+    units = {}
+    for unit in pack["units"]:
+        work_unit = unit.get("work_unit") if isinstance(unit, dict) else None
+        if not isinstance(work_unit, dict) or "id" not in work_unit:
+            raise Unavailable("a release evidence pack unit carries no `work_unit.id`")
+        units[str(work_unit["id"])] = unit
+    verified = 0
+    for deployment in pack["deployments"]:
+        unit_id = (
+            deployment.get("post_deploy_work_unit_id") if isinstance(deployment, dict) else None
+        )
+        unit = units.get(str(unit_id)) if unit_id else None
+        if unit is None:
+            continue
+        decided = unit.get("verifier_decided_completion")
+        if not isinstance(decided, dict) or not isinstance(decided.get("satisfied"), bool):
+            raise Unavailable(
+                "a post-deploy unit's pack carries no readable `verifier_decided_completion`, so "
+                "whether the verifier confirmed the release cannot be told"
+            )
+        if unit["work_unit"].get("state") == "completed" and decided["satisfied"]:
+            verified += 1
+    return verified
 
 
 def tracker_is_a_projection() -> int:

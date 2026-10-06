@@ -74,12 +74,15 @@ Three decisions aren't carried forward:
 
 ### Blocked
 
-- **Traceability through observations (5c), the rest.** The chain joins each release commit's
-  landing and derives a pull request made outside the factory from it (#343). Wave-2 exit clause
-  2 still needs a post-deployment observation of a release, and Devon ruled on 2026-10-04 that a
-  landing, recorded at merge, does not answer it. Blocked by 5a: no deploy records a release
-  binding, so no release exists for the revision watcher's `production_revision` records (from
-  2026-09-08) to observe. Devon chose on 2026-10-05 to take it after 5a.
+- **Wave-2 exit clause 2: a post-deployment observation of a release.** Devon ruled on 2026-10-06
+  that the release's post-deploy verification answers it: the exit probe counts a post-deploy unit
+  the verifier completed, which the deployment observation minted and so post-dates the deploy. A
+  revision watcher reading can't, because it carries the served commit's own date. Each
+  orchestrator deploy now binds the factory units its image ships and verifies them (5a, #355 and
+  #356; first run 2026-10-06 on `ffdd70f-sds11binder-amd64` bound nothing, because the three
+  completed factory units had shipped in earlier images). The clause waits on two things: a deploy
+  that ships a factory unit, and that release's revision added to the clause's arguments in
+  `docs/operations/wave-exit-manifest.toml`, which names its releases explicitly.
 
 ### Deferred, with the evidence
 
@@ -108,7 +111,6 @@ These are in no fixed order.
 | 5b | One declared deployment-observation schema. | Five summary dicts; only the secret detector is shared. |
 | 3c-1 | Separate the runner's permitted commands from its ordered verify script. | factory-runner still runs `allowed_commands` as the script. |
 | 4c-3 | Separate the deciding view from the auditing view. | One page with a decision section and context-gated forms. |
-| 5a | Record the release binding as part of deploying. Unblocks the rest of 5c. | Only machine-local activations bind; Coolify deploys and self-builds don't. |
 | 7c | Run the whole-repo guards where the work happens. | `make check` refuses an empty collection; the guards still run only in a full `make check`. |
 | 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Machines can register intakes (ADR-0027); the human paste survives, and packages are LLM-authored through `factory create`. |
 | L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Four producers exist; where WS-P3.5 belongs is open decision 1. |
