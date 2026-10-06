@@ -65,6 +65,27 @@ The two are told apart by one field, `kind`, and the shapes are conditional on i
 An observation must describe the same model as its binding
 (`deployment_observation_kind_mismatch`).
 
+### Summary shapes
+
+Each summary is a declared model, published in the served OpenAPI document
+(`/openapi.json`, `components.schemas`): `ProbeSummary` (1 to 10 `Probe`s, each with `name`,
+`endpoint`, `method`, `observed_at` and a `status_code` from 100 to 599), `RouteSummary` (1 to 30
+`Route`s, each a `path` and whether it is `present`), `AuthSummary` (`missing_m2m_status` must
+be 401, and `configured_m2m_status`, when reported, 200), the optional `DispatchSummary`
+(`dispatch_enabled`), `StatusSummary` (`status`, `summary`) and `ActivationSummary` (below). The
+models live in `services/release/deployment_observations.py`. They refuse undeclared keys and are
+strict, so `"200"` is not a status code. The route refuses a malformed summary with a 422, and
+the service refuses one sent to it directly with `deployment_observation_invalid`. The rules
+that span summaries are the service's alone: which summaries each `kind` carries, the 4096-byte
+total, and the secret detector.
+
+Where these shapes and the verifier's evaluators disagreed, the evaluator's rule was taken
+(2026-10-06). A probe has no expected status range, because health is judged as plain 2xx, and
+a configured M2M read that did not answer 200 is refused at ingest rather than recorded, so
+`image_release` refuses such a pass before writing anything. Each producer keeps its own copy
+of its shapes: `tests/contract/test_hosted_observation_contract.py` and
+`test_activation_summary_contract.py` hold those copies to the models.
+
 ### The activation summary
 
 Three facts about one working copy, each measured on its own:

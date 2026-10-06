@@ -177,8 +177,6 @@ def test_a_stalled_post_deploy_verification_is_one_open_alarm(
                             "name": "live",
                             "method": "GET",
                             "endpoint": "/health/live",
-                            "expected_status_min": 200,
-                            "expected_status_max": 299,
                             "status_code": 200,
                             "observed_at": OBSERVED_AT,
                         }

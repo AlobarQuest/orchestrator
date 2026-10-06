@@ -8,10 +8,12 @@ without a test here failing.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from image_release.client import ReleaseCallError
 from image_release.release import (
@@ -320,6 +322,19 @@ def test_an_unauthenticated_read_that_was_not_refused_writes_nothing(history: Hi
     assert has_conditions(summary)
 
 
+def test_an_authenticated_read_that_did_not_answer_200_writes_nothing(history: History) -> None:
+    """The service records a configured M2M status only when it is 200, so a binding written
+    before the refused observation would be orphaned. Refused before the first write instead."""
+    system = FakeSystem([candidate_row(history.merge)], configured_status=403)
+
+    summary = _run(history, system)
+
+    assert summary["refusal"]["outcome"] == AUTH_POSTURE_UNRECORDABLE
+    assert summary["refusal"]["reason"] == "an authenticated read answered 403"
+    assert system.bound == [] and system.observed == []
+    assert has_conditions(summary)
+
+
 def test_a_swap_still_settling_is_retried_until_it_is_healthy(history: History) -> None:
     system = FakeSystem([candidate_row(history.merge)])
     sleeps = Sleeps()
@@ -363,8 +378,8 @@ def test_a_production_still_degraded_after_every_retry_is_filed_as_it_is(
 
 @pytest.mark.parametrize(
     ("production_kwargs", "configured"),
-    [({"ready_status": 503}, 200), ({}, 403), ({"paths": ("/health/live",)}, 200)],
-    ids=["ready-unavailable", "configured-m2m-refused", "route-missing"],
+    [({"ready_status": 503}, 200), ({"paths": ("/health/live",)}, 200)],
+    ids=["ready-unavailable", "route-missing"],
 )
 def test_any_failed_probe_makes_the_status_degraded(
     history: History, production_kwargs: dict[str, Any], configured: int
@@ -527,7 +542,11 @@ def test_the_binding_payload_is_one_the_server_admits(
 
 
 def _observation_command(payload: dict[str, Any]) -> Any:
-    fields = DeploymentObservationCommandModel.model_validate(payload).model_dump()
+    model = DeploymentObservationCommandModel.model_validate(payload)
+    fields = {
+        **model.model_dump(exclude=set(model.stored_summaries())),
+        **model.stored_summaries(),
+    }
     command = deployment_observations.DeploymentObservationCommand(
         release_artifact_binding_id=uuid.UUID(BINDING_ID), actor=SYSTEM_ACTOR, **fields
     )
@@ -547,11 +566,15 @@ def test_the_observation_payload_is_one_the_server_admits(
 def test_the_shape_check_is_live_and_would_refuse_a_wrong_payload(
     sent: tuple[dict[str, Any], dict[str, Any]],
 ) -> None:
-    """The two tests above are not vacuous: the same validator refuses a payload one key off."""
+    """The two tests above are not vacuous: both rule sets refuse a payload one key off -- the
+    route's model at the wire, and the service for a caller that reaches it directly."""
     _, observation = sent
     broken = {**observation, "auth_summary": {"configured_m2m_status": 200}}
+    with pytest.raises(ValidationError):
+        DeploymentObservationCommandModel.model_validate(broken)
+    command = replace(_observation_command(observation), auth_summary=broken["auth_summary"])
     with pytest.raises(DomainError):
-        deployment_observations._validate_command_shape(_observation_command(broken))
+        deployment_observations._validate_command_shape(command)
 
 
 def test_a_redeploy_of_the_same_image_binds_nothing_and_replays_verification(

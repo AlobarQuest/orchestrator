@@ -3,10 +3,10 @@ import re
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal, get_args
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -69,6 +69,70 @@ MAX_FACT_BYTES = 4096
 MAX_PROBES = 10
 MAX_ROUTES = 30
 
+# THE DECLARED SUMMARY SHAPES. Each summary an observation carries is one of the models below, so
+# the served OpenAPI document publishes it and a producer can be held to it by a contract test.
+# They live in the service rather than in `api.schemas` because the service validates its own
+# input through them -- a caller reaching it directly is held to the same shape as one arriving
+# over HTTP -- and `tests/architecture/test_layering.py` forbids services importing `api`.
+#
+# Every model refuses an undeclared key (`extra="forbid"`) and is STRICT, so `"200"` is not a
+# status code and `true` is not an integer. Where these shapes and the verifier's evaluators once
+# disagreed, the evaluator's rule was taken (Devon, 2026-10-06): a probe carries no expected
+# status range, because health is judged as plain 2xx; a route path and a status must contain a
+# non-blank character; and a configured M2M read, when reported, must have answered 200.
+#
+# The rules that span more than one summary stay in `_validate_command_shape`: which summaries a
+# `kind` carries, the bounded total size, and the secret detector.
+
+
+class _Summary(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+NON_BLANK = r"\S"
+
+
+class Probe(_Summary):
+    name: str = Field(min_length=1)
+    endpoint: str = Field(pattern=NON_BLANK)
+    method: str = Field(min_length=1)
+    # Text, not a datetime: the summary is stored exactly as it was sent, and a parsed timestamp
+    # would come back out reformatted, which an idempotent retry would read as different facts.
+    observed_at: str = Field(min_length=1)
+    status_code: int = Field(ge=100, le=599)
+
+
+class ProbeSummary(_Summary):
+    probes: list[Probe] = Field(min_length=1, max_length=MAX_PROBES)
+
+
+class Route(_Summary):
+    path: str = Field(pattern=NON_BLANK)
+    present: bool
+
+
+class RouteSummary(_Summary):
+    routes: list[Route] = Field(min_length=1, max_length=MAX_ROUTES)
+
+
+class AuthSummary(_Summary):
+    missing_m2m_status: Literal[401]
+    configured_m2m_status: Literal[200] | None = None
+
+
+class DispatchSummary(_Summary):
+    """Optional since SDS 1.1: dispatch posture is a standing setting, not a property of a
+    release, so post-deploy verification no longer judges it. A summary still sent is held to
+    this shape."""
+
+    dispatch_enabled: bool
+
+
+class StatusSummary(_Summary):
+    status: str = Field(pattern=NON_BLANK)
+    summary: str
+
+
 # THE MACHINE-LOCAL SUMMARY: three facts about one working copy, kept separate.
 #
 # They are separate members rather than one verdict because "not current" for three different
@@ -78,27 +142,31 @@ MAX_ROUTES = 30
 # the moment a pull lands -- console entry points are the exception, which is why "the code is at
 # the right commit" is not the same statement as "the program that will run is the new one".
 #
-# This vocabulary CROSSES A PROCESS BOUNDARY. `src/activation_sweep` composes the summary and
-# cannot import this module (it is a separate program, and `tests/architecture` enforces that),
-# so it carries a transcription that `tests/contract/test_activation_summary_contract.py` holds
-# to these names. A rename here without one there would empty the lane in silence.
-ACTIVATION_MERGE_COMMIT = "merge_commit_present"
-ACTIVATION_ENTRY_POINTS = "console_entry_points_present"
-ACTIVATION_ENVIRONMENT = "environment_matches_lock"
-ACTIVATION_FACTS = (ACTIVATION_MERGE_COMMIT, ACTIVATION_ENTRY_POINTS, ACTIVATION_ENVIRONMENT)
-
 # Tri-state, not boolean, and `not_applicable` is the load-bearing member. One of the four
 # enrolled working copies is a TypeScript project with no `pyproject.toml`, no lockfile and no
 # virtual environment, so two of the three questions genuinely do not apply to it -- and this
 # estate's standing ruling is that "not applicable" is a distinct answer from "not met".
-ACTIVATION_YES = "yes"
-ACTIVATION_NO = "no"
-ACTIVATION_NOT_APPLICABLE = "not_applicable"
-ACTIVATION_RESULTS = (ACTIVATION_YES, ACTIVATION_NO, ACTIVATION_NOT_APPLICABLE)
+#
+# This vocabulary CROSSES A PROCESS BOUNDARY. `src/activation_sweep` composes the summary and
+# cannot import this module (it is a separate program, and `tests/architecture` enforces that),
+# so it carries a transcription that `tests/contract/test_activation_summary_contract.py` holds
+# to these names. A rename here without one there would empty the lane in silence.
+ActivationResult = Literal["yes", "no", "not_applicable"]
 
-# The one fact that can never be `not_applicable`: every working copy either holds the commit in
-# its history or does not, whatever it is written in.
-ALWAYS_ANSWERABLE = (ACTIVATION_MERGE_COMMIT,)
+
+class ActivationSummary(_Summary):
+    """EXACT membership: a missing fact would read as one nobody thought to check, which is the
+    shape a reader would take for a clean answer."""
+
+    # The one fact that can never be `not_applicable`: every working copy either holds the commit
+    # in its history or does not, whatever it is written in.
+    merge_commit_present: Literal["yes", "no"]
+    console_entry_points_present: ActivationResult
+    environment_matches_lock: ActivationResult
+
+
+ACTIVATION_FACTS = tuple(ActivationSummary.model_fields)
+ACTIVATION_RESULTS: tuple[str, ...] = get_args(ActivationResult)
 
 
 @dataclass(frozen=True)
@@ -545,15 +613,12 @@ def _validate_hosted_shape(command: DeploymentObservationCommand) -> None:
             "a hosted observation carries no activation summary",
             None,
         )
-    _validate_probe_summary(command.probe_summary)
-    _validate_route_summary(command.route_summary)
-    _validate_auth_summary(command.auth_summary)
-    # Optional since SDS 1.1: dispatch posture is a standing setting, not a property of a release,
-    # so post-deploy verification no longer judges it. A summary a producer still sends is held
-    # to its old shape.
+    _validate_summary(ProbeSummary, command.probe_summary, "probe summary")
+    _validate_summary(RouteSummary, command.route_summary, "route summary")
+    _validate_summary(AuthSummary, command.auth_summary, "auth summary")
     if command.dispatch_summary:
-        _validate_dispatch_summary(command.dispatch_summary)
-    _validate_status_summary(command.status_summary)
+        _validate_summary(DispatchSummary, command.dispatch_summary, "dispatch posture")
+    _validate_summary(StatusSummary, command.status_summary, "status summary")
 
 
 def _validate_machine_local_shape(command: DeploymentObservationCommand) -> None:
@@ -576,7 +641,7 @@ def _validate_machine_local_shape(command: DeploymentObservationCommand) -> None
             f"a machine-local observation names environment {OPERATOR_MACHINE_ENVIRONMENT}",
             None,
         )
-    _validate_activation_summary(command.activation_summary)
+    _validate_summary(ActivationSummary, command.activation_summary, "activation summary")
 
 
 def _hosted_summaries(command: DeploymentObservationCommand) -> dict[str, dict[str, Any]]:
@@ -589,33 +654,22 @@ def _hosted_summaries(command: DeploymentObservationCommand) -> dict[str, dict[s
     }
 
 
-def _validate_activation_summary(payload: dict[str, Any]) -> None:
-    """Every fact present, every value in the vocabulary, and one of them never excused.
+def _validate_summary(model: type[_Summary], payload: dict[str, Any], label: str) -> None:
+    """Hold one summary to its declared model. The dict itself is what gets stored, unchanged.
 
-    EXACT membership rather than a subset: a missing member would read as a fact nobody thought
-    to check, which is the shape a reader would take for a clean answer.
+    The refusal names where the summary is wrong and why, never the offending value: a value
+    refused for its shape may still be one that should not be repeated.
     """
-    _require_keys(payload, set(ACTIVATION_FACTS), "activation summary")
-    if set(payload) != set(ACTIVATION_FACTS):
+    try:
+        model.model_validate(payload)
+    except ValidationError as error:
+        first = error.errors()[0]
+        where = ".".join(str(part) for part in first["loc"]) or "$"
         raise DomainError(
             "deployment_observation_invalid",
-            "activation summary is missing a fact",
+            f"{label} is malformed at {where}: {first['msg']}",
             None,
-        )
-    for fact in ACTIVATION_FACTS:
-        value = payload[fact]
-        if value not in ACTIVATION_RESULTS:
-            raise DomainError(
-                "deployment_observation_invalid",
-                f"activation summary fact {fact} is malformed",
-                None,
-            )
-        if value == ACTIVATION_NOT_APPLICABLE and fact in ALWAYS_ANSWERABLE:
-            raise DomainError(
-                "deployment_observation_invalid",
-                f"activation summary fact {fact} always applies",
-                None,
-            )
+        ) from None
 
 
 def _validate_command_envelope(command: DeploymentObservationCommand) -> None:
@@ -670,102 +724,6 @@ def _validate_observed_at_and_digest(command: DeploymentObservationCommand) -> N
             "observed artifact digest must be an immutable sha256 digest",
             None,
         )
-
-
-def _validate_probe_summary(payload: dict[str, Any]) -> None:
-    _require_keys(payload, {"probes"}, "probe summary")
-    probes = payload.get("probes")
-    if not isinstance(probes, list) or not probes or len(probes) > MAX_PROBES:
-        raise DomainError("deployment_observation_invalid", "probe summary is missing", None)
-    for probe in probes:
-        _require_keys(
-            probe if isinstance(probe, dict) else {},
-            {
-                "endpoint",
-                "expected_status_max",
-                "expected_status_min",
-                "method",
-                "name",
-                "observed_at",
-                "status_code",
-            },
-            "probe summary",
-        )
-        if not isinstance(probe, dict):
-            raise DomainError("deployment_observation_invalid", "probe summary is malformed", None)
-        if not isinstance(probe.get("endpoint"), str) or not probe["endpoint"].strip():
-            raise DomainError("deployment_observation_invalid", "probe endpoint is missing", None)
-        if not _valid_status_code(probe.get("status_code")):
-            raise DomainError("deployment_observation_invalid", "probe status is missing", None)
-        if not _valid_status_code(probe.get("expected_status_min")) or not _valid_status_code(
-            probe.get("expected_status_max")
-        ):
-            raise DomainError(
-                "deployment_observation_invalid",
-                "probe status range is malformed",
-                None,
-            )
-
-
-def _validate_route_summary(payload: dict[str, Any]) -> None:
-    _require_keys(payload, {"routes"}, "route summary")
-    routes = payload.get("routes")
-    if not isinstance(routes, list) or not routes or len(routes) > MAX_ROUTES:
-        raise DomainError("deployment_observation_invalid", "route summary is missing", None)
-    for route in routes:
-        _require_keys(
-            route if isinstance(route, dict) else {},
-            {"path", "present"},
-            "route summary",
-        )
-        if (
-            not isinstance(route, dict)
-            or not isinstance(route.get("path"), str)
-            or not isinstance(route.get("present"), bool)
-        ):
-            raise DomainError("deployment_observation_invalid", "route summary is malformed", None)
-
-
-def _validate_auth_summary(payload: dict[str, Any]) -> None:
-    _require_keys(
-        payload,
-        {"configured_m2m_status", "missing_m2m_status"},
-        "auth summary",
-    )
-    if payload.get("missing_m2m_status") != 401:
-        raise DomainError(
-            "deployment_observation_invalid",
-            "auth summary must include missing M2M 401",
-            None,
-        )
-    configured = payload.get("configured_m2m_status")
-    if configured is not None and not _valid_status_code(configured):
-        raise DomainError("deployment_observation_invalid", "auth summary is malformed", None)
-
-
-def _validate_dispatch_summary(payload: dict[str, Any]) -> None:
-    _require_keys(payload, {"dispatch_enabled"}, "dispatch posture")
-    if not isinstance(payload.get("dispatch_enabled"), bool):
-        raise DomainError("deployment_observation_invalid", "dispatch posture is malformed", None)
-
-
-def _validate_status_summary(payload: dict[str, Any]) -> None:
-    _require_keys(payload, {"status", "summary"}, "status summary")
-    if not isinstance(payload.get("status"), str) or not payload["status"].strip():
-        raise DomainError("deployment_observation_invalid", "status summary is missing", None)
-
-
-def _require_keys(payload: dict[str, Any], allowed: set[str], label: str) -> None:
-    if not isinstance(payload, dict) or not set(payload).issubset(allowed):
-        raise DomainError(
-            "deployment_observation_invalid",
-            f"{label} contains unbounded fields",
-            None,
-        )
-
-
-def _valid_status_code(value: object) -> bool:
-    return isinstance(value, int) and 100 <= value <= 599
 
 
 def _validate_bounded_json_size(command: DeploymentObservationCommand) -> None:

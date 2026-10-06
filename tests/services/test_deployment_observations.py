@@ -64,8 +64,6 @@ def observation_command(binding, *, key: str = "deployment-observation"):
                     "name": "live",
                     "method": "GET",
                     "endpoint": "/health/live",
-                    "expected_status_min": 200,
-                    "expected_status_max": 299,
                     "status_code": 200,
                     "observed_at": OBSERVED_AT.isoformat(),
                 },
@@ -73,8 +71,6 @@ def observation_command(binding, *, key: str = "deployment-observation"):
                     "name": "ready",
                     "method": "GET",
                     "endpoint": "/health/ready",
-                    "expected_status_min": 200,
-                    "expected_status_max": 299,
                     "status_code": 200,
                     "observed_at": OBSERVED_AT.isoformat(),
                 },
@@ -940,3 +936,73 @@ def test_the_retired_dispatch_criterion_cannot_be_adjudicated_publicly(
     )
 
     assert isinstance(result, DomainError)
+
+
+@pytest.mark.parametrize(
+    ("field", "summary"),
+    [
+        (
+            "probe_summary",
+            {
+                "probes": [
+                    {
+                        "name": "live",
+                        "endpoint": "/health/live",
+                        "method": "GET",
+                        "observed_at": "2026-10-06T09:00:00+00:00",
+                        "status_code": 200,
+                        "expected_status_min": 200,
+                    }
+                ]
+            },
+        ),
+        ("route_summary", {"routes": [{"path": "/health/live", "present": True}], "extra": 1}),
+        ("auth_summary", {"missing_m2m_status": 401, "configured_m2m_status": 401}),
+        ("auth_summary", {"missing_m2m_status": "401"}),
+        ("status_summary", {"status": "  ", "summary": "bounded"}),
+        ("route_summary", {"routes": [{"path": " ", "present": True}]}),
+        ("route_summary", {"routes": [{"path": "/health/live", "present": "yes"}]}),
+    ],
+    ids=[
+        "retired-probe-range",
+        "extra-key",
+        "configured-401",
+        "status-as-text",
+        "blank-status",
+        "blank-route",
+        "present-as-text",
+    ],
+)
+def test_the_service_holds_a_direct_caller_to_the_declared_shapes(
+    migrated_session: Session, field: str, summary: dict[str, object]
+) -> None:
+    """The service validates through the same models the route publishes, so a caller reaching
+    it without the route is refused the same shapes."""
+    _unit, binding = release_binding(migrated_session, key=f"direct-{field}")
+
+    result = record_deployment_observation(
+        migrated_session,
+        replace(observation_command(binding, key=f"direct-{field}"), **{field: summary}),
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "deployment_observation_invalid"
+    assert result.message.startswith(field.replace("_", " "))
+
+
+def test_a_refusal_names_where_the_summary_is_wrong_and_never_the_value(
+    migrated_session: Session,
+) -> None:
+    _unit, binding = release_binding(migrated_session, key="refusal-message")
+
+    result = record_deployment_observation(
+        migrated_session,
+        replace(
+            observation_command(binding, key="refusal-message"),
+            auth_summary={"missing_m2m_status": 401, "configured_m2m_status": 418},
+        ),
+    )
+
+    assert isinstance(result, DomainError)
+    assert "configured_m2m_status" in result.message
+    assert "418" not in result.message

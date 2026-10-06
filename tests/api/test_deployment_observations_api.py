@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
@@ -27,8 +28,6 @@ def observation_body(*, key: str = "deployment-api-observation") -> dict[str, ob
                     "name": "live",
                     "method": "GET",
                     "endpoint": "/health/live",
-                    "expected_status_min": 200,
-                    "expected_status_max": 299,
                     "status_code": 200,
                     "observed_at": observed_at,
                 }
@@ -252,3 +251,160 @@ def test_the_route_refuses_an_activation_whose_binding_describes_a_hosted_image(
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "deployment_observation_kind_mismatch"
+
+
+OBSERVATIONS_PATH = "/api/v1/release-artifacts/{binding_id}/deployment-observations"
+
+# Each declared summary and the properties the served document must publish for it.
+DECLARED_SUMMARIES = {
+    "ProbeSummary": {"probes"},
+    "Probe": {"name", "endpoint", "method", "observed_at", "status_code"},
+    "RouteSummary": {"routes"},
+    "Route": {"path", "present"},
+    "AuthSummary": {"missing_m2m_status", "configured_m2m_status"},
+    "DispatchSummary": {"dispatch_enabled"},
+    "StatusSummary": {"status", "summary"},
+    "ActivationSummary": {
+        "merge_commit_present",
+        "console_entry_points_present",
+        "environment_matches_lock",
+    },
+}
+
+
+def test_the_served_document_publishes_every_summary_shape(client: TestClient) -> None:
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    for name, properties in DECLARED_SUMMARIES.items():
+        assert set(schemas[name]["properties"]) == properties, name
+        assert schemas[name]["additionalProperties"] is False, name
+    command = schemas["DeploymentObservationCommandModel"]["properties"]
+    refs = {
+        field: {option.get("$ref") for option in command[field]["anyOf"]}
+        for field in (
+            "probe_summary",
+            "route_summary",
+            "auth_summary",
+            "dispatch_summary",
+            "status_summary",
+            "activation_summary",
+        )
+    }
+    assert refs["probe_summary"] == {"#/components/schemas/ProbeSummary", None}
+    assert refs["activation_summary"] == {"#/components/schemas/ActivationSummary", None}
+    assert schemas["AuthSummary"]["properties"]["missing_m2m_status"]["const"] == 401
+
+
+def _post(db_client: TestClient, binding_id: str, body: dict[str, object]):
+    return db_client.post(
+        OBSERVATIONS_PATH.format(binding_id=binding_id), headers=SYSTEM, json=body
+    )
+
+
+def _error_locations(response) -> list[tuple[object, ...]]:
+    return [tuple(error["loc"]) for error in response.json()["detail"]]
+
+
+def test_the_route_refuses_an_undeclared_summary_key(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    binding_id = release_artifact(db_client, migrated_engine)
+    body = observation_body(key="extra-summary-key")
+    body["route_summary"] = {"routes": [{"path": "/health/live", "present": True}], "extra": 1}
+
+    response = _post(db_client, binding_id, body)
+
+    assert response.status_code == 422
+    assert ("body", "route_summary", "extra") in _error_locations(response)
+
+
+def test_the_route_refuses_the_retired_probe_range_fields(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    binding_id = release_artifact(db_client, migrated_engine)
+    body = observation_body(key="retired-probe-fields")
+    body["probe_summary"] = {
+        "probes": [
+            {
+                "name": "live",
+                "method": "GET",
+                "endpoint": "/health/live",
+                "status_code": 200,
+                "observed_at": body["observed_at"],
+                "expected_status_min": 200,
+            }
+        ]
+    }
+
+    response = _post(db_client, binding_id, body)
+
+    assert response.status_code == 422
+    assert ("body", "probe_summary", "probes", 0, "expected_status_min") in _error_locations(
+        response
+    )
+
+
+@pytest.mark.parametrize("configured", [401, 403, 500])
+def test_the_route_refuses_a_configured_m2m_status_other_than_200(
+    db_client: TestClient, migrated_engine: Engine, configured: int
+) -> None:
+    """The evaluator requires 200 when the status is reported, so ingest does too."""
+    binding_id = release_artifact(db_client, migrated_engine)
+    body = observation_body(key=f"configured-{configured}")
+    body["auth_summary"] = {"missing_m2m_status": 401, "configured_m2m_status": configured}
+
+    response = _post(db_client, binding_id, body)
+
+    assert response.status_code == 422
+    assert ("body", "auth_summary", "configured_m2m_status") in _error_locations(response)
+
+
+def test_a_retry_that_omits_an_optional_key_replays_the_row_it_wrote(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """The replay trap: the route hands the service exactly what was sent, so a default the
+    model knows (`configured_m2m_status: None`) never appears in the stored payload and a
+    byte-identical retry is a replay, not an `idempotency_conflict`."""
+    binding_id = release_artifact(db_client, migrated_engine)
+    body = observation_body(key="omits-configured")
+    body["auth_summary"] = {"missing_m2m_status": 401}
+    del body["dispatch_summary"]
+
+    first = _post(db_client, binding_id, body)
+    retry = _post(db_client, binding_id, body)
+
+    assert first.status_code == 201, first.json()
+    assert retry.status_code == 201, retry.json()
+    assert retry.json()["id"] == first.json()["id"]
+    assert first.json()["auth_summary"] == {"missing_m2m_status": 401}
+    assert first.json()["dispatch_summary"] == {}
+
+
+def test_the_route_refuses_a_machine_local_row_carrying_a_hosted_summary(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    binding_id = machine_local_artifact(db_client, migrated_engine)
+    body = activation_body(key="machine-local-with-probes")
+    body["probe_summary"] = observation_body()["probe_summary"]
+
+    response = _post(db_client, binding_id, body)
+
+    # The wire admits either summary; the kind conditional is the service's, so a refusal.
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "deployment_observation_invalid"
+    assert "probe_summary" in response.json()["error"]["message"]
+
+
+def test_the_route_refuses_a_hosted_row_carrying_an_activation_summary(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    binding_id = release_artifact(db_client, migrated_engine)
+    body = observation_body(key="hosted-with-activation")
+    body["activation_summary"] = activation_body()["activation_summary"]
+
+    response = _post(db_client, binding_id, body)
+
+    # The wire admits either summary; the kind conditional is the service's, so a refusal.
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "deployment_observation_invalid"
+    assert "activation summary" in response.json()["error"]["message"]
