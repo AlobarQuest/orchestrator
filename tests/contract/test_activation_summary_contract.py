@@ -83,8 +83,9 @@ def test_the_producers_activation_payload_parses_as_the_command_the_route_declar
     assert command.base_url is None
     assert command.deployment_url is None
     assert command.deployer is None
-    assert command.probe_summary == {}
-    assert set(command.activation_summary) == set(ACTIVATION_FACTS)
+    stored = command.stored_summaries()
+    assert all(stored[name] == {} for name in stored if name != "activation_summary")
+    assert set(stored["activation_summary"]) == set(ACTIVATION_FACTS)
 
 
 def test_the_route_refuses_an_activation_payload_with_no_expected_version() -> None:
@@ -106,4 +107,14 @@ def test_every_fact_the_producer_can_emit_is_a_value_the_validator_accepts() -> 
             if fact == "merge_commit_present" and result == activation.NOT_APPLICABLE:
                 continue  # every working copy either holds the commit or does not
             command = DeploymentObservationCommandModel.model_validate(_payload(**{fact: result}))
-            assert command.activation_summary[fact] == result
+            assert command.stored_summaries()["activation_summary"][fact] == result
+
+
+def test_the_route_refuses_excusing_the_merge_commit_fact() -> None:
+    """The one fact that always applies: `not_applicable` is refused at the wire."""
+    payload = _payload(merge_commit_present=activation.NOT_APPLICABLE)
+
+    with pytest.raises(ValidationError) as raised:
+        DeploymentObservationCommandModel.model_validate(payload)
+
+    assert raised.value.errors()[0]["loc"] == ("activation_summary", "merge_commit_present")

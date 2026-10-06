@@ -64,8 +64,6 @@ def observation_command(binding, *, key: str = "deployment-observation"):
                     "name": "live",
                     "method": "GET",
                     "endpoint": "/health/live",
-                    "expected_status_min": 200,
-                    "expected_status_max": 299,
                     "status_code": 200,
                     "observed_at": OBSERVED_AT.isoformat(),
                 },
@@ -73,8 +71,6 @@ def observation_command(binding, *, key: str = "deployment-observation"):
                     "name": "ready",
                     "method": "GET",
                     "endpoint": "/health/ready",
-                    "expected_status_min": 200,
-                    "expected_status_max": 299,
                     "status_code": 200,
                     "observed_at": OBSERVED_AT.isoformat(),
                 },
@@ -466,15 +462,7 @@ def test_rejects_unbounded_raw_observation_fields(migrated_session: Session) -> 
         migrated_session,
         replace(
             observation_command(binding, key="large-probe-list"),
-            probe_summary={
-                "probes": [
-                    {
-                        "endpoint": f"/health/{index}",
-                        "status_code": 200,
-                    }
-                    for index in range(11)
-                ]
-            },
+            probe_summary={"probes": [_probe(endpoint=f"/health/{index}") for index in range(11)]},
         ),
     )
 
@@ -940,3 +928,151 @@ def test_the_retired_dispatch_criterion_cannot_be_adjudicated_publicly(
     )
 
     assert isinstance(result, DomainError)
+
+
+def _probe(**overrides: object) -> dict[str, object]:
+    return {
+        "name": "live",
+        "endpoint": "/health/live",
+        "method": "GET",
+        "observed_at": "2026-10-06T09:00:00+00:00",
+        "status_code": 200,
+        **overrides,
+    }
+
+
+def _route(index: int = 0) -> dict[str, object]:
+    return {"path": f"/r/{index}", "present": True}
+
+
+@pytest.mark.parametrize(
+    ("field", "summary"),
+    [
+        (
+            "probe_summary",
+            {
+                "probes": [
+                    {
+                        "name": "live",
+                        "endpoint": "/health/live",
+                        "method": "GET",
+                        "observed_at": "2026-10-06T09:00:00+00:00",
+                        "status_code": 200,
+                        "expected_status_min": 200,
+                    }
+                ]
+            },
+        ),
+        ("route_summary", {"routes": [{"path": "/health/live", "present": True}], "extra": 1}),
+        ("auth_summary", {"missing_m2m_status": 401, "configured_m2m_status": 401}),
+        ("auth_summary", {"missing_m2m_status": "401"}),
+        ("status_summary", {"status": "  ", "summary": "bounded"}),
+        ("route_summary", {"routes": [{"path": " ", "present": True}]}),
+        ("route_summary", {"routes": [{"path": "/health/live", "present": "yes"}]}),
+        # Empty once stripped, though a regex `\S` matches them: `str.strip` removes U+001C-U+001F.
+        ("route_summary", {"routes": [{"path": "\x1c", "present": True}]}),
+        ("probe_summary", {"probes": [_probe(endpoint="\x1f")]}),
+        ("status_summary", {"status": "\x1d", "summary": "bounded"}),
+        ("auth_summary", {"missing_m2m_status": 401.0}),
+        ("auth_summary", {"missing_m2m_status": 401, "configured_m2m_status": 200.0}),
+        ("probe_summary", {"probes": [_probe(status_code=200.0)]}),
+        ("probe_summary", {"probes": [_probe(status_code=True)]}),
+    ],
+    ids=[
+        "retired-probe-range",
+        "extra-key",
+        "configured-401",
+        "status-as-text",
+        "blank-status",
+        "blank-route",
+        "present-as-text",
+        "route-blank-once-stripped",
+        "endpoint-blank-once-stripped",
+        "status-blank-once-stripped",
+        "missing-401-as-float",
+        "configured-200-as-float",
+        "status-code-as-float",
+        "status-code-as-bool",
+    ],
+)
+def test_the_service_holds_a_direct_caller_to_the_declared_shapes(
+    migrated_session: Session, field: str, summary: dict[str, object]
+) -> None:
+    """The service validates through the same models the route publishes, so a caller reaching
+    it without the route is refused the same shapes."""
+    _unit, binding = release_binding(migrated_session, key=f"direct-{field}")
+
+    result = record_deployment_observation(
+        migrated_session,
+        replace(observation_command(binding, key=f"direct-{field}"), **{field: summary}),
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "deployment_observation_invalid"
+    assert result.message.startswith(field.replace("_", " "))
+
+
+def test_a_refusal_names_where_the_summary_is_wrong_and_never_the_value(
+    migrated_session: Session,
+) -> None:
+    _unit, binding = release_binding(migrated_session, key="refusal-message")
+
+    result = record_deployment_observation(
+        migrated_session,
+        replace(
+            observation_command(binding, key="refusal-message"),
+            auth_summary={"missing_m2m_status": 401, "configured_m2m_status": 418},
+        ),
+    )
+
+    assert isinstance(result, DomainError)
+    assert "configured_m2m_status" in result.message
+    assert "418" not in result.message
+
+
+@pytest.mark.parametrize(
+    ("field", "summary", "admitted"),
+    [
+        ("probe_summary", {"probes": []}, False),
+        ("probe_summary", {"probes": [_probe() for _ in range(10)]}, True),
+        ("probe_summary", {"probes": [_probe() for _ in range(11)]}, False),
+        ("probe_summary", {"probes": [_probe(status_code=100)]}, True),
+        ("probe_summary", {"probes": [_probe(status_code=99)]}, False),
+        ("probe_summary", {"probes": [_probe(status_code=599)]}, True),
+        ("probe_summary", {"probes": [_probe(status_code=600)]}, False),
+        ("probe_summary", {"probes": [_probe(endpoint=" ")]}, False),
+        ("route_summary", {"routes": []}, False),
+        ("route_summary", {"routes": [_route(index) for index in range(30)]}, True),
+        ("route_summary", {"routes": [_route(index) for index in range(31)]}, False),
+    ],
+    ids=[
+        "no-probes",
+        "ten-probes",
+        "eleven-probes",
+        "status-100",
+        "status-99",
+        "status-599",
+        "status-600",
+        "blank-endpoint",
+        "no-routes",
+        "thirty-routes",
+        "thirty-one-routes",
+    ],
+)
+def test_the_summary_bounds_admit_their_edge_and_refuse_one_past_it(
+    migrated_session: Session, field: str, summary: dict[str, object], admitted: bool
+) -> None:
+    """Each bound is shown from both sides, so a widened bound cannot pass as the same test."""
+    _unit, binding = release_binding(migrated_session, key=f"bounds-{field}")
+
+    result = record_deployment_observation(
+        migrated_session,
+        replace(observation_command(binding, key=f"bounds-{field}"), **{field: summary}),
+    )
+
+    if admitted:
+        assert isinstance(result, DeploymentObservation)
+    else:
+        assert isinstance(result, DomainError)
+        assert result.code == "deployment_observation_invalid"
+        assert result.message.startswith(field.replace("_", " "))

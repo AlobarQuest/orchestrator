@@ -65,7 +65,7 @@ three deployed as `433cd36-sds11approve-amd64`.
 The unit page puts its forms directly under the decision facts and collapses the audit sections
 below them, linking the Evidence Pack as the audit view (4c-3, #358); not yet deployed.
 
-Three decisions aren't carried forward:
+Four decisions aren't carried forward:
 
 - 6b, confirming Todoist as the place to see factory work: ADR-0040 retired the tracker lane.
 - 6c, deriving candidate lessons automatically: Tier 3 item 24 deleted the promotion surface it
@@ -73,6 +73,8 @@ Three decisions aren't carried forward:
 - 3d-2, recording real exit codes: factory-runner records a command only after it exits 0, since
   any other exit stops finalize first, so its `exit_code: 0` is measured, not assumed (factory-runner
   backlog, closed 2026-09-27).
+- 7c, running the whole-repo guards where the work happens: CI already runs every guard on every
+  pull request, so Devon closed it on 2026-10-06.
 
 ### Blocked
 
@@ -110,9 +112,7 @@ These are in no fixed order.
 
 | Review id | Item | State today |
 |---|---|---|
-| 5b | One declared deployment-observation schema. | Five summary dicts; only the secret detector is shared. |
 | 3c-1 | Separate the runner's permitted commands from its ordered verify script. | factory-runner still runs `allowed_commands` as the script. |
-| 7c | Run the whole-repo guards where the work happens. | `make check` refuses an empty collection; the guards still run only in a full `make check`. |
 | 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Machines can register intakes (ADR-0027); the human paste survives, and packages are LLM-authored through `factory create`. |
 | L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Four producers exist; where WS-P3.5 belongs is open decision 1. |
 | 3a-1 | Admission keeps two checks; posture moves to policy. | Admission grew (reach, estate and declaration terms). Review which terms fold into `factory-policy.toml`. |

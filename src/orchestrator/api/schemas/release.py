@@ -6,9 +6,18 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_validator,
 )
 
 from orchestrator.api.schemas.common import CommandBase
+from orchestrator.services.release.deployment_observations import (
+    ActivationSummary,
+    AuthSummary,
+    DispatchSummary,
+    ProbeSummary,
+    RouteSummary,
+    StatusSummary,
+)
 
 
 class ReleaseArtifactCommandModel(CommandBase):
@@ -45,12 +54,14 @@ class ReleaseArtifactCommandModel(CommandBase):
 class DeploymentObservationCommandModel(CommandBase):
     """The wire shape of both activation models, LOOSER than either one on its own.
 
-    Every field a machine-local observation cannot carry is optional here and conditional in the
-    service, which is the authority: a hosted observation requires the URLs and the five
-    probe-shaped summaries, a machine-local one refuses them and requires the activation summary.
-    Loosening the wire while the service still refuses keeps one rule in one place -- and this
-    model is a SECOND rule set the service's own tests never traverse, so a producer's composed
-    payload is validated against it directly by `tests/contract`.
+    Each summary is its declared model, so the served OpenAPI document publishes its shape; the
+    models belong to the service, which validates through them too. Every summary is OPTIONAL
+    here and conditional in the service, which is the authority: a hosted observation requires
+    the URLs and the four probe-shaped summaries (dispatch posture optional), a machine-local one
+    refuses them and requires the activation summary. Loosening the wire while the service still
+    refuses keeps one rule in one place -- and this model is a SECOND rule set the service's own
+    tests never traverse, so each producer's composed payload is validated against it directly by
+    `tests/contract`.
     """
 
     environment: str = Field(min_length=1)
@@ -61,12 +72,47 @@ class DeploymentObservationCommandModel(CommandBase):
     deployer: str | None = None
     observed_at: datetime
     kind: str = "container_image"
-    probe_summary: dict[str, Any] = Field(default_factory=dict)
-    route_summary: dict[str, Any] = Field(default_factory=dict)
-    auth_summary: dict[str, Any] = Field(default_factory=dict)
-    dispatch_summary: dict[str, Any] = Field(default_factory=dict)
-    status_summary: dict[str, Any] = Field(default_factory=dict)
-    activation_summary: dict[str, Any] = Field(default_factory=dict)
+    probe_summary: ProbeSummary | None = None
+    route_summary: RouteSummary | None = None
+    auth_summary: AuthSummary | None = None
+    dispatch_summary: DispatchSummary | None = None
+    status_summary: StatusSummary | None = None
+    activation_summary: ActivationSummary | None = None
+
+    @field_validator(
+        "probe_summary",
+        "route_summary",
+        "auth_summary",
+        "dispatch_summary",
+        "status_summary",
+        "activation_summary",
+        mode="before",
+    )
+    @classmethod
+    def _empty_is_absent(cls, value: object) -> object:
+        """An explicit `{}` is the absent summary, as it was when these fields were dicts: the
+        service stores and compares `{}` for a summary nobody sent, so the two must not differ."""
+        return None if isinstance(value, dict) and not value else value
+
+    def stored_summaries(self) -> dict[str, dict[str, Any]]:
+        """Each summary as the service stores it: exactly the keys the caller sent, `{}` for none.
+
+        `exclude_unset`, never `exclude_none` or a full dump: a default filled in here would make
+        a retry that omits an optional key look different from a first write that sent it (or the
+        reverse), and the idempotent replay compares the two payloads key for key.
+        """
+        summaries = {
+            "probe_summary": self.probe_summary,
+            "route_summary": self.route_summary,
+            "auth_summary": self.auth_summary,
+            "dispatch_summary": self.dispatch_summary,
+            "status_summary": self.status_summary,
+            "activation_summary": self.activation_summary,
+        }
+        return {
+            name: {} if summary is None else summary.model_dump(mode="json", exclude_unset=True)
+            for name, summary in summaries.items()
+        }
 
 
 class ObservationCommandModel(CommandBase):

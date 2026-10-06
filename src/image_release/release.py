@@ -8,9 +8,10 @@ unit an earlier image shipped is SHIPPED EARLIER and stays unbound.
 
 NOTHING IS WRITTEN UNTIL PRODUCTION IS CONFIRMED. The probe runs once per pass, before any
 binding, retried until production is fully healthy. If it still does not serve the built commit,
-or answers an unauthenticated read with anything but 401 (which the orchestrator cannot record),
-the pass refuses with nothing written. A probe still otherwise degraded after every retry is filed
-as it is: the observation is final, and a genuine failure is what it exists to record.
+or answers an unauthenticated read with anything but 401 or an authenticated one with anything but
+200 (which the orchestrator cannot record), the pass refuses with nothing written. A probe still
+otherwise degraded after every retry is filed as it is: the observation is final, and a genuine
+failure is what it exists to record.
 
 WHAT IS NOT A FINDING: a unit that landed after the build (NOT CARRIED), one an earlier image
 shipped (SHIPPED EARLIER), and one bound to another digest whose observation exists (RELEASED BY
@@ -236,6 +237,7 @@ class Production:
     revision_matches: bool
     healthy: bool
     missing_m2m_status: int
+    configured_m2m_status: int
     probe_summary: dict[str, Any]
     route_summary: dict[str, Any]
     auth_summary: dict[str, Any]
@@ -349,8 +351,6 @@ def measure_production(
             "endpoint": path,
             "method": "GET",
             "status_code": probe.status_code,
-            "expected_status_min": HEALTHY_MIN,
-            "expected_status_max": HEALTHY_MAX,
             "observed_at": observed_at,
         }
         for name, path, probe in (("live", HEALTH_LIVE, live), ("ready", HEALTH_READY, ready))
@@ -376,6 +376,7 @@ def measure_production(
         revision_matches=served_revision == release.built_commit,
         healthy=healthy,
         missing_m2m_status=missing,
+        configured_m2m_status=configured,
         probe_summary={"probes": probes},
         route_summary={"routes": routes},
         auth_summary={"missing_m2m_status": missing, "configured_m2m_status": configured},
@@ -489,6 +490,13 @@ def _production_refusal(production: Production) -> dict[str, Any] | None:
         return {
             "outcome": AUTH_POSTURE_UNRECORDABLE,
             "reason": f"an unauthenticated read answered {production.missing_m2m_status}",
+        }
+    if production.configured_m2m_status != AUTHENTICATED_STATUS:
+        # The same for the authenticated read: the service records a configured status only when
+        # it is 200, so anything else would be refused at the observation, after the binding.
+        return {
+            "outcome": AUTH_POSTURE_UNRECORDABLE,
+            "reason": f"an authenticated read answered {production.configured_m2m_status}",
         }
     return None
 

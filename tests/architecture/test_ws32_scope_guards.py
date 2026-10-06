@@ -12,7 +12,6 @@ WS42_DISPATCH_PATHS = {
     # The route modules that name these words; one per domain since Tier 2 item 14.
     Path("src/orchestrator/api/routes/execution.py"),
     Path("src/orchestrator/api/routes/landing.py"),
-    Path("src/orchestrator/api/routes/release.py"),
     Path("src/orchestrator/api/routes/reporting.py"),
     Path("src/orchestrator/api/routes/verifier.py"),
     # WS-P2.1 AC-005: the dead-letter view READS DispatchRecord rows and re-applies the shared

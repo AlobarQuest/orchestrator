@@ -188,12 +188,17 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   - the two digests differ (nothing is read or written);
   - production still does not serve the built commit, or an unauthenticated read is not refused
     (nothing is written);
+  - an authenticated read does not answer 200 (`auth_posture_unrecordable`, nothing is written);
   - a binding to another digest was never observed (orphaned);
   - a merge commit is missing from the checkout (fetch and re-run);
   - verification asked for revision or review.
 
   Exit 3: a refusal or an unreadable state, including a `--previous-commit` the checkout does not
   hold. A re-run over the same deploy re-files nothing.
+
+  Run the binder from a worktree at the built commit. The observation's summary shapes are checked
+  on both sides, and a binder that does not match the served image sends a shape the server refuses
+  only after the binding is written (a newer binder against an older server, or the reverse).
 
 ### #61
 
