@@ -162,8 +162,48 @@ def test_the_route_refuses_a_kind_that_is_not_a_release_artifact_kind(
         CANDIDATES, params={"repository": REPOSITORY, "kind": "tarball"}, headers=SYSTEM
     )
 
-    assert response.status_code in {400, 409, 422}
+    assert response.status_code == 409
     assert response.json()["error"]["code"] == "release_artifact_kind_invalid"
+
+
+def test_the_route_passes_the_kind_through_to_the_already_bound_read(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """A machine-local binding marks the unit bound for its own kind only. Dropping `kind` at the
+    route would report it bound for a container image too, which this would catch."""
+    revision_id, unit_id = completed_unit(db_client, migrated_engine)
+    record_landing(db_client)
+    (candidate,) = db_client.get(
+        CANDIDATES, params={"repository": REPOSITORY}, headers=SYSTEM
+    ).json()
+    bound = db_client.post(
+        f"/api/v1/work-units/{unit_id}/release-artifacts",
+        headers=SYSTEM,
+        json={
+            "idempotency_key": f"machine-activation:{unit_id}",
+            "expected_version": candidate["work_unit_version"],
+            "kind": "machine_local",
+            "package_revision_id": revision_id,
+            "package_revision_hash": PACKAGE_HASH,
+            "source_repository": REPOSITORY,
+            "implementation_pr_number": PR_NUMBER,
+            "source_commit": HEAD_SHA,
+            "merge_commit": MERGE_COMMIT,
+            "artifact_digest": "sha256:" + "a" * 64,
+            "summary": {"activation": {"path": "/Users/x/Projects/infraops-mcp-server"}},
+        },
+    )
+    assert bound.status_code in {200, 201}, bound.text
+
+    def binding_ids(kind: str) -> list[object]:
+        response = db_client.get(
+            CANDIDATES, params={"repository": REPOSITORY, "kind": kind}, headers=SYSTEM
+        )
+        assert response.status_code == 200
+        return [row["binding_id"] for row in response.json()]
+
+    assert binding_ids("machine_local") == [bound.json()["id"]]
+    assert binding_ids("container_image") == [None]
 
 
 def test_the_route_serves_the_container_image_kind(db_client: TestClient) -> None:

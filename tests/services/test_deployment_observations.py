@@ -434,6 +434,24 @@ def test_a_hosted_observation_needs_no_dispatch_summary(migrated_session: Sessio
     assert isinstance(observation, DeploymentObservation)
 
 
+@pytest.mark.parametrize(
+    "summary", [{"dispatch_enabled": "yes"}, {"dispatch_enabled": False, "extra": 1}]
+)
+def test_a_dispatch_summary_that_is_sent_is_held_to_its_shape(
+    migrated_session: Session, summary: dict[str, object]
+) -> None:
+    _unit, binding = release_binding(migrated_session, key=f"bad-dispatch-{len(summary)}")
+    command = replace(
+        observation_command(binding, key=f"bad-dispatch-observation-{len(summary)}"),
+        dispatch_summary=summary,
+    )
+
+    result = record_deployment_observation(migrated_session, command)
+
+    assert isinstance(result, DomainError)
+    assert result.code == "deployment_observation_invalid"
+
+
 def test_rejects_unbounded_raw_observation_fields(migrated_session: Session) -> None:
     _unit, binding = release_binding(migrated_session, key="raw-fields")
 

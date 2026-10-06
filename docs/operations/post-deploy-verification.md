@@ -39,7 +39,7 @@ A deployment observation records bounded, stable facts:
 - health probe summaries;
 - route presence summaries;
 - M2M auth behavior summaries without token values;
-- dispatch-disabled posture summaries;
+- optionally, a dispatch posture summary, held to its shape when sent but no longer judged;
 - small status summaries.
 
 The observed artifact digest must exactly match the immutable digest recorded in
@@ -54,7 +54,7 @@ table to enumerate and no 401 to observe.
 
 The two are told apart by one field, `kind`, and the shapes are conditional on it:
 
-- `container_image`: the five probe-shaped summaries above, a canonical base URL, a deployment
+- `container_image`: the four required probe-shaped summaries above, a canonical base URL, a deployment
   URL and a deployer. Recording one creates the generated verification unit described in the
   following section.
 - `machine_local`: an `activation_summary` and none of those. The environment must be
@@ -113,8 +113,11 @@ observation:
 - `post-deploy-health`: health probes pass;
 - `post-deploy-routes`: required routes are present;
 - `post-deploy-auth`: missing M2M returns 401 and configured M2M returns 200
-  when supplied;
-- `post-deploy-dispatch`: dispatch automation remains disabled.
+  when supplied.
+
+`post-deploy-dispatch` (dispatch automation remains disabled) was retired in SDS 1.1: dispatch
+posture is a standing setting, not a release property, and production runs with it enabled. Units
+minted before carry the criterion, and public adjudication still refuses its id.
 
 The verifier evaluates only evidence already recorded in the orchestrator. It
 does not call production, GitHub, Coolify, trackers, brains, or deployment tools.
