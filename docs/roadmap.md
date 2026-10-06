@@ -62,6 +62,8 @@ A waiver is accepted only for a criterion failing on its current evidence (#350)
 page's approval takes an `awaiting_approval` unit back to `ready` (#352). The package evidence
 vocabulary is one contract pinned in both repositories (4a-2, #353 with intent-packages #109). All
 three deployed as `433cd36-sds11approve-amd64`.
+The unit page puts its forms directly under the decision facts and collapses the audit sections
+below them, linking the Evidence Pack as the audit view (4c-3, #358); not yet deployed.
 
 Three decisions aren't carried forward:
 

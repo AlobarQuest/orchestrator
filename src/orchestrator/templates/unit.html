@@ -7,8 +7,6 @@
 <p><a href="/review/units/{{ unit.id }}/evidence-pack">Open read-only Evidence Pack</a></p>
 
 {% include "_decision.html" %}
-{# The deciding view comes first: the three facts, the envelope the authority form attests, and
-   the forms. The audit record follows, collapsed; the Evidence Pack is the read-only audit view. #}
 
 <h2>Package and authority</h2>
 <dl><dt>Revision</dt><dd>{{ revision.revision }}</dd><dt>Content hash</dt><dd>{{ revision.content_hash }}</dd><dt>Source</dt><dd>{{ revision.source_path }} at {{ revision.source_commit }}</dd><dt>Authority fingerprint</dt><dd>{{ unit.authority_fingerprint }}</dd><dt>Attempt budget</dt><dd>{{ unit.attempt_count }} of {{ unit.max_attempts }}</dd></dl>
@@ -61,9 +59,9 @@
     </dl>
   </div>
   {# The evidence THIS criterion is decided against, beside the control that decides it. The
-     Evidence section in the audit record below is the full supersession-aware view and serves a different
-     reader; this is the current row only, so a reviewer never scrolls away from what they are
-     judging. Full fidelity is correct here -- the page is human-only behind forward-auth. #}
+     Evidence section in the audit record below is the full supersession-aware view and serves a
+     different reader; this is the current row only, so a reviewer never scrolls away from what
+     they are judging. Full fidelity is correct here -- the page is human-only behind forward-auth. #}
   {% if ac.evidence %}
   <div class="ac-evidence"><p>Evidence: {{ ac.evidence.evidence_type }}, recorded by {{ ac.evidence.recorded_by }} at {{ ac.evidence.recorded_at }}, attempt {{ ac.evidence.attempt }}.</p>
     <dl>
