@@ -11,48 +11,13 @@ would -- because a recovery surface an operator cannot actually act on is not a 
 import re
 import uuid
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import ReconciliationCondition, WorkUnit
-from orchestrator.services.reconciliation.reconciliation import (
-    ConditionCommand,
-    ConditionOutcome,
-    open_conditions,
-    record_reconciliation_condition,
-)
-from tests._support.seeding import register_unit
+from orchestrator.services.reconciliation.reconciliation import open_conditions
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM
-
-SYSTEM_ACTOR = ActorContext("system", ActorRole.SYSTEM)
-
-
-@pytest.fixture
-def flagged_unit(migrated_engine: Engine) -> WorkUnit:
-    """A work unit carrying one open reconciliation condition."""
-    with Session(migrated_engine) as session:
-        unit = register_unit(session, "resolve-route")
-        session.commit()
-        outcome = record_reconciliation_condition(
-            session,
-            ConditionCommand(
-                actor=SYSTEM_ACTOR,
-                work_unit_id=unit.id,
-                observation_kind="github_check",
-                condition_type="check_result_flip",
-                key_facts={"check_name": "Quality"},
-                stored_state={"conclusion": "success"},
-                observed_state={"conclusion": "failure"},
-                detail="Quality flipped after verification read it",
-            ),
-        )
-        assert isinstance(outcome, ConditionOutcome)
-        session.refresh(unit)
-        session.expunge(unit)
-        return unit
 
 
 def _condition_id(session: Session, unit: WorkUnit) -> uuid.UUID:

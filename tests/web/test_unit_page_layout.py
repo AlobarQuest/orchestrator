@@ -70,7 +70,8 @@ def test_no_state_renders_a_form_below_the_audit_record(
     attempts_exhausted: bool,
 ) -> None:
     # Each form renders only in the states whose service would accept it, so the one-state test
-    # above sees only some of them. Across every state, each one appears somewhere.
+    # above sees only some of them. This one checks, in each state, that whatever forms render sit
+    # above the audit record, and that a state with none says so rather than rendering nothing.
     with Session(migrated_engine) as session:
         unit = session.get(WorkUnit, review_unit.id)
         assert unit is not None
@@ -82,4 +83,18 @@ def test_no_state_renders_a_form_below_the_audit_record(
 
     actions = page.index("<h2>Human actions</h2>")
     audit = page.index(AUDIT_OPEN)
-    assert all(actions < form < audit for form in _offsets(page, '<form method="post"'))
+    forms = _offsets(page, '<form method="post"')
+    assert forms or "No action is available" in page
+    assert all(actions < form < audit for form in forms)
+
+
+def test_the_reconciliation_resolution_form_precedes_the_audit_record(
+    db_client: TestClient, flagged_unit: WorkUnit
+) -> None:
+    page = db_client.get(f"/review/units/{flagged_unit.id}", headers=HUMAN).text
+
+    actions = page.index("<h2>Human actions</h2>")
+    audit = page.index(AUDIT_OPEN)
+    conditions = _offsets(page, 'action="/review/reconciliation/conditions/')
+    assert len(conditions) == 1
+    assert actions < conditions[0] < audit
