@@ -45,10 +45,13 @@ from orchestrator.services.lifecycle.readiness import evaluate_readiness
 POST_DEPLOY_AC_IDS = (
     "post-deploy-artifact",
     "post-deploy-auth",
-    "post-deploy-dispatch",
     "post-deploy-health",
     "post-deploy-routes",
 )
+# `post-deploy-dispatch` was retired in SDS 1.1: dispatch posture is a standing setting, not a
+# release property. Generated criteria are rebuilt on every read, so no unit carries it any more;
+# its old evidence rows are inert, and a public adjudication naming it is refused as a criterion
+# the revision does not declare.
 
 # The capability a generated follow-up review unit carries -- the same string
 # `services.intake.follow_ups` mints units with and `is_generated_follow_up_unit` /

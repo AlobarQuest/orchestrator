@@ -139,12 +139,6 @@ def _generated_post_deploy_criteria(
             "production.auth_behavior",
             "bounded authentication behavior summary",
         ),
-        (
-            "post-deploy-dispatch",
-            "Production dispatch automation remains disabled.",
-            "production.dispatch_posture",
-            "bounded dispatch posture summary",
-        ),
     )
     return tuple(
         PackageAcceptanceCriterion(

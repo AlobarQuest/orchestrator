@@ -182,8 +182,8 @@ Placement rule: global CLAUDE.md §7.
   Dockerfile `HEALTHCHECK` consults `/health/ready`; never point either at it without re-deciding
   migration order. Detail: `docs/operations/deploy.md`.
 - `deployment_observation` payloads are exact-key-set bounded per `kind` (`container_image` needs
-  five summaries, `machine_local` only `activation_summary`), and the secret detector rejects key
-  names containing credential/token/key. History: `docs/history/claude-md-invariants-archive.md`
+  four summaries plus an optional dispatch one, `machine_local` only `activation_summary`), and the
+  secret detector rejects key names containing credential/token/key. History: `docs/history/claude-md-invariants-archive.md`
   #63.
 - The orchestrator assigns the dispatch ordinal (`max(attempt_count, highest recorded) + 1`); a
   supplied `runner_attempt` other than that is refused `dispatch_attempt_not_next`, and a retry

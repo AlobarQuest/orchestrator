@@ -113,12 +113,6 @@ POST_DEPLOY_PAIRS = (
         "production.auth_behavior",
         {"missing_m2m_status": 401, "configured_m2m_status": 200},
     ),
-    (
-        "post-deploy-dispatch",
-        "production.dispatch_posture",
-        "production.dispatch_posture",
-        {"dispatch_enabled": False},
-    ),
 )
 
 

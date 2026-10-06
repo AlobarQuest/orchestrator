@@ -13,7 +13,7 @@ from orchestrator.api.schemas.release import (
     ReleaseArtifactCommandModel,
 )
 from orchestrator.errors import DomainError
-from orchestrator.persistence.models import Observation
+from orchestrator.persistence.models import MACHINE_LOCAL_KIND, RELEASE_ARTIFACT_KINDS, Observation
 from orchestrator.services.reconciliation.reconciliation_detection import (
     detect_observation_conditions,
     record_digest_divergence,
@@ -142,6 +142,7 @@ def machine_activation_candidates_route(
     repository: str,
     _actor: ActorDep,
     session: SessionDep,
+    kind: str = MACHINE_LOCAL_KIND,
 ) -> object:
     """ADR-0030: which completed units a machine-local working copy could bind an artifact for.
 
@@ -149,8 +150,15 @@ def machine_activation_candidates_route(
     asserts nothing about the machine. A repository with no confirmed landings answers with an
     empty list rather than a 404 -- the ordinary state of a repository the factory has not landed
     into yet, which a 404 would make indistinguishable from a misspelled name.
+
+    `kind` names which bindings count as already made: `machine_local` for a working copy (the
+    default, and the activation sweep's), `container_image` for a hosted image's deploy.
     """
-    return list(machine_activation_candidates(session, repository))
+    if kind not in RELEASE_ARTIFACT_KINDS:
+        raise DomainError(
+            "release_artifact_kind_invalid", "kind is not a release artifact kind", None
+        )
+    return list(machine_activation_candidates(session, repository, kind))
 
 
 @router.post(

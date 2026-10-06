@@ -291,14 +291,12 @@ def test_observation_records_bounded_evidence_and_events(migrated_session: Sessi
     assert [row.ac_id for row in evidence] == [
         "post-deploy-artifact",
         "post-deploy-auth",
-        "post-deploy-dispatch",
         "post-deploy-health",
         "post-deploy-routes",
     ]
     assert {row.evidence_type for row in evidence} == {
         "release.deployment_observed",
         "production.auth_behavior",
-        "production.dispatch_posture",
         "production.health",
         "production.route_presence",
     }
@@ -330,7 +328,6 @@ def test_generated_post_deploy_unit_verifies_through_ws51(migrated_session: Sess
     assert {evaluation.ac_id for evaluation in result.evaluations} == {
         "post-deploy-artifact",
         "post-deploy-auth",
-        "post-deploy-dispatch",
         "post-deploy-health",
         "post-deploy-routes",
     }
@@ -396,7 +393,7 @@ def test_generated_post_deploy_unit_fails_closed_for_bad_route_fact(
     )
 
 
-def test_generated_post_deploy_unit_fails_closed_for_dispatch_enabled(
+def test_dispatch_posture_no_longer_decides_post_deploy_verification(
     migrated_session: Session,
 ) -> None:
     _unit, binding = release_binding(migrated_session, key="dispatch-enabled")
@@ -419,12 +416,40 @@ def test_generated_post_deploy_unit_fails_closed_for_dispatch_enabled(
         ),
     )
 
-    assert result.result == "revision_required"
-    assert result.state is WorkUnitState.REVISION_REQUIRED
-    assert any(
-        evaluation.ac_id == "post-deploy-dispatch" and evaluation.outcome == "failed"
-        for evaluation in result.evaluations
+    # Dispatch posture is a standing setting, not a release property (SDS 1.1), so a deploy with
+    # dispatch on verifies like any other.
+    assert result.result == "completed"
+    assert result.state is WorkUnitState.COMPLETED
+    assert not any(evaluation.ac_id == "post-deploy-dispatch" for evaluation in result.evaluations)
+
+
+def test_a_hosted_observation_needs_no_dispatch_summary(migrated_session: Session) -> None:
+    _unit, binding = release_binding(migrated_session, key="no-dispatch")
+    command = replace(
+        observation_command(binding, key="no-dispatch-observation"), dispatch_summary={}
     )
+
+    observation = record_deployment_observation(migrated_session, command)
+
+    assert isinstance(observation, DeploymentObservation)
+
+
+@pytest.mark.parametrize(
+    "summary", [{"dispatch_enabled": "yes"}, {"dispatch_enabled": False, "extra": 1}]
+)
+def test_a_dispatch_summary_that_is_sent_is_held_to_its_shape(
+    migrated_session: Session, summary: dict[str, object]
+) -> None:
+    _unit, binding = release_binding(migrated_session, key=f"bad-dispatch-{len(summary)}")
+    command = replace(
+        observation_command(binding, key=f"bad-dispatch-observation-{len(summary)}"),
+        dispatch_summary=summary,
+    )
+
+    result = record_deployment_observation(migrated_session, command)
+
+    assert isinstance(result, DomainError)
+    assert result.code == "deployment_observation_invalid"
 
 
 def test_rejects_unbounded_raw_observation_fields(migrated_session: Session) -> None:
@@ -889,3 +914,29 @@ def test_the_database_refuses_a_machine_local_row_naming_a_url(
         )
     assert "ck_deployment_observations_by_kind" in str(refusal.value)
     migrated_session.rollback()
+
+
+def test_the_retired_dispatch_criterion_cannot_be_adjudicated_publicly(
+    migrated_session: Session,
+) -> None:
+    """Retired from the generated set, so no gate names it, and it is still refused."""
+    _unit, binding = release_binding(migrated_session, key="retired-dispatch")
+    observation = record_deployment_observation(
+        migrated_session,
+        observation_command(binding, key="retired-dispatch-observation"),
+    )
+    assert isinstance(observation, DeploymentObservation)
+    assert observation.post_deploy_work_unit_id is not None
+
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=observation.work_package_revision_id,
+        work_unit_id=observation.post_deploy_work_unit_id,
+        ac_id="post-deploy-dispatch",
+        outcome="passed",
+        actor=VERIFIER,
+        rationale="attempt to decide the retired criterion",
+        idempotency_key="retired-dispatch-adjudication",
+    )
+
+    assert isinstance(result, DomainError)

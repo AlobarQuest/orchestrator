@@ -378,7 +378,6 @@ def _deployment_evidence(
         ("post-deploy-health", "production.health", command.probe_summary),
         ("post-deploy-routes", "production.route_presence", command.route_summary),
         ("post-deploy-auth", "production.auth_behavior", command.auth_summary),
-        ("post-deploy-dispatch", "production.dispatch_posture", command.dispatch_summary),
     )
     evidence_ids: list[str] = []
     for ac_id, evidence_type, payload in evidence_specs:
@@ -549,7 +548,11 @@ def _validate_hosted_shape(command: DeploymentObservationCommand) -> None:
     _validate_probe_summary(command.probe_summary)
     _validate_route_summary(command.route_summary)
     _validate_auth_summary(command.auth_summary)
-    _validate_dispatch_summary(command.dispatch_summary)
+    # Optional since SDS 1.1: dispatch posture is a standing setting, not a property of a release,
+    # so post-deploy verification no longer judges it. A summary a producer still sends is held
+    # to its old shape.
+    if command.dispatch_summary:
+        _validate_dispatch_summary(command.dispatch_summary)
     _validate_status_summary(command.status_summary)
 
 
