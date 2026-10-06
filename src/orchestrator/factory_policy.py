@@ -148,11 +148,21 @@ _PATTERN_FIELDS = frozenset(
 # The one envelope shape schema 2 can describe: a unit that runs an ordered command list against
 # one repository. Every stored envelope of that shape carries exactly these constraint keys --
 # three from the authoring side and `work_unit_id`, which the orchestrator stamps. The set is
-# EXACT, so a constraint nobody declared is an envelope no pattern recognises. A different shape
-# (a unit that runs no commands, say) is a different schema version, not a looser check here.
+# EXACT, apart from the one optional key below, so a constraint nobody declared is an envelope no
+# pattern recognises. A different shape (a unit that runs no commands, say) is a different schema
+# version, not a looser check here.
 _CONSTRAINT_FIELDS = frozenset(
     {"allowed_commands", "mutation_commands", "target_repository", "work_unit_id"}
 )
+# The one optional key of that same shape (SDS 1.1 item 3c-1). `verify_commands` names which of
+# `allowed_commands` the runner executes, after the mutators, as its verify script; it can only
+# repeat commands already in `allowed_commands` (`runner_command_authority_violation`), so it
+# declares no command the pattern has not already matched -- and it is still matched by prefix
+# itself, so recognition never rests on the subset rule having run first. Its absence is the
+# shape every envelope before 3c-1 carries, and that shape must stay recognised. The artifact's
+# document schema is unchanged: patterns declare no new field.
+_OPTIONAL_CONSTRAINT_FIELDS = frozenset({"verify_commands"})
+_COMMAND_CONSTRAINT_FIELDS = ("allowed_commands", "mutation_commands", "verify_commands")
 _CONFORMANCE_FIELDS = frozenset({"status", "standards_touched", "accepted_standards"})
 
 # Characters through which a command string could become more than the one invocation its declared
@@ -616,7 +626,7 @@ def _conformance_recognised(conformance: Mapping[str, Any] | None, status: str) 
 def _constraints_recognised(
     pattern: KnownGoodPattern, constraints: Mapping[str, Any], unit_id: UUID
 ) -> bool:
-    if set(constraints) != _CONSTRAINT_FIELDS:
+    if set(constraints) - _OPTIONAL_CONSTRAINT_FIELDS != _CONSTRAINT_FIELDS:
         return False
     # The stamped id is fingerprinted by value, so leaving it unaccounted for would be a hole in
     # the totality claim above. It can only ever be this unit's own id.
@@ -626,7 +636,8 @@ def _constraints_recognised(
         return False
     return all(
         _commands_recognised(constraints[field], pattern.command_prefixes)
-        for field in ("allowed_commands", "mutation_commands")
+        for field in _COMMAND_CONSTRAINT_FIELDS
+        if field in constraints
     )
 
 

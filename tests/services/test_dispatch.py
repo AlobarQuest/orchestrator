@@ -269,6 +269,48 @@ def test_dispatch_skips_legacy_invalid_dependency_update_authority(
     assert github.calls == []
 
 
+@pytest.mark.parametrize(
+    ("verify_commands", "code"),
+    [
+        ([], "authority_verify_commands_invalid"),
+        (["make check"], "authority_verify_command_not_allowed"),
+        (["uv add x"], "authority_verify_command_mutates"),
+    ],
+)
+def test_dispatch_skips_an_envelope_whose_verify_script_the_runner_refuses(
+    migrated_session: Session, verify_commands: list[str], code: str
+) -> None:
+    """SDS 1.1 3c-1: the same last-gate treatment as its mutation_commands siblings."""
+    unit = ready_unit(migrated_session, key=f"bad-verify-{code}")
+    unit.authority = {
+        "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "change_class": "dependency-update",
+        "constraints": {
+            "target_repository": PILOT_REPOSITORY,
+            "allowed_commands": ["uv add x", "uv lock --check"],
+            "mutation_commands": ["uv add x"],
+            "verify_commands": verify_commands,
+        },
+        "conformance": GREEN_CONFORMANCE,
+    }
+    migrated_session.flush()
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        github,
+        inert_source(),
+        target_source=declared_source(),
+    )
+
+    assert record.status == "skipped"
+    assert record.reason_code == code
+    assert github.calls == []
+
+
 def test_dispatch_blocks_a_legacy_capability_outside_the_runner_vocabulary(
     migrated_session: Session,
 ) -> None:
