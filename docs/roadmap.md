@@ -62,6 +62,8 @@ A waiver is accepted only for a criterion failing on its current evidence (#350)
 page's approval takes an `awaiting_approval` unit back to `ready` (#352). The package evidence
 vocabulary is one contract pinned in both repositories (4a-2, #353 with intent-packages #109). All
 three deployed as `433cd36-sds11approve-amd64`.
+The unit page puts its forms directly under the decision facts and collapses the audit sections
+below them, linking the Evidence Pack as the audit view (4c-3, #358); not yet deployed.
 
 Three decisions aren't carried forward:
 
@@ -110,7 +112,6 @@ These are in no fixed order.
 |---|---|---|
 | 5b | One declared deployment-observation schema. | Five summary dicts; only the secret detector is shared. |
 | 3c-1 | Separate the runner's permitted commands from its ordered verify script. | factory-runner still runs `allowed_commands` as the script. |
-| 4c-3 | Separate the deciding view from the auditing view. | One page with a decision section and context-gated forms. |
 | 7c | Run the whole-repo guards where the work happens. | `make check` refuses an empty collection; the guards still run only in a full `make check`. |
 | 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Machines can register intakes (ADR-0027); the human paste survives, and packages are LLM-authored through `factory create`. |
 | L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Four producers exist; where WS-P3.5 belongs is open decision 1. |

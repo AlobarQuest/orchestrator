@@ -4,12 +4,17 @@ import pytest
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from orchestrator.kernel.states import WorkUnitState
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
     Dependency,
     PackageAcceptanceCriterion,
     WorkUnit,
+)
+from orchestrator.services.reconciliation.reconciliation import (
+    ConditionCommand,
+    ConditionOutcome,
+    record_reconciliation_condition,
 )
 from tests._support.seeding import register_unit
 from tests.api.conftest import auth_config, db_client
@@ -135,3 +140,28 @@ def review_unit_with_post_deploy_ac(migrated_engine: Engine) -> WorkUnit:
         unit_key="review-unit-post-deploy-ac",
         criteria=(("ac-1", "human.review"), ("post-deploy-health", "production.health")),
     )
+
+
+@pytest.fixture
+def flagged_unit(migrated_engine: Engine) -> WorkUnit:
+    """A work unit carrying one open reconciliation condition."""
+    with Session(migrated_engine) as session:
+        unit = register_unit(session, "resolve-route")
+        session.commit()
+        outcome = record_reconciliation_condition(
+            session,
+            ConditionCommand(
+                actor=ActorContext("system", ActorRole.SYSTEM),
+                work_unit_id=unit.id,
+                observation_kind="github_check",
+                condition_type="check_result_flip",
+                key_facts={"check_name": "Quality"},
+                stored_state={"conclusion": "success"},
+                observed_state={"conclusion": "failure"},
+                detail="Quality flipped after verification read it",
+            ),
+        )
+        assert isinstance(outcome, ConditionOutcome)
+        session.refresh(unit)
+        session.expunge(unit)
+        return unit
