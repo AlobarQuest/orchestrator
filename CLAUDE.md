@@ -206,9 +206,10 @@ Placement rule: global CLAUDE.md §7.
   separate, unmodelled dimension. History: `docs/history/claude-md-invariants-archive.md` #78.
 - `factory-policy.toml` can only REFUSE: no schema value permits, `factory_policy.py` imports no
   config, an empty refusal list means no objection, and a listed value (`known_good`,
-  `[admission]`) only withholds one objection. Exactly one row per `REACH_VOCABULARY` member or it
-  fails to load; `SUPPORTED_SCHEMA_VERSIONS` is exact; a new field ships with its reader. History:
-  `docs/history/claude-md-invariants-archive.md` #81.
+  `[admission]`) only withholds one objection, so an EMPTY `[admission]` list refuses every value.
+  Exactly one row per `REACH_VOCABULARY` member or it fails to load; `SUPPORTED_SCHEMA_VERSIONS` is
+  exact; a new field ships with its reader. History: `docs/history/claude-md-invariants-archive.md`
+  #81.
 - Minted follow-up units are created in `AWAITING_REVIEW`, and minting refuses rather than inherit
   an unknown reach. History: `docs/history/claude-md-invariants-archive.md` #88.
 - A lease may only LENGTHEN (`kernel/leases.py`: above `DEFAULT_LEASE`, at most `LEASE_CEILING`);

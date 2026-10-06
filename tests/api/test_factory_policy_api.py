@@ -6,7 +6,10 @@ and until this route existed there was no way to ask the running instance which 
 
 from fastapi.testclient import TestClient
 
-from orchestrator.api.schemas.execution import FactoryPolicyResponse
+from orchestrator.api.schemas.execution import (
+    FactoryPolicyAdmissionResponse,
+    FactoryPolicyResponse,
+)
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.reach_vocabulary import REACH_VOCABULARY
 from tests.api.test_lifecycle_api import SYSTEM, WORKER
@@ -37,6 +40,12 @@ def test_the_policy_surface_serves_the_admission_posture(db_client: TestClient) 
     # deployment's settings, so the deploy check reads them here, off the wire.
     admission = db_client.get("/api/v1/factory-policy", headers=SYSTEM).json()["admission"]
 
+    # Served keys, sub-model fields and report keys are one set, for the reason the top level is.
+    assert (
+        set(admission)
+        == set(FactoryPolicyAdmissionResponse.model_fields)
+        == set(load_factory_policy().report()["admission"])
+    )
     assert admission["capabilities"] == ["github.pr.create", "repo.edit"]
     assert admission["change_classes"] == [
         "dependency-update",

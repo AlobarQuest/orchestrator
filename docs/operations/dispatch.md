@@ -55,7 +55,10 @@ every admission and served at `GET /api/v1/factory-policy` under `admission`. A 
 either list is refused as `capability_not_enabled` or `change_class_not_allowed`; an empty list
 refuses every value. Changing either list is an edit to that file and ships as a release. The
 former `ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES` and
-`ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES` variables are ignored if still set.
+`ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES` variables are ignored by an image carrying schema 7.
+Delete them from the deployment only after that image is verified, and keep them through the
+rollback window: an older image started without them reads both lists as empty and refuses every
+unit.
 
 The GitHub credential must be provided only through the approved BWS/Coolify secret
 path. Do not store raw tokens in tracked files, prompts, logs, package YAML,

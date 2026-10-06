@@ -7,6 +7,29 @@
   withhold an objection), ADR-0015 amendment 4 (target repositories left the environment the same
   way), ADR-0046 (the lane kill switches default on)
 
+## Provenance, and where this departs from the review
+
+The simplification review (`~/docs/software-delivery-system/2026-07-31-simplification-review-notes.md`,
+3a) found that most admission clauses were operator posture rather than per-unit questions. It
+counted the kill switch, the change-class allowlist and the target-repository allowlist as posture,
+and decided that admission "keeps only the two real checks" and that posture "moves wholesale into
+the change window (2d)". That is not what this change does. On 2026-10-06 Devon chose between
+options HQ framed, and picked "move the two lists into factory-policy.toml; keep the kill switch".
+It departs from the review in two ways:
+
+- **The lists go in a top-level `[admission]` table, not in the change window.** A window answers
+  *when* work may start. These lists answer *what kind* of work is taken at all, so folding them
+  into the window would make one field answer two questions. The placement reasoning is under "Why
+  top-level, not per reach row" below.
+- **The kill switch stays in the environment.** ADR-0046 made it a default-on off switch, and an
+  off switch has to work without a release. Moving it into an artifact that ships with the image
+  would make stopping the lane cost a deploy.
+
+The review's broader reduction to "only two checks" is not done here either. The reach, estate and
+target-declaration terms stay in admission. They are classified as the review's two checks: reach
+and estate as check A (is this unit authorised to run what it declares), and the target declaration
+as check B (is the target repository fit to receive work). They are kept as they are.
+
 ## Decision
 
 `ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES` and `ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES` are
@@ -62,10 +85,12 @@ The table ships with the values production enforced through the environment:
 - `capabilities = ["github.pr.create", "repo.edit"]`
 - `change_classes = ["dependency-update", "maintenance-remediation", "software-delivery"]`
 
-Source: the standing decisions recorded in `docs/operations/driving-a-unit.md` #66, which were
-container-verified on 2026-08-04. `maintenance-remediation` was added on 2026-08-03; `github.pr.create`
-and `software-delivery` were added on 2026-08-04 (archive #147 and the WS-P2.35 note). The repository
-records no later widening. These values were not re-read from the live container for this change.
+These values were confirmed from the running production container on 2026-10-06: capabilities
+`["repo.edit","github.pr.create"]`, change classes
+`["dependency-update","maintenance-remediation","software-delivery"]`. They match the standing
+decisions recorded in `docs/operations/driving-a-unit.md` #66 (container-verified 2026-08-04):
+`maintenance-remediation` was added on 2026-08-03, and `github.pr.create` and `software-delivery` on
+2026-08-04 (archive #147 and the WS-P2.35 note).
 
 ## Consequences
 
@@ -73,8 +98,10 @@ records no later widening. These values were not re-read from the live container
   policy change already has (deploy.md #82).
 - `GET /api/v1/factory-policy` serves the table under `admission`. That is the deploy check that the
   running image enforces the intended posture.
-- After the release, the two environment variables are dead. pydantic-settings ignores undeclared
-  variables, so deleting them from the Coolify application can happen before or after the swap.
+- After the release the new image reads neither environment variable; pydantic-settings ignores
+  undeclared ones. **Delete them from the Coolify application only after the new image is verified**
+  (`GET /api/v1/factory-policy` serves the expected `admission`), and keep them through the rollback
+  window. An older image started without them reads both lists as empty and refuses every unit.
 - A test that dispatches a harness envelope with no `change_class` opts in to the `harness_posture`
   fixture (`tests/_support/posture.py`). That fixture is the shipped table plus the fallback
   `repo.edit` change class. The runner-envelope contract test dispatches against the shipped table
