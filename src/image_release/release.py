@@ -520,13 +520,7 @@ def _bind_phase(candidate: Candidate, state: _Pass) -> tuple[dict[str, Any], str
         return _bound_phase(candidate, state)
     try:
         if not holds_commit(state.checkout, candidate.merge_commit):
-            return (
-                {
-                    "outcome": MERGE_COMMIT_MISSING,
-                    "reason": "the merge commit is not in the checkout; fetch and re-run",
-                },
-                None,
-            )
+            return _merge_commit_missing(), None
         if not carries(state.checkout, candidate.merge_commit, release.built_commit):
             return {"outcome": NOT_CARRIED, "reason": "landed after the built commit"}, None
         if carries(state.checkout, candidate.merge_commit, release.previous_commit):
@@ -546,6 +540,14 @@ def _bind_phase(candidate: Candidate, state: _Pass) -> tuple[dict[str, Any], str
     if binding_id is None:
         return {"outcome": REFUSED, "reason": "the binding carried no id"}, None
     return {"outcome": BOUND, "binding_id": binding_id}, binding_id
+
+
+def _merge_commit_missing() -> dict[str, Any]:
+    """The checkout cannot answer for this unit (shallow or stale), bound or not."""
+    return {
+        "outcome": MERGE_COMMIT_MISSING,
+        "reason": "the merge commit is not in the checkout; fetch and re-run",
+    }
 
 
 def _bound_phase(candidate: Candidate, state: _Pass) -> tuple[dict[str, Any], str | None]:
@@ -572,9 +574,9 @@ def _bound_phase(candidate: Candidate, state: _Pass) -> tuple[dict[str, Any], st
     # Bound to THIS digest by an earlier pass. Asked again rather than trusted: an observation
     # asserts that this image carries the unit, and a wrong binding must not be built upon.
     try:
-        carried = holds_commit(state.checkout, candidate.merge_commit) and carries(
-            state.checkout, candidate.merge_commit, state.release.built_commit
-        )
+        if not holds_commit(state.checkout, candidate.merge_commit):
+            return _merge_commit_missing(), None
+        carried = carries(state.checkout, candidate.merge_commit, state.release.built_commit)
     except RECOVERABLE as error:
         return {"outcome": UNAVAILABLE, "reason": str(error)}, None
     if not carried:

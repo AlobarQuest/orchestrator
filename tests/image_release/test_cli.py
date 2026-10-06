@@ -118,6 +118,9 @@ def test_a_full_pass_exits_zero_and_verifies_as_the_verifier(
     assert result.exit_code == EXIT_OK, result.output
     summary = json.loads(result.output)
     assert summary["units"][0]["verification"]["outcome"] == "completed"
+    # Printed so a re-run can reuse the recorded pre-swap revision rather than re-read it.
+    assert summary["previous_commit"] == history.previous
+    assert summary["built_commit"] == history.built
     assert len(installed.verifier.verified) == 1
     # Each identity's bearer goes to its own client and nowhere else.
     assert installed.opened["system"]["token"] == "system-bearer-stand-in"

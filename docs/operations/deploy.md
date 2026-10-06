@@ -144,7 +144,11 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### Binding the release (SDS 1.1 item 5a)
 
-- **Record `/health/live`'s `revision` BEFORE the swap; that is `--previous-commit`.** After the
+- **`--previous-commit` is the pre-swap revision recorded at the swap step (#305 above).**
+  **Every re-run of a deploy's binder must reuse that same recorded value, never a fresh read.** A
+  read after the swap returns the built commit, which turns every unbound unit into a silent
+  `shipped_earlier`. Each run prints `previous_commit` and `built_commit` in its JSON output, so a
+  re-run can copy both from the first run's output. After the
   swap, and only after the running container's `RepoDigest` equals the pushed digest and
   `/health/live` reports the built commit, run `image-release bind`. **A unit is bound to the first
   deployed image that carries it, from this program's first run onward**: it binds a
@@ -171,7 +175,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
     IMAGE_VERIFY_TOKEN="$(bws_value 660d5846-abcb-4751-be86-b483012899eb)" \
       uv run --directory <worktree> image-release bind \
         --repository AlobarQuest/orchestrator --checkout <worktree> \
-        --previous-commit <revision /health/live reported before the swap> \
+        --previous-commit <the pre-swap revision recorded at the swap, reused on every re-run> \
         --built-commit <full-40-char-sha> --digest <pushed sha256:…> \
         --observed-digest <running container's sha256:…> \
         --image-name orchestrator --tag <short-sha>[-<label>]-amd64 \
@@ -396,3 +400,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   Coolify's own check (`health_check_enabled: false`) and the Dockerfile `HEALTHCHECK`
   (`/health/live`) both ignore. Keep it short; do the tag write BEFORE the migration so the swap is
   one call afterwards.
+  **Immediately before the swap call, record the `revision` that
+  `curl -s https://sds.alobar.net/health/live` reports, and keep it with the deploy's notes.** It is
+  the outgoing image's revision and the binder's `--previous-commit` (see "Binding the release").
+  After the swap it can never be read again: `/health/live` then reports the new build.

@@ -187,12 +187,28 @@ def test_a_unit_bound_to_this_digest_is_observed_and_not_rebound(history: Histor
     assert [binding for binding, _ in system.observed] == [BINDING_ID]
 
 
-@pytest.mark.parametrize("merge", ["later", "unknown"])
-def test_a_unit_bound_to_this_digest_that_the_build_does_not_carry_is_refused(
-    history: History, merge: str
+def test_a_unit_bound_to_this_digest_whose_merge_commit_is_missing_says_fetch(
+    history: History,
 ) -> None:
-    commit = history.later if merge == "later" else "c" * 40
-    system = FakeSystem([candidate_row(commit, binding_id=BINDING_ID, binding_digest=DIGEST)])
+    """The same answer the unbound path gives: the checkout cannot say, so it is not a refusal."""
+    system = FakeSystem([candidate_row("c" * 40, binding_id=BINDING_ID, binding_digest=DIGEST)])
+    verifier = FakeVerifier()
+
+    summary = _run(history, system, verifier=verifier)
+
+    binding = summary["units"][0]["binding"]
+    assert binding["outcome"] == MERGE_COMMIT_MISSING
+    assert "fetch and re-run" in binding["reason"]
+    assert system.observed == [] and verifier.verified == []
+    assert has_conditions(summary) and not has_findings(summary)
+
+
+def test_a_unit_bound_to_this_digest_that_the_build_does_not_carry_is_refused(
+    history: History,
+) -> None:
+    system = FakeSystem(
+        [candidate_row(history.later, binding_id=BINDING_ID, binding_digest=DIGEST)]
+    )
     verifier = FakeVerifier()
 
     summary = _run(history, system, verifier=verifier)
@@ -536,3 +552,57 @@ def test_the_shape_check_is_live_and_would_refuse_a_wrong_payload(
     broken = {**observation, "auth_summary": {"configured_m2m_status": 200}}
     with pytest.raises(DomainError):
         deployment_observations._validate_command_shape(_observation_command(broken))
+
+
+def test_a_redeploy_of_the_same_image_binds_nothing_and_replays_verification(
+    history: History,
+) -> None:
+    """`--previous-commit` == `--built-commit`: everything was shipped by the image already
+    running, and what that image bound is observed and replays its verification."""
+    system = FakeSystem(
+        [
+            _bound_row(history, observation_id="o"),
+            candidate_row(history.built, unit_id=SECOND_UNIT_ID),
+        ],
+        existing=[{"id": "o", "environment": "production", "post_deploy_work_unit_id": "pd"}],
+    )
+    verifier = FakeVerifier()
+
+    summary = _run(history, system, verifier=verifier, previous=history.built)
+
+    bound, fresh = summary["units"]
+    assert bound["binding"]["outcome"] == ALREADY_BOUND
+    assert bound["observation"]["outcome"] == ALREADY_OBSERVED
+    assert bound["verification"]["outcome"] == COMPLETED
+    assert fresh["binding"]["outcome"] == SHIPPED_EARLIER
+    assert system.bound == [] and system.observed == []
+    assert [unit for unit, _ in verifier.verified] == ["pd"]
+    assert not has_findings(summary) and not has_conditions(summary)
+
+
+def test_a_revision_that_arrives_on_a_later_attempt_is_bound_only_then(history: History) -> None:
+    """The first reads see the outgoing image; nothing may be written from them."""
+
+    class Swapping(FakeProduction):
+        def probe(self, path: str) -> Any:
+            if path == "/health/live":
+                self.revision = history.built if self.passes >= 2 else history.previous
+            return super().probe(path)
+
+    events: list[str] = []
+
+    class Recording(FakeSystem):
+        def bind(self, work_unit_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+            events.append(f"bind after {production.passes} probes")
+            return super().bind(work_unit_id, payload)
+
+    production = Swapping(None)
+    system = Recording([candidate_row(history.merge)])
+
+    summary = _run(history, system, production=production)
+
+    assert summary["production"]["attempts"] == 3
+    assert summary["production"]["served_revision"] == history.built
+    assert events == ["bind after 3 probes"]
+    [(_, observation)] = system.observed
+    assert observation["status_summary"]["status"] == "healthy"
