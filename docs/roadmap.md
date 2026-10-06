@@ -115,7 +115,6 @@ These are in no fixed order.
 | 3c-1 | Separate the runner's permitted commands from its ordered verify script. | factory-runner still runs `allowed_commands` as the script. |
 | 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Machines can register intakes (ADR-0027); the human paste survives, and packages are LLM-authored through `factory create`. |
 | L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Four producers exist; where WS-P3.5 belongs is open decision 1. |
-| 3a-1 | Admission keeps two checks; posture moves to policy. | Admission grew (reach, estate and declaration terms). Review which terms fold into `factory-policy.toml`. |
 | R9 | Net gate load is a target set per wave. | Measured in the SLO report (#359); per-wave target not yet set. |
 | 7a | Deploy is automated like the build, and migrate/swap ordering is safe by construction. | Deferred by Devon on 2026-08-02. Migrate-before-swap is safe only because no health check reads readiness. Re-decide before building. |
 

@@ -47,6 +47,10 @@ from tests.services.test_dispatch import (
     ready_unit,
     settings,
 )
+from tests.services.test_factory_policy import ADMISSION
+
+# Admission's posture terms are the shipped policy's, plus the harness's fallback change class.
+pytestmark = pytest.mark.usefixtures("harness_posture")
 
 NEW_YORK = ZoneInfo("America/New_York")
 WORKER = ActorContext("worker", ActorRole.WORKER)
@@ -60,8 +64,8 @@ DECIDED = 'decided = "2026-08-01"'
 # overlap, which is exactly the composition case §7 below needs and exactly the arrangement the
 # shipped artifact avoids.
 WINDOWED = f"""
-version = 6
-
+version = 7
+{ADMISSION}
 [reach.source_repository]
 rationale = "repository only"
 {DECIDED}

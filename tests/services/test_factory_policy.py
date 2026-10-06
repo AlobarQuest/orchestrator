@@ -19,8 +19,11 @@ from typing import Any
 import pytest
 
 from orchestrator import factory_policy
+from orchestrator.capability_vocabulary import RUNNER_CAPABILITIES
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import (
+    CAPABILITY_NOT_ENABLED,
+    CHANGE_CLASS_NOT_ALLOWED,
     PACKAGED_ARTIFACT,
     REACH_NOT_IN_POLICY,
     REACH_UNDECLARED,
@@ -30,6 +33,8 @@ from orchestrator.factory_policy import (
     load_factory_policy,
 )
 from orchestrator.reach_vocabulary import LIVE_ESTATE, REACH_VOCABULARY
+from orchestrator.services.execution import reach_admission
+from orchestrator.services.execution.reach_admission import REACH_POLICY_UNREADABLE
 
 SOURCE_ROOT = Path("src")
 MODULE_PATH = "src/orchestrator/factory_policy.py"
@@ -37,9 +42,19 @@ MODULE_PATH = "src/orchestrator/factory_policy.py"
 RATIONALE = 'rationale = "repository only"'
 DECIDED = 'decided = "2026-08-01"'
 
-VALID = f"""
-version = 6
+# Schema 7's one required table. Narrow on purpose: these tests are about the document's shape,
+# and the shipped values are pinned against production separately.
+ADMISSION = """
+[admission]
+rationale = "the posture these tests load under"
+decided = "2026-10-06"
+capabilities = ["repo.edit"]
+change_classes = ["dependency-update"]
+"""
 
+VALID = f"""
+version = 7
+{ADMISSION}
 [reach.source_repository]
 {RATIONALE}
 {DECIDED}
@@ -57,9 +72,9 @@ rationale = "the operator's own machine"
 {DECIDED}
 """
 
-ROWS_ARE_NOT_TABLES = """
-version = 6
-
+ROWS_ARE_NOT_TABLES = f"""
+version = 7
+{ADMISSION}
 [reach]
 source_repository = 1
 live_estate = 1
@@ -69,11 +84,11 @@ operator_machine = 1
 
 MALFORMED: tuple[tuple[str, str], ...] = (
     ("not toml at all", "this is not = = toml"),
-    ("no version", VALID.replace("version = 6\n", "")),
-    ("version is a string", VALID.replace("version = 6", 'version = "4"')),
-    ("version is a boolean", VALID.replace("version = 6", "version = true")),
+    ("no version", VALID.replace("version = 7\n", "")),
+    ("version is a string", VALID.replace("version = 7", 'version = "4"')),
+    ("version is a boolean", VALID.replace("version = 7", "version = true")),
     ("an unknown top-level key", VALID + '\nlease = "15m"\n'),
-    ("no reach table", "version = 6\n"),
+    ("no reach table", f"version = 7\n{ADMISSION}"),
     ("a missing row", VALID.replace("[reach.external_system]", "[reach.spare]")),
     ("an unknown row", VALID + f'\n[reach.invented]\nrationale = "x"\n{DECIDED}\n'),
     ("a row that is not a table", ROWS_ARE_NOT_TABLES),
@@ -88,6 +103,34 @@ MALFORMED: tuple[tuple[str, str], ...] = (
     ("a rationale that is not a string", VALID.replace(RATIONALE, "rationale = 7")),
     ("an unquoted TOML date", VALID.replace(DECIDED, "decided = 2026-08-01", 1)),
     ("a decided value that is not a date", VALID.replace(DECIDED, 'decided = "soon"', 1)),
+    # Schema 7. The admission table has no implicit default: absent is a load failure, never an
+    # empty posture, and every field is required.
+    ("no admission table", VALID.replace(ADMISSION, "")),
+    (
+        "an admission table missing a list",
+        VALID.replace('change_classes = ["dependency-update"]\n', ""),
+    ),
+    (
+        "an admission table with an extra field",
+        VALID.replace(ADMISSION, ADMISSION + 'note = "x"\n'),
+    ),
+    # A string is iterable, so it must be refused as a string -- "software" has no repeated letter,
+    # so read as a list it would load as eight one-letter change classes.
+    ("an admission list that is a string", VALID.replace('["dependency-update"]', '"software"')),
+    ("an admission decided value that is not a date", VALID.replace('"2026-10-06"', '"soon"')),
+    ("an admission entry that is not a string", VALID.replace('["repo.edit"]', "[7]")),
+    ("an empty admission entry", VALID.replace('["dependency-update"]', '[" "]')),
+    ("a padded admission entry", VALID.replace('["dependency-update"]', '["dependency-update "]')),
+    (
+        "an admission entry named twice",
+        VALID.replace('["dependency-update"]', '["dependency-update", "dependency-update"]'),
+    ),
+    # A capability the orchestrator accepts but no runner performs: the bound is the RUNNER's set.
+    (
+        "a capability no runner performs",
+        VALID.replace('["repo.edit"]', '["post_deploy_verification"]'),
+    ),
+    ("an empty admission rationale", VALID.replace('"the posture these tests load under"', '" "')),
 )
 
 
@@ -105,7 +148,7 @@ def write(tmp_path: Path, text: str) -> Path:
 def test_the_shipped_artifact_loads_and_covers_every_reach_member() -> None:
     policy = load_factory_policy()
 
-    assert policy.version == 6
+    assert policy.version == 7
     assert set(policy.rows) == set(REACH_VOCABULARY)
     assert all(row.rationale and row.decided for row in policy.rows.values())
 
@@ -125,7 +168,7 @@ def test_the_artifact_ships_beside_the_module_that_reads_it() -> None:
 def test_a_valid_artifact_loads_the_control_for_every_malformation(tmp_path: Path) -> None:
     policy = load_factory_policy(write(tmp_path, VALID))
 
-    assert policy.version == 6
+    assert policy.version == 7
     assert sorted(policy.rows) == sorted(REACH_VOCABULARY)
 
 
@@ -153,10 +196,10 @@ def test_an_absent_artifact_is_a_named_failure_not_an_empty_policy(tmp_path: Pat
 
 
 def test_an_unknown_schema_version_fails_closed(tmp_path: Path) -> None:
-    assert load_factory_policy(write(tmp_path, VALID)).version == 6  # control
+    assert load_factory_policy(write(tmp_path, VALID)).version == 7  # control
 
     with pytest.raises(DomainError) as raised:
-        load_factory_policy(write(tmp_path, VALID.replace("version = 6", "version = 7")))
+        load_factory_policy(write(tmp_path, VALID.replace("version = 7", "version = 8")))
 
     assert raised.value.code == "factory_policy_version_unsupported"
 
@@ -165,7 +208,7 @@ def test_a_version_below_the_supported_one_fails_closed_too(tmp_path: Path) -> N
     # Compatibility is an exact set, not a floor: an artifact at an OLDER schema is as unreadable
     # as a newer one, because this loader was not written against its shape either.
     with pytest.raises(DomainError) as raised:
-        load_factory_policy(write(tmp_path, VALID.replace("version = 6", "version = 2")))
+        load_factory_policy(write(tmp_path, VALID.replace("version = 7", "version = 6")))
 
     assert raised.value.code == "factory_policy_version_unsupported"
 
@@ -353,10 +396,12 @@ def test_no_second_copy_of_the_artifact_values_exists_in_the_source_tree() -> No
     policy = load_factory_policy()
     sources = {path: path.read_text(encoding="utf-8") for path in sorted(SOURCE_ROOT.rglob("*.py"))}
 
-    for row in policy.rows.values():
-        fingerprint = " ".join(row.rationale.split()[:8])
+    rationales = {row.member: row.rationale for row in policy.rows.values()}
+    rationales["admission"] = policy.admission.rationale
+    for owner, rationale in rationales.items():
+        fingerprint = " ".join(rationale.split()[:8])
         holders = [str(path) for path, text in sources.items() if fingerprint in text]
-        assert holders == [], f"{row.member}'s rationale also lives in {holders}"
+        assert holders == [], f"{owner}'s rationale also lives in {holders}"
 
     readers = [str(path) for path, text in sources.items() if PACKAGED_ARTIFACT.name in text]
     assert readers == [MODULE_PATH]
@@ -377,6 +422,105 @@ def test_the_artifact_is_pinned_to_the_reach_vocabulary_not_a_second_copy_of_it(
 
 
 # ---------------------------------------------------------------------------------------------
+# Schema 7: what kind of work admission takes, as two withholding sets
+# ---------------------------------------------------------------------------------------------
+
+
+def test_the_shipped_posture_is_the_one_production_enforced_from_its_settings() -> None:
+    """Carried over unchanged on 2026-10-06, so the move changed no admission answer.
+
+    The source is the standing decisions recorded in `docs/operations/driving-a-unit.md` (#66,
+    container-verified 2026-08-04). Widening either set is a standing authority decision, so this
+    pin is meant to fail on any edit that makes one without also editing the test.
+    """
+    admission = load_factory_policy().admission
+
+    assert admission.capabilities == {"github.pr.create", "repo.edit"}
+    assert admission.change_classes == {
+        "dependency-update",
+        "maintenance-remediation",
+        "software-delivery",
+    }
+    assert admission.rationale and admission.decided
+
+
+def test_a_named_capability_and_change_class_draw_no_posture_objection() -> None:
+    # The control for the three refusals below, on the same document.
+    assert load_factory_policy().posture_refusal("repo.edit", "dependency-update") is None
+
+
+def test_a_capability_nobody_named_draws_its_objection() -> None:
+    policy = load_factory_policy()
+
+    assert policy.posture_refusal("command.run", "dependency-update") == CAPABILITY_NOT_ENABLED
+
+
+def test_a_change_class_nobody_named_draws_its_objection() -> None:
+    policy = load_factory_policy()
+
+    assert policy.posture_refusal("repo.edit", "infrastructure-change") == CHANGE_CLASS_NOT_ALLOWED
+
+
+def test_a_unit_with_no_change_class_is_refused_on_its_capability_name() -> None:
+    # Admission matches an envelope with no change class on its `required_capability`, and no
+    # capability name is a change class the shipped document names -- so omission never admits.
+    policy = load_factory_policy()
+
+    for capability in policy.admission.capabilities:
+        assert policy.posture_refusal(capability, capability) == CHANGE_CLASS_NOT_ALLOWED
+
+
+def test_the_capability_objection_is_reported_before_the_change_class_one() -> None:
+    assert load_factory_policy().posture_refusal("command.run", "invented") == (
+        CAPABILITY_NOT_ENABLED
+    )
+
+
+def test_an_empty_posture_refuses_every_value_rather_than_none(tmp_path: Path) -> None:
+    """The reading an unset list always had: empty withholds nothing, so everything is refused."""
+    empty = VALID.replace('["repo.edit"]', "[]").replace('["dependency-update"]', "[]")
+    policy = load_factory_policy(write(tmp_path, empty))
+
+    assert policy.admission.capabilities == frozenset()
+    assert policy.posture_refusal("repo.edit", "dependency-update") == CAPABILITY_NOT_ENABLED
+    only_classes_empty = VALID.replace('["dependency-update"]', "[]")
+    narrowed = load_factory_policy(write(tmp_path, only_classes_empty))
+    assert narrowed.posture_refusal("repo.edit", "dependency-update") == CHANGE_CLASS_NOT_ALLOWED
+
+
+def test_every_runner_capability_may_be_named_the_control_for_the_bound(tmp_path: Path) -> None:
+    # The bound refuses names outside the runner's vocabulary; this shows it admits the whole of it,
+    # so the malformation above fails for the bound and not for some other shape.
+    names = ", ".join(f'"{name}"' for name in sorted(RUNNER_CAPABILITIES))
+    policy = load_factory_policy(write(tmp_path, VALID.replace('["repo.edit"]', f"[{names}]")))
+
+    assert policy.admission.capabilities == RUNNER_CAPABILITIES
+
+
+def test_the_posture_reader_refuses_when_the_artifact_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unreachable through admission -- the reach term reports the same fault first -- so here."""
+    assert reach_admission.posture_refusal("repo.edit", "dependency-update") is None  # control
+
+    def unreadable() -> FactoryPolicy:
+        raise DomainError("factory_policy_invalid", "the policy artifact is invalid", "correct it")
+
+    monkeypatch.setattr(reach_admission, "load_factory_policy", unreadable)
+
+    assert reach_admission.posture_refusal("repo.edit", "dependency-update") == (
+        REACH_POLICY_UNREADABLE
+    )
+
+
+def test_the_posture_reader_answers_from_the_shipped_artifact() -> None:
+    assert reach_admission.posture_refusal("command.run", "dependency-update") == (
+        CAPABILITY_NOT_ENABLED
+    )
+    assert reach_admission.posture_refusal("repo.edit", "repo.edit") == CHANGE_CLASS_NOT_ALLOWED
+
+
+# ---------------------------------------------------------------------------------------------
 # The report the production caller serves
 # ---------------------------------------------------------------------------------------------
 
@@ -384,10 +528,16 @@ def test_the_artifact_is_pinned_to_the_reach_vocabulary_not_a_second_copy_of_it(
 def test_the_report_names_the_version_the_source_and_every_row() -> None:
     report: dict[str, Any] = load_factory_policy().report()
 
-    assert report["version"] == 6
+    assert report["version"] == 7
     assert report["source"] == PACKAGED_ARTIFACT.name
     assert [row["member"] for row in report["reach"]] == sorted(REACH_VOCABULARY)
     assert all(isinstance(row["rationale"], str) and row["rationale"] for row in report["reach"])
+    assert report["admission"]["capabilities"] == ["github.pr.create", "repo.edit"]
+    assert report["admission"]["change_classes"] == [
+        "dependency-update",
+        "maintenance-remediation",
+        "software-delivery",
+    ]
 
 
 def test_a_rationale_reaches_the_report_as_one_line() -> None:

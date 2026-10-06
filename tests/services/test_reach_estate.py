@@ -46,6 +46,9 @@ from tests.services.test_dispatch import (
     settings,
 )
 
+# Admission's posture terms are the shipped policy's, plus the harness's fallback change class.
+pytestmark = pytest.mark.usefixtures("harness_posture")
+
 CHANGE_MANAGER = "AlobarQuest/change-manager"
 ORCHESTRATOR = "AlobarQuest/orchestrator"
 INTENT_PACKAGES = "AlobarQuest/intent-packages"

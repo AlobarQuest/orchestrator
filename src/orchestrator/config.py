@@ -15,8 +15,6 @@ class Settings(BaseSettings):
     # meant to stop, and nothing reports it. Setting the variable to false still stops the lane,
     # fail-closed, with a named refusal; what changed is only what ABSENCE means.
     dispatch_enabled: bool = True
-    dispatch_allowed_change_classes: frozenset[str] = Field(default_factory=frozenset)
-    dispatch_enabled_capabilities: frozenset[str] = Field(default_factory=frozenset)
     # The workflow-dispatch endpoint takes a workflow file NAME or numeric id, not a path.
     # A path adds URL segments and GitHub answers 404, which is indistinguishable from a
     # missing workflow and opens the failure-signature circuit breaker after three tries.

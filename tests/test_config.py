@@ -55,3 +55,21 @@ def test_a_lane_switch_is_off_when_its_variable_says_false(monkeypatch, field, v
     """The variable survives as the off switch, and it is the only way to stop a lane."""
     monkeypatch.setenv(variable, "false")
     assert getattr(Settings(database_url=DB_URL), field) is False
+
+
+@pytest.mark.parametrize(
+    "variable",
+    ["ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES", "ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES"],
+)
+def test_the_retired_posture_variables_are_read_by_nothing(monkeypatch, variable) -> None:
+    """ADR-0053. The lists live in the policy artifact; a leftover variable is not a field, does not
+    fail boot, and so cannot widen anything -- which is why deleting it from a deployment can happen
+    in either order with the release."""
+    monkeypatch.setenv(variable, '["command.run", "anything"]')
+    settings = Settings(database_url=DB_URL)
+
+    assert not any(
+        name in Settings.model_fields
+        for name in ("dispatch_enabled_capabilities", "dispatch_allowed_change_classes")
+    )
+    assert "anything" not in settings.model_dump_json()

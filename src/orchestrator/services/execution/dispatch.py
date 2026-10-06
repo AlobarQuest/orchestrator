@@ -26,6 +26,7 @@ from orchestrator.services.execution.factory_target import FactoryTargetSource
 from orchestrator.services.execution.reach_admission import (
     change_window_refusal,
     estate_refusal,
+    posture_refusal,
     reach_admission_refusal,
 )
 from orchestrator.services.github_app import GitHubAppTokenError
@@ -41,9 +42,9 @@ TARGET_REPOSITORY_DECLARATION_UNREADABLE = "target_repository_declaration_unread
 
 @dataclass(frozen=True)
 class DispatchSettings:
+    # Which capabilities and change classes are taken at all is not a setting: it is policy's, read
+    # per admission (schema 7). The off-switch stays here.
     enabled: bool
-    allowed_change_classes: frozenset[str]
-    enabled_capabilities: frozenset[str]
     workflow_id: str
     workflow_ref: str
     # Whether the App credentials are configured — never the credentials themselves, so no
@@ -414,7 +415,7 @@ def _blocked_reason(
         return AdmissionDecision(estate_reason, target_repository)
     if unit.authority_approval_id is None and gate.refusals:
         return AdmissionDecision("authority_approval_missing", target_repository)
-    envelope_reason = _envelope_reason(unit, settings, envelope, target_repository, target_source)
+    envelope_reason = _envelope_reason(unit, envelope, target_repository, target_source)
     window, overridden = suppressed(window_refusal, change_window_override)
     return AdmissionDecision(
         envelope_reason or window,
@@ -431,7 +432,6 @@ def _blocked_reason(
 
 def _envelope_reason(
     unit: WorkUnit,
-    settings: DispatchSettings,
     envelope: AuthorityEnvelope,
     target_repository: str,
     target_source: FactoryTargetSource,
@@ -459,12 +459,18 @@ def _envelope_reason(
     makes, and it is asked only once every cheaper term has passed. Both `False` and "could not
     tell" refuse, under different names: one needs the repository to declare itself a target, the
     other needs somebody to look at why the declaration could not be read.
+
+    **What kind of work is taken at all is policy's (schema 7), not this process's settings.** The
+    capability and change-class terms are read from the policy artifact here, first among the
+    envelope terms as they always were. Policy names the values that withhold each objection, so
+    it can narrow this lane and cannot open it: the off-switch above and every term below still
+    apply to a unit whose capability and change class it names.
     """
-    if unit.required_capability not in settings.enabled_capabilities:
-        return "capability_not_enabled"
-    change_class = _change_class(envelope, unit.required_capability)
-    if change_class not in settings.allowed_change_classes:
-        return "change_class_not_allowed"
+    posture = posture_refusal(
+        unit.required_capability, _change_class(envelope, unit.required_capability)
+    )
+    if posture is not None:
+        return posture
     if envelope.level_for(unit.required_capability) != "allowed":
         return "capability_not_authorized"
     if not set(envelope.capabilities).issubset(RUNNER_CAPABILITIES):

@@ -49,6 +49,9 @@ from tests.services.target_doubles import (
 )
 from tests.services.test_authority_known_good import uv_bump
 
+# Admission's posture terms are the shipped policy's, plus the harness's fallback change class.
+pytestmark = pytest.mark.usefixtures("harness_posture")
+
 PILOT_REPOSITORY = "AlobarQuest/orchestrator"
 GREEN_CONFORMANCE: dict[str, object] = {
     "status": "green",
@@ -97,8 +100,6 @@ class FakeGitHubDispatcher:
 def settings(**overrides: object) -> DispatchSettings:
     values = {
         "enabled": True,
-        "allowed_change_classes": frozenset({"repo.edit"}),
-        "enabled_capabilities": frozenset({"repo.edit"}),
         "workflow_id": "factory-runner-pilot.yml",
         "workflow_ref": "main",
         "github_app_configured": True,
@@ -257,7 +258,7 @@ def test_dispatch_skips_legacy_invalid_dependency_update_authority(
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(allowed_change_classes=frozenset({"dependency-update"})),
+        settings(),
         github,
         inert_source(),
         target_source=declared_source(),
@@ -305,7 +306,7 @@ def test_dispatch_blocks_a_legacy_capability_outside_the_runner_vocabulary(
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(allowed_change_classes=frozenset({"dependency-update"})),
+        settings(),
         github,
         inert_source(),
         target_source=declared_source(),
@@ -966,13 +967,6 @@ def recognised_unit(
     return unit
 
 
-def recognising_settings(**overrides: object) -> DispatchSettings:
-    return settings(
-        allowed_change_classes=frozenset({"dependency-update"}),
-        **overrides,
-    )
-
-
 def gate_events(session: Session, unit_id: uuid.UUID) -> list[Event]:
     return list(
         session.scalars(
@@ -993,7 +987,7 @@ def test_a_unit_nobody_approved_is_admitted_when_policy_recognises_its_envelope(
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        recognising_settings(),
+        settings(),
         github,
         inert_source(),
         target_source=declared_source(),
@@ -1025,7 +1019,7 @@ def test_the_same_unit_is_refused_when_no_pattern_recognises_its_envelope(
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        recognising_settings(),
+        settings(),
         github,
         inert_source(),
         target_source=declared_source(),
@@ -1057,7 +1051,7 @@ def test_a_unit_whose_package_declared_no_reach_is_refused_and_still_needs_a_hum
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        recognising_settings(),
+        settings(),
         github,
         inert_source(),
         target_source=declared_source(),
@@ -1081,7 +1075,7 @@ def test_a_lifted_gate_never_writes_an_approval_row(migrated_session: Session) -
     dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        recognising_settings(),
+        settings(),
         FakeGitHubDispatcher([]),
         inert_source(),
         target_source=declared_source(),
@@ -1105,7 +1099,7 @@ def test_a_lifted_gate_leaves_a_record_that_is_not_an_approval(
     dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        recognising_settings(),
+        settings(),
         FakeGitHubDispatcher([]),
         inert_source(),
         target_source=declared_source(),
@@ -1160,7 +1154,7 @@ def test_the_off_switch_outranks_a_recognising_pattern(migrated_session: Session
     blocked = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id, attempt=1),
-        recognising_settings(enabled=False),
+        settings(enabled=False),
         github,
         inert_source(),
         target_source=declared_source(),
@@ -1168,7 +1162,7 @@ def test_the_off_switch_outranks_a_recognising_pattern(migrated_session: Session
     admitted = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id, attempt=2),
-        recognising_settings(enabled=True),
+        settings(enabled=True),
         github,
         inert_source(),
         target_source=declared_source(),
@@ -1216,7 +1210,7 @@ def test_dispatch_blocks_a_capability_level_the_runner_refuses(
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(allowed_change_classes=frozenset({"dependency-update"})),
+        settings(),
         github,
         inert_source(),
         target_source=declared_source(),
@@ -1254,7 +1248,7 @@ def test_dispatch_blocks_an_envelope_field_the_runner_forbids(
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
-        settings(allowed_change_classes=frozenset({"dependency-update"})),
+        settings(),
         github,
         inert_source(),
         target_source=declared_source(),

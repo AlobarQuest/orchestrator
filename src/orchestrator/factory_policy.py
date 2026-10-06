@@ -71,6 +71,21 @@ is shortened only when every member of it was decided to be shorter -- which non
 number.** :meth:`FactoryPolicy.lease_for` is consulted after work has already been admitted,
 claimed and sent; it cannot cause work to run that the hard off-switch refuses, because it is never
 asked whether work may run.
+
+**Schema version 7 moves what kind of work the factory takes at all into this document, and it is
+written the way known-good patterns are: as objections a declared set withholds.** Every unit's
+``required_capability`` draws ``capability_not_enabled`` and every change class draws
+``change_class_not_allowed``; a value named in ``[admission]`` withholds that one objection and
+nothing else. Two things follow, and both are what made the move safe. An empty list withholds
+nothing, so it refuses every value -- the reading the process settings these lists came from gave an
+unset variable, so moving them changed no answer. And withholding one term leaves every other term
+standing: the off-switch, the runner-vocabulary and level checks on the envelope, the authority and
+conformance terms. The capabilities are also bounded by a set this build owns, as a lease is: a
+name outside ``RUNNER_CAPABILITIES`` stops the document loading, so this table can never name work
+no runner performs. Change classes are free strings and have no such vocabulary to be bounded by.
+The table is top-level rather than per reach row because the question it answers -- what kind of
+work this factory takes -- is the same whatever the work touches; four rows would be four copies of
+one value, and keying it on reach would be a new dimension nobody decided.
 """
 
 from __future__ import annotations
@@ -85,6 +100,7 @@ from typing import Any, Final
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from orchestrator.capability_vocabulary import RUNNER_CAPABILITIES
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityEnvelope
 from orchestrator.kernel.leases import DEFAULT_LEASE, LEASE_CEILING
@@ -97,7 +113,7 @@ PACKAGED_ARTIFACT: Final[Path] = Path(__file__).parent / "factory-policy.toml"
 # narrowing the new version introduced, which is the permissive reading of a version skew. A new
 # version is therefore a coordinated change -- the loader learns it in the same commit that ships
 # the document at it and the code that reads its new field.
-SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({6})
+SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({7})
 
 # Why policy objects. These are the whole output vocabulary of this module.
 REACH_UNDECLARED: Final = "reach_undeclared"
@@ -105,10 +121,13 @@ REACH_UNRECOGNISED: Final = "reach_unrecognised"
 REACH_NOT_IN_POLICY: Final = "reach_not_in_policy"
 AUTHORITY_ENVELOPE_NOVEL: Final = "authority_envelope_novel"
 OUTSIDE_CHANGE_WINDOW: Final = "outside_change_window"
+CAPABILITY_NOT_ENABLED: Final = "capability_not_enabled"
+CHANGE_CLASS_NOT_ALLOWED: Final = "change_class_not_allowed"
 
 _ROW_REQUIRED_FIELDS = frozenset({"rationale", "decided"})
 _ROW_OPTIONAL_FIELDS = frozenset({"known_good", "change_window", "lease"})
-_TOP_LEVEL_FIELDS = frozenset({"version", "reach"})
+_TOP_LEVEL_FIELDS = frozenset({"version", "admission", "reach"})
+_ADMISSION_FIELDS = frozenset({"rationale", "decided", "capabilities", "change_classes"})
 _WINDOW_FIELDS = frozenset({"rationale", "decided", "timezone", "start", "end"})
 _LEASE_FIELDS = frozenset({"rationale", "decided", "minutes"})
 _PATTERN_FIELDS = frozenset(
@@ -228,6 +247,21 @@ class Lease:
 
 
 @dataclass(frozen=True)
+class AdmissionPosture:
+    """What kind of work this factory takes at all, as two sets that withhold an objection.
+
+    Not a grant. Every capability and change class draws its objection unless it is named here, so
+    an empty set objects to every value -- and withholding either objection leaves every other
+    admission term exactly where it was.
+    """
+
+    rationale: str
+    decided: date
+    capabilities: frozenset[str]
+    change_classes: frozenset[str]
+
+
+@dataclass(frozen=True)
 class ReachPolicy:
     """One row -- everything policy currently says about a single reach member."""
 
@@ -259,7 +293,22 @@ class FactoryPolicy:
 
     version: int
     source: str
+    admission: AdmissionPosture
     rows: Mapping[str, ReachPolicy]
+
+    def posture_refusal(self, required_capability: str, change_class: str) -> str | None:
+        """Why policy objects to this kind of work; ``None`` means it raises no objection.
+
+        Two terms, asked in the order admission has always reported them: a capability nobody named
+        draws its objection before the change class is looked at, so an operator is sent to the
+        first thing that is wrong. Neither set is consulted for anything but membership, so naming
+        a value can only withhold that one objection.
+        """
+        if required_capability not in self.admission.capabilities:
+            return CAPABILITY_NOT_ENABLED
+        if change_class not in self.admission.change_classes:
+            return CHANGE_CLASS_NOT_ALLOWED
+        return None
 
     def refusals_for(self, reach: Sequence[str] | None) -> tuple[str, ...]:
         """Why this policy objects to work of the given reach; empty means it does not object.
@@ -417,6 +466,12 @@ class FactoryPolicy:
         return {
             "version": self.version,
             "source": self.source,
+            "admission": {
+                "rationale": self.admission.rationale,
+                "decided": self.admission.decided,
+                "capabilities": sorted(self.admission.capabilities),
+                "change_classes": sorted(self.admission.change_classes),
+            },
             # Without these two an operator cannot read a row's `lease: null`: it means "the
             # default applies", and the default lives in the image rather than in the document.
             # The ceiling is served alongside because it is the other half of what a row may say.
@@ -630,6 +685,7 @@ def load_factory_policy(path: Path = PACKAGED_ARTIFACT) -> FactoryPolicy:
     return FactoryPolicy(
         version=_schema_version(document),
         source=path.name,
+        admission=_admission(document),
         rows=_rows(document),
     )
 
@@ -650,6 +706,46 @@ def _schema_version(document: Mapping[str, Any]) -> int:
             "ship a build that knows this schema version, or restore the artifact to one it does",
         )
     return version
+
+
+def _admission(document: Mapping[str, Any]) -> AdmissionPosture:
+    """The ``[admission]`` table, which must be present and declare exactly its four fields.
+
+    Absent is a load failure rather than an empty posture, for the reason every other absence here
+    is: there is no implicit default, and a document that does not load permits nothing. An EMPTY
+    list is different and is allowed -- it is a decision that this factory takes no such work, and
+    it reads the same way an unset list always has, as refusing every value.
+    """
+    value = document.get("admission")
+    if not isinstance(value, dict) or set(value) != _ADMISSION_FIELDS:
+        raise _invalid(
+            "`[admission]` must be a table declaring exactly "
+            + ", ".join(sorted(_ADMISSION_FIELDS))
+        )
+    capabilities = _member_set("admission", "capabilities", value["capabilities"])
+    outside = sorted(capabilities - RUNNER_CAPABILITIES)
+    if outside:
+        raise _invalid(
+            "`admission.capabilities` names work no runner performs: " + ", ".join(outside)
+        )
+    return AdmissionPosture(
+        rationale=_text("admission", "rationale", value["rationale"]),
+        decided=_decided("admission", value["decided"]),
+        capabilities=capabilities,
+        change_classes=_member_set("admission", "change_classes", value["change_classes"]),
+    )
+
+
+def _member_set(where: str, field: str, value: object) -> frozenset[str]:
+    """A list of distinct non-empty strings, possibly empty. A repeat is a typo, not a decision."""
+    if not isinstance(value, list):
+        raise _invalid(f"`{where}.{field}` must be an array of strings")
+    for entry in value:
+        if not isinstance(entry, str) or not entry.strip() or entry != entry.strip():
+            raise _invalid(f"`{where}.{field}` entries must be non-empty strings without padding")
+    if len(set(value)) != len(value):
+        raise _invalid(f"`{where}.{field}` names the same value twice")
+    return frozenset(value)
 
 
 def _rows(document: Mapping[str, Any]) -> Mapping[str, ReachPolicy]:

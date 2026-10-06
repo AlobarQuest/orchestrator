@@ -37,8 +37,6 @@ Every other admission term fails closed; the kill switch itself defaults ON (ADR
 - `ORCHESTRATOR_DISPATCH_ENABLED`: global kill switch. Defaults to `true`; set it to `false`
   to stop dispatch (refused as `dispatch_disabled`).
   Read once per process (`get_settings` is `lru_cache`d), so flipping it needs a restart.
-- `ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES`: allowlisted change classes.
-- `ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES`: allowlisted runner capabilities.
 - `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`: workflow **file name** or numeric ID, default
   `factory-runner-pilot.yml`. Not a path — `POST /actions/workflows/{workflow_id}/dispatches`
   answers 404 for a path, which is indistinguishable from a missing workflow.
@@ -51,8 +49,16 @@ Every other admission term fails closed; the kill switch itself defaults ON (ADR
 - `ORCHESTRATOR_DISPATCH_FAILURE_SIGNATURE_THRESHOLD`: same-signature failure threshold, default `3`.
 - `ORCHESTRATOR_DISPATCH_HUMAN_GATE_AGE_OUT_SECONDS`: optional age-out evidence threshold for human-gate states.
 
-The frozenset-valued variables are parsed as JSON, e.g.
-`ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES='["repo.edit"]'`.
+Which capabilities and change classes are dispatched at all is not an environment setting. It is
+the `[admission]` table of `src/orchestrator/factory-policy.toml` (schema 7, ADR-0053), read on
+every admission and served at `GET /api/v1/factory-policy` under `admission`. A value outside
+either list is refused as `capability_not_enabled` or `change_class_not_allowed`; an empty list
+refuses every value. Changing either list is an edit to that file and ships as a release. The
+former `ORCHESTRATOR_DISPATCH_ENABLED_CAPABILITIES` and
+`ORCHESTRATOR_DISPATCH_ALLOWED_CHANGE_CLASSES` variables are ignored by an image carrying schema 7.
+Delete them from the deployment only after that image is verified, and keep them through the
+rollback window: an older image started without them reads both lists as empty and refuses every
+unit.
 
 The GitHub credential must be provided only through the approved BWS/Coolify secret
 path. Do not store raw tokens in tracked files, prompts, logs, package YAML,
@@ -73,9 +79,9 @@ A work unit is dispatchable only when all of these are true:
 - the GitHub App dispatch credentials are configured;
 - the unit is `ready`;
 - an approved authority envelope is recorded on the unit;
-- the unit capability and change class are allowlisted;
-- the unit declares `authority.constraints.target_repository`, and that repository is
-  allowlisted;
+- the unit capability and change class are named in the policy artifact's `[admission]` table;
+- the unit declares `authority.constraints.target_repository`, and that repository declares
+  itself a target in its own `factory-target.toml`;
 - the unit's own conformance claim is green, or every touched standard is explicitly
   accepted in it.
 

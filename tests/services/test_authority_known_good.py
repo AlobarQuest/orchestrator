@@ -27,6 +27,7 @@ from orchestrator.factory_policy import (
 )
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.reach_vocabulary import REACH_VOCABULARY
+from tests.services.test_factory_policy import ADMISSION
 
 UNIT_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 RECOGNISED_REPOSITORY = "AlobarQuest/change-manager"
@@ -309,8 +310,8 @@ command_prefixes = ["uv add"]
 """
 
 VALID_V2 = f"""
-version = 6
-
+version = 7
+{ADMISSION}
 [reach.source_repository]
 rationale = "repository only"
 decided = "2026-08-01"
@@ -375,7 +376,7 @@ def write(tmp_path: Path, text: str) -> Path:
 def test_a_valid_v2_artifact_loads_the_control_for_every_malformation(tmp_path: Path) -> None:
     policy = load_factory_policy(write(tmp_path, VALID_V2))
 
-    assert policy.version == 6
+    assert policy.version == 7
     assert [pattern.name for pattern in policy.rows["source_repository"].known_good] == ["example"]
     assert policy.rows["live_estate"].known_good == ()
 

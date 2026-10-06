@@ -42,8 +42,6 @@ def dispatch_route(
     credentials = github_app_credentials_for(settings)
     dispatch_settings = DispatchSettings(
         enabled=settings.dispatch_enabled,
-        allowed_change_classes=settings.dispatch_allowed_change_classes,
-        enabled_capabilities=settings.dispatch_enabled_capabilities,
         workflow_id=settings.dispatch_workflow_id,
         workflow_ref=settings.dispatch_workflow_ref,
         github_app_configured=credentials is not None,

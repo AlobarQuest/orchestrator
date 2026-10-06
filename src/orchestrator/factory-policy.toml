@@ -127,8 +127,39 @@
 # only makes the unit reclaimable by somebody who asks. The lease was never
 # bounding that and tuning it does not begin to. The hole is real and it is
 # WS-P2.19's.
+#
+# WHAT KIND OF WORK THE FACTORY TAKES IS A WITHHOLDING SET, NOT A GRANT (schema 7).
+# `[admission]` lists the capabilities and change classes admission raises no
+# objection to, and it reads exactly as a known-good pattern does: every unit's
+# capability draws `capability_not_enabled` and every change class draws
+# `change_class_not_allowed`, and a name listed here only withholds that one
+# objection. Nothing else moves — the off-switch, the envelope's own checks and
+# the human authority gate all still apply. An EMPTY list withholds nothing and so
+# refuses every value; a MISSING table stops this file loading. A capability the
+# runner vocabulary does not know is a load failure too, so this table cannot name
+# work no runner performs. Change classes are free strings and nothing bounds them
+# but this list, which is why adding one is a standing authority decision, made
+# here, dated and reasoned, and shipped as a release.
+#
+# IT IS TOP-LEVEL, NOT PER REACH ROW, because the question is the same whatever the
+# work touches. Four rows would be four copies of one value, and keying the list on
+# reach would be a new restriction nobody decided.
 
-version = 6
+version = 7
+
+[admission]
+rationale = """
+The work this factory has been decided to take, carried over unchanged from the
+deployment settings it was held in until 2026-10-06. Two capabilities: editing a
+repository and opening a pull request against it, the two a runner's work begins
+from. Three change classes, each added by a standing decision: dependency-update
+first, maintenance-remediation on 2026-08-03, software-delivery on 2026-08-04.
+A unit with no change class is matched on its capability name, which names no
+change class below, so it is refused rather than admitted by omission.
+"""
+decided = "2026-10-06"
+capabilities = ["github.pr.create", "repo.edit"]
+change_classes = ["dependency-update", "maintenance-remediation", "software-delivery"]
 
 [reach.source_repository]
 rationale = """
