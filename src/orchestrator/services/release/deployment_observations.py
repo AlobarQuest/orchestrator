@@ -3,10 +3,17 @@ import re
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
-from typing import Any, Literal, get_args
+from typing import Annotated, Any, Literal, get_args
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    ValidationError,
+)
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -89,12 +96,28 @@ class _Summary(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-NON_BLANK = r"\S"
+def _non_blank(value: str) -> str:
+    """The evaluator's test, verbatim: a value that is empty once stripped is no value. A regex
+    `\\S` is not the same test: `str.strip` also removes U+001C-U+001F, which `\\S` matches."""
+    if not value.strip():
+        raise ValueError("must contain a non-whitespace character")
+    return value
+
+
+def _exact_int(value: object) -> object:
+    """Refuse anything but an `int` before a `Literal` sees it. A `Literal` compares by equality,
+    so `401.0` (and `True` against `1`) would otherwise pass and be stored as sent."""
+    if type(value) is not int:
+        raise ValueError("must be an integer")
+    return value
+
+
+NonBlank = Annotated[str, Field(min_length=1), AfterValidator(_non_blank)]
 
 
 class Probe(_Summary):
     name: str = Field(min_length=1)
-    endpoint: str = Field(pattern=NON_BLANK)
+    endpoint: NonBlank
     method: str = Field(min_length=1)
     # Text, not a datetime: the summary is stored exactly as it was sent, and a parsed timestamp
     # would come back out reformatted, which an idempotent retry would read as different facts.
@@ -107,7 +130,7 @@ class ProbeSummary(_Summary):
 
 
 class Route(_Summary):
-    path: str = Field(pattern=NON_BLANK)
+    path: NonBlank
     present: bool
 
 
@@ -116,8 +139,8 @@ class RouteSummary(_Summary):
 
 
 class AuthSummary(_Summary):
-    missing_m2m_status: Literal[401]
-    configured_m2m_status: Literal[200] | None = None
+    missing_m2m_status: Annotated[Literal[401], BeforeValidator(_exact_int)]
+    configured_m2m_status: Annotated[Literal[200], BeforeValidator(_exact_int)] | None = None
 
 
 class DispatchSummary(_Summary):
@@ -129,7 +152,7 @@ class DispatchSummary(_Summary):
 
 
 class StatusSummary(_Summary):
-    status: str = Field(pattern=NON_BLANK)
+    status: NonBlank
     summary: str
 
 

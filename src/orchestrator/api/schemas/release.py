@@ -6,6 +6,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_validator,
 )
 
 from orchestrator.api.schemas.common import CommandBase
@@ -77,6 +78,21 @@ class DeploymentObservationCommandModel(CommandBase):
     dispatch_summary: DispatchSummary | None = None
     status_summary: StatusSummary | None = None
     activation_summary: ActivationSummary | None = None
+
+    @field_validator(
+        "probe_summary",
+        "route_summary",
+        "auth_summary",
+        "dispatch_summary",
+        "status_summary",
+        "activation_summary",
+        mode="before",
+    )
+    @classmethod
+    def _empty_is_absent(cls, value: object) -> object:
+        """An explicit `{}` is the absent summary, as it was when these fields were dicts: the
+        service stores and compares `{}` for a summary nobody sent, so the two must not differ."""
+        return None if isinstance(value, dict) and not value else value
 
     def stored_summaries(self) -> dict[str, dict[str, Any]]:
         """Each summary as the service stores it: exactly the keys the caller sent, `{}` for none.

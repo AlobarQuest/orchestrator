@@ -1,9 +1,15 @@
+import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
+from sqlalchemy.orm import Session
 
+from orchestrator.kernel.states import ActorContext, ActorRole
+from orchestrator.persistence.models import DeploymentObservation
+from orchestrator.services.release import deployment_observations
 from tests.api.test_lifecycle_api import SYSTEM, VERIFIER, WORKER
 from tests.api.test_release_artifacts_api import completed_unit, release_body
 
@@ -408,3 +414,124 @@ def test_the_route_refuses_a_hosted_row_carrying_an_activation_summary(
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "deployment_observation_invalid"
     assert "activation summary" in response.json()["error"]["message"]
+
+
+def test_a_row_stored_before_the_declared_shapes_is_still_served_and_verified(
+    db_client: TestClient, migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Why response summaries stay plain dicts. Rows written before 5b carry the retired
+    `expected_status_min/max`; a typed `extra="forbid"` response model would fail to serve them,
+    and the verifier must still judge their evidence. The row is written the way the pre-change
+    service admitted it: through the service, with the probe shape check stood down."""
+    binding_id = release_artifact(db_client, migrated_engine)
+    real = deployment_observations._validate_summary
+
+    def pre_change(model: type, payload: dict[str, Any], label: str) -> None:
+        if model is not deployment_observations.ProbeSummary:
+            real(model, payload, label)
+
+    monkeypatch.setattr(deployment_observations, "_validate_summary", pre_change)
+    old_probe = {
+        "name": "live",
+        "method": "GET",
+        "endpoint": "/health/live",
+        "status_code": 200,
+        "observed_at": datetime(2026, 7, 8, 20, 0, tzinfo=UTC).isoformat(),
+        "expected_status_min": 200,
+        "expected_status_max": 299,
+    }
+    with Session(migrated_engine) as session:
+        row = deployment_observations.record_deployment_observation(
+            session,
+            deployment_observations.DeploymentObservationCommand(
+                release_artifact_binding_id=uuid.UUID(binding_id),
+                actor=ActorContext("system", ActorRole.SYSTEM),
+                environment="production",
+                base_url="https://sds.alobar.net",
+                observed_artifact_digest=DIGEST,
+                deployment_ref="pre-change",
+                deployment_url="https://coolify.example.invalid/pre-change",
+                deployer="coolify",
+                observed_at=datetime(2026, 7, 8, 20, 0, tzinfo=UTC),
+                probe_summary={"probes": [old_probe]},
+                route_summary={"routes": [{"path": "/health/live", "present": True}]},
+                auth_summary={"missing_m2m_status": 401, "configured_m2m_status": 200},
+                dispatch_summary={},
+                status_summary={"status": "observed", "summary": "bounded"},
+                idempotency_key="pre-change-row",
+            ),
+        )
+        assert isinstance(row, DeploymentObservation)
+        post_deploy_unit_id = str(row.post_deploy_work_unit_id)
+    monkeypatch.undo()
+
+    listing = db_client.get(OBSERVATIONS_PATH.format(binding_id=binding_id), headers=SYSTEM)
+    verified = db_client.post(
+        f"/api/v1/work-units/{post_deploy_unit_id}/verify",
+        headers=VERIFIER,
+        json={"idempotency_key": "verify-pre-change-row", "expected_version": 1},
+    )
+
+    assert listing.status_code == 200
+    [served] = listing.json()
+    assert served["probe_summary"]["probes"][0]["expected_status_min"] == 200
+    assert served["probe_summary"]["probes"][0]["expected_status_max"] == 299
+    assert verified.status_code == 200, verified.json()
+    assert verified.json()["result"] == "completed"
+
+
+def test_an_explicit_empty_summary_is_the_absent_one_on_both_kinds(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """`{}` meant "not sent" when the summaries were dicts, and still does: a hosted row may
+    send an empty activation and dispatch summary, a machine-local row empty hosted ones, and a
+    retry that omits them instead replays the same row."""
+    hosted_binding = release_artifact(db_client, migrated_engine)
+    hosted = observation_body(key="hosted-explicit-empty")
+    hosted["activation_summary"] = {}
+    hosted["dispatch_summary"] = {}
+    machine_binding = machine_local_artifact(db_client, migrated_engine)
+    machine = activation_body(key="machine-explicit-empty")
+    for name in (
+        "probe_summary",
+        "route_summary",
+        "auth_summary",
+        "dispatch_summary",
+        "status_summary",
+    ):
+        machine[name] = {}
+
+    hosted_first = _post(db_client, hosted_binding, hosted)
+    machine_first = _post(db_client, machine_binding, machine)
+    del hosted["activation_summary"], hosted["dispatch_summary"]
+    hosted_retry = _post(db_client, hosted_binding, hosted)
+    machine_retry = _post(db_client, machine_binding, activation_body(key="machine-explicit-empty"))
+
+    assert hosted_first.status_code == 201, hosted_first.json()
+    assert machine_first.status_code == 201, machine_first.json()
+    assert hosted_retry.json()["id"] == hosted_first.json()["id"]
+    assert machine_retry.json()["id"] == machine_first.json()["id"]
+    assert hosted_first.json()["activation_summary"] == {}
+    assert machine_first.json()["probe_summary"] == {}
+
+
+@pytest.mark.parametrize(
+    "auth_summary",
+    [
+        {"missing_m2m_status": 401.0},
+        {"missing_m2m_status": 401, "configured_m2m_status": 200.0},
+    ],
+    ids=["missing-as-float", "configured-as-float"],
+)
+def test_the_route_refuses_an_m2m_status_sent_as_a_float(
+    db_client: TestClient, migrated_engine: Engine, auth_summary: dict[str, object]
+) -> None:
+    """A `Literal` compares by equality, so 401.0 would pass it and be stored as sent."""
+    binding_id = release_artifact(db_client, migrated_engine)
+    body = observation_body(key=f"float-{len(auth_summary)}")
+    body["auth_summary"] = auth_summary
+
+    response = _post(db_client, binding_id, body)
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"][:2] == ["body", "auth_summary"]

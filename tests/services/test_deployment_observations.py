@@ -930,6 +930,21 @@ def test_the_retired_dispatch_criterion_cannot_be_adjudicated_publicly(
     assert isinstance(result, DomainError)
 
 
+def _probe(**overrides: object) -> dict[str, object]:
+    return {
+        "name": "live",
+        "endpoint": "/health/live",
+        "method": "GET",
+        "observed_at": "2026-10-06T09:00:00+00:00",
+        "status_code": 200,
+        **overrides,
+    }
+
+
+def _route(index: int = 0) -> dict[str, object]:
+    return {"path": f"/r/{index}", "present": True}
+
+
 @pytest.mark.parametrize(
     ("field", "summary"),
     [
@@ -954,6 +969,14 @@ def test_the_retired_dispatch_criterion_cannot_be_adjudicated_publicly(
         ("status_summary", {"status": "  ", "summary": "bounded"}),
         ("route_summary", {"routes": [{"path": " ", "present": True}]}),
         ("route_summary", {"routes": [{"path": "/health/live", "present": "yes"}]}),
+        # Empty once stripped, though a regex `\S` matches them: `str.strip` removes U+001C-U+001F.
+        ("route_summary", {"routes": [{"path": "\x1c", "present": True}]}),
+        ("probe_summary", {"probes": [_probe(endpoint="\x1f")]}),
+        ("status_summary", {"status": "\x1d", "summary": "bounded"}),
+        ("auth_summary", {"missing_m2m_status": 401.0}),
+        ("auth_summary", {"missing_m2m_status": 401, "configured_m2m_status": 200.0}),
+        ("probe_summary", {"probes": [_probe(status_code=200.0)]}),
+        ("probe_summary", {"probes": [_probe(status_code=True)]}),
     ],
     ids=[
         "retired-probe-range",
@@ -963,6 +986,13 @@ def test_the_retired_dispatch_criterion_cannot_be_adjudicated_publicly(
         "blank-status",
         "blank-route",
         "present-as-text",
+        "route-blank-once-stripped",
+        "endpoint-blank-once-stripped",
+        "status-blank-once-stripped",
+        "missing-401-as-float",
+        "configured-200-as-float",
+        "status-code-as-float",
+        "status-code-as-bool",
     ],
 )
 def test_the_service_holds_a_direct_caller_to_the_declared_shapes(
@@ -998,21 +1028,6 @@ def test_a_refusal_names_where_the_summary_is_wrong_and_never_the_value(
     assert isinstance(result, DomainError)
     assert "configured_m2m_status" in result.message
     assert "418" not in result.message
-
-
-def _probe(**overrides: object) -> dict[str, object]:
-    return {
-        "name": "live",
-        "endpoint": "/health/live",
-        "method": "GET",
-        "observed_at": "2026-10-06T09:00:00+00:00",
-        "status_code": 200,
-        **overrides,
-    }
-
-
-def _route(index: int = 0) -> dict[str, object]:
-    return {"path": f"/r/{index}", "present": True}
 
 
 @pytest.mark.parametrize(

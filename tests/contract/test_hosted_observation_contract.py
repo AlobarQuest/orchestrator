@@ -14,7 +14,7 @@ verifier's evaluators disagreed, the evaluator's rule was taken. The producer's 
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any, get_args
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -105,13 +105,22 @@ def test_the_route_refuses_the_retired_probe_fields() -> None:
 
 
 def test_the_producers_m2m_answers_are_the_ones_the_auth_shape_admits() -> None:
-    fields = AuthSummary.model_fields
-    assert get_args(fields["missing_m2m_status"].annotation) == (
-        image_release.UNAUTHENTICATED_STATUS,
+    """Exactly the producer's two answers: each admitted, and one either side of each refused."""
+    unauthenticated = image_release.UNAUTHENTICATED_STATUS
+    authenticated = image_release.AUTHENTICATED_STATUS
+    AuthSummary.model_validate(
+        {"missing_m2m_status": unauthenticated, "configured_m2m_status": authenticated}
     )
-    assert image_release.AUTHENTICATED_STATUS in get_args(
-        get_args(fields["configured_m2m_status"].annotation)[0]
-    )
+    for missing, configured in (
+        (unauthenticated - 1, authenticated),
+        (unauthenticated + 1, authenticated),
+        (unauthenticated, authenticated - 1),
+        (unauthenticated, authenticated + 1),
+    ):
+        with pytest.raises(ValidationError):
+            AuthSummary.model_validate(
+                {"missing_m2m_status": missing, "configured_m2m_status": configured}
+            )
 
 
 def test_the_producers_healthy_range_is_the_evaluators() -> None:

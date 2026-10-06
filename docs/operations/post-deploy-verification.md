@@ -74,10 +74,13 @@ Each summary is a declared model, published in the served OpenAPI document
 be 401, and `configured_m2m_status`, when reported, 200), the optional `DispatchSummary`
 (`dispatch_enabled`), `StatusSummary` (`status`, `summary`) and `ActivationSummary` (below). The
 models live in `services/release/deployment_observations.py`. They refuse undeclared keys and are
-strict, so `"200"` is not a status code. The route refuses a malformed summary with a 422, and
-the service refuses one sent to it directly with `deployment_observation_invalid`. The rules
-that span summaries are the service's alone: which summaries each `kind` carries, the 4096-byte
-total, and the secret detector.
+strict, so neither `"200"` nor `200.0` is a status code, and a text field that is empty once
+stripped is refused. An explicit `{}` summary means the summary was not sent. The route refuses a
+malformed summary with a 422, and the service refuses one sent to it directly with
+`deployment_observation_invalid`. The rules that span summaries are the service's alone: which
+summaries each `kind` carries, the 4096-byte total, and the secret detector. Response summaries
+stay plain dicts, so rows stored before these shapes (with a probe's retired
+`expected_status_min/max`) are still served and verified.
 
 Where these shapes and the verifier's evaluators disagreed, the evaluator's rule was taken
 (2026-10-06). A probe has no expected status range, because health is judged as plain 2xx, and
