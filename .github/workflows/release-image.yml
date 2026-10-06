@@ -1,4 +1,7 @@
 name: Release image
+# The deploy command (scripts/deploy_orchestrator.py) finds the run it dispatched by this title, so
+# it names the commit being built. `gh workflow run` returns no run id to attribute by.
+run-name: Release image ${{ inputs.ref }}
 on:
   workflow_dispatch:
     inputs:

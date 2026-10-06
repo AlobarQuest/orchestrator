@@ -15,6 +15,7 @@ from pathlib import Path
 import yaml
 
 from scripts.compute_image_tags import IMAGE
+from scripts.deploy_orchestrator import run_title
 
 ROOT = Path(__file__).resolve().parents[2]
 RELEASE_WORKFLOW = ROOT / ".github/workflows/release-image.yml"
@@ -112,3 +113,11 @@ def test_the_pushed_image_is_read_back_out_of_the_registry():
     # Read back via the derivable tag, so resolving that tag to the pushed digest is proven by
     # the same step rather than assumed.
     assert "$SHA_TAG" in run and "$DIGEST" in run
+
+
+def test_the_run_is_titled_by_the_commit_it_builds():
+    """`gh workflow run` returns no run id, so the deploy command attributes its run by this title.
+    Renaming it would make every deploy refuse with "no run appeared"."""
+    workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text())
+    assert workflow["run-name"] == "Release image ${{ inputs.ref }}"
+    assert run_title("abc") == "Release image abc"

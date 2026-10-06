@@ -121,7 +121,7 @@ These are in no fixed order.
 | 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Devon chose on 2026-10-06: the CLI stages, the review page shows what it does, what it affects and whether it can be backed out, computed rather than added to the package, starting with machine-originated profiles. Not yet built. |
 | L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Devon chose on 2026-10-06 (open decision 1): a separate lane, in which a producer detects and reports, and work is minted only from an approved change record. Not yet built. |
 | R9 | Net gate load is a target set per wave. | Measured in the SLO report (#359). Devon chose on 2026-10-06 to set the target after about two weeks of readings, around 2026-10-20. |
-| 7a | Deploy is automated like the build, and migrate/swap ordering is safe by construction. | Deferred by Devon on 2026-08-02. Migrate-before-swap is safe only because no health check reads readiness. Re-decide before building. |
+| 7a | Deploy is automated like the build, and migrate/swap ordering is safe by construction. | Shipped (#366, Devon's option B, 2026-10-06): `scripts/deploy_orchestrator.py` runs the procedure and refuses a health check that reads readiness. Coolify writes and host reads stay infraops calls it prints. See `docs/operations/deploy.md`. |
 
 ## After 1.0
 

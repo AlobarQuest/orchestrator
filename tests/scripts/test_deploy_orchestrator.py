@@ -1,0 +1,1120 @@
+"""The deploy command refuses where the procedure says a deploy must not proceed.
+
+The world is faked at its edges only. Production is an `httpx.MockTransport`; `gh` and the binder
+are recorded subprocess fakes; `git` is REAL, against a throwaway origin and clone, because the
+refusals that read history (not on main, a rollback, a missing commit) and migration detection
+are only worth testing against what git actually answers.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from scripts import deploy_orchestrator as deploy
+from scripts.deploy_orchestrator import (
+    EXIT_CONDITION,
+    EXIT_OK,
+    EXIT_REFUSED,
+    EXIT_USAGE,
+    State,
+    World,
+)
+
+GOOD_DOCKERFILE = (
+    "FROM python:3.14-slim AS runtime\n"
+    'HEALTHCHECK CMD ["python", "-c", "urlopen(\'http://127.0.0.1:8000/health/live\')"]\n'
+)
+GOOD_COMPOSE = (
+    "services:\n  orchestrator:\n    healthcheck:\n"
+    '      test: ["CMD", "curl", "http://127.0.0.1:8000/health/live"]\n'
+)
+DIGEST = "sha256:" + "a" * 64
+OTHER_DIGEST = "sha256:" + "b" * 64
+SYSTEM_TOKEN = "system-secret-value"
+VERIFIER_TOKEN = "verifier-secret-value"
+UNIT = "11111111-1111-1111-1111-111111111111"
+
+
+# --------------------------------------------------------------------------------------------
+# git: a real origin and clone
+# --------------------------------------------------------------------------------------------
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _commit(work: Path, files: dict[str, str], message: str) -> str:
+    for name, text in files.items():
+        path = work / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    _git(work, "add", "-A")
+    _git(work, "commit", "-q", "-m", message)
+    return _git(work, "rev-parse", "HEAD")
+
+
+@dataclass
+class Repo:
+    work: Path
+    base: str  # what production serves
+    migrated: str  # adds a migration on top of base
+    plain: str  # changes no migration on top of migrated
+    side: str  # never pushed to main
+    readiness: str  # on main, Dockerfile health check reads readiness
+    fixed: str  # on main after readiness, puts the health check back on liveness
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Repo:
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
+    _git(work, "config", "user.email", "t@example.invalid")
+    _git(work, "config", "user.name", "t")
+    _git(work, "checkout", "-q", "-b", "main")
+    base = _commit(
+        work,
+        {
+            "Dockerfile": GOOD_DOCKERFILE,
+            "docker-compose.yml": GOOD_COMPOSE,
+            "migrations/versions/0001_first.py": "x = 1\n",
+        },
+        "base",
+    )
+    migrated = _commit(work, {"migrations/versions/0002_second.py": "x = 2\n"}, "migrate")
+    plain = _commit(
+        work, {"README.md": "hello\n", "migrations/versions/README": "notes\n"}, "plain"
+    )
+    readiness = _commit(
+        work, {"Dockerfile": GOOD_DOCKERFILE.replace("/health/live", "/health/ready")}, "ready"
+    )
+    fixed = _commit(work, {"Dockerfile": GOOD_DOCKERFILE}, "fixed")
+    _git(work, "push", "-q", "origin", "main")
+    _git(work, "checkout", "-q", "-b", "side", plain)
+    side = _commit(work, {"SIDE.md": "x\n"}, "side")
+    _git(work, "checkout", "-q", migrated)
+    return Repo(work, base, migrated, plain, side, readiness, fixed)
+
+
+# --------------------------------------------------------------------------------------------
+# production, gh and the binder
+# --------------------------------------------------------------------------------------------
+
+
+def _ledger_row(state: str, key: str = "unit-a", unit_id: str = UNIT) -> dict[str, Any]:
+    return {"unit_id": unit_id, "unit_key": key, "unit_state": state}
+
+
+@dataclass
+class Production:
+    ledger: Any = field(default_factory=lambda: [_ledger_row("completed")])
+    ledger_status: int = 200
+    histories: dict[str, Any] = field(default_factory=dict)
+    # Each entry is a revision (served as /health/live's JSON) or a whole httpx.Response, which is
+    # how a test plays the swap's outage. The last entry repeats.
+    live: list[Any] = field(default_factory=list)
+    ready: tuple[int, dict[str, Any]] = (200, {"status": "ok"})
+    openapi: Any = field(
+        default_factory=lambda: {
+            "paths": {"/health/live": {}},
+            "components": {"schemas": {"Thing": {"properties": {"field_a": {}}}}},
+        }
+    )
+    requests: list[httpx.Request] = field(default_factory=list)
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        path = request.url.path
+        if path == "/api/v1/status-ledger":
+            return httpx.Response(self.ledger_status, json=self.ledger)
+        if path.startswith("/api/v1/work-units/") and path.endswith("/history"):
+            return httpx.Response(200, json=self.histories.get(path.split("/")[4], []))
+        if path == "/health/live":
+            body = self.live.pop(0) if len(self.live) > 1 else self.live[0]
+            if isinstance(body, httpx.Response):
+                return body
+            return httpx.Response(200, json={"status": "ok", "revision": body})
+        if path == "/health/ready":
+            return httpx.Response(self.ready[0], json=self.ready[1])
+        if path == "/openapi.json":
+            return httpx.Response(200, json=self.openapi)
+        return httpx.Response(404, json={})
+
+    def paths(self) -> list[str]:
+        return [r.url.path for r in self.requests]
+
+
+DRIFT_503 = (503, {"status": "unavailable", "reason": "migration_drift"})
+RUN_URL = "https://github.com/AlobarQuest/orchestrator/actions/runs/{}"
+
+
+@dataclass
+class Gh:
+    """GitHub as `gh` answers it. A dispatch creates a run titled by the workflow's `run-name`."""
+
+    conclusion: str = "success"
+    appears: bool = True
+    title: str | None = None  # a run-name other than this commit's
+    log_revision: str | None = None
+    log_sha_tag_revision: str | None = None
+    digests: tuple[str, ...] = (DIGEST,)
+    failures: int = 0  # consecutive failed `run view` calls before one succeeds
+    # Answers for successive `run view --json` polls: "fail" or "in_progress"; then completed.
+    view_plan: list[str] = field(default_factory=list)
+    runs: list[dict[str, Any]] = field(
+        default_factory=lambda: [
+            {"databaseId": 100, "displayTitle": "Release image", "url": RUN_URL.format(100)}
+        ]
+    )
+    on_dispatch: Callable[[], None] = lambda: None
+    built: str = ""
+    dispatched: list[list[str]] = field(default_factory=list)
+    calls: list[list[str]] = field(default_factory=list)
+
+    def __call__(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
+        self.calls.append(argv)
+        if argv[1:3] == ["workflow", "run"]:
+            return self._dispatch(argv)
+        if argv[1:3] == ["run", "list"]:
+            return _done(json.dumps(self.runs))
+        if argv[1:3] == ["run", "view"] and self.failures:
+            self.failures -= 1
+            return _done("", 1)
+        if argv[1:3] == ["run", "view"] and "--log" in argv:
+            return _done(self._log())
+        if argv[1:3] == ["run", "view"] and self.view_plan:
+            step = self.view_plan.pop(0)
+            if step == "fail":
+                return _done("", 1)
+            return _done(json.dumps({"status": step, "url": RUN_URL.format(argv[3])}))
+        if argv[1:3] == ["run", "view"]:
+            view = {"status": "completed", "conclusion": self.conclusion}
+            return _done(json.dumps({**view, "url": RUN_URL.format(argv[3])}))
+        raise AssertionError(f"unexpected gh call {argv}")
+
+    def _dispatch(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
+        self.on_dispatch()
+        self.dispatched.append(argv)
+        self.built = next(a.split("=", 1)[1] for a in argv if a.startswith("ref="))
+        if self.appears:
+            run_id = self.runs[-1]["databaseId"] + 1
+            title = self.title or f"Release image {self.built}"
+            self.runs.append(
+                {"databaseId": run_id, "displayTitle": title, "url": RUN_URL.format(run_id)}
+            )
+        return _done("")
+
+    def _log(self) -> str:
+        """The verify step's environment block, in `gh run view --log`'s real line format."""
+        revision = self.log_revision or self.built
+        sha_tag = deploy.derivable_tag(self.log_sha_tag_revision or revision)
+        prefix = "build-and-push\tVerify the pushed image asserts its own provenance\t"
+        stamp = "2026-10-06T16:18:50.5752719Z"
+        lines = [
+            f"build-and-push\tRefuse to overwrite an existing tag\t{stamp}   SHA_TAG: {sha_tag}"
+        ]
+        lines += [f"{prefix}{stamp}   DIGEST: {d}" for d in self.digests]
+        lines += [
+            f"{prefix}{stamp}   REVISION: {revision}",
+            f"{prefix}{stamp}   SHA_TAG: {sha_tag}",
+        ]
+        return "\n".join(lines)
+
+
+class BrokenGh(Gh):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+    def __call__(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
+        raise self.error
+
+
+@dataclass
+class Binder:
+    code: int = 0
+    calls: list[tuple[list[str], dict[str, str]]] = field(default_factory=list)
+
+    def __call__(
+        self, argv: list[str], env: dict[str, str] | None
+    ) -> subprocess.CompletedProcess[str]:
+        self.calls.append((argv, env or {}))
+        return _done(json.dumps({"bound": 1}), self.code)
+
+
+def _done(stdout: str, code: int = 0) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess([], code, stdout, "")
+
+
+@dataclass
+class Clock:
+    now: float = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+@dataclass
+class Harness:
+    repo: Repo
+    production: Production
+    gh: Gh
+    binder: Binder
+    tmp: Path
+    bearers: list[str] = field(default_factory=list)
+
+    @property
+    def state_path(self) -> Path:
+        return self.tmp / "scratch" / "deploy.json"
+
+    def world(self) -> World:
+        clock = Clock()
+
+        def run(argv, *, env=None, timeout=600):
+            if argv[0] == "gh":
+                return self.gh(argv)
+            if argv[0] == str(self.binder_path):
+                return self.binder(argv, env)
+            assert argv[0] == "git", argv
+            return subprocess.run(argv, capture_output=True, text=True, check=False)
+
+        def bearer(uuid: str) -> str:
+            self.bearers.append(uuid)
+            return {deploy.SYSTEM_BEARER_UUID: SYSTEM_TOKEN}.get(uuid, VERIFIER_TOKEN)
+
+        return World(
+            run=run,
+            bearer=bearer,
+            transport=httpx.MockTransport(self.production.handle),
+            sleep=clock.sleep,
+            clock=clock,
+            checkout=self.repo.work,
+            binder=self.binder_path,
+        )
+
+    @property
+    def binder_path(self) -> Path:
+        return self.tmp / "venv" / "bin" / "image-release"
+
+    def prepare(self, ref: str, *extra: str, enabled: str = "false", path: str = "/") -> int:
+        argv = [
+            "prepare",
+            "--ref",
+            ref,
+            "--state",
+            str(self.state_path),
+            "--coolify-health-check-enabled",
+            enabled,
+            "--coolify-health-check-path",
+            path,
+            *extra,
+        ]
+        return deploy.main(argv, self.world())
+
+    def resume(self) -> int:
+        return deploy.main(["prepare", "--resume", "--state", str(self.state_path)], self.world())
+
+    def finish(self, observed: str = DIGEST) -> int:
+        argv = ["finish", "--state", str(self.state_path), "--observed-digest", observed]
+        return deploy.main(argv, self.world())
+
+
+@pytest.fixture
+def h(repo: Repo, tmp_path: Path) -> Harness:
+    production = Production(live=[repo.base])
+    return Harness(repo, production, Gh(), Binder(), tmp_path)
+
+
+def _output(capsys: pytest.CaptureFixture[str]) -> tuple[dict[str, Any], str]:
+    captured = capsys.readouterr()
+    return json.loads(captured.out), captured.err
+
+
+# --------------------------------------------------------------------------------------------
+# prepare
+# --------------------------------------------------------------------------------------------
+
+
+def test_prepare_records_the_pre_swap_revision_builds_and_prints_the_steps(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    h.production.ledger = [_ledger_row("completed"), _ledger_row("draft", "unit-d")]
+
+    assert h.prepare(h.repo.migrated, "--label", "deploycmd") == EXIT_OK
+
+    out, steps = _output(capsys)
+    state = State.load(h.state_path)
+    assert state.previous_commit == h.repo.base
+    assert state.built_commit == h.repo.migrated
+    assert state.pushed_digest == DIGEST
+    assert state.migrations == ["migrations/versions/0002_second.py"]
+    assert state.tag_name == f"{h.repo.migrated[:7]}-deploycmd-amd64"
+    assert out["draft_units"] == ["unit-d"]
+    (dispatch,) = h.gh.dispatched
+    assert dispatch[dispatch.index("--ref") + 1] == "main"
+    assert f"ref={h.repo.migrated}" in dispatch
+    assert f'docker_registry_image_tag="{state.tag_name}"' in steps
+    assert "alembic upgrade head" in steps
+    assert steps.index("coolify_update_application") < steps.index("alembic upgrade head")
+    assert steps.index("alembic upgrade head") < steps.index("recheck --state")
+    assert steps.index("recheck --state") < steps.index("coolify_deploy")
+    assert "any Coolify restart or redeploy" in steps
+    assert "do NOT roll back" in steps and "run recheck again" in steps
+    assert "one call long" not in steps
+    assert f"orchestrator@{DIGEST}" in steps
+    assert f"recheck --state {h.state_path}" in steps
+    assert steps.index("recheck --state") < steps.index("coolify_deploy")
+    assert SYSTEM_TOKEN not in steps + json.dumps(out)
+    ledger = next(r for r in h.production.requests if r.url.path == "/api/v1/status-ledger")
+    assert ledger.headers["Authorization"] == f"Bearer {SYSTEM_TOKEN}"
+    assert ledger.url.params["include_inactive"] == "true"
+    assert ledger.headers["User-Agent"] == deploy.USER_AGENT
+
+
+def test_prepare_with_no_migration_says_so(h: Harness, capsys: pytest.CaptureFixture[str]) -> None:
+    h.production.live = [h.repo.migrated]
+
+    assert h.prepare(h.repo.plain) == EXIT_OK
+
+    _, steps = _output(capsys)
+    assert State.load(h.state_path).migrations == []
+    assert "No migration" in steps
+    assert "alembic upgrade head" not in steps
+
+
+def test_prepare_refuses_a_build_whose_dockerfile_health_check_reads_readiness(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert h.prepare(h.repo.readiness) == EXIT_REFUSED
+
+    out, _ = _output(capsys)
+    assert "Dockerfile" in out["reason"]
+    assert h.gh.calls == [] and h.production.requests == []
+
+
+def test_prepare_reads_the_built_commit_not_the_working_tree(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (h.repo.work / "Dockerfile").write_text("HEALTHCHECK CMD /health/ready\n")
+
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+
+
+def test_prepare_refuses_a_compose_health_check_that_reads_readiness(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _git(h.repo.work, "checkout", "-q", "main")
+    sha = _commit(
+        h.repo.work,
+        {"docker-compose.yml": GOOD_COMPOSE.replace("/health/live", "/health/ready")},
+        "compose ready",
+    )
+    _git(h.repo.work, "push", "-q", "origin", "main")
+
+    assert h.prepare(sha) == EXIT_REFUSED
+
+    assert "docker-compose.yml" in _output(capsys)[0]["reason"]
+
+
+def test_prepare_refuses_an_enabled_coolify_health_check_on_readiness(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert h.prepare(h.repo.migrated, enabled="true", path="/health/ready") == EXIT_REFUSED
+
+    assert "Coolify" in _output(capsys)[0]["reason"]
+    assert h.gh.calls == []
+
+
+def test_prepare_refuses_while_the_outgoing_image_health_check_reads_readiness(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The migration runs under the OUTGOING image, so its health check is the one that fires."""
+    h.production.live = [h.repo.readiness]
+
+    assert h.prepare(h.repo.fixed) == EXIT_REFUSED
+
+    assert h.repo.readiness[:7] in _output(capsys)[0]["reason"]
+    assert h.gh.dispatched == []
+
+
+def test_prepare_refuses_a_malformed_boolean_as_usage(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert h.prepare(h.repo.migrated, enabled="yes") == EXIT_USAGE
+
+    assert _output(capsys)[0]["result"] == "usage"
+    assert h.gh.calls == []
+
+
+def test_a_disabled_coolify_health_check_does_not_refuse(h: Harness) -> None:
+    assert h.prepare(h.repo.migrated, enabled="false", path="/health/ready") == EXIT_OK
+
+
+@pytest.mark.parametrize("state", ["claimed", "executing", "submitted", "verifying"])
+def test_prepare_refuses_while_a_unit_is_live(
+    h: Harness, state: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    h.production.ledger = [_ledger_row("completed", "done"), _ledger_row(state, "busy")]
+
+    assert h.prepare(h.repo.migrated) == EXIT_CONDITION
+
+    assert "busy" in _output(capsys)[0]["reason"]
+    assert h.gh.dispatched == []
+
+
+def _history(*events: tuple[str, str | None]) -> list[dict[str, Any]]:
+    return [{"action": action, "to_state": to_state} for action, to_state in events]
+
+
+def test_prepare_refuses_while_a_dispatched_run_has_not_claimed_its_ready_unit(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    h.production.ledger = [_ledger_row("ready", "starting")]
+    h.production.histories[UNIT] = _history(
+        ("work_unit.transitioned", "ready"), ("dispatch.dispatched", "ready")
+    )
+
+    assert h.prepare(h.repo.migrated) == EXIT_CONDITION
+
+    assert "starting" in _output(capsys)[0]["reason"]
+    assert h.gh.dispatched == []
+
+
+@pytest.mark.parametrize(
+    "history",
+    [
+        _history(("work_unit.transitioned", "ready")),
+        _history(("dispatch.skipped", "ready")),
+        _history(
+            ("dispatch.dispatched", "ready"),
+            ("work_unit.transitioned", "claimed"),
+            ("work_unit.transitioned", "failed"),
+            ("work_unit.transitioned", "ready"),
+        ),
+    ],
+    ids=["never-dispatched", "skipped", "dispatched-then-claimed"],
+)
+def test_a_ready_unit_without_an_unclaimed_dispatch_does_not_refuse(
+    h: Harness, history: list[dict[str, Any]]
+) -> None:
+    h.production.ledger = [_ledger_row("ready", "idle")]
+    h.production.histories[UNIT] = history
+
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+
+
+@pytest.mark.parametrize(
+    ("status", "ledger"),
+    [(401, []), (200, {"items": []}), (200, [{"unit_state": "completed"}])],
+    ids=["unauthorized", "not-a-list", "row-missing-keys"],
+)
+def test_prepare_refuses_an_unreadable_ledger(h: Harness, status: int, ledger: Any) -> None:
+    h.production.ledger_status = status
+    h.production.ledger = ledger
+
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+    assert h.gh.dispatched == []
+
+
+@pytest.mark.parametrize("revision", [None, "abc1234"])
+def test_prepare_refuses_when_the_outgoing_image_states_no_revision(
+    h: Harness, revision: str | None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    h.production.live = [revision]
+
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+    assert "cannot state what it carries" in _output(capsys)[0]["reason"]
+    assert h.gh.dispatched == []
+
+
+def test_prepare_stops_when_production_already_serves_the_commit(h: Harness) -> None:
+    h.production.live = [h.repo.migrated]
+
+    assert h.prepare(h.repo.migrated) == EXIT_CONDITION
+    assert h.gh.dispatched == []
+
+
+def test_prepare_refuses_a_commit_that_is_not_on_main(h: Harness) -> None:
+    assert h.prepare(h.repo.side) == EXIT_REFUSED
+    assert h.gh.calls == []
+
+
+def test_prepare_refuses_a_pre_swap_revision_the_checkout_does_not_hold(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    h.production.live = ["f" * 40]
+
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+    assert "fetch and re-run" in _output(capsys)[0]["reason"]
+    assert h.gh.dispatched == []
+
+
+def test_prepare_refuses_a_rollback(h: Harness) -> None:
+    h.production.live = [h.repo.plain]
+
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+    assert h.gh.dispatched == []
+
+
+@pytest.mark.parametrize(
+    "gh",
+    [
+        Gh(conclusion="failure"),
+        Gh(appears=False),
+        Gh(title="Release image " + "c" * 40),
+        Gh(log_revision="c" * 40),
+        Gh(log_sha_tag_revision="c" * 40),
+        Gh(log_revision="c" * 40, log_sha_tag_revision="__built__"),
+        Gh(digests=(DIGEST, OTHER_DIGEST)),
+        Gh(digests=()),
+    ],
+    ids=[
+        "build-failed",
+        "run-never-appeared",
+        "only-someone-elses-title",
+        "someone-elses-run",
+        "someone-elses-tag",
+        "someone-elses-revision",
+        "two-digests",
+        "no-digest",
+    ],
+)
+def test_prepare_refuses_a_build_it_cannot_attribute(h: Harness, gh: Gh) -> None:
+    if gh.log_sha_tag_revision == "__built__":
+        gh.log_sha_tag_revision = h.repo.migrated
+    h.gh = gh
+
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+    assert State.load(h.state_path, complete=False).pushed_digest == ""
+    assert len(h.gh.dispatched) == 1
+
+
+def test_prepare_attributes_the_run_by_its_title_not_by_recency(h: Harness) -> None:
+    """A newer run with another commit's title is somebody else's dispatch."""
+    h.gh.runs.append(
+        {"databaseId": 150, "displayTitle": "Release image " + "c" * 40, "url": RUN_URL.format(150)}
+    )
+    # An earlier build attempt of this very commit is not this dispatch's run either.
+    h.gh.runs.insert(
+        0,
+        {"databaseId": 50, "displayTitle": f"Release image {h.repo.migrated}", "url": "old"},
+    )
+
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+
+    state = State.load(h.state_path)
+    assert state.runs_before == 150
+    assert state.run_id == 151
+    assert state.workflow_run_url == RUN_URL.format(151)
+
+
+def test_the_state_is_saved_before_the_dispatch(h: Harness) -> None:
+    seen: list[State] = []
+    h.gh.on_dispatch = lambda: seen.append(State.load(h.state_path, complete=False))
+
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+
+    (saved,) = seen
+    assert (saved.run_id, saved.pushed_digest, saved.runs_before) == (None, "", 100)
+
+
+def test_prepare_survives_transient_gh_failures_while_polling(h: Harness) -> None:
+    h.gh.failures = deploy.GH_RETRIES
+
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+    assert State.load(h.state_path).pushed_digest == DIGEST
+
+
+def test_prepare_stops_waiting_for_a_build_that_never_finishes_and_can_resume(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    polls = deploy.BUILD_SECONDS // deploy.POLL_SECONDS + 5
+    h.gh.view_plan = ["in_progress"] * polls
+
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+    assert "did not finish" in _output(capsys)[0]["reason"]
+    assert State.load(h.state_path, complete=False).run_id == 101
+
+    h.gh.view_plan = []
+    assert h.resume() == EXIT_OK
+    assert len(h.gh.dispatched) == 1
+
+
+def test_the_retry_bound_counts_consecutive_failures_only(h: Harness) -> None:
+    h.gh.view_plan = ["fail"] * deploy.GH_RETRIES + ["in_progress"] + ["fail"] * deploy.GH_RETRIES
+
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+
+
+def test_prepare_gives_up_after_bounded_gh_failures_and_resumes_without_redispatching(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    h.gh.failures = deploy.GH_RETRIES + 1
+
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+    pending = State.load(h.state_path, complete=False)
+    assert pending.run_id == 101 and pending.pushed_digest == ""
+    capsys.readouterr()
+
+    assert h.resume() == EXIT_OK
+
+    out, steps = _output(capsys)
+    assert out["resumed"] is True and out["pushed_digest"] == DIGEST
+    assert len(h.gh.dispatched) == 1
+    assert "coolify_deploy" in steps
+    assert State.load(h.state_path).pushed_digest == DIGEST
+
+
+def test_a_resume_after_a_crash_before_the_run_was_found_finds_it(h: Harness) -> None:
+    h.gh.appears = False
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+    # The dispatch did happen; its run shows up late.
+    h.gh.runs.append(
+        {
+            "databaseId": 101,
+            "displayTitle": f"Release image {h.repo.migrated}",
+            "url": RUN_URL.format(101),
+        }
+    )
+
+    assert h.resume() == EXIT_OK
+    assert len(h.gh.dispatched) == 1
+    assert State.load(h.state_path).run_id == 101
+
+
+def test_prepare_refuses_a_database_ahead_of_the_outgoing_image(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    h.production.ready = DRIFT_503
+
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+
+    assert "BEFORE this deploy" in _output(capsys)[0]["reason"]
+    assert h.gh.dispatched == [] and not h.state_path.exists()
+
+
+def test_prepare_refuses_an_unready_outgoing_image(h: Harness) -> None:
+    h.production.ready = (503, {"status": "unavailable", "reason": "database"})
+
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+    assert h.gh.dispatched == []
+
+
+def test_prepare_refuses_a_malformed_label_before_anything_runs(h: Harness) -> None:
+    assert h.prepare(h.repo.migrated, "--label", "Bad Label") == EXIT_USAGE
+    assert h.gh.calls == [] and h.production.requests == []
+
+
+def test_a_fresh_prepare_needs_a_ref_and_the_coolify_facts(h: Harness) -> None:
+    argv = ["prepare", "--state", str(h.state_path)]
+    assert deploy.main(argv, h.world()) == EXIT_USAGE
+    assert deploy.main([*argv, "--ref", h.repo.migrated], h.world()) == EXIT_USAGE
+    assert h.gh.calls == []
+
+
+def test_a_second_prepare_resumes_rather_than_rebuilding(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+    capsys.readouterr()
+
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+
+    out, steps = _output(capsys)
+    assert out["resumed"] is True
+    assert len(h.gh.dispatched) == 1
+    assert "coolify_deploy" in steps
+
+
+def test_a_second_prepare_for_another_commit_refuses(h: Harness) -> None:
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+
+    assert h.prepare(h.repo.plain) == EXIT_REFUSED
+    assert len(h.gh.dispatched) == 1
+
+
+@pytest.mark.parametrize("error", [subprocess.TimeoutExpired(["gh"], 600), FileNotFoundError("gh")])
+def test_a_failing_subprocess_is_one_json_refusal_not_a_traceback(
+    h: Harness, error: Exception, capsys: pytest.CaptureFixture[str]
+) -> None:
+    h.gh = BrokenGh(error)
+
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+    assert _output(capsys)[0]["result"] == "refused"
+
+
+# --------------------------------------------------------------------------------------------
+# the printed host commands
+# --------------------------------------------------------------------------------------------
+
+
+def test_the_migration_command_runs_the_new_image_against_the_running_containers_database(
+    repo: Repo,
+) -> None:
+    command = deploy.migration_command(_state(repo))
+
+    assert f"docker ps -q --filter name={deploy.APPLICATION_UUID})" in command
+    assert 'grep -c .)" -eq 1 ]' in command  # exactly one container, never `head -1`
+    assert "head -1" not in command
+    assert "grep '^ORCHESTRATOR_DATABASE_URL=' | cut -d= -f2-" in command
+    assert '[ -n "$DB" ] ||' in command
+    assert 'docker run --rm --network coolify -e ORCHESTRATOR_DATABASE_URL="$DB" ' in command
+    assert f"ghcr.io/alobarquest/orchestrator@{DIGEST}" in command
+    assert "alembic upgrade head && .venv/bin/alembic current && .venv/bin/alembic heads" in command
+    assert command.index('[ -n "$DB" ]') < command.index("docker run")
+    assert "echo $DB" not in command and 'echo "$DB"' not in command
+
+
+def test_the_digest_read_selects_the_container_running_the_new_tag(repo: Repo) -> None:
+    state = _state(repo)
+    command = deploy.repo_digest_command(state)
+
+    assert (
+        f"--filter name={deploy.APPLICATION_UUID} "
+        f"--filter ancestor=ghcr.io/alobarquest/orchestrator:{state.tag_name})"
+    ) in command
+    assert 'grep -c .)" -eq 1 ]' in command
+    assert "head -1" not in command
+    assert 'docker image inspect "$(docker inspect "$C" --format \'{{.Image}}\')"' in command
+    assert "{{range .RepoDigests}}{{println .}}{{end}}" in command
+
+
+def test_the_real_release_log_yields_its_pushed_digest() -> None:
+    """Lines copied from release run 37494595944, trimmed to what the parser reads plus the
+    look-alikes it must ignore (`Digest:` from buildx, `DIGEST=` in the build script)."""
+    log = Path("tests/fixtures/release_image_run_37494595944.log").read_text()
+    sha = "c88fba9de91775856ada8db0aa5b975b28d1f362"
+
+    def gh(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        return _done(log)
+
+    world = World(run=gh)
+
+    assert deploy.pushed_digest(world, 37494595944, sha) == (
+        "sha256:a0ca700d4aeb8db10ec991a4a51c42a3f537024e5fa401d77178923facdf0c05"
+    )
+    with pytest.raises(deploy.Refused, match="somebody else"):
+        deploy.pushed_digest(world, 37494595944, "c" * 40)
+
+
+# --------------------------------------------------------------------------------------------
+# recheck: the prepare-time checks that age, run again immediately before the swap
+# --------------------------------------------------------------------------------------------
+
+
+def _recheck(h: Harness) -> int:
+    return deploy.main(["recheck", "--state", str(h.state_path)], h.world())
+
+
+@pytest.fixture
+def migrated(h: Harness) -> Harness:
+    """Prepared with a migration, and the migration has run: the old image reports drift."""
+    _state(h.repo).save(h.state_path)
+    h.production.ready = DRIFT_503
+    return h
+
+
+def test_recheck_is_clear_once_the_migration_has_run(
+    migrated: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _recheck(migrated) == EXIT_OK
+    assert "the migration ran" in _output(capsys)[0]["migration"]
+
+
+def test_recheck_refuses_a_swap_before_the_migration(
+    migrated: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    migrated.production.ready = (200, {"status": "ok"})
+
+    assert _recheck(migrated) == EXIT_REFUSED
+    assert "Run step 2" in _output(capsys)[0]["reason"]
+
+
+def test_recheck_without_a_migration_needs_readiness(h: Harness) -> None:
+    _state(h.repo, migrations=[]).save(h.state_path)
+
+    assert _recheck(h) == EXIT_OK
+
+    h.production.ready = DRIFT_503
+    assert _recheck(h) == EXIT_REFUSED
+
+
+def test_recheck_refuses_any_other_readiness_answer(migrated: Harness) -> None:
+    migrated.production.ready = (503, {"status": "unavailable", "reason": "database"})
+
+    assert _recheck(migrated) == EXIT_REFUSED
+
+
+def test_recheck_stops_on_a_unit_that_went_live_during_the_build(migrated: Harness) -> None:
+    migrated.production.ledger = [_ledger_row("claimed", "late")]
+
+    assert _recheck(migrated) == EXIT_CONDITION
+
+
+def test_recheck_stops_on_a_dispatch_made_during_the_build(migrated: Harness) -> None:
+    migrated.production.ledger = [_ledger_row("ready", "late")]
+    migrated.production.histories[UNIT] = _history(("dispatch.dispatched", "ready"))
+
+    assert _recheck(migrated) == EXIT_CONDITION
+
+
+def test_recheck_stops_when_somebody_else_deployed(
+    migrated: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    migrated.production.live = [migrated.repo.plain]
+
+    assert _recheck(migrated) == EXIT_CONDITION
+    assert "somebody else" in _output(capsys)[0]["reason"]
+
+
+def test_recheck_after_the_swap_says_run_finish(
+    migrated: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    migrated.production.live = [migrated.repo.migrated]
+
+    assert _recheck(migrated) == EXIT_CONDITION
+    reason = _output(capsys)[0]["reason"]
+    assert "already swapped, run finish" in reason and "somebody else" not in reason
+
+
+def test_recheck_refuses_without_a_state(h: Harness) -> None:
+    assert _recheck(h) == EXIT_REFUSED
+
+
+def test_recheck_refuses_a_prepare_that_has_not_read_its_digest(
+    migrated: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _state(migrated.repo, pushed_digest="", run_id=101).save(migrated.state_path)
+
+    assert _recheck(migrated) == EXIT_REFUSED
+    assert "resume prepare first" in _output(capsys)[0]["reason"]
+
+
+def test_finish_refuses_a_prepare_that_has_not_read_its_digest(
+    prepared: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _state(prepared.repo, pushed_digest="", run_id=101).save(prepared.state_path)
+
+    assert prepared.finish() == EXIT_REFUSED
+    assert "resume prepare first" in _output(capsys)[0]["reason"]
+    assert prepared.binder.calls == []
+
+
+# --------------------------------------------------------------------------------------------
+# finish
+# --------------------------------------------------------------------------------------------
+
+
+def _state(repo: Repo, **overrides: Any) -> State:
+    values: dict[str, Any] = {
+        "built_commit": repo.migrated,
+        "previous_commit": repo.base,
+        "label": "",
+        "tag": deploy.readable_tag(repo.migrated),
+        "pushed_digest": DIGEST,
+        "workflow_run_url": "https://github.com/AlobarQuest/orchestrator/actions/runs/101",
+        "migrations": ["migrations/versions/0002_second.py"],
+        "expect_schema": ["Thing", "Thing.field_a"],
+    }
+    values.update(overrides)
+    return State(**values)
+
+
+@pytest.fixture
+def prepared(h: Harness) -> Harness:
+    _state(h.repo).save(h.state_path)
+    h.production.live = [h.repo.base, h.repo.base, h.repo.migrated]
+    return h
+
+
+def test_finish_verifies_and_binds_with_the_recorded_pre_swap_revision(
+    prepared: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert prepared.finish() == EXIT_OK
+
+    out, _ = _output(capsys)
+    assert out["result"] == "deployed"
+    assert "no migration drift" in out["health_ready"]
+    ((argv, env),) = prepared.binder.calls
+    assert argv[argv.index("--previous-commit") + 1] == prepared.repo.base
+    assert argv[argv.index("--built-commit") + 1] == prepared.repo.migrated
+    assert argv[argv.index("--observed-digest") + 1] == DIGEST
+    assert argv[argv.index("--tag") + 1] == f"{prepared.repo.migrated[:7]}-amd64"
+    assert env["ACTIVATION_BIND_TOKEN"] == SYSTEM_TOKEN
+    assert env["IMAGE_VERIFY_TOKEN"] == VERIFIER_TOKEN
+    assert SYSTEM_TOKEN not in argv and VERIFIER_TOKEN not in argv
+    assert prepared.bearers == [deploy.SYSTEM_BEARER_UUID, deploy.VERIFIER_BEARER_UUID]
+
+
+def test_finish_never_reads_the_pre_swap_revision_again(prepared: Harness) -> None:
+    """After the swap `/health/live` serves the built commit, and reading it there would turn every
+    unbound unit into `shipped_earlier`. The value bound is the recorded one, whatever is served."""
+    prepared.production.live = [prepared.repo.migrated]
+
+    assert prepared.finish() == EXIT_OK
+
+    ((argv, _),) = prepared.binder.calls
+    assert argv[argv.index("--previous-commit") + 1] == prepared.repo.base
+    assert prepared.production.paths().count("/health/live") == 1
+    assert "/api/v1/status-ledger" not in prepared.production.paths()
+
+
+def test_finish_refuses_a_digest_that_is_not_the_pushed_one(prepared: Harness) -> None:
+    assert prepared.finish(OTHER_DIGEST) == EXIT_CONDITION
+    assert prepared.production.requests == [] and prepared.binder.calls == []
+
+
+def test_finish_refuses_a_malformed_digest(prepared: Harness) -> None:
+    assert prepared.finish("sha256:short") == EXIT_USAGE
+    assert prepared.binder.calls == []
+
+
+@pytest.mark.parametrize("content", [None, "{not json", json.dumps({"built_commit": "x"})])
+def test_finish_refuses_a_missing_or_malformed_state(h: Harness, content: str | None) -> None:
+    if content is not None:
+        h.state_path.parent.mkdir(parents=True)
+        h.state_path.write_text(content)
+
+    assert h.finish() == EXIT_REFUSED
+    assert h.binder.calls == []
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"previous_commit": "abc1234"}, {"pushed_digest": "sha256:short"}, {"schema": 99}],
+    ids=["short-previous", "bad-digest", "unknown-schema"],
+)
+def test_finish_refuses_a_state_it_does_not_recognise(
+    h: Harness, overrides: dict[str, Any]
+) -> None:
+    _state(h.repo, **overrides).save(h.state_path)
+    h.production.live = [h.repo.migrated]
+
+    assert h.finish() == EXIT_REFUSED
+    assert h.binder.calls == []
+
+
+def test_finish_refuses_a_checkout_that_is_not_the_built_commit(prepared: Harness) -> None:
+    _git(prepared.repo.work, "checkout", "-q", prepared.repo.plain)
+
+    assert prepared.finish() == EXIT_REFUSED
+    assert prepared.binder.calls == []
+
+
+def test_finish_stops_when_the_built_commit_is_never_served(prepared: Harness) -> None:
+    prepared.production.live = [prepared.repo.base]
+
+    assert prepared.finish() == EXIT_CONDITION
+    assert prepared.binder.calls == []
+
+
+def test_finish_stops_at_once_on_a_revision_nobody_built_here(prepared: Harness) -> None:
+    prepared.production.live = ["d" * 40, prepared.repo.migrated]
+
+    assert prepared.finish() == EXIT_CONDITION
+    assert prepared.production.paths().count("/health/live") == 1
+    assert prepared.binder.calls == []
+
+
+def test_finish_requires_readiness(prepared: Harness, capsys: pytest.CaptureFixture[str]) -> None:
+    prepared.production.ready = (503, {"status": "unavailable", "reason": "migration_drift"})
+
+    assert prepared.finish() == EXIT_CONDITION
+    assert "migration_drift" in _output(capsys)[0]["reason"]
+    assert prepared.binder.calls == []
+
+
+def test_finish_waits_through_the_swaps_outage(prepared: Harness) -> None:
+    """The orchestrator's swap is not zero-downtime (#267): the proxy answers 502 with no JSON,
+    then HTML, before the new container serves. None of it is a verdict."""
+    prepared.production.live = [
+        prepared.repo.base,
+        httpx.Response(502, text="no available server"),
+        httpx.Response(200, text="<html>not json</html>"),
+        httpx.Response(200, json=["not", "an", "object"]),
+        prepared.repo.migrated,
+    ]
+
+    assert prepared.finish() == EXIT_OK
+    assert prepared.production.paths().count("/health/live") == 5
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        ["a", "list"],
+        {"paths": {"/x": {}}, "components": ["a", "list"]},
+        {"paths": {"/x": {}}, "components": {"schemas": "x"}},
+    ],
+    ids=["document-not-an-object", "components-not-an-object", "schemas-not-an-object"],
+)
+def test_finish_handles_a_malformed_openapi_document_without_a_traceback(
+    prepared: Harness, document: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    prepared.production.openapi = document
+
+    assert prepared.finish() in (EXIT_REFUSED, EXIT_CONDITION)
+    assert _output(capsys)[0]["result"] in ("refused", "condition")
+    assert prepared.binder.calls == []
+
+
+def test_finish_refuses_an_openapi_document_with_no_paths(prepared: Harness) -> None:
+    prepared.production.openapi = {"paths": {}}
+
+    assert prepared.finish() == EXIT_REFUSED
+    assert prepared.binder.calls == []
+
+
+@pytest.mark.parametrize("expected", [["Missing"], ["Thing.field_b"]])
+def test_finish_stops_when_the_served_schema_lacks_an_expected_model(
+    h: Harness, expected: list[str]
+) -> None:
+    _state(h.repo, expect_schema=expected).save(h.state_path)
+    h.production.live = [h.repo.migrated]
+
+    assert h.finish() == EXIT_CONDITION
+    assert h.binder.calls == []
+
+
+@pytest.mark.parametrize(
+    ("binder_code", "expected"),
+    [(2, EXIT_CONDITION), (3, EXIT_REFUSED), (1, EXIT_REFUSED)],
+)
+def test_finish_carries_the_binder_outcome(
+    prepared: Harness, binder_code: int, expected: int
+) -> None:
+    prepared.binder.code = binder_code
+
+    assert prepared.finish() == expected
+
+
+def test_state_round_trips(repo: Repo, tmp_path: Path) -> None:
+    state = _state(repo)
+    path = tmp_path / "nested" / "state.json"
+
+    state.save(path)
+
+    assert State.load(path) == state
+    assert asdict(State.load(path)) == asdict(state)
+
+
+def test_the_readiness_predicate_names_every_file_that_reads_readiness() -> None:
+    files = {"Dockerfile": "HEALTHCHECK /health/ready", "docker-compose.yml": "/health/live"}
+
+    assert deploy.readiness_consumers(files) == ["Dockerfile"]
+    assert deploy.readiness_consumers({"Dockerfile": GOOD_DOCKERFILE}) == []
