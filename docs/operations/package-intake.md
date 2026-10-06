@@ -67,8 +67,7 @@ longer be registered (the confirm returns 409), or should not be, open "Withdraw
 page, give a reason, and withdraw it. The row records who withdrew it, when and why, leaves
 `/review`, and can never be confirmed. To bring it back, stage it again under a new key.
 
-The intent-packages CLI still copies the payload for the paste form. Moving it to staging is a
-separate change, after this route is deployed.
+`factory submit` (intent-packages) is the staging path: it posts this body and prints the row's page. `factory submit --print` copies the payload for the paste form instead.
 
 ## The lane: `work-carrier`
 
