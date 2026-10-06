@@ -13,8 +13,11 @@ from sqlalchemy import Float, cast, func, select
 from sqlalchemy.orm import Session, aliased
 
 from orchestrator.clock import TransactionClock
+from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.transitions import HUMAN_EDGES
 from orchestrator.persistence.models import (
     Adjudication,
+    Approval,
     Claim,
     Event,
     WorkPackageRevision,
@@ -45,6 +48,16 @@ class MetricValue:
 
 
 @dataclass(frozen=True)
+class GateLoadMetric:
+    status: str
+    value: float | None
+    basis: str
+    decisions: int
+    completed_units: int
+    by_kind: dict[str, int]
+
+
+@dataclass(frozen=True)
 class SloReport:
     since: datetime
     until: datetime
@@ -58,6 +71,7 @@ class SloReport:
     token_consumption: MetricValue
     improvisation: MetricValue
     budget_breach: MetricValue
+    gate_load: GateLoadMetric
 
 
 def slo_report(session: Session, filters: SloReportFilters | None = None) -> SloReport:
@@ -78,6 +92,7 @@ def slo_report(session: Session, filters: SloReportFilters | None = None) -> Slo
         token_consumption=_tokens(session, since, until, now),
         improvisation=_improvisation(session, since, until, now),
         budget_breach=_budget_breach(session, since, until, now),
+        gate_load=_gate_load(session, since, until),
     )
 
 
@@ -379,6 +394,132 @@ def _budget_breach(session, since, until, now) -> MetricValue:
         float(breaches),
         f"{breaches} unit(s) exceeded their declared llm-call ceiling in the window",
     )
+
+
+# The approval subject types counted as gate load, each under its own key; an approval of any other
+# subject type is not counted.
+_GATE_LOAD_APPROVAL_SUBJECTS = ("action", "authority", "retry")
+# The event actions `services/intake/decomposition.py` writes for a decision on a proposal. Its
+# submission event is not one; a test holds this to the writer's literals.
+_DECOMPOSITION_DECISIONS = (
+    "decomposition.approved",
+    "decomposition.rejected",
+    "decomposition.revision_required",
+    "decomposition.superseded",
+)
+
+
+def _gate_load(session, since, until) -> GateLoadMetric:
+    """Decisions made through a human credential per unit completed in the window, by kind.
+
+    What is measured is credential load, not human attention: the `human` role comes from a
+    forward-auth login, and build sessions also decide gates on the review page with it, so a
+    decision counted here was made through that credential and not necessarily by a person.
+
+    Four kinds of record count. An approval of an action, an authority envelope or a retry is read
+    from the `approvals` table: both places that write one refuse any actor without the human
+    role. A decision on a decomposition proposal (approve, reject, require revision, supersede) is
+    read from its event, which only a human-role actor can cause. An adjudication counts when its
+    recorded `decided_by_role` is human; a row from before that column existed has no role and is
+    not counted, and when one falls in the window the basis says so and a computed ratio is
+    partial. A lifecycle transition counts when its event records the human role and its edge is
+    one a human may take; the role is what separates a human completion from a verifier's, since
+    both may take the same edge.
+
+    Registering a work unit is not counted. Its only production caller is the decomposition
+    approval, already counted once, and the `legacy_manual` activation it otherwise allows has no
+    production caller.
+
+    The kinds are counted independently, so one action can be several decisions: approving an
+    `awaiting_approval` unit records an approval and resuming it is a human transition, and
+    superseding a decomposition also cancels each of its units by a human transition. Decisions
+    and completions are counted separately over the window, so a decision about a unit that has
+    not completed, or completed outside the window, still counts.
+    """
+    approvals = dict(
+        session.execute(
+            select(Approval.subject_type, func.count(Approval.id))
+            .where(
+                Approval.created_at >= since,
+                Approval.created_at < until,
+            )
+            .group_by(Approval.subject_type)
+        ).all()
+    )
+    adjudication_window = (Adjudication.decided_at >= since, Adjudication.decided_at < until)
+    adjudications = (
+        session.scalar(
+            select(func.count(Adjudication.id)).where(
+                Adjudication.decided_by_role == ActorRole.HUMAN.value, *adjudication_window
+            )
+        )
+        or 0
+    )
+    unattributed = (
+        session.scalar(
+            select(func.count(Adjudication.id)).where(
+                Adjudication.decided_by_role.is_(None), *adjudication_window
+            )
+        )
+        or 0
+    )
+    human_transitions = session.execute(
+        select(Event.from_state, Event.to_state).where(
+            Event.action == _TRANSITIONED,
+            Event.payload["actor_role"].astext == ActorRole.HUMAN.value,
+            Event.occurred_at >= since,
+            Event.occurred_at < until,
+        )
+    ).all()
+    transitions = sum(1 for edge in human_transitions if tuple(edge) in HUMAN_EDGES)
+    decomposition_decisions = (
+        session.scalar(
+            select(func.count(Event.id)).where(
+                Event.action.in_(_DECOMPOSITION_DECISIONS),
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+            )
+        )
+        or 0
+    )
+    by_kind = {
+        **{
+            f"{subject}_approval": approvals.get(subject, 0)
+            for subject in _GATE_LOAD_APPROVAL_SUBJECTS
+        },
+        "decomposition_decision": decomposition_decisions,
+        "human_adjudication": adjudications,
+        "human_transition": transitions,
+    }
+    decisions = sum(by_kind.values())
+    completed = (
+        session.scalar(
+            select(func.count(func.distinct(Event.subject_id))).where(
+                Event.action == _TRANSITIONED,
+                Event.to_state == "completed",
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+            )
+        )
+        or 0
+    )
+    if completed == 0:
+        status, value = STATUS_NO_DATA, None
+        basis = (
+            "no work units completed in the window "
+            f"({decisions} decisions made through a human credential recorded)"
+        )
+    else:
+        status, value = STATUS_COMPUTED, decisions / completed
+        basis = (
+            f"{decisions} decisions made through a human credential over {completed} completed "
+            "units in the window"
+        )
+        if unattributed:
+            status = STATUS_PARTIAL
+    if unattributed:
+        basis += f"; {unattributed} adjudications have no recorded role (not counted)"
+    return GateLoadMetric(status, value, basis, decisions, completed, by_kind)
 
 
 def _median(values: list[float]) -> float:
