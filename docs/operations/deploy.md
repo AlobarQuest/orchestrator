@@ -144,23 +144,34 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### Binding the release (SDS 1.1 item 5a)
 
-- **After the swap, and only after the running container's `RepoDigest` equals the pushed digest
-  and `/health/live` reports the built commit, run `image-release bind`.** It binds a
+- **Record `/health/live`'s `revision` BEFORE the swap; that is `--previous-commit`.** After the
+  swap, and only after the running container's `RepoDigest` equals the pushed digest and
+  `/health/live` reports the built commit, run `image-release bind`. **A unit is bound to the first
+  deployed image that carries it, from this program's first run onward**: it binds a
   `container_image` release artifact for every completed factory unit whose landing the built
-  commit carries, files the deployment observation (which mints one post-deploy unit per binding),
-  and verifies that unit. Run `--dry-run` first: it reads and probes and writes nothing, and needs
-  only the SYSTEM bearer. The two bearers are separate identities in separate variables, fetched
-  in a subshell so neither they nor `BWS_ACCESS_TOKEN` outlive the command, and never echoed:
+  commit carries and the previous commit does not. Units an earlier image shipped stay unbound and
+  are reported `shipped_earlier`. It then files the deployment observation, which mints one
+  post-deploy unit per binding, and verifies that unit.
+  **The observation is final**: one per binding per environment, and the minted unit has one
+  attempt. So the command retries the whole production probe up to 6 times, 10 s apart, until
+  every probe is 2xx, the revision matches, every required route is served and auth answers
+  401/200. It writes nothing until the revision matches. A production still degraded after the
+  retries is filed as it is, and verification then asks for revision.
+  Run it from a worktree's venv (`uv run --directory <worktree>`), never the main tree's `.venv`,
+  which the scheduled lanes own. Run `--dry-run` first: it reads and probes, writes nothing, and
+  needs only the SYSTEM bearer. The two bearers are separate identities in separate variables. Fetch
+  them in a subshell so neither they nor `BWS_ACCESS_TOKEN` outlive the command, and never echo them:
 
   ```bash
   (
-    source scripts/sds-token.sh
+    source ~/Projects/orchestrator/scripts/sds-token.sh
     bws_value() { env -u FORCE_COLOR -u CLICOLOR_FORCE bws secret get "$1" --output json --color no \
       | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])'; }
     ACTIVATION_BIND_TOKEN="$(bws_value 221a48d5-3f29-4898-b300-b4820140c880)" \
     IMAGE_VERIFY_TOKEN="$(bws_value 660d5846-abcb-4751-be86-b483012899eb)" \
-      .venv/bin/image-release bind \
-        --repository AlobarQuest/orchestrator --checkout <clone-holding-the-built-commit> \
+      uv run --directory <worktree> image-release bind \
+        --repository AlobarQuest/orchestrator --checkout <worktree> \
+        --previous-commit <revision /health/live reported before the swap> \
         --built-commit <full-40-char-sha> --digest <pushed sha256:…> \
         --observed-digest <running container's sha256:…> \
         --image-name orchestrator --tag <short-sha>[-<label>]-amd64 \
@@ -169,11 +180,16 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   )
   ```
 
-  Exit 0: done or nothing to do. Exit 2: a condition — the two digests differ (nothing is read or
-  written), production does not serve the built commit (bindings are written, observations are
-  not), or verification asked for revision or review. Exit 3: a refusal or an unreadable state;
-  the JSON output names which unit and why. A re-run over the same deploy re-files nothing. A unit
-  bound to an earlier image's digest is skipped, because bindings are write-once.
+  Exit 0: done, or nothing to do. Exit 2: a condition, with the reason in the JSON output:
+  - the two digests differ (nothing is read or written);
+  - production still does not serve the built commit, or an unauthenticated read is not refused
+    (nothing is written);
+  - a binding to another digest was never observed (orphaned);
+  - a merge commit is missing from the checkout (fetch and re-run);
+  - verification asked for revision or review.
+
+  Exit 3: a refusal or an unreadable state, including a `--previous-commit` the checkout does not
+  hold. A re-run over the same deploy re-files nothing.
 
 ### #61
 

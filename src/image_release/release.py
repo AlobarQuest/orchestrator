@@ -1,25 +1,33 @@
-"""One pass: bind what the image carries, observe the deployment once, verify what that minted.
+"""One pass: bind what THIS deploy shipped, observe it once, verify what that minted.
 
-WHAT IS NOT A FINDING. A candidate the built commit does not carry is NOT CARRIED -- it landed
-after this image was built, and the next deploy binds it. A candidate bound to ANOTHER digest was
-released by an earlier image: bindings are write-once per source tuple, so this image cannot
-re-bind it and must not try. Neither makes the pass incomplete.
+A UNIT IS BOUND TO THE FIRST DEPLOYED IMAGE THAT CARRIES IT, from this program's first run
+onward. "Carries" is reachability from `--built-commit`; "first" is "not already carried by
+`--previous-commit`", the revision production served before the swap. So the first real run binds
+only what that deploy shipped, rather than stamping the whole history onto today's digest, and a
+unit an earlier image shipped is SHIPPED EARLIER and stays unbound.
 
-A CONDITION (exit 2) is production not being what was deployed or not passing what a post-deploy
-verification judges: the served revision is not the built commit, the auth posture is one the
-orchestrator cannot record, or verification asks for revision or review.
+NOTHING IS WRITTEN UNTIL PRODUCTION IS CONFIRMED. The probe runs once per pass, before any
+binding, retried until production is fully healthy. If it still does not serve the built commit,
+or answers an unauthenticated read with anything but 401 (which the orchestrator cannot record),
+the pass refuses with nothing written. A probe still otherwise degraded after every retry is filed
+as it is: the observation is final, and a genuine failure is what it exists to record.
 
-A FINDING (exit 3) is an answer that is missing: a read or write the orchestrator refused or could
-not be asked, or a checkout that could not answer.
+WHAT IS NOT A FINDING: a unit that landed after the build (NOT CARRIED), one an earlier image
+shipped (SHIPPED EARLIER), and one bound to another digest whose observation exists (RELEASED BY
+AN EARLIER IMAGE). Bindings are write-once per source tuple, so this image cannot re-bind those.
 
-THE PROBE RUNS ONCE PER PASS, before anything is observed, and every observation in the pass
-carries the same summaries. A served revision that is not the built commit refuses EVERY
-observation, because each one would assert that the bound digest is what production runs. The
-binding is still written: it is a fact about the pushed image, true whether or not it is running.
+A CONDITION (exit 2): production does not serve the build or its auth posture is unrecordable; a
+binding to another digest was never observed (orphaned); a merge commit the checkout does not hold
+(fetch and re-run); or verification asks for revision or review.
+
+A FINDING (exit 3): an answer that is missing -- a refusal, an unreachable orchestrator, a checkout
+that cannot answer, or a unit bound to this digest that the built commit does not carry.
 """
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -65,11 +73,20 @@ AUTHENTICATED_STATUS = 200
 # refusal for a person to look at.
 MINTED_POST_DEPLOY_VERSION = 1
 
+# The whole production probe is retried until production is FULLY healthy, because what is filed
+# is final: one observation per binding per environment, and the unit it mints has one attempt. A
+# swap that is seconds from settling must not become a permanent revision_required.
+PROBE_ATTEMPTS = 6
+PROBE_INTERVAL_SECONDS = 10.0
+
 # Per-phase outcomes.
 BOUND = "bound"  # bound by this pass
 ALREADY_BOUND = "already_bound"  # bound to this digest by an earlier pass
-EARLIER_IMAGE = "released_by_earlier_image"
-NOT_CARRIED = "not_carried"
+EARLIER_IMAGE = "released_by_earlier_image"  # bound to another digest, and observed
+ORPHANED_BINDING = "orphaned_binding"  # bound to another digest, and never observed
+NOT_CARRIED = "not_carried"  # landed after the built commit
+SHIPPED_EARLIER = "shipped_earlier"  # the previous image already carried it
+MERGE_COMMIT_MISSING = "merge_commit_missing"  # the checkout cannot answer; fetch and re-run
 OBSERVED = "observed"
 ALREADY_OBSERVED = "already_observed"
 REVISION_MISMATCH = "revision_mismatch"
@@ -84,7 +101,14 @@ AWAITING_REVIEW = "awaiting_review"
 
 FINDING_OUTCOMES = frozenset({REFUSED, UNAVAILABLE})
 CONDITION_OUTCOMES = frozenset(
-    {REVISION_MISMATCH, AUTH_POSTURE_UNRECORDABLE, REVISION_REQUIRED, AWAITING_REVIEW}
+    {
+        REVISION_MISMATCH,
+        AUTH_POSTURE_UNRECORDABLE,
+        ORPHANED_BINDING,
+        MERGE_COMMIT_MISSING,
+        REVISION_REQUIRED,
+        AWAITING_REVIEW,
+    }
 )
 
 RECOVERABLE = (ReleaseCallError, AncestryError, KeyError, TypeError, ValueError)
@@ -119,6 +143,9 @@ class Release:
 
     repository: str
     built_commit: str
+    # The revision `/health/live` reported BEFORE the swap. What it already carried was shipped by
+    # an earlier image, so this deploy binds only what lies between the two.
+    previous_commit: str
     digest: str
     registry: str
     image_repository: str
@@ -207,6 +234,7 @@ class Production:
 
     served_revision: object
     revision_matches: bool
+    healthy: bool
     missing_m2m_status: int
     probe_summary: dict[str, Any]
     route_summary: dict[str, Any]
@@ -271,6 +299,38 @@ def verify_payload(post_deploy_unit_id: str) -> dict[str, Any]:
     }
 
 
+def probe_until_healthy(
+    anonymous: Anonymous,
+    system: System,
+    release: Release,
+    *,
+    sleep: Callable[[float], None],
+    now: datetime | None = None,
+) -> tuple[Production | None, int, str | None]:
+    """Probe up to `PROBE_ATTEMPTS` times until production is fully healthy and serves the build.
+
+    Returns the last measurement, the attempts it took, and why production could not be asked at
+    all when the last attempt could not. A measurement still degraded after every attempt is
+    returned as it is: that is a real failure, and filing it is the point.
+    """
+    production: Production | None = None
+    reason: str | None = None
+    for attempt in range(1, PROBE_ATTEMPTS + 1):
+        if attempt > 1:
+            sleep(PROBE_INTERVAL_SECONDS)
+        try:
+            production = measure_production(anonymous, system, release, now=now)
+        except UNRECOVERABLE:
+            raise
+        except RECOVERABLE as error:
+            production, reason = None, f"production could not be probed: {error}"
+            continue
+        reason = None
+        if production.healthy and production.revision_matches:
+            return production, attempt, None
+    return production, PROBE_ATTEMPTS, reason
+
+
 def measure_production(
     anonymous: Anonymous, system: System, release: Release, *, now: datetime | None = None
 ) -> Production:
@@ -314,6 +374,7 @@ def measure_production(
     return Production(
         served_revision=served_revision,
         revision_matches=served_revision == release.built_commit,
+        healthy=healthy,
         missing_m2m_status=missing,
         probe_summary={"probes": probes},
         route_summary={"routes": routes},
@@ -339,8 +400,7 @@ class _Pass:
     checkout: Path
     system: System
     verifier: Verifier | None
-    production: Production | None
-    production_reason: str | None
+    production: Production
     dry_run: bool
 
 
@@ -353,21 +413,28 @@ def release_pass(
     anonymous: Anonymous,
     dry_run: bool,
     now: datetime | None = None,
+    sleep: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
     """One pass. Never raises for a recoverable failure; always returns what it managed to do."""
     summary: dict[str, Any] = {
         "repository": release.repository,
         "built_commit": release.built_commit,
+        "previous_commit": release.previous_commit,
         "digest": release.digest,
         "dry_run": dry_run,
         "unavailable": False,
         "reason": None,
+        "refusal": None,
         "production": None,
         "units": [],
     }
     try:
-        if not holds_commit(checkout, release.built_commit):
-            raise AncestryError("the checkout does not hold the built commit")
+        for label, commit in (
+            ("built", release.built_commit),
+            ("previous", release.previous_commit),
+        ):
+            if not holds_commit(checkout, commit):
+                raise AncestryError(f"the checkout does not hold the {label} commit")
         rows = system.candidates(release.repository)
     except UNRECOVERABLE:
         raise
@@ -378,21 +445,23 @@ def release_pass(
     if not rows:
         return summary
 
-    production: Production | None = None
-    production_reason: str | None = None
-    try:
-        production = measure_production(anonymous, system, release, now=now)
-    except UNRECOVERABLE:
-        raise
-    except RECOVERABLE as error:
-        production_reason = f"production could not be probed: {error}"
-    if production is not None:
-        summary["production"] = {
-            "served_revision": production.served_revision,
-            "revision_matches": production.revision_matches,
-            "status": production.status_summary["status"],
-            "summary": production.status_summary["summary"],
-        }
+    production, attempts, reason = probe_until_healthy(
+        anonymous, system, release, sleep=sleep or time.sleep, now=now
+    )
+    if production is None:
+        summary["unavailable"] = True
+        summary["reason"] = reason
+        return summary
+    summary["production"] = {
+        "attempts": attempts,
+        "served_revision": production.served_revision,
+        "revision_matches": production.revision_matches,
+        "status": production.status_summary["status"],
+        "summary": production.status_summary["summary"],
+    }
+    summary["refusal"] = _production_refusal(production)
+    if summary["refusal"] is not None:
+        return summary
 
     state = _Pass(
         release=release,
@@ -400,11 +469,28 @@ def release_pass(
         system=system,
         verifier=verifier,
         production=production,
-        production_reason=production_reason,
         dry_run=dry_run,
     )
     summary["units"] = [_consider(row, state) for row in rows]
     return summary
+
+
+def _production_refusal(production: Production) -> dict[str, Any] | None:
+    """Why nothing may be written at all, or None. Checked once, before the first binding."""
+    if not production.revision_matches:
+        return {
+            "outcome": REVISION_MISMATCH,
+            "served_revision": production.served_revision,
+            "reason": "production does not serve the built commit; nothing was written",
+        }
+    if production.missing_m2m_status != UNAUTHENTICATED_STATUS:
+        # The service records only a 401 here, so no observation could be filed -- and a binding
+        # written now would be orphaned. It is also the answer a person most needs to see.
+        return {
+            "outcome": AUTH_POSTURE_UNRECORDABLE,
+            "reason": f"an unauthenticated read answered {production.missing_m2m_status}",
+        }
+    return None
 
 
 def _consider(row: dict[str, Any], state: _Pass) -> dict[str, Any]:
@@ -431,23 +517,20 @@ def _consider(row: dict[str, Any], state: _Pass) -> dict[str, Any]:
 def _bind_phase(candidate: Candidate, state: _Pass) -> tuple[dict[str, Any], str | None]:
     release = state.release
     if candidate.binding_id is not None:
-        if candidate.binding_artifact_digest != release.digest:
-            return (
-                {
-                    "outcome": EARLIER_IMAGE,
-                    "binding_artifact_digest": candidate.binding_artifact_digest,
-                },
-                None,
-            )
-        return {"outcome": ALREADY_BOUND, "binding_id": candidate.binding_id}, candidate.binding_id
+        return _bound_phase(candidate, state)
     try:
         if not holds_commit(state.checkout, candidate.merge_commit):
             return (
-                {"outcome": NOT_CARRIED, "reason": "the merge commit is not in the checkout"},
+                {
+                    "outcome": MERGE_COMMIT_MISSING,
+                    "reason": "the merge commit is not in the checkout; fetch and re-run",
+                },
                 None,
             )
         if not carries(state.checkout, candidate.merge_commit, release.built_commit):
             return {"outcome": NOT_CARRIED, "reason": "landed after the built commit"}, None
+        if carries(state.checkout, candidate.merge_commit, release.previous_commit):
+            return {"outcome": SHIPPED_EARLIER, "reason": "the previous image carried it"}, None
     except RECOVERABLE as error:
         return {"outcome": UNAVAILABLE, "reason": str(error)}, None
     payload = binding_payload(candidate, release)
@@ -465,32 +548,51 @@ def _bind_phase(candidate: Candidate, state: _Pass) -> tuple[dict[str, Any], str
     return {"outcome": BOUND, "binding_id": binding_id}, binding_id
 
 
+def _bound_phase(candidate: Candidate, state: _Pass) -> tuple[dict[str, Any], str | None]:
+    """A candidate that already has a container-image binding."""
+    if candidate.binding_artifact_digest != state.release.digest:
+        if candidate.observed:
+            return (
+                {
+                    "outcome": EARLIER_IMAGE,
+                    "binding_artifact_digest": candidate.binding_artifact_digest,
+                },
+                None,
+            )
+        # Bound to an image whose deployment nobody observed: nothing will ever verify it, and
+        # this image cannot re-bind it. A person has to look.
+        return (
+            {
+                "outcome": ORPHANED_BINDING,
+                "binding_artifact_digest": candidate.binding_artifact_digest,
+                "reason": "bound to another digest and never observed",
+            },
+            None,
+        )
+    # Bound to THIS digest by an earlier pass. Asked again rather than trusted: an observation
+    # asserts that this image carries the unit, and a wrong binding must not be built upon.
+    try:
+        carried = holds_commit(state.checkout, candidate.merge_commit) and carries(
+            state.checkout, candidate.merge_commit, state.release.built_commit
+        )
+    except RECOVERABLE as error:
+        return {"outcome": UNAVAILABLE, "reason": str(error)}, None
+    if not carried:
+        return (
+            {
+                "outcome": REFUSED,
+                "reason": "bound to this digest, but the built commit does not carry it",
+            },
+            None,
+        )
+    return {"outcome": ALREADY_BOUND, "binding_id": candidate.binding_id}, candidate.binding_id
+
+
 def _observe_phase(
     candidate: Candidate, binding_id: str | None, state: _Pass
 ) -> tuple[dict[str, Any], str | None]:
     """File the observation, or find the one already filed. Returns the post-deploy unit's id."""
     production = state.production
-    if production is None:
-        return {"outcome": UNAVAILABLE, "reason": state.production_reason}, None
-    if not production.revision_matches:
-        return (
-            {
-                "outcome": REVISION_MISMATCH,
-                "served_revision": production.served_revision,
-                "reason": "production does not serve the built commit",
-            },
-            None,
-        )
-    if production.missing_m2m_status != UNAUTHENTICATED_STATUS:
-        # The service records only a 401 here, so this answer cannot be filed -- and it is the
-        # one a person most needs to see: an unauthenticated read was not refused.
-        return (
-            {
-                "outcome": AUTH_POSTURE_UNRECORDABLE,
-                "reason": f"an unauthenticated read answered {production.missing_m2m_status}",
-            },
-            None,
-        )
     if binding_id is None:
         # Only a dry run reaches here without an id: the binding it would create does not exist.
         return {
@@ -550,12 +652,12 @@ def _verify_phase(post_deploy_unit_id: str, state: _Pass) -> dict[str, Any]:
 
 
 def _outcomes(summary: dict[str, Any]) -> list[str]:
-    return [
-        phase["outcome"]
+    phases = [summary.get("refusal")] + [
+        phase
         for unit in summary["units"]
         for phase in (unit.get("binding"), unit.get("observation"), unit.get("verification"))
-        if isinstance(phase, dict)
     ]
+    return [phase["outcome"] for phase in phases if isinstance(phase, dict)]
 
 
 def has_findings(summary: dict[str, Any]) -> bool:

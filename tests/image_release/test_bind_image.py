@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from image_release.client import ReleaseCallError
 from image_release.release import (
     ALREADY_BOUND,
     ALREADY_OBSERVED,
@@ -21,11 +22,16 @@ from image_release.release import (
     COMPLETED,
     DRY_RUN,
     EARLIER_IMAGE,
+    MERGE_COMMIT_MISSING,
     NOT_CARRIED,
     OBSERVED,
+    ORPHANED_BINDING,
+    PROBE_ATTEMPTS,
+    PROBE_INTERVAL_SECONDS,
     REFUSED,
     REVISION_MISMATCH,
     REVISION_REQUIRED,
+    SHIPPED_EARLIER,
     UNAVAILABLE,
     has_conditions,
     has_findings,
@@ -57,6 +63,14 @@ NOW = datetime(2026, 10, 5, 22, 0, tzinfo=UTC)
 SYSTEM_ACTOR = ActorContext("system", ActorRole.SYSTEM)
 
 
+class Sleeps:
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+
+
 def _run(
     history: History,
     system: FakeSystem,
@@ -64,33 +78,50 @@ def _run(
     production: FakeProduction | None = None,
     verifier: FakeVerifier | None = None,
     dry_run: bool = False,
-    **release: Any,
+    sleeps: Sleeps | None = None,
+    built: str | None = None,
+    previous: str | None = None,
 ) -> dict[str, Any]:
     return release_pass(
-        release_for(history.built, **release),
+        release_for(built or history.built, previous=previous or history.previous),
         checkout=history.path,
         system=system,
         verifier=verifier if verifier is not None else FakeVerifier(),
         anonymous=production if production is not None else FakeProduction(history.built),
         dry_run=dry_run,
         now=NOW,
+        sleep=sleeps if sleeps is not None else Sleeps(),
     )
 
 
-def test_binds_a_carried_unit_and_skips_one_that_landed_after_the_build(history: History) -> None:
+def _bound_row(history: History, **overrides: Any) -> dict[str, Any]:
+    return candidate_row(history.merge, binding_id=BINDING_ID, binding_digest=DIGEST, **overrides)
+
+
+# ------------------------------------------------------------------------------------------------
+# What is bound
+# ------------------------------------------------------------------------------------------------
+
+
+def test_binds_only_what_this_deploy_shipped(history: History) -> None:
     system = FakeSystem(
-        [candidate_row(history.merge), candidate_row(history.later, unit_id=SECOND_UNIT_ID)]
+        [
+            candidate_row(history.merge),
+            candidate_row(history.later, unit_id=SECOND_UNIT_ID),
+            candidate_row(history.shipped, unit_id="00000000-0000-4000-8000-000000000003"),
+        ]
     )
     verifier = FakeVerifier()
 
     summary = _run(history, system, verifier=verifier)
 
-    carried, later = summary["units"]
+    carried, later, shipped = summary["units"]
     assert carried["binding"] == {"outcome": BOUND, "binding_id": BINDING_ID}
     assert carried["observation"]["outcome"] == OBSERVED
     assert carried["verification"]["outcome"] == COMPLETED
     assert later["binding"]["outcome"] == NOT_CARRIED
-    assert "observation" not in later
+    assert shipped["binding"]["outcome"] == SHIPPED_EARLIER
+    assert "observation" not in later and "observation" not in shipped
     assert [unit for unit, _ in system.bound] == [carried["work_unit_id"]]
     assert [binding for binding, _ in system.observed] == [BINDING_ID]
     assert [unit for unit, _ in verifier.verified] == [POST_DEPLOY_UNIT_ID]
@@ -99,27 +130,53 @@ def test_binds_a_carried_unit_and_skips_one_that_landed_after_the_build(history:
 
 def test_the_built_commit_itself_is_carried(history: History) -> None:
     system = FakeSystem([candidate_row(history.built)])
+    assert _run(history, system)["units"][0]["binding"]["outcome"] == BOUND
+
+
+def test_the_previous_commit_itself_was_shipped_earlier(history: History) -> None:
+    system = FakeSystem([candidate_row(history.previous)])
     summary = _run(history, system)
-    assert summary["units"][0]["binding"]["outcome"] == BOUND
+    assert summary["units"][0]["binding"]["outcome"] == SHIPPED_EARLIER
+    assert system.bound == []
 
 
-def test_a_commit_the_checkout_never_held_is_not_carried_and_says_so(history: History) -> None:
+def test_a_merge_commit_the_checkout_never_held_is_a_condition(history: History) -> None:
     system = FakeSystem([candidate_row("c" * 40)])
 
     summary = _run(history, system)
 
-    assert summary["units"][0]["binding"] == {
-        "outcome": NOT_CARRIED,
-        "reason": "the merge commit is not in the checkout",
-    }
+    assert summary["units"][0]["binding"]["outcome"] == MERGE_COMMIT_MISSING
+    assert "fetch and re-run" in summary["units"][0]["binding"]["reason"]
     assert system.bound == []
-    assert not has_findings(summary)
+    assert has_conditions(summary) and not has_findings(summary)
+
+
+@pytest.mark.parametrize("which", ["built", "previous"])
+def test_a_checkout_without_the_built_or_previous_commit_refuses_the_whole_pass(
+    history: History, which: str
+) -> None:
+    system = FakeSystem([candidate_row(history.merge)])
+    production = FakeProduction("d" * 40)
+
+    unknown = "d" * 40
+    if which == "built":
+        summary = _run(history, system, production=production, built=unknown)
+    else:
+        summary = _run(history, system, production=production, previous=unknown)
+
+    assert summary["unavailable"] is True
+    assert which in summary["reason"]
+    assert system.bound == [] and production.asked == []
+    assert has_findings(summary)
+
+
+# ------------------------------------------------------------------------------------------------
+# What is already bound
+# ------------------------------------------------------------------------------------------------
 
 
 def test_a_unit_bound_to_this_digest_is_observed_and_not_rebound(history: History) -> None:
-    system = FakeSystem(
-        [candidate_row(history.merge, binding_id=BINDING_ID, binding_digest=DIGEST)]
-    )
+    system = FakeSystem([_bound_row(history)])
 
     summary = _run(history, system)
 
@@ -130,16 +187,27 @@ def test_a_unit_bound_to_this_digest_is_observed_and_not_rebound(history: Histor
     assert [binding for binding, _ in system.observed] == [BINDING_ID]
 
 
+@pytest.mark.parametrize("merge", ["later", "unknown"])
+def test_a_unit_bound_to_this_digest_that_the_build_does_not_carry_is_refused(
+    history: History, merge: str
+) -> None:
+    commit = history.later if merge == "later" else "c" * 40
+    system = FakeSystem([candidate_row(commit, binding_id=BINDING_ID, binding_digest=DIGEST)])
+    verifier = FakeVerifier()
+
+    summary = _run(history, system, verifier=verifier)
+
+    assert summary["units"][0]["binding"]["outcome"] == REFUSED
+    assert system.observed == [] and verifier.verified == []
+    assert has_findings(summary)
+
+
 def test_an_existing_observation_is_found_and_its_unit_verified_without_refiling(
     history: History,
 ) -> None:
     """Observed and never verified -- an interrupted pass -- must not strand the unit."""
     system = FakeSystem(
-        [
-            candidate_row(
-                history.merge, binding_id=BINDING_ID, binding_digest=DIGEST, observation_id="o"
-            )
-        ],
+        [_bound_row(history, observation_id="o")],
         existing=[
             {"id": "elsewhere", "environment": "staging", "post_deploy_work_unit_id": "x"},
             {"id": "o", "environment": "production", "post_deploy_work_unit_id": "pd"},
@@ -155,11 +223,18 @@ def test_an_existing_observation_is_found_and_its_unit_verified_without_refiling
     assert [unit_id for unit_id, _ in verifier.verified] == ["pd"]
 
 
-def test_a_unit_bound_to_another_digest_was_released_by_an_earlier_image(
+def test_an_observed_binding_to_another_digest_was_released_by_an_earlier_image(
     history: History,
 ) -> None:
     system = FakeSystem(
-        [candidate_row(history.merge, binding_id=BINDING_ID, binding_digest=OTHER_DIGEST)]
+        [
+            candidate_row(
+                history.merge,
+                binding_id=BINDING_ID,
+                binding_digest=OTHER_DIGEST,
+                observation_id="o",
+            )
+        ]
     )
 
     summary = _run(history, system)
@@ -172,6 +247,20 @@ def test_a_unit_bound_to_another_digest_was_released_by_an_earlier_image(
     assert not has_findings(summary) and not has_conditions(summary)
 
 
+def test_an_unobserved_binding_to_another_digest_is_orphaned_and_surfaced(
+    history: History,
+) -> None:
+    system = FakeSystem(
+        [candidate_row(history.merge, binding_id=BINDING_ID, binding_digest=OTHER_DIGEST)]
+    )
+
+    summary = _run(history, system)
+
+    assert summary["units"][0]["binding"]["outcome"] == ORPHANED_BINDING
+    assert system.bound == [] and system.observed == []
+    assert has_conditions(summary) and not has_findings(summary)
+
+
 def test_a_bound_candidate_without_its_digest_is_a_narrowed_contract(history: History) -> None:
     system = FakeSystem([candidate_row(history.merge, binding_id=BINDING_ID)])
     summary = _run(history, system)
@@ -179,39 +268,64 @@ def test_a_bound_candidate_without_its_digest_is_a_narrowed_contract(history: Hi
     assert has_findings(summary)
 
 
-def test_a_served_revision_that_is_not_the_built_commit_refuses_every_observation(
-    history: History,
+# ------------------------------------------------------------------------------------------------
+# Production is confirmed before anything is written
+# ------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("served", ["later", None], ids=["another-commit", "unknown"])
+def test_a_served_revision_that_is_not_the_build_writes_nothing(
+    history: History, served: str | None
 ) -> None:
-    system = FakeSystem([candidate_row(history.merge)])
+    system = FakeSystem([candidate_row(history.merge), _bound_row(history)])
     verifier = FakeVerifier()
+    sleeps = Sleeps()
+    revision = history.later if served == "later" else None
 
-    summary = _run(history, system, production=FakeProduction(history.later), verifier=verifier)
+    summary = _run(
+        history, system, production=FakeProduction(revision), verifier=verifier, sleeps=sleeps
+    )
 
-    unit = summary["units"][0]
-    assert unit["binding"]["outcome"] == BOUND
-    assert unit["observation"]["outcome"] == REVISION_MISMATCH
-    assert system.observed == [] and verifier.verified == []
+    assert summary["refusal"]["outcome"] == REVISION_MISMATCH
+    assert summary["units"] == []
+    assert system.bound == [] and system.observed == [] and verifier.verified == []
+    assert summary["production"]["attempts"] == PROBE_ATTEMPTS
+    assert sleeps.calls == [PROBE_INTERVAL_SECONDS] * (PROBE_ATTEMPTS - 1)
     assert has_conditions(summary) and not has_findings(summary)
 
 
-def test_an_unknown_served_revision_is_a_mismatch_too(history: History) -> None:
+def test_an_unauthenticated_read_that_was_not_refused_writes_nothing(history: History) -> None:
     system = FakeSystem([candidate_row(history.merge)])
-    summary = _run(history, system, production=FakeProduction(None))
-    assert summary["units"][0]["observation"]["outcome"] == REVISION_MISMATCH
 
+    summary = _run(history, system, production=FakeProduction(history.built, missing_status=200))
 
-def test_an_unauthenticated_read_that_was_not_refused_is_not_filed(history: History) -> None:
-    system = FakeSystem([candidate_row(history.merge)])
-    production = FakeProduction(history.built, missing_status=200)
-
-    summary = _run(history, system, production=production)
-
-    assert summary["units"][0]["observation"]["outcome"] == AUTH_POSTURE_UNRECORDABLE
-    assert system.observed == []
+    assert summary["refusal"]["outcome"] == AUTH_POSTURE_UNRECORDABLE
+    assert system.bound == [] and system.observed == []
     assert has_conditions(summary)
 
 
-def test_a_degraded_production_is_still_observed_and_verification_decides(
+def test_a_swap_still_settling_is_retried_until_it_is_healthy(history: History) -> None:
+    system = FakeSystem([candidate_row(history.merge)])
+    sleeps = Sleeps()
+    production = FakeProduction(history.built, settles_after=2)
+
+    summary = _run(history, system, production=production, sleeps=sleeps)
+
+    assert summary["production"]["attempts"] == 3
+    assert summary["production"]["status"] == "healthy"
+    assert len(sleeps.calls) == 2
+    _, payload = system.observed[0]
+    assert payload["status_summary"]["status"] == "healthy"
+
+
+def test_a_healthy_first_probe_does_not_sleep(history: History) -> None:
+    sleeps = Sleeps()
+    summary = _run(history, FakeSystem([candidate_row(history.merge)]), sleeps=sleeps)
+    assert summary["production"]["attempts"] == 1
+    assert sleeps.calls == []
+
+
+def test_a_production_still_degraded_after_every_retry_is_filed_as_it_is(
     history: History,
 ) -> None:
     system = FakeSystem([candidate_row(history.merge)])
@@ -224,35 +338,85 @@ def test_a_degraded_production_is_still_observed_and_verification_decides(
         verifier=verifier,
     )
 
+    assert summary["production"]["attempts"] == PROBE_ATTEMPTS
     _, payload = system.observed[0]
     assert payload["status_summary"]["status"] == "degraded"
     assert summary["units"][0]["verification"]["outcome"] == REVISION_REQUIRED
     assert has_conditions(summary)
 
 
-def test_verification_is_asked_with_the_minted_version_and_a_stable_key(history: History) -> None:
+@pytest.mark.parametrize(
+    ("production_kwargs", "configured"),
+    [({"ready_status": 503}, 200), ({}, 403), ({"paths": ("/health/live",)}, 200)],
+    ids=["ready-unavailable", "configured-m2m-refused", "route-missing"],
+)
+def test_any_failed_probe_makes_the_status_degraded(
+    history: History, production_kwargs: dict[str, Any], configured: int
+) -> None:
+    system = FakeSystem([candidate_row(history.merge)], configured_status=configured)
+
+    _run(history, system, production=FakeProduction(history.built, **production_kwargs))
+
+    _, payload = system.observed[0]
+    assert payload["status_summary"]["status"] == "degraded"
+    assert payload["auth_summary"]["configured_m2m_status"] == configured
+
+
+def test_a_production_that_cannot_be_asked_is_unavailable_and_writes_nothing(
+    history: History,
+) -> None:
+    class Unreachable(FakeProduction):
+        def probe(self, path: str) -> Any:
+            self.asked.append(path)
+            raise ReleaseCallError("unreachable for GET /health/live: ConnectError")
+
     system = FakeSystem([candidate_row(history.merge)])
+    production = Unreachable(history.built)
+
+    summary = _run(history, system, production=production)
+
+    assert summary["unavailable"] is True
+    assert production.passes == PROBE_ATTEMPTS
+    assert system.bound == []
+    assert has_findings(summary)
+
+
+def test_the_probe_runs_once_per_pass_when_healthy(history: History) -> None:
+    system = FakeSystem(
+        [candidate_row(history.merge), candidate_row(history.built, unit_id=SECOND_UNIT_ID)]
+    )
+    production = FakeProduction(history.built)
+    _run(history, system, production=production)
+    assert production.passes == 1
+    assert len(system.observed) == 2
+
+
+def test_no_candidates_is_quiet_and_probes_nothing(history: History) -> None:
+    production = FakeProduction(history.built)
+    summary = _run(history, FakeSystem([]), production=production)
+    assert summary["units"] == [] and production.asked == []
+    assert not has_findings(summary) and not has_conditions(summary)
+
+
+# ------------------------------------------------------------------------------------------------
+# Verification, dry runs, refusals
+# ------------------------------------------------------------------------------------------------
+
+
+def test_verification_is_asked_with_the_minted_version_and_a_stable_key(history: History) -> None:
     verifier = FakeVerifier()
-
-    _run(history, system, verifier=verifier)
-
+    _run(history, FakeSystem([candidate_row(history.merge)]), verifier=verifier)
     [(unit_id, payload)] = verifier.verified
     assert payload == {"idempotency_key": f"image-verify:{unit_id}", "expected_version": 1}
     VerifyCommandModel.model_validate(payload)
 
 
-def test_the_probe_runs_once_per_pass(history: History) -> None:
-    system = FakeSystem(
-        [
-            candidate_row(history.merge),
-            candidate_row(history.built, unit_id=SECOND_UNIT_ID),
-        ]
+def test_a_verification_answer_outside_the_vocabulary_is_a_refusal(history: History) -> None:
+    summary = _run(
+        history, FakeSystem([candidate_row(history.merge)]), verifier=FakeVerifier("failed")
     )
-    production = FakeProduction(history.built)
-
-    _run(history, system, production=production)
-
-    assert production.asked.count("/health/live") == 1
+    assert summary["units"][0]["verification"]["outcome"] == REFUSED
+    assert has_findings(summary)
 
 
 def test_a_dry_run_writes_nothing_and_shows_what_it_would(history: History) -> None:
@@ -269,9 +433,7 @@ def test_a_dry_run_writes_nothing_and_shows_what_it_would(history: History) -> N
 
 
 def test_a_dry_run_over_a_bound_unit_neither_observes_nor_verifies(history: History) -> None:
-    system = FakeSystem(
-        [candidate_row(history.merge, binding_id=BINDING_ID, binding_digest=DIGEST)]
-    )
+    system = FakeSystem([_bound_row(history)])
     verifier = FakeVerifier()
 
     summary = _run(history, system, verifier=verifier, dry_run=True)
@@ -282,27 +444,34 @@ def test_a_dry_run_over_a_bound_unit_neither_observes_nor_verifies(history: Hist
     assert system.observed == [] and verifier.verified == []
 
 
-def test_a_checkout_without_the_built_commit_refuses_the_whole_pass(history: History) -> None:
-    system = FakeSystem([candidate_row(history.merge)])
+def test_a_dry_run_over_an_observed_unit_does_not_verify_it(history: History) -> None:
+    system = FakeSystem(
+        [_bound_row(history, observation_id="o")],
+        existing=[{"id": "o", "environment": "production", "post_deploy_work_unit_id": "pd"}],
+    )
+    verifier = FakeVerifier()
 
+    summary = _run(history, system, verifier=verifier, dry_run=True)
+
+    assert summary["units"][0]["verification"]["outcome"] == DRY_RUN
+    assert verifier.verified == []
+
+
+def test_a_verifier_absent_reports_dry_run_rather_than_verifying(history: History) -> None:
     summary = release_pass(
-        release_for("d" * 40),
+        release_for(history.built, previous=history.previous),
         checkout=history.path,
-        system=system,
-        verifier=FakeVerifier(),
-        anonymous=FakeProduction("d" * 40),
+        system=FakeSystem([candidate_row(history.merge)]),
+        verifier=None,
+        anonymous=FakeProduction(history.built),
         dry_run=False,
         now=NOW,
+        sleep=Sleeps(),
     )
-
-    assert summary["unavailable"] is True
-    assert system.bound == []
-    assert has_findings(summary)
+    assert summary["units"][0]["verification"]["outcome"] == DRY_RUN
 
 
 def test_a_refused_binding_is_a_finding(history: History) -> None:
-    from image_release.client import ReleaseCallError
-
     class Refusing(FakeSystem):
         def bind(self, work_unit_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             raise ReleaseCallError("rejected POST x: 409 (release_artifact_conflict)")
@@ -311,27 +480,6 @@ def test_a_refused_binding_is_a_finding(history: History) -> None:
 
     assert summary["units"][0]["binding"]["outcome"] == REFUSED
     assert has_findings(summary)
-
-
-def test_no_candidates_is_quiet_and_probes_nothing(history: History) -> None:
-    production = FakeProduction(history.built)
-    summary = _run(history, FakeSystem([]), production=production)
-    assert summary["units"] == [] and production.asked == []
-    assert not has_findings(summary) and not has_conditions(summary)
-
-
-def test_a_verifier_absent_reports_dry_run_rather_than_verifying(history: History) -> None:
-    system = FakeSystem([candidate_row(history.merge)])
-    summary = release_pass(
-        release_for(history.built),
-        checkout=history.path,
-        system=system,
-        verifier=None,
-        anonymous=FakeProduction(history.built),
-        dry_run=False,
-        now=NOW,
-    )
-    assert summary["units"][0]["verification"]["outcome"] == DRY_RUN
 
 
 # ------------------------------------------------------------------------------------------------
@@ -352,8 +500,7 @@ def test_the_binding_payload_is_one_the_server_admits(
     sent: tuple[dict[str, Any], dict[str, Any]], history: History
 ) -> None:
     binding, _ = sent
-    model = ReleaseArtifactCommandModel.model_validate(binding)
-    fields = model.model_dump()
+    fields = ReleaseArtifactCommandModel.model_validate(binding).model_dump()
     command = release_artifacts.ReleaseArtifactCommand(
         work_unit_id=uuid.uuid4(), actor=SYSTEM_ACTOR, **fields
     )
@@ -363,17 +510,19 @@ def test_the_binding_payload_is_one_the_server_admits(
     assert binding["summary"]["image"]["built_commit"] == history.built
 
 
+def _observation_command(payload: dict[str, Any]) -> Any:
+    fields = DeploymentObservationCommandModel.model_validate(payload).model_dump()
+    command = deployment_observations.DeploymentObservationCommand(
+        release_artifact_binding_id=uuid.UUID(BINDING_ID), actor=SYSTEM_ACTOR, **fields
+    )
+    return deployment_observations._normalized_command(command)
+
+
 def test_the_observation_payload_is_one_the_server_admits(
     sent: tuple[dict[str, Any], dict[str, Any]],
 ) -> None:
     _, observation = sent
-    model = DeploymentObservationCommandModel.model_validate(observation)
-    fields = model.model_dump()
-    command = deployment_observations.DeploymentObservationCommand(
-        release_artifact_binding_id=uuid.UUID(BINDING_ID), actor=SYSTEM_ACTOR, **fields
-    )
-    command = deployment_observations._normalized_command(command)
-    deployment_observations._validate_command_shape(command)
+    deployment_observations._validate_command_shape(_observation_command(observation))
     assert observation["kind"] == "container_image"
     assert "dispatch_summary" not in observation
     assert observation["observed_at"] == NOW.isoformat()
@@ -385,57 +534,5 @@ def test_the_shape_check_is_live_and_would_refuse_a_wrong_payload(
     """The two tests above are not vacuous: the same validator refuses a payload one key off."""
     _, observation = sent
     broken = {**observation, "auth_summary": {"configured_m2m_status": 200}}
-    fields = DeploymentObservationCommandModel.model_validate(broken).model_dump()
-    command = deployment_observations.DeploymentObservationCommand(
-        release_artifact_binding_id=uuid.UUID(BINDING_ID), actor=SYSTEM_ACTOR, **fields
-    )
     with pytest.raises(DomainError):
-        deployment_observations._validate_command_shape(command)
-
-
-def test_a_dry_run_over_an_observed_unit_does_not_verify_it(history: History) -> None:
-    system = FakeSystem(
-        [
-            candidate_row(
-                history.merge, binding_id=BINDING_ID, binding_digest=DIGEST, observation_id="o"
-            )
-        ],
-        existing=[{"id": "o", "environment": "production", "post_deploy_work_unit_id": "pd"}],
-    )
-    verifier = FakeVerifier()
-
-    summary = _run(history, system, verifier=verifier, dry_run=True)
-
-    assert summary["units"][0]["verification"]["outcome"] == DRY_RUN
-    assert verifier.verified == []
-
-
-@pytest.mark.parametrize(
-    ("production_kwargs", "configured"),
-    [({"ready_status": 503}, 200), ({}, 403)],
-    ids=["ready-unavailable", "configured-m2m-refused"],
-)
-def test_any_failed_probe_makes_the_status_degraded(
-    history: History, production_kwargs: dict[str, Any], configured: int
-) -> None:
-    system = FakeSystem([candidate_row(history.merge)], configured_status=configured)
-
-    _run(history, system, production=FakeProduction(history.built, **production_kwargs))
-
-    _, payload = system.observed[0]
-    assert payload["status_summary"]["status"] == "degraded"
-    assert payload["auth_summary"]["configured_m2m_status"] == configured
-
-
-def test_a_verification_answer_outside_the_vocabulary_is_a_refusal(history: History) -> None:
-    system = FakeSystem([candidate_row(history.merge)])
-    summary = _run(history, system, verifier=FakeVerifier(result="failed"))
-    assert summary["units"][0]["verification"]["outcome"] == REFUSED
-    assert has_findings(summary)
-
-
-def test_a_healthy_production_says_so(history: History) -> None:
-    system = FakeSystem([candidate_row(history.merge)])
-    _run(history, system)
-    _, payload = system.observed[0]
-    assert payload["status_summary"]["status"] == "healthy"
+        deployment_observations._validate_command_shape(_observation_command(broken))

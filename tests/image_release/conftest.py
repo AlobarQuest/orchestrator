@@ -3,8 +3,9 @@
 A real repository rather than a fake git runner, for the reason the activation sweep's suite
 records: a fake would let these tests agree with a model of git rather than with git.
 
-History built here: `merge` (a unit's landing) <- `built` (the commit the image was built from)
-<- `later` (a landing after the build, which the image does not carry).
+History built here: `shipped` (a landing the previous image already carried) <- `previous` (the
+revision production served before the swap) <- `merge` (a unit's landing) <- `built` (the commit
+the image was built from) <- `later` (a landing after the build, which the image does not carry).
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ POST_DEPLOY_UNIT_ID = "7a7a7a7a-0000-4000-8000-0000000000d1"
 @dataclass(frozen=True)
 class History:
     path: Path
+    shipped: str
+    previous: str
     merge: str
     built: str
     later: str
@@ -47,17 +50,21 @@ def history(tmp_path: Path) -> History:
     path = tmp_path / "checkout"
     path.mkdir()
     git(path, "init", "-q", "-b", "main")
-    _commit(path, "base")
+    shipped = _commit(path, "shipped")
+    previous = _commit(path, "previous")
     merge = _commit(path, "merge")
     built = _commit(path, "built")
     later = _commit(path, "later")
-    return History(path=path, merge=merge, built=built, later=later)
+    return History(
+        path=path, shipped=shipped, previous=previous, merge=merge, built=built, later=later
+    )
 
 
-def release_for(built: str, *, digest: str = DIGEST) -> Release:
+def release_for(built: str, *, previous: str, digest: str = DIGEST) -> Release:
     return Release(
         repository="AlobarQuest/orchestrator",
         built_commit=built,
+        previous_commit=previous,
         digest=digest,
         registry="ghcr.io",
         image_repository="alobarquest",
@@ -143,18 +150,27 @@ SERVED_PATHS = (
 
 @dataclass
 class FakeProduction:
+    """Production as the probe sees it. `settles_after` makes the first N probe passes degraded,
+    the way a swap looks while it is still settling."""
+
     revision: str | None
     ready_status: int = 200
     missing_status: int = 401
     paths: tuple[str, ...] = SERVED_PATHS
+    settles_after: int = 0
     asked: list[str] = field(default_factory=list)
+
+    @property
+    def passes(self) -> int:
+        return self.asked.count("/health/live")
 
     def probe(self, path: str) -> Probe:
         self.asked.append(path)
         if path == "/health/live":
             return Probe(200, {"status": "ok", "revision": self.revision})
         if path == "/health/ready":
-            return Probe(self.ready_status, {"status": "ok"})
+            settling = self.passes <= self.settles_after
+            return Probe(503 if settling else self.ready_status, {"status": "ok"})
         if path == "/openapi.json":
             return Probe(200, {"paths": {p: {} for p in self.paths}})
         if path == "/api/v1/dead-letter":

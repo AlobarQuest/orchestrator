@@ -67,10 +67,14 @@ def _install(
     monkeypatch.setattr("image_release.cli.VerifierClient", factory("verifier", installed.verifier))
     monkeypatch.setenv(SYSTEM_TOKEN_VARIABLE, "system-bearer-stand-in")
     monkeypatch.setenv(VERIFIER_TOKEN_VARIABLE, "verifier-bearer-stand-in")
+    # The probe's retry interval. Patched at its one reader, so these tests never wait.
+    monkeypatch.setattr("image_release.release.time.sleep", lambda _seconds: None)
     return installed
 
 
-def _invoke(history: History, *extra: str, observed: str = DIGEST, built: str = "") -> Any:
+def _invoke(
+    history: History, *extra: str, observed: str = DIGEST, built: str = "", previous: str = ""
+) -> Any:
     return runner.invoke(
         app,
         [
@@ -81,6 +85,8 @@ def _invoke(history: History, *extra: str, observed: str = DIGEST, built: str = 
             str(history.path),
             "--built-commit",
             built or history.built,
+            "--previous-commit",
+            previous or history.previous,
             "--digest",
             DIGEST,
             "--observed-digest",
@@ -139,8 +145,33 @@ def test_a_digest_mismatch_refuses_before_anything_is_read(
 def test_a_served_revision_mismatch_exits_two(
     history: History, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _install(monkeypatch, FakeSystem([candidate_row(history.merge)]), FakeProduction(history.later))
+    installed = _install(
+        monkeypatch, FakeSystem([candidate_row(history.merge)]), FakeProduction(history.later)
+    )
     assert _invoke(history).exit_code == EXIT_CONDITION
+    assert installed.system.bound == [] and installed.system.observed == []
+
+
+def test_a_previous_commit_the_checkout_does_not_hold_exits_three(
+    history: History, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installed = _install(
+        monkeypatch, FakeSystem([candidate_row(history.merge)]), FakeProduction(history.built)
+    )
+    assert _invoke(history, previous="e" * 40).exit_code == EXIT_INCOMPLETE
+    assert installed.system.bound == []
+
+
+def test_a_unit_shipped_by_the_previous_image_is_not_bound(
+    history: History, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installed = _install(
+        monkeypatch, FakeSystem([candidate_row(history.shipped)]), FakeProduction(history.built)
+    )
+    result = _invoke(history)
+    assert result.exit_code == EXIT_OK, result.output
+    assert json.loads(result.output)["units"][0]["binding"]["outcome"] == "shipped_earlier"
+    assert installed.system.bound == []
 
 
 def test_an_unreadable_checkout_exits_three(
@@ -192,8 +223,12 @@ def test_a_dry_run_still_needs_the_system_token(
 
 @pytest.mark.parametrize(
     "arguments",
-    [("--built-commit", "abc123"), ("--digest", "sha256:short")],
-    ids=["short-sha", "short-digest"],
+    [
+        ("--built-commit", "abc123"),
+        ("--previous-commit", "abc123"),
+        ("--digest", "sha256:short"),
+    ],
+    ids=["short-built-sha", "short-previous-sha", "short-digest"],
 )
 def test_a_malformed_identity_is_a_usage_error(
     history: History, monkeypatch: pytest.MonkeyPatch, arguments: tuple[str, str]

@@ -190,6 +190,8 @@ TABLE: dict[str, Row] = {
         "pathlib",
         "re",
         "subprocess",
+        # `time.sleep` alone, between production probe attempts; injectable, so tests never wait.
+        "time",
         "typer",
         "typing",
         no_sibling_lanes=True,

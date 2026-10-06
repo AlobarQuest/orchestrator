@@ -67,6 +67,11 @@ verifies it. The producer is `src/image_release` (`image-release bind`). A perso
 deploy session after the running container's digest has been checked against the pushed digest.
 It is not scheduled, and no external content triggers it.
 
+**What it binds.** A unit is bound to the first deployed image that carries it, from this
+program's first run onward. A unit is bound when the built commit carries its landing commit and
+the revision production served before the swap (`--previous-commit`) does not. Units an earlier
+image shipped are not bound. The program writes nothing until production serves the built commit.
+
 **The boundary.** This program alone may send a `container_image` binding or observation. The
 exception is carried in its own row of `tests/architecture/test_external_content_observes_only.py`
 (`mints_post_deploy_units`). Exactly one row may carry it, and that row's payloads must name

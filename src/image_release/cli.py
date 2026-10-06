@@ -4,7 +4,8 @@ Exit codes mirror the activation sweep's, because a person reads them the same w
 
 * 0 -- everything was done, or there was nothing to do.
 * 2 -- a condition is unmet: the operator's digests disagree, production does not serve the built
-  commit, or verification asks for revision or review.
+  commit or its auth posture cannot be recorded, a binding to another digest was never observed,
+  a merge commit is missing from the checkout, or verification asks for revision or review.
 * 3 -- an answer is missing: a refusal, an unreachable orchestrator, or a checkout that could not
   answer. This outranks 2.
 * 1 -- the command itself is malformed: a missing token, a malformed sha or digest, a bad URL.
@@ -65,6 +66,12 @@ def _usage(message: str) -> typer.Exit:
 def bind_command(
     repository: Annotated[str, typer.Option(help="e.g. AlobarQuest/orchestrator")],
     checkout: Annotated[Path, typer.Option(help="A local clone holding the built commit.")],
+    previous_commit: Annotated[
+        str,
+        typer.Option(
+            help="The revision /health/live reported BEFORE the swap; what it carried is not bound."
+        ),
+    ],
     built_commit: Annotated[
         str, typer.Option(help="Full 40-character sha the image was built from.")
     ],
@@ -95,8 +102,10 @@ def bind_command(
     units are candidates and the auth probe needs a configured read. It needs no VERIFIER bearer:
     it sends nothing to verify.
     """
-    if not FULL_SHA.fullmatch(built_commit):
-        raise _usage("--built-commit must be a full 40-character lowercase sha")
+    if not FULL_SHA.fullmatch(built_commit) or not FULL_SHA.fullmatch(previous_commit):
+        raise _usage(
+            "--built-commit and --previous-commit must be full 40-character lowercase shas"
+        )
     if not SHA256_DIGEST.fullmatch(digest) or not SHA256_DIGEST.fullmatch(observed_digest):
         raise _usage("--digest and --observed-digest must be sha256:<64 lowercase hex>")
     if observed_digest != digest:
@@ -116,6 +125,7 @@ def bind_command(
     release = Release(
         repository=repository,
         built_commit=built_commit,
+        previous_commit=previous_commit,
         digest=digest,
         registry=registry,
         image_repository=image_repository,

@@ -2,12 +2,13 @@
 
 SDS 1.1 item 5a, and ADR-0039's amendment of 2026-10-05. The operator-run deploy session calls it
 once, AFTER it has read the running container's image digest and revision label on the host and
-found both equal to what the `Release image` workflow pushed. It then does four things for every
-completed factory unit whose landing commit the built commit carries:
+found both equal to what the `Release image` workflow pushed. Once production is confirmed to
+serve the built commit, it does three things for every completed factory unit whose landing
+commit the built commit carries and the previous revision did not:
 
 1. binds a `container_image` release artifact naming the pushed digest (SYSTEM);
-2. probes production once and files the `container_image` deployment observation (SYSTEM), which
-   mints one verifier-owned post-deploy unit per binding;
+2. files the `container_image` deployment observation (SYSTEM), which mints one verifier-owned
+   post-deploy unit per binding;
 3. verifies that post-deploy unit (VERIFIER) -- the same session, not a later lane.
 
 WHY A PROGRAM OF ITS OWN rather than a subcommand of `activation-sweep`. The ADR-0039 guard holds
