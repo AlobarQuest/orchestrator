@@ -69,7 +69,7 @@ pretends to. A CLI that could satisfy `_require_human` would defeat this ADR by 
 | gate | human surface |
 |---|---|
 | package intake | ✅ `GET /review/intakes/new` → `POST /review/intakes` (**this ADR**) |
-| staged package intake | ✅ `GET /review/staged-intakes/{id}` → `POST /review/staged-intakes/{id}/confirm` (amendment 1) |
+| staged package intake | ✅ `GET /review/staged-intakes/{id}` → `POST /review/staged-intakes/{id}/confirm` or `/withdraw` (amendment 1) |
 | authority approval | ✅ `POST /review/units/{id}/authority-approval` (WS-6.3) |
 | decomposition decision | ✅ `POST /review/decomposition-proposals/{id}/approve` |
 
@@ -131,7 +131,19 @@ paste and becomes a decision surface.
 - **The paste survives** as the escape hatch: `/review/intakes/new` still registers a payload that
   was never staged.
 
-**Not decided here.** `withdrawn` is a reserved state with no writer. A staged row that should go
-no further stays staged, and on the queue, until a verb for it is decided. The service's own
-refusals (status, verification mode, evidence types, reach) run at the confirm rather than at
-staging, so a payload that passes the model but fails one of them is refused after the click.
+- **Staging refuses what the confirm would refuse.** `stage_package_intake` runs
+  `preflight_package_intake`, which runs the registration's own checks (expected version, intake
+  purpose, approved status, verification mode, follow-up, reach, acceptance criteria and evidence
+  types, originating observation) through the same function `register_package_intake` calls, and
+  refuses with the same code. It adds two read-only checks for the conflicts registration finds
+  under its locks: an idempotency key an intake event already holds, and a package revision that
+  is already registered (or a package registered from another source repository). The identical
+  revision is refused too, which is stricter than the confirm, because confirming it would
+  register nothing new. The checks were factored out of `register_package_intake` rather than run
+  as a rolled-back dry registration: a dry run would need a HUMAN actor that does not exist yet.
+- **A person can withdraw a staged row.** The estate can still change between staging and the
+  confirm (another registration of the same revision, say), and the confirm re-runs everything.
+  `POST /review/staged-intakes/{id}/withdraw` takes a reason and a CSRF token bound to the row and
+  that action, and stamps who withdrew it, when and why. A withdrawn row leaves the queue, refuses
+  the confirm, and stays withdrawn; withdrawing it again changes nothing. A registered row cannot
+  be withdrawn. To bring a withdrawn intake back, stage it again under a new key.

@@ -50,11 +50,16 @@ payload was staged with, so a second press or a resubmitted page lands on the sa
 intake event records the staged row's id beside the command. A staged row registers nothing until
 then, and no machine credential can confirm it.
 
-Staging validates the request model only. The intake service's own checks (approved status,
-`caller_attested_cli_verified`, evidence types, reach) run at the confirm, so a payload that fails
-one is refused after the click and the row stays staged. Staging the same key with the same body
-replays the row; with a different body it is `idempotency_conflict`. There is no withdraw control
-yet: a row that should go no further stays staged.
+Staging refuses whatever registering would refuse, with the same error code: approved status,
+`caller_attested_cli_verified`, evidence types, reach, an unknown originating observation, an
+idempotency key an intake already used, and a package revision that is already registered. Staging
+the same key with the same body replays the row; with a different body it is
+`idempotency_conflict`.
+
+The confirm re-runs every check, because things can change after staging. If a staged row can no
+longer be registered (the confirm returns 409), or should not be, open "Withdraw instead" on its
+page, give a reason, and withdraw it. The row records who withdrew it, when and why, leaves
+`/review`, and can never be confirmed. To bring it back, stage it again under a new key.
 
 The intent-packages CLI still copies the payload for the paste form. Moving it to staging is a
 separate change, after this route is deployed.
