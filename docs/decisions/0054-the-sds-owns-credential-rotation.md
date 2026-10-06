@@ -1,9 +1,9 @@
 # ADR-0054 — The SDS owns credential rotation
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-06
-- **Decided by:** Devon (pending). Direction set 2026-10-06: "I intend on having SDS handle
-  credential rotations."
+- **Decided by:** Devon, accepted 2026-10-06 ("I intend on having SDS handle credential
+  rotations"). Increments 2 to 5 are deferred: tracked, not scheduled.
 - **Relates to:** ADR-0011 (known-good patterns), ADR-0019 increment 5a and ADR-0026 decision 5 (a
   producer may propose but never move a change record's status), ADR-0027 (machine intakes name the
   change record that caused them), ADR-0028 (a standing package per target, revised per change),
