@@ -270,10 +270,13 @@ Placement rule: global CLAUDE.md §7.
   stricter, never looser. History:
   `docs/history/claude-md-invariants-archive.md` #126.
 - `allowed_commands` is the coding agent's entire enforced Bash vocabulary (exact match), so an
-  envelope must list every command the work needs. Finalize re-executes it in order, mutators first
-  and verifier last, unless the envelope declares `verify_commands`. Then finalize runs the
-  mutators, in `allowed_commands` order, followed by `verify_commands`. Absent keeps every existing
-  fingerprint. Detail: `docs/operations/driving-a-unit.md` #130.
+  envelope must list every command the work needs. Without `verify_commands`, finalize re-executes
+  it as written, so authors must order it mutators first, verifier last (finalize never reorders).
+  With `verify_commands`, finalize runs only the mutators (in `allowed_commands` order) and then
+  that script; every other allowed command is agent-only. For edit-shaped work (no mutators) that
+  includes a build: a build the verifier depends on must be in `verify_commands` or a mutator, or
+  finalize never runs it. Absent keeps every existing fingerprint. Detail:
+  `docs/operations/driving-a-unit.md`.
 - `DRAFT/READY -> CANCELLED` need the `decomposition_superseded` guard, which only superseding the
   unit's own approval sets (ADR-0052); otherwise a stranded READY unit is inert and is retired by
   letting it fail then cancelling. History: `docs/history/claude-md-invariants-archive.md` #134.

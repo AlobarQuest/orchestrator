@@ -358,6 +358,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   assumed: mutators labelled `applied`, everything else `passed`. With it, finalize runs the
   `mutation_commands` in their `allowed_commands` order, then `verify_commands` in its own order.
   An allowed command in neither list is agent vocabulary only, and finalize does not run it.
+  For edit-shaped work, which has no mutators, that includes a build step: a build the verifier
+  depends on must be listed in `verify_commands` (or as a mutator), or finalize never runs it.
   `verify_commands` is optional for every change class. When present it must be a non-empty
   string list, a subset of `allowed_commands`, and disjoint from `mutation_commands`: each executed
   command gets one label, and a shared command would run twice. The runner enforces this in
@@ -367,8 +369,9 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   policy whose script differs from the refreshed envelope's. The known-good pattern matches it
   by prefix like the other command lists, and an envelope without it is still recognised.
   Every command in the script runs **before** `git status`, so one that cannot run makes
-  finalize fail **however well the coding phase went**. Mutators still come first and the
-  verifier last, and every scripted command must be idempotent. The intent-packages
+  finalize fail **however well the coding phase went**. "Mutators first, verifier last" is an
+  AUTHORING rule for the order of `allowed_commands`, which finalize replays as written when the
+  key is absent; finalize never reorders it. Every scripted command must be idempotent. The intent-packages
   dependency-update profile emits `verify_commands = verifiers`, and its
   `allowed_commands = [*mutations, *verifiers]` is unchanged, so its script runs exactly what
   it ran before the key existed.
