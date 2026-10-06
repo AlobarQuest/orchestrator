@@ -173,11 +173,9 @@ Placement rule: global CLAUDE.md §7.
   `docs/operations/architecture-guards.md`.
 - Alembic revision ids must be at most 32 characters (`alembic_version.version_num` is
   `varchar(32)`). History: `docs/history/claude-md-invariants-archive.md` #57.
-- The traceability observation hop reads unit-scoped observations, the landing record of each
-  release binding's merge commit (exact repository + commit join), and, for a `container_image`
-  binding, the revision watcher's readings of production serving its `summary.image.built_commit`
-  (repository case-folded); other repository-, service- or environment-scoped observations appear
-  in no chain. With no factory PR binding, the `pr` hop
+- The traceability observation hop reads unit-scoped observations plus the landing record of each
+  release binding's merge commit (exact repository + commit join); other repository-, service- or
+  environment-scoped observations appear in no chain. With no factory PR binding, the `pr` hop
   comes from that landing only when the binding's `implementation_pr_number` agrees, marked
   `source="landing_ledger"`. History: `docs/history/claude-md-invariants-archive.md` #60.
 - Migrate-before-swap is safe only because neither Coolify's (disabled) health check nor the

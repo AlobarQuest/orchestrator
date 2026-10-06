@@ -74,12 +74,15 @@ Three decisions aren't carried forward:
 
 ### Blocked
 
-- **Wave-2 exit clause 2: a post-deployment observation of a release.** Everything it needs is
-  built. Each orchestrator deploy binds the completed factory units its image ships (5a, #355 and
-  #356, first run 2026-10-06 on `ffdd70f-sds11binder-amd64`), and the chain joins the revision
-  watcher's reading of production serving that image (5c). What it waits on is a deploy that ships
-  a factory unit: the first run found the orchestrator's three completed factory units all shipped
-  by earlier images, so it bound nothing.
+- **Wave-2 exit clause 2: a post-deployment observation of a release.** Devon ruled on 2026-10-06
+  that the release's post-deploy verification answers it: the exit probe counts a post-deploy unit
+  the verifier completed, which the deployment observation minted and so post-dates the deploy. A
+  revision watcher reading can't, because it carries the served commit's own date. Each
+  orchestrator deploy now binds the factory units its image ships and verifies them (5a, #355 and
+  #356; first run 2026-10-06 on `ffdd70f-sds11binder-amd64` bound nothing, because the three
+  completed factory units had shipped in earlier images). The clause waits on two things: a deploy
+  that ships a factory unit, and that release's revision added to the clause's arguments in
+  `docs/operations/wave-exit-manifest.toml`, which names its releases explicitly.
 
 ### Deferred, with the evidence
 
