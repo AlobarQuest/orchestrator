@@ -1,0 +1,10 @@
+build-and-push	Set up Docker Buildx	2026-10-06T16:18:21.4514381Z Digest: sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+build-and-push	Refuse to overwrite an existing tag	2026-10-06T16:18:23.7777826Z   TAG: ghcr.io/alobarquest/orchestrator:c88fba9-sds11verify-amd64
+build-and-push	Refuse to overwrite an existing tag	2026-10-06T16:18:23.7778397Z   SHA_TAG: ghcr.io/alobarquest/orchestrator:sha-c88fba9de91775856ada8db0aa5b975b28d1f362
+build-and-push	Build and push (amd64; in-build digest gate fails closed)	2026-10-06T16:18:25.2599512Z ^[[36;1mDIGEST=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('containerimage.digest',''))" "$RUNNER_TEMP/meta.json")^[[0m
+build-and-push	Build and push (amd64; in-build digest gate fails closed)	2026-10-06T16:18:25.2603654Z ^[[36;1mDIGEST="sha256:${DIGEST##*sha256:}"^[[0m
+build-and-push	Verify the pushed image asserts its own provenance	2026-10-06T16:18:50.5642956Z ^[[36;1mif [ "${RESOLVED##*@}" != "$DIGEST" ]; then^[[0m
+build-and-push	Verify the pushed image asserts its own provenance	2026-10-06T16:18:50.5752719Z   DIGEST: sha256:a0ca700d4aeb8db10ec991a4a51c42a3f537024e5fa401d77178923facdf0c05
+build-and-push	Verify the pushed image asserts its own provenance	2026-10-06T16:18:50.5753209Z   REVISION: c88fba9de91775856ada8db0aa5b975b28d1f362
+build-and-push	Verify the pushed image asserts its own provenance	2026-10-06T16:18:50.5753704Z   SHA_TAG: ghcr.io/alobarquest/orchestrator:sha-c88fba9de91775856ada8db0aa5b975b28d1f362
+build-and-push	Summary	2026-10-06T16:18:56.3922619Z ^[[36;1m  echo "- Digest: \`sha256:a0ca700d4aeb8db10ec991a4a51c42a3f537024e5fa401d77178923facdf0c05\`"^[[0m

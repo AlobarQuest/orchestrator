@@ -11,16 +11,19 @@ calls, which `prepare` prints exactly.
     uv run python -m scripts.deploy_orchestrator prepare --ref <sha|origin/main> --state <path>
         --coolify-health-check-enabled <bool> --coolify-health-check-path <path>
         [--label <label>] [--expect-schema <Model[.field]>]
+    uv run python -m scripts.deploy_orchestrator prepare --resume --state <path>
     uv run python -m scripts.deploy_orchestrator recheck --state <path>
     uv run python -m scripts.deploy_orchestrator finish --state <path>
         --observed-digest sha256:<64 hex>
 
 `prepare` refuses a build whose health checks read `/health/ready` (migrate-first would become
-an outage), refuses while a unit is live or a dispatched run has not been claimed yet, records
-the pre-swap revision, builds the image with the `Release image` workflow, reads the pushed
-digest from that run, and decides whether a migration is needed. `recheck`, run immediately
-before the swap, repeats the nothing-live check and confirms production still serves the recorded
-pre-swap revision, because the first check is as old as the build. `finish` refuses unless the
+an outage), refuses while a unit is live or a dispatched run has not been claimed yet, and
+refuses a database already ahead of the outgoing image. It records the pre-swap revision, saves
+its state, builds the image with the `Release image` workflow, reads the pushed digest from that
+run, and decides whether a migration is needed. A re-run resumes the same build. `recheck`, run
+immediately before the swap, requires readiness to prove the migration ran (503 drift with one,
+200 without), repeats the nothing-live check, and confirms production still serves the recorded
+pre-swap revision. `finish` refuses unless the
 running container's digest is the pushed one. It then waits for `/health/live` to serve the
 built commit, requires `/health/ready` and the OpenAPI document, and runs `image-release bind`
 with the pre-swap revision `prepare` recorded, never a fresh read.
@@ -63,6 +66,8 @@ VERIFIER_BEARER_UUID = "660d5846-abcb-4751-be86-b483012899eb"  # orchestrator-ve
 SYSTEM_KEY_ID = "orchestrator-system"
 USER_AGENT = "deploy-orchestrator/1 (+AlobarQuest/orchestrator)"
 READINESS_PATH = "/health/ready"
+DRIFT = "migration_drift"
+IMAGE_NAME = "ghcr.io/alobarquest/orchestrator"
 MIGRATIONS_DIR = "migrations/versions/"
 HEALTH_CHECK_FILES = ("Dockerfile", "docker-compose.yml")
 
@@ -86,6 +91,7 @@ RUN_APPEAR_SECONDS = 120
 BUILD_SECONDS = 45 * 60
 SERVE_SECONDS = 300
 POLL_SECONDS = 10
+GH_RETRIES = 3
 
 
 class Condition(Exception):
@@ -225,6 +231,8 @@ class State:
     workflow_run_url: str
     migrations: list[str]
     expect_schema: list[str]
+    runs_before: int = 0
+    run_id: int | None = None
     schema: int = STATE_SCHEMA
 
     @property
@@ -237,7 +245,8 @@ class State:
         path.write_text(json.dumps(asdict(self), indent=2, sort_keys=True) + "\n")
 
     @classmethod
-    def load(cls, path: Path) -> State:
+    def load(cls, path: Path, *, complete: bool = True) -> State:
+        """`complete=False` admits a prepare whose build has not been read yet (resume only)."""
         try:
             raw = json.loads(path.read_text())
             state = cls(**raw)
@@ -246,8 +255,12 @@ class State:
         if state.schema != STATE_SCHEMA:
             raise Refused(f"the state file {path} has schema {state.schema}")
         shas = (state.built_commit, state.previous_commit)
-        if not all(FULL_SHA.match(s) for s in shas) or not DIGEST.match(state.pushed_digest):
-            raise Refused(f"the state file {path} does not hold full shas and a digest")
+        if not all(isinstance(s, str) and FULL_SHA.match(s) for s in shas):
+            raise Refused(f"the state file {path} does not hold full shas")
+        if state.pushed_digest == "" and not complete:
+            return state
+        if not isinstance(state.pushed_digest, str) or not DIGEST.match(state.pushed_digest):
+            raise Refused(f"the state file {path} holds no pushed digest; resume prepare first")
         return state
 
 
@@ -379,7 +392,26 @@ def _deadline_poll(world: World, seconds: float, probe: Callable[[], Any]) -> An
         world.sleep(POLL_SECONDS)
 
 
-def _latest_run_id(world: World) -> int:
+def _tolerant(probe: Callable[[], Any]) -> Callable[[], Any]:
+    """A probe that survives up to GH_RETRIES consecutive failed `gh` calls while polling."""
+    failures = 0
+
+    def attempt() -> Any:
+        nonlocal failures
+        try:
+            found = probe()
+        except Refused:
+            failures += 1
+            if failures > GH_RETRIES:
+                raise
+            return None
+        failures = 0
+        return found
+
+    return attempt
+
+
+def release_runs(world: World) -> list[dict[str, Any]]:
     runs = _gh_json(
         world,
         "run",
@@ -391,54 +423,55 @@ def _latest_run_id(world: World) -> int:
         "--event",
         "workflow_dispatch",
         "--limit",
-        "1",
+        "20",
         "--json",
-        "databaseId",
+        "databaseId,displayTitle,url",
     )
-    try:
-        return int(runs[0]["databaseId"]) if runs else 0
-    except (KeyError, IndexError, TypeError, ValueError) as error:
-        raise Refused("gh run list did not answer a run id") from error
+    if not isinstance(runs, list) or not all(
+        isinstance(r, dict) and isinstance(r.get("databaseId"), int) for r in runs
+    ):
+        raise Refused("gh run list did not answer runs with ids")
+    return runs
 
 
-def build_image(world: World, sha: str, label: str) -> tuple[int, str]:
-    """Dispatch the release workflow and wait for it. Returns the run id and URL."""
-    before = _latest_run_id(world)
-    _gh(
-        world,
-        "workflow",
-        "run",
-        RELEASE_WORKFLOW,
-        "-R",
-        REPOSITORY,
-        "--ref",
-        WORKFLOW_FILE_REF,
-        "-f",
-        f"ref={sha}",
-        "-f",
-        f"label={label}",
-    )
+def run_title(sha: str) -> str:
+    """The workflow's `run-name`, which is how a dispatched run is attributed to its commit."""
+    return f"Release image {sha}"
 
-    def appeared() -> int | None:
-        latest = _latest_run_id(world)
-        return latest if latest > before else None
 
-    run_id = _deadline_poll(world, RUN_APPEAR_SECONDS, appeared)
-    if run_id is None:
-        raise Refused("the dispatched Release image run never appeared")
+def find_run(world: World, state: State) -> dict[str, Any]:
+    """The first run newer than the dispatch whose title names this commit."""
 
+    def appeared() -> dict[str, Any] | None:
+        mine = [
+            r
+            for r in release_runs(world)
+            if r["databaseId"] > state.runs_before
+            and r.get("displayTitle") == run_title(state.built_commit)
+        ]
+        return min(mine, key=lambda r: r["databaseId"]) if mine else None
+
+    run = _deadline_poll(world, RUN_APPEAR_SECONDS, _tolerant(appeared))
+    if run is None:
+        raise Refused(
+            f"no Release image run titled {run_title(state.built_commit)!r} appeared. If the "
+            "dispatch never happened, remove the state file and prepare again."
+        )
+    return run
+
+
+def wait_for_build(world: World, run_id: int) -> None:
     def concluded() -> dict[str, Any] | None:
         view = _gh_json(
             world, "run", "view", str(run_id), "-R", REPOSITORY, "--json", "status,conclusion,url"
         )
         return view if isinstance(view, dict) and view.get("status") == "completed" else None
 
-    view = _deadline_poll(world, BUILD_SECONDS, concluded)
+    view = _deadline_poll(world, BUILD_SECONDS, _tolerant(concluded))
     if view is None:
-        raise Refused(f"Release image run {run_id} did not finish in {BUILD_SECONDS}s")
+        raise Refused(f"Release image run {run_id} did not finish in {BUILD_SECONDS}s; resume")
     if view.get("conclusion") != "success":
         raise Refused(f"Release image run {view.get('url')} concluded {view.get('conclusion')}")
-    return run_id, str(view["url"])
 
 
 def pushed_digest(world: World, run_id: int, sha: str) -> str:
@@ -454,92 +487,162 @@ def pushed_digest(world: World, run_id: int, sha: str) -> str:
     return digests.pop()
 
 
+def readiness(world: World) -> tuple[int, str | None]:
+    """`/health/ready`'s status and reason. 200 only when the DB is at the code's single head."""
+    try:
+        response = _get(world, READINESS_PATH)
+    except httpx.HTTPError as error:
+        raise Refused(f"GET {READINESS_PATH} failed: {error}") from error
+    try:
+        body = response.json()
+        reason = body.get("reason") if isinstance(body, dict) else None
+    except ValueError:
+        reason = None
+    return response.status_code, reason
+
+
+def require_outgoing_ready(world: World) -> None:
+    """The DB must be at the outgoing image's head, or the drift `recheck` reads means nothing."""
+    status, reason = readiness(world)
+    if status == 200:
+        return
+    if reason == DRIFT:
+        raise Refused(
+            f"{READINESS_PATH} answers 503 {DRIFT} BEFORE this deploy: the database is not at the "
+            "outgoing image's head (a migration applied without its swap, or a hand change). "
+            "Resolve that first; this deploy could not tell its own migration from it."
+        )
+    raise Refused(f"{READINESS_PATH} answered {status} ({reason}) before the deploy")
+
+
 def _prepare(args: argparse.Namespace, world: World) -> dict[str, Any]:
     state_path = Path(args.state)
-    if state_path.exists():
-        return {"result": "prepared", "resumed": True, **_resume(state_path, args.ref, world)}
+    if state_path.exists() or args.resume:
+        return _resume(state_path, args.ref, world)
+    if args.ref is None:
+        raise Usage("--ref is required unless --resume")
     sha = resolve_commit(world, args.ref)
-    refuse_readiness_health_checks(
-        world, sha, args.coolify_health_check_enabled, args.coolify_health_check_path
-    )
+    enabled, path = args.coolify_health_check_enabled, args.coolify_health_check_path
+    if enabled is None or path is None:
+        raise Usage("--coolify-health-check-enabled and --coolify-health-check-path are required")
+    refuse_readiness_health_checks(world, sha, enabled, path)
     seen = precheck(world, world.bearer(SYSTEM_BEARER_UUID))
     previous = pre_swap_revision(world)
     if previous == sha:
         raise Condition(f"production already serves {sha}")
     migrations = migrations_between(world, previous, sha)
     # The migration runs under the OUTGOING image, so its health check is the one that would fire.
-    refuse_readiness_health_checks(
-        world, previous, args.coolify_health_check_enabled, args.coolify_health_check_path
-    )
-    run_id, run_url = build_image(world, sha, args.label)
-    tag = readable_tag(sha, args.label)
+    refuse_readiness_health_checks(world, previous, enabled, path)
+    require_outgoing_ready(world)
     state = State(
         built_commit=sha,
         previous_commit=previous,
         label=args.label,
-        tag=tag,
-        pushed_digest=pushed_digest(world, run_id, sha),
-        workflow_run_url=run_url,
+        tag=readable_tag(sha, args.label),
+        pushed_digest="",
+        workflow_run_url="",
         migrations=migrations,
         expect_schema=list(args.expect_schema),
+        runs_before=max((r["databaseId"] for r in release_runs(world)), default=0),
     )
+    # Saved BEFORE the dispatch: the workflow refuses to rebuild a tag, so from here on a re-run
+    # must find this run rather than start another.
+    state.save(state_path)
+    _gh(
+        world,
+        "workflow",
+        "run",
+        RELEASE_WORKFLOW,
+        "-R",
+        REPOSITORY,
+        "--ref",
+        WORKFLOW_FILE_REF,
+        "-f",
+        f"ref={sha}",
+        "-f",
+        f"label={args.label}",
+    )
+    return {"resumed": False, "draft_units": seen["reported"], **_build(world, state, state_path)}
+
+
+def _build(world: World, state: State, state_path: Path) -> dict[str, Any]:
+    """Find, wait for and read the dispatched run, saving each fact as it is learned."""
+    run_id = state.run_id
+    if run_id is None:
+        run = find_run(world, state)
+        run_id = state.run_id = run["databaseId"]
+        state.workflow_run_url = str(run.get("url", ""))
+        state.save(state_path)
+    wait_for_build(world, run_id)
+    state.pushed_digest = pushed_digest(world, run_id, state.built_commit)
     state.save(state_path)
     print(next_steps(state, state_path), file=sys.stderr)
-    return {
-        "result": "prepared",
-        "resumed": False,
-        "draft_units": seen["reported"],
-        **asdict(state),
-    }
+    return {"result": "prepared", **asdict(state)}
 
 
-def _resume(state_path: Path, ref: str, world: World) -> dict[str, Any]:
-    """Re-print an earlier prepare. The workflow refuses to rebuild a tag, so it never re-runs."""
-    state = State.load(state_path)
-    sha = _git(world, "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
-    if sha != state.built_commit:
-        raise Refused(f"{state_path} records {state.built_commit}, not {sha}; use a new --state")
-    print(next_steps(state, state_path), file=sys.stderr)
-    return asdict(state)
+def _resume(state_path: Path, ref: str | None, world: World) -> dict[str, Any]:
+    """Continue an earlier prepare. It never dispatches: that run is already this deploy's."""
+    state = State.load(state_path, complete=False)
+    if ref is not None:
+        sha = _git(world, "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
+        if sha != state.built_commit:
+            raise Refused(
+                f"{state_path} records {state.built_commit}, not {sha}; use a new --state"
+            )
+    if state.pushed_digest:
+        print(next_steps(state, state_path), file=sys.stderr)
+        return {"result": "prepared", "resumed": True, **asdict(state)}
+    return {"resumed": True, **_build(world, state, state_path)}
 
 
-def _container() -> str:
+def _exactly_one(variable: str, what: str) -> str:
     return (
-        f"C=$(docker ps -q --filter name={APPLICATION_UUID} | head -1); "
-        '[ -n "$C" ] || { echo "no running container" >&2; exit 1; }'
+        f'[ "$(printf \'%s\\n\' "${variable}" | grep -c .)" -eq 1 ] || '
+        f'{{ echo "expected exactly one {what}, found: ${variable}" >&2; exit 1; }}'
     )
 
 
 def migration_command(state: State) -> str:
-    """Alembic from the NEW image, on the coolify network; the DB URL never leaves the host."""
-    image = f"ghcr.io/alobarquest/orchestrator@{state.pushed_digest}"
+    """Alembic from the NEW image, on the coolify network; the DB URL never leaves the host.
+
+    Run before the swap, so the one running container is the outgoing one.
+    """
+    image = f"{IMAGE_NAME}@{state.pushed_digest}"
     return (
-        f"{_container()}; "
+        f"C=$(docker ps -q --filter name={APPLICATION_UUID}); "
+        f"{_exactly_one('C', 'running container')}; "
         "DB=$(docker inspect \"$C\" --format '{{range .Config.Env}}{{println .}}{{end}}' "
         "| grep '^ORCHESTRATOR_DATABASE_URL=' | cut -d= -f2-); "
+        '[ -n "$DB" ] || { echo "no ORCHESTRATOR_DATABASE_URL in the running container" >&2; '
+        "exit 1; }; "
         f'docker run --rm --network coolify -e ORCHESTRATOR_DATABASE_URL="$DB" {image} '
         "sh -c 'cd /app && .venv/bin/alembic upgrade head && .venv/bin/alembic current "
         "&& .venv/bin/alembic heads'"
     )
 
 
-def repo_digest_command() -> str:
-    """Container -> image -> RepoDigests: a container has no RepoDigests of its own (#52)."""
+def repo_digest_command(state: State) -> str:
+    """Container -> image -> RepoDigests (#52), for the container running the NEW tag only."""
     return (
-        f'{_container()}; docker image inspect "$(docker inspect "$C" --format '
+        f"C=$(docker ps -q --filter name={APPLICATION_UUID} "
+        f"--filter ancestor={IMAGE_NAME}:{state.tag_name}); "
+        f"{_exactly_one('C', f'container running {state.tag_name}')}; "
+        'docker image inspect "$(docker inspect "$C" --format '
         "'{{.Image}}')\" --format '{{range .RepoDigests}}{{println .}}{{end}}'"
     )
 
 
 def next_steps(state: State, state_path: Path) -> str:
+    recheck = f"uv run python -m scripts.deploy_orchestrator recheck --state {state_path}"
     lines = [
         f"Built {state.built_commit} as {state.tag} ({state.pushed_digest}).",
         f"Pre-swap revision recorded: {state.previous_commit}.",
-        "Make these infraops calls IN THIS ORDER. The tag write comes first, so the window",
-        "between migration and swap is one call long (deploy.md #305):",
+        "Make these infraops calls IN THIS ORDER (deploy.md #305):",
         "",
         f'1. coolify_update_application(uuid="{APPLICATION_UUID}", instance="prod", '
         f'docker_registry_image_tag="{state.tag_name}")',
+        "   From here Coolify's tag names the NEW image: any Coolify restart or redeploy of this",
+        "   application swaps it in, whether or not the migration has run.",
     ]
     if state.migrations:
         lines += [
@@ -548,7 +651,8 @@ def next_steps(state: State, state_path: Path) -> str:
             "",
             migration_command(state),
             "",
-            "   Confirm the printed `current` equals `heads` before the swap.",
+            "   Confirm the printed `current` equals `heads`. The old image now answers",
+            f"   {READINESS_PATH} 503 {DRIFT}; no health check reads it, so it keeps serving.",
         ]
     else:
         lines.append(
@@ -556,14 +660,16 @@ def next_steps(state: State, state_path: Path) -> str:
             f"{state.previous_commit[:7]}."
         )
     lines += [
-        "3. Immediately before the swap, re-check that nothing is live and that production still",
-        f"   serves {state.previous_commit}. The first check is as old as the build:",
-        f"   uv run python -m scripts.deploy_orchestrator recheck --state {state_path}",
+        "3. Immediately before the swap, re-check. The first check is as old as the build:",
+        f"   {recheck}",
         f'   Only if it exits 0: coolify_deploy(uuid="{APPLICATION_UUID}", instance="prod")',
-        "4. Once the deployment has finished, read the running container's digest with",
+        "   If it stops on a live unit after the migration, do NOT roll back: the old image",
+        "   serves the migrated database, and only readiness (which nothing reads) reports it.",
+        "   Wait for the unit to finish, then run recheck again.",
+        "4. Once the deployment has finished, read the new container's digest with",
         '   vps_exec(instance="prod") and this command:',
         "",
-        repo_digest_command(),
+        repo_digest_command(state),
         "",
         "5. From a checkout at the built commit, with its own venv:",
         f"   uv run python -m scripts.deploy_orchestrator finish --state {state_path} "
@@ -572,17 +678,37 @@ def next_steps(state: State, state_path: Path) -> str:
     return "\n".join(lines)
 
 
+def require_migration_state(world: World, state: State) -> str:
+    """Readiness proves the migration ran: 503 drift with migrations, 200 without (#61)."""
+    status, reason = readiness(world)
+    if state.migrations and (status, reason) == (503, DRIFT):
+        return f"503 {DRIFT}: the migration ran and the outgoing image is behind it"
+    if not state.migrations and status == 200:
+        return "200: no migration in this deploy, and the database is at the outgoing head"
+    expected = f"503 {DRIFT}" if state.migrations else "200"
+    hint = " Run step 2 (the migration) first." if state.migrations and status == 200 else ""
+    raise Refused(f"{READINESS_PATH} answered {status} ({reason}), not {expected}.{hint}")
+
+
 def _recheck(args: argparse.Namespace, world: World) -> dict[str, Any]:
-    """The prepare-time checks that age: run again immediately before the swap (#82)."""
+    """The prepare-time checks that age, run again immediately before the swap (#82)."""
     state = State.load(Path(args.state))
-    seen = precheck(world, world.bearer(SYSTEM_BEARER_UUID))
     serving = pre_swap_revision(world)
+    if serving == state.built_commit:
+        raise Condition(f"production already serves {serving}: already swapped, run finish")
     if serving != state.previous_commit:
         raise Condition(
             f"production serves {serving}, not the recorded pre-swap {state.previous_commit}: "
             "somebody else deployed"
         )
-    return {"result": "clear", "previous_commit": serving, "draft_units": seen["reported"]}
+    migration = require_migration_state(world, state)
+    seen = precheck(world, world.bearer(SYSTEM_BEARER_UUID))
+    return {
+        "result": "clear",
+        "previous_commit": serving,
+        "migration": migration,
+        "draft_units": seen["reported"],
+    }
 
 
 # --------------------------------------------------------------------------------------------
@@ -613,32 +739,29 @@ def wait_for_revision(world: World, state: State) -> None:
 
 
 def require_ready(world: World) -> str:
-    try:
-        response = _get(world, READINESS_PATH)
-    except httpx.HTTPError as error:
-        raise Refused(f"GET {READINESS_PATH} failed: {error}") from error
-    if response.status_code != 200:
-        try:
-            reason = response.json().get("reason")
-        except ValueError, AttributeError:
-            reason = None
-        raise Condition(f"{READINESS_PATH} answered {response.status_code} ({reason})")
+    status, reason = readiness(world)
+    if status != 200:
+        raise Condition(f"{READINESS_PATH} answered {status} ({reason})")
     # `api/health.py::ready` answers 200 only when the database has exactly one head and it is
     # the code's single head, so a 200 rules out migration drift.
     return "200: the database is at the code's single alembic head, so there is no migration drift"
 
 
+def _mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def check_openapi(world: World, expected: list[str]) -> dict[str, Any]:
-    document = _get_json(world, "/openapi.json")
-    paths = document.get("paths") if isinstance(document, dict) else None
+    document = _mapping(_get_json(world, "/openapi.json"))
+    paths = document.get("paths")
     if not isinstance(paths, dict) or not paths:
         raise Refused("/openapi.json served no paths")
-    schemas = document.get("components", {}).get("schemas", {})
+    schemas = _mapping(_mapping(document.get("components")).get("schemas"))
     missing = []
     for name in expected:
         model, _, prop = name.partition(".")
-        properties = schemas.get(model, {}).get("properties", {}) if model in schemas else None
-        if properties is None or (prop and prop not in properties):
+        properties = _mapping(schemas[model]).get("properties") if model in schemas else None
+        if not isinstance(properties, dict) or (prop and prop not in properties):
             missing.append(name)
     if missing:
         raise Condition(f"the served schema lacks {', '.join(missing)}")
@@ -745,18 +868,19 @@ def _parser() -> argparse.ArgumentParser:
     parser = _Parser(description="Deploy the orchestrator by its recorded procedure.")
     phases = parser.add_subparsers(dest="phase", required=True)
     prepare = phases.add_parser("prepare", help="precheck, record, build, print the next steps")
-    prepare.add_argument("--ref", required=True, help="a commit or origin/main")
+    prepare.add_argument("--ref", help="a commit or origin/main (optional with --resume)")
+    prepare.add_argument(
+        "--resume", action="store_true", help="continue the build recorded in --state"
+    )
     prepare.add_argument("--state", required=True, help="a JSON path outside the repository")
     prepare.add_argument("--label", default="", help="optional readable-tag suffix")
     prepare.add_argument(
         "--coolify-health-check-enabled",
-        required=True,
         type=_boolean,
         help="health_check_enabled from coolify_get_application",
     )
     prepare.add_argument(
         "--coolify-health-check-path",
-        required=True,
         help="health_check_path from coolify_get_application",
     )
     prepare.add_argument(
@@ -801,6 +925,10 @@ def main(argv: Sequence[str] | None = None, world: World | None = None) -> int:
         result, code = {"result": "condition", "reason": str(error)}, EXIT_CONDITION
     except Refused as error:
         result, code = {"result": "refused", "reason": str(error)}, EXIT_REFUSED
+    except (OSError, subprocess.SubprocessError) as error:
+        # A missing `gh`, a timed-out subprocess: the command could not ask, so it refuses.
+        reason = f"{type(error).__name__}: {error}"
+        result, code = {"result": "refused", "reason": reason}, EXIT_REFUSED
     print(json.dumps({"phase": args.phase, **result}, indent=2, sort_keys=True))
     return code
 

@@ -11,8 +11,8 @@ worktree's own venv, and keep the state file in the session scratchpad, never a 
 it under `rtk proxy`, because rtk swallows the stdout of `python -m`, and the result JSON goes to
 stdout.
 
-It runs in two phases, with a `recheck` between them, because **five steps stay infraops calls the deploying session makes
-itself**. The workspace rule (`~/Projects/CLAUDE.md`) routes every Coolify change through the
+It runs in two phases, with a `recheck` between them, because **five steps stay infraops calls
+the deploying session makes itself**. The workspace rule (`~/Projects/CLAUDE.md`) routes every Coolify change through the
 infraops MCP tools, and reading the host means `vps_exec`. A local program can call neither, so
 `prepare` prints those calls exactly and `finish` takes their result:
 
@@ -23,16 +23,27 @@ infraops MCP tools, and reading the host means `vps_exec`. A local program can c
 4. `coolify_deploy(...)`, the swap;
 5. the container → image → `RepoDigest` read, through `vps_exec`.
 
-Steps 2 to 4 are printed in #305's order: the tag write comes before the migration, so the
-migration-to-swap window is one call long. Immediately before step 4, the printed steps run
-`recheck`. It repeats the nothing-live check and confirms that production still serves the
-recorded pre-swap revision, because the first check is as old as the build (up to 45 minutes).
+Steps 2 to 4 are printed in #305's order: tag write, migration, `recheck`, swap. Two facts about
+the window between them:
+
+- **From the tag write on, any Coolify restart or redeploy of the application swaps the new image
+  in**, whether or not the migration has run. Don't start the window while anything else might
+  restart it.
+- **`recheck`** runs immediately before `coolify_deploy`. It reads `/health/live` (still the
+  recorded pre-swap revision; if it already serves the built commit, it says "already swapped,
+  run finish"). It then reads `/health/ready` from the old image, which proves the migration ran:
+  503 `migration_drift` when the deploy has a migration, 200 when it has none, and a refusal for
+  any other answer. Last, it repeats the nothing-live check, because the first one is as old as
+  the build (up to 45 minutes). **If it stops on a live unit after the migration, don't roll
+  back.** The old image serves the migrated database, its readiness reports 503
+  `migration_drift`, and no health check reads readiness (#61). Wait for the unit to finish, then
+  run `recheck` again.
 
 ```bash
 cd <worktree at the commit>   # uv sync --frozen first
 rtk proxy uv run python -m scripts.deploy_orchestrator prepare --ref origin/main \
   --state <scratchpad>/deploy.json \
-  --coolify-health-check-enabled false --coolify-health-check-path <from step 1> \
+  --coolify-health-check-enabled <from step 1> --coolify-health-check-path <from step 1> \
   [--label <suffix>] [--expect-schema <ResponseModel>[.<field>] ...]
 # ... the infraops calls it prints, with this immediately before coolify_deploy:
 rtk proxy uv run python -m scripts.deploy_orchestrator recheck --state <scratchpad>/deploy.json
@@ -64,18 +75,27 @@ checks these, in order:
   production already serves the commit. It refuses a `previous_commit` the checkout does not hold
   (fetch first), and one that is not an ancestor of the built commit, because a rollback is not
   this procedure.
-- **Build.** It runs `gh workflow run release-image.yml --ref main -f ref=<sha> -f label=<label>`,
-  takes the first run newer than the one it saw before dispatching, and waits for it to succeed.
-  It reads the pushed digest from the `DIGEST:` line of the "Verify the pushed image" step in
-  `gh run view --log`. Neither a step summary nor an artifact can be read through the API. It
-  refuses unless that step names this commit's `REVISION` and `SHA_TAG`, so another person's
-  concurrent run cannot be mistaken for this one. The readable tag comes from
-  `scripts/compute_image_tags.py`, the same function the workflow uses.
+- **The database is at the outgoing head.** It requires the old image's `/health/ready` to
+  answer 200 before building. A 503 `migration_drift` here means the database is already ahead of
+  the running image (a migration applied without its swap, or a hand change). `recheck` would then
+  read that drift as this deploy's migration, so `prepare` refuses and says why.
+- **Build.** It saves the state file first, then runs
+  `gh workflow run release-image.yml --ref main -f ref=<sha> -f label=<label>`. The workflow's
+  `run-name` is `Release image <ref>`, and `gh workflow run` returns no run id, so `prepare`
+  takes the first run newer than any it saw before dispatching whose title names this commit. It
+  saves that run's id, waits for it to succeed, and survives up to three consecutive failed `gh`
+  calls while polling. It reads the pushed digest from the `DIGEST:` line of the "Verify the
+  pushed image" step in `gh run view --log`. Neither a step summary nor an artifact can be read
+  through the API. It refuses unless that step names this commit's `REVISION` and `SHA_TAG`. The
+  readable tag comes from `scripts/compute_image_tags.py`, the same function the workflow uses.
 - **Migrations.** It lists every `migrations/versions/*.py` changed between the pre-swap revision
   and the built commit. Only then does it print the migration step.
 
-A second `prepare` against an existing state file reprints the steps and does not rebuild, because
-the workflow refuses to overwrite a tag.
+A second `prepare` against an existing state file, or `prepare --resume --state <path>`, never
+dispatches again: the workflow refuses to overwrite a tag. If the build was already read, it
+reprints the steps. Otherwise it continues where the first one stopped: finding the run by its
+title, waiting for it, reading its digest. If the dispatch itself never happened, the run never
+appears, and `prepare` says to remove the state file and start again.
 
 **`finish`** checks these, in order:
 
@@ -92,7 +112,8 @@ the workflow refuses to overwrite a tag.
 5. It runs `image-release bind` with the recorded `previous_commit`, never a fresh read. Both
    bearers are fetched in-process from BWS and passed in the binder's environment.
 
-It prints one JSON result. Exit 0 means done. Exit 2 means a condition: a live unit, a digest
+Every command prints one JSON result, including when a subprocess times out, `gh` is missing, or
+the OpenAPI document is malformed. Exit 0 means done. Exit 2 means a condition: a live unit, a digest
 mismatch, a revision not served, readiness failing, a missing schema model, or a binder
 condition. Exit 3 means a state it cannot read or will not deploy from. Exit 1 means usage.
 
