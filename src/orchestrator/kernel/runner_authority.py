@@ -7,7 +7,11 @@ runner's own authority validation:
 where a command produces the diff; a present `mutation_commands` must always
 be well-formed and a subset of `allowed_commands`. Edit-shaped work omits
 `mutation_commands` honestly — the coding agent produces the diff and no
-command mutates a tracked file.
+command mutates a tracked file. `verify_commands` is optional for every change
+class (SDS 1.1 item 3c-1): when present it is the ordered script the runner
+executes after the mutators, so it must be well-formed, a subset of
+`allowed_commands`, and disjoint from `mutation_commands`; when absent the
+runner replays `allowed_commands` in order, as it always has.
 
 `runner_envelope_field_violation` is the envelope-shape half (WS-P2.34): the runner's
 model forbids extra fields outright, so a field this build does not understand is a
@@ -73,6 +77,7 @@ def runner_command_authority_violation(
             "constraints.allowed_commands must be a non-empty list of non-empty strings",
             "declare the complete ordered command list",
         )
+    mutations: tuple[str, ...] = ()
     if "mutation_commands" not in envelope.constraints:
         if is_dependency_update:
             return AuthorityViolation(
@@ -80,19 +85,54 @@ def runner_command_authority_violation(
                 "constraints.mutation_commands must be a non-empty list of non-empty strings",
                 "declare the ordered commands expected to mutate the dependency",
             )
+    else:
+        declared = _non_empty_string_list(envelope.constraints["mutation_commands"])
+        if declared is None:
+            return AuthorityViolation(
+                "authority_mutation_commands_invalid",
+                "constraints.mutation_commands must be a non-empty list of non-empty strings",
+                "declare the ordered mutating commands, or omit the key when no command mutates",
+            )
+        if any(command not in allowed for command in declared):
+            return AuthorityViolation(
+                "authority_mutation_command_not_allowed",
+                "every mutation command must also appear in constraints.allowed_commands",
+                "add the mutation command to allowed_commands without changing its spelling",
+            )
+        mutations = declared
+    return _verify_commands_violation(envelope, allowed, mutations)
+
+
+def _verify_commands_violation(
+    envelope: AuthorityEnvelope, allowed: tuple[str, ...], mutations: tuple[str, ...]
+) -> AuthorityViolation | None:
+    """The runner's `verify_commands` rule: optional, and when present a disjoint subset.
+
+    Disjoint from `mutation_commands` because the runner labels each command it executes once,
+    `applied` for a mutator and `passed` for a verifier, and runs the mutators before the verify
+    script: a command in both would run twice and one of its records would claim verification
+    of a command whose job is to change the tree.
+    """
+    if "verify_commands" not in envelope.constraints:
         return None
-    mutations = _non_empty_string_list(envelope.constraints["mutation_commands"])
-    if mutations is None:
+    verifiers = _non_empty_string_list(envelope.constraints["verify_commands"])
+    if verifiers is None:
         return AuthorityViolation(
-            "authority_mutation_commands_invalid",
-            "constraints.mutation_commands must be a non-empty list of non-empty strings",
-            "declare the ordered mutating commands, or omit the key when no command mutates",
+            "authority_verify_commands_invalid",
+            "constraints.verify_commands must be a non-empty list of non-empty strings",
+            "declare the ordered verify script, or omit the key to replay allowed_commands",
         )
-    if any(command not in allowed for command in mutations):
+    if any(command not in allowed for command in verifiers):
         return AuthorityViolation(
-            "authority_mutation_command_not_allowed",
-            "every mutation command must also appear in constraints.allowed_commands",
-            "add the mutation command to allowed_commands without changing its spelling",
+            "authority_verify_command_not_allowed",
+            "every verify command must also appear in constraints.allowed_commands",
+            "add the verify command to allowed_commands without changing its spelling",
+        )
+    if any(command in mutations for command in verifiers):
+        return AuthorityViolation(
+            "authority_verify_command_mutates",
+            "a verify command must not also be a mutation command",
+            "list each command in mutation_commands or verify_commands, never both",
         )
     return None
 

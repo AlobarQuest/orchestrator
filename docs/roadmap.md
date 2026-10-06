@@ -112,7 +112,6 @@ These are in no fixed order.
 
 | Review id | Item | State today |
 |---|---|---|
-| 3c-1 | Separate the runner's permitted commands from its ordered verify script. | factory-runner still runs `allowed_commands` as the script. |
 | 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Machines can register intakes (ADR-0027); the human paste survives, and packages are LLM-authored through `factory create`. |
 | L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Four producers exist; where WS-P3.5 belongs is open decision 1. |
 | R9 | Net gate load is a target set per wave. | Measured in the SLO report (#359); per-wave target not yet set. |

@@ -265,11 +265,15 @@ Placement rule: global CLAUDE.md §7.
   keyed on durability. Detail: `docs/operations/landing-lanes.md`.
 - `runner_command_authority_violation` mirrors the runner: `allowed_commands` required when
   `command.run` is allowed; `mutation_commands` required iff `change_class == "dependency-update"`,
-  validated whenever present. The orchestrator may be stricter, never looser. History:
+  validated whenever present; optional `verify_commands` validated whenever present (non-empty,
+  subset of `allowed_commands`, disjoint from `mutation_commands`). The orchestrator may be
+  stricter, never looser. History:
   `docs/history/claude-md-invariants-archive.md` #126.
-- `allowed_commands` is the coding agent's entire enforced Bash vocabulary (exact match) and is
-  re-executed in order at finalize, so an envelope must list every command the work needs, mutators
-  first, verifier last. Detail: `docs/operations/driving-a-unit.md`.
+- `allowed_commands` is the coding agent's entire enforced Bash vocabulary (exact match), so an
+  envelope must list every command the work needs. Finalize re-executes it in order, mutators first
+  and verifier last, unless the envelope declares `verify_commands`. Then finalize runs the
+  mutators, in `allowed_commands` order, followed by `verify_commands`. Absent keeps every existing
+  fingerprint. Detail: `docs/operations/driving-a-unit.md` #130.
 - `DRAFT/READY -> CANCELLED` need the `decomposition_superseded` guard, which only superseding the
   unit's own approval sets (ADR-0052); otherwise a stranded READY unit is inert and is retired by
   letting it fail then cancelling. History: `docs/history/claude-md-invariants-archive.md` #134.

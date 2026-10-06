@@ -18,6 +18,16 @@ tracked file, so `mutation_commands` is honestly absent. The byte pin alone cann
 the two sides disagreeing about a RULE (both fixtures stayed green while production
 disagreed), so both repos also assert the rule against the fixtures: this envelope is
 admitted, and the dependency-update envelope with `mutation_commands` stripped is refused.
+
+SDS 1.1 item 3c-1 added `runner_authority_envelope_verify.json`, carrying the optional
+`constraints.verify_commands`: the ordered script the runner executes after the mutators,
+separate from the `allowed_commands` vocabulary. It is a DECLARED shape, not a record of
+dispatched work -- the uv pin bump intent-packages' dependency-update profile emits from 3c-1
+on -- so this module can assert in one place that the runner contract admits it, that the
+orchestrator serves and dispatches it, and that the shipped known-good pattern recognises it.
+Both repos enforce the same rule: a subset of `allowed_commands`, disjoint from
+`mutation_commands`. The two older fixtures keep the key absent, and their authority
+fingerprints are pinned below to the values computed before the key existed.
 """
 
 import hashlib
@@ -31,13 +41,20 @@ from sqlalchemy.orm import Session
 
 from orchestrator.capability_vocabulary import RUNNER_CAPABILITIES
 from orchestrator.errors import DomainError
-from orchestrator.kernel.authority import KNOWN_FIELDS, normalize_authority, runner_payload
+from orchestrator.factory_policy import load_factory_policy
+from orchestrator.kernel.authority import (
+    KNOWN_FIELDS,
+    authority_fingerprint,
+    normalize_authority,
+    runner_payload,
+)
 from orchestrator.kernel.runner_authority import (
     RUNNER_CAPABILITY_LEVELS,
     RUNNER_ENVELOPE_FIELDS,
     runner_command_authority_violation,
 )
-from orchestrator.kernel.states import ActorContext, ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
+from orchestrator.persistence.models import WorkUnit
 from orchestrator.services.execution.dispatch import (
     DispatchCommand,
     DispatchSettings,
@@ -75,6 +92,19 @@ FIXTURE_EDIT = (
     Path(__file__).resolve().parents[1] / "fixtures" / "runner_authority_envelope_edit.json"
 )
 CONTRACT_SHA256_EDIT = "90b73de69bdd9d5ee88be38b0a0ac2eeff1e4bb467ec72062cd1b70f49888f6e"
+
+FIXTURE_VERIFY = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "runner_authority_envelope_verify.json"
+)
+CONTRACT_SHA256_VERIFY = "809a8a5f34f0078fb2fceb3819a345ec18490c9bdd920975dca379358ae4061a"
+
+# The authority fingerprints of the two pre-3c-1 fixtures, computed on origin/main at a1205f1
+# (before `verify_commands` existed). An approval attests a fingerprint, so an envelope without
+# the key must keep the one it was approved under; adding the key may not move it.
+PRE_VERIFY_FINGERPRINTS = {
+    FIXTURE: "806d2e79e6d84a844ef66bbaa743602a5a768c8f9aad63cb71e5d8781c3e0695",
+    FIXTURE_EDIT: "bac3a732861a0b3105e409b6d86eb995bdf81059419fbb591d9623498f5eea7e",
+}
 
 # WS-P2.34: a THIRD pinned artifact, and it exists because the two above provably cannot carry
 # what it carries. Every capability in both golden envelopes is declared "allowed", so their
@@ -116,6 +146,10 @@ def golden_envelope() -> dict[str, Any]:
 
 def golden_edit_envelope() -> dict[str, Any]:
     return json.loads(FIXTURE_EDIT.read_text())
+
+
+def golden_verify_envelope() -> dict[str, Any]:
+    return json.loads(FIXTURE_VERIFY.read_text())
 
 
 def golden_contract() -> dict[str, list[str]]:
@@ -167,6 +201,7 @@ def _approved_ready_unit(
     change_class: str = CHANGE_CLASS,
     prefix: str = "fanout",
     unit_key: str = "bump-dependency",
+    approve_authority: bool = True,
 ):
     payload = _authored(envelope if envelope is not None else golden_envelope())
     revision = register_package_intake(
@@ -212,6 +247,8 @@ def _approved_ready_unit(
         idempotency_key=f"proposal-{prefix}-approve",
     )
     unit_id = uuid.UUID(str(uuid.uuid5(proposal.id, unit_key)))
+    if not approve_authority:
+        return unit_id
     record_approval(
         session,
         unit_id=unit_id,
@@ -236,6 +273,42 @@ def test_golden_edit_envelope_is_unchanged() -> None:
     """A one-sided edit here means factory-runner's copy has silently drifted."""
     canonical = json.dumps(golden_edit_envelope(), sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_EDIT
+
+
+def test_golden_verify_envelope_is_unchanged() -> None:
+    """A one-sided edit here means factory-runner's copy has silently drifted."""
+    canonical = json.dumps(golden_verify_envelope(), sort_keys=True, separators=(",", ":"))
+    assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_VERIFY
+
+
+@pytest.mark.parametrize("fixture", list(PRE_VERIFY_FINGERPRINTS), ids=lambda path: path.name)
+def test_an_envelope_without_verify_commands_keeps_its_approved_fingerprint(
+    fixture: Path,
+) -> None:
+    """Existing approved envelopes carry no `verify_commands`; their fingerprints must not move."""
+    envelope = normalize_authority(json.loads(fixture.read_text()))
+
+    assert "verify_commands" not in envelope.constraints
+    assert authority_fingerprint(envelope) == PRE_VERIFY_FINGERPRINTS[fixture]
+
+
+def test_verify_commands_enters_the_fingerprint_by_value() -> None:
+    """The other direction: a present script is attested, so changing it is a new authority."""
+    declared = golden_verify_envelope()
+    reordered = golden_verify_envelope()
+    reordered["constraints"]["verify_commands"] = [
+        "uv lock --check",
+        "uv add --dev 'ruff>=0.15.21'",
+    ]
+    stripped = golden_verify_envelope()
+    del stripped["constraints"]["verify_commands"]
+
+    fingerprints = {
+        authority_fingerprint(normalize_authority(payload))
+        for payload in (declared, reordered, stripped)
+    }
+
+    assert len(fingerprints) == 3
 
 
 def test_envelope_field_set_is_derived_from_the_pinned_contract() -> None:
@@ -323,6 +396,7 @@ def test_each_golden_envelope_names_only_declared_capabilities() -> None:
     """
     assert frozenset(golden_envelope()["capabilities"]) <= RUNNER_CAPABILITIES
     assert frozenset(golden_edit_envelope()["capabilities"]) <= RUNNER_CAPABILITIES
+    assert frozenset(golden_verify_envelope()["capabilities"]) <= RUNNER_CAPABILITIES
 
 
 def test_golden_envelope_satisfies_the_runner_vocabulary() -> None:
@@ -400,6 +474,104 @@ def test_present_mutation_commands_is_validated_for_every_change_class() -> None
 
     assert violation is not None
     assert violation.code == "authority_mutation_command_not_allowed"
+
+
+def test_verify_envelope_is_admitted() -> None:
+    assert runner_command_authority_violation(normalize_authority(golden_verify_envelope())) is None
+
+
+@pytest.mark.parametrize(
+    ("label", "verify_commands", "code"),
+    [
+        ("empty", [], "authority_verify_commands_invalid"),
+        ("not a list", "uv lock --check", "authority_verify_commands_invalid"),
+        ("a blank entry", ["uv lock --check", " "], "authority_verify_commands_invalid"),
+        ("outside allowed_commands", ["make check"], "authority_verify_command_not_allowed"),
+        ("also a mutation", ["uv add --dev 'ruff>=0.15.21'"], "authority_verify_command_mutates"),
+    ],
+)
+def test_a_malformed_verify_script_is_refused(
+    label: str, verify_commands: object, code: str
+) -> None:
+    """The runner refuses each of these in `_verify_commands`; admitting one spends an ordinal."""
+    payload = golden_verify_envelope()
+    payload["constraints"]["verify_commands"] = verify_commands
+
+    violation = runner_command_authority_violation(normalize_authority(payload))
+
+    assert violation is not None, label
+    assert violation.code == code
+
+
+def test_a_verify_script_is_validated_on_edit_shaped_work_too() -> None:
+    """Optional for every change class, and validated whenever present, like mutation_commands."""
+    admitted = golden_edit_envelope()
+    admitted["constraints"]["verify_commands"] = ["make check"]
+    refused = golden_edit_envelope()
+    refused["constraints"]["verify_commands"] = ["a command nobody allowed"]
+
+    assert runner_command_authority_violation(normalize_authority(admitted)) is None
+    violation = runner_command_authority_violation(normalize_authority(refused))
+    assert violation is not None
+    assert violation.code == "authority_verify_command_not_allowed"
+
+
+def test_the_shipped_pattern_recognises_the_verify_envelope() -> None:
+    """Without `verify_commands` in the recognised shape, every new bump reads as novel."""
+    unit_id = uuid.uuid4()
+    payload = golden_verify_envelope()
+    payload["constraints"]["work_unit_id"] = str(unit_id)
+
+    recognition = load_factory_policy().authority_refusals(
+        ("source_repository",), normalize_authority(payload), unit_id
+    )
+
+    assert recognition.refusals == ()
+    assert recognition.recognised_by == ("uv dependency pin bump into a named repository",)
+
+
+def test_orchestrator_serves_the_verify_envelope_and_admits_it(
+    migrated_session: Session,
+) -> None:
+    """The verify-script envelope traverses intake, breakdown, approval and admission intact."""
+    unit_id = _approved_ready_unit(
+        migrated_session,
+        envelope=golden_verify_envelope(),
+        prefix="verifyshape",
+        unit_key="bump-with-a-verify-script",
+        # The shipped known-good pattern recognises this envelope, so no human authority
+        # approval is asked for: the unit is ready on the breakdown approval alone. That is the
+        # end-to-end form of "a new bump does not read as authority_envelope_novel".
+        approve_authority=False,
+    )
+    unit = migrated_session.get(WorkUnit, unit_id)
+    assert unit is not None
+    assert unit.state == WorkUnitState.READY
+
+    brief = runner_brief(migrated_session, unit_id)
+    served = cast(dict[str, Any], cast(dict[str, Any], brief["authority"])["envelope"])
+
+    expected = golden_verify_envelope()
+    expected["constraints"] = {**expected["constraints"], "work_unit_id": str(unit_id)}
+    assert served == expected
+
+    github = FakeGitHubDispatcher()
+    record = dispatch_work_unit(
+        migrated_session,
+        DispatchCommand(
+            unit_id=unit_id,
+            runner_attempt=1,
+            actor=SYSTEM,
+            idempotency_key="verifyshape-dispatch",
+        ),
+        _dispatch_settings(),
+        github,
+        inert_source(),
+        target_source=declared_source(),
+    )
+
+    assert record.status == "dispatched"
+    assert github.calls[0]["repository"] == TARGET_REPOSITORY
 
 
 def test_orchestrator_serves_the_golden_envelope_and_admits_it(migrated_session: Session) -> None:

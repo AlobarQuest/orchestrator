@@ -494,6 +494,9 @@ def _is_skipped_reason(reason: str) -> bool:
         "authority_allowed_commands_invalid",
         "authority_mutation_commands_invalid",
         "authority_mutation_command_not_allowed",
+        "authority_verify_commands_invalid",
+        "authority_verify_command_not_allowed",
+        "authority_verify_command_mutates",
     }
 
 

@@ -39,7 +39,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 - **That dry-run rule is necessary but NOT sufficient — it passed all three WS-6.4 defects.**
   Add three clauses. (1) **Run the ordered list twice** in one checkout: `finalize-run`
-  re-executes every `allowed_commands` entry before `git status`, and `uv venv` is not
+  re-executes its script (every `allowed_commands` entry, or the mutators then
+  `verify_commands` when the envelope declares one; see #130) before `git status`, and `uv venv` is not
   idempotent (`uv venv --clear` is). (2) **Name every site of a pin**: `uv` resolves
   `[dependency-groups]` and `[project.optional-dependencies]` jointly, so bumping one of
   two identical `==` pins is *unsatisfiable*, not merely inconsistent. (3) **Control for
@@ -349,12 +350,28 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `dependency_update.py::commands_deferred_to_coding`, keyed on what a failure MEANS: `npm ci`
   failing means the dependency graph cannot resolve, which no in-scope source change fixes, so
   authoring runs it; a build failing is the assignment, so authoring does not. Deferring is not
-  exempting: finalize re-executes the whole list regardless.
-  **The finalize half of the old bullet stands unchanged.** `allowed_commands` becomes
-  `verification_commands` at finalize (`cli.py:839`), which re-executes the ordered list before
-  checking `git status` — so a listed command that cannot run makes finalize fail **however well the
-  coding phase went**, the ordering rule (mutators first, verifier last) matters because of that
-  re-execution, and every listed command must be idempotent.
+  exempting: finalize re-executes the deferred command regardless, as a mutator or in the verify
+  script.
+  **The finalize script is `allowed_commands` unless the envelope declares `verify_commands`
+  (SDS 1.1 item 3c-1).** factory-runner's `authority.finalization_script` decides it. Without the
+  key, finalize replays `allowed_commands` in order, as every envelope approved before 3c-1
+  assumed: mutators labelled `applied`, everything else `passed`. With it, finalize runs the
+  `mutation_commands` in their `allowed_commands` order, then `verify_commands` in its own order.
+  An allowed command in neither list is agent vocabulary only, and finalize does not run it.
+  `verify_commands` is optional for every change class. When present it must be a non-empty
+  string list, a subset of `allowed_commands`, and disjoint from `mutation_commands`: each executed
+  command gets one label, and a shared command would run twice. The runner enforces this in
+  `_verify_commands` and the orchestrator in `runner_command_authority_violation`
+  (`authority_verify_commands_invalid`, `..._command_not_allowed`, `..._command_mutates`).
+  The runner binds the script into its 0400 policy file and digest, and finalize refuses a
+  policy whose script differs from the refreshed envelope's. The known-good pattern matches it
+  by prefix like the other command lists, and an envelope without it is still recognised.
+  Every command in the script runs **before** `git status`, so one that cannot run makes
+  finalize fail **however well the coding phase went**. Mutators still come first and the
+  verifier last, and every scripted command must be idempotent. The intent-packages
+  dependency-update profile emits `verify_commands = verifiers`, and its
+  `allowed_commands = [*mutations, *verifiers]` is unchanged, so its script runs exactly what
+  it ran before the key existed.
 
 ### #131
 
